@@ -1,43 +1,19 @@
-"""Which model, and which effort, a stage or chat runs on — resolved in one place.
+"""Which model, and which effort, a stage or chat runs on, resolved in one place.
 
-`0004_no-setting-says-which-model-runs-a-stage`. Until this module every session got
-`COS_MODEL`, whatever it was for, and nobody could see or change a stage's model without
-editing code. Now each row — every stage `cos.mjs` names, then `chat` — resolves in this
-order, and the first that has an answer wins:
+Each row (every stage `cos.mjs` names, then `chat`) resolves override first (a `model:<name>`
+row in `prefs`), then default (`models.json`, shipped with the package; no `chat` key), then
+`COS_MODEL` (`Config.model`, handed in; this module never reads the environment). If none
+answers the model is `None` and the SDK default applies.
 
-1. **override** — a `model:<name>` row in the `prefs` table, set from Settings. It lives
-   under the data root, outside the code and outside any repository.
-2. **default** — `coscc/agent/models.json`, shipped with the package beside `states.json` and for
-   the same reason (`coscc/units/states.py:36-39`): a wheel has to carry the rules it runs on.
-   It has no `chat` key on purpose (spec `## Answers`, câu 1).
-3. **COS_MODEL** — `Config.model`, handed in. This module never reads the environment
-   (`coscc/config.py:5-6`).
+Effort is overridden under `effort:<name>` with no environment fallback. A stage after `plan`
+may have a `<stage>:novel` row, used when the plan's effective label is `novel`; model and
+effort are looked up separately, variant first. `max` is taken only from an override.
 
-If none answers, the model is `None`, and the SDK's own default applies as it did before.
+`resolve` may be handed a `trial_model`: lookup is then override, `COS_MODEL`, trial, default.
+Only a routine `impl` board step hands one in; `table` never does.
 
-**Effort and the `novel` variant** (`0033_impl-runs-one-model-whatever-the-plan-demands`).
-A row also carries an effort, overridden under `effort:<name>`, with no environment
-fallback: unset means the SDK's default. A stage after `plan` may have a second row,
-`<stage>:novel`, used when the plan's effective label is `novel` (`coscc/agent/labels.py`). Model
-and effort are looked up separately, variant first, then the base row (spec R6). `max` is
-taken only from an override, never from `models.json` (spec R7): only a person who chose it
-spends it.
-
-**The model trial** (`0139_some-transitions-still-read-prose`, Part 3, which replaced the
-effort trial of `0123`). `resolve` may be handed a `trial_model`, and then the model is looked
-up override, `COS_MODEL`, trial, default: a `model:<name>` override or `COS_MODEL` still wins
-(spec R17), and the effort is looked up as before. Only a board step of a routine `impl`
-hands one in (`coscc/knowledge/modeltrial.py`); `table` never does, so Settings shows what it
-showed before.
-
-**What it does not hold is the list of stages.** That list is `cos.mjs`'s, and the caller
-passes it in (`coscc/units/board.py` `stages`). A key here that `cos.mjs` does not name is
-reported as a problem, never shown as a stage — `.claude/CLAUDE.md` forbids a second copy
-of the loop, and a list of stage names in this file would be one.
-
-Nothing here raises on bad data. A broken `models.json` or a hand-edited override that does
-not parse is skipped and named in `problems`, so the app keeps running and says why a row
-fell back (spec R11).
+The list of stages is `cos.mjs`'s and the caller passes it in; a key here that `cos.mjs` does
+not name is reported as a problem. Bad data never raises: it is skipped and named in `problems`.
 """
 
 from __future__ import annotations
@@ -49,22 +25,21 @@ from typing import Any, Iterable
 DEFAULT_PATH = Path(__file__).resolve().parent / "models.json"
 
 CHAT = "chat"
-# `0074`. The backlog's proposal session. Not a stage and not in `cos.mjs`: a row of its own,
-# shown just before `chat`.
+# The backlog's proposal session: a row of its own, shown just before `chat`.
 ESTIMATE = "estimate"
-# `0044`. Jera's session, the same kind of row: after `estimate`, before `chat`.
+# Jera's session, the same kind of row: after `estimate`, before `chat`.
 PRECEDENT = "precedent"
 PREFIX = "model:"
 EFFORT_PREFIX = "effort:"
 NOVEL_SUFFIX = ":novel"
 NOVEL = "novel"
 
-# What the CLI's `--effort` accepts (`0033 idea.md:14`). `max` only from an override.
+# What the CLI's `--effort` accepts. `max` only from an override.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 OVERRIDE_ONLY = "max"
 
 OVERRIDE = "override"
-# `0139`. The model came from the trial, between `COS_MODEL` and the default.
+# The model came from the trial, between `COS_MODEL` and the default.
 TRIAL = "trial"
 DEFAULT = "default"
 ENV = "COS_MODEL"
@@ -76,7 +51,7 @@ def load_defaults(
 ) -> tuple[dict[str, dict[str, str | None]], list[str]]:
     """The shipped defaults, `{name: {"model", "effort"}}`, and what was wrong with them.
 
-    A bare string is the pre-`0033` shape: that model, no effort. Never raises.
+    A bare string means that model, no effort. Never raises.
     """
     where = Path(path) if path is not None else DEFAULT_PATH
     try:
@@ -151,13 +126,10 @@ def resolve(
     env_model: str | None,
     trial_model: str | None = None,
 ) -> tuple[str | None, str, str | None, str]:
-    """`(model, model_source, effort, effort_source)` for one row, in spec R6's order.
+    """`(model, model_source, effort, effort_source)` for one row.
 
-    The `<name>:novel` keys are consulted only when `label` is `novel`; whether such a row
-    may exist at all is `table`'s question, not this one's.
-
-    `trial_model` (`0139` R16) is taken, as `TRIAL`, when no key has a model override and
-    `COS_MODEL` is unset. `None` leaves everything as it was.
+    The `<name>:novel` keys are consulted only when `label` is `novel`. `trial_model` is taken,
+    as `TRIAL`, when no key has a model override and `COS_MODEL` is unset.
     """
     keys = ([name + NOVEL_SUFFIX] if label == NOVEL else []) + [name]
 
@@ -180,7 +152,7 @@ def resolve(
 
 def rows_for(stages: Iterable[str]) -> list[str]:
     """Every row Settings shows: each stage, its `:novel` variant right after it when the
-    stage comes after `plan`, then `estimate` (`0074`), `precedent` (`0044`), then `chat`."""
+    stage comes after `plan`, then `estimate`, `precedent`, then `chat`."""
     names = [str(s) for s in stages]
     after_plan = names.index("plan") + 1 if "plan" in names else len(names)
     out: list[str] = []
@@ -201,12 +173,9 @@ def table(
 ) -> dict[str, Any]:
     """Every row Settings shows, as `rows_for` orders them.
 
-    A `:novel` row is resolved as a `novel` run of its stage would be, so what it shows is
-    what that run gets. `chat` has no effort (spec Out of scope).
-
-    `problems` names every key, in the overrides or the defaults, that is not a row. Such a
-    key changes nothing; saying so is the only way a person finds out a stage was renamed
-    under their setting.
+    A `:novel` row is resolved as a `novel` run of its stage would be. `chat` has no effort.
+    `problems` names every key, in the overrides or the defaults, that is not a row; such a
+    key changes nothing, and this is how a person learns a stage was renamed.
     """
     names = rows_for(stages)
     rows = []

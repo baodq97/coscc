@@ -1,7 +1,4 @@
-"""A unit's dialog and its tabs: runs, questions, integration, outcome, run again, hold and
-review rounds.
-Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
-"""
+"""A unit's dialog and its tabs: runs, questions, integration, outcome, run again, hold and review rounds."""
 
 from __future__ import annotations
 
@@ -23,9 +20,8 @@ from coscc.screens.board import _update_warning
 
 
 def _cell_chip(cell: rx.Var[Cell]) -> rx.Component:
-    # `0019_a-failed-step-destroys-the-work-that-succeeded` plan step 7. `cell.label` is
-    # `cell.status` except when the artifact is absent and the last run of this stage
-    # failed, in which case it names that run instead of the bare word "not started".
+    # `cell.label` is `cell.status` except when the artifact is absent and the last run of this
+    # stage failed, in which case it names that run instead of the bare word "not started".
     return rx.vstack(
         s.text(cell.stage, size="1"),
         s.badge(cell.label, cell.color),
@@ -42,7 +38,7 @@ def _run_row(run: rx.Var[Run]) -> rx.Component:
             rx.hstack(rx.text(run.stage, size="2", weight="medium"),
                       s.badge(run.mode, "gray"), s.badge(run.outcome, run.color),
                       rx.spacer(),
-                      # `0073` R10, R13: a run from before `0073` opens the pane on its note.
+                      # A run from before the watch pane opens the pane on its note.
                       rx.button(rx.icon("eye", size=13), "View",
                                 on_click=P.open_watch(run.run, P.unit_id + " · " + run.stage, P.unit_id),
                                 class_name="watch-run", variant="soft", size="1"),
@@ -74,8 +70,8 @@ def _run_row(run: rx.Var[Run]) -> rx.Component:
 
 
 def _move_row(move: rx.Var[Move]) -> rx.Component:
-    """`0136` R20. One transition: what moved, the guard's label and whose decision it was.
-    The guard's id, the full SHA and the run's id only behind *Details* (S3)."""
+    """One transition: what moved, the guard's label and whose decision it was.
+    The guard's id, the full SHA and the run's id only behind *Details*."""
     return rx.vstack(
         rx.hstack(
             s.badge(move.artifact, "gray"),
@@ -103,16 +99,16 @@ def _move_row(move: rx.Var[Move]) -> rx.Component:
 
 
 def _question_row(q: rx.Var[Question]) -> rx.Component:
-    """`0016` R2. One unanswered question and the box its answer goes in."""
+    """One unanswered question and the box its answer goes in."""
     return s.panel(
         rx.hstack(
             s.badge(q.artifact, rx.cond(q.counted, "amber", "gray")),
-            # `0028`: a finding a person is awaited on reads as one, by its `F<n>`.
+            # A finding a person is awaited on reads as one, by its `F<n>`.
             s.text(rx.cond(q.number == 0, "finding ", "question ") + q.label, size="1"),
             rx.spacer(),
-            # `0044` R10: whose answer is in force, or that Jera left it to a person.
+            # Whose answer is in force, or that Jera left it to a person.
             rx.cond(q.by_jera, s.badge("Answered by Jera", "iris")),
-            # `0136` R15: whose decision the answer in force is, as the app recorded it.
+            # Whose decision the answer in force is, as the app recorded it.
             rx.cond(q.authority != "", s.badge(q.authority, "gray")),
             rx.cond(q.needs_person, s.badge("Needs a person", "red")),
             width="100%", align="center",
@@ -137,8 +133,7 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
                 s.text("Jera's proposal", size="1", weight="medium"),
                 rx.box(rx.markdown(q.proposal), width="100%"),
                 s.text(q.reason, size="1", color=rx.color("red", 11)),
-                # `0101` R9: fills the box below and sends nothing; hidden where no answer may
-                # be given, or there is nothing to use (S8).
+                # Fills the box below and sends nothing; hidden where no answer may be given, or there is nothing to use.
                 rx.cond(
                     (q.proposal != "") & ~P.unit_dropped & P.current_unit.answerable,
                     rx.button(
@@ -150,8 +145,7 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
                 spacing="1", width="100%", margin_top="8px", align="start",
             ),
         ),
-        # `0056` R11: a dropped unit is read, not answered. `0082` R11: nor a finished or
-        # closed one — the service's `answerable` says which.
+        # A dropped unit is read, not answered, nor a finished or closed one: the service's `answerable` says which.
         rx.cond(~P.current_unit.answerable, s.badge("Not answered", "gray")),
         rx.cond(
             ~P.unit_dropped & P.current_unit.answerable,
@@ -174,14 +168,13 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
 
 
 def _questions_tab() -> rx.Component:
-    """`0016` R2 and R10. What an answer is and is not is in `.claude/CLAUDE.md` (`0082`
-    D12); the page says one sentence, and asks no name (R3)."""
+    """The page says one sentence about what an answer is, and asks no name."""
     return rx.vstack(
         s.text(rx.cond(P.current_unit.answerable,
                        "The app keeps your answer, and the next step reads it.",
                        "This unit is finished; its questions are shown to read."),
                size="1"),
-        # `0044`. Hidden, not greyed, when there is nothing Jera may answer (S8).
+        # Hidden, not greyed, when there is nothing Jera may answer.
         rx.cond(
             P.jera_can_ask & ~P.unit_dropped,
             rx.hstack(
@@ -202,8 +195,7 @@ def _questions_tab() -> rx.Component:
 
 
 def _integration_panel() -> rx.Component:
-    """`0035` R1, R3, R8, R13. A separate component from the run button, which still offers
-    only the stage `cos.mjs next` names. Hidden for a unit outside the window."""
+    """A separate component from the run button, which still offers only the stage `cos.mjs next` names. Hidden for a unit outside the window."""
     u = P.current_unit
     return rx.cond(
         u.integration_state != "",
@@ -215,7 +207,7 @@ def _integration_panel() -> rx.Component:
                         rx.cond(u.integrate_button & (u.integration_state != "current"), "amber", "gray")),
                 width="100%", align="center",
             ),
-            # `0082` R13: one state; the count only when there is one.
+            # One state; the count only when there is one.
             rx.cond((u.integration_behind != "") & (u.integration_behind != "0"),
                     s.text(u.integration_behind + " commits behind main, as of the last fetch",
                            size="1", margin_top="8px", id="integration-behind")),
@@ -243,8 +235,7 @@ def _integration_panel() -> rx.Component:
 
 
 def _outcome_panel() -> rx.Component:
-    """`0047` R8. The outcome of the open unit against its intent's deadline, and on a
-    finished unit a form to record one. Hidden when the service gives no label."""
+    """The outcome of the open unit against its intent's deadline, and on a finished unit a form to record one. Hidden when the service gives no label."""
     u = P.current_unit
     return rx.cond(
         u.outcome_text != "",
@@ -305,7 +296,7 @@ def _outcome_panel() -> rx.Component:
     )
 
 
-# `0045`. The button each move gets, keyed by the value `cos.mjs` puts in `holdMoves`.
+# The button each move gets, keyed by the value `cos.mjs` puts in `holdMoves`.
 _HOLD_BUTTONS = (
     ("paused", "Pause", "pause"),
     ("dropped", "Drop", "circle-x"),
@@ -314,9 +305,7 @@ _HOLD_BUTTONS = (
 
 
 def _rerun_panel() -> rx.Component:
-    """`0054` R9. Run an accepted stage again, apart from the main *Run*. The stages offered and
-    what runs again after each are `cos.mjs rerun`'s; the note sits beside the button
-    (`spec.md ## Answers, câu 2`). Nothing runs until the confirming button."""
+    """Run an accepted stage again, apart from the main *Run*. The stages offered and what runs again after each are `cos.mjs rerun`'s. Nothing runs until the confirming button."""
     return rx.vstack(
         rx.heading("Run an earlier stage again", size="4", weight="medium"),
         rx.hstack(
@@ -336,7 +325,7 @@ def _rerun_panel() -> rx.Component:
         rx.cond(
             P.rerun_confirming,
             rx.vstack(
-                # R2's list as badges, never a run of prose (S5).
+                # The list as badges, never a run of prose.
                 rx.hstack(
                     s.text("Rerunning " + P.rerun_stage + " means these run again:", size="2"),
                     rx.foreach(P.rerun_after, lambda stage: s.badge(stage, "amber")),
@@ -357,11 +346,9 @@ def _rerun_panel() -> rx.Component:
 
 
 def _hold_panel() -> rx.Component:
-    """`0045` R14. The unit's hold as `cos.mjs` read it, and one button per move it allows.
+    """The unit's hold as `cos.mjs` read it, and one button per move it allows.
 
-    Nothing here decides which moves exist: a button shows only when its value is in
-    `hold_moves`. The *Drop* sentence is on screen before the button, because a drop closes
-    a pull request with this machine's `gh` login. No name is asked (`0082` R3).
+    A button shows only when its value is in `hold_moves`. The *Drop* sentence is on screen before the button, because a drop closes a pull request with this machine's `gh` login. No name is asked.
     """
     u = P.current_unit
     return rx.cond(
@@ -399,9 +386,7 @@ def _hold_panel() -> rx.Component:
 
 
 def _rounds_panel() -> rx.Component:
-    """`0081` R8. Shown only when `cos.mjs` says the unit used its review rounds with findings
-    still open. One sentence and one button; who may press it and what it costs are in
-    `.claude/docs/not-built.md` (S2), and no name is asked (S7)."""
+    """Shown only when `cos.mjs` says the unit used its review rounds with findings still open. One sentence and one button."""
     return s.panel(
         s.eyebrow("REVIEW ROUNDS"),
         s.text("Review used all its rounds and findings are still open.", size="2", margin_top="8px"),
@@ -416,7 +401,7 @@ def _rounds_panel() -> rx.Component:
 
 
 def _round_row(r: rx.Var[Round]) -> rx.Component:
-    """`0021` R7, R8. One review round: on the PR with its link, or not and a button."""
+    """One review round: on the PR with its link, or not and a button."""
     return s.panel(
         rx.hstack(
             s.text("Round " + r.number.to_string(), size="2"),
@@ -434,7 +419,7 @@ def _round_row(r: rx.Var[Round]) -> rx.Component:
                 rx.cond(r.reason != "",
                         s.text("Last attempt: " + r.reason, size="1", overflow_wrap="anywhere")),
                 rx.cond(
-                    ~P.unit_dropped,  # `0056` R11
+                    ~P.unit_dropped,
                     rx.button(
                         rx.icon("send", size=14), "Post to PR",
                         on_click=P.post_review_comment(r.number),
@@ -451,7 +436,7 @@ def _round_row(r: rx.Var[Round]) -> rx.Component:
 
 
 def _comments_tab() -> rx.Component:
-    """`0021` R4, R10. What a comment is not is `.claude/docs/not-built.md`'s since `0089`."""
+    """What a comment is not is `.claude/docs/not-built.md`'s."""
     return rx.vstack(
         s.text("Each review round is posted to the pull request as one comment.", size="1"),
         rx.cond(P.current_unit.pr_url != "",
@@ -466,8 +451,7 @@ def _comments_tab() -> rx.Component:
 
 
 def _unit_not_found() -> rx.Component:
-    """`0056` R9. An address named a unit this workspace's board does not list: say so,
-    rather than draw an empty unit as if it were one."""
+    """An address named a unit this workspace's board does not list: say so, rather than draw an empty unit as if it were one."""
     return rx.vstack(
         rx.hstack(
             rx.dialog.title("Not found", size="6", weight="medium"),
@@ -493,7 +477,7 @@ def _link_row(label: str, text: rx.Var[str], href: rx.Var[str], testid: str) -> 
 
 
 def _links() -> rx.Component:
-    """`0040` R15 (4). The idea a unit was opened from, its repository, and what it waits on."""
+    """The idea a unit was opened from, its repository, and what it waits on."""
     u = P.current_unit
     return rx.cond(
         (u.idea_ref != "") | (u.repo != "") | (u.waits_for != ""),
@@ -507,28 +491,27 @@ def _links() -> rx.Component:
 
 
 def _unit_badges() -> rx.Component:
-    """`0133` R7. The badges the card let go, where the unit is opened. `problems` and
-    `waits_for` are not here: the overview tab already shows both (`_links`, its callout)."""
+    """The badges the card let go, where the unit is opened. `problems` and `waits_for` are not here: the overview tab already shows both."""
     u = P.current_unit
     return rx.fragment(
         rx.flex(
-            # `0016` R8, `0082` R11: only while the service says the unit can still be answered.
+            # Only while the service says the unit can still be answered.
             rx.cond((u.open_questions > 0) & u.answerable,
                     s.badge(u.open_questions.to_string() + " waiting on you", "amber")),
-            # `0035` R1, `0052`: `current` has a button too, and still reads gray.
+            # `current` has a button too, and still reads gray.
             rx.cond(u.integration_state != "",
                     s.badge("main: " + u.integration_state,
                             rx.cond(u.integrate_button & (u.integration_state != "current"),
                                     "amber", "gray"))),
-            # `0047` R8. The label is the service's; the page only shows it.
+            # The label is the service's; the page only shows it.
             rx.cond(u.outcome_text != "", s.badge("outcome: " + u.outcome_text, u.outcome_color)),
-            # `0074`. Its place in the shortlist.
+            # Its place in the shortlist.
             rx.cond(u.shortlist_rank > 0, s.badge("#" + u.shortlist_rank.to_string(), "iris")),
             rx.cond(u.mode == "autonomous", s.badge("Autonomous", "iris")),
             s.badge(u.owner, "gray"),
             wrap="wrap", gap="8px", margin_top="14px", id="unit-badges",
         ),
-        # `0074` R9. Its relations.
+        # Its relations.
         rx.cond(u.relations_text != "",
                 s.text(u.relations_text, size="1", margin_top="8px", overflow_wrap="anywhere")),
     )
@@ -537,8 +520,7 @@ def _unit_badges() -> rx.Component:
 def _detail_dialog() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
-            # `0071` R2, R7. Sticky at the top of the content, which is what scrolls here
-            # (`overflow_y` below), so a message is in view however far down the tab is.
+            # Sticky at the top of the content, which is what scrolls here (`overflow_y` below), so a message is in view however far down the tab is.
             rx.box(
                 _banners("detail"),
                 position="sticky", top="0", z_index="2", background=s.CANVAS,
@@ -551,8 +533,7 @@ def _detail_dialog() -> rx.Component:
                     s.text(P.current_unit.id, size="1",
                            font_family="ui-monospace, monospace"),
                     s.badge(P.current_unit.state_label, P.current_unit.state_color),
-                    # `0082` R12, `0100` C3: what a unit waits on, beside its state, where
-                    # the service finds the two agree (review F1).
+                    # What a unit waits on, beside its state, where the service finds the two agree.
                     rx.cond(P.current_unit.state_reason != "",
                             s.badge(P.current_unit.state_reason, "amber")),
                     rx.spacer(),
@@ -588,7 +569,7 @@ def _detail_dialog() -> rx.Component:
                 ),
                 rx.tabs.content(
                     rx.vstack(
-                        # `0040` R15 (4). First in the tab, so a phone sees them (knowledge K12).
+                        # First in the tab, so a phone sees them.
                         _links(),
                         rx.cond(
                             P.current_unit.problems != "",
@@ -596,8 +577,7 @@ def _detail_dialog() -> rx.Component:
                                        color_scheme="red", variant="surface", size="1"),
                         ),
                         rx.heading("The next step", size="4", weight="medium"),
-                        # `0024`. What `cos.mjs next` said about this unit, verbatim. The
-                        # stage below is its answer; the page works nothing out itself.
+                        # What `cos.mjs next` said about this unit, verbatim. The stage below is its answer; the page works nothing out itself.
                         rx.hstack(
                             s.text(P.run_said, size="1", overflow_wrap="anywhere",
                                    id="next-said"),
@@ -608,12 +588,11 @@ def _detail_dialog() -> rx.Component:
                             ),
                             justify="between", align="center", width="100%", spacing="3",
                         ),
-                        # `0028`. `cos.mjs next` named findings a person must act on, and
-                        # offers no stage. Say which, and point at where they are answered.
+                        # `cos.mjs next` named findings a person must act on, and offers no stage. Say which, and point at where they are answered.
                         rx.cond(
                             (P.next_stage == "") & (P.run_waiting.length() > 0),
                             rx.hstack(
-                                # `0082` D69: the findings as a list, not a comma run.
+                                # The findings as a list, not a comma run.
                                 rx.hstack(
                                     s.text("Needs a person", size="2"),
                                     rx.foreach(P.run_waiting, lambda f: s.badge(f, "amber")),
@@ -629,8 +608,7 @@ def _detail_dialog() -> rx.Component:
                                 justify="between", align="center", width="100%", spacing="3",
                             ),
                         ),
-                        # `0027` review F1: the findings the last review round left out, as
-                        # a list beside `next`'s sentence rather than joined into it (S5).
+                        # The findings the last review round left out, as a list beside `next`'s sentence rather than joined into it.
                         rx.cond(
                             P.run_dropped.length() > 0,
                             rx.hstack(
@@ -639,7 +617,7 @@ def _detail_dialog() -> rx.Component:
                                 spacing="2", align="center", flex_wrap="wrap", id="next-dropped",
                             ),
                         ),
-                        # `0056` R11: nothing that writes, for a dropped unit.
+                        # Nothing that writes, for a dropped unit.
                         rx.cond(
                             ~P.unit_dropped & (P.next_stage != ""),
                             rx.vstack(
@@ -652,8 +630,7 @@ def _detail_dialog() -> rx.Component:
                                         value=P.next_cell.mode, on_change=P.set_mode, size="1",
                                     ),
                                 ),
-                                # `0082` D9: one line of what the step may do; the grant's
-                                # tools and its full warning only inside *Details*.
+                                # One line of what the step may do; the grant's tools and its full warning only inside *Details*.
                                 rx.hstack(
                                     s.badge(P.next_stage, "iris"),
                                     s.text(rx.cond(P.next_cell.opens_tools, "with tools", "no tools"),
@@ -674,10 +651,7 @@ def _detail_dialog() -> rx.Component:
                                 ),
                                 s.text(P.next_cell.consequence, size="1", id="run-consequence"),
                                 _update_warning(),
-                                # `0014` R8. The one control on this page that writes to
-                                # the repository's git. It is separate from Run and stays
-                                # separate: cutting a branch is a decision about where the
-                                # work lands, and Run is a decision to spend money.
+                                # The one control on this page that writes to the repository's git. It stays separate from Run: cutting a branch decides where the work lands, and Run decides to spend money.
                                 rx.button(
                                     rx.icon("git-branch", size=15),
                                     "Cut this unit's branch",
@@ -701,22 +675,19 @@ def _detail_dialog() -> rx.Component:
                             ),
                             s.text("No stage is ready to run; the line above says why."),
                         ),
-                        # `0100` R7. What the board last heard from CI, and when.
+                        # What the board last heard from CI, and when.
                         rx.cond(P.current_unit.ci_line != "",
                                 s.text(P.current_unit.ci_line, id="unit-ci-line", size="2")),
-                        # `0081` R8. Under the CI line, so the button stays in view on a
-                        # phone; the hold panel follows it here rather than below, so the
-                        # page holds one `#hold-panel` at a time.
+                        # Under the CI line, so the button stays in view on a phone; the hold panel follows it here rather than below, so the page holds one `#hold-panel` at a time.
                         rx.cond(P.current_unit.more_rounds,
                                 rx.fragment(_rounds_panel(), _hold_panel())),
-                        # `0054` review F2. Below the CI line, which belongs to the next step.
+                        # Below the CI line, which belongs to the next step.
                         rx.cond(~P.unit_dropped & P.recording & (P.rerun_stages.length() > 0),
                                 _rerun_panel()),
                         rx.cond(~P.unit_dropped, _integration_panel()),
                         rx.cond(~P.unit_dropped, _outcome_panel()),
                         _unit_cost(),
-                        # Kept for a dropped unit: its one move (`paused`, `cos.mjs`
-                        # `HOLD_MOVES`) is the board's way back (`spec.md ## Answers, câu 1`).
+                        # Kept for a dropped unit: its one move (`paused`, `cos.mjs` `HOLD_MOVES`) is the board's way back.
                         rx.cond(~P.current_unit.more_rounds, _hold_panel()),
                         rx.cond(
                             P.log_here,
@@ -755,7 +726,7 @@ def _detail_dialog() -> rx.Component:
                         rx.foreach(P.runs, _run_row),
                         rx.cond(P.runs.length() == 0,
                                 s.text("No step of this unit has been run from here.")),
-                        # `0136` R20. Every transition, with the guard that decided it.
+                        # Every transition, with the guard that decided it.
                         rx.cond(
                             P.moves.length() > 0,
                             rx.vstack(

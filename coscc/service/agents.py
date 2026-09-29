@@ -1,8 +1,7 @@
 """Which agent each stage's session is, with the overrides Settings holds.
 
-`0036_stage-agents-do-not-know-who-they-are` R2. The resolving is `coscc/agent/agents.py`;
-this is where the overrides are read from `prefs` and written back. A mixin with no fields,
-like `ModelsMixin`, which `Service` inherits.
+The resolving is `coscc/agent/agents.py`; this is where the overrides are read from `prefs`
+and written back. A mixin with no fields, which `Service` inherits.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ class AgentsMixin:
 
     def _agent_overrides(self) -> tuple[dict[str, dict[str, str]], list[str]]:
         """The stored overrides, or none and why when `cos.db` cannot be read: a name is
-        never a reason to refuse a step or a board read (spec R2)."""
+        never a reason to refuse a step or a board read."""
         try:
             rows = Data(self.config.data_dir).pref_rows(agents.PREFIX)
         except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
@@ -31,8 +30,8 @@ class AgentsMixin:
         return agents.agent_for(key, self._agent_overrides()[0])
 
     def agent_names(self) -> list[str]:
-        """`0137` R2. Every name an agent answers under: each row's default and override, since
-        an older block carries the name its agent had then, and `Jera` and `Leif`. Never raises."""
+        """Every name an agent answers under: each row's default and override, since an older
+        block carries the name its agent had then, and `Jera` and `Leif`. Never raises."""
         defaults, _ = agents.load_defaults()
         overrides, _ = self._agent_overrides()
         names = [str(r.get("name") or "") for r in (*defaults.values(), *overrides.values())]
@@ -49,12 +48,12 @@ class AgentsMixin:
 
     def set_agent(self, key: Any, fields: dict[str, Any] | None = None) -> dict[str, Any]:
         """Set some fields of one row's override; `""` removes that field's, and no fields
-        at all removes the row's. A wrong field is refused and nothing is written (R2).
+        at all removes the row's. A wrong field is refused and nothing is written.
 
         **Behind the password like every route here**: whoever holds it or a live session can
         rename any agent, and the name goes into prompts, commits and review comments. The
         trace is the `setting` record appended below, with the old and new override. A name
-        opens and closes nothing (spec C6).
+        opens and closes nothing.
         """
         if not isinstance(key, str) or not key:
             raise Invalid("key is required")

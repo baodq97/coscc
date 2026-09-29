@@ -1,22 +1,15 @@
 """One fetch of `origin/main` per repository at a time, and the result shared.
 
-`0048`. Two steps started together on one workspace each ran `git fetch`, both wrote
-`refs/remotes/origin/main` in the one git dir a clone and its worktrees share, and one
-lost: `error: fetching ref refs/remotes/origin/main failed: incorrect old value provided`
-(observed 2026-09-24, `intent.md ## Problem`). The step went on with `base.sha` empty and
-`fresh` false, and nothing said why.
+Two steps fetching at once race on `refs/remotes/origin/main` in the shared git dir
+(`incorrect old value provided`). Every trunk fetch goes through here, keyed by git dir,
+remote and branch:
 
-So every fetch the app makes of the trunk goes through here (R1). Keyed by the shared git
-dir, the remote and the branch:
+- a fetch already running for the key is joined;
+- a fetch that succeeded and **started** under `REUSE_SECONDS` ago is reused;
+- otherwise this call fetches, and a ref-lock race is retried once after `RETRY_DELAY`.
 
-- a fetch already running for the key is joined, not started again (R2);
-- a fetch that succeeded and **started** under `REUSE_SECONDS` ago is reused (R3);
-- otherwise this call fetches, and a ref-lock race is retried once after `RETRY_DELAY` (R4).
-
-`gitops.fetch` itself is unchanged: this decides whether to call it, never what it runs
-(R8). The table lives in this process's memory only — a second copy of the app, or a
-`git fetch` from a terminal or a step with `Bash`, does not pass through it, and only the
-retry covers those (`spec.md ## Out of scope`).
+The table is per process: a second app or a terminal `git fetch` bypasses it, and only the
+retry covers those.
 """
 
 from __future__ import annotations
@@ -31,25 +24,22 @@ from typing import Any, Awaitable, Callable
 from coscc.git import gitops
 from coscc.git.gitops import GitError
 
-# Seconds. `intent.md ## Answers, câu 1`: a fetch under 30s old is reused and still counts
-# as fresh. Chosen there, not measured. Callers use the same figure for `fresh` (R7).
+# Seconds. A fetch under this age is reused and still counts as fresh; callers use the same
+# figure for `fresh`.
 REUSE_SECONDS = 30.0
 
-# Seconds before the one retry. `spec.md ## Answers, câu 1`: "Chờ 1 giây rồi thử lại một
-# lần." Chosen, not measured.
+# Seconds before the one retry.
 RETRY_DELAY = 1.0
 
-# What git says when another writer held the ref. Only the first was observed here
-# (`intent.md ## Problem`); `cannot lock ref` is inferred, not seen (`spec.md` C3) — a
-# wrong guess costs one extra attempt on some other error.
+# What git says when another writer held the ref. `cannot lock ref` is inferred, not seen; a
+# wrong guess costs one extra attempt.
 RACE_MARKERS = ("incorrect old value provided", "cannot lock ref")
 
 Run = Callable[[Path, str, str], Awaitable[str]]
 
 
 class FetchFailed(GitError):
-    """A coordinated fetch that did not succeed. Still a `GitError`, so every existing
-    `except GitError` keeps catching it; `attempts` is how many `git fetch` it ran."""
+    """A coordinated fetch that did not succeed. Still a `GitError`; `attempts` counts `git fetch` runs."""
 
     def __init__(self, message: str, attempts: int):
         super().__init__(message)
@@ -87,18 +77,17 @@ class Fetches:
     ) -> dict[str, Any]:
         """`{outcome, attempts, age}` — how `refs/remotes/<remote>/<branch>` got current.
 
-        `outcome` is `fetched`, `joined` or `reused`; `age` is seconds since the attempt
-        whose result is used began. Raises `FetchFailed` instead of returning `failed`.
-        The caller still reads the ref itself afterwards: another fetch may since have
-        moved it, and then what it reads is only newer.
+        `outcome` is `fetched`, `joined` or `reused`; `age` is seconds since the attempt whose
+        result is used began. Raises `FetchFailed` instead of returning `failed`. Callers still
+        read the ref themselves afterwards.
         """
         try:
             where = await gitops.common_dir(Path(path))
         except GitError as e:
             raise FetchFailed(str(e), 0) from e
 
-        # From here until the future is registered there is no `await`: two calls must not
-        # both find the table empty (`spec.md ## Design`).
+        # No `await` from here until the future is registered: two calls must not both find the
+        # table empty.
         entry = self._table.setdefault((str(where), remote, branch), _Entry())
         loop = asyncio.get_running_loop()
         joined = entry.inflight
@@ -137,8 +126,7 @@ class Fetches:
             future.set_result((started, attempts))
             return {"outcome": "fetched", "attempts": attempts, "age": self._age(started)}
         except BaseException as e:
-            # Cancelled, or something that is not git's error: whoever joined must not
-            # wait forever on a future nobody will settle.
+            # Cancelled, or not git's error: joiners must not wait forever on a future nobody settles.
             if not future.done():
                 reason = (
                     "the fetch this call joined was cancelled"
@@ -162,14 +150,13 @@ class Fetches:
 
 
 def _tenths(seconds: float) -> float:
-    """`seconds` rounded **down** to 0.1. Callers call a fetch fresh when its `age` is under
-    `REUSE_SECONDS`; rounded to nearest, a reuse at 29.97s read 30.0 and was reported not
-    fresh (`0048` review round 1, F1). The inner `round` only absorbs float noise, so a
-    29.9 computed as 29.8999… still reads 29.9."""
+    """`seconds` rounded **down** to 0.1, so a reuse at 29.97s still reads under `REUSE_SECONDS`.
+    The inner `round` only absorbs float noise.
+    """
     return math.floor(round(seconds, 6) * 10) / 10
 
 
-# One per process: the point is that every caller shares it.
+# One per process: every caller shares it.
 shared = Fetches()
 
 

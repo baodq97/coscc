@@ -1,9 +1,8 @@
-"""An idea several units share, each unit in its own repository's workspace (`0040`).
+"""An idea several units share, each unit in its own repository's workspace.
 
 `.cos/ideas/NNNN_<slug>.md` in the store of the workspace it was started in. `cos.mjs
-new-idea` allocates the number, this module writes the file and appends one line under
-`## Units` for each unit opened from it, and `cos.mjs` reads it (`.claude/docs/ideas.md`).
-Nothing above `## Units` is ever rewritten, and nothing here decides a gate.
+new-idea` allocates the number; this module writes the file and appends one line under
+`## Units` per unit opened from it. Nothing above `## Units` is ever rewritten.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ _ID = r"\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*"
 # A workspace name as `coscc/service/store.py` `valid_name` has it; it holds no `/`.
 _WS = r"[A-Za-z0-9._-]{1,64}"
 IDEA_ID_RE = re.compile(_ID)
-# `<ws>/ideas/NNNN_<slug>.md`: the one form a request may name an idea by (spec R11).
+# `<ws>/ideas/NNNN_<slug>.md`: the one form a request may name an idea by.
 IDEA_REF_RE = re.compile(rf"({_WS})/{IDEAS_DIR}/({_ID})\.md")
 UNIT_REF_RE = re.compile(rf"({_WS})/(\d{{4}}_[a-z0-9]+(?:-[a-z0-9]+)*)")
 _OWN_WORDS = "## In their own words"
@@ -101,16 +100,15 @@ def create_idea(
 
 
 def unit_line(workspace_name: str, unit: str, depends_on: str = "") -> str:
-    """The line under `## Units` for one unit (spec R3)."""
+    """The line under `## Units` for one unit."""
     tail = f". Depends on: {depends_on}" if depends_on else ""
     return f"- {workspace_name}/{unit}{tail}.\n"
 
 
 def append_unit(path: str | os.PathLike[str], workspace_name: str, unit: str, depends_on: str = "") -> None:
-    """Append one line to the end of the idea. Nothing already in the file is rewritten.
+    """Append one line to the end of the idea; `## Units` is the last section.
 
-    `## Units` is the file's last section, so its end is the file's end. A file that does
-    not end in a newline gets one first, so the line starts a line of its own.
+    A file that does not end in a newline gets one first.
     """
     target = Path(path)
     needs_newline = False
@@ -129,8 +127,7 @@ def read_text(path: str | os.PathLike[str]) -> str:
 def read_units(text: str) -> list[dict[str, Any]]:
     """The units listed under `## Units`, `{ref, depends_on: [...]}`, in the file's order.
 
-    Used by the route to check a `depends_on` it was sent against what the idea lists (R11).
-    A line it cannot read is left out; `cos.mjs status` is what reports it.
+    A line it cannot read is left out; `cos.mjs status` reports it.
     """
     out: list[dict[str, Any]] = []
     inside = False
@@ -150,9 +147,7 @@ def read_units(text: str) -> list[dict[str, Any]]:
 def brief_of(text: str) -> str:
     """The originator's words: the idea's `## In their own words`, without its heading.
 
-    They run to `## Units`, not to the next `## `: `create_idea` writes the brief as it was
-    given, and one pasted from a markdown file has headings of its own (`0040` review round 1,
-    F2).
+    They run to `## Units`, not the next `## `: a pasted brief may have headings of its own.
     """
     lines = text.splitlines()
     try:

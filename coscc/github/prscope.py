@@ -1,17 +1,12 @@
-"""`pr.md ## Scope of the diff` against the pull request it describes (`0122`).
+"""Compares `pr.md ## Scope of the diff` with the pull request it describes.
 
-**What this module may do on GitHub, and nothing more.** It reads one pull request's counts
-and file list (`gh pr view <url> --json changedFiles,additions,deletions,files`). It writes
-nothing, on GitHub or on disk, and no gate reads what it returns: the verdict goes into the
-step's `pr-sync` row and nowhere else.
+Only reads one pull request's counts and file list (`gh pr view --json ...`); writes nothing,
+and no gate reads the result (it goes into the step's `pr-sync` row).
 
-**Why GitHub's numbers.** GitHub counts from the merge-base of the head with the remote
-base, which is what the reader of the pull request sees; a local `main` may be stale
-(`intent.md ## Answers, câu 2`). Paths are compared only against the `files` `gh` returned,
-which may be fewer than `changedFiles` (spec R5).
+GitHub's numbers are used because they count from the merge-base with the remote base, which
+is what a reader sees; a local `main` may be stale. `files` may be fewer than `changedFiles`.
 
-`read` never raises. Anything that keeps the comparison from being made is `unread`, with
-the reason.
+`read` never raises: anything that prevents the comparison is `unread`, with the reason.
 """
 
 from __future__ import annotations
@@ -70,8 +65,7 @@ def compare(scope: Any, got: Any) -> dict[str, Any]:
 async def read(url: str, scope: Any, cwd: str, run: prcomment.Run | None = None) -> dict[str, Any]:
     """Ask `gh` for the pull request's counts and compare. Never raises.
 
-    `run` defaults to `prcomment._gh`, looked up at call time as `prsync.sync` does, so the
-    timeout is `prcomment.TIMEOUT`.
+    `run` defaults to `prcomment._gh`, looked up at call time; the timeout is `prcomment.TIMEOUT`.
     """
     try:
         run = run or prcomment._gh

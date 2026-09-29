@@ -1,24 +1,4 @@
-"""The app: one shell, a route per screen, one ASGI app, one port.
-
-It was "one loopback port" until `0011` made `0.0.0.0` the default. Since `0070` what
-uvicorn serves is `served()` below: this app behind `coscc/web/auth.py`, so every request —
-the page, its socket and `/api` alike — needs the master password or a live session
-first.
-
-This file once held a second page — the one the earlier units built — and
-a prototype sat beside it at `/prototype`. `spec.md` R19 replaced both with
-one: the prototype's shape, on the real service. The old page's components and state are
-gone rather than kept around, because two front ends are two things to fix every time and
-only one of them ever gets fixed (`spec.md` C3 records what that costs).
-
-What is left here is registration. The page is `coscc/screens/__init__.py`, its state is
-`coscc/state/__init__.py`, and the business logic is where it always was, in
-`coscc/service/__init__.py`.
-
-The FastAPI app mounted here is the *same object* `state.py` reads its service from. Two
-instances would mean two `Sessions` registries, and knob 4 ("resume only what this app
-created") would start answering differently depending on which door you came through.
-"""
+"""The app: one shell, a route per screen, one ASGI app, one port, behind the login guard."""
 
 from __future__ import annotations
 
@@ -28,23 +8,18 @@ from coscc import screens
 from coscc.web import place, ui
 from coscc.state import API, StudioState
 
-# The theme lives in `rxconfig.py` through `RadixThemesPlugin`, because 0.9.11 deprecates
-# `App(theme=...)` and removes it at 1.0. The global style still belongs here.
+# The theme lives in `rxconfig.py` (`App(theme=...)` is deprecated).
 app = rx.App(api_transformer=API, style=ui.GLOBAL_STYLE)
-# `0056`: one shell under static routes (one per `place.SCREENS`, `/unit` and `/idea`), each arriving through `StudioState.arrive`.
-# Static, not `/unit/[unit]`: 0.9.12 builds no page for a dynamic route and serves it
-# through the SPA fallback with a 404 (`.cos/0056_*/spike.md ## U1`).
+# Static routes, not `/unit/[unit]`: Reflex builds no page for a dynamic route and serves
+# it through the SPA fallback with a 404.
 for route in ("/", *(f"/{s}" for s in place.SCREENS[1:]), "/unit", "/idea"):
     app.add_page(screens.index, route=route, title="CoS Studio", on_load=StudioState.arrive)
 
 
 async def resume_after_update() -> None:
-    """`0138` R7: every session an update paused is taken up again, and then -- `0043` R5 c --
-    every workspace whose autopilot switch is on starts again. One task, in that order, so
-    the autopilot never starts a step on a unit a paused one is about to take back.
+    """Take up every session an update paused, then start each autopilot-on workspace again.
 
-    A Reflex lifespan task, because `api.py`'s lifespan is one the real stack never runs
-    (`coscc/run.py`). The service is read when the app starts, not when this is imported.
+    A Reflex lifespan task, because `api.py`'s lifespan is never run by the real stack.
     """
     await API.state.service.resume_after_update()
 
@@ -53,11 +28,9 @@ app.register_lifespan_task(resume_after_update)
 
 
 def served():
-    """What uvicorn serves: the composed app, behind the login guard (`0070`).
+    """What uvicorn serves: the composed app behind the login guard.
 
-    It wraps what `app()` returns rather than joining `api_transformer`, because that is
-    the one position `.cos/0070_*/spike.md ## U1` measured to see every scope — CORS
-    preflight included, which Reflex's own middleware answers before any transformer.
+    It wraps `app()` because that position sees every scope, CORS preflight included.
     """
     from coscc.web.auth import Guard
     from coscc.data import Data

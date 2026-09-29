@@ -1,7 +1,6 @@
-"""An idea several units share, each unit in its own workspace (`0040`).
+"""An idea several units share, each unit in its own workspace.
 
-Split out the way `coscc/service/__init__.py` splits every area (`0095`); `Service` inherits
-it, a mixin with no fields. What an idea *means* to a gate is `cos.mjs`'s; this module writes
+A mixin with no fields, which `Service` inherits. What an idea *means* to a gate is `cos.mjs`'s; this module writes
 the file, links a unit to it, and gathers what the `/idea` page and a step's prompt show.
 """
 
@@ -27,7 +26,7 @@ class IdeasMixin:
         return str(rows[0]["path"]) if len(rows) == 1 else None
 
     def create_idea(self, cwd: str, slug: str, brief: str) -> dict[str, Any]:
-        """`0040` R10. The idea's home is `cwd`'s store; its text is the brief, and nothing else."""
+        """The idea's home is `cwd`'s store; its text is the brief, and nothing else."""
         self._workspace_or_refuse(cwd)
         if not str(brief or "").strip():
             raise Invalid("An idea needs a brief.")
@@ -40,7 +39,7 @@ class IdeasMixin:
         return {"cwd": cwd, "id": made["id"], "ref": ideas.idea_ref(name, made["id"]) if name else ""}
 
     def _idea_link(self, cwd: str, idea: str, brief: str, depends_on: str) -> dict[str, Any]:
-        """`0040` R11: every check a unit opened from `idea` needs, before anything is made."""
+        """Every check a unit opened from `idea` needs, before anything is made."""
         ref = ideas.parse_idea_ref(idea)
         if ref is None:
             raise Invalid(f"{idea} is not <workspace>/ideas/NNNN_<slug>.md.")
@@ -82,8 +81,8 @@ class IdeasMixin:
     def _idea_of(self, cwd: str, unit: str) -> dict[str, Any] | None:
         """The idea that lists `<cwd's name>/<unit>` under `## Units`, with that line, or None.
 
-        Read off the files in each store, never `cos.mjs`: which idea a unit was opened from is
-        the app's own record, and asking the script would read every workspace's board.
+        Read off the files in each store, never `cos.mjs`: which idea a unit was opened from is the
+        app's own record, and asking the script would read every workspace's board.
         """
         name = self._workspace_name(cwd)
         if not name:
@@ -96,7 +95,7 @@ class IdeasMixin:
         return None
 
     def _idea_note(self, cwd: str, unit: str) -> str:
-        """`0040` R12. The idea's text, its units with their `Repo`, and the three header lines."""
+        """The idea's text, its units with their `Repo`, and the three header lines."""
         found = self._idea_of(cwd, unit)
         if found is None:
             return ""
@@ -115,7 +114,7 @@ class IdeasMixin:
         )
 
     async def _siblings(self, cwd: str, unit: str) -> tuple[tuple[str, ...], str]:
-        """`0040` R13. The checkouts `impl` may read, and the note naming each with its HEAD.
+        """The checkouts `impl` may read, and the note naming each with its HEAD.
 
         The other workspaces the idea lists, and those of the unit's dependencies; never the
         unit's own. A workspace no longer there is named as missing and not read.
@@ -150,7 +149,7 @@ class IdeasMixin:
         return tuple(paths), note
 
     async def idea(self, cwd: str, idea_id: str) -> dict[str, Any]:
-        """`0040` R15 (2). One idea, its text, and a row per unit it lists.
+        """One idea, its text, and a row per unit it lists.
 
         Each row reads the board of the unit's own workspace, once per workspace; a workspace
         that is gone is a `missing` row, not a refusal.

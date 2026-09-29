@@ -1,7 +1,4 @@
-"""The Board screen: its lanes and cards, starting a unit, what is running, the update panel
-and the guide panel.
-Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
-"""
+"""The Board screen: lanes and cards, starting a unit, what is running, the update panel and the guide panel."""
 
 from __future__ import annotations
 
@@ -15,9 +12,7 @@ from coscc.screens.overview import _empty_board
 
 
 def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
-    """`0133` R3, R4. One line: the unit's number, its title cut to fit, and its state in words
-    unless it is *Ready*. `grouped` for a card in a folded group, which names its stage
-    (`0100` R8): in a lane, the lane does."""
+    """One line: the unit's number, its title cut to fit, and its state in words unless it is *Ready*. `grouped` names the stage for a card in a folded group."""
     return rx.el.button(
         rx.hstack(
             s.text(unit.id.split("_")[0], size="1", font_family=_MONO, flex_shrink="0"),
@@ -25,20 +20,17 @@ def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
                     rx.icon("sparkles", size=13, color=rx.color("iris", 10), flex_shrink="0")),
             rx.text(unit.title, size="2", weight="medium", color=s.INK, white_space="nowrap",
                     overflow="hidden", text_overflow="ellipsis", min_width="0", flex="1"),
-            # `0100` R9. The state, as the service decided it; a paused or dropped hold is
-            # this badge's word. `attention_reason` stays in the dialog (spec C3).
+            # The state as the service decided it; a paused or dropped hold is this badge's word.
             rx.cond(unit.state != "ready", s.badge(unit.state_label, unit.state_color)),
-            # `0136` R22. The code the autopilot's last pass held the unit back with.
+            # The code the autopilot's last pass held the unit back with.
             rx.cond(unit.held != "", s.badge(unit.held, "amber")),
             *([s.badge(unit.at, "gray")] if grouped else []),
-            # `0133` R7: the badges `0016`, `0035`, `0047`, `0074`, `0082` and `0040` put here
-            # live in the dialog's header (`_unit_badges`).
+            # The unit's other badges live in the dialog's header (`_unit_badges`).
             width="100%", align="center", spacing="2",
         ),
         id="unit-" + unit.id, data_testid="work-card", data_state=unit.state, type="button",
         title=unit.id + " · " + unit.title, aria_label="Open " + unit.id + " " + unit.title,
         on_click=P.open_unit(unit.id),
-        # `0133` Design: the density changes only the padding.
         padding=rx.cond(P.density == "compact", "3px 8px", "5px 10px"),
         background=s.CANVAS, border=f"1px solid {s.LINE}", border_radius="8px",
         border_left=rx.cond(unit.state == "needs-you", f"3px solid {rx.color('amber', 9)}",
@@ -54,8 +46,7 @@ def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
 
 
 def _stage_glyph(stage: rx.Var[str]) -> rx.Component:
-    """`0036` R5. The lane's agent: its glyph as a button, `<Name> (agent, <stage>)` on
-    hover and to a screen reader, and a small panel with its meaning and role on a press."""
+    """The lane's agent: its glyph as a button, with its name on hover and a small panel on a press."""
     label = P.stage_labels[stage]
     return rx.popover.root(
         rx.popover.trigger(
@@ -75,9 +66,7 @@ def _stage_glyph(stage: rx.Var[str]) -> rx.Component:
 
 
 def _lane(stage: rx.Var[str]) -> rx.Component:
-    """`0133` R1, R2. One stage's lane: its name and count, then its cards wrapping in the
-    width left, so the board is never wider than the page. The stages are the board read's,
-    never a list here (R8)."""
+    """One stage's lane: its name and count, then its cards wrapping in the width left, so the board is never wider than the page."""
     count = P.stage_counts[stage]
     return rx.flex(
         rx.hstack(
@@ -88,8 +77,7 @@ def _lane(stage: rx.Var[str]) -> rx.Component:
             padding_top="4px", data_testid="lane-label",
         ),
         rx.grid(
-            # `0053` R8: every lane walks the one `cards` list and draws its own shown ones
-            # (`spike.md ## U2`), so no card reaches the page twice.
+            # Every lane walks the one `cards` list and draws its own shown ones, so no card reaches the page twice.
             rx.foreach(P.cards, lambda c: rx.cond(
                 (c.at == stage) & P.board_ids.contains(c.id), _unit_card(c), rx.fragment())),
             grid_template_columns=rx.breakpoints(initial="1fr", md="repeat(auto-fill, minmax(160px, 1fr))"),
@@ -97,23 +85,13 @@ def _lane(stage: rx.Var[str]) -> rx.Component:
         ),
         direction=rx.breakpoints(initial="column", md="row"), gap="10px", width="100%",
         min_width="0", padding="3px 0", border_bottom=f"1px solid {s.LINE}",
-        # So a proof can ask which lane a card is in (`0001_product-describes-a-state-it-
-        # is-not-in` R4).
+        # So a proof can ask which lane a card is in.
         data_testid="column-" + stage,
     )
 
 
 def _start_unit() -> rx.Component:
-    """`0014` R8. The control that was missing entirely.
-
-    Until `0014` a work unit could only be made by typing `cos.mjs new-path` in a terminal
-    and creating the directory by hand, so the Board could list work but never start any —
-    every unit it had ever shown was made outside the app.
-
-    The brief is not optional here and `state.create_unit` says why: it becomes the unit's
-    `idea.md`, which is the only thing the intent step has to work from. A unit started
-    without one spends a paid step on an empty prompt.
-    """
+    """The form that starts a unit. The brief is required: it becomes the unit's `idea.md`, the only input of the intent step."""
     return s.panel(
         rx.vstack(
             rx.hstack(
@@ -157,8 +135,7 @@ def _start_unit() -> rx.Component:
 
 
 def _start_idea() -> rx.Component:
-    """`0040` R15 (1). An idea several units share, one per repository, and this workspace's
-    ideas, each a link to its page. Units are opened from there."""
+    """An idea several units share, one per repository, and this workspace's ideas, each a link to its page."""
     return s.panel(
         rx.vstack(
             rx.hstack(
@@ -201,11 +178,9 @@ def _start_idea() -> rx.Component:
 
 
 def _running_steps() -> rx.Component:
-    """`0034` R6, R13. Every step running in this workspace, one Stop each, and every
-    integration, with none (`0114` R1).
+    """Every step running in this workspace, one Stop each, and every integration, with none.
 
-    The list is the service's, re-read on each board load and after each Stop; nothing
-    refreshes it on a timer. No name is asked (`0082` R3): `stopped_by` records `owner`.
+    The list is re-read on each board load and after each Stop, never on a timer.
     """
     return rx.cond(
         P.running_steps.length() > 0,
@@ -216,8 +191,7 @@ def _running_steps() -> rx.Component:
                 s.badge(r.stage, "iris"),
                 s.text(r.started_at, size="1"),
                 rx.spacer(),
-                # `0073` R10. Watching changes nothing; Stop, beside it, is what acts.
-                # `0114` R1: an integration is listed with neither.
+                # Watching changes nothing; Stop, beside it, is what acts.
                 rx.cond(
                     r.kind == "step",
                     rx.hstack(
@@ -243,7 +217,7 @@ def _running_steps() -> rx.Component:
 
 
 def _log_tail(key: str, text) -> rx.Component:
-    """`0082` D67: a log's tail holds paths and commands, so it opens only on request."""
+    """A log's tail holds paths and commands, so it opens only on request."""
     return rx.cond(
         text != "",
         _details(f"log-{key}", "Log",
@@ -253,7 +227,7 @@ def _log_tail(key: str, text) -> rx.Component:
 
 
 def _update_actions(channel: str, line) -> rx.Component:
-    """One channel's line and only the buttons `Service.update_status` lists (`0082` R9)."""
+    """One channel's line and only the buttons `Service.update_status` lists."""
     return rx.hstack(
         s.text(line, size="1"),
         rx.spacer(),
@@ -268,9 +242,7 @@ def _update_actions(channel: str, line) -> rx.Component:
 
 
 def _update_panel() -> rx.Component:
-    """`0068`, on Settings since `0082` R9. What runs, one line of state, and only the
-    buttons that can be used. Every word and every button comes from `Service.update_status`.
-    """
+    """What runs, one line of state, and only the buttons that can be used, all from `Service.update_status`."""
     return s.panel(
         s.section_head("Updates", rx.icon("download", size=18, color=s.MUTED)),
         rx.hstack(
@@ -315,15 +287,14 @@ def _update_panel() -> rx.Component:
 
 
 def _update_warning() -> rx.Component:
-    """R9: starting work while an update waits is allowed, and pushes the update back."""
+    """Starting work while an update waits is allowed, and pushes the update back."""
     return rx.cond(P.update_pending, s.text(P.update_warning, size="1", color=rx.color("amber", 11)))
 
 
-# R14. Asks `/api/update` every 5 s outside Reflex's socket, and reloads the page when the
+# Asks `/api/update` every 5 s outside Reflex's socket, and reloads the page when the
 # build it answers for is not the one the page was loaded under. The overlay says
 # "Restarting…" while nothing answers, and after 120 s says it could not reconnect.
-# A `401` is not a restart: the session ended (expiry, logout elsewhere, `reset-password`),
-# so the page goes to `/login` rather than point at a rollback (`0070` review F3).
+# A `401` is not a restart: the session ended, so the page goes to `/login`.
 _RECONNECT_JS = """
 (function () {
   if (window.__coscc_update_watch) return;
@@ -395,8 +366,7 @@ def _guide_list(title: str, items, empty: str, testid: str) -> rx.Component:
 
 
 def _guide_panel() -> rx.Component:
-    """`0101` R10, in place of `0043`'s strip: what runs, what needs you and what Jera decided,
-    under the day's cap line. Off, one sentence and the way to Settings."""
+    """What runs, what needs you and what Jera decided, under the day's cap line. Off, one sentence and the way to Settings."""
     return rx.cond(
         P.autopilot_on,
         rx.vstack(
@@ -408,7 +378,7 @@ def _guide_panel() -> rx.Component:
                 width="100%", align="center", wrap="wrap",
             ),
             rx.cond(P.autopilot_refused != "", s.text(P.autopilot_refused, size="1")),
-            # `0133` R11: the lists in a closed part, so the panel does not push the lanes down.
+            # The lists sit in a closed part so the panel does not push the lanes down.
             rx.el.details(
                 rx.el.summary(s.text(
                     P.guide_running.length().to_string() + " running · "
@@ -436,8 +406,7 @@ def _guide_panel() -> rx.Component:
 
 
 def _release_panel() -> rx.Component:
-    """`0046`. What `main` holds since the last release, and the one button its state has.
-    Every word and whether the button may be pressed come from the board's `release` block."""
+    """What `main` holds since the last release, and the one button its state has, from the board's `release` block."""
     row = dict(gap="8px", align="center", wrap="wrap", width="100%")
     return rx.cond(
         P.rel_state != "",
@@ -508,14 +477,12 @@ def _release_panel() -> rx.Component:
 
 
 def _focus(target: str):
-    """`0133` R10. Moves focus to a form's first field, below the board."""
+    """Moves focus to a form's first field, below the board."""
     return rx.call_script(f"document.getElementById('{target}').focus()")
 
 
 def _board() -> rx.Component:
-    """`0133` Design: the toolbar, the guide panel (`0101`), the lanes, the folded groups, what is
-    running, the release panel (`0046`), and the two forms last, so nothing above the lanes
-    pushes them down (R10)."""
+    """The toolbar, guide panel, lanes, folded groups, what is running, the release panel, and the two forms last so nothing above the lanes pushes them down."""
     return rx.vstack(
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
         rx.flex(
@@ -546,7 +513,7 @@ def _board() -> rx.Component:
                                                on_click=_focus("new-unit-slug"), size="1", variant="soft")),
             rx.cond(P.has_workspace, rx.button(rx.icon("lightbulb", size=14), "New idea", id="board-new-idea",
                                                on_click=_focus("new-idea-slug"), size="1", variant="soft")),
-            # `0133` R5. The done units are a number here, and a link to their group.
+            # The done units are a number here, and a link to their group.
             rx.cond(P.group_counts["done"] > 0, rx.button(
                 P.group_counts["done"].to_string() + " done", id="done-count",
                 on_click=rx.call_script(
@@ -564,8 +531,7 @@ def _board() -> rx.Component:
                         s.text("Try a different search or choose All work.", margin_top="8px")),
                 rx.cond(
                     P.board_view == "Board",
-                    # `0133` R1: lanes wrap their cards, so the board is never wider than
-                    # the page.
+                    # lanes wrap their cards, so the board is never wider than the page.
                     rx.vstack(
                         rx.foreach(P.stages, _lane),
                         spacing="0", width="100%", min_width="0", id="board-grid",
@@ -595,10 +561,7 @@ def _board() -> rx.Component:
 
 
 def _collapsed_groups() -> rx.Component:
-    """`0100` R8 (`intent.md ## Answers, câu 4`). Done and dropped units, each in a closed
-    group with its count at the foot of the board; a group of none is not drawn. A paused
-    unit stays in its lane (`0133` spec C2). The search and the filter leave in a group what
-    they leave in the List (review F2)."""
+    """Done and dropped units, each in a closed group with its count at the foot of the board; a group of none is not drawn. A paused unit stays in its lane. The search and the filter leave in a group what they leave in the List."""
     return rx.vstack(
         *(_collapsed_group(state, label) for state, label in
           (("done", "Done"), ("dropped", "Dropped"))),

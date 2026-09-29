@@ -1,22 +1,18 @@
-"""Integrating a unit whose pull request fell behind `main` (`0035`).
+"""Integrating a unit whose pull request fell behind `main`.
 
-Not a stage. `.claude/scripts/cos.mjs` defines the loop and this module adds nothing to it:
-it runs only on a unit `cos.mjs` says sits between `pr` and ship (`betweenPrAndShip`),
-only when a person presses the button, and it writes no artifact. What it leaves behind is
-one `integration` record in the run log per attempt (R9).
+Not a stage. It runs only on a unit `cos.mjs` says sits between `pr` and ship
+(`betweenPrAndShip`), only when a person presses the button, and it writes no artifact. Each
+attempt leaves one `integration` record in the run log.
 
 Two roads:
 
 - **mechanical** (`behind`): `gh pr update-branch --rebase`, then the local branch follows
-  the new head. No session, no quota (R4).
-- **agent** (`conflicting`, `red-after-integration`): Gebo, a session under the
-  `integrate` grant in `coscc/agent/policy.py`, which may push only with a lease bound to the
-  head it began at (R5, R6). Since `0052` also a `behind` unit whose `update-branch`
-  exited non-zero: the press agreed to a Gebo session when the mechanical road cannot go
-  (`.cos/0052_*/spec.md ## Answers, câu 1`).
+  the new head. No session, no quota.
+- **agent** (`conflicting`, `red-after-integration`): Gebo, a session under the `integrate`
+  grant in `coscc/agent/policy.py`, which may push only with a lease bound to the head it began
+  at. Also a `behind` unit whose `update-branch` exited non-zero.
 
-Since `0052` a press fetches `origin/main` first, so a board that counted against a stale
-ref no longer refuses a unit as `current`; the board read itself still does not fetch.
+A press fetches `origin/main` first; the board read itself does not fetch.
 
 The pure functions come first; the `gh` calls after them; the session last.
 """
@@ -33,20 +29,19 @@ from coscc.agent import agents
 from coscc.agent.harness import child_env
 
 STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown")
-# R3: the three states with something to integrate. Since `0052` `current` carries a button
-# too, and a press on it is refused unless the fetch it begins with finds it behind.
+# The three states with something to integrate. `current` carries a button too; a press on it
+# is refused unless the fetch it begins with finds it behind.
 BUTTON_STATES = ("behind", "conflicting", "red-after-integration")
 GEBO_STATES = ("conflicting", "red-after-integration")
 OUTCOMES = ("pushed", "needs-person", "refused", "failed")
-# `0043` R3. Who started a step or an integration: the autopilot, or a request to a route —
-# a person on the board, `curl`, or an agent at a terminal, which the app cannot tell apart.
-# Kept here, the module with no imports of its own, so `runner.py` can share it.
+# Who started a step or an integration: the autopilot, or a request to a route (a person on
+# the board, `curl`, or an agent at a terminal, which the app cannot tell apart). Kept here, the
+# module with no imports of its own, so `runner.py` can share it.
 STARTED_BY = ("person", "autopilot")
 
-# Seconds. Chosen, not measured — the same figure as `board.GATE_TIMEOUT` and
-# `prcomment.TIMEOUT`.
+# Seconds. Chosen, not measured; the same as `board.GATE_TIMEOUT` and `prcomment.TIMEOUT`.
 GH_TIMEOUT = 30.0
-# R4: how long the app waits for GitHub's rebase to show as a new head. Chosen, not measured.
+# How long the app waits for GitHub's rebase to show as a new head. Chosen, not measured.
 POLL_TRIES = 5
 POLL_DELAY = 2.0
 
@@ -65,12 +60,12 @@ def check_started_by(value: str) -> str:
     return value
 
 
-# --- pure --------------------------------------------------------------------
 
 
 def needs_checks(pr_row: dict | str, last_record: dict | None) -> bool:
-    """Whether `classify` needs the required checks: only when the pull request's head is
-    the one the last integration pushed. Most board reads therefore cost no extra `gh`."""
+    """Whether `classify` needs the required checks: only when the pull request's head is the one
+    the last integration pushed. Most board reads therefore cost no extra `gh`.
+    """
     if not isinstance(pr_row, dict) or not last_record:
         return False
     after = str(last_record.get("head_after") or "")
@@ -84,11 +79,10 @@ def classify(
     last_record: dict | None,
     checks: list | str | None = None,
 ) -> dict[str, Any]:
-    """R1: one of `STATES`, with the reason. Errors arrive as strings and become `unknown`.
+    """One of `STATES`, with the reason. Errors arrive as strings and become `unknown`.
 
-    Order, as `plan.md` step 4 fixes it: an error; `CONFLICTING`; the integration's own
-    head with red required checks; commits missing; otherwise current. `UNKNOWN`
-    mergeability (GitHub still computing) goes by the count.
+    Order: an error; `CONFLICTING`; the integration's own head with red required checks; commits
+    missing; otherwise current. `UNKNOWN` mergeability (GitHub still computing) goes by the count.
     """
     if isinstance(pr_row, str):
         return {"state": "unknown", "reason": pr_row}
@@ -112,7 +106,7 @@ def classify(
 
 
 def origin_note(origin_sha: str, fetch: dict | None) -> str:
-    """`0052` R4: which `origin/main` a press counted against, and how it got there.
+    """Which `origin/main` a press counted against, and how it got there.
 
     `fetch` is what `fetches.fetch` returned (`{outcome, attempts, age}`), or
     `{"outcome": "failed", "detail": ...}`, or None when no fetch was tried.
@@ -133,11 +127,11 @@ def origin_note(origin_sha: str, fetch: dict | None) -> str:
 
 
 def cut_integration(records: list[dict], unit: str, running: bool) -> dict | None:
-    """`0114` R3: the `start` of an integration this unit's run log opened and never closed.
+    """The `start` of an integration this unit's run log opened and never closed.
 
-    `records` are the unit's, oldest first. `{at, head}` of its last `start` of `integrate`
-    when no `end` and no `integration` came after it and nothing runs for the unit in this
-    process (`running`); `None` otherwise. Only Gebo's road writes a `start`.
+    `records` are the unit's, oldest first. `{at, head}` of its last `start` of `integrate` when
+    no `end` and no `integration` came after it and nothing runs for the unit in this process
+    (`running`); `None` otherwise. Only Gebo's road writes a `start`.
     """
     if running:
         return None
@@ -156,15 +150,14 @@ def cut_integration(records: list[dict], unit: str, running: bool) -> dict | Non
 def relation(
     local: str, pr: str, local_in_pr: bool | None, pr_in_local: bool | None, newer: bool | None = True,
 ) -> str:
-    """`0114` R5: how the local head stands to the pull request's head.
+    """How the local head stands to the pull request's head.
 
-    `local_in_pr` and `pr_in_local` are `gitops.is_ancestor`'s answers, `None` when git could
-    not give one. `""` then, since nothing is known.
+    `local_in_pr` and `pr_in_local` are `gitops.is_ancestor`'s answers, `None` when git could not
+    give one; `""` then, since nothing is known.
 
-    `newer` (review F1) is `newer_base`'s answer, read only for heads that diverge. A local
-    head that is not on a newer `main` than the pull request's is `stale`, not `diverged`: the
-    pull request was rebased elsewhere, or the tree rewritten in place, and neither is a
-    rebase that was never pushed.
+    `newer` is `newer_base`'s answer, read only for heads that diverge. A local head that is not
+    on a newer `main` than the pull request's is `stale`, not `diverged`: the pull request was
+    rebased elsewhere, or the tree rewritten in place.
     """
     if local and local == pr:
         return "same"
@@ -180,15 +173,15 @@ def relation(
 
 
 def newer_base(local_base: str, pr_base: str, pr_base_in_local_base: bool | None) -> bool | None:
-    """`0114` review F1: whether the local head's merge-base with `origin/main` strictly
-    descends the pull request's — what a rebase onto a newer `main` leaves. `None` when git
-    could not tell."""
+    """Whether the local head's merge-base with `origin/main` strictly descends the pull request's,
+    what a rebase onto a newer `main` leaves. `None` when git could not tell.
+    """
     if not local_base or not pr_base or pr_base_in_local_base is None:
         return None
     return local_base != pr_base and pr_base_in_local_base
 
 
-# `0114` R6: the relations that go the completion road, whatever the unit's state.
+# The relations that go the completion road, whatever the unit's state.
 COMPLETION = ("ahead", "diverged")
 STALE = "the pull request's head is on a base no older than the local head's, so the local head is not a rebase of it"
 
@@ -206,19 +199,19 @@ def refusal(
     relation: str = "",
     relation_said: str = "",
 ) -> str:
-    """R12: the first condition that does not hold, in the spec's order, or `""`.
+    """The first condition that does not hold, or `""`.
 
-    `origin` is `origin_note`'s sentence; a `current` unit is then said to be current
-    against it (`0052` R4). The sentence still begins `the unit is current`.
+    `origin` is `origin_note`'s sentence; a `current` unit is then said to be current against it.
+    The sentence still begins `the unit is current`.
 
-    `0114` R5: `relation` is how the two heads stand when they differ. `ahead` or `diverged`
-    is the completion road, which runs in every state; anything else is still refused, with
-    git's words (`relation_said`) when it could not tell, and `stale` with `STALE`.
+    `relation` is how the two heads stand when they differ. `ahead` or `diverged` is the
+    completion road, which runs in every state; anything else is still refused, with git's words
+    (`relation_said`) when it could not tell, and `stale` with `STALE`.
     """
     if not in_window:
         return "this unit is not between pr and ship with an open pull request"
     if busy:
-        # `steps.describe`'s sentence (`0050` R3): what holds the unit, and since when.
+        # `steps.describe`'s sentence: what holds the unit, and since when.
         return busy
     if clean is None:
         return "the unit has no worktree to integrate in"
@@ -227,8 +220,8 @@ def refusal(
     if branch_ok is not True:
         return "the unit's worktree is not on the unit's branch"
     if not pr_head:
-        # Nothing to compare the local head with: `gh` could not be read, so the state is
-        # `unknown` too. Said as that, not as a head mismatch against "none".
+        # Nothing to compare the local head with: `gh` could not be read, so the state is `unknown`
+        # too. Said as that, not as a head mismatch against "none".
         return f"the pull request's head could not be read, so the unit is {state or 'unknown'}: nothing to integrate"
     if not local_head or local_head != pr_head:
         if local_head and relation in COMPLETION:
@@ -250,15 +243,15 @@ def warnings(
     rounds: list[dict], review_status: str, gebo: bool, grant_warning: str, fallback: bool = False,
     name: str = "",
 ) -> list[str]:
-    """R13: what the page says before the button is pressed. `fallback`: the press goes the
-    mechanical road, and Gebo opens if GitHub refuses it (`0052`). `name` is the `integrate`
-    agent's, from the agent table (`0036` R1)."""
+    """What the page says before the button is pressed. `fallback`: the press goes the mechanical
+    road, and Gebo opens if GitHub refuses it. `name` is the `integrate` agent's, from the agent
+    table.
+    """
     out: list[str] = []
-    # `0061` R11.1: the app cannot tell "behind but mergeable" (spike U1, U2), so the page
-    # says when integrating a passed unit is worth another round, and leaves it to a person.
-    # `0067` R8: only a rebase that changes the unit's patch costs that round; `cos.mjs`
-    # decides which, and this only says so. `0121`: after changes were asked, the same test
-    # decides between impl and a round that counts.
+    # The app cannot tell "behind but mergeable", so the page says when integrating a passed unit
+    # is worth another round, and leaves it to a person. Only a rebase that changes the unit's patch
+    # costs that round; `cos.mjs` decides which, and this only says so. After changes were asked,
+    # the same test decides between impl and a round that counts.
     if rounds and str(rounds[-1].get("verdict") or "") == "pass":
         out.append(
             "The last review round passed. Integrating rewrites the reviewed commit. If the "
@@ -300,7 +293,7 @@ def related(
     others: list[dict],
     self_unit: str,
 ) -> dict[str, list[dict]]:
-    """R7, both groups, computed by the app and never by Gebo.
+    """Both groups, computed by the app and never by Gebo.
 
     `main_commits`: `{sha, subject, files}` on `origin/main` since the merge-base.
     `units`: board unit dicts (`name`, `pr`). `others`: `{unit, files}` for the other
@@ -349,7 +342,7 @@ def related_units(rel: dict[str, list[dict]]) -> list[str]:
 
 
 def read_paths(units_root: Path, own: str, rel: dict[str, list[dict]]) -> tuple[str, ...]:
-    """R7: Gebo's own unit folder, and intent/spec/plan of the related units — nothing else."""
+    """Gebo's own unit folder, and intent/spec/plan of the related units, nothing else."""
     paths = [str(units_root / own)]
     for name in related_units(rel):
         for f in ("intent.md", "spec.md", "plan.md"):
@@ -358,9 +351,10 @@ def read_paths(units_root: Path, own: str, rel: dict[str, list[dict]]) -> tuple[
 
 
 def needs_person_of(submitted: dict[str, Any] | None) -> list[str]:
-    """`0136` R7. What Gebo handed back through `submit` as needing a person, one line each:
-    `<commit>: <why>`, or `<why>` alone when it names no commit. `[]` when it handed back
-    none; its reply is never read for it."""
+    """What Gebo handed back through `submit` as needing a person, one line each: `<commit>: <why>`,
+    or `<why>` alone when it names no commit. `[]` when it handed back none; its reply is never
+    read for it.
+    """
     out = []
     for item in (submitted or {}).get("needs_person") or []:
         commit, why = str(item.get("commit") or "").strip(), str(item.get("why") or "").strip()
@@ -390,21 +384,18 @@ def record(
     completion: dict | None = None,
     agent: str = "",
 ) -> dict[str, Any]:
-    """R9: the one record every integration leaves, whatever happened.
+    """The one record every integration leaves, whatever happened.
 
-    `0036` R7: `agent` is the session's agent name, written only when one was opened — a
-    record of the mechanical road, a refusal, or one from before `0036` has none.
+    `agent` is the session's agent name, written only when one was opened.
 
-    `0052` R5: `fetch` is how the press got its `origin/main` and `merge_state` what GitHub
-    said of the pull request then — observed, never decided on. `update_branch` is the exit
-    code and words of a refused `gh pr update-branch` that sent the press to Gebo. All three
-    keys are always written; a record from before `0052` has none of them.
+    `fetch` is how the press got its `origin/main` and `merge_state` what GitHub said of the pull
+    request then, observed and never decided on. `update_branch` is the exit code and words of a
+    refused `gh pr update-branch` that sent the press to Gebo. All three keys are always written.
 
-    `0043` R3: `started_by` is always written too; a record from before `0043` has none,
-    which reads as `person`.
+    `started_by` is always written too; a record without it reads as `person`.
 
-    `0114` R8: `completion` is `{relation, local_head, cut}` when the local head was not the
-    pull request's, or `None`; always written, like the keys of `0052`.
+    `completion` is `{relation, local_head, cut}` when the local head was not the pull request's,
+    or `None`; always written.
     """
     if outcome not in OUTCOMES:
         raise ValueError(f"outcome must be one of {', '.join(OUTCOMES)}, got {outcome!r}")
@@ -456,9 +447,9 @@ def _fetch_of(fetch: dict | None) -> dict | None:
 
 
 def outcome_of_session(head_before: str, head_now: str, needs_person: list[str]) -> str:
-    """What a Gebo session did, in `0136` R7's order: the head on git moved, else the object
-    it handed back names something only a person can settle, else it failed. Its words never
-    decide (spec, design 4)."""
+    """What a Gebo session did, in order: the head on git moved, else the object it handed back
+    names something only a person can settle, else it failed. Its words never decide.
+    """
     if head_now and head_now != head_before:
         return "pushed"
     if needs_person:
@@ -467,13 +458,14 @@ def outcome_of_session(head_before: str, head_now: str, needs_person: list[str])
 
 
 def describe_for_review(rec: dict[str, Any], overrides: dict[str, dict[str, str]] | None = None) -> str:
-    """R10: the section the next `review` prompt carries.
+    """The section the next `review` prompt carries.
 
-    `0114` R8: a completion says what it pushed — local commits nobody had pushed — and
-    that the app opened the session for it, not a person.
+    A completion says what it pushed (local commits nobody had pushed) and that the app opened
+    the session for it, not a person.
 
-    `0036` R7: the session is named from the record, or for one from before `0036` from
-    today's table, `overrides` included."""
+    The session is named from the record, or for an older one from today's table, `overrides`
+    included.
+    """
     body = json.dumps(rec, ensure_ascii=False, indent=2)
     name = agents.of_record(rec, overrides)
     session = f"an agent session ({name})" if name else "an agent session"
@@ -516,19 +508,19 @@ def build_prompt(
 ) -> str:
     """Gebo's prompt: its rules, what is wrong, where to start, and whose intent to read.
 
-    `agent` (`0036` R3) is the `integrate` row of the agent table; its section opens the
-    prompt, before the rules. `None` adds not one byte.
+    `agent` is the `integrate` row of the agent table; its section opens the prompt, before the
+    rules. `None` adds not one byte.
 
     `own_paths`: the unit's own artifacts that exist, by name, each an absolute path.
 
-    `refused_update` (`0052`): the `{code, said}` of the app's own `update-branch`, when
-    that refusal is why this session was opened.
+    `refused_update`: the `{code, said}` of the app's own `update-branch`, when that refusal is
+    why this session was opened.
 
-    `completion` (`0114` R6): `{relation, local_head, cut}` when the tree holds commits the
-    pull request does not. The session then pushes them, or says why not, and nothing else.
+    `completion`: `{relation, local_head, cut}` when the tree holds commits the pull request does
+    not. The session then pushes them, or says why not, and nothing else.
 
-    The app does not rebase to find the conflicting files first (`plan.md` step 7): that
-    would write to the tree before the session began, and R12 wants it clean.
+    The app does not rebase to find the conflicting files first: that would write to the tree
+    before the session began, which must be clean.
     """
     parts = ([agents.identity_section(agent), ""] if agent is not None else []) + [skill.strip(), ""]
     parts.append(f"# This integration\n\nUnit: `{unit}`. Branch: `{branch}`. Pull request: #{pr}.")
@@ -537,7 +529,7 @@ def build_prompt(
     parts.append(
         f"The only push allowed: `git push --force-with-lease={branch}:{head_before} origin {branch}`."
     )
-    # `0130` R4: the `integrate` grant always holds `Bash`.
+    # The `integrate` grant always holds `Bash`.
     from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
 
     parts.append(f"\n{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
@@ -572,7 +564,7 @@ def build_prompt(
         for name in names:
             for f in ("intent.md", "spec.md", "plan.md"):
                 parts.append(f"- {units_root / name / f}")
-    # `0094` R14: named, not carried. `read_paths` already lets Gebo `Read` its own unit's folder.
+    # Named, not carried. `read_paths` already lets Gebo `Read` its own unit's folder.
     parts.append("\n# This unit's own artifacts\n")
     for path in own_paths.values():
         parts.append(f"- {path}")
@@ -582,7 +574,7 @@ def build_prompt(
 
 
 def _completion_section(completion: dict, branch: str, pr_head: str) -> str:
-    """`0114` R6: what the completion road asks of Gebo, and all it allows."""
+    """What the completion road asks of Gebo, and all it allows."""
     local = str(completion.get("local_head") or "")
     how = str(completion.get("relation") or "")
     lines = [
@@ -616,7 +608,6 @@ def _completion_section(completion: dict, branch: str, pr_head: str) -> str:
     return "\n".join(lines)
 
 
-# --- gh ----------------------------------------------------------------------
 
 
 async def _gh(argv: list[str], cwd: str) -> tuple[int, str, str]:
@@ -673,15 +664,15 @@ async def required_checks(tree: str, n: int) -> list[dict]:
 
 
 async def update_branch(tree: str, n: int) -> tuple[int, str]:
-    """`gh pr update-branch <n> --rebase`. `(exit code, what gh said)`; never raises on
-    refusal. `0052`: the code goes into the record and Gebo's prompt."""
+    """`gh pr update-branch <n> --rebase`. `(exit code, what gh said)`; never raises on refusal.
+    The code goes into the record and Gebo's prompt.
+    """
     code, out, err = await _gh(["pr", "update-branch", str(int(n)), "--rebase"], tree)
     return code, (out.strip() or err.strip())
 
 
 async def merge_state(tree: str, n: int) -> str:
-    """`0052` R5: GitHub's `mergeStateStatus` for one pull request, or `""`. Observed only —
-    nothing decides on it — so it never raises (`spike.md ## U1` did not measure it)."""
+    """GitHub's `mergeStateStatus` for one pull request, or `""`. Observed only, so it never raises."""
     try:
         code, out, _ = await _gh(["pr", "view", str(int(n)), "--json", "mergeStateStatus"], tree)
     except IntegrateError:
@@ -706,12 +697,11 @@ async def pr_head(tree: str, n: int) -> str:
 
 
 async def pr_for_branch(tree: str, branch: str) -> dict:
-    """`0041` R2: the open pull request of one branch, asked before a `pr` step starts.
+    """The open pull request of one branch, asked before a `pr` step starts.
 
     One of `{"state": "found", "url", "number", "mergeable", "head"}`, `{"state": "none",
-    "branch"}` or `{"state": "unknown", "reason"}`. Never raises: a lookup that fails
-    must not stop the step, only be said in its prompt. Not `open_prs`, which carries no
-    `url` — widening it would change every board read for this one caller.
+    "branch"}` or `{"state": "unknown", "reason"}`. Never raises: a lookup that fails must not
+    stop the step, only be said in its prompt. Not `open_prs`, which carries no `url`.
     """
     if not branch:
         return {"state": "unknown", "reason": "this checkout is on no branch"}
@@ -742,8 +732,8 @@ async def pr_for_branch(tree: str, branch: str) -> dict:
     }
 
 
-# `0055` R7. Said in the two branches where the step ends with a pull request to put
-# pr.md onto; `coscc/service/__init__.py` `_sync_pr` is what does it.
+# Said in the two branches where the step ends with a pull request to put pr.md onto;
+# `coscc/service/__init__.py` `_sync_pr` does it.
 PR_SYNC_NOTE = (
     "After this step ends, the app puts pr.md's title and body onto the pull request "
     "itself; do not run `gh pr edit`."
@@ -784,7 +774,6 @@ def describe_pr_lookup(rec: dict) -> str:
     )
 
 
-# --- Gebo --------------------------------------------------------------------
 
 
 async def run_gebo(
@@ -802,17 +791,17 @@ async def run_gebo(
     resume: dict[str, Any] | None = None,
     channel: Any = None,
 ) -> AsyncIterator[tuple[str, Any]]:
-    """One Gebo session, streamed. Not `Runner.run`: that requires an artifact written, and
-    Gebo writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`.
+    """One Gebo session, streamed. Not `Runner.run`: that requires an artifact written, and Gebo
+    writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`.
 
-    `settings` (`0036` R8) is the agent's commit attribution, beside the preset every Gebo
-    session has; `None` passes nothing.
+    `settings` is the agent's commit attribution, beside the preset every Gebo session has; `None`
+    passes nothing.
 
-    `owner` and `resume` are `0138`'s: whose session this is, for a `suspend` row, and such
-    a row to go on from, under what is left of the grant's ceilings (R10).
+    `owner` and `resume`: whose session this is, for a `suspend` row, and such a row to go on
+    from, under what is left of the grant's ceilings.
 
-    `channel` (`0136` R7) is the `submit.Collector` Gebo hands its result to; `None` opens
-    none."""
+    `channel` is the `submit.Collector` Gebo hands its result to; `None` opens none.
+    """
     from coscc.agent.transcript import ceilings_left
     from coscc.runner import CLAUDE_CODE_PRESET, Denials, permission_gate
 
@@ -867,6 +856,6 @@ async def run_gebo(
     end["reply"] = reply
     end["denials"] = denials.count
     end["denied"] = denials.reasons or None
-    # `0130` R3: the `integrate` grant always holds `Bash`.
+    # The `integrate` grant always holds `Bash`.
     end["background"] = denials.background
     yield ("end", end)

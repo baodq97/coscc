@@ -1,26 +1,15 @@
 """The one door: every request this app serves is decided here first.
 
-`.cos/0070_anyone-who-reaches-the-port-can-run-anything`. Until that unit no route had a
-login and the default bind was `0.0.0.0`, so anyone who reached the port could do what the
-person at the board could. Now one master password stands in front, and this module is
-the whole of it.
+One master password stands in front of everything. `coscc.coscc.served` wraps what `rx.App`
+returns and uvicorn serves the wrapper, the position that sees every scope (`/api/*`, the
+page, static files, `/_event`, `/_upload`, `/ping`, CORS preflight, unknown paths).
 
-**Where it sits is the property.** `coscc.coscc.served` wraps what `rx.App` returns, and
-uvicorn serves that wrapper — the `outer` position `spike.md ## U1` measured to see every
-scope: `/api/*`, the page, its static files, `/_event` over polling and websocket,
-`/_upload`, `/ping`, CORS preflight and paths that do not exist. The `api_transformer`
-position lets Reflex's CORS answer `OPTIONS` without this ever seeing it.
+Default is refusal: the guard knows only the closed list `EXEMPT` and refuses everything
+else without a live session, so a later route is behind the door automatically. Exempt
+paths are compared by equality, never by prefix; `lifespan` is the only scope handed through.
 
-**Default is refusal.** The guard knows nothing about which routes exist. It knows the
-closed list in `EXEMPT` (spec R2) and refuses everything else that carries no live
-session, so a route added later is behind the door without anybody remembering to put it
-there. Exempt paths are compared by equality, never by prefix, and `lifespan` is the only
-scope type handed straight through.
-
-**What it is not.** One password, one user: every name typed into `answered_by`, `by`,
-`stopped_by` or `recorded_by` still is only a word, typed by whoever holds the password or
-a live session cookie. On plain HTTP the password, the cookie and the setup token cross
-the network readable (spec C8); the banner and the login page say so.
+One password, one user: names typed into `answered_by`, `by`, `stopped_by` or `recorded_by`
+are only words. On plain HTTP the password, cookie and setup token cross the network readable.
 """
 
 from __future__ import annotations
@@ -51,51 +40,43 @@ LOGIN = "/login"
 SETUP = "/setup"
 LOGOUT = "/logout"
 
-# spec R2, and the only place the list is written. `/api/health` stays open because
-# `scripts/install.sh` probes it after installing; `/login` because without it nobody gets
-# in. Compared as (method, path) by equality: `/api/health/`, `POST /api/health` and
-# `/login/x` are not on it.
+# The only place the list is written. `/api/health` stays open because `scripts/install.sh`
+# probes it; `/login` because without it nobody gets in. Compared as (method, path) by
+# equality: `/api/health/`, `POST /api/health` and `/login/x` are not on it.
 EXEMPT = frozenset({
     ("GET", HEALTH),
     ("HEAD", HEALTH),
     ("GET", LOGIN),
     ("POST", LOGIN),
 })
-# Exempt **only while no password is stored**. Once one is, these are refused like any
-# other route, and with a session they do nothing: there is no way to set or change the
-# password over the web (`intent.md ## Answers, câu 3`).
+# Exempt **only while no password is stored**. Once one is, these are refused like any other
+# route: there is no way to set or change the password over the web.
 SETUP_EXEMPT = frozenset({("GET", SETUP), ("POST", SETUP)})
 
-# 30 days from last use, `intent.md ## Answers, câu 4`.
+# 30 days from last use.
 SESSION_TTL = 30 * 86400
-# Chosen (spec R6): push the expiry forward at most once an hour, so a board asking every
-# 5 s is not a write every 5 s.
+# Push the expiry forward at most once an hour, so a board asking every 5 s is not a write every 5 s.
 TOUCH_EVERY = 3600
-# `spec.md ## Answers, câu 12`.
 MIN_PASSWORD = 12
-# Chosen. A login or setup form is three short fields; anything bigger is not one.
+# A login or setup form is three short fields; anything bigger is not one.
 MAX_FORM = 4096
 
-# Chosen, for spec C4. One argon2 verify with the library defaults peaks at 64.1 MiB and
-# takes about 67 ms (`spike.md ## U2`), and memory grows linearly with how many run at
-# once: 8 was 512.5 MiB. Two at once caps it near 128 MiB.
+# One argon2 verify with the library defaults peaks at 64.1 MiB and takes about 67 ms;
+# memory grows linearly with how many run at once. Two at once caps it near 128 MiB.
 HASH_CONCURRENCY = 2
-# Chosen. A request that waits longer than this for a slot gets 429, is not hashed and is
-# not counted as a failure.
+# A request that waits longer than this for a slot gets 429, is not hashed and is not counted as a failure.
 HASH_WAIT = 5.0
 
-# Chosen, under the 60 s spec R8 allows: how often an open websocket's session is asked
-# about again. Read at each sleep, so a test can shorten it.
+# How often an open websocket's session is asked about again. Read at each sleep, so a test can shorten it.
 WS_RECHECK = 30.0
 
-# `intent.md ## Answers, câu 5` says "for example 5 a minute, then a growing wait"; the
-# numbers are chosen (spec R9). 5 failures inside a sliding 60 s lock the address for 60 s;
-# the first failure after a lock ends doubles it, up to an hour.
+# 5 failures inside a sliding 60 s lock the address for 60 s; the first failure after a lock
+# ends doubles it, up to an hour.
 FAIL_LIMIT = 5
 FAIL_WINDOW = 60.0
 LOCK_FIRST = 60.0
 LOCK_MAX = 3600.0
-# Chosen. Past this many addresses, rows with no lock and no failure in the window go.
+# Past this many addresses, rows with no lock and no failure in the window go.
 LIMITER_KEYS = 10000
 
 # The line the setup token is written on. `coscc/update/updater.py` reads a trial's output for it.
@@ -133,10 +114,9 @@ def _peer(scope: dict) -> str:
 def is_https(scope: dict) -> bool:
     """Whether the browser reached us over TLS.
 
-    uvicorn runs with `proxy_headers=False` (`coscc/run.py`, spec answer 14), so a proxy's
-    `X-Forwarded-Proto` is read here, and only from a loopback peer — a proxy on the same
-    machine. Any process on this machine can set it too (`spike.md ## U3`); all it buys is
-    `Secure` on its own cookie. `X-Forwarded-For` is never read.
+    uvicorn runs with `proxy_headers=False`, so a proxy's `X-Forwarded-Proto` is read here,
+    only from a loopback peer. Any local process can set it too; all it buys is `Secure` on
+    its own cookie. `X-Forwarded-For` is never read.
     """
     if scope.get("scheme") in ("https", "wss"):
         return True
@@ -153,12 +133,11 @@ def _host_port(scheme: str, netloc: str) -> str:
 
 
 def _origin_ok(scope: dict) -> bool:
-    """`spec.md ## Answers, câu 13`: a state-changing request from another origin is refused.
+    """A state-changing request from another origin is refused.
 
-    Only host and port are compared, not scheme: behind a TLS proxy the scope is always
-    `http` while the browser's `Origin` says `https`. A request with no `Origin` passes —
-    clients that are not browsers send none, and they have no browser cookie to borrow.
-    `Origin: null` does not.
+    Only host and port are compared: behind a TLS proxy the scope is `http` while `Origin`
+    says `https`. A request with no `Origin` passes (non-browser clients have no cookie to
+    borrow); `Origin: null` does not.
     """
     origin = _header(scope, b"origin")
     if origin is None:
@@ -202,11 +181,10 @@ class _Row:
 
 
 class Limiter:
-    """spec R9: failed logins and setups, per client address, in memory only (spec C5).
+    """Failed logins and setups, per client address, in memory only.
 
-    The address is the peer uvicorn saw. Behind a proxy every client shares the proxy's,
-    so a stranger's five wrong tries lock the owner out too — accepted in
-    `spec.md ## Answers, câu 14`.
+    The address is the peer uvicorn saw. Behind a proxy every client shares the proxy's, so
+    a stranger's five wrong tries lock the owner out too; accepted.
     """
 
     def __init__(self, clock: Callable[[], float]):
@@ -267,12 +245,12 @@ class Guard:
         self.data = data
         self.clock = clock
         self.err = err if err is not None else sys.stderr
-        # Library defaults: argon2id, m=65536, t=3, p=4 (`spike.md ## U2`).
+    # Library defaults: argon2id, m=65536, t=3, p=4.
         self.hasher = hasher or argon2.PasswordHasher()
         self.limiter = Limiter(clock)
         self._slots = asyncio.Semaphore(HASH_CONCURRENCY)
         self._token: str | None = None
-        # spec R4: every start with no password gets a fresh token.
+        # Every start with no password gets a fresh token.
         if data.auth_password_hash() is None:
             self._issue_token()
 
@@ -281,9 +259,8 @@ class Guard:
     def _issue_token(self) -> None:
         """Mint a token and write it, once, to stderr, flushed at once.
 
-        Flushed because `spike.md ## U4` measured it: a flushed stderr line reached
-        `journalctl --user -u <unit>` after 0.05 s, an unflushed stdout line not in 10 s.
-        Nothing else holds the token — no file, no database row.
+        A flushed stderr line reaches `journalctl` in 0.05 s; an unflushed stdout line does
+        not in 10 s. Nothing else holds the token: no file, no database row.
         """
         self._token = secrets.token_urlsafe(16)
         self.err.write(f"coscc setup token: {self._token}\n")
@@ -294,7 +271,7 @@ class Guard:
         self.err.flush()
 
     def _saw(self, has_password: bool) -> None:
-        """Keep the token in step with the database (spec R10: no restart needed)."""
+        """Keep the token in step with the database (no restart needed)."""
         if has_password:
             self._token = None
         elif self._token is None:
@@ -382,7 +359,7 @@ class Guard:
                     await self._setup(scope, receive, send, method)
                     return
                 if live:
-                    # A password exists; with a session this does nothing (spec R2).
+                # A password exists; with a session this does nothing.
                     await _redirect(send, "/")
                     return
             if (method, path) == ("POST", LOGOUT) and live:
@@ -410,7 +387,7 @@ class Guard:
     # -- refusal ----------------------------------------------------------------
 
     async def _refuse(self, scope, receive, send, method: str, has_password: bool) -> None:
-        """The three shapes spec's "refusal" allows, and nothing of the app in any of them."""
+        """The three shapes of refusal, and nothing of the app in any of them."""
         if scope["type"] == "websocket":
             await self._close_socket(receive, send)
             return
@@ -421,7 +398,7 @@ class Guard:
 
     @staticmethod
     async def _close_socket(receive, send) -> None:
-        # Closed before accept; uvicorn answers the handshake 403 (`spike.md ## U1`).
+        # Closed before accept; uvicorn answers the handshake 403.
         await receive()
         await send({"type": "websocket.close", "code": 1008})
 
@@ -523,19 +500,16 @@ class Guard:
     # -- a socket that got through --------------------------------------------------
 
     async def _serve_socket(self, scope, receive, send, sha: str, touched_at: float) -> None:
-        """spec R8: an open socket closes within `WS_RECHECK` of its session ending.
+        """An open socket closes within `WS_RECHECK` of its session ending.
 
         A watcher asks the database again every `WS_RECHECK` seconds. When the session is
-        gone, the next `receive` the page's socket handler awaits — raced against the
-        watcher — sends `websocket.close` (1008) to the browser and hands the app a
-        `websocket.disconnect`, so no page handler runs on that socket again.
+        gone, the next `receive` (raced against the watcher) sends `websocket.close` (1008)
+        and hands the app a `websocket.disconnect`.
 
-        Use through the socket counts as use (`intent.md ## Answers, câu 4`): the board
-        sends every event over `/_event`, so a tab worked in for a month may make no HTTP
-        request at all. When a message arrived since the last touch and that touch is
-        `TOUCH_EVERY` old, the watcher pushes the expiry forward as an HTTP request would
-        (`0070` review round 1, F1). It cannot refresh the browser's cookie — only a
-        response can — so that happens at the next handshake or page load.
+        Use through the socket counts as use: a tab may make no HTTP request for a month. When
+        a message arrived since the last touch and it is `TOUCH_EVERY` old, the watcher pushes
+        the expiry forward. It cannot refresh the browser's cookie (only a response can), so
+        that happens at the next handshake or page load.
         """
         gone = asyncio.Event()
         closed = False
@@ -609,10 +583,8 @@ def _with_header(send, header: tuple[bytes, bytes]):
 def _revalidate_pages(send):
     """A page let through is marked `no-cache`, so the browser asks the door again next time.
 
-    The static mount sends `index.html` with `Last-Modified` and no `Cache-Control`, and a
-    browser may reuse it by heuristic freshness — longer the older the build. Measured in
-    chromium (`scripts/verify_0070.py --browser`, `0070` review round 1, F2): after logging
-    out, `/` came back from the cache as the board, whose socket the door then refused, and
+    The static mount sends `index.html` with `Last-Modified` and no `Cache-Control`, so a
+    browser may reuse it: after logging out, `/` came back from the cache as the board and
     never reached `/login`. Assets keep their caching; their names carry a content hash.
     """
     async def wrapped(message: dict) -> None:
@@ -660,7 +632,7 @@ def _error(text: str | None) -> str:
 
 def _login_page(scope: dict, error: str | None = None) -> str:
     warn = ""
-    # `spec.md ## Answers, câu 11`: one line here, none on the board.
+    # One line here, none on the board.
     if not is_https(scope) and _hostname(scope) not in LOOPBACK:
         warn = (
             "<p class=\"warn\" id=\"plain-http\">This page is served over plain HTTP: the "

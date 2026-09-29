@@ -1,15 +1,8 @@
-"""The files a plan changes, as they stand, for its `impl` step (`0096` R9).
+"""The files a plan changes, as they stand, for its `impl` step.
 
-`0096_an-impl-session-grows-until-every-turn-is-expensive`. 861 of the 1405 search and read
-tool uses of 56 `impl` steps aimed at a file the plan's `## Files that change` names
-(`spike.md ## U5`). Before an `impl` step, `Service.run_step` hands this module `plan.md` and
-the step's tree; it lists each of those files with its line count and, for Python and
-JavaScript, the line each top-level and class-level definition starts on, and gives back the
-section `runner.compose_prompt` places and the record `Runner.run` puts into `start`.
-
-The paths are `autopilot.files_of`'s, the reader `spike.md ## U5` measured with; this module
-writes no reader of its own. Nothing outside the tree is read. It opens no `cos.db`, runs no
-`git` and asks nothing of `cos.mjs`.
+Lists each file the plan's `## Files that change` names with its line count and, for Python
+and JavaScript, the line each top-level and class-level definition starts on. It returns the
+prompt section and the record `Runner.run` puts into `start`. It reads only inside the tree.
 """
 
 from __future__ import annotations
@@ -24,8 +17,7 @@ from typing import Any
 from coscc.units.autopilot import files_of
 from coscc.git.drift import files_section
 
-# `spec.md` R9. The bytes of the whole section, advice aside. Chosen, not measured: twice
-# `priorfindings.CAP_BYTES`, since one entry here may carry hundreds of definitions.
+# The bytes of the whole section, advice aside: twice `priorfindings.CAP_BYTES`.
 CAP_BYTES = 12288
 
 _PY = re.compile(r"^(async\s+def|def|class)\s+(\w+)")
@@ -42,8 +34,7 @@ def _empty() -> dict[str, Any]:
 
 
 def _statements(text: str) -> set[int] | None:
-    """The lines a logical line of Python starts on, from 1. A line inside a string, a bracket
-    or after a `\\` is not one. `None` when `text` does not tokenize: every line may then be."""
+    """The lines a logical line of Python starts on, from 1; `None` when `text` does not tokenize."""
     starts: set[int] = set()
     fresh = True
     skip = (tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER)
@@ -60,11 +51,11 @@ def _statements(text: str) -> set[int] | None:
 
 
 def definitions(name: str, text: str) -> list[tuple[int, str]]:
-    """`(line, "def name")` for every definition `spec.md` R9 lists, lines from 1: for `.py`,
-    `def` and `class` at column 0 and a `def` four spaces in whose nearest column-0
-    statement is a `class`, as `Class.method`; for `.js` and `.mjs`, `function`, `class` and
-    `const … =` at column 0. Any other file has none. A Python line that starts no statement,
-    one inside a multi-line string among them, is neither a definition nor an end of a class."""
+    """`(line, "def name")` for every definition listed, lines from 1.
+
+    `.py`: `def` and `class` at column 0, and a `def` four spaces in under a `class` as
+    `Class.method`. `.js`/`.mjs`: `function`, `class` and `const … =` at column 0.
+    """
     out: list[tuple[int, str]] = []
     if name.endswith(".py"):
         owner = ""
@@ -92,8 +83,7 @@ def definitions(name: str, text: str) -> list[tuple[int, str]]:
 
 
 def _paths(plan_text: str) -> list[str]:
-    """The plan's paths in the order the section first names them, ties by bytes. A `::name`
-    after a path names something in it, so it is cut, and the path kept once."""
+    """The plan's paths in the order the section first names them; `::name` is cut."""
     section = files_section(plan_text) or ""
     seen: dict[str, int] = {}
     for token in files_of(plan_text) or ():
@@ -109,15 +99,12 @@ def _join(lines: list[str]) -> int:
 
 
 def select(plan_text: str, tree: str | os.PathLike[str]) -> tuple[str, dict[str, Any]]:
-    """`(section, record)`: one entry per file the plan names, never over `CAP_BYTES`, and
-    `{bytes, files, full, short, new, outside}` for the `start` record. No section, or no
-    path in it, is `""`.
+    """`(section, record)`: one entry per file the plan names, never over `CAP_BYTES`.
 
-    A path that resolves outside `tree` (absolute, `..`, a symlink out) is counted as
-    `outside` and never opened; a directory is skipped; a missing path with a `/` is `new`,
-    one without (a name such as `Runner.run`) is not a file the plan changes and is skipped.
-    A file gets its whole entry while that, and the short line of every file after it, still
-    fit; from the first that does not, every file gets its short line only."""
+    The record is `{bytes, files, full, short, new, outside}`. A path resolving outside `tree`
+    is counted `outside` and never opened; a directory is skipped; a missing path with a `/`
+    is `new`. Files get a whole entry while it fits, then only a short line each.
+    """
     if files_section(plan_text) is None:
         return "", _empty()
     base = Path(tree).expanduser().resolve()
@@ -168,9 +155,7 @@ def select(plan_text: str, tree: str | os.PathLike[str]) -> tuple[str, dict[str,
 
 
 def for_step(plan_path: str | os.PathLike[str], tree: str | os.PathLike[str]) -> dict[str, Any]:
-    """`{plan_map, plan_map_record}` for `Runner.run`. Never raises: a `plan.md` that cannot
-    be read, or a bug here, is no section and a record carrying `error`, and the step runs as
-    it would have."""
+    """`{plan_map, plan_map_record}` for `Runner.run`. Never raises: a failure is no section and a record with `error`."""
     try:
         section, record = select(Path(plan_path).read_text(encoding="utf-8"), tree)
     except Exception as e:  # noqa: BLE001 — recorded, never a reason to refuse the step

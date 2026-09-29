@@ -1,11 +1,10 @@
-"""Taking up again every session an update paused (`0138` R7-R9, R15).
+"""Taking up again every session an update paused.
 
-Split like the other mixins of `coscc/service/__init__.py`, whose `Service` inherits it; a
-mixin with no fields. The pausing is `Sessions.suspend_all`'s and the rows are the
+A mixin with no fields, which `Service` inherits. The pausing is `Sessions.suspend_all`'s and the rows are the
 updater's; this reads them at the next start, whatever version that is, and hands each to
 the owner of its kind, which ends it as if nothing had come between.
 
-Nothing here runs git on a session's worktree (R9): not to read it, not to clean it.
+Nothing here runs git on a session's worktree: not to read it, not to clean it.
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ _TASKS: set[asyncio.Task] = set()
 
 
 def resume_message(dropped: list[dict[str, Any]] | None) -> str:
-    """R7. What a session taken up again is told first, in English like every prompt."""
+    """What a session taken up again is told first, in English like every prompt."""
     if not dropped:
         return (
             "The app was just restarted to install an update. Nothing you were running was "
@@ -49,7 +48,7 @@ def resume_message(dropped: list[dict[str, Any]] | None) -> str:
 
 
 async def nothing() -> AsyncIterator[tuple[str, Any]]:
-    """A session that is not opened: its ceiling was used up before the update (R10)."""
+    """A session that is not opened: its ceiling was used up before the update."""
     return
     yield
 
@@ -69,10 +68,10 @@ def resume_kwargs(resume: dict[str, Any] | None, grant: Any, prompt: str) -> dic
 
 
 def check(row: dict[str, Any]) -> tuple[str, list[str]]:
-    """R8. Why `row` cannot be taken up, or `""`, and the pieces before its safe point.
+    """Why `row` cannot be taken up, or `""`, and the pieces before its safe point.
 
     The transcript must be where the CLI keeps it for that `cwd`: left to itself, the CLI
-    takes a file of the same id from another project and writes into it (`spike.md ## U5`).
+    takes a file of the same id from another project and writes into it.
     """
     if row.get("unresumable"):
         return str(row["unresumable"]), []
@@ -92,7 +91,7 @@ def check(row: dict[str, Any]) -> tuple[str, list[str]]:
 
 
 def moved_on(journal: Any, row: dict[str, Any]) -> str:
-    """Review round 1, F3. Why `row`'s unit went on without its session, or `""`: a `start` or
+    """Why `row`'s unit went on without its session, or `""`: a `start` or
     an `end` of that unit written after the `suspend` row, as a rerun while the row waited
     for a start leaves. A session taken up then would write over newer work."""
     unit = str(row.get("unit") or "")
@@ -121,15 +120,15 @@ def _spawn(coro: Any) -> asyncio.Task:
 class ResumeMixin:
 
     async def resume_after_update(self) -> list[dict[str, Any]]:
-        """R7. At start-up: each `suspend` row no start took up is taken up once, then the
+        """At start-up: each `suspend` row no start took up is taken up once, then the
         autopilot starts again. What happened to each row is returned.
 
         The `resume` row goes first, so a start that dies after it never takes the session up
         a second time. Every unit a step or an integration held is claimed again, with no
         `await` in between, before the autopilot is asked, so it cannot start a step on one.
         """
-        # Review round 2, F6: the pause is over once its rows are taken up -- here after a
-        # failed hand-off; a new process never had it.
+        # The pause is over once its rows are taken up, here after a failed hand-off; a new
+        # process never had it.
         self.sessions.paused = False
         journal = self._journal()
         said: list[dict[str, Any]] = []
@@ -149,7 +148,7 @@ class ResumeMixin:
                 problem = f"no owner takes up a session of kind {kind!r}"
             problem = problem or gone[id(row)]
             if not problem and kind in STEP_KINDS + ("integrate",):
-                # Review round 1, F4: what the claim would refuse, asked before the `resume` row
+                # What the claim would refuse, asked before the `resume` row
                 # so that row says what happened. Nothing awaits from here to the claim.
                 key, unit = str(owner.get("workspace") or ""), str(owner.get("unit") or "")
                 held = self.steps.get(key, unit)
@@ -160,7 +159,7 @@ class ResumeMixin:
             if not problem and kind in ("estimate", "precedent", "chat"):
                 problem = self._owner_refuses(kind, owner)
             if not problem and kind == "chat":
-                # Review round 1, F5: R10 for a chat turn, said here so its `resume` row does.
+                # A chat turn's used-up ceiling, said here so its `resume` row does.
                 used_up = transcript.ceilings_left(CHAT_TURNS, None, row)[2]
                 if used_up:
                     problem = f"its ceiling was used up before the update: {used_up}"
@@ -168,7 +167,7 @@ class ResumeMixin:
                 journal.resumed(
                     str(row.get("workspace") or ""), str(row.get("unit") or ""), str(row.get("stage") or ""),
                     str(row.get("suspend_id") or ""), by="app", result="failed" if problem else "resumed",
-                    # `0139` R15: every resume goes through `sessions._options`, which sets
+                    # Every resume goes through `sessions._options`, which sets
                     # `snapshot` on the system prompt once `resume_at` is given.
                     **({"detail": problem} if problem else {"system_prompt": "snapshot"}),
                 )
@@ -188,16 +187,15 @@ class ResumeMixin:
         for start in starts:
             if start is not None:
                 _spawn(start)
-        # `0136` R13: a merge asked for before the app went down is recorded before the
+        # A merge asked for before the app went down is recorded before the
         # autopilot could ask for it again.
         await self.reconcile_prs()
         self.autopilot_resume()
         return said
 
     def _owner_refuses(self, kind: str, owner: dict[str, Any]) -> str:
-        """Review round 2, F7. What an estimate, Jera or a chat turn refuses before its
-        session, asked before the `resume` row as F4's claim is, so that row says what
-        happened. Each owner holds what it takes before its first `await`, and its task runs
+        """What an estimate, Jera or a chat turn refuses before its session, asked before the
+        `resume` row as the step claim is, so that row says what happened. Each owner holds what it takes before its first `await`, and its task runs
         before the autopilot's, so nothing comes between this and that."""
         cwd, key, unit = str(owner.get("workspace_dir") or ""), str(owner.get("workspace") or ""), str(owner.get("unit") or "")
         try:
@@ -213,7 +211,7 @@ class ResumeMixin:
         return ""
 
     def _end_unresumed(self, journal: Any, row: dict[str, Any], kind: str, problem: str) -> None:
-        """R8. The step, integration, estimate or Jera ends `failed` and waits for a rerun; a
+        """The step, integration, estimate or Jera ends `failed` and waits for a rerun; a
         chat turn has no `start`, and only its `resume` row says it failed."""
         if kind == "chat":
             return
@@ -324,7 +322,7 @@ class ResumeMixin:
         return go()
 
     async def _resume_chat(self, cwd: str, record: dict[str, Any]) -> None:
-        """C11: nobody is reading this turn now; its reply is in the session, and its `chat`
+        """Nobody is reading this turn now; its reply is in the session, and its `chat`
         row is written as any turn's is."""
         async for _ in self.stream(cwd, str(record.get("message") or ""), str(record.get("session_id") or ""),
                                    resume=record):

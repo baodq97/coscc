@@ -1,14 +1,9 @@
 """Listing, creating and resuming sessions.
 
-Two layers live here, and the split from `spec.md` matters:
-
-- The **read layer** (`list_for_directory`, `history`) is pure disk. It needs no live
-  client, which is what lets R1 and R6 hold across a restart of this app.
-- The **session layer** (`Sessions`) owns one SDK client per live session. The client
-  spawns its own CLI process, so the lifetime is this app's to decide.
-
-A session is a transcript, not a process (`spec.md`). Resuming means continuing a record
-on disk, not attaching to something still running.
+The read layer (`list_for_directory`, `history`) is pure disk and needs no live client, so it
+holds across a restart. The session layer (`Sessions`) owns one SDK client per live session;
+the client spawns its own CLI process. A session is a transcript, not a process: resuming
+continues a record on disk.
 """
 
 from __future__ import annotations
@@ -43,50 +38,31 @@ from coscc.config import Config
 from coscc.data import Data
 
 
-# The app's own environment must not reach a session, and it cannot be removed -- only
-# overridden. `claude_agent_sdk` builds the child environment as
-# `{k: v for k, v in os.environ.items() if k != "CLAUDECODE"}` and then lays `options.env`
-# on top, so a key left out of `options.env` is a key the child *inherits*. Absence is not
-# deletion here.
+# The app's own environment must not reach a session, and it cannot be removed, only
+# overridden: `claude_agent_sdk` lays `options.env` over `os.environ`, so a key left out is
+# inherited. Tests must assert the value the child would read, not absence from the dict.
 #
-# `coscc/run.py` sets `REFLEX_WEB_WORKDIR` process-wide, pointing at the bundle this app
-# serves -- `coscc/_web` inside the installed package. A step that runs a build reads it
-# and compiles **into the installed package**: `index.html` is replaced by a fresh
-# scaffold and the page answers 404 while `/api/health` stays 200. Measured twice on
-# 2026-09-23, on the machine the step was running for, to the copy running the step.
+# `coscc/run.py` sets `REFLEX_WEB_WORKDIR` process-wide, pointing at the served bundle
+# (`coscc/_web`); a step that runs a build would compile into the installed package and the
+# page would 404 while `/api/health` stays 200. `<cwd>/.web` is where a checkout's build belongs.
 #
-# The first attempt at this fix left the key out of `options.env` and asserted it was
-# absent *from the dictionary*. That test passed and the bundle was destroyed again an
-# hour later, because the assertion was about this process and the damage was in the
-# child. It is overridden now, and the test asks what value the child would read.
+# A step's `cwd` is the unit's own worktree, so `VIRTUAL_ENV` points into the worktree, `PATH`
+# loses every entry under the workspace or the installed package (a workspace's `.venv/bin`
+# would run the workspace's code), and every `__REFLEX_*` this process set is overridden empty.
 #
-# `<cwd>/.web` is where a checkout's build belongs: `coscc/web/frontend.py` `web_dir` returns
-# exactly that for anything not packaged, and a session's `cwd` is the workspace.
-#
-# Since `0017` a step's `cwd` is the unit's own worktree, not the workspace, and three more
-# names are laid over for the same reason: `VIRTUAL_ENV` points into the worktree, `PATH`
-# loses every entry under the workspace or the installed package (a workspace's
-# `.venv/bin` first on `PATH` runs the workspace's code, not the unit's), and every
-# `__REFLEX_*` this process set (`coscc/run.py:56,172`) is overridden with an empty value.
-#
-# Since `0076` `COS_DATA_DIR` is not blanked but pointed at a directory of the session's
-# own. Blank read as unset, unset read as `~/.cos`, and a step's `npm test` migrated the
-# running app's `cos.db` to a schema the app could not read. `config.PROTECTED_DB_VAR`
-# names that database too, for the code that reaches `~/.cos` without reading the setting.
+# `COS_DATA_DIR` is pointed at a directory of the session's own, not blanked: blank read as
+# unset, unset read as `~/.cos`, and a step's `npm test` migrated the running app's `cos.db`.
+# `config.PROTECTED_DB_VAR` names that database too.
 def child_env(
     cwd: str, workspace: str | None = None, *, data_dir: str, app_db: Path, bash: bool = False
 ) -> dict[str, str]:
     """What to lay over the environment a session would otherwise inherit whole.
 
-    Every name this app puts into its own environment appears here with a value that is
-    safe for somebody else's repository, because leaving one out hands the child this
-    app's own.
-
-    `data_dir` is the session's throwaway data root (`scratch_dir`) and `app_db` this
-    app's `cos.db`. Both are required, so no session environment can be built without them.
-
-    `bash` (`0130` R5) is true when the session holds `Bash`; it then also gets
-    `FOREGROUND_ENV`.
+    Every name this app puts into its own environment appears here with a value safe for
+    somebody else's repository, because leaving one out hands the child this app's own.
+    `data_dir` is the session's throwaway data root (`scratch_dir`) and `app_db` this app's
+    `cos.db`; both are required. `bash` is true when the session holds `Bash`; it then also
+    gets `FOREGROUND_ENV`.
     """
     from coscc.git import worktrees  # here, not at the top: worktrees imports prcomment
 
@@ -96,9 +72,7 @@ def child_env(
         "PATH": worktrees.clean_path(workspace),
     }
     # This app's settings describe this app, not the workspace. Empty reads as unset to
-    # `coscc/config.py` `from_env` for every one of them (host and port only since the
-    # `0017` review, F1), and to `cos.mjs` for `COS_REVIEW_ROUNDS`. `sessions_test.py`
-    # loads the config from what the child reads.
+    # `coscc/config.py` `from_env` and to `cos.mjs` for `COS_REVIEW_ROUNDS`.
     env.update({name: "" for name in os.environ if name.startswith(("COS_", "__REFLEX_"))})
     env["COS_DATA_DIR"] = data_dir
     env[cfg.PROTECTED_DB_VAR] = cfg.protect(app_db)
@@ -107,19 +81,16 @@ def child_env(
     return env
 
 
-# `0130` R5. The app closes a step's session once its turn ends, so a command must end in
-# the foreground or be killed, never be left running where nothing reads its end. Measured on claude-agent-sdk 0.2.159 (`0130 spike.md`):
+# The app closes a step's session once its turn ends, so a command must end in the foreground
+# or be killed, never be left running where nothing reads its end.
 #
 # - `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`: two roads to the background never reach
-#   `can_use_tool`. A command the CLI takes for read-only runs in the background unasked
-#   (`## U1`, result 2), and a foreground command past its timeout is moved there (`## U2`,
-#   result 1). With this set the first is refused by the CLI's own schema and the second is
-#   killed (`## U2`, result 3, runs `u1c` and `u2g`).
-# - `BASH_DEFAULT_TIMEOUT_MS`: what a call asking no `timeout` gets (`## U2`, result 5).
-#   The longest proof measured, a build and `npm run e2e`, took about 196 s (`## U3`);
-#   600000 is above twice that, and is the CLI's own default ceiling (`## U2`, result 4).
-# - `BASH_MAX_TIMEOUT_MS`: the most a call may ask for, set to the same, not higher.
-#   Above 600000 was read from the CLI's code only, never run (`## U2`, result 4).
+#   `can_use_tool` (a command the CLI takes for read-only runs there unasked; a foreground
+#   command past its timeout is moved there). With this set the first is refused by the CLI's
+#   own schema and the second is killed.
+# - `BASH_DEFAULT_TIMEOUT_MS`: what a call asking no `timeout` gets. The longest proof (a build
+#   and `npm run e2e`) took about 196 s; 600000 is over twice that, and the CLI's default ceiling.
+# - `BASH_MAX_TIMEOUT_MS`: the most a call may ask for, the same; above 600000 was never run.
 FOREGROUND_ENV = {
     "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
     "BASH_DEFAULT_TIMEOUT_MS": "600000",
@@ -130,16 +101,15 @@ FOREGROUND_ENV = {
 # What every throwaway data root starts with. `_drop` removes nothing without it.
 SCRATCH_PREFIX = "coscc-session-"
 
-# The project's instructions, in a session's data root, for the CLI to read (`0088`, F1).
+# The project's instructions, in a session's data root, for the CLI to read.
 PROMPT_FILE = "project-instructions.md"
 
 
 def scratch_dir(app_root: Path) -> Path:
     """A new, empty data root for one session: `0700`, unguessable, in the OS temp dir.
 
-    `0076` R1 and R2. Refused, and removed again, if it landed inside `app_root` or holds
-    it -- a `TMPDIR` pointed into the data root would otherwise hand a step the app's own
-    directory under another name.
+    Refused, and removed again, if it landed inside `app_root` or holds it (a `TMPDIR` pointed
+    into the data root would hand a step the app's own directory under another name).
     """
     made = Path(tempfile.mkdtemp(prefix=SCRATCH_PREFIX)).resolve()
     root = Path(app_root).resolve()
@@ -152,9 +122,9 @@ def scratch_dir(app_root: Path) -> Path:
 def _drop(path: Path | None) -> None:
     """Remove a directory `scratch_dir` made, and nothing else.
 
-    An `rmtree`, so it asks twice: the name carries `SCRATCH_PREFIX`, and it sits directly
-    in the OS temp dir, not through a symlink. Anything else is left alone, silently --
-    this runs in `finally` blocks, where raising would hide the step's own outcome.
+    An `rmtree`, so it asks twice: the name carries `SCRATCH_PREFIX`, and it sits directly in
+    the OS temp dir, not through a symlink. Otherwise silent: this runs in `finally` blocks,
+    where raising would hide the step's own outcome.
     """
     if path is None:
         return
@@ -171,27 +141,21 @@ class Refused(Exception):
 
 
 class Suspended(Exception):
-    """`0138`. An update paused this session; it has a `suspend` row and is resumed on the
-    next start. Its owner writes no `end` for it: the `ResultMessage` the CLI sends after
-    `interrupt()` is never handed on as a `done`."""
+    """An update paused this session; it has a `suspend` row and is resumed on the next start.
+    Its owner writes no `end` for it: the `ResultMessage` the CLI sends after `interrupt()` is
+    never handed on as a `done`."""
 
 
-# `0138` review round 2, F6: what a stream begun after `suspend_all` is refused with.
+# What a stream begun after `suspend_all` is refused with.
 PAUSED = "every session was paused for an update, so no new one may open"
 
 
-# ---------------------------------------------------------------------------
-# Read layer
-# ---------------------------------------------------------------------------
+# --- Read layer ---
 
 
 def _text_of(content: Any) -> str:
-    """Flatten one stored message's content to text.
-
-    The transcript stores content either as a bare string or as a list of blocks. Only
-    text blocks are kept: tool blocks have no reading in a chat-only app, and rendering
-    them is explicitly a later intent.
-    """
+    """Flatten one stored message's content to text (a bare string or a list of blocks).
+    Only text blocks are kept."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -206,11 +170,8 @@ def _text_of(content: Any) -> str:
 
 
 def list_for_directory(directory: str, limit: int | None = None) -> list[dict[str, Any]]:
-    """Sessions belonging to one project directory (R1).
-
-    `cwd` is carried through on every entry so a caller can check that nothing from
-    another project leaked in — R1 asks for exactly that.
-    """
+    """Sessions belonging to one project directory. `cwd` is carried on every entry so a
+    caller can check nothing from another project leaked in."""
     infos = sdk.list_sessions(directory=directory, limit=limit, include_worktrees=False)
     return [
         {
@@ -226,11 +187,8 @@ def list_for_directory(directory: str, limit: int | None = None) -> list[dict[st
 
 
 def history(session_id: str, directory: str | None = None) -> list[dict[str, Any]]:
-    """Conversation read back from the SDK's session store (R6).
-
-    The app keeps no copy. `spec.md` C6: a second store would be a second truth, and the
-    one that counts is the one Claude actually reads.
-    """
+    """Conversation read back from the SDK's session store. The app keeps no copy: a second
+    store would be a second truth."""
     messages = sdk.get_session_messages(session_id, directory=directory)
     out = []
     for m in messages:
@@ -248,11 +206,8 @@ def exists(session_id: str, directory: str | None = None) -> bool:
 
 
 def _tool_result_text(content: Any) -> str:
-    """The text of a `tool_result` block only — never the tool call that produced it.
-
-    `0019` plan step 2: an excerpt is what a session *did*, not what it was asked to do,
-    so a `ToolUseBlock`'s own input is skipped here the same way `history` skips it.
-    """
+    """The text of a `tool_result` block only, never the tool call that produced it: an
+    excerpt is what a session *did*, not what it was asked to do."""
     if isinstance(content, str):
         return content
     parts = []
@@ -269,9 +224,8 @@ def transcript_excerpt(
 ) -> tuple[str, int]:
     """The last `limit` characters of what a session *did*, and the full length.
 
-    `0019` plan step 2. Assembled from the assistant's own text and the results tool
-    calls came back with — never the prompt that started the turn, which is not
-    something the session did. Subagent traffic is excluded, as `history` excludes it.
+    Assembled from the assistant's own text and the results tool calls came back with, never
+    the prompt that started the turn. Subagent traffic is excluded, as `history` excludes it.
     """
     if not session_id:
         raise ValueError("transcript_excerpt needs a session id")
@@ -297,9 +251,7 @@ def transcript_excerpt(
     return full[-limit:], len(full)
 
 
-# ---------------------------------------------------------------------------
-# Session layer
-# ---------------------------------------------------------------------------
+# --- Session layer ---
 
 
 @dataclass
@@ -307,17 +259,14 @@ class Live:
     client: ClaudeSDKClient
     session_id: str
     cwd: str
-    # What this session had cost as of the last turn. See `_cumulative` for why a running
-    # total has to be kept here rather than read fresh each time.
+    # What this session had cost as of the last turn. See `_cumulative`.
     spent: dict[str, float] = field(default_factory=dict)
-    # `0076`. The chat's own `COS_DATA_DIR`. It lives as long as the client, across turns,
-    # and is removed when the session is closed.
+    # The chat's own `COS_DATA_DIR`. It lives as long as the client and is removed on close.
     scratch: Path | None = None
 
 
 # How long `_shut` lets the SDK close the CLI its own way before signalling the process
-# itself. Chosen, not measured: with `KILL_AFTER` it stays under the 10 seconds `0034`'s
-# intent gives a step's process to be gone.
+# itself. Chosen, not measured.
 DISCONNECT_TIMEOUT = 5.0
 
 # How long `_shut` waits after its SIGTERM before SIGKILL. Chosen, not measured.
@@ -338,17 +287,14 @@ def _begin(coro: Any) -> asyncio.Task:
 async def _shut(client: Any, transport: Any, reached: bool) -> None:
     """Close a client, and see that the CLI it spawned is gone.
 
-    `0034` review round 2, F3. The SDK's own close waits 5s for the CLI to exit on stdin
-    EOF before it sends SIGTERM, then SIGKILL -- but a raw asyncio cancel skips that
-    escalation (its own docstring says so), and an `asyncio.wait_for` around it is one. So
-    the SDK's close runs as its own task, shielded: nothing here cancels it. Past
-    `DISCONNECT_TIMEOUT` the process is signalled from here, and the SDK's close, still
-    waiting on it, then finishes. `_process` is the SDK transport's private name, read
-    with `getattr` like `_transport` and `_query`; a stand-in without it is not signalled.
+    The SDK's close waits 5s for the CLI to exit on stdin EOF before SIGTERM then SIGKILL, but
+    a raw asyncio cancel skips that escalation (as `asyncio.wait_for` would), so the SDK's
+    close runs as its own shielded task. Past `DISCONNECT_TIMEOUT` the process is signalled
+    from here. `_process` is the SDK transport's private name, read with `getattr` like
+    `_transport` and `_query`; a stand-in without it is not signalled.
 
-    `reached` is whether `connect` got as far as the control protocol. Without it the SDK's
-    `disconnect` closes nothing and only drops the transport (review round 1, F1), so the
-    transport is closed here.
+    `reached` is whether `connect` got as far as the control protocol; without it the SDK's
+    `disconnect` closes nothing and only drops the transport, so it is closed here.
     """
     process = getattr(transport, "_process", None)
 
@@ -384,35 +330,29 @@ async def _shut(client: Any, transport: Any, reached: bool) -> None:
 class StepHandle:
     """The one client a board step spawned, and the one way to close it.
 
-    `0034`. A board step used to leave its client in `_live` for the life of the app, so
-    every step ever run kept a CLI process (measured: 14 of them, 230-285 MB each). A step
-    is never resumed, so it has no reason to stay: `stream(step=...)` closes it however
-    the step ends, and `Service.stop_step` closes it early.
-
-    `close` may be called before the client exists -- `client` is set only once `connect`
-    has returned; `stream` then closes the client the moment it connects and never sends
-    the prompt. Every later call waits on the one closing the first began, and cancelling
-    a caller does not cancel that closing (review round 2, F3 and F4).
+    A step is never resumed, so `stream(step=...)` closes it however the step ends and
+    `Service.stop_step` closes it early. `close` may be called before the client exists: the
+    client is then closed the moment it connects and the prompt is never sent. Every later
+    call waits on the one closing the first began; cancelling a caller does not cancel it.
     """
 
     cwd: str = ""
     client: Any = None
     closed: bool = False
     _closing: asyncio.Task | None = None
-    # `0076`. The step's own `COS_DATA_DIR`, set before the client is built and removed by
-    # `stream` once the client is closed, however the step ended.
+    # The step's own `COS_DATA_DIR`, removed by `stream` once the client is closed.
     scratch: Path | None = None
-    # `0073`. The step's `coscc/runlog/events.py` recorder, set by `Service.run_step`. `_stream`
-    # hands it every message before anything else reads it; chat has no handle, so none.
+    # The step's `coscc/runlog/events.py` recorder, set by `Service.run_step`. `_stream` hands
+    # it every message first; chat has no handle, so none.
     recorder: Any = None
-    # `0138`. Whose session this is (`stream`'s `owner`), its id once `init` names it, the
-    # model it was opened on, and whether `Sessions.suspend_all` paused it.
+    # Whose session this is (`stream`'s `owner`), its id once `init` names it, the model it was
+    # opened on, and whether `Sessions.suspend_all` paused it.
     owner: dict[str, Any] | None = None
     session_id: str = ""
     model: str | None = None
     suspended: bool = False
-    # `0139` R17. The model the session's `init` named: what the CLI resolved and will run,
-    # `[1m]` and all (`0139 spike.md ## U2`). `""` until it arrives.
+    # The model the session's `init` named: what the CLI resolved and will run, `[1m]` and all.
+    # `""` until it arrives.
     init_model: str = ""
 
     async def close(self) -> None:
@@ -425,13 +365,12 @@ class StepHandle:
         await asyncio.shield(self._closing)
 
     def drop_scratch(self) -> None:
-        """Remove the step's data root once its client is closed (`0076` R3).
+        """Remove the step's data root once its client is closed.
 
-        A Stop's cancel can land on the close itself: the closing goes on without its
-        caller, and the CLI may live `DISCONNECT_TIMEOUT + KILL_AFTER` longer. A `Data` it
-        opened in that time would make the directory again with nobody left to remove it
-        (`0076` review round 1, F1), so the removal waits for that closing -- or for the
-        one `_stream` began when `connect` failed (round 2, F2).
+        A Stop's cancel can land on the close itself and the CLI may live
+        `DISCONNECT_TIMEOUT + KILL_AFTER` longer; a `Data` it opened in that time would remake
+        the directory with nobody to remove it, so this waits for that closing, or for the one
+        `_stream` began when `connect` failed.
         """
         scratch = self.scratch
         if self._closing is not None and not self._closing.done():
@@ -443,12 +382,10 @@ class StepHandle:
 def _abandon(client: Any) -> asyncio.Task:
     """Begin closing a client whose `connect` did not finish, and return the closing.
 
-    One stopped inside the transport's own `connect` may already have spawned the CLI,
-    and the SDK's `disconnect` would drop that transport without closing it, so `_shut`
-    closes the transport itself. Both are read before anything is closed.
-
-    The caller keeps the task on its handle as `_closing`, so a Stop's cancel landing on
-    this closing still leaves the step's data root until it ends (`0076` review round 2, F2).
+    One stopped inside the transport's own `connect` may already have spawned the CLI, and the
+    SDK's `disconnect` would drop that transport without closing it, so `_shut` closes it. Both
+    are read before anything is closed. The caller keeps the task on its handle as `_closing`,
+    so a Stop's cancel still leaves the data root until it ends.
     """
     transport = getattr(client, "_transport", None)
     reached = getattr(client, "_query", None) is not None
@@ -456,7 +393,7 @@ def _abandon(client: Any) -> asyncio.Task:
 
 
 def _set(flow: Any, **values: Any) -> None:
-    """`0138`. Note something about a stream on its `StepHandle` or its `_turns` entry."""
+    """Note something about a stream on its `StepHandle` or its `_turns` entry."""
     if flow is None:
         return
     if isinstance(flow, dict):
@@ -472,17 +409,16 @@ def _paused(flow: Any) -> bool:
     return bool(flow.get("suspended") if isinstance(flow, dict) else flow.suspended)
 
 
-# `0138` R5. How long `suspend_all` gives `interrupt()`; `spike.md ## U2` measured it
-# returning in under 0.01 s. Chosen, not measured.
+# How long `suspend_all` gives `interrupt()`; it returns in under 0.01 s. Chosen, not measured.
 INTERRUPT_TIMEOUT = 1.0
 
 
 def _descendants(pid: int, proc: Path = Path("/proc")) -> list[tuple[int, str]]:
     """Every process under `pid`, as `(pid, start time)`, read from `/proc/*/stat`.
 
-    `0138` R5: a CLI killed with SIGKILL leaves its Bash tree running and writing into the
-    worktree (`spike.md ## U3`). The start time is kept so a pid reused before the kill is
-    not the one killed. Empty where there is no `/proc`.
+    A CLI killed with SIGKILL leaves its Bash tree running and writing into the worktree. The
+    start time is kept so a pid reused before the kill is not the one killed. Empty where there
+    is no `/proc`.
     """
     children: dict[int, list[tuple[int, str]]] = {}
     for stat in proc.glob("[0-9]*/stat"):
@@ -542,17 +478,10 @@ _USAGE_KEYS = {
 def _cumulative(message: Any) -> dict[str, float]:
     """Everything this *session* has spent so far, summed over models.
 
-    **`model_usage` is cumulative, not per-turn.** Measured on 2026-09-21 by running two
-    turns on one client: `cacheReadInputTokens` came back 1608 then 5512, and
-    `total_cost_usd` 0.0169 then 0.0363 — each reading is the session to date. Adding them
-    up per turn would therefore double-count, which is exactly the failure `plan.md` Risk 4
-    names: the total looks measured and is wrong.
-
-    The top-level `usage` dict is not the answer either. It reports only the last iteration
-    within a turn — the same run showed `input_tokens: 2` where `model_usage` showed 1171.
-
-    So the cumulative figure is what the SDK gives honestly, and a turn's own cost is the
-    difference between two of them. `stream` does that subtraction.
+    `model_usage` is cumulative, not per-turn (each reading is the session to date), so adding
+    per-turn readings would double-count. The top-level `usage` dict reports only the last
+    iteration within a turn. A turn's own cost is the difference between two cumulative
+    figures; `stream` does that subtraction.
     """
     total = {name: 0.0 for name in COST_FIELDS}
     total["cost_usd"] = float(getattr(message, "total_cost_usd", None) or 0.0)
@@ -564,23 +493,13 @@ def _cumulative(message: Any) -> dict[str, float]:
     return total
 
 
-# The longest single line of the CLI's stdout a session may receive (`0091`). Left unset,
-# the SDK's `_DEFAULT_MAX_BUFFER_SIZE` of 1 048 576 applies, and a `Read` of an image
-# arrives as one line: on 2026-09-25 run `c58b7e48` of `0082`'s `impl` read
-# `.screens/settings-1440x900.png` -- 504 656 bytes, 1440x4298 -- and died on
-# `CLIJSONDecodeError`, five commits in, with no `tool_result`. Since `0083` every UI unit's
-# `impl` and `review` must open such images.
-#
-# The SDK compares `len()` of a `str`, so this counts characters, not bytes; for JSON
-# carrying base64 the two agree (`0091` `spike.md ## U1`). Nothing is allocated up front:
-# the transport keeps the pieces of the line it has, and RSS grew the same 152 KiB with a
-# 1 MiB cap and a 16 MiB one (`spike.md ## U3`), so a large cap costs nothing until a line
-# that long arrives.
-#
-# 32 MiB is chosen, not measured. What a line weighs against the file it carries is known
-# only from below -- more than 2.08 times (`spike.md ## U2`) -- so this holds that
-# screenshot unless the CLI multiplies it by more than about 66 (`spec.md` C1). A longer
-# line still ends the session exactly as before.
+# The longest single line of the CLI's stdout a session may receive. Left unset, the SDK's
+# 1 048 576 applies, and a `Read` of a large screenshot arrives as one line and dies on
+# `CLIJSONDecodeError` with no `tool_result`. The SDK compares `len()` of a `str`, so this
+# counts characters; for base64 JSON the two agree. Nothing is allocated up front, so a large
+# cap costs nothing until a line that long arrives. 32 MiB is chosen, not measured: a line
+# weighs more than 2.08 times its file, so this holds a screenshot unless the CLI multiplies
+# it by more than about 66.
 MAX_BUFFER = 32 * 1024 * 1024
 
 
@@ -605,54 +524,39 @@ def _options(
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
-    `fork_session=False` is the line `spec.md` C7 warns about: the forking flavour of
-    resume returns a *new* id, every other part of the app keeps working, and R3 fails
-    silently. It is written out rather than left to the default so that deleting it is a
-    visible edit.
+    `fork_session=False` is written out so deleting it is a visible edit: the forking flavour
+    of resume returns a *new* id and the resume guarantee fails silently.
 
-    `max_turns` is a parameter rather than the constant it was, because `spec.md` R11 puts the
-    ceiling on the step: a board step that has to edit files cannot finish in one turn, and
-    a chat turn must not quietly become several. The default is still 1, so every caller
-    that does not ask gets the old behaviour (`plan.md` C6).
+    `max_turns` is set per step (a board step that edits files cannot finish in one turn; a
+    chat turn must not quietly become several); the default is 1.
 
-    `model` is what `coscc/agent/models.py` resolved for this stage or for chat. `None` means
-    nobody resolved one, and `COS_MODEL` applies as it always did.
+    `model` is what `coscc/agent/models.py` resolved for this stage or chat; `None` means
+    `COS_MODEL` applies.
 
-    `system_prompt` is `None` unless a caller asks (`0037`). Left unset, the SDK hands the
-    CLI an empty system prompt, which is what every chat turn and every tool-less step
-    still gets. A board step with tools passes `runner.CLAUDE_CODE_PRESET`, so the session
-    carries Claude Code's own guidance on using those tools. It changes nothing else here:
-    the tool list, the permission mode, `setting_sources` and the callback are what they
-    would have been without it, and what a step may do is still decided by `can_use_tool`.
+    `system_prompt` is `None` unless a caller asks: the SDK then hands the CLI an empty system
+    prompt, as every chat turn and tool-less step gets. A board step with tools passes
+    `runner.CLAUDE_CODE_PRESET`; it changes nothing else, and `can_use_tool` still decides.
 
-    Since `0088` no settings source is loaded, for any session, so the CLI reads nothing of
-    the user's, the machine's or the project's own configuration. The project's
-    instructions come back through `coscc/agent/instructions.py`, written to `PROMPT_FILE` in
-    `data_dir`: appended to the preset when there is one (`--append-system-prompt-file`),
-    as the whole system prompt when there is not (`--system-prompt-file`), and not at all
-    when `cwd` holds none -- the session is then exactly the one it was before, and
-    nothing is written.
+    No settings source is loaded for any session. The project's instructions come back through
+    `coscc/agent/instructions.py`, written to `PROMPT_FILE` in `data_dir`: appended to the
+    preset when there is one (`--append-system-prompt-file`), the whole system prompt when
+    there is not (`--system-prompt-file`), nothing written when `cwd` holds none.
 
-    `data_dir` is the session's own data root (`0076`); the database it protects is the
-    one `config` names. Building a `Data` touches no disk.
+    `data_dir` is the session's own data root; building a `Data` touches no disk.
 
-    `settings` (`0036` R8) is the agent's `{"attribution": …}` from
-    `agents.settings_json`, passed as `--settings`, and only beside a preset: attribution
-    replaces the preset's commit guidance, and a session with no preset keeps the argv it
-    had. `setting_sources=[]` is untouched, so no settings file is read beside it
-    (`0036 spike.md ## U4` measured the argv and the gate with it set).
+    `settings` is the agent's `{"attribution": ...}` from `agents.settings_json`, passed as
+    `--settings` and only beside a preset (attribution replaces the preset's commit guidance).
 
-    `mcp_servers` (`0136` R2) is the app's own in-process servers, `{"cos": <submit>}` for a
-    step that hands back an object. `strict_mcp_config` stays: those are then the only ones.
+    `mcp_servers` is the app's own in-process servers, `{"cos": <submit>}` for a step that
+    hands back an object; `strict_mcp_config` stays, so those are the only ones.
     """
-    # A board step brings its own list from `policy.Grant`; everything else gets the
-    # app default, which is empty. `tools=[]` and `tools=None` mean different things to
-    # the SDK, so the distinction is `is None`, not truthiness. Read once, so the
-    # environment below follows the same list the session is handed.
+    # A board step brings its own list from `policy.Grant`; everything else gets the app
+    # default, empty. `tools=[]` and `tools=None` differ for the SDK, so test `is None`. Read
+    # once so the environment below follows the same list.
     resolved = config.effective_tools() if tools is None else list(tools)
     options = ClaudeAgentOptions(
         cwd=cwd,
-        # Laid over what the child would inherit. See `child_env` and what it cost twice.
+        # Laid over what the child would inherit. See `child_env`.
         env=child_env(
             cwd, workspace, data_dir=data_dir, app_db=Data(config.data_dir).db_path,
             bash="Bash" in resolved,
@@ -660,41 +564,28 @@ def _options(
         tools=resolved,
         permission_mode=config.permission_mode(),
         resume=resume,
-        fork_session=False,  # spec.md C7 — R3 needs the same id back, not a branch
+        fork_session=False,  # resume needs the same id back, not a branch
         model=model if model is not None else config.model,
         max_turns=max(1, int(max_turns)),
-        # `0088`. No source at all -- not user, project, local, nor what claude.ai adds.
-        # `None` said "no project/user settings" here and meant the opposite: on this SDK
-        # it passes no flag, and the CLI then loads every source, so each session carried
-        # the machine's MCP servers, skills, plugins and `permissions.allow` -- the last
-        # one answering a `Bash` call before `can_use_tool` was asked. `[]` passes
-        # `--setting-sources=` with nothing after it; `0088` `spike.md ## U6` measured the
-        # argv, the init and the gate on 0.2.159.
+        # No source at all, not user, project, local, nor what claude.ai adds. `None` passes no
+        # flag and the CLI then loads every source (machine MCP servers, skills, plugins and
+        # `permissions.allow`, which answers a `Bash` call before `can_use_tool` is asked). `[]`
+        # passes `--setting-sources=` with nothing after it.
         setting_sources=[],
-        # And no MCP server but the ones declared here: none, or since `0136` the app's own
-        # `submit` (`mcp_servers` below).
+        # And no MCP server but the ones declared here: none, or the app's own `submit`.
         strict_mcp_config=True,
-        # Without this the CLI rewrites the prompt before the model sees it: an `@path`
-        # anywhere in it is replaced by that file's contents, and a leading `/word` is
-        # dispatched as a slash command. Neither is anything this app ever means to do.
-        #
-        # Measured 2026-09-23 on claude-agent-sdk 0.2.158: a session with `tools=[]` --
-        # no way to read a file -- was sent `@/tmp/canary.txt` and repeated the word
-        # inside it. With this set it saw only the path. That mattered from `0016` on,
-        # because `POST /api/units/answer` takes free text -- from anyone who could reach
-        # the port until `0070`, from anyone holding the password or a session since -- and
-        # puts it verbatim into the next stage's
-        # prompt. An answer reading `@~/.ssh/id_rsa` would have put the key there.
+        # Without this the CLI rewrites the prompt before the model sees it: an `@path` is
+        # replaced by that file's contents and a leading `/word` is dispatched as a slash
+        # command. `POST /api/units/answer` takes free text that goes verbatim into the next
+        # stage's prompt, so an answer reading `@~/.ssh/id_rsa` would put the key there.
         verbatim_prompts=True,
-        # `0091`. One screenshot is one line; see `MAX_BUFFER`.
+        # One screenshot is one line; see `MAX_BUFFER`.
         max_buffer_size=MAX_BUFFER,
     )
     if can_use_tool is not None:
-        # The second layer, and the one that matters. Eleven MCP tools were measured
-        # reaching a session created with `tools=[]`, because `--tools` names the built-in
-        # set only. This callback is on the path every call takes, whatever declared it.
-        # Since `0088` `strict_mcp_config` keeps those tools out of the session's init;
-        # this is still what decides whether a call runs.
+        # The second layer, and the one that matters: `--tools` names the built-in set only, so
+        # MCP tools reach a session created with `tools=[]`. This callback is on the path every
+        # call takes; `strict_mcp_config` keeps those tools out of init but this decides.
         options.can_use_tool = can_use_tool
     if max_budget_usd:
         options.max_budget_usd = float(max_budget_usd)
@@ -709,12 +600,9 @@ def _options(
         if settings is not None:
             options.settings = settings
     if project:
-        # Through a file, never as a value in argv (`0088` review round 1, F1): the SDK
-        # passes a string or an `append` as one argument, and Linux refuses an `execve`
-        # whose single argument passes `MAX_ARG_STRLEN` (32 pages) with `E2BIG` -- every
-        # session in a workspace whose instructions grew past it would fail to start, with
-        # an error that names nothing of why. The file sits in the session's own data root,
-        # `0700`, removed with it.
+        # Through a file, never as a value in argv: the SDK passes a string or an `append` as one
+        # argument and Linux refuses an `execve` argument past `MAX_ARG_STRLEN` with `E2BIG`,
+        # an error that names nothing of why. The file sits in the session's data root, `0700`.
         path = Path(data_dir) / PROMPT_FILE
         path.write_text(project, encoding="utf-8")
         if system_prompt is not None:
@@ -723,19 +611,16 @@ def _options(
         else:
             options.system_prompt = {"type": "file", "path": str(path)}
     if effort is not None:
-        # `0033`: what `coscc/agent/models.py` resolved for this stage and label. Unset, the
-        # SDK's own default applies, as it did before.
+        # What `coscc/agent/models.py` resolved for this stage and label. Unset, the SDK default.
         options.effort = effort
     if resume_at is not None:
-        # `0138` R7: the session goes on from its safe point, and nothing past it is read.
-        # `resume_drops_turn` is never set: the CLI refused 3 of 5 cuts made mid-turn with
-        # it (`0138 spike.md ## U2`, point 8), and without it took all five.
+        # The session goes on from its safe point, and nothing past it is read.
+        # `resume_drops_turn` is never set: the CLI refused 3 of 5 mid-turn cuts with it.
         options.resume_session_at = resume_at
-        # `0139` R15: the resumed session keeps the system prompt it recorded at its start, and
-        # reads no skill or rule an update changed in between. Only a preset or a custom
-        # prompt carries `snapshot` (`0139 spike.md ## U1`); the file form cannot, so it
-        # becomes an empty custom prompt with the same file appended -- never the file's text
-        # as a value in argv, which is `0088` F1's `E2BIG`.
+        # The resumed session keeps the system prompt it recorded at its start and reads no skill
+        # or rule an update changed. Only a preset or custom prompt carries `snapshot`; the file
+        # form becomes an empty custom prompt with the same file appended, never the file's text
+        # in argv (`E2BIG`).
         sp = options.system_prompt
         if isinstance(sp, dict) and sp.get("type") == "file":
             options.extra_args["append-system-prompt-file"] = sp["path"]
@@ -750,8 +635,8 @@ def _options(
 def _resolve(directory: str) -> Path | None:
     """The directory as one comparable value, or `None` if it is not a path at all.
 
-    `ValueError` is caught alongside `OSError` because an embedded null raises that one,
-    not the other — and a crash here would turn a question about sessions into a 500.
+    `ValueError` is caught alongside `OSError` because an embedded null raises that one; a
+    crash here would turn a question about sessions into a 500.
     """
     try:
         return Path(directory).expanduser().resolve()
@@ -764,30 +649,25 @@ class Sessions:
 
     def __init__(self, config: Config):
         self.config = config
-        # Who counts as a workspace. Defaults to the env list, and `Service` replaces it
-        # with the union of env and store (`spec.md` R21).
-        #
-        # The reason this has to be injected rather than hardcoded: this
-        # layer used to ask `config.is_workspace` directly, so a store-backed workspace
-        # passed the service gate and was refused here — two implementations of one
-        # question, which is exactly what R10 exists to prevent. The guard stays (it is
-        # the last thing before a CLI process is spawned); only the answer is shared.
+        # Who counts as a workspace. Defaults to the env list; `Service` replaces it with the
+        # union of env and store. Injected so a store-backed workspace that passed the service
+        # gate is not refused here; the guard stays as the last thing before a CLI spawns.
         self.membership = config.is_workspace
         self._live: dict[str, Live] = {}
         self._created_here: set[str] = set()
-        # `0034`. Board steps in flight, each with the one client it spawned. Never in
-        # `_live`: a step is not resumed, so its client is closed when the step ends.
+        # Board steps in flight, each with the one client it spawned. Never in `_live`: a step
+        # is not resumed, so its client is closed when the step ends.
         self._steps: set[StepHandle] = set()
         self._lock = asyncio.Lock()
-        # `0068` R8. Chat turns answering now, by an id of their own so a new session with
-        # no id yet can still be named and cut. Each is `{id, session_id, workspace,
-        # started}` plus the task reading it. Board steps are never here: `_steps` has those.
+        # Chat turns answering now, by an id of their own so a new session with no id yet can
+        # still be named and cut. Each is `{id, session_id, workspace, started}` plus the task
+        # reading it. Board steps are never here: `_steps` has those.
         self._turns: dict[str, dict[str, Any]] = {}
         # Told when a turn ends, so the updater waiting on it need not guess by the clock.
         self.on_turn_end: Any = None
-        # `0138` review round 2, F6. Set by `suspend_all`: from then on no stream opens, so a
-        # step between two sessions while the update waits for it ends saying why, rather
-        # than open one the hand-off cuts with no `suspend` row. `resume_after_update` clears it.
+        # Set by `suspend_all`: from then on no stream opens, so a step between two sessions
+        # while the update waits ends saying why, rather than open one the hand-off cuts with no
+        # `suspend` row. `resume_after_update` clears it.
         self.paused = False
 
     def created_here(self, session_id: str) -> bool:
@@ -796,13 +676,9 @@ class Sessions:
     def live_in(self, directory: str) -> list[str]:
         """Session ids with a live client in this directory, newest registration last.
 
-        `spec.md` R6: `pull` rewrites files under a running turn, so the service asks this
-        before it lets `git` near a workspace.
-
-        **It sees this process only.** `_live` is a dict in memory, so a second app on the
-        same working folder is invisible here and `pull` will proceed under its session.
-        That is `spec.md` C2, recorded and not fixed — closing it needs a mark on disk, which
-        `intent.md` did not authorise. Do not read an empty list as "nobody is working".
+        `pull` rewrites files under a running turn, so the service asks this before `git`
+        touches a workspace. It sees this process only: `_live` is in memory, so a second app
+        on the same working folder is invisible. Do not read an empty list as "nobody is working".
 
         Compared by resolved path, not by string: the caller builds the directory from the
         store and `stream` was given whatever the browser sent.
@@ -811,8 +687,7 @@ class Sessions:
         if target is None:
             return []
         found = [sid for sid, live in self._live.items() if _resolve(live.cwd) == target]
-        # A step in flight counts too (`0034`), with no session id to name it by until the
-        # step ends. A finished one no longer blocks `pull` until the next restart.
+        # A step in flight counts too, with no session id to name it by until the step ends.
         found += ["(running step)" for h in self._steps if _resolve(h.cwd) == target]
         return found
 
@@ -824,21 +699,21 @@ class Sessions:
             "workspace": cwd,
             "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "task": asyncio.current_task(),
-            # `0138`: what `suspend_all` needs of a stream with no step -- chat, Gebo.
+            # What `suspend_all` needs of a stream with no step: chat, Gebo.
             "owner": owner, "client": None, "cwd": cwd, "model": model, "suspended": False,
         }
         self._turns[turn["id"]] = turn
         return turn
 
     def in_flight(self) -> list[dict[str, Any]]:
-        """`0068` R8. The chat turns answering now, oldest first. This process only."""
+        """The chat turns answering now, oldest first. This process only."""
         return [
             {k: t[k] for k in ("id", "session_id", "workspace", "started")}
             for t in sorted(self._turns.values(), key=lambda t: t["started"])
         ]
 
     async def cut_turn(self, turn_id: str) -> bool:
-        """`0068` R10. End one chat turn: its reader is cancelled and its client closed.
+        """End one chat turn: its reader is cancelled and its client closed.
 
         `False` when the turn had already ended. The reply stops where it was; nothing is
         written for it, like a chat whose tab was closed.
@@ -856,11 +731,8 @@ class Sessions:
         return True
 
     def adopt(self, session_id: str) -> None:
-        """Record a session as this app's.
-
-        The proof command creates a session, closes it, and resumes in the same process;
-        without this the app's own session would look foreign to knob 4.
-        """
+        """Record a session as this app's; otherwise a session created and resumed in one
+        process would look foreign to knob 4."""
         self._created_here.add(session_id)
 
     async def stream(
@@ -886,32 +758,25 @@ class Sessions:
     ):
         """Send one prompt and yield the reply as it arrives.
 
-        `workspace` is who is asked about membership; `cwd` is where the session runs.
-        They are the same thing except for a board step since `0017`, which runs in the
-        unit's worktree — a directory that is not a workspace and must not become one.
+        `workspace` is who is asked about membership; `cwd` is where the session runs. They
+        differ for a board step, which runs in the unit's worktree, a directory that is not a
+        workspace and must not become one.
 
-        Yields ``("chunk", text)`` zero or more times, then exactly one
-        ``("done", {...})``. The browser and the proof command both consume this, which
-        is what keeps `spec.md`'s "no separate route for tests" true — a test-only path is
-        a path nobody runs for real.
+        Yields ``("chunk", text)`` zero or more times, then exactly one ``("done", {...})``.
+        The browser and the proof command both consume this: no test-only path. Creates the
+        session when `session_id` is None, resumes it otherwise.
 
-        Creates the session when `session_id` is None (R2), resumes it otherwise (R3).
+        `step` is a board step's handle. With one, the client is closed however this ends
+        (finished, raised, closed early, abandoned by its reader) and never kept for resuming.
+        Without one, chat needs `_live`.
 
-        `step` is a board step's handle (`0034`). With one, the client is closed however
-        this ends -- finished, raised, closed early through the handle, or abandoned by
-        its reader -- and is never kept for resuming. Without one nothing here changes:
-        chat needs `_live`.
-
-        `0138`. `owner` says whose session this is -- `kind` (`step`, `opening`, `closing`,
-        `integrate`, `estimate`, `precedent`, `chat`) and what that owner needs to take it
-        up again -- and is what `suspend_all` writes into a `suspend` row. `resume_at` goes
-        on from a safe point of `session_id` (`_options`). `spent_before` is what the
-        session had cost before this client: `{}`, the default, makes `done.cost` the whole
-        session's, since the CLI's own total carries over a resume (`spike.md ## U4`).
-        A stream `suspend_all` paused raises `Suspended` and yields no `done`, and one begun
-        after it is `Refused`.
-
-        `mcp_servers` goes to `_options` as it is (`0136` R2).
+        `owner` says whose session this is (`kind`: `step`, `opening`, `closing`, `integrate`,
+        `estimate`, `precedent`, `chat`, and what that owner needs to take it up again) and is
+        what `suspend_all` writes into a `suspend` row. `resume_at` goes on from a safe point of
+        `session_id` (`_options`). `spent_before` is what the session cost before this client:
+        `{}` makes `done.cost` the whole session's, since the CLI's total carries over a resume.
+        A stream `suspend_all` paused raises `Suspended` and yields no `done`; one begun after
+        it is `Refused`. `mcp_servers` goes to `_options` as it is.
         """
         if self.paused:
             raise Refused(PAUSED)
@@ -958,10 +823,10 @@ class Sessions:
             try:
                 await step.close()
             finally:
-                # A Stop's cancel can land on this very close (review round 2, F4); the
-                # closing goes on without us, and the handle must still leave the set.
+                # A Stop's cancel can land on this very close; the closing goes on without
+                # us, and the handle must still leave the set.
                 self._steps.discard(step)
-                # After the close, so the CLI is gone before its data root is (`0076` R3).
+                # After the close, so the CLI is gone before its data root is.
                 step.drop_scratch()
 
     async def _stream(
@@ -975,22 +840,22 @@ class Sessions:
         if not self.membership(member):
             raise Refused(f"not a configured workspace: {member}")
         if session_id is not None and not self.config.may_resume(self.created_here(session_id)):
-            # spec.md C1. The transcript is visible in the listing, but writing to it
-            # would put a second process on a record another one may still hold open.
+            # The transcript is visible in the listing, but writing to it would put a second
+            # process on a record another one may still hold open.
             raise Refused(
                 f"session {session_id} was not created by this app; "
                 "resuming it is off until spec.md open question 3 is tested"
             )
 
-        # `0076`. A chat's data root this call made and `_live` does not own yet: removed
-        # here if the call ends before the session is kept. A step's is `stream`'s to remove.
+        # A chat's data root this call made and `_live` does not own yet: removed here if the
+        # call ends before the session is kept. A step's is `stream`'s to remove.
         made: Path | None = None
         try:
             async with self._lock:
                 live = self._live.get(session_id) if session_id and step is None else None
                 if live is None:
-                    # Made before the client, so a client that fails to build or connect
-                    # still leaves it with an owner (`0076` R3).
+                    # Made before the client, so a client that fails to build or connect still
+                    # leaves it with an owner.
                     scratch = scratch_dir(Data(self.config.data_dir).root)
                     if step is None:
                         made = scratch
@@ -1017,16 +882,15 @@ class Sessions:
                         await client.connect()
                         _set(flow, client=client)
                         if _paused(flow):
-                            # `0138`. Paused while it was starting: nothing is sent.
+                            # Paused while it was starting: nothing is sent.
                             await _begin(_shut(client, getattr(client, "_transport", None), True))
                             raise Suspended("the session was paused for an update before its prompt was sent")
                     else:
                         try:
                             await client.connect()
                         except BaseException:
-                            # A cancel or a failure while the CLI was starting. The handle
-                            # has no client yet, so nothing else will close what `connect`
-                            # got as far as spawning (`0034` review round 1, F1).
+                            # A cancel or failure while the CLI was starting. The handle has no
+                            # client yet, so nothing else closes what `connect` spawned.
                             step._closing = _abandon(client)
                             await asyncio.shield(step._closing)
                             raise
@@ -1050,38 +914,35 @@ class Sessions:
             turns = 0
             duration_ms = 0
             terminal = ""
-            # Which model ids the SDK billed this session to: the keys of `model_usage`. This
-            # is the session's own record of the model it ran on, as opposed to the model the
-            # app asked for (`0004_no-setting-says-which-model-runs-a-stage`, outcome 4).
+            # Which model ids the SDK billed this session to: the keys of `model_usage`, the
+            # session's own record of the model it ran on.
             used: list[str] = []
-            # `0019` plan step 2. Yielded once, the first moment `resolved` has a value, so a
-            # caller that dies before `done` — the whole reason this unit exists — still has a
-            # session id to read a transcript excerpt back with. `Service.stream` (chat) drops
-            # this kind; `api.py` would otherwise turn it into a spurious `done` line in chat.
+            # Yielded once, the first moment `resolved` has a value, so a caller that dies before
+            # `done` still has a session id to read a transcript excerpt back with. `Service.stream`
+            # (chat) drops this kind; `api.py` would turn it into a spurious `done` line.
             told_session = bool(resolved)
             if told_session:
                 yield ("session", resolved)
-            # `0138` R14: the tokens of the first API call this client made, what reloading
-            # a resumed session cost.
+            # The tokens of the first API call this client made: what reloading a resumed
+            # session cost.
             first_call: dict[str, int] | None = None
             await live.client.query(text)
             async for message in live.client.receive_response():
                 if step is not None and step.recorder is not None:
-                    # `0073` R3, R5. Synchronous and swallowing: the kinds this yields, and
-                    # when, are what they were without it.
+                    # Synchronous and swallowing: the kinds this yields, and when, are unchanged.
                     try:
                         step.recorder.message(message)
                     except Exception:  # noqa: BLE001
                         pass
                 if isinstance(message, sdk.SystemMessage) and message.subtype == "init":
-                    # `0138`. The id is known here, before the first reply, so an update
-                    # that pauses the session now can still name it.
+                    # The id is known here, before the first reply, so an update that pauses the
+                    # session now can still name it.
                     said = str((message.data or {}).get("session_id") or "")
                     if step is not None and (message.data or {}).get("model"):
                         # Set before `session` is yielded below, so the caller reads it there.
                         step.init_model = str(message.data["model"])
                     if said and session_id and said != session_id:
-                        # R8: a resume that came back as another session is refused.
+                        # A resume that came back as another session is refused.
                         await _begin(_shut(live.client, getattr(live.client, "_transport", None), True))
                         self._live.pop(session_id, None)
                         raise Refused(
@@ -1106,10 +967,9 @@ class Sessions:
                             collected.append(block.text)
                             yield ("chunk", block.text)
                         elif isinstance(block, (ToolUseBlock, ServerToolUseBlock)):
-                            # Said out loud so a caller assembling an artifact from the reply
-                            # knows where one piece of text ends and the next begins. The
-                            # runner keeps every piece and cuts the artifact at its own title
-                            # line (`0099`). See `coscc/runner/__init__.py` for what is done with it.
+                            # Tells a caller assembling an artifact from the reply where one
+                            # piece of text ends and the next begins; the runner cuts the
+                            # artifact at its own title line.
                             yield ("tool", getattr(block, "name", "") or "tool")
                     if message.session_id:
                         resolved = message.session_id
@@ -1122,29 +982,26 @@ class Sessions:
                     if resolved and not told_session:
                         told_session = True
                         yield ("session", resolved)
-                    # The one message carrying what this cost. An earlier version read `session_id` off it
-                    # and dropped the rest, so every turn the app ran was unaccounted for.
+                    # The one message carrying what this cost.
                     total = _cumulative(message)
                     used = sorted(str(k) for k in (getattr(message, "model_usage", None) or {}))
                     turn = {k: total[k] - live.spent.get(k, 0.0) for k in total}
                     live.spent = total
                     turns += int(getattr(message, "num_turns", 0) or 0)
                     duration_ms += int(getattr(message, "duration_ms", 0) or 0)
-                    # Why the loop stopped. A turn that ran into its ceiling has to be
-                    # distinguishable from one that finished, or the turn bound turns a bounded
-                    # failure back into a silent one.
+                    # Why the loop stopped: a turn that hit its ceiling must be
+                    # distinguishable from one that finished.
                     terminal = getattr(message, "terminal_reason", None) or (
                         getattr(message, "subtype", "") or ""
                     )
 
             if _paused(flow):
-                # `0138`. The `ResultMessage` after `interrupt()` ends the loop above like any
-                # other; it is not this session's end, and its owner must not read it as one.
+                # The `ResultMessage` after `interrupt()` ends the loop above like any other; it is
+                # not this session's end, and its owner must not read it as one.
                 raise Suspended(f"session {resolved} was paused for an update")
 
             if session_id and resolved != session_id:
-                # Never observed, but the failure C7 describes is silent, so it is checked
-                # rather than assumed.
+                # Never observed, but the failure is silent, so it is checked.
                 await live.client.disconnect()
                 self._live.pop(session_id, None)
                 _drop(live.scratch)
@@ -1160,8 +1017,7 @@ class Sessions:
             cost = {name: int(turn.get(name, 0.0)) for name in COST_FIELDS}
             cost["turns"] = turns
             cost["duration_ms"] = duration_ms
-            # Kept as a float and rounded rather than truncated: a turn can cost less than a
-            # cent, and `int()` would report every one of those as free.
+            # Kept as a float and rounded, not truncated: a turn can cost under a cent.
             cost["cost_usd"] = round(turn.get("cost_usd", 0.0), 6)
             yield (
                 "done",
@@ -1196,9 +1052,8 @@ class Sessions:
                 _drop(live.scratch)
 
     async def close_all(self) -> None:
-        """Every client is a CLI process. The plan lists leaking them as a risk, so
-        shutdown is explicit rather than left to the garbage collector.
-        """
+        """Every client is a CLI process, so shutdown is explicit rather than left to the
+        garbage collector."""
         for session_id in list(self._live):
             await self.close(session_id)
         for step in list(self._steps):
@@ -1207,15 +1062,15 @@ class Sessions:
             step.drop_scratch()
 
     async def suspend_all(self) -> list[dict[str, Any]]:
-        """`0138` R4-R6. Pause every stream this process has open, all at once, and say
-        where each one can be taken up again.
+        """Pause every stream this process has open, all at once, and say where each one can be
+        taken up again.
 
-        Each is marked first, so its owner gets `Suspended` instead of an end; then its
-        CLI's descendants are listed, the transcript's boundary read, `interrupt()` sent and
-        the client closed by `_shut`, and whatever of that list is still alive killed. What
-        is returned is one `suspend` row's fields per stream, for the updater to write. A
-        stream with no session id or no client yet is closed all the same and marked
-        `unresumable`. Nothing here writes to a transcript or runs git.
+        Each is marked first, so its owner gets `Suspended` instead of an end; then its CLI's
+        descendants are listed, the transcript's boundary read, `interrupt()` sent, the client
+        closed by `_shut`, and whatever of that list is still alive killed. Returns one
+        `suspend` row's fields per stream, for the updater to write. A stream with no session id
+        or no client yet is closed all the same and marked `unresumable`. Nothing here writes to
+        a transcript or runs git.
         """
         self.paused = True
         flows: list[Any] = [*self._steps, *self._turns.values()]

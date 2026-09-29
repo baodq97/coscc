@@ -1,24 +1,12 @@
 """The update state machine behind the Updates section of Settings.
 
-`.cos/0068_updating-the-app-is-a-manual-reinstall` R3 to R13. `Service` holds one
-`Updater`; the page and the routes only ever reach it through `Service`, and neither decides
-anything (`.claude/rules/coscc-app.md`, "A handler that decides anything is a bug").
+`Service` holds one `Updater`; the page and routes only reach it through `Service` and decide nothing. `idle → pending → applying → (the process exits 75)`.
 
-`idle → pending → applying → (the process exits 75)`. Three parts:
+- **Checker**: a daemon thread, started only when this install is the `install.sh` shape and `COS_UPDATE_CHECK` is not `0`. One `releases/latest` call at start and every six hours; offline or rate-limited keeps the old state and says nothing.
+- **LocalBuilder**: `scripts/build_wheel.sh --local` of the configured workspace's `origin/main`, in a throwaway worktree, only when someone presses the button.
+- **Apply**: wait only for a mechanical integration or a screenshot retake; refuse new sessions from the start of the trial; try the new version beside the old one; pause every agent session (`Sessions.suspend_all`) and cancel a local build; then hand the install to `run.main` and stop uvicorn. The next start takes each paused session up again (`coscc/service/resume.py`).
 
-- **Checker** (R3, R4, R5): a daemon thread, started only when this install is the
-  `install.sh` shape and `COS_UPDATE_CHECK` is not `0`. One `releases/latest` call at start
-  and every six hours; offline or rate-limited keeps the old state and says nothing.
-- **LocalBuilder** (R6): `scripts/build_wheel.sh --local` of the configured workspace's
-  `origin/main`, in a throwaway worktree, only when someone presses the button.
-- **Apply** (R7 to R12; `0138`): wait only for a mechanical integration or a screenshot
-  retake; refuse new sessions from the start of the trial; try the new version beside the
-  old one; pause every agent session (`Sessions.suspend_all`) and cancel a local build;
-  then hand the install to `run.main` and stop uvicorn. The next start takes each paused
-  session up again (`coscc/service/resume.py`).
-
-**It is not an approval and it starts nothing** (R16): no path here asks a gate, reads
-`next` or runs a step. Since `0138` one Apply pauses every running session; none is lost.
+**It is not an approval and it starts nothing**: no path here asks a gate, reads `next` or runs a step.
 """
 
 from __future__ import annotations
@@ -49,31 +37,29 @@ from coscc.data import Data
 
 CHECK_EVERY = 6 * 60 * 60
 CHECK_TAG_TIMEOUT = 10
-TRIAL_INSTALL_TIMEOUT = 300  # chosen by the plan; the spec sets none
+TRIAL_INSTALL_TIMEOUT = 300
 TRIAL_HEALTHY_WITHIN = 60
 TRIAL_STOP_GRACE = 5
-# Chosen. The longest line of the trial's output read whole; Reflex draws progress bars.
+# The longest line of the trial's output read whole; Reflex draws progress bars.
 OUTPUT_LINE_LIMIT = 1 << 20
 BUILD_TIMEOUT = 15 * 60
 LOG_TAIL = 40
 HTTP_TIMEOUT = 30
-FETCH_LOCK_WAIT = 120  # chosen: how long an apply waits for a download already under way
-# `0138` review round 2, F6. Chosen: how long work with no session open is given to finish
-# after the pause. `spike.md ## U1` estimates 37 s from press to serving; 37 + 15 stays
-# under R2's 60 s.
+FETCH_LOCK_WAIT = 120  # how long an apply waits for a download already under way
+# How long work with no session open is given to finish after the pause: about 37 s from
+# press to serving, and 37 + 15 stays under 60 s.
 SETTLE_WITHIN = 15
 
 CHANNELS = ("release", "local")
 
-# `origin` of the local channel's workspace must be this repository, https or ssh (R6).
+# `origin` of the local channel's workspace must be this repository, https or ssh.
 _ORIGIN = re.compile(
     r"(https://github\.com/|git@github\.com:|ssh://git@github\.com/)baodq97/coscc(\.git)?/?"
 )
 
 UPDATING = "an update is being applied"
-# `0138` spec.md ## Answers, câu 1 (Jera's inference): once Apply is pressed, none of the
-# things an update still waits for may begin -- since `0131` a knowledge gather among them
-# (review round 1, F2).
+# Once Apply is pressed, none of the things an update still waits for may begin, a
+# knowledge gather among them.
 WAITING = "an update is waiting to be applied"
 WAITING_WARNING = "An update waits for an integration, a screenshot retake or a knowledge gather to finish."
 
@@ -85,13 +71,13 @@ class Refused(Exception):
 
 
 class NotHere(Refused):
-    """R2: this install is not the shape an update can be applied to."""
+    """This install is not the shape an update can be applied to."""
 
     status = 409
 
 
 class Updating(Refused):
-    """R11: the few seconds between the trial run and the exit."""
+    """The few seconds between the trial run and the exit."""
 
     status = 503
 
@@ -108,8 +94,7 @@ def _urlopen(url: str):
 def backup_db(src: Path, dst: Path) -> bool:
     """SQLite online backup of `src` into `dst`. `False` when there is no database yet.
 
-    `busy_timeout` is the first statement on both connections
-    (`.claude/rules/coscc-app.md`, "SQLite settings are ordered").
+    `busy_timeout` is the first statement on both connections.
     """
     if not src.is_file():
         return False
@@ -161,7 +146,7 @@ class Updater:
         self._thread: threading.Thread | None = None
         # Held by a check while it writes `release/` or `current/`, and by an apply from the
         # moment it reads them until it hands off: a wheel handed to `finish` is never
-        # replaced underneath it (review round 1, F3).
+        # replaced underneath it.
         self._fetch_lock = threading.Lock()
         if start:
             self.start()
@@ -180,8 +165,7 @@ class Updater:
         return shutil.which("node", path=self.config.path_env or None)
 
     def env(self, **extra: str) -> dict[str, str]:
-        """What every subprocess here gets: built from `Config`, never inherited, so a
-        trial run sees no `INVOCATION_ID` and no `COS_WORKING_DIR` (R12 step 2)."""
+        """What every subprocess here gets: built from `Config`, never inherited, so a trial run sees no `INVOCATION_ID` and no `COS_WORKING_DIR`."""
         uv_dir = str(Path(self.me().get("uv", "uv")).parent)
         path = os.pathsep.join(p for p in (uv_dir, self.config.path_env) if p)
         return {"PATH": path, "HOME": self.config.home, **extra}
@@ -231,13 +215,13 @@ class Updater:
 
     @staticmethod
     def _local_ready(found: dict[str, Any], me: dict[str, Any]) -> bool:
-        """R6: a different `(version, commit)`, and a public version not below the running one."""
+        """A different `(version, commit)`, and a public version not below the running one."""
         mine, theirs = update.public(me["version"]), update.public(found["version"])
         if not mine or not theirs or theirs < mine:
             return False
         return (found["version"], found.get("commit", "")) != (me["version"], me.get("commit", ""))
 
-    # -- R13: what happened last time ----------------------------------------
+    # -- what happened last time ---------------------------------------------
 
     def _report_last(self) -> None:
         last_path, reported = self.root / "last.json", self.root / "last-reported.json"
@@ -254,7 +238,7 @@ class Updater:
             self.last = shown
 
     def _promote(self, version: str) -> None:
-        """R13: the wheel just applied becomes `current/`, and its channel is emptied."""
+        """The wheel just applied becomes `current/`, and its channel is emptied."""
         for channel in CHANNELS:
             found = update.verified_wheel(self.root / channel)
             if found and found["version"] == version:
@@ -266,8 +250,7 @@ class Updater:
     # -- the run log ---------------------------------------------------------
 
     def _record(self, event: str, by: str, **extra: Any) -> None:
-        """One `update` row, workspace `""` like `setting`. No working folder, no row: the
-        log file and `last.json` still say what happened."""
+        """One `update` row, workspace `""` like `setting`. No working folder, no row: the log file and `last.json` still say what happened."""
         journal = self.service._journal()
         if journal is None:
             return
@@ -279,7 +262,7 @@ class Updater:
         except Exception:  # noqa: BLE001 - a busy log must not stop an update or a check
             pass
 
-    # -- Checker (R3 to R5) --------------------------------------------------
+    # -- Checker -------------------------------------------------------------
 
     def _check_loop(self) -> None:
         while not self._stop.is_set():
@@ -337,7 +320,7 @@ class Updater:
             self.release = before
 
     def _ensure_current(self) -> None:
-        """R5: a release keeps its own wheel in `current/`, so R12 has something to go back to.
+        """A release keeps its own wheel in `current/`, so an apply has something to go back to.
 
         The caller holds `_fetch_lock`.
         """
@@ -361,12 +344,9 @@ class Updater:
         return "+" not in version and update.public(version) is not None
 
     def rollback(self) -> str:
-        """`""` when R12 step 1 will find a way back, else the reason it will refuse.
+        """`""` when the apply will find a way back, else the reason it will refuse.
 
-        Step 1 fills an empty `current/` itself when the running version is a release, so
-        the Checker is not the only road there: with `COS_UPDATE_CHECK=0` or no `node` it
-        never runs (review round 1, F1). A local build running with no `current/` has no
-        road at all, and the panel says so instead of offering a press step 1 refuses.
+        The apply fills an empty `current/` itself when the running version is a release, so the Checker is not the only road there (it never runs with `COS_UPDATE_CHECK=0` or no `node`). A local build running with no `current/` has no road at all, and the panel says so instead of offering a press the apply refuses.
         """
         version = self.me()["version"]
         if self._refetchable(version) or self._current_matches():
@@ -378,12 +358,10 @@ class Updater:
         if channel.get("state") == "ready" and blocked:
             return {**channel, "state": "blocked", "reason": blocked}
         return dict(channel)
-    # -- what an update waits for (R8; `0138` R2, R3) --------------------------
+    # -- what an update waits for --------------------------------------------
 
     def waited(self) -> list[dict[str, Any]]:
-        """The only work an Apply waits for: a mechanical integration and a screenshot
-        retake (spec.md ## Answers, câu 1). Every agent session is paused instead, and a
-        local build cancelled."""
+        """The only work an Apply waits for: a mechanical integration and a screenshot retake. Every agent session is paused instead, and a local build cancelled."""
         return list(self.service._update_waited())
 
     def job_ended(self) -> None:
@@ -409,7 +387,7 @@ class Updater:
         if me["shape"] != "service":
             out["reason"] = f"{update.UNAVAILABLE}: {me['reason']}"
             return out
-        # R9's ten seconds, belt and braces: a job whose end was not told still clears here.
+        # Belt and braces: a job whose end was not told still clears here.
         self._maybe_apply()
         jobs = self.waited() if self.state == "pending" else []
         blocked = self.rollback()
@@ -433,22 +411,20 @@ class Updater:
             raise NotHere(f"{update.UNAVAILABLE}: {me['reason']}")
 
     def refuse_while_updating(self) -> None:
-        """R11. Called before a step, an integration, a chat turn or a build begins. Since
-        `0138` the window opens when the trial begins (R3)."""
+        """Called before a step, an integration, a chat turn or a build begins. The window opens when the trial begins."""
         if self.window:
             raise Updating(UPDATING)
 
     def refuse_mechanical_while_updating(self) -> None:
-        """`0138` R3. Called before a mechanical integration, a screenshot retake or a knowledge
-        gather: from the press of Apply on, none begins, so the wait it began cannot grow."""
+        """Called before a mechanical integration, a screenshot retake or a knowledge gather: from the press of Apply on, none begins, so the wait cannot grow."""
         self.refuse_while_updating()
         if self.state in ("pending", "applying"):
             raise Updating(WAITING)
 
-    # -- R7, R9; `0138` R1 ---------------------------------------------------
+    # -- apply ---------------------------------------------------------------
 
     async def apply(self, channel: str, by: str) -> dict[str, Any]:
-        """The one way to apply (`0138` R1): wait for what `waited` names, then go."""
+        """The one way to apply: wait for what `waited` names, then go."""
         self._require_service()
         self.refuse_while_updating()
         name = (by or "").strip()
@@ -492,7 +468,7 @@ class Updater:
         self.pending = None
         self._apply_task = asyncio.get_running_loop().create_task(self._apply(channel, by))
 
-    # -- R12 -----------------------------------------------------------------
+    # -- the hand-off --------------------------------------------------------
 
     def _fail(self, message: str, log: Path | None = None) -> None:
         self.state, self.window = "idle", False
@@ -521,34 +497,32 @@ class Updater:
             if current is None:
                 return self._fail("no way back: no current wheel matches the running version")
             # Step 2: a trial run, while this one keeps serving and its sessions keep running.
-            # `0138` R3: the window of R11 opens first, so no new session starts from here; a
-            # failed trial closes it again (`_fail`) and has touched no session.
+            # The refusal window opens first, so no new session starts from here; a failed
+            # trial closes it again (`_fail`) and has touched no session.
             self.window = True
             log.write_text(f"trial of {target['version']} from {channel}, pressed by {by}\n", encoding="utf-8")
             problem = await self._trial(target, log)
             if problem:
                 return self._fail(problem, log)
-            # Step 3: nothing this waits for began during the trial -- it was refused.
+            # Step 3: nothing this waits for began during the trial; it was refused.
             if self.waited():
                 self.state, self.window = "pending", False
                 self.pending = {"channel": channel, "by": by, "since": update.now(),
                                 "reason": "an integration, a retake or a knowledge gather began during the trial"}
                 self._record("pending", by, channel=channel, to=target["version"])
                 return
-            # `0138` R3: a local build is not a session, and is not taken up again.
+            # A local build is not a session, and is not taken up again.
             if self._build_task is not None and not self._build_task.done():
                 self._build_task.cancel()
                 self._record("cut", by, cut={"kind": "build", "started": self.local.get("started", "")},
                              stopped_by=by)
-            # `0138` R4-R6: every session paused, each with its `suspend` row, before the
-            # steps' tasks are cancelled below.
+            # Every session paused, each with its `suspend` row, before the steps' tasks are cancelled below.
             paused = True
             await self.service.suspend_sessions(by)
-            # Review round 2, F6: what had no session open to pause gets a bounded wait, and
-            # what outlives it is named before `shutdown` cancels it.
+            # What had no session open to pause gets a bounded wait, and what outlives it is named before `shutdown` cancels it.
             for job in await self.service.settle_after_suspend(SETTLE_WITHIN):
                 self._record("cut", by, cut=job, stopped_by=by)
-            # Step 4: the lifespan does not run on the real stack (`spike.md ## U5` part 2).
+            # Step 4: the lifespan does not run on the real stack.
             await self.service.shutdown()
             await self.service.sessions.close_all()
             # Step 5.
@@ -587,9 +561,7 @@ class Updater:
             await self._take_up_again()
 
     async def _take_up_again(self) -> None:
-        """`0138` review round 1, F3. Every session was paused and the hand-off then failed, so
-        this process goes on serving: it takes them up now, `_fail` having closed the window,
-        rather than leave their rows to whichever start comes next, over units that moved on."""
+        """Every session was paused and the hand-off then failed, so this process goes on serving: it takes them up now, `_fail` having closed the window, rather than leave their rows to whichever start comes next, over units that moved on."""
         try:
             await self.service.resume_after_update()
         except Exception as e:  # noqa: BLE001 - the panel says what went wrong
@@ -597,7 +569,7 @@ class Updater:
             self.error = {**(self.error or {}), "message": f"{(self.error or {}).get('message', '')}; {said}"}
 
     async def _trial(self, target: dict[str, Any], log: Path) -> str:
-        """R12 step 2. `""` when the new version installed, answered and was stopped."""
+        """`""` when the new version installed, answered and was stopped."""
         tmp = self.root / "tmp" / f"trial-{_stamp()}"
         tools, bin_dir, data = tmp / "tools", tmp / "bin", tmp / "data"
         proc = None
@@ -615,9 +587,8 @@ class Updater:
             if code != 0 or f"coscc {target['version']}" not in seen:
                 return f"the trial did not answer --version with {target['version']}"
             await asyncio.to_thread(backup_db, self.db, data / "cos.db")
-            # `0070` step 6. The copy of the database carries this machine's password; the
-            # trial clears it on the copy — never on `cos.db` — so it can set its own and
-            # log in the way a person would.
+            # The copy of the database carries this machine's password; the trial clears it on
+            # the copy, never on `cos.db`, so it can set its own and log in like a person.
             code = await self._run(
                 [str(bin_dir / "coscc"), "reset-password"], log, 30, COS_DATA_DIR=str(data)
             )
@@ -672,7 +643,7 @@ class Updater:
             out.write(f"[exit {code}]\n")
         return code
 
-    # -- LocalBuilder (R6) ---------------------------------------------------
+    # -- LocalBuilder --------------------------------------------------------
 
     def build_local(self, by: str) -> dict[str, Any]:
         self._require_service()
@@ -782,10 +753,9 @@ def _free_port() -> int:
 
 
 async def _copy_output(stream, log: Path, token: list[str]) -> None:
-    """The trial's output, line by line, into the update's log — minus the setup token.
+    """The trial's output, line by line, into the update's log, minus the setup token.
 
-    `0070` R4: the token lives in memory and in the process's own log, never in a file
-    this app writes. The line is kept, redacted, so the log still shows it was printed.
+    The token lives in memory and in the process's own log, never in a file this app writes. The line is kept, redacted, so the log still shows it was printed.
     """
     with open(log, "a", encoding="utf-8") as out:
         while True:
@@ -823,12 +793,7 @@ def _request(port: int, method: str, path: str, body: bytes | None = None,
 async def _healthy(port: int, within: float, token: Callable[[], str | None]) -> str:
     """`""` when the trial logged in like a person and served; else the step that failed.
 
-    Since `0070` a build that answers `/api/health` but breaks the login would lock the
-    owner out of an app with no board left to go back to, so the trial goes through the
-    door: health, a refusal without a cookie, `POST /setup` with the token it printed and
-    a password nobody keeps, then `/api/workspaces` and `/` with the cookie that gave.
-    The password and the cookie live in this call only. `POST /setup` is sent once: a
-    second would be refused, the password being set.
+    A build that answers `/api/health` but breaks the login would lock the owner out of an app with no board left to go back to, so the trial goes through the door: health, a refusal without a cookie, `POST /setup` with the token it printed and a password nobody keeps, then `/api/workspaces` and `/` with the cookie that gave. The password and the cookie live in this call only. `POST /setup` is sent once: a second would be refused, the password being set.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + within

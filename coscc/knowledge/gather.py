@@ -1,36 +1,26 @@
 """`coscc knowledge gather`: turns what earlier units measured into the knowledge store.
 
-`0090_agents-relearn-what-earlier-units-already-knew` R9-R14. `gather` is a command run by
-hand at a terminal: not a stage, unknown to `cos.mjs`, never called by the autopilot, and no
-route starts it. Since `0131` R1 there is one other caller: `gather_unit`, which the app runs
-by itself after a `ship` step ends `done`, for that unit alone (`coscc/service/knowledge.py`,
-the one service module that may import this one — `coscc/knowledge/cli_test.py` holds that).
-Each batch is one tool-less session under the grant `knowledge`, run through `precedent.ask`
-— the one way a tool-less session is run here — and whatever it says reaches the store only
-through `knowledge.validate` and `knowledge.save`.
+A command run by hand at a terminal: not a stage, never called by the autopilot, no route
+starts it. The one other caller is `gather_unit`, which the app runs after a `ship` step ends
+`done` (`coscc/service/knowledge.py`, the only service module that may import this one). Each
+batch is one tool-less session under the grant `knowledge`, run through `precedent.ask`, and
+whatever it says reaches the store only through `knowledge.validate` and `knowledge.save`.
 
-**It spends quota, and nobody knows how much before it runs** (`spec.md` C7). Without
-`--yes` it only says how many sources, how many batches and the most they may cost. The
-ceiling is checked by the CLI after the turn has run, so a session can pass it; the run as a
-whole is held to what it printed by what the sessions before cost (`0107` R7), so it can pass
-that figure by one session's excess.
+**It spends quota, and nobody knows how much before it runs.** Without `--yes` it only says
+how many sources, batches and the most they may cost. The ceiling is checked after each turn,
+so a session can pass it; the run is held to what it printed by what earlier sessions cost, so
+it can pass that figure by one session's excess. A reply the check refuses is sent back to be
+repaired, at most `REPAIRS` times; `--all` saves after every passing batch and records its
+progress in `PROGRESS`, so the next `--all` goes on from the failed batch.
 
-`0107`: a reply the check refuses is sent back to be repaired, at most `REPAIRS` times; and a
-`--all` saves the store after every batch that passes and records how far it got in
-`PROGRESS`, so the next `--all` goes on from the batch that failed instead of paying again
-for the ones before it.
+Sources are every `spec.md`, `plan.md`, `spike.md` and `review.md` under
+`<data>/units/<slot>/.cos/<unit>/`, every slot the app ever wrote, removed workspaces included.
+The text given to the session has its `## Answers` cut by `runner.strip_answers`, and is named
+by `<slot>/<unit>/<file>`, never by an absolute path.
 
-Sources (R10) are every `spec.md`, `plan.md` (since `0131` R3), `spike.md` and `review.md`
-under `<data>/units/<slot>/.cos/<unit>/`,
-every slot the app ever wrote, a workspace since removed from the list included. The text
-given to the session has its `## Answers` cut by `runner.strip_answers`, and is named by
-`<slot>/<unit>/<file>`, never by an absolute path.
-
-Since `0108`, what the session returns passes `admit.admit` after `validate`: the code writes
-each entry's date and version, drops what it cannot read back from the run log or git, and
-since `0131` keeps no unit the only source of more than two entries. A gather that can read
-neither is refused (R12). Every gather reads `Ref:` on an `origin/main` it has just fetched,
-and one whose fetch fails opens no session (`0131` R11).
+What the session returns passes `admit.admit` after `validate`. A gather that can read neither
+the run log nor git is refused. Every gather reads `Ref:` on an `origin/main` it has just
+fetched, and one whose fetch fails opens no session.
 """
 
 from __future__ import annotations
@@ -49,7 +39,7 @@ from coscc import knowledge, units
 from coscc.knowledge import admit
 from coscc.data import Data
 
-# R12. Bytes of sources per batch. Chosen, not measured: a batch this size and a full store
+# Bytes of sources per batch. Chosen, not measured: a batch this size and a full store
 # stay well under a model's context, and nobody has measured what a batch costs.
 BATCH_BYTES = 65536
 
@@ -57,25 +47,23 @@ MODES = ("new", "all", "unit")
 KIND = "knowledge"
 REBUILT = "rebuilt by gather --all"
 LOCK = ".lock"
-# `0107` spec Design 3: how far an unfinished `--all` got, beside the store.
+# How far an unfinished `--all` got, beside the store.
 PROGRESS = "gather-all.json"
 
-# `0107` R1. Repairs per batch, and how far under a limit the repair prompt aims. Both chosen;
-# `0107` `spike.md ## U1` tried them on 3 trials of one batch with no other workspace: every
-# trial was accepted within 2 repairs, and two accepted stores, at 7891 and 7730 bytes, landed
-# above the 7372 aimed at and under 8192 only because of the margin — so keep the margin.
+# Repairs per batch, and how far under a limit the repair prompt aims. Both chosen: accepted
+# stores landed above the aim and under the cap only because of the margin, so keep it.
 REPAIRS = 2
 MARGIN = 0.10
 
-# `0131` R4, the sentence `spike.md ## U1` tried, said to the session as it is.
+# Said to the session as it is.
 REWRITE_RULE = (
     "Rewrite the store, do not only add to it: merge entries on one subject into one more "
     "general statement, and one unit may not be the only source of more than 2 entries."
 )
-# `0131` R11. Seconds between two tries of a lock another gather holds.
+# Seconds between two tries of a lock another gather holds.
 LOCK_POLL = 1.0
 
-# `0108` R9, said to the session as they are.
+# Said to the session as they are.
 PROMPT_RULES = (
     "Prefer knowledge about tools and how to use a framework.",
     "Write a `workspace:` entry only for a pitfall the current code does not show. What the "
@@ -96,9 +84,8 @@ def digest(text: str) -> str:
 
 
 def sources(data_dir: str | os.PathLike[str] | None) -> list[dict[str, str]]:
-    """R10. `[{label, slot, unit, file, text, sha}]`, by slot, unit, file. `text` is the file
-    with its `## Answers` cut; `sha` is of that text, so an answer added later does not make
-    a source new again (R11)."""
+    """`[{label, slot, unit, file, text, sha}]`, by slot, unit, file. `text` is the file with its
+    `## Answers` cut; `sha` is of that text, so an added answer does not make a source new."""
     from coscc.runner import strip_answers
 
     root = Data(data_dir).root / units.UNITS_DIR
@@ -126,7 +113,7 @@ def sources(data_dir: str | os.PathLike[str] | None) -> list[dict[str, str]]:
 
 
 def load_manifest(path: Path) -> dict[str, str]:
-    """R11. `{label: sha}`; `{}` when there is none. A manifest that does not read is an
+    """`{label: sha}`; `{}` when there is none. A manifest that does not read is an
     error, not an empty one: reading it as empty would send every source again."""
     try:
         raw = path.read_text(encoding="utf-8")
@@ -166,7 +153,7 @@ def save_progress(path: Path, progress: dict[str, Any]) -> None:
 
 def batches(found: list[dict[str, str]], cap: int = BATCH_BYTES,
             dates: dict[str, dict[str, str]] | None = None) -> list[list[dict[str, str]]]:
-    """R12. By slot, then newest date first (`0108` R2), then `(unit, file)`, filled up to
+    """By slot, then newest date first, then `(unit, file)`, filled up to
     `cap` bytes; a source `dates` does not date goes last. A source over `cap` is a batch of
     its own and goes whole: cutting it would cut a measurement."""
     out: list[list[dict[str, str]]] = []
@@ -234,9 +221,8 @@ def _bytes(entries: list[dict[str, Any]]) -> int:
 
 def build_prompt(slot: str, max_id: int, current: str, batch: list[dict[str, str]],
                  dates: dict[str, dict[str, str]] | None = None) -> str:
-    """The session's whole input (spec Design 3): the grammar, the batch's workspace, the ids
-    it may take, the part of the store that workspace receives, and the sources by label,
-    each with the date the run log gives it (`0108` R2, R9)."""
+    """The session's whole input: the grammar, the batch's workspace, the ids it may take, the
+    part of the store that workspace receives, and the sources by label with their dates."""
     lines = [
         "You maintain a store of knowledge that earlier units of work measured, so the stages "
         "that plan the next unit do not measure it again. You have no tools and one turn; "
@@ -254,7 +240,7 @@ def build_prompt(slot: str, max_id: int, current: str, batch: list[dict[str, str
         "something different, and cite the newer source.",
         "- Keep only what a later unit could use to avoid measuring again. A finding that was "
         "fixed in the code is not knowledge unless the pitfall can recur.",
-        # `0107` R3: the size it starts from, measured as `validate` measures it.
+        # The size it starts from, measured as `validate` measures it.
         f"- The part of the store below is {len(current.encode('utf-8'))} bytes now; keep each "
         f"entry under {knowledge.ENTRY_BYTES} bytes, and the whole store you return under "
         f"{knowledge.CAP_BYTES} bytes.",
@@ -283,8 +269,8 @@ def build_prompt(slot: str, max_id: int, current: str, batch: list[dict[str, str
 def build_repair_prompt(slot: str, max_id: int, old_slice: str, store: str,
                         dropped: list[dict[str, Any]], reasons: list[str],
                         others: list[dict[str, Any]]) -> str:
-    """`0107` R2: a refused reply sent back with every reason, the bytes it holds and the
-    limits that bind it (spec Design 2). No source goes with it: the refused store already
+    """A refused reply sent back with every reason, the bytes it holds and the limits that
+    bind it. No source goes with it: the refused store already
     cites them, and its answer is checked against the batch's labels all the same."""
     kept = knowledge.parse(store)["entries"]
     tools = [e for e in kept if e["scope"].startswith("tool:")]
@@ -359,7 +345,7 @@ def _costs(end: dict[str, Any]) -> dict[str, Any]:
 
 class _Lock:
     """One gather at a time, per store. At a terminal a second is refused, never queued;
-    `wait` is the app's (`0131` R1): it tries again every `LOCK_POLL` seconds, on the event
+    `wait` is the app's: it tries again every `LOCK_POLL` seconds, on the event
     loop, so it blocks no thread and a cancel reaches it."""
 
     def __init__(self, directory: Path):
@@ -398,8 +384,8 @@ def read_store(directory: Path) -> tuple[str, dict[str, Any]]:
     """`(text, parsed)` of the store, `("", parse(""))` when there is none.
 
     A store holding a block `parse` skips is refused: every save renders only the entries it
-    read, so gathering over it would delete what a person wrote (R5), and delete it without
-    naming it in any `dropped` (R13)."""
+    read, so gathering over it would delete what a person wrote, and delete it without
+    naming it in any `dropped`."""
     try:
         text = knowledge.load(directory / knowledge.STORE)
     except FileNotFoundError:
@@ -417,7 +403,7 @@ def read_store(directory: Path) -> tuple[str, dict[str, Any]]:
             + " more than once; an id names one entry (R7) — renumber or merge them by hand first")
     if parsed["entries"] and not knowledge.has_header(text):
         # The header is the one record of ids given out and since dropped; without it a new
-        # entry could take one of them again (R7).
+        # entry could take one of them again.
         raise Refused(
             f"{directory / knowledge.STORE} holds entries but no `Version: … Max id: K<n>.` line, "
             "so the ids given out before cannot be known — put it back by hand first")
@@ -426,7 +412,7 @@ def read_store(directory: Path) -> tuple[str, dict[str, Any]]:
 
 def dropped_max(journal: Any) -> int:
     """The highest id a `done` knowledge row of the run log names as dropped, `0` for none;
-    since `0131` a `saved` one too, the one record of a gather after a ship.
+    a `saved` one too, the one record of a gather after a ship.
 
     A header edited below an id given out and since dropped cannot be caught from the store
     alone; this catches the ids a gather dropped. Rows under another `COS_WORKING_DIR` are
@@ -454,14 +440,14 @@ def plan_of(data_dir: str | os.PathLike[str] | None, mode: str, journal: Any = N
     and git. `store` is `read_store`'s, so it refuses what that refuses.
 
     With `journal`, a run log that cannot be read or a `git` that cannot be run is refused
-    here, before any session (`0108` R12): every entry of every batch would be dropped.
+    here, before any session: every entry of every batch would be dropped.
     `dates` covers every source, `every`, not only those sent.
 
-    While a `--all` is unfinished (`0107` R5, R11), `new` is refused, and `all` leaves out
+    While a `--all` is unfinished, `new` is refused, and `all` leaves out
     every source its progress record passed at the sha it has now; `ceiling_usd` is then that
-    of the batches left (R6).
+    of the batches left.
 
-    `unit` mode (`0131` R1, R3) takes `unit`'s `(slot, name)` sources alone, whether the
+    `unit` mode takes `unit`'s `(slot, name)` sources alone, whether the
     manifest has them or not, and is refused while a `--all` is unfinished, as `new` is."""
     from coscc.agent.policy import grant_for
 
@@ -514,7 +500,7 @@ def plan_of(data_dir: str | os.PathLike[str] | None, mode: str, journal: Any = N
 
 
 def _to_fetch(planned: dict[str, Any], slots: set[str], extra: dict[str, str] | None = None) -> dict[str, str]:
-    """`0131` R11. `{slot: path}` of every workspace whose `origin/main` a gather reads: the
+    """`{slot: path}` of every workspace whose `origin/main` a gather reads: the
     batches' own, and every one a `workspace:` entry of the store names, which `admit` checks
     too. A slot the run log gives no path is not fetched, and `admit` drops its entries."""
     paths = {**admit.workspaces(planned["end_rows"]), **(extra or {})}
@@ -570,7 +556,7 @@ class _Batches:
         # What every session of this batch reported, repairs included, for its "done" line.
         paid_batch, unpaid_batch = 0.0, 0
         for attempt in range(1, REPAIRS + 2):
-            # `0107` R7: no session opens that could take the run past what it printed.
+            # No session opens that could take the run past what it printed.
             if self.spent + grant.max_budget_usd > ceiling:
                 why = (f"no further session opened: ${self.spent:.2f} spent, and one more may cost "
                        f"${grant.max_budget_usd:.2f}, past the ${ceiling:.2f} printed")
@@ -595,7 +581,7 @@ class _Batches:
             new = knowledge.parse(store)["entries"] if not reason else []
             after, admitted = entries, []
             if not reason:
-                # Before `admit`, so an id it drops is never given out again (`0108` R8).
+                # Before `admit`, so an id it drops is never given out again.
                 header["max_id"] = max([header["max_id"]] + [e["id"] for e in new])
                 after, admitted = admit.admit(new, others, self.ctx)
             record({
@@ -610,7 +596,7 @@ class _Batches:
             if not reason:
                 break
             # Only a reply that read and was refused is repaired; a broken session or a
-            # reply with no JSON fails the batch as it did (`0107` spec Design 1).
+            # reply with no JSON fails the batch.
             if not reasons or attempt > REPAIRS:
                 say(f"batch {i}/{n} failed, nothing of it written{kept}: {reason}")
                 if not reason.startswith("the session") and reply:
@@ -634,14 +620,12 @@ async def gather(
 ) -> int:
     """Run every batch. `0` done (or nothing new), `1` a batch failed and says why, `2` refused.
 
-    `journal` gets one `kind='knowledge'` row per session that ran (R14, `0107` R8). Every
-    batch that passes is written as it passes, in both modes (`0107` R4). In `all` mode the
-    store is rebuilt from nothing, keeping `Max id` (R7); the progress record says which
-    sources passed, so a run that stops goes on from there when run again (`0107` R5), and
-    the manifest is replaced only when the last batch has passed (`0107` R10).
-    Its `dropped` holds what the session dropped and what `admit` dropped (`0108` R8).
+    `journal` gets one `kind='knowledge'` row per session that ran. Every batch that passes is
+    written as it passes, in both modes. In `all` mode the store is rebuilt from nothing,
+    keeping `Max id`; the progress record says which sources passed, so a run that stops goes
+    on from there, and the manifest is replaced only when the last batch has passed.
     `Ref:` is read on `origin/main`, fetched first; a fetch that fails is `1` before any
-    session (`0131` R11)."""
+    session."""
     if mode not in ("new", "all"):
         raise Refused("a terminal gathers `new` or `all`")
     directory = knowledge.path_of(data_dir)
@@ -656,7 +640,7 @@ async def gather(
         header = dict(before["header"])
 
         def finish(progress: dict[str, Any], version: int, count: int) -> int:
-            # `0107` R10. The manifest is every source of the rebuild, the runs before this one
+            # The manifest is every source of the rebuild, the runs before this one
             # included. Written before the record goes, so a process that dies between the
             # two finishes on the next run, spending nothing.
             knowledge.save(manifest_path, json.dumps(progress["done"], indent=2, sort_keys=True) + "\n")
@@ -679,11 +663,10 @@ async def gather(
             say(f"origin/main of {slot}: {sha[:12]}")
         manifest = load_manifest(manifest_path)
         # A header edited down by hand is not the highest id given out; new ids start above
-        # it, every id the store holds and every id a gather dropped (R7).
+        # it, every id the store holds and every id a gather dropped.
         header["max_id"] = max([header["max_id"], dropped_max(journal)] + [e["id"] for e in before["entries"]])
-        # A new `all` starts from nothing and keeps `Max id` (R7); `new`, and an `all` going
-        # on, from the store as it is. The entries it replaces are named once, with the
-        # first save of the rebuild (`0107` R9).
+        # A new `all` starts from nothing and keeps `Max id`; `new`, and an `all` going on,
+        # from the store as it is. The entries it replaces are named once, with the first save.
         fresh = mode == "all" and not resumed
         entries = [] if fresh else list(before["entries"])
         rebuilt = [{"id": f"K{e['id']}", "reason": REBUILT} for e in before["entries"]] if fresh else []
@@ -703,14 +686,14 @@ async def gather(
         for i, batch in enumerate(parts, 1):
             row = {"kind": KIND, "workspace": batch[0]["slot"], "mode": mode, "resumed": resumed,
                    "entries_before": len(before["entries"]) if rebuilt else len(entries), "origin_main": shas}
-            # Either mode has saved every batch before this one (`0107` review F2).
+            # Either mode has saved every batch before this one.
             kept = ", the batches before it are kept" if i > 1 else ""
             after, _, _ = await run.batch(i, len(parts), batch, entries, header, rebuilt, row, record, kept)
             if after is None:
                 return 1
             entries, rebuilt = after, []
             header = {**header, "version": header["version"] + 1, "gathered": _now()}
-            # The store before the record of it (`0107` spec Design 3): the other way round,
+            # The store before the record of it: the other way round,
             # a batch could be marked passed that the store does not hold.
             knowledge.save(store_path, knowledge.render(header, entries))
             if mode == "new":
@@ -737,14 +720,14 @@ async def gather_unit(
     workspace_path: str,
     say: Callable[[str], None] = print,
 ) -> dict[str, Any]:
-    """`0131` R1-R4, R7, R8, R11: gather `unit`'s own sources, once it has shipped, and return
+    """Gather `unit`'s own sources, once it has shipped, and return
     the one `knowledge` record it appended — `mode: unit`, whatever the outcome.
 
-    It waits for another gather to end rather than being refused (R1). It fetches
+    It waits for another gather to end rather than being refused. It fetches
     `origin/main` of `workspace_path` and of every workspace a `workspace:` entry names before
     any session, and opens none if a fetch fails (`refused`). The store is held in memory
     across every batch and written, with the manifest and `knowledge.HEALTH`, only once every
-    batch has passed, so a gather that fails leaves the store as it was, byte for byte (R8).
+    batch has passed, so a gather that fails leaves the store as it was, byte for byte.
     `saved`, `unchanged` (no source, or the same entries back), `refused` or `failed`. Raises
     nothing but a cancel."""
     directory = knowledge.path_of(data_dir)
@@ -808,7 +791,7 @@ async def _gather_unit(data_dir: str | os.PathLike[str] | None, journal: Any, se
             return {"outcome": "failed", "reason": why}
         entries = after
         dropped += gone
-    # Read before anything is written: a git that fails here fails the gather whole (R8).
+    # Read before anything is written: a git that fails here fails the gather whole.
     found = admit.health(entries, paths, ctx["git"])
     manifest = load_manifest(directory / knowledge.SOURCES)
     same = knowledge.entries_text(sorted(entries, key=lambda e: e["id"])) == knowledge.entries_text(

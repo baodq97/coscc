@@ -1,20 +1,10 @@
 """`coscc knowledge measure`: did the store make a unit take fewer turns?
 
-`0131_the-knowledge-store-goes-stale-after-one-gather` R20-R23, a holdout like `0123`'s: while
-`COS_KNOWLEDGE` is on every unit is in the `on` or the `off` arm (`knowledge.arm`), and every
-`start` it runs says which (`knowledge.TRIAL_FIELD`). `measure` compares the two arms over every
-stage, from the arm the records carry, never worked out again from a name. It replaces
-`0090`'s before-and-after against a baseline, which is gone with `baseline.json`.
-
-It reads `cos.db` with `sqlite3` in `mode=ro`, as `scripts/verify_0093.py` does, and imports
-nothing of the web app; the Knowledge page calls `measure` on the same rows, without the fetch
-`run_measure` makes first (R11). Run it at a terminal: inside a step `cos.db` is a tripwire
-(`.claude/rules/coscc-sessions.md`).
-
-The fields read here are the ones `coscc/runner/__init__.py` and `coscc/knowledge/gather.py` write, by the
-names in `coscc/knowledge/__init__.py`, `coscc/knowledge/efforttrial.py` and `coscc/knowledge/gather.py`:
-rename one there and this reads nothing, silently (`.claude/rules/coscc-data.md`), which
-`coscc/knowledge/measure_test.py` guards by writing its fixture through the same names.
+While `COS_KNOWLEDGE` is on every unit is in the `on` or `off` arm (`knowledge.arm`), and every
+`start` records which; this compares the arms over every stage from the recorded arm. Reads
+`cos.db` read-only and imports nothing of the web app; the Knowledge page calls `measure` on
+the same rows. Run it at a terminal: inside a step `cos.db` is a tripwire. The fields read here
+are written by other modules: rename one there and this reads nothing, silently.
 """
 
 from __future__ import annotations
@@ -31,8 +21,6 @@ from typing import Any, Callable
 from coscc import knowledge, units
 from coscc.knowledge import efforttrial, gather
 
-# `intent.md ## Answers`, câu 5 and 6: 10 units a side, 20% fewer turns, by 2026-10-16 read
-# in UTC, and no more cost, changes-requested rounds or red-CI returns.
 GROUP = 10
 TARGET = 0.20
 DEADLINE = "2026-10-16"
@@ -43,9 +31,9 @@ PASS, FAIL, SHORT = "đạt", "không đạt", "chưa đủ mẫu"
 CHANGES_REQUESTED = "changes-requested"
 KINDS = ("start", "end", gather.KIND)
 ARMS = (knowledge.ON, knowledge.OFF)
-# R21: the first two compared by median, the last two by mean.
+# The first two are compared by median, the last two by mean.
 METRICS = ("turns", "usd", "changes_requested", "ci_red")
-# R21, C4: the gathers whose cost is the `on` arm's.
+# The gathers whose cost is the `on` arm's.
 GATHER_MODES = ("unit", "new")
 
 
@@ -58,11 +46,10 @@ def _now() -> str:
 
 
 def read_rows(db: Path) -> list[dict[str, Any]]:
-    """Every `start`, `end` and `knowledge` record, oldest first, read-only. A row whose JSON
-    does not parse is skipped, as `Journal.records` skips it."""
+    """Every `start`, `end` and `knowledge` record, oldest first; unparseable rows are skipped."""
     conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
     try:
-        # First on the connection, as every connection here sets it (`coscc-app.md`).
+        # First on the connection.
         conn.execute("PRAGMA busy_timeout = 5000")
         found = conn.execute(
             f"SELECT id, record FROM runs WHERE kind IN ({','.join('?' * len(KINDS))}) ORDER BY id",
@@ -98,8 +85,7 @@ def slots(rows: list[dict[str, Any]]) -> list[str]:
 
 
 def choose(rows: list[dict[str, Any]], wanted: str | None) -> str:
-    """`--workspace`, or the one slot whose name is `coscc`; anything else is refused with
-    the slots there are."""
+    """`--workspace`, or the one slot named `coscc`; anything else is refused, listing the slots."""
     known = slots(rows)
     if wanted:
         if wanted not in known:
@@ -115,8 +101,8 @@ def choose(rows: list[dict[str, Any]], wanted: str | None) -> str:
 
 
 def units_of(rows: list[dict[str, Any]], slot: str) -> dict[str, dict[str, Any]]:
-    """`{unit: {starts, ends, plan_done_at}}` of one workspace. `plan_done_at` is the first
-    `end` of `plan` with outcome `done`."""
+    """`{unit: {starts, ends, plan_done_at}}` of one workspace; `plan_done_at` is the first
+    `end` of `plan` that is `done`."""
     of = _slot_of()
     out: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -156,7 +142,7 @@ def _shipped_at(unit: dict[str, Any]) -> str | None:
 
 
 def failed(unit: dict[str, Any]) -> list[int]:
-    """Every one of R20's three conditions `unit` fails, by number."""
+    """The numbers of the three inclusion conditions `unit` fails."""
     out = []
     arms = {arm_of(s) for s in unit["starts"]}
     if len(arms) != 1 or not arms <= set(ARMS):
@@ -170,7 +156,7 @@ def failed(unit: dict[str, Any]) -> list[int]:
 
 
 def metrics(unit: dict[str, Any]) -> dict[str, Any]:
-    """R21, over every stage."""
+    """Sums over every stage."""
     return {
         "turns": sum(e["turns"] for e in unit["ends"]),
         "usd": round(sum(float(e["cost_usd"]) for e in unit["ends"]), 6),
@@ -194,8 +180,8 @@ def _side(each: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 
 def measure(rows: list[dict[str, Any]], slot: str, today: str | None = None) -> dict[str, Any]:
-    """R20-R22 over one workspace's records, pure: what `run_measure` prints and the Knowledge
-    page shows, but for `origin_main` and `health`, which only the command reads."""
+    """The measure over one workspace's records, pure; `origin_main` and `health` are only read
+    by the command."""
     found = units_of(rows, slot)
     each: dict[str, dict[str, dict[str, Any]]] = {arm: {} for arm in ARMS}
     excluded = []
@@ -213,7 +199,7 @@ def measure(rows: list[dict[str, Any]], slot: str, today: str | None = None) -> 
         window += [min(str(s.get("at") or "") for s in unit["starts"]), str(_shipped_at(unit))]
     on, off = _side(each[knowledge.ON]), _side(each[knowledge.OFF])
 
-    # C4: what gathering cost while the counted units ran is the `on` arm's, per `on` unit.
+    # What gathering cost while the counted units ran is the `on` arm's, per `on` unit.
     begin, end = (min(window), max(window)) if window else ("", "")
     gathered = round(sum(
         float(r["cost_usd"]) for r in rows
@@ -233,8 +219,7 @@ def measure(rows: list[dict[str, Any]], slot: str, today: str | None = None) -> 
         verdict = PASS
     else:
         verdict = FAIL
-    # C1: how the effort trial's arms fall across these, worked out from the name, since that
-    # flag may be off and its field absent.
+    # The effort trial's arms are worked out from the name: that flag may be off, its field absent.
     crosstab = {arm: {e: 0 for e in (efforttrial.TRIAL_ARM, efforttrial.CONTROL_ARM)} for arm in ARMS}
     for arm in ARMS:
         for name in each[arm]:
@@ -268,9 +253,8 @@ def _db(data_dir: str | os.PathLike[str] | None) -> Path:
 
 def run_measure(data_dir: str | os.PathLike[str] | None, wanted: str | None,
                 say: Callable[[str], None] = print) -> int:
-    """R22. Fetches the workspace's `origin/main` first, checks the store on it and writes
-    `knowledge.HEALTH`, then prints the measure with both. A fetch that fails is `1`, and no
-    verdict is printed (R11)."""
+    """Fetch the workspace's `origin/main`, check the store on it, write `knowledge.HEALTH`, then
+    print the measure. A failed fetch is `1` and prints no verdict."""
     from coscc.knowledge import admit
 
     db = _db(data_dir)

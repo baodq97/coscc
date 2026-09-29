@@ -1,7 +1,4 @@
-"""Which model and effort each stage runs on, and the autopilot's settings.
-
-Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
-"""
+"""Which model and effort each stage runs on, and the autopilot's settings. A mixin with no fields."""
 
 from __future__ import annotations
 
@@ -23,12 +20,12 @@ from coscc.service.common import Invalid
 
 
 def _whole_at_least_one(value: Any) -> bool:
-    """`max_parallel`: an int, not a bool, 1 or more (`0043` R2)."""
+    """`max_parallel`: an int, not a bool, 1 or more."""
     return isinstance(value, int) and not isinstance(value, bool) and value >= 1
 
 
 def _positive_number(value: Any) -> bool:
-    """`daily_cap_usd`: a finite number above 0, not a bool (`0043` R2)."""
+    """`daily_cap_usd`: a finite number above 0, not a bool."""
     return (
         isinstance(value, (int, float)) and not isinstance(value, bool)
         and math.isfinite(value) and value > 0
@@ -37,11 +34,10 @@ def _positive_number(value: Any) -> bool:
 
 class ModelsMixin:
 
-    # -- which model each stage runs on --------------------------------------
-    #
-    # `0004_no-setting-says-which-model-runs-a-stage`. The resolving is `coscc/agent/models.py`;
-    # this is where its three inputs are gathered: the stage list from `cos.mjs`, the
-    # overrides from `prefs`, `COS_MODEL` from `Config`.
+# -- which model each stage runs on --------------------------------------
+#
+# The resolving is `coscc/agent/models.py`; this gathers its inputs: the stage list from
+# `cos.mjs`, the overrides from `prefs`, `COS_MODEL` from `Config`.
 
     def _model_overrides(self) -> tuple[dict[str, str], list[str]]:
         return models.overrides_from(Data(self.config.data_dir).pref_rows(models.PREFIX))
@@ -54,8 +50,6 @@ class ModelsMixin:
     def _model_for(self, name: str) -> tuple[str | None, str]:
         """`(model, source)` for chat, and for Gebo on `impl`'s base row. Never raises on bad data.
 
-        Takes no stage list: the caller has already checked `name` against `cos.mjs`
-        (`run_step` found the row), and resolving one row does not need the others.
         A board step goes through `_stage_config` instead, which also reads the label.
         """
         overrides, _ = self._model_overrides()
@@ -65,16 +59,15 @@ class ModelsMixin:
     def _stage_config(
         self, stage: str, stages: list[str], directory: Path, journal: Journal, key: str, unit: str
     ) -> dict[str, Any]:
-        """`0033`. The label a step runs under, the model and effort it resolves to, and
-        for `impl` which run of the unit's this is. Called after the gate, before any money
-        is spent. The label chooses a configuration and nothing else (spec R11).
+        """The label a step runs under, the model and effort it resolves to, and for `impl`
+        which run of the unit's this is. Called after the gate, before any money is spent.
+        The label chooses a configuration and nothing else.
 
         `Busy` from the run log is left to the caller, as `failed_attempts` is.
 
-        `0139` R16, R17. On a routine `impl`, with no flag, the unit's arm names the model
-        handed to `resolve`, and `trial_record` says which arm and what was asked for; the
-        model the session really ran is filled in once its `init` names it. Any other step
-        calls `resolve` as before and has no `trial_record` key.
+        On a routine `impl`, with no flag, the unit's arm names the model handed to `resolve`,
+        and `trial_record` says which arm and what was asked for; the model the session really
+        ran is filled in once its `init` names it. Any other step has no `trial_record` key.
         """
         try:
             plan_text: str | None = (Path(directory) / "plan.md").read_text(encoding="utf-8", errors="replace")
@@ -97,27 +90,24 @@ class ModelsMixin:
             "model": model, "model_source": model_source,
             "effort": effort, "effort_source": effort_source,
             "label_declared": label_declared, "label": label, "label_source": label_source,
-            # R10: every `start` of `impl` counts, the review-driven fixes included; the
-            # reading "before the first `pr`" is done from the log (spec Answers, câu 2).
+            # Every `start` of `impl` counts, the review-driven fixes included.
             "impl_run": (
                 sum(1 for r in history if r.get("kind") == "start") + 1 if stage == "impl" else None
             ),
         }
 
     async def _ci_red(self, cwd: str, unit: str, repo: str) -> bool | None:
-        """`0123` R7. Whether `cos.mjs next` sends `unit` back to `impl` because CI is red, read
-        with `autopilot.is_ci_red`; `None` when it could not be asked. Never raises: the answer
-        is recorded and refuses nothing."""
+        """Whether `cos.mjs next` sends `unit` back to `impl` because CI is red, read with
+        `autopilot.is_ci_red`; `None` when it could not be asked. Never raises."""
         try:
             found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit]))
             return autopilot.is_ci_red(found)
-        except Exception:  # noqa: BLE001 — R7, recorded as null
+        except Exception:  # noqa: BLE001 — recorded as null
             return None
 
     async def _findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, Any]:
-        """`0033` R10. The findings in the rounds a `review` step added, off the board —
-        `parseReview`'s count, read the way `_post_new_rounds` reads it. `0093` R9: and
-        those rounds' verdicts, each a string, for *Changes-requested rounds*."""
+        """The findings in the rounds a `review` step added, off the board (`parseReview`'s
+        count, read the way `_post_new_rounds` reads it), and those rounds' verdicts."""
         data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
         found = next((u for u in data["units"] if u["name"] == unit), None) or {}
         added = [r for r in found.get("rounds") or [] if r.get("n") not in before]
@@ -130,9 +120,8 @@ class ModelsMixin:
     async def stage_models(self) -> dict[str, Any]:
         """Every row Settings shows: stage, agents, model, effort, where each came from.
 
-        When `node` cannot run there is no stage list, and inventing one here would be the
-        second copy of the loop. So the table is empty and `problems` says why. `pr` and
-        `ship` run no session (`0139` R12), so they have no model to show.
+        When `node` cannot run there is no stage list (a second copy of the loop would be
+        wrong), so the table is empty and `problems` says why. `pr` and `ship` run no session.
         """
         try:
             stages = [s for s in await board_reader.stages() if s not in prmachine.STAGES]
@@ -177,13 +166,9 @@ class ModelsMixin:
     async def set_stage_model(self, name: Any, model: Any = None) -> dict[str, Any]:
         """Set one row's model, or remove the override when `model` is None.
 
-        **Behind the password like every route here** (`0070`): whoever holds it or a live
-        session can move `review` to a weaker model, or every stage to a dearer one. The one trace is the `setting`
-        record appended below, with the old and new value. It chooses a model and nothing
-        else: no gate reads it, and no stage starts because of it.
-
-        The model name is not checked against the API — an unknown one fails at the next
-        step of that stage, with the CLI's own error (spec Out of scope).
+        Behind the password like every route: whoever holds it can move `review` to a weaker
+        model. The one trace is the `setting` record, with the old and new value. No gate reads it.
+        An unknown model fails at the next step of that stage, with the CLI's own error.
         """
         name = await self._setting_row(name, allow_chat=True)
         if model is not None:
@@ -202,12 +187,11 @@ class ModelsMixin:
         return await self.stage_models()
 
     async def set_stage_effort(self, name: Any, effort: Any = None) -> dict[str, Any]:
-        """`0033` R9. Set one row's effort, or remove the override when `effort` is None.
+        """Set one row's effort, or remove the override when `effort` is None.
 
-        The same exposure as `set_stage_model`, and the `setting` record is the
-        trace. `max` is accepted here and only here — `models.json` may not ship it, so
-        every `max` run traces back to one of these records (spec R7, C8). `chat` has no
-        effort (spec Out of scope).
+        Same exposure and trace as `set_stage_model`. `max` is accepted here and only here
+        (`models.json` may not ship it), so every `max` run traces back to a `setting` record.
+        `chat` has no effort.
         """
         name = await self._setting_row(name, allow_chat=False)
         if effort is not None and effort not in models.EFFORTS:
@@ -223,11 +207,11 @@ class ModelsMixin:
         self._log_setting(key, old, effort)
         return await self.stage_models()
 
-    # -- the autopilot's settings (`0043` R1, R2) ----------------------------
-    #
-    # In the data root's `prefs`, not the workspace's repository. Three per workspace, keyed
-    # by the journal key; the cap is one for the whole app, since the quota is the machine's
-    # account (`intent.md ## Answers`, câu 9). Not in `PREFERENCES`: those are the page's.
+# -- the autopilot's settings ---------------------------------------------
+#
+# In the data root's `prefs`, not the workspace's repository. Three per workspace, keyed by
+# the journal key; the cap is one for the whole app, since the quota is the machine's account.
+# Not in `PREFERENCES`: those are the page's.
 
     AUTOPILOT_SETTINGS = ("autopilot", "autopilot_may_ship", "max_parallel", "daily_cap_usd")
     CAP_PREF = "autopilot_daily_cap_usd"
@@ -252,10 +236,10 @@ class ModelsMixin:
         }
 
     def _off_loopback(self) -> str:
-        """Why the autopilot may not run on this bind, or `""` (`spec.md ## Answers`, câu 3)."""
+        """Why the autopilot may not run on this bind, or `""`."""
         if self.config.host in LOOPBACK:
             return ""
-        # S3: no variable name here, the page shows it verbatim; `coscc-settings.md` names it.
+        # No variable name here: the page shows it verbatim.
         return f"The app listens on {self.config.host}, beyond this machine; restart it on 127.0.0.1 to use the autopilot."
 
     def autopilot_settings(self, cwd: str) -> dict[str, Any]:
@@ -268,11 +252,11 @@ class ModelsMixin:
         }
 
     def set_autopilot(self, cwd: str, name: Any, value: Any) -> dict[str, Any]:
-        """Set one of the four. A wrong value is refused and nothing is written (R2).
+        """Set one of the four. A wrong value is refused and nothing is written.
 
-        Behind the password like every route: whoever holds it or a live session can turn
-        the autopilot on, raise the cap, or let it ship. The trace is the `setting` record.
-        Turning it on is refused while the app listens beyond loopback.
+        Behind the password like every route: whoever holds it can turn the autopilot on,
+        raise the cap, or let it ship. The trace is the `setting` record. Turning it on is
+        refused while the app listens beyond loopback.
         """
         self._workspace_or_refuse(cwd)
         if name not in self.AUTOPILOT_SETTINGS:

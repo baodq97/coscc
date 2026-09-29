@@ -1,6 +1,6 @@
 """The workspaces the app serves: listing, adopting, labelling, removing and pulling one.
 
-Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+A mixin with no fields, inherited by `Service`.
 """
 
 from __future__ import annotations
@@ -24,8 +24,7 @@ class WorkspacesMixin:
     def workspaces(self) -> dict[str, Any]:
         """Both sources, with the count the app could not answer before the store existed.
 
-        `source` is carried per entry rather than merged away: an env workspace cannot be
-        renamed or removed from here, and a caller has to be able to tell.
+        `source` is carried per entry: an env workspace cannot be renamed or removed from here.
         """
         rows: list[dict[str, Any]] = []
         for path in self.config.workspaces:
@@ -54,7 +53,6 @@ class WorkspacesMixin:
             "working_dir": self.config.working_dir,
             "count": len(rows),
             "workspaces": rows,
-            # Kept so the original shape still reads: it only ever asked for paths.
             "paths": [r["path"] for r in rows],
         }
 
@@ -90,12 +88,7 @@ class WorkspacesMixin:
     ) -> dict[str, Any]:
         """Add by adopting a directory already under the root, or by cloning into it.
 
-        Both are `intent.md`'s scope line, where "thêm" and "clone" are separate entries.
-
-        Order matters and is the whole of `spec.md` R16: clone into a temp directory,
-        rename into place, and only then write the store. The worst state a failure can
-        leave is a temp directory nobody cleaned — never a listed workspace that does not
-        work.
+        Order matters: clone into a temp directory, rename into place, and only then write the store. The worst a failure leaves is a temp directory, never a listed workspace that does not work.
         """
         store = self._store_or_refuse()
         self._name_or_refuse(name)
@@ -131,7 +124,7 @@ class WorkspacesMixin:
         return self._row(entry.name, entry.label)
 
     def remove_workspace(self, name: str) -> dict[str, Any]:
-        """Drops the entry only. The directory stays — `spec.md` R18 and C6."""
+        """Drops the entry only. The directory stays."""
         store = self._store_or_refuse()
         self._name_or_refuse(name)
         try:
@@ -141,11 +134,9 @@ class WorkspacesMixin:
         return {"removed": name, "count": len(self.workspaces()["workspaces"])}
 
     async def pull_workspace(self, name: str) -> dict[str, Any]:
-        """Fast-forward only. A failure comes back with its output — `spec.md` R20.
+        """Fast-forward only. A failure comes back with its output.
 
-        Refused outright while a session is live here (`spec.md` R6). The refusal is an
-        `Invalid` like every other reason a pull fails, so it reaches the page through the
-        path R20 already built rather than through one of its own — R8.
+        Refused while a session is live here, as an `Invalid` like every other reason a pull fails.
         """
         store = self._store_or_refuse()
         self._name_or_refuse(name)
@@ -154,10 +145,9 @@ class WorkspacesMixin:
         target = store.path_of(name)
         if not target.is_dir():
             raise Invalid(f"workspace directory is missing: {target}")
-        # R6, and this has to come before `gitops`: a fast-forward rewrites files
-        # under a turn that is already reading them, and the turn cannot be told. The
-        # answer covers this process only (`spec.md` C2) — a second app holding a session
-        # here is not seen, and the pull will go ahead.
+        # This has to come before `gitops`: a fast-forward rewrites files under a turn that is
+        # already reading them. The answer covers this process only; a second app holding a
+        # session here is not seen.
         live = self.sessions.live_in(str(target))
         if live:
             raise Invalid(

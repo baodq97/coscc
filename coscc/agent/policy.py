@@ -1,26 +1,16 @@
 """What a step is allowed to do, keyed on the stage it runs.
 
-This is not a fifth knob. `Config` keeps meaning one thing — the app's default, which
-`coscc/config.py:44` states as *chat only, no tools at all* — and this table says what
-a **board step** may do instead. This table exists because that sentence in `config.py` was not
-true; making `Config` answer for two different things as well is how it would stop being
-true again.
+`Config` is the app's default (chat only, no tools); this table says what a board step may do
+instead.
 
-Three properties, each deliberate:
+- Deny by default: a stage this table does not name gets `Grant()`: no tools, one turn, no budget.
+- Pure: nothing here reads the environment, the store or a request.
+- The tools go with the stage, not the mode; the mode is recorded in the journal and decides
+  nothing here.
 
-- **Deny by default.** A stage this table does not name gets `Grant()`, which is no tools,
-  one turn and no budget. A stage invented tomorrow is therefore locked, not open.
-- **Pure.** Nothing here reads the environment, the store, or a request. There is no path
-  from HTTP to these values, the same way there is none to `COS_WORKING_DIR`.
-- **The tools go with the stage, not the mode.** Until `0020` `manual` carried nothing and
-  `autonomous` carried the grant. `0020` `spec.md` `## Answers`, answer 1, ended that: a
-  stage's tools follow from its task, in every mode. The mode is still recorded in the
-  journal; it decides nothing here.
-
-That measurement is why `Grant.tools` is not the whole enforcement. A list handed to
-the SDK covers the built-in set and nothing else — eleven MCP tools walked past `tools=[]`
-on this machine. So the grant also carries what `Runner` must refuse at the moment of use,
-and `can_use_tool` is where that happens.
+`Grant.tools` is not the whole enforcement: a list handed to the SDK covers the built-in set
+only and MCP tools walk past `tools=[]`. So the grant also carries what `Runner` must refuse
+at the moment of use, in `can_use_tool`.
 """
 
 from __future__ import annotations
@@ -30,14 +20,8 @@ from dataclasses import dataclass, field, replace
 
 from coscc.agent.labels import NOVEL
 
-# Stages whose artifact is prose. The app writes these from the text the session returns,
-# so the session itself needs no ability to write at all — see `plan.md` Risk 1 for why the
-# spec's design section is wrong about this, and why it is recorded there rather than
-# quietly fixed here.
-#
-# `ship` left this list in `0015`. It merges now — `pr` stops at an open pull request and
-# the merge waits for a review that passed — and a stage that runs `gh pr merge` is not
-# one whose artifact the app can write from a reply.
+# Stages whose artifact is prose. The app writes these from the text the session returns, so
+# the session needs no ability to write. `ship` is not one: it runs `gh pr merge`.
 PROSE_STAGES = ("idea", "intent", "spec", "plan", "review")
 
 
@@ -46,33 +30,27 @@ class Grant:
     """What one step may do. The default is the locked position."""
 
     tools: tuple[str, ...] = ()
-    # Commands the step may run, matched on the first word of the command line. Empty
-    # means none, which is the only safe default for a field like this.
+    # Commands the step may run, matched on the first word of the command line. Empty means none.
     commands: tuple[str, ...] = ()
-    # Chosen, not measured: they exist to turn a loop that will not end into a
-    # named failure, not to describe what a step ought to cost.
+    # Chosen, not measured: they turn a loop that will not end into a named failure.
     max_turns: int = 1
     max_budget_usd: float = 0.0
-    # Whether the app writes the artifact from the reply (prose stages) or the session
-    # writes it itself (stages that touch code).
+    # Whether the app writes the artifact from the reply (prose stages) or the session writes it
+    # itself (stages that touch code).
     app_writes_artifact: bool = True
-    # Shown on the page *before* the step is started. `spec.md` C4: a capability that comes
-    # from the machine's own configuration is exactly the kind that is invisible in an app,
-    # and this unit opens one on purpose — so it has to be said out loud where the button
-    # is, not only in a design document.
+    # Shown on the page before the step is started: a capability from the machine's own
+    # configuration is invisible in an app, so it is said where the button is.
     warning: str = ""
-    # Command prefixes refused even though their first word is allowed, each with the
-    # reason given. Matched on the leading tokens of a segment, so it catches the plain
-    # spelling and nothing cleverer — see `plan.md` Risk 5 of `0015`.
+    # Command prefixes refused even though their first word is allowed, each with the reason
+    # given. Matched on the leading tokens of a segment: the plain spelling and nothing cleverer.
     denied: tuple[tuple[tuple[str, ...], str], ...] = ()
-    # `0035` R6: every `git push` must carry `--force-with-lease` bound to the head the pull
-    # request had when the step began, and name the unit's own branch. The lease itself is
-    # not in the grant — it is per run — and reaches `decide` as `lease`.
+    # Every `git push` must carry `--force-with-lease` bound to the head the pull request had
+    # when the step began, and name the unit's own branch. The lease is per run, so it reaches
+    # `decide` as `lease`, not through the grant.
     push_needs_lease: bool = False
-    # `0136` R2. Whether the session is handed `submit` (`coscc/agent/submit.py`), the one
-    # tool beyond this grant's list `decide` lets through. It writes nothing and runs nothing,
-    # and is not in `tools`: `--tools` names the built-in set, and an SDK server's tool
-    # reaches the session without it (`0136 spike.md ## U1`).
+    # Whether the session is handed `submit` (`coscc/agent/submit.py`), the one tool beyond this
+    # grant's list `decide` lets through. It writes nothing and runs nothing, and is not in
+    # `tools`: `--tools` names the built-in set, and an SDK server's tool reaches the session anyway.
     submits: bool = False
 
     @property
@@ -80,16 +58,14 @@ class Grant:
         return bool(self.tools or self.commands)
 
 
-# Tools that only read. Safe for a step that has to understand a repository before changing
-# it, and listed separately so the write set is short enough to read in one go.
+# Tools that only read, listed separately so the write set is short.
 READ_TOOLS = ("Read", "Glob", "Grep")
-# `0136`. `coscc/agent/submit.py`'s `NAME`, spelled here so this module imports nothing of it.
+# `coscc/agent/submit.py`'s `NAME`, spelled here so this module imports nothing of it.
 SUBMIT_TOOL = "mcp__cos__submit"
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 EXEC_TOOLS = ("Bash",)
 # Hands work to one of `SUBAGENTS` inside the same session. Every tool call a helper makes
-# reaches the same `decide` and the same grant as the session's own (measured on SDK
-# 0.2.161, with a refusal that held), and its spend is in the session's cost.
+# reaches the same `decide` and grant as the session's own, and its spend is in the session's cost.
 AGENT_TOOL = "Agent"
 # Named helpers with a bounded report, so big reads and test output stay out of the main
 # context. `sessions._options` turns each into an `AgentDefinition`.
@@ -117,31 +93,27 @@ SUBAGENTS = {
 }
 
 # Commands `impl` may run, matched on the first word of every segment of the command line.
-# Deliberately short: this is the list that lets a step check its own work, not a shell.
+# Deliberately short: enough to check its own work, not a shell.
 IMPL_COMMANDS = (
     "git", "npm", "node", "uv", "python", "python3", "pytest",
     "ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "diff", "mkdir", "true",
     "echo", "printf", "test", "which", "pwd", "sort", "uniq",
 )
 
-# `0015`: a pull request is merged by `ship`, after a review that passed, and since `0139`
-# R12 only by the PR machine (`coscc/github/prmachine.py`): no session merges, and no stage
-# has a `pr` or `ship` grant any more.
+# No session merges: a pull request is merged only by the PR machine
+# (`coscc/github/prmachine.py`), and no stage has a `pr` or `ship` grant.
 #
-# Matched on the words left once flags are removed (`_words` below), so a `-R o/r` in front
-# does not walk past it. `gh alias set` is refused too: an alias a step defines is an alias
-# it can then run under another name.
+# Matched on the words left once flags are removed (`_words` below), so a `-R o/r` in front does
+# not walk past it. `gh alias set` is refused too: a defined alias can run under another name.
 MERGE_IS_SHIPS = (
     (("gh", "pr", "merge"), "merging is the ship stage's"),
     (("gh", "alias", "set"), "an alias is a merge under another name; merging is the ship stage's"),
 )
 
-# `0035`: Gebo, the integration step. Not a stage — it runs outside the loop, on a unit
-# between `pr` and `ship`, only when a person presses the button — but keyed in the same
-# table so it starts from the locked position like everything else.
-#
-# `impl`'s commands, because resolving a conflict means running the repository's tests
-# before pushing, plus `gh` to read the pull request and its CI.
+# Gebo, the integration step. Not a stage: it runs outside the loop, between `pr` and `ship`,
+# when a person presses the button, but is keyed in the same table so it starts locked.
+# `impl`'s commands (resolving a conflict means running the tests), plus `gh` to read the pull
+# request and its CI.
 INTEGRATE_COMMANDS = IMPL_COMMANDS + ("gh",)
 
 INTEGRATE_WARNING = (
@@ -151,16 +123,15 @@ INTEGRATE_WARNING = (
     "not a person's approval."
 )
 
-# R6: rebase only. `git merge` and `git pull` would bring `main` in by merging, and
-# `gh pr update-branch` would move the head on GitHub's side under the lease the push is
-# bound to — the push has exactly one road.
+# Rebase only. `git merge` and `git pull` would bring `main` in by merging, and
+# `gh pr update-branch` would move the head on GitHub's side under the lease: the push has
+# exactly one road.
 INTEGRATE_DENIED = MERGE_IS_SHIPS + (
     (("git", "merge"), "integration is by rebase, never by merge"),
     (("git", "pull"), "integration is by rebase, never by merge"),
     (("gh", "pr", "update-branch"), "the head the push is leased to would move under it"),
-    # `0035` review round 2, F4: roads to the branch that are not `git push` and so never
-    # meet the lease. `gh api` reaches `git/refs` with `force=true`; the pull request and
-    # its checks are read with `gh pr view` and `gh pr checks`, which stay open.
+    # Roads to the branch that are not `git push` and so never meet the lease: `gh api` reaches
+    # `git/refs` with `force=true`. `gh pr view` and `gh pr checks` stay open.
     (("gh", "api"), "it can move the branch on GitHub with no lease; read with `gh pr view` or `gh pr checks`"),
     (("gh", "repo", "sync"), "it can force the branch on GitHub with no lease"),
     (("gh", "extension"), "an extension is a command this grant cannot read"),
@@ -168,15 +139,15 @@ INTEGRATE_DENIED = MERGE_IS_SHIPS + (
     (("git", "http-push"), "it pushes without the lease; push only with `git push --force-with-lease`"),
 )
 
-# `0035` review round 2, F4: an alias or an included config file made during the step
-# renames `push` into a word `_may_be_push` never sees — `git -c alias.p=push p`, `git
-# config alias.p push`, or the same through `GIT_CONFIG_*`. Matched on the whole segment,
-# assignments included, so a commit message naming one is refused too, with this reason.
+# An alias or an included config file made during the step renames `push` into a word
+# `_may_be_push` never sees (`git -c alias.p=push p`, `git config alias.p push`, or the same
+# through `GIT_CONFIG_*`). Matched on the whole segment, assignments included, so a commit
+# message naming one is refused too, with this reason.
 _GIT_CONFIG_ROAD = re.compile(r"(?:^|[\s='\"])(?:alias|include|includeif)\.|\bGIT_CONFIG", re.IGNORECASE)
 
-# `0039`: ᛈ Perthro, the spike step. `impl`'s commands without `git`: `git -C <worktree>
-# commit` is the shortest road for throwaway code into the unit's branch (`spec.md ##
-# Answers, câu 2`). Everything else is kept, because measuring means running things.
+# ᛈ Perthro, the spike step. `impl`'s commands without `git`: `git -C <worktree> commit` is the
+# shortest road for throwaway code into the unit's branch. Everything else is kept, because
+# measuring means running things.
 SPIKE_COMMANDS = tuple(c for c in IMPL_COMMANDS if c != "git")
 
 SPIKE_WARNING = (
@@ -186,14 +157,14 @@ SPIKE_WARNING = (
     "fails the step, and is not undone. Anywhere else, `~` included, it is not seen."
 )
 
-# `0074` R19. Said on the Backlog panel above the button, before it is pressed.
+# Said on the Backlog panel above the button, before it is pressed.
 ESTIMATE_WARNING = (
     "Proposing estimates opens one paid session (1 turn, $2.00 ceiling) on the model of the "
     "Settings row `estimate`. Whoever holds the password or a live session can press it, and "
     "can rewrite any estimate, relation or the shortlist under any name they type."
 )
 
-# `0044`. Said wherever *Ask Jera* is explained in full; the page keeps one sentence
+# Said wherever *Ask Jera* is explained in full; the page keeps one sentence
 # (`service.CONSEQUENCE["precedent"]`).
 PRECEDENT_WARNING = (
     "Asking Jera opens one paid session (1 turn, a ceiling from $1.00 to $3.00, set by the "
@@ -203,31 +174,14 @@ PRECEDENT_WARNING = (
     "autopilot opens it with nobody pressing anything."
 )
 
-# Only stages that appear here get anything. The rest — `idea`, `intent`, and any
-# stage invented later — falls through to `Grant()`. Keyed by stage alone since `0020`:
-# the mode a step is started in is recorded, and grants nothing.
+# Only stages that appear here get anything. The rest (`idea`, `intent`, any stage invented
+# later) falls through to `Grant()`. Keyed by stage alone.
 GRANTS: dict[str, Grant] = {
-    # The one entry whose ceilings are measured rather than chosen. Four `impl` steps ran
-    # through the board on 2026-09-23 and three of them died at the turn ceiling:
-    #
-    #   0001, run 1   51/50 turns   $2.5317   exhausted, no impl.md
-    #   0001, run 2   51/50 turns   $1.7866   exhausted, no impl.md
-    #   0001, run 3   23/50 turns   $0.6611   done -- most of the work already existed
-    #   0016, run 1   51/50 turns   $2.4099   exhausted, no impl.md, nothing committed
-    #
-    # Fifty was never a measurement. It was picked to end a loop that would not end, and
-    # what it actually ended was three steps in the middle of working: the 0016 run left
-    # 580 uncommitted lines across 7 files and a board that said the stage had not started.
-    #
-    # The run that finished did so in 23 turns *because two exhausted runs had already
-    # done the work*, so it is not evidence that 23 is enough for a unit from cold. 120 is
-    # roughly twice the highest real attempt, and the budget goes with it -- at the
-    # measured $0.047/turn a 120-turn step lands near $5.6, so leaving the cap at $5 would
-    # only move the same premature stop from one ceiling to the other.
-    #
-    # This raises the ceiling. It does not fix what happens at it: a step that hits one
-    # still spends the money and leaves no record of what it did.
-    # `0019_a-failed-step-destroys-the-work-that-succeeded` is that, and it is the real fix.
+    # The one entry whose ceilings are measured rather than chosen. Fifty turns ended three of
+    # four `impl` steps mid-work (51/50 turns, $1.8-2.5, no `impl.md`); the one that finished did
+    # so because earlier runs had done the work. 120 is about twice the highest real attempt,
+    # and the budget goes with it: at the measured $0.047/turn a 120-turn step lands near $5.6,
+    # so a $5 cap would only move the same premature stop to the other ceiling.
     "impl": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS + (AGENT_TOOL,),
         commands=IMPL_COMMANDS,
@@ -235,61 +189,38 @@ GRANTS: dict[str, Grant] = {
         max_budget_usd=8.0,
         app_writes_artifact=False,
     ),
-    # `plan` reads, and only reads. `.claude/skills/write-plan/SKILL.md` has told this
-    # stage to open the files it is about to name since it was written -- *"Read the files
-    # the plan will touch before naming them"*, and invariant 1 requires every path under
-    # `## Files that change` to be verified before it is written down. This table gave it
-    # nothing, so a plan produced by the board named paths it had never seen.
-    #
-    # It went unnoticed until 2026-09-23 because until then every plan in this repository
-    # had been typed by hand, by a session that did have tools. The first plan actually run
-    # through the product is what found it.
-    #
-    # No write tools and no commands: the app still writes `plan.md` from the reply, which
-    # is what stops a plan from authoring itself, and `beyond_reading` below is what keeps
-    # that true if this entry is ever widened.
+    # `plan` reads, and only reads: `write-plan` requires every path under `## Files that change`
+    # to be verified before it is written down, and without read tools a plan names paths it
+    # never saw. No write tools and no commands: the app still writes `plan.md` from the reply,
+    # which stops a plan authoring itself, and `beyond_reading` keeps that true if this widens.
     "plan": Grant(
         tools=READ_TOOLS,
-        # Twenty was chosen, not measured, and on 2026-09-23 it cut a plan mid-read:
-        # `0021_review-findings-never-reach-the-pull-request` stopped at the ceiling after
-        # $1.0777 and returned nothing, because what it had to read had grown -- the gates,
-        # the runner and the service, plus everything `0015` added to all three. Earlier
-        # plans finished under the same ceiling.
-        #
-        # The `turns` the app records is not the counter `max_turns` stops on (plans that
-        # finished were recorded at 30 and 34), so there is no measured number to set this
-        # from. Forty doubles the ceiling that was hit; the budget moves with it so the
-        # other limit does not become the real one.
+        # Chosen, not measured: 20 cut a plan mid-read at the ceiling ($1.08, nothing returned)
+        # as what it had to read grew. The `turns` the app records is not the counter `max_turns`
+        # stops on, so there is no number to set this from. Forty doubles the ceiling that was
+        # hit; the budget moves with it so the other limit does not become the real one.
         max_turns=40,
         max_budget_usd=4.0,
     ),
-    # `spec` reads, and only reads, for the reason `plan` does. `write-spec` invariant 7
-    # requires every figure to name its source and every citation to carry a path and a
-    # line range, and until `0020` this table gave the stage no way to open a file. So it
-    # wrote from descriptions: `0016`'s R9 required a commit in the store, which has never
-    # been a git repository, and only `plan` — which could read — caught it.
-    #
-    # No write tools and no commands: the app still writes `spec.md` from the reply.
-    # Both ceilings are copied from `plan` above, not measured for `spec`.
+    # `spec` reads, and only reads, for the reason `plan` does: `write-spec` requires every
+    # figure to name its source and every citation a path and line range. No write tools and no
+    # commands; the app writes `spec.md` from the reply. Both ceilings are `plan`'s, not measured.
     "spec": Grant(
         tools=READ_TOOLS,
         max_turns=40,
         max_budget_usd=4.0,
     ),
-    # `0039`. The first grant that both holds commands and has the app write its artifact
-    # from the reply. `beyond_reading` guards only `PROSE_STAGES`, which this is not, so
-    # `policy_test` pins `git` out of `commands` instead (`spec.md` C2). Writing is held to
-    # the session's `cwd`, a throwaway directory `service.run_step` makes and removes; the
-    # worktree and the unit are read through `read_also`.
+    # The first grant that both holds commands and has the app write its artifact from the
+    # reply. `beyond_reading` guards only `PROSE_STAGES`, which this is not, so `policy_test`
+    # pins `git` out of `commands` instead. Writing is held to the session's `cwd`, a throwaway
+    # directory `service.run_step` makes and removes; the worktree and the unit are read
+    # through `read_also`.
     #
-    # `0080` R8. Ceilings chosen, not measured. The first ones were `spec`'s and `plan`'s,
-    # 40 turns / $4.0, and on 2026-09-24 and 2026-09-25 three spikes (`0070`, `0078`,
-    # `0053`) stopped at them without writing `spike.md`; spikes that finished were recorded
-    # at 36-44 turns (`0080` `intent.md ## Answers, câu 2`). The `turns` the app records is
-    # not the counter `max_turns` stops on (see `plan` above), so 80 doubles the ceiling
-    # that was hit, as `plan` went from 20 to 40. The seven runs that answer lists cost
-    # $0.032-0.055 a recorded turn ($1.33/41 to $2.03/37), so 80 turns would be about
-    # $2.6-4.4, and $4 would stop the dearer ones before the turn ceiling; $8.0 is `impl`'s.
+    # Ceilings chosen, not measured. Spikes that finished were recorded at 36-44 turns and 40
+    # turns / $4.0 stopped several before writing `spike.md`. The recorded `turns` is not the
+    # counter `max_turns` stops on (see `plan`), so 80 doubles the ceiling that was hit. Runs
+    # cost $0.032-0.055 a recorded turn, so 80 turns is about $2.6-4.4, and $4 would stop the
+    # dearer ones before the turn ceiling; $8.0 is `impl`'s.
     "spike": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=SPIKE_COMMANDS,
@@ -298,26 +229,22 @@ GRANTS: dict[str, Grant] = {
         app_writes_artifact=True,
         warning=SPIKE_WARNING,
     ),
-    # `0015`: a separate agent session reviews the open pull request, before the merge. It
-    # reads and only reads, like `plan`: the app still writes `review.md` from the reply.
-    # It cannot run `git diff`, so it sees the working tree and `impl.md`, not the diff —
-    # `0015` plan, Risk 3, and a later unit.
+    # A separate agent session reviews the open pull request, before the merge. It reads and
+    # only reads, like `plan`: the app still writes `review.md` from the reply. It cannot run
+    # `git diff`, so it sees the working tree and `impl.md`, not the diff.
     "review": Grant(
         tools=READ_TOOLS,
-        # `0085` R1. Chosen, not measured: 20/$2.0 was `plan`'s ceiling before it went to
-        # 40/$4.0, and five review sessions on 2026-09-25 stopped at it without writing a
-        # round (`0085` `intent.md ## Answers, câu 4`). A review that still stops at it
-        # gets one closing turn from the app (`runner.Runner.run`), which this budget does
-        # not bound: the CLI compares the session's whole cost, after the turn has run
-        # (`0085` `spike.md ## U2`, point 3).
+        # Chosen, not measured: 20/$2.0 stopped review sessions before they wrote a round. A
+        # review that still stops at it gets one closing turn from the app (`runner.Runner.run`),
+        # which this budget does not bound: the CLI compares the session's whole cost after the
+        # turn has run.
         max_turns=40,
         max_budget_usd=4.0,
     ),
-    # `0139` R12: no `pr` and no `ship` entry. Both are the PR machine's, with no session
+    # No `pr` and no `ship` entry: both are the PR machine's, with no session
     # (`coscc/github/prmachine.py`), so a step of either falls through to the locked `Grant()`.
-    # `0035`. Ceilings chosen, not measured: `spec.md ## Answers`, answer 1 — "start from
-    # impl's ceilings (120 turns, $8)", and lower them once real runs are recorded. No
-    # Gebo run existed when this was written.
+    # Gebo's ceilings are chosen, not measured: impl's (120 turns, $8), to lower once real runs
+    # are recorded.
     "integrate": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=INTEGRATE_COMMANDS,
@@ -328,95 +255,80 @@ GRANTS: dict[str, Grant] = {
         denied=INTEGRATE_DENIED,
         push_needs_lease=True,
     ),
-    # `0074`. Not a stage either: the backlog's *Propose estimates* button, one session per
-    # press. No tools and no commands, like `idea` and `intent`; since `0136` R9 it hands its
-    # estimate back through `submit` (`SUBMITTING_SESSIONS`), and the reply is not read.
-    # Ceilings chosen, not measured (`spec.md` C5): nobody has measured a prompt of ~70 units.
+    # Not a stage either: the backlog's *Propose estimates* button, one session per press. No
+    # tools and no commands, like `idea` and `intent`; it hands its estimate back through
+    # `submit` (`SUBMITTING_SESSIONS`) and the reply is not read. Ceilings chosen, not measured.
     "estimate": Grant(
         max_turns=1,
         max_budget_usd=2.0,
         warning=ESTIMATE_WARNING,
     ),
-    # `0044`. Jera, not a stage either: *Ask Jera* on a unit's Questions tab, or the autopilot
-    # (`0101` R1), one session each. No tools, no commands; since `0136` R8 it hands its
-    # verdicts back through `submit` (`SUBMITTING_SESSIONS`), and the app writes what survives
-    # its filter (`coscc/agent/precedent.py`). Since `0101` R5 the
-    # $1.00 here is only the floor: each session runs on `precedent.grant_for_prompt`, whose
-    # ceiling grows with the prompt up to `PRECEDENT_MAX_USD`.
+    # Jera, not a stage either: *Ask Jera* on a unit's Questions tab, or the autopilot, one
+    # session each. No tools, no commands; it hands its verdicts back through `submit`
+    # (`SUBMITTING_SESSIONS`) and the app writes what survives its filter
+    # (`coscc/agent/precedent.py`). The $1.00 here is only the floor: each session runs on
+    # `precedent.grant_for_prompt`, whose ceiling grows with the prompt up to `PRECEDENT_MAX_USD`.
     "precedent": Grant(
         max_turns=1,
         max_budget_usd=1.0,
         warning=PRECEDENT_WARNING,
     ),
-    # `0090`. Not a stage either: one batch of a gather — `coscc knowledge gather` at a
-    # terminal, or since `0131` R1 the one the app starts after a `ship` ends `done`; no route,
-    # button or autopilot pass starts one. No tools, no commands, one turn; the app checks the
-    # reply and writes the store (`coscc/knowledge/gather.py`).
-    # $2.00 is chosen, not measured: nobody has measured a batch of 64 KiB of sources, and
-    # the CLI checks it after the turn has run (`0085` `spike.md ## U2`), so a batch can pass it.
+    # Not a stage either: one batch of a gather, started by `coscc knowledge gather` at a
+    # terminal or by the app after a `ship` ends `done`. No tools, no commands, one turn; the
+    # app checks the reply and writes the store (`coscc/knowledge/gather.py`). $2.00 is chosen,
+    # not measured; the CLI checks it after the turn has run, so a batch can pass it.
     "knowledge": Grant(
         max_turns=1,
         max_budget_usd=2.0,
     ),
 }
 
-# `0090` spec, *Design*: no screen changes. The grants no board step runs under, which
-# `Service.settings` leaves off the page's list of what the board's steps may use. `0131`
-# Design 1 keeps `knowledge` here though the app now gathers too: it is still no step's grant.
+# The grants no board step runs under, which `Service.settings` leaves off the page's list of
+# what the board's steps may use. `knowledge` stays here though the app now gathers too.
 TERMINAL_ONLY = frozenset({"knowledge"})
 
-# `0062`. The ceilings a step gets when its plan's label is `novel` (`coscc/agent/labels.py`),
-# as `(max_turns, max_budget_usd)`; everything else about the grant stays the stage's own.
-# A stage not named here runs the same grant whatever its label.
+# The ceilings a step gets when its plan's label is `novel` (`coscc/agent/labels.py`), as
+# `(max_turns, max_budget_usd)`; everything else about the grant stays the stage's own. A stage
+# not named here runs the same grant whatever its label.
 #
-# 250 is chosen, not measured (`0062` spec C1): `intent.md ## Answers, câu 1` — "Đề xuất
-# novel: max_turns 250, ngân sách tương ứng ×2 impl thường" — read as 2 × $8.0 (spec C5).
-# `spike.md ## U1` measured the dearest turn at $0.0419 across the `novel` runs (250 turns
-# → $10.48) and $0.0568 across all 60 `impl` runs (→ $14.21), so $16 leaves a thin margin,
-# and nothing between 181 and 250 turns has ever been measured. A `novel` impl that stops
-# on the budget instead is not escalated and not counted by the intent's outcome.
+# 250 is chosen, not measured, and $16 is 2 x $8.0. The dearest turn measured $0.0419 across
+# `novel` runs (250 turns, $10.48) and $0.0568 across all `impl` runs ($14.21), so $16 leaves a
+# thin margin. A `novel` impl that stops on the budget is not escalated.
 NOVEL_CEILINGS: dict[str, tuple[int, float]] = {
     "impl": (250, 16.0),
 }
 
 
 def beyond_reading(grant: Grant) -> tuple[str, ...]:
-    """What a grant carries that a prose stage may not — which is anything beyond reading.
+    """What a grant carries that a prose stage may not: anything beyond reading.
 
-    A prose stage is one whose artifact **the app** writes from the reply. That is the
-    property worth defending: a step holding write tools could write its own artifact
-    behind the app's back, and a step holding commands is not a prose stage at all.
-    Reading is neither of those, and `plan` was required to read long before it was
-    allowed to.
-
-    So the guard in `coscc/runner/__init__.py` asks this rather than asking whether the grant is
-    empty. The old question — empty or not — read as *no tools* and meant *no capability*;
-    the two stopped being the same thing on 2026-09-23.
+    A prose stage's artifact is written by **the app** from the reply. A step holding write
+    tools could write its own artifact behind the app's back, and one holding commands is not
+    a prose stage at all; reading is neither. The guard in `coscc/runner/__init__.py` asks
+    this rather than whether the grant is empty ("no tools" is not "no capability").
     """
     return tuple(t for t in grant.tools if t not in READ_TOOLS) + tuple(grant.commands)
 
 
-# `0136` R2, R4, R5. The stages whose run hands back an object through `submit`: a stage
-# result, or `review`'s round. `coscc/agent/submit.py` holds the same stages as
-# `STAGE_RESULT` and `ROUND`; `policy_test` pins the two.
-# A set, not the loop's order: that is `cos.mjs`'s alone (`autopilot_test`, `0115` R4).
+# The stages whose run hands back an object through `submit`: a stage result, or `review`'s
+# round. `coscc/agent/submit.py` holds the same stages as `STAGE_RESULT` and `ROUND`;
+# `policy_test` pins the two. A set, not the loop's order: that is `cos.mjs`'s alone.
 SUBMITTING = ("idea", "impl", "intent", "plan", "review", "spec", "spike")
-# The fewest turns such a step gets: `idea` and `intent` had one, and a call to `submit` ends
-# a turn. Chosen, not measured, from `0136 spike.md ## U2`: a refused object was submitted
-# again after one more turn, so four holds a call, a refusal, a second call and the reply.
+# The fewest turns such a step gets: a call to `submit` ends a turn, and a refused object is
+# submitted again after one more turn, so four holds a call, a refusal, a second call and the
+# reply. Chosen, not measured.
 SUBMIT_TURNS = 4
-# `0136` R7, R8, R9. The sessions that are no stage and hand back an object through `submit`:
-# Gebo, the estimate and Jera, `coscc/agent/submit.py`'s `SESSIONS`. `knowledge` is not one:
-# its reply drives no transition (`0136` spec, `## Out of scope`).
+# The sessions that are no stage and hand back an object through `submit`: Gebo, the estimate
+# and Jera, `coscc/agent/submit.py`'s `SESSIONS`. `knowledge` is not one: its reply drives no
+# transition.
 SUBMITTING_SESSIONS = ("estimate", "integrate", "precedent")
 
 
 def grant_for(stage: str) -> Grant:
     """The grant for one step. A stage the table does not name is locked, not open.
 
-    No mode: `0020` `spec.md` `## Answers`, answer 1 — the tools go with the stage's task.
-    `0136`: a stage in `SUBMITTING` or a session in `SUBMITTING_SESSIONS` gets `submits`, and
-    at least `SUBMIT_TURNS` turns.
+    A stage in `SUBMITTING` or a session in `SUBMITTING_SESSIONS` gets `submits`, and at least
+    `SUBMIT_TURNS` turns.
     """
     grant = GRANTS.get(stage, Grant())
     if stage not in SUBMITTING + SUBMITTING_SESSIONS:
@@ -443,27 +355,21 @@ def is_prose_stage(stage: str) -> bool:
 
 # --- deciding one call -------------------------------------------------------
 #
-# Measured: the list handed to the SDK is not enough on its own. Eleven MCP tools
-# arrived at a session created with `tools=[]`, because `--tools` names the built-in set and
-# nothing else. A callback sits on the path every call takes, whatever declared it.
+# The list handed to the SDK is not enough on its own: `--tools` names the built-in set only,
+# and MCP tools reach a `tools=[]` session. A callback sits on the path every call takes.
 
-# `0130`. A step's session is closed once its turn ends, so a command left running in the
-# background is one nobody reads the end of. The words are the ones `0130 spike.md ## U1`
-# refused with, after which the model ran the command again in the foreground, same turn.
+# A step's session is closed once its turn ends, so a command left running in the background is
+# one nobody reads the end of. The words are the ones the model was refused with, after which
+# it ran the command again in the foreground, same turn.
 BACKGROUND_REFUSAL = (
     "this session ends when your turn ends and nothing wakes it when a background command "
     "finishes; run the command in the foreground"
 )
 
-# `0060`: the line is read the way bash reads it, not split as raw text. Until then `;`, `|`
-# and `&&` were split on wherever they stood, quotes and heredoc bodies included, and
-# `$(`, `` ` `` and `${` were refused wherever they stood, single quotes included. The
-# originator counted 165 refusals naming a "command" that was only a fragment of text, on
-# 2026-09-23..24 (`0060 intent.md ## Problem`; the transcripts are not in this repository).
-#
-# Bash's own rules, copied: `0060 spike.md ## U2` measured that a board step's `Bash` runs
-# `bash -c "… eval '<command>'"`, bash 5.3, `extglob` off. Anything this reader is not sure
-# of is `_Unreadable`, and an unreadable line is refused, never guessed (`0060` R6).
+# The line is read the way bash reads it, not split as raw text (`;`, `|` and `&&` inside quotes
+# or heredoc bodies, and `$(` inside single quotes, must not count). Bash's own rules, copied: a
+# board step's `Bash` runs `bash -c "... eval '<command>'"`, bash 5.3, `extglob` off. Anything
+# this reader is not sure of is `_Unreadable`, and an unreadable line is refused, never guessed.
 
 
 @dataclass(frozen=True)
@@ -495,7 +401,7 @@ class _Parsed:
     commands: tuple[_Simple, ...]
     # Every substitution in effect, as `(token, at)`: `$(`, `` ` ``, `<(`, `>(`, `$((`.
     substitutions: tuple[tuple[str, int], ...]
-    # `0130` R2. Where each lone `&` stands: a command it ends runs in the background.
+    # Where each lone `&` stands: a command it ends runs in the background.
     background: tuple[int, ...] = ()
 
 
@@ -1001,7 +907,7 @@ _PUSH_WIDE = frozenset({"--all", "--mirror", "--tags", "--delete", "-d", "--prun
 
 
 def check_push(words: list[str], branch: str, lease_head: str) -> str:
-    """"" if `git push <words>` is the one push `0035` R6 allows, else why not.
+    """"" if `git push <words>` is the one push allowed, else why not.
 
     `words` are the tokens after `push`. The one allowed shape is `origin <branch>` or
     `origin HEAD:<branch>`, carrying exactly one `--force-with-lease=<branch>:<lease_head>`
@@ -1038,17 +944,16 @@ def check_push(words: list[str], branch: str, lease_head: str) -> str:
 def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = None, unit: str = "") -> str:
     """"" if the command may run, else why not.
 
-    **This is a best-effort reading of a shell command, and it is the weakest guard here.**
-    `plan.md` Risk 3 says so: a first-word allowlist does not bound what `git` or `npm` can
-    be told to do, and it cannot. What actually bounds the step is that the session runs
-    with `cwd` set to the workspace and that writes are checked against it. Treat this as
-    the thing that turns obvious mistakes into refusals, not as a sandbox.
+    **A best-effort reading of a shell command, and the weakest guard here**: a first-word
+    allowlist does not bound what `git` or `npm` can be told to do. What bounds the step is that
+    the session runs with `cwd` set to the workspace and writes are checked against it. Treat
+    this as turning obvious mistakes into refusals, not as a sandbox.
 
-    Since `0060` the line is read as bash reads it (`_read`), and checked in this order: a
-    line that cannot be read, a lone `&` (`0130`), a substitution in effect, a redirect that
-    writes, then every simple command. `unit` is the step's own unit, `NNNN_<slug>`: a redirect may write under
-    a `/tmp` directory naming it (`_redirect_refused`). **That write is outside the write
-    boundary `decide` keeps**, and nothing creates or removes the directory.
+    The line is read as bash reads it (`_read`) and checked in this order: a line that cannot
+    be read, a lone `&`, a substitution in effect, a redirect that writes, then every simple
+    command. `unit` is the step's own unit, `NNNN_<slug>`: a redirect may write under a `/tmp`
+    directory naming it (`_redirect_refused`). **That write is outside the write boundary
+    `decide` keeps**, and nothing creates or removes the directory.
     """
     text = (command or "").strip()
     if not text:
@@ -1060,7 +965,7 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
             f"at character {parsed.at + 1}; nothing was guessed"
         )
     if parsed.background:
-        # `0130` R2. `&&`, `&>`, `&>>`, `>&`, `<&` and `|&` are read elsewhere and never land here.
+        # `&&`, `&>`, `&>>`, `>&`, `<&` and `|&` are read elsewhere and never land here.
         return f"`&` at character {parsed.background[0] + 1} runs a command in the background: {BACKGROUND_REFUSAL}"
     if parsed.substitutions:
         # With substitution in play the first word no longer says what runs.
@@ -1092,20 +997,19 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
         k += 1
     word = all_words[k]
     if _ASSIGNMENT.match(word):
-        # Still refused, as before `0060` — but by what it is. Named by the last `/` of its
-        # value it read `this step may not run 'coscc-fb0599d12eeb'` for `S=/home/…/coscc-
-        # fb0599d12eeb`, a name that is no command at all (R6).
+        # Refused by what it is: named by the last `/` of its value it would read `this step may
+        # not run 'coscc-fb0599d12eeb'` for `S=/home/.../coscc-fb0599d12eeb`, which is no command.
         name = _ASSIGNMENT.match(word).group(0)
         return f"a command that only assigns ({name}…) is not allowed: this step runs only the commands it names"
     if simple.expanded[k]:
-        # `0060` R4: what runs is whatever the variable holds, which this reader cannot know.
+        # What runs is whatever the variable holds, which this reader cannot know.
         return f"the command's name is a variable ({word}): this step runs only names it can read"
     base = word.rsplit("/", 1)[-1]
     if base not in grant.commands:
         return f"this step may not run {base!r}"
     if base in ("git", "gh") and (grant.denied or grant.push_needs_lease):
-        # `0060` R4: `gh $P merge` is `gh pr merge` once `P=pr`. Refused by the variable's
-        # name, since the value is not known here.
+        # `gh $P merge` is `gh pr merge` once `P=pr`. Refused by the variable's name, since the
+        # value is not known here.
         for other, expanded in zip(all_words, simple.expanded):
             if expanded:
                 return f"this step may not pass {other} to {base}: a variable can hide a refused word"
@@ -1117,16 +1021,16 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
     if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
         # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
         return "this step may not call the merge endpoint: merging is the ship stage's"
-    # Read on the text as written, quotes kept, as before `0060` — and on the words with
-    # their quotes removed too, so `al\ias.p` or `$'\x61lias.p'` is not a way round it.
+    # Read on the text as written, quotes kept, and on the words with their quotes removed too,
+    # so `al\ias.p` or `$'\x61lias.p'` is not a way round it.
     config_road = bool(_GIT_CONFIG_ROAD.search(simple.source)) or any(
         _GIT_CONFIG_ROAD.search(" " + t) for t in all_words
     )
     if base == "git" and grant.push_needs_lease and config_road:
         return "this step may not define a git alias, an include or GIT_CONFIG_*: it can rename `push` past the lease"
     if base == "git" and grant.push_needs_lease and _may_be_push(raw):
-        # `0035` R6. `push` must be the first word after `git`, so a `-C dir` or
-        # `-c k=v` in front cannot hide what it pushes.
+        # `push` must be the first word after `git`, so a `-C dir` or `-c k=v` in front cannot
+        # hide what it pushes.
         if raw[0] != "push":
             return "a push must be spelled `git push …`, with nothing between"
         branch, head = lease if lease else ("", "")
@@ -1136,18 +1040,14 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
     return ""
 
 
-# Redirection into a file, which is a write that no write-tool check would ever see.
-# Measured on 2026-09-22: a real `impl` step was refused four times, and one of those was `Write` aimed at the working
-# folder above the workspace — so the boundary matters and a shell that can reach past it
-# matters just as much. A redirect writes a file without any write tool being called, so
-# the path check in `decide` never sees it; the step has `Write` and `Edit` for files.
+# Redirection into a file, which is a write that no write-tool check would ever see: a redirect
+# writes a file without any write tool being called, so the path check in `decide` never sees it.
 #
-# `0060` `intent.md ## Answers, câu 3` names what is safe: "`> /dev/null`, `2>&1`, và ghi
-# vào thư mục tạm riêng của bước (dưới /tmp, tên có unit). Ghi vào file trong worktree vẫn
-# bị chặn — phải dùng công cụ Write/Edit."
+# Safe: `> /dev/null`, `2>&1`, and writes to the step's own temp directory (under /tmp, its name
+# carrying the unit). Writing a file in the worktree stays refused: use Write/Edit.
 _READ_REDIRECTS = frozenset({"<", "<<", "<<-", "<<<", "<&"})
 _DESCRIPTOR = re.compile(r"\d*-?")
-# Copied from `coscc/units/__init__.py:53`, not imported: this module depends on no other of the app's.
+# Copied from `coscc/units/__init__.py:53`, not imported: this module depends on no other of the app.
 _UNIT_NAME = re.compile(r"\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
@@ -1176,12 +1076,12 @@ def _redirect_refused(redirect: _Redirect, unit: str) -> str:
 
 
 def _in_step_tmp(redirect: _Redirect, unit: str) -> bool:
-    """Whether the target, symlinks resolved now, lies below a directory directly under
-    `/tmp` whose name carries `unit`, and is not that directory itself.
+    """Whether the target, symlinks resolved now, lies below a directory directly under `/tmp`
+    whose name carries `unit`, and is not that directory itself.
 
-    Resolved when `decide` runs, not when bash opens the file: a directory swapped for a
-    symlink in between is not seen (`0060 plan.md` Risk 2). `/tmp` is shared, so anyone can
-    make a directory carrying a unit's name before the step does (`0060 spec.md` C1).
+    Resolved when `decide` runs, not when bash opens the file: a directory swapped for a symlink
+    in between is not seen. `/tmp` is shared, so anyone can make a directory carrying a unit's
+    name before the step does.
     """
     from pathlib import Path
 
@@ -1198,22 +1098,23 @@ def _in_step_tmp(redirect: _Redirect, unit: str) -> bool:
     return len(rel.parts) >= 2 and unit in rel.parts[0]
 
 
-# Flags `gh` reads a value after, anywhere on the line. Their values are dropped with them,
-# so `gh -R o/r pr merge` and `gh pr --repo o/r merge` read as `gh pr merge` (`0015` review
-# round 1, F1). Every other `-x` / `--x` / `--x=v` is dropped alone.
+# Flags `gh` reads a value after, anywhere on the line. Their values are dropped with them, so
+# `gh -R o/r pr merge` and `gh pr --repo o/r merge` read as `gh pr merge`. Every other `-x` /
+# `--x` / `--x=v` is dropped alone.
+#
 _GH_VALUE_FLAGS = frozenset({"-R", "--repo", "--hostname"})
 # The same for `git`, in front of the subcommand: `git -C . rebase main` must read as
-# `git rebase main` (`0041` R3). Only the two git itself reads a separate value after.
+# `git rebase main`. Only the two git itself reads a separate value after.
 _GIT_VALUE_FLAGS = frozenset({"-C", "-c"})
 _MERGE_ENDPOINT = re.compile(r"pulls/[^/\s]+/merge\b")
 
 
 def _may_be_push(raw: list[str]) -> bool:
-    """Whether `git <raw>` could be a push: a `push` with only options, or an option's
-    value, in front of it. `git log --grep push` is not one (`0035` review round 1, F3).
+    """Whether `git <raw>` could be a push: a `push` with only options, or an option's value,
+    in front of it. `git log --grep push` is not one.
 
-    Leans towards yes: `git --no-pager log push` reads as one, since which of git's
-    options take a value is not known here.
+    Leans towards yes: `git --no-pager log push` reads as one, since which of git's options
+    take a value is not known here.
     """
     if "push" not in raw:
         return False
@@ -1222,11 +1123,11 @@ def _may_be_push(raw: list[str]) -> bool:
 
 
 def _words(base: str, rest: list[str]) -> tuple[str, ...]:
-    """The command and its positional words, flags removed — what a deny prefix is matched on.
+    """The command and its positional words, flags removed: what a deny prefix is matched on.
 
-    Still a reading of tokens, not of what the program will do: an alias defined before
-    the step, or `node -e` spawning `gh`, is not seen. `.claude/CLAUDE.md` says so. The
-    `integrate` grant also refuses an alias made during the step (`_GIT_CONFIG_ROAD`).
+    Still a reading of tokens, not of what the program will do: an alias defined before the
+    step, or `node -e` spawning `gh`, is not seen. The `integrate` grant also refuses an alias
+    made during the step (`_GIT_CONFIG_ROAD`).
     """
     out = [base]
     skip = False
@@ -1264,35 +1165,27 @@ def decide(
 ) -> str:
     """"" if this call may proceed, else the reason it may not.
 
-    Checked in this order on purpose: the tool has to be granted at all before anything
-    about its arguments matters.
+    Checked in this order on purpose: the tool has to be granted at all before anything about
+    its arguments matters.
 
-    **`unit_dir` widens the write boundary by exactly one directory, and `0014` `spec.md`
-    C2 is why it had to.** A step that writes its own artifact — `impl`, and `pr` until
-    `0139` R12 took its session away — used to write it inside the workspace. `0014` moved
-    every artifact into the product's own store so that nothing of coscc's lands in a
-    repository a team shares, and that put the file the step must write outside the only
-    place the step may write.
+    **`unit_dir` widens the write boundary by exactly one directory.** Every artifact lives in
+    the product's own store, outside the workspace, so a step that writes its own artifact
+    (`impl`) needs that one place. It is one directory, not a prefix of the store: a step may
+    write its own unit's files and no other unit's. And the path is not the caller's: it comes
+    from `coscc/units/__init__.py`, built from the data root and a workspace that already passed
+    the membership gate; no route leads from a request to this value. `None` means no second
+    root, the shape every prose stage runs with (they hold no write tools).
 
-    Two properties keep this from being a hole. It is **one** directory, not a prefix of
-    the store: a step may write its own unit's files and no other unit's. And the path is
-    not the caller's — it comes from `coscc/units/__init__.py`, built from the data root (which is
-    read from the environment, `coscc/config.py`) and a workspace that already passed the
-    membership gate. There is no route from a request to this value.
+    The same two roots bound `Read`, `Glob` and `Grep` too.
 
-    `None` means no second root, which is the shape every prose stage runs with: they are
-    granted no write tools at all, so the question never arises for them.
-
-    Since `0020` the same two roots bound `Read`, `Glob` and `Grep` too — see below.
-
-    `0035`: `read_also` widens **reading only**, by an explicit list of paths the app built
-    from the data root (Gebo's own unit folder and the intent/spec/plan of the related
-    units). Writing keeps its roots. `lease` is `(branch, head)`, which a grant with
-    `push_needs_lease` binds every `git push` to.
+    `read_also` widens **reading only**, by an explicit list of paths the app built from the
+    data root (Gebo's own unit folder and the intent/spec/plan of the related units). Writing
+    keeps its roots. `lease` is `(branch, head)`, which a grant with `push_needs_lease` binds
+    every `git push` to.
     """
     if tool == SUBMIT_TOOL and grant.submits:
-        # `0136` spec C4. The one MCP tool a grant lets through, by its exact name: the app's
-        # own in-process server, whose handler writes nothing and runs nothing.
+        # The one MCP tool a grant lets through, by its exact name: the app's own in-process
+        # server, whose handler writes nothing and runs nothing.
         return ""
     if tool not in grant.tools:
         # Covers MCP tools by construction: their names are never in a grant.
@@ -1302,13 +1195,12 @@ def decide(
         return f"only these helpers may be started: {', '.join(SUBAGENTS)}"
 
     if tool in EXEC_TOOLS:
-        # `0130` R1. Only the calls the CLI asks about reach here: one it takes for read-only
-        # runs in the background without asking (`0130 spike.md ## U1`, result 2), which is
-        # what `sessions.FOREGROUND_ENV` closes.
+        # Only the calls the CLI asks about reach here: one it takes for read-only runs in the
+        # background without asking, which is what `sessions.FOREGROUND_ENV` closes.
         if tool_input.get("run_in_background"):
             return f"run_in_background is refused: {BACKGROUND_REFUSAL}"
-        # `0060`: the unit's name opens a `/tmp` directory to redirects. Writes there are
-        # outside the boundary the write tools are held to below.
+        # The unit's name opens a `/tmp` directory to redirects. Writes there are outside the
+        # boundary the write tools are held to below.
         from pathlib import Path
 
         unit = Path(unit_dir).name if unit_dir else ""
@@ -1319,9 +1211,8 @@ def decide(
             return reason
 
     if tool in WRITE_TOOLS:
-        # Relative paths resolve against the app's own directory here, as they always have.
-        # Changing that would widen writing in one corner, and nothing asked for it
-        # (`0020` plan, step 1).
+        # Relative paths resolve against the app's own directory here; changing that would widen
+        # writing in one corner.
         roots, reason = _roots(workspace, unit_dir)
         if reason:
             return reason
@@ -1330,11 +1221,10 @@ def decide(
                 return f"writing outside the workspace is not allowed: {raw}"
 
     if tool in READ_TOOLS:
-        # `0020` `spec.md` `## Answers`, answer 2: reading is held to the same two roots as
-        # writing. Before this a step that could `Read` could read anything the app's own
-        # process could — `~/.ssh`, `~/.config/coscc/env`, every other unit in the store.
-        # Relative paths resolve against the workspace, because that is the session's `cwd`
-        # and so what the tool itself will read.
+        # Reading is held to the same two roots as writing, or a step that could `Read` could read
+        # anything the app's process could (`~/.ssh`, `~/.config/coscc/env`, every other unit).
+        # Relative paths resolve against the workspace, the session's `cwd` and so what the tool
+        # itself will read.
         roots, reason = _roots(workspace, unit_dir)
         if reason:
             return reason
@@ -1361,16 +1251,15 @@ _GIT_VALUED = ("-C", "-c", "--git-dir", "--work-tree")
 
 
 def _git_into(command: str, workspace: str, read_also: tuple[str, ...]) -> str:
-    """`0040` R13: why a `git` pointed into a path `read_also` names is refused, or "".
+    """Why a `git` pointed into a path `read_also` names is refused, or "".
 
     `read_also` widens reading, and `git -C <sibling> commit` would be a write there that no
     write tool made. `_words` drops `-C` and its value, so the deny list never sees it; this
-    reads them, as git does (`0040` review round 1, F1): each `-C` relative to the one before,
-    and a relative `--git-dir`, `--work-tree`, `-c` value or `GIT_*=` assignment against both
-    the workspace and the directory the `-C`s end in. `cd <sibling> && git …` needs `cd`,
-    which no grant holds. A path a subcommand takes (`git worktree add <sibling>/x`) is not
-    read, and the rest is still the read boundary, which is not a sandbox
-    (`.claude/rules/coscc-policy.md`; `test_the_known_limit_of_git_into`).
+    reads them as git does: each `-C` relative to the one before, and a relative `--git-dir`,
+    `--work-tree`, `-c` value or `GIT_*=` assignment against both the workspace and the
+    directory the `-C`s end in. `cd <sibling> && git ...` needs `cd`, which no grant holds. A
+    path a subcommand takes (`git worktree add <sibling>/x`) is not read, and the rest is still
+    the read boundary, which is not a sandbox (`.claude/rules/coscc-policy.md`).
     """
     from pathlib import Path
 
@@ -1392,8 +1281,7 @@ def _git_into(command: str, workspace: str, read_also: tuple[str, ...]) -> str:
             k += 1
         if not words or words[k].rsplit("/", 1)[-1] != "git":
             continue
-        # `GIT_DIR=`, `GIT_WORK_TREE=` and the other `GIT_*` paths git reads from its
-        # environment, set on this one command.
+        # `GIT_DIR=`, `GIT_WORK_TREE=` and the other `GIT_*` paths git reads from its environment.
         values = [w.partition("=")[2] for w in words[:k] if w.startswith("GIT_")]
         if any(e for w, e in zip(words[:k], simple.expanded) if w.startswith("GIT_")):
             # What a variable holds is not known here, and `impl`'s grant lets one reach git.
@@ -1447,7 +1335,7 @@ def _inside(raw: str, roots: list, base) -> bool:
     """Whether `raw`, once resolved (symlinks included), lies in one of `roots`.
 
     `base` is what a relative path is resolved against; `None` means the process's own
-    directory, which is what the write check has always used.
+    directory.
     """
     from pathlib import Path
 
@@ -1470,9 +1358,8 @@ _GLOB_CHARS = "*?[{"
 def _read_paths_in(tool: str, tool_input: dict) -> list:
     """Every path a read tool was given, plus the fixed prefix of an absolute `Glob` pattern.
 
-    No `path` at all is fine: the SDK then searches the session's `cwd`, which is the
-    workspace (`coscc/runner/__init__.py`). Reading a pattern this way is best-effort — `0020`
-    plan, Risk 3 — and `TheReadBoundaryIsNotASandbox` below pins what it does not see.
+    No `path` at all is fine: the SDK then searches the session's `cwd`, the workspace. Reading
+    a pattern this way is best-effort; `TheReadBoundaryIsNotASandbox` below pins what it misses.
     """
     out: list = list(_paths_in(tool_input))
     pattern = tool_input.get("pattern")

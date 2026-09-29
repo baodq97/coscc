@@ -1,20 +1,11 @@
 """Everything the page shows, and nothing it decides.
 
-`spec.md` R10 is the rule this module answers to: the page and the JSON API are two
-entry points to one capability, so no handler here validates anything, builds a path, or
-decides what counts as a workspace. Each one calls `Service`, turns `Invalid` into a line
-of text, and stops. A conditional about business state in this file is a bug in
-`service.py`.
+No handler here validates anything or builds a path: each calls `Service`, turns `Invalid`
+into a line of text, and stops. The dataclasses are a view Reflex can render a list against;
+a card's state is `service.unit_state`'s, and the page only lays `Running` over it.
 
-The dataclasses below exist because Reflex needs a declared shape to render a list against,
-and `Service` returns dictionaries. They are a *view*: every field is something the screen
-draws. Nothing is computed here that the service could have answered: since `0100` a card's
-state is `service.unit_state`'s, and the page only lays `Running` over it through
-`service.shown_state`.
-
-The service instance is the same object the FastAPI app holds. Two instances would mean two
-`Sessions` registries, and knob 4 ("resume only what this app created") would answer
-differently depending on which door you came through.
+The service instance is the one the FastAPI app holds: two instances would mean two
+`Sessions` registries, and "resume only what this app created" would differ by door.
 """
 
 from __future__ import annotations
@@ -31,8 +22,7 @@ from coscc.web import place, present
 from coscc.web.api import build
 from coscc.service import COLLAPSED_STATES, FOLDED_STATES, Invalid, describe_base
 
-# `0095`: these moved to modules of their own. Every name is imported back, so
-# `coscc.state.<name>` still resolves; a patch reaches only the module that looks it up.
+# Re-exported so `coscc.state.<name>` resolves; a patch reaches only the module that looks it up.
 from coscc.state.views import (
     NAVIGATION,
     SCREEN_TITLES,
@@ -173,15 +163,15 @@ class StudioState(
     """The whole page. No business state lives here — it is all read back from `Service`."""
 
     screen: str = "overview"
-    # `0056`. The socket `session_id` of the last full read; another one is a new page
-    # (`arrive`). Then the workspace and the unit last read, and the unit `load_next` last
-    # answered for. Each is set once its read is done. Backend only.
+    # The socket `session_id` of the last full read; another one is a new page (`arrive`).
+    # Then the workspace and the unit last read, and the unit `load_next` last answered
+    # for. Each is set once its read is done. Backend only.
     _loaded_sid: str = ""
     _read_cwd: str = ""
     _read_unit: str = ""
     _asked: str = ""
-    # `0056` F2. Set by `arrive` for the `load_next` it chains, which then waits for an ask
-    # already in flight; *Ask again*, a step's end and a hold move ask afresh.
+    # Set by `arrive` for the `load_next` it chains, which then waits for an ask already in
+    # flight; *Ask again*, a step's end and a hold move ask afresh.
     _ask_joins: bool = False
     loading: bool = False
     busy: bool = False
@@ -190,32 +180,30 @@ class StudioState(
 
     # -- board
     stages: list[str] = []
-    # `0036` R5. Each column's agent, by stage, as `Service.board` resolved it: the glyph,
-    # `<Name> (agent, <stage>)`, and its meaning and role one per line. A stage with no
-    # row is not a key.
+    # Each column's agent, by stage, as `Service.board` resolved it: the glyph,
+    # `<Name> (agent, <stage>)`, and its meaning and role one per line.
     stage_glyphs: dict[str, str] = {}
     stage_labels: dict[str, str] = {}
     stage_notes: dict[str, str] = {}
-    # `0053`. Every unit of the last board read, whole, keyed by id in board order. Backend
-    # only: the page gets `cards` and, for the one unit open, `current_unit`. Always
-    # assigned a new dict, never changed in place (`spike.md ## U3` measured only that).
+    # Every unit of the last board read, whole, keyed by id in board order. Backend only:
+    # the page gets `cards` and, for the one unit open, `current_unit`. Always assigned a
+    # new dict, never changed in place.
     _full: dict[str, Unit] = {}
-    # `0053` R7, R8. The one list of cards the page receives; the stage columns, List, the
-    # collapsed groups, the palette and Overview all filter it on the page.
+    # The one list of cards the page receives; the stage columns, List, the collapsed
+    # groups, the palette and Overview all filter it on the page.
     cards: list[Card] = []
-    # `0053` R7. The open unit, whole, copied from `_full` by `_set_current` — never by a
-    # computed var walking a list the page would then receive too.
+    # The open unit, whole, copied from `_full` by `_set_current`, never by a computed var
+    # walking a list the page would then receive too.
     current_unit: Unit = Unit()
     board_note: str = ""
-    # Set only when the board is empty (`0001_product-describes-a-state-it-is-not-in` R6):
-    # the store the board read, the host repository, and how many units the host's own
-    # `.cos/` holds that the board does not list.
+    # Set only when the board is empty: the store the board read, the host repository, and
+    # how many units the host's own `.cos/` holds that the board does not list.
     empty_store: str = ""
     empty_host: str = ""
     empty_host_units: int = 0
     recording: bool = False
-    # `0051`. `Service.running`'s latest answer, kept so a board read that rebuilds every
-    # card can put `live` back on at once instead of waiting for the next ask. Backend only.
+    # `Service.running`'s latest answer, kept so a board read that rebuilds every card can
+    # put `live` back on at once. Backend only.
     _running_read: dict = {}
     query: str = ""
     focus: str = "All work"
@@ -229,49 +217,46 @@ class StudioState(
     artifact_file: str = ""
     artifact_missing: bool = False
     runs: list[Run] = []
-    # `0136` R20. The unit's transitions, beside its runs on the Timeline tab.
+    # The unit's transitions, beside its runs on the Timeline tab.
     moves: list[Move] = []
-    # `0034`. Every step running in this workspace, as the service lists it. One per unit
-    # -- the service refuses a second -- and any number of units at once. This page holds
-    # no running flag of its own; the list is re-read, never patched.
+    # Every step running in this workspace, as the service lists it: one per unit, any
+    # number of units. The list is re-read, never patched.
     running_steps: list[RunningStep] = []
-    # `0043` R9. The board's `autopilot` block, copied: whether it is on, its stops, the cap.
+    # The board's `autopilot` block, copied: whether it is on, its stops, the cap.
     autopilot_on: bool = False
     autopilot_stops: list[AutopilotStop] = []
     autopilot_cap: str = ""
     autopilot_refused: str = ""
-    # `0101` R10. The board's `guide` block, copied: what runs, what needs a person, and what
-    # Jera decided lately. Nothing here decides anything.
+    # The board's `guide` block, copied: what runs, what needs a person, and what Jera
+    # decided lately.
     guide_running: list[GuideItem] = []
     guide_needs_you: list[GuideItem] = []
     guide_decided: list[GuideItem] = []
     run_log: str = ""
-    # The unit whose step this page is streaming into `run_log`, so another unit's
-    # reply is never shown under the one now open.
+    # The unit whose step this page is streaming into `run_log`, so another unit's reply
+    # is never shown under the one now open.
     log_unit: str = ""
-    # `0082` R7, R3: which *Details* are open, by key. Closed, their content is not in the DOM.
+    # Which *Details* are open, by key. Closed, their content is not in the DOM.
     open_details: list[str] = []
-    # `0024`. The stage `cos.mjs next` names for the open unit, and what it said. Set only
-    # by `load_next`, from `_run_target`; `next_stage` reads it and nothing computes it.
+    # The stage `cos.mjs next` names for the open unit, and what it said. Set only by
+    # `load_next`, from `_run_target`.
     run_stage: str = ""
     run_said: str = ""
-    # `0028`. The findings `cos.mjs next` says a person is awaited on; set only by
-    # `load_next`, from `_run_waiting`. Non-empty means the button offers nothing and the
-    # page points at the Questions tab instead.
+    # The findings `cos.mjs next` says a person is awaited on; set only by `load_next`.
+    # Non-empty means the button offers nothing and the page points at the Questions tab.
     run_waiting: list[str] = []
-    # `0027`. The ids `cos.mjs next` says the last review round left out; set only by
-    # `load_next`, from `_run_dropped`.
+    # The ids `cos.mjs next` says the last review round left out; set only by `load_next`.
     run_dropped: list[str] = []
 
     # -- sessions
     conversations: list[Conversation] = []
     session_id: str = ""
-    # `0053` R10. What the page shows: each message of `_history`, in the same order, cut
-    # to `MESSAGE_CUT` characters; `open_message` puts one back whole.
+    # What the page shows: each message of `_history`, in order, cut to `MESSAGE_CUT`
+    # characters; `open_message` puts one back whole.
     messages: list[Message] = []
     _history: list[Message] = []
-    # `0053` R9. The workspace the conversation list was last read for, `""` when none:
-    # Sessions reads it on arrival only when this differs from `cwd`.
+    # The workspace the conversation list was last read for, `""` when none: Sessions
+    # reads it on arrival only when this differs from `cwd`.
     _sessions_cwd: str = ""
     prompt: str = ""
     sending: bool = False
@@ -281,7 +266,7 @@ class StudioState(
     usage_total_tokens: str = "—"
     usage_total_usd: str = "—"
     usage_cost_note: str = COST_NOTE
-    # `0093`. The *Cost* screen, read only on arrival there (R12), and the open unit's part.
+    # The *Cost* screen, read only on arrival there, and the open unit's part.
     cost_recording: bool = True
     cost_total_usd: str = "—"
     cost_total_steps: str = "0"
@@ -297,27 +282,24 @@ class StudioState(
     unit_anomalies: list[AnomalyRow] = []
     knobs: list[Knob] = []
     grants: list[GrantRow] = []
-    # `0135` R4: the fields an import could not read, and why the report itself could not be.
+    # The fields an import could not read, and why the report itself could not be.
     import_rows: list[ImportRow] = []
     import_problem: str = ""
     data_dir: str = ""
     host_port: str = ""
-    # Whether the bound address reaches this machine only. Since `0011` the default
-    # is `0.0.0.0`, so the page may no longer state "loopback" as a fact -- it has to
-    # read it. A page that claims a safety property it does not have is worse than a
-    # page that says nothing, and `0007` exists because of exactly that.
+    # Whether the bound address reaches this machine only. The default is `0.0.0.0`, so
+    # the page must read this rather than state "loopback" as a fact.
     loopback_only: bool = True
-    # `COS_MODEL`, the fallback for a row nothing else answers. Until `0004_no-setting-
-    # says-which-model-runs-a-stage` it was the model of every session.
+    # `COS_MODEL`, the fallback for a row nothing else answers.
     model: str = ""
     # The model of each stage, then chat, and why a row fell back. The box being typed in
     # is `model_target`, the same one-box-at-a-time shape the answers use.
     model_rows: list[ModelRow] = []
     model_problems: list[str] = []
-    # `0036` R2. The agent table, and why a field fell back. Each row is its own form.
+    # The agent table, and why a field fell back. Each row is its own form.
     agent_rows: list[AgentRow] = []
     agent_problems: list[str] = []
-    # `0043` R2. One workspace's autopilot settings, as `Service.autopilot_settings` has them.
+    # One workspace's autopilot settings, as `Service.autopilot_settings` has them.
     ap_on: bool = False
     ap_may_ship: bool = False
     ap_max_parallel: str = ""
@@ -336,12 +318,12 @@ class StudioState(
 
     @rx.var
     def screen_title(self) -> str:
-        # `0040`: `/idea` is no screen of the navigation, and its title is its own.
+        # `/idea` is no screen of the navigation, and its title is its own.
         return "Idea" if self.screen == "idea" else SCREEN_TITLES.get(self.screen, "Overview")
 
     @rx.var
     def session_title(self) -> str:
-        """`0082` R14. The open conversation's title, as its row in the list shows it."""
+        """The open conversation's title, as its row in the list shows it."""
         return next((c.title for c in self.conversations if c.id == self.session_id), "")
 
     @rx.var
@@ -362,9 +344,9 @@ class StudioState(
             return self.workspaces
         return [w for w in self.workspaces if q in w.name.lower() or q in w.label.lower()]
 
-    # `0053` R8. The columns, the List, the collapsed groups, the palette and Overview each
-    # filter `cards` on the page by one of the lists of ids below: a list of cards per column
-    # would send every card again (`spike.md ## U2`). Order is always `cards`' order.
+    # The columns, the List, the collapsed groups, the palette and Overview each filter
+    # `cards` on the page by one of the lists of ids below: a list of cards per column would
+    # send every card again. Order is always `cards`' order.
 
     @rx.var
     def shown_ids(self) -> list[str]:
@@ -377,14 +359,14 @@ class StudioState(
         if self.focus == "Autonomous":
             rows = [c for c in rows if c.mode == "autonomous"]
         elif self.focus == "Needs you":
-            # `0100` R10: the state, as the service decided it.
+            # The state, as the service decided it.
             rows = [c for c in rows if c.state == "needs-you"]
         return [c.id for c in rows]
 
     @rx.var
     def resume_id(self) -> str:
         """*Pick up where you left off*: the first card in board order — column, then place
-        in it — that is `Running` or `Ready` (`0100` R10), `""` if none."""
+        in it — that is `Running` or `Ready`, `""` if none."""
         board = set(self.board_ids)
         order = {name: i for i, name in enumerate(self.stages)}
         rows = [(order.get(c.at, len(order)), i, c.id) for i, c in enumerate(self.cards)
@@ -393,25 +375,24 @@ class StudioState(
 
     @rx.var
     def active_count(self) -> int:
-        """`0100` R10. Every unit that is not done, paused or dropped."""
+        """Every unit that is not done, paused or dropped."""
         return len([c for c in self.cards if c.state not in COLLAPSED_STATES])
 
     @rx.var
     def attention_count(self) -> int:
-        """`0100` R10. Every unit whose state is *Needs you*."""
+        """Every unit whose state is *Needs you*."""
         return len([c for c in self.cards if c.state == "needs-you"])
 
     @rx.var
     def board_ids(self) -> list[str]:
-        """`0100` R8. The shown cards the stage lanes draw: every one outside the done and
-        dropped groups (`0133` spec C2: a paused one stays in its lane)."""
+        """The shown cards the stage lanes draw: every one outside the done and dropped
+        groups (a paused one stays in its lane)."""
         shown = set(self.shown_ids)
         return [c.id for c in self.cards if c.id in shown and c.state not in FOLDED_STATES]
 
     @rx.var
     def stage_counts(self) -> dict[str, int]:
-        """`0100` R1. How many cards each stage's lane holds, keyed by the stages the board
-        read returned, for its count."""
+        """How many cards each stage's lane holds, keyed by the stages the board read returned."""
         counts = {name: 0 for name in self.stages}
         board = set(self.board_ids)
         for c in self.cards:
@@ -421,8 +402,8 @@ class StudioState(
 
     @rx.var
     def group_counts(self) -> dict[str, int]:
-        """`0100` R8. How many shown cards each collapsed group holds: the search and the
-        filter narrow a group as they narrow a lane (review F2)."""
+        """How many shown cards each collapsed group holds: the search and the filter narrow
+        a group as they narrow a lane."""
         counts = {name: 0 for name in FOLDED_STATES}
         shown = set(self.shown_ids)
         for c in self.cards:
@@ -432,18 +413,18 @@ class StudioState(
 
     @rx.var
     def ws_name(self) -> str:
-        """`0056` R8. What `ws=` carries: the workspace's name, never its path."""
+        """What `ws=` carries: the workspace's name, never its path."""
         return next((w.name for w in self.workspaces if w.id == self.cwd), "")
 
     @rx.var
     def unit_missing(self) -> bool:
-        """`0056` R9. An address named a unit this workspace's board does not list."""
+        """An address named a unit this workspace's board does not list."""
         return (self.unit_id != "" and not self.loading
                 and not any(c.id == self.unit_id for c in self.cards))
 
     @rx.var
     def unit_dropped(self) -> bool:
-        """`0056` R11. The open unit is dropped, so the dialog offers nothing that writes."""
+        """The open unit is dropped, so the dialog offers nothing that writes."""
         return self.current_unit.hold_state == "dropped"
 
     @rx.var
@@ -453,28 +434,28 @@ class StudioState(
 
     @rx.var
     def settings_href(self) -> str:
-        """`0101` R10. Where the guide sends a person to turn the autopilot on."""
+        """Where the guide sends a person to turn the autopilot on."""
         ws = next((w.name for w in self.workspaces if w.id == self.cwd), "")
         return place.href(place.Place("settings", ws))
 
     @rx.var
     def open_questions_here(self) -> list[Question]:
-        """`0016`. The open unit's unanswered questions, counted artifact's first. `0044`:
-        then the ones Jera answered, so a person can read them and answer over them."""
+        """The open unit's unanswered questions, counted artifact's first, then the ones Jera
+        answered, so a person can read them and answer over them."""
         shown = [q for q in self.current_unit.questions if not q.answered or q.by_jera]
         return sorted(shown, key=lambda q: (q.answered, not q.counted))
 
     @rx.var
     def jera_can_ask(self) -> bool:
-        """`0044` R2, as the page can see it: an unanswered question outside `review.md`.
-        `Service.precedent` still decides; this only hides a button it would refuse (S8)."""
+        """An unanswered question outside `review.md`, as the page can see it.
+        `Service.precedent` still decides; this only hides a button it would refuse."""
         return self.current_unit.answerable and any(
             not q.answered and q.artifact != "review.md" for q in self.current_unit.questions
         )
 
     @rx.var
     def next_stage(self) -> str:
-        """The stage the run button would run: the one `cos.mjs next` named (`0024`)."""
+        """The stage the run button would run: the one `cos.mjs next` named."""
         return self.run_stage
 
     @rx.var
@@ -501,10 +482,10 @@ class StudioState(
 
     @rx.var
     def usage_rows(self) -> list[UsageRow]:
-        """`0053` R11. Only while *Activity & usage* is shown; nothing elsewhere.
+        """Only while *Activity & usage* is shown; nothing elsewhere.
 
-        `0092` R8 c: a unit whose steps all died before a token was counted still has a
-        row, reading `unknown`, rather than leaving the table as if it cost nothing."""
+        A unit whose steps all died before a token was counted still has a row, reading
+        `unknown`, rather than leaving the table as if it cost nothing."""
         if self.screen != "activity":
             return []
         return [UsageRow(id=c.id, title=c.title, tokens=c.tokens, usd=c.usd,
@@ -595,7 +576,7 @@ class StudioState(
         self._load_autopilot()
 
     def _show_autopilot_block(self, block: dict) -> None:
-        """`0043` R9. Copied from the board; nothing here decides whether to stop."""
+        """Copied from the board; nothing here decides whether to stop."""
         self.autopilot_on = bool(block.get("on"))
         self.autopilot_refused = str(block.get("refused_because") or "")
         self.autopilot_stops = [
@@ -612,7 +593,7 @@ class StudioState(
         )
 
     def _show_guide(self, block: dict) -> None:
-        """`0101` R10. Copied from the board; every word of `needs_you` is the service's."""
+        """Copied from the board; every word of `needs_you` is the service's."""
         ws = self._name_of(self.cwd)
 
         def link(screen: str, unit: str = "", tab: str = "overview") -> str:
@@ -681,8 +662,8 @@ class StudioState(
             self.cwd = self.workspaces[0].id
 
     def _load_running(self) -> None:
-        """`0034`. In memory and synchronous: no `gh`, no git, so a step's first chunk
-        can ask it without waiting on anything a full board read waits on."""
+        """In memory and synchronous: no `gh`, no git, so a step's first chunk can ask it
+        without waiting on what a full board read waits on."""
         self.running_steps = []
         if not self.cwd:
             return
@@ -694,9 +675,8 @@ class StudioState(
             self.running_steps = []
 
     def _set_current(self) -> None:
-        """`0053`. `current_unit` from `_full` for `unit_id`: its own copy, lists and the
-        rows in them included, so nothing shares an object with `_full` (review round 1,
-        F1). Called wherever either of the two changes."""
+        """`current_unit` from `_full` for `unit_id`: its own deep copy, so nothing shares an
+        object with `_full`. Called wherever either of the two changes."""
         found = self.get_value("_full").get(self.unit_id)
         self.current_unit = copy.deepcopy(found) if found is not None else Unit()
 
@@ -737,7 +717,6 @@ class StudioState(
         self.recording = bool(data["recording"])
         self._show_autopilot_block(data.get("autopilot") or {})
         self._show_guide(data.get("guide") or {})
-        # `0046`. Copied from the board; the panel decides nothing.
         self._show_release(data.get("release"))
         read_only = READ_ONLY_NOTE if data.get("read_only_because") else ""
         self.board_note = read_only or data.get("empty_because") or ""
@@ -746,9 +725,8 @@ class StudioState(
         self.empty_host = str(empty.get("host") or "")
         self.empty_host_units = int(empty.get("host_units") or 0)
         if self.empty_host_units > 0:
-            # `empty_because` speaks of the store's `.cos/`, and next to a host `.cos/`
-            # that is full it reads as a claim about the wrong directory — the fault this
-            # unit exists for. Only the read-only reason survives, appended by the page.
+            # `empty_because` speaks of the store's `.cos/`; next to a full host `.cos/` it
+            # would read as a claim about the wrong directory. Only the read-only reason survives.
             self.board_note = read_only
 
         units: list[Unit] = []
@@ -773,7 +751,7 @@ class StudioState(
             stage = _current_stage(u, self.stages)
             count, shown = _tokens(u.get("cost") or {})
             # The file-only stage `cos.mjs` names, not the one the run button asks for: that
-            # one can cost two `gh` calls, and this runs for every card (`0024` plan, Risk 7).
+            # one can cost two `gh` calls, and this runs for every card.
             nxt = next((c for c in cells if c.stage == (u.get("next_stage") or "")), None)
             mode = nxt.mode if nxt is not None else "manual"
             waiting, asked = _questions(u)
@@ -820,11 +798,10 @@ class StudioState(
         self._set_current()
 
     def _apply_running(self, read: dict) -> None:
-        """`0051` R3. Put one `Service.running` answer on every card. Decides nothing.
+        """Put one `Service.running` answer on every card. Decides nothing.
 
-        `0053` C4: the cards are sent again only when a card's `live` changed, and the open
-        unit only when its own did — an ask that changes nothing sends neither. `0100`: a
-        state that `Running` starts or stops covering is a change the same way."""
+        The cards are sent again only when a card's `live` or covered state changed, and the
+        open unit only when its own did: an ask that changes nothing sends neither."""
         self._running_read = read
         full, moved = {}, set()
         for key, unit in self.get_value("_full").items():
@@ -861,12 +838,6 @@ class StudioState(
             for row in data["sessions"]
         ]
         self.conversations = rows
-        # A session this app created but the SDK has not listed would be invisible here.
-        # Measured on 2026-09-22 against a real send: it does not happen — `sessions_for`
-        # returned the new session on the first call after the reply finished. An earlier
-        # version of this method inserted a placeholder row for that case; it was removed
-        # once the measurement showed the case does not arise, because a branch nothing
-        # reaches is a branch nobody maintains.
         if self.session_id and not any(c.id == self.session_id for c in rows):
             self.session_id = ""
         if not self.session_id and self.conversations:
@@ -899,10 +870,9 @@ class StudioState(
         ]
 
     def _keep_whole(self, shown: list[Message]) -> None:
-        """`0053` review round 1, F3. After `send` reads the conversation again, a message
-        the page showed whole just before — the reply that streamed, one opened with
-        `open_message` — stays whole instead of shrinking under the reader. Matched on the
-        text, not the index: the read may not line up with what streamed."""
+        """After `send` reads the conversation again, a message the page showed whole (the
+        streamed reply, one opened with `open_message`) stays whole. Matched on the text,
+        not the index: the read may not line up with what streamed."""
         whole = {m.text for m in shown if not m.cut and len(m.text) > MESSAGE_CUT}
         full = self.get_value("_history")
         messages = list(self.get_value("messages"))
@@ -931,12 +901,11 @@ class StudioState(
             "mode": ("sliders-horizontal", "blue"),
             "start": ("zap", "iris"),
             "end": ("circle-check", "grass"),
-            # `0019` plan step 7. What a stopped step left behind, captured just before
-            # `end` — its own row, distinct from the `end` row that follows it.
+            # What a stopped step left behind, captured just before `end`.
             "attempt": ("camera", "amber"),
-            # `0045` R10. A person paused, dropped or resumed a unit.
+            # A person paused, dropped or resumed a unit.
             "hold": ("pause", "amber"),
-            # `0046` R15. A release press, refused ones included.
+            # A release press, refused ones included.
             "release": ("tag", "iris"),
         }
         events: list[Event] = []
@@ -971,8 +940,8 @@ class StudioState(
         self.usage_cost_note = cost_note(total)
 
     def _load_cost(self) -> None:
-        """`0093`. The *Cost* screen, from one read of the run log (R12). The review rounds
-        come from the board already read (R9); nothing here adds or decides a figure."""
+        """The *Cost* screen, from one read of the run log. The review rounds come from the
+        board already read; nothing here adds or decides a figure."""
         self.cost_units, self.cost_stages, self.cost_days = [], [], []
         self.cost_tokens, self.cost_waste, self.cost_anomalies = [], [], []
         self.cost_total_usd, self.cost_total_steps, self.cost_total_unknown = "—", "0", ""
@@ -1004,7 +973,7 @@ class StudioState(
         self.cost_anomalies = _anomaly_rows(data["anomalies"])
 
     def _load_unit_cost(self) -> None:
-        """`0093` R11. The open unit's cost by stage and its anomalies."""
+        """The open unit's cost by stage and its anomalies."""
         self.unit_cost_stages, self.unit_anomalies = [], []
         if not (self.cwd and self.unit_id):
             return
@@ -1029,13 +998,13 @@ class StudioState(
             Run(
                 stage=r.get("stage") or "",
                 mode=r.get("mode") or "",
-                # `0089` R12: a reader's time; `ended` is empty while the run is not over.
+                # A reader's time; `ended` is empty while the run is not over.
                 started=present.when(r.get("started")),
                 ended=present.when(r.get("ended")),
                 outcome=r.get("outcome") or "—",
                 session_id=(r.get("session_id") or "—")[:12],
                 tokens=_tokens(r.get("cost") or {})[1],
-                # `0092` R8 b: an ended run that reported no cost reads `unknown`, not `—`.
+                # An ended run that reported no cost reads `unknown`, not `—`.
                 usd=_usd({**(r.get("cost") or {}), "unknown": int(
                     r.get("ended") is not None and not r.get("reported", True)
                 )}),
@@ -1082,27 +1051,27 @@ class StudioState(
     async def _load_rest(self) -> None:
         await self._load_models()
         await self._load_board()
-        # `0053` R9: no Sessions here. `arrive` reads them when Sessions is where it lands.
+        # No Sessions here: `arrive` reads them when Sessions is where it lands.
         self._load_activity()
         self._load_update()
 
     def _load_unit(self, forget: bool = True) -> None:
         """What opening a unit reads. Asked even of a unit the board does not list: the
-        board may predate it, and whether it exists is the service's to say (R9)."""
+        board may predate it, and whether it exists is the service's to say."""
         self.run_log = ""
         if forget:
-            # `0071` R9: a message shown in the dialog is one made after it opened. Not on
-            # a page's first arrival, whose messages are about the load itself.
+            # A message shown in the dialog is one made after it opened. Not on a page's
+            # first arrival, whose messages are about the load itself.
             self.error, self.notice = "", ""
         self._load_timeline()
         self._load_unit_cost()
         self._load_artifact()
 
-    # -- where the page is (`0056`) ------------------------------------------
+    # -- where the page is ------------------------------------------
     #
     # The address is the one source of `screen`, `cwd`, `unit_id` and `detail_tab`: a
-    # button builds the address of where it goes and redirects there, and `arrive` — the
-    # `on_load` of every route — is the only handler that sets the four (`spec.md` R12).
+    # button redirects to the address of where it goes, and `arrive` (the `on_load` of
+    # every route) is the only handler that sets the four.
 
     def _address(self) -> tuple[str, str, str]:
         """The one place `router` is read: the path, the query, and the socket's id."""
@@ -1114,33 +1083,32 @@ class StudioState(
 
     @rx.event
     async def arrive(self):
-        """`0056` R15, R16. Put the page where its address says, reading once.
+        """Put the page where its address says, reading once.
 
-        A page's first arrival — a load, a reload, an address typed into the bar — is told
-        from a move inside the app by the socket's `session_id`: it is new on every such
-        load and the same across `rx.redirect`, Back and Forward (`spike.md ## U4`). The
-        token, and so this state, survives a reload, so an empty state cannot tell it.
+        A first arrival (a load, a reload, a typed address) is told from a move inside the
+        app by the socket's `session_id`: new on every such load, the same across
+        `rx.redirect`, Back and Forward. The token, and so this state, survives a reload, so
+        an empty state cannot tell it.
 
-        Reflex's `on_load_internal` supersedes: a newer navigation cancels whatever of the
-        older one's chain is still running — this handler and what it chained. So what was
-        read is recorded only once the read is done (`_loaded_sid`, `_read_cwd`,
+        A newer navigation cancels whatever of the older one's chain is still running, so
+        what was read is recorded only once the read is done (`_loaded_sid`, `_read_cwd`,
         `_read_unit`, `_asked`), and an arrival cut short is read again by the next one.
         """
         path, query, sid = self._address()
         want = place.read(path, query)
         first = sid != self._loaded_sid
         if self.watch_run:
-            # `0073`. The pane belongs to the page it was opened on; its loop stops.
+            # The pane belongs to the page it was opened on; its loop stops.
             self._watch_reset("", "", "")
         if first:
             self.loading, self.error = True, ""
-            # `0053` R9. A new page reads Sessions again when it gets there, as before.
+            # A new page reads Sessions again when it gets there.
             self._sessions_cwd = ""
             yield
             self._load_base()
 
-        # Which workspace: the first one of that name (C6), else what `_load_workspaces`
-        # left, which keeps the current one while it is still listed (R8).
+        # Which workspace: the first one of that name, else what `_load_workspaces` left,
+        # which keeps the current one while it is still listed.
         named = next((w.id for w in self.workspaces if want.ws and w.name == want.ws), "")
         cwd = named or self.cwd
         stray = bool(want.ws) and not named
@@ -1149,12 +1117,12 @@ class StudioState(
         if screen not in place.SCREENS and screen not in ("unit", "idea"):
             screen = "overview"
         if (screen == "unit" and not unit) or (screen == "idea" and not want.idea):
-            screen = "board"  # R10
+            screen = "board"
         if screen != "unit":
             unit, tab = "", "overview"
         elif tab not in place.TABS:
             tab = "overview"
-        # `0040` R15. An idea is read after the board, every arrival, like a unit's dialog.
+        # An idea is read after the board, every arrival, like a unit's dialog.
         idea = want.idea if screen == "idea" else ""
         fixed = place.Place(screen, self._name_of(cwd), unit, tab, idea=idea)
 
@@ -1164,24 +1132,23 @@ class StudioState(
         self.cwd = cwd
         self.screen = "board" if screen == "unit" else screen
         if moved_ws or moved_unit or moved_screen:
-            # Not on an arrival that moved nothing — the one a corrected address causes
-            # may come after a person opened the menu (`verify_0071` at 390px).
+            # Not on an arrival that moved nothing: the one a corrected address causes may
+            # come after a person opened the menu.
             self.mobile_open = self.command_open = False
         if moved_ws and not first:
             self.session_id, self.query, self.error = "", "", ""
         # While a workspace's board is read, `cards` is still the last one's: a dialog open
         # over it would show that list's unit, or "not a unit", under this workspace's name.
-        # So the unit opens once its own board is in (`0056` review round 1, F1).
+        # So the unit opens once its own board is in.
         reading = first or moved_ws
         self.unit_id, self.detail_tab = ("", "overview") if reading else (unit, tab)
         self._set_current()
         if reading:
             # `_load_board` empties `cards` before its first await: a read cut short there
-            # must leave nothing recorded as read, or going back finds no move and an empty
-            # board (`0056` review round 2, F5).
+            # must leave nothing recorded as read, or going back finds no move and an empty board.
             self._read_cwd = self._read_unit = ""
 
-        # R16: one read, the one of the largest change.
+        # One read, the one of the largest change.
         if first:
             yield
             await self._load_rest()
@@ -1189,15 +1156,15 @@ class StudioState(
             self._loaded_sid = sid
         elif moved_ws:
             # The last read answered for the workspace just left; a unit of the same name
-            # here must not show its session (`0051` review round 1, F1).
+            # here must not show its session.
             try:
                 self._running_read = SERVICE.running(cwd)
             except Invalid:
                 self._running_read = {}
             yield
             await self._load_board()
-            # `0053` R9. What Sessions showed was the last workspace's; it is read again
-            # only if Sessions is where this arrival lands, just below.
+            # What Sessions showed was the last workspace's; it is read again only if
+            # Sessions is where this arrival lands, just below.
             self.conversations, self.messages, self._history = [], [], []
             self._sessions_cwd = ""
             self._load_activity()
@@ -1206,21 +1173,20 @@ class StudioState(
         if self.screen == "sessions" and self._sessions_cwd != cwd:
             self._load_sessions()
         if self.screen == "cost":
-            # `0093` R12: every arrival here reads the run log once; no other screen does.
+            # Every arrival here reads the run log once; no other screen does.
             self._load_cost()
         if self.screen == "knowledge":
-            # `0131` R24: the same, for the store, `health.json` and the run log.
+            # The same, for the store, `health.json` and the run log.
             self._load_knowledge()
         if self.screen == "settings":
-            # `0137` R5, R6: the names panel reads every workspace's board, so only an
-            # arrival at Settings pays for it.
+            # The names panel reads every workspace's board, so only an arrival at Settings pays for it.
             await self._load_decisions()
         self._read_cwd = cwd
         self.unit_id, self.detail_tab = unit, tab
         self._set_current()
-        # A unit is read after whatever the arrival read, which R16 does not list: a pasted
-        # link or a reload at `/unit` would otherwise open a dialog with no timeline or
-        # artifact (R4, R5). None of it calls `SERVICE.board` (R17).
+        # A unit is read after whatever the arrival read: a pasted link or a reload at
+        # `/unit` would otherwise open a dialog with no timeline or artifact. None of it
+        # calls `SERVICE.board`.
         if unit and (moved_unit or moved_ws or first):
             self._load_unit(forget=not first)
             self._asked = ""
@@ -1230,9 +1196,8 @@ class StudioState(
         if stray:
             self.notice = "That workspace is not on the list."
 
-        # R7, R8, R10: an address the page had to correct is replaced, not added to. Last,
-        # and alone: the arrival it causes would cancel anything chained here, so that one
-        # chains it instead, and finds nothing else to read.
+        # An address the page had to correct is replaced, not added to. Last, and alone: the
+        # arrival it causes would cancel anything chained here, so that one chains it instead.
         if place.href(fixed) != place.href(want):
             yield rx.redirect(place.href(fixed), replace=True)
             return
@@ -1256,7 +1221,7 @@ class StudioState(
         if not any(w.id == path for w in self.workspaces):
             self.notice = "That workspace is not on the list."
             return
-        # R13: a unit belongs to the workspace it was opened in, so leaving it goes to Board.
+        # A unit belongs to the workspace it was opened in, so leaving it goes to Board.
         screen = "board" if self.unit_id else self.screen
         return rx.redirect(place.href(place.Place(screen, self._name_of(path))))
 
@@ -1269,12 +1234,12 @@ class StudioState(
 
     @rx.event(background=True)
     async def poll_running(self):
-        """`0051` R3. Ask `Service.running` every `RUNNING_POLL` seconds while the Board shows.
+        """Ask `Service.running` every `RUNNING_POLL` seconds while the Board shows.
 
-        The one source for every card's `live`, whichever tab, route or process started
-        the step (R8). One loop per tab: a second start while one lives returns at once.
-        The loop ends when the tab leaves the Board, has no workspace, or has had no socket
-        for `GONE_AFTER` asks in a row.
+        The one source for every card's `live`, whichever tab, route or process started the
+        step. One loop per tab: a second start while one lives returns at once. It ends when
+        the tab leaves the Board, has no workspace, or has had no socket for `GONE_AFTER`
+        asks in a row.
         """
         # The token the event came with: the one the socket server maps to this tab.
         # `router.session.client_token` is empty when no browser hydrated the state.
@@ -1311,8 +1276,7 @@ class StudioState(
 
     @rx.event
     def filter_work(self, value: str | list[str]):
-        # `rx.segmented_control` hands back a list when it is multi-select. This one is
-        # not, and the prototype shipped a version that accepted a list and then indexed a string.
+        # `rx.segmented_control` may hand back a list when multi-select; this one is not.
         if not isinstance(value, str) or value not in ("All work", "Autonomous", "Needs you"):
             self.notice = "Choose one of the work filters."
             return
@@ -1332,7 +1296,7 @@ class StudioState(
 
     @rx.event
     def save_decision_preferences(self):
-        """`0044` R8a. Kept as typed; each paragraph becomes one `pref:<k>` Jera may cite."""
+        """Kept as typed; each paragraph becomes one `pref:<k>` Jera may cite."""
         self._remember("decision_preferences", self.decision_preferences)
         self.notice = "Decision preferences saved; Jera reads them on its next run."
 
@@ -1342,7 +1306,7 @@ class StudioState(
 
     @rx.event
     def save_decision_rules(self):
-        """`0101` R8. Kept as typed; an empty box is the default rules again."""
+        """Kept as typed; an empty box is the default rules again."""
         self._remember("decision_rules", self.decision_rules)
         self.notice = (
             "Decision rules saved; Jera reads them on its next run." if self.decision_rules.strip()
@@ -1394,8 +1358,8 @@ class StudioState(
 
     @rx.event
     def save_agent(self, form: dict):
-        """`0036` R2. One row's form, as typed. Whether it may be saved is
-        `Service.set_agent`'s call; a field left as it was is not sent."""
+        """One row's form, as typed. Whether it may be saved is `Service.set_agent`'s call;
+        a field left as it was is not sent."""
         key = str(form.get("key") or "")
         row = next((r for r in self.agent_rows if r.key == key), None)
         if row is None:
@@ -1424,7 +1388,7 @@ class StudioState(
 
     @rx.event
     def set_autopilot_on(self, value: bool):
-        """`0043`. Whether it may be turned on is `Service.set_autopilot`'s call."""
+        """Whether it may be turned on is `Service.set_autopilot`'s call."""
         self._change_autopilot("autopilot", bool(value))
 
     @rx.event
@@ -1458,7 +1422,7 @@ class StudioState(
 
     @rx.event
     async def save_effort(self, name: str, effort: str):
-        """`0033`. Set one row's effort. Whether it may be set is `Service.set_stage_effort`'s call."""
+        """Set one row's effort. Whether it may be set is `Service.set_stage_effort`'s call."""
         await self._change_effort(name, effort)
 
     @rx.event
@@ -1509,17 +1473,17 @@ class StudioState(
 
     @rx.event
     def open_unit(self, unit: str):
-        # `arrive` reads it (`_load_unit`); the dialog sits over the Board (R13, C9).
+        # `arrive` reads it (`_load_unit`); the dialog sits over the Board.
         return rx.redirect(place.href(place.Place("unit", self._name_of(self.cwd), unit)))
 
     @rx.event(background=True)
     async def load_next(self):
-        """`0024`. Ask `cos.mjs next` which stage the run button may offer for the open unit.
+        """Ask `cos.mjs next` which stage the run button may offer for the open unit.
 
         In the background because the answer can wait on `gh` for up to 60s (two calls,
         `board.GATE_TIMEOUT` each), and a handler holding the page's lock that long freezes
-        every other control. Runs when a unit is opened, after a step ends, and when a
-        person presses *Ask again* -- never on a timer: nothing here starts anything (R5).
+        every other control. Runs when a unit is opened, after a step ends, and on *Ask
+        again*; never on a timer, and it starts nothing.
         """
         async with self:
             unit, cwd = self.unit_id, self.cwd
@@ -1544,7 +1508,7 @@ class StudioState(
             dropped = _run_dropped(found)
         except Invalid as e:
             stage, said = "", str(e)
-        # `0054` R1. Files only, after `next` has answered; a refusal offers nothing.
+        # Files only, after `next` has answered; a refusal offers nothing.
         try:
             offers = list((await SERVICE.rerun_offers(cwd, unit)).get("offers") or [])
         except Invalid:
@@ -1574,7 +1538,7 @@ class StudioState(
         if value not in place.TABS:
             self.notice = "That tab does not exist."
             return
-        # R7: replaced, so Back from a unit goes to where the unit was opened from.
+        # Replaced, so Back from a unit goes to where the unit was opened from.
         here = place.Place("unit", self._name_of(self.cwd), self.unit_id, value)
         return rx.redirect(place.href(here), replace=True)
 
@@ -1587,7 +1551,7 @@ class StudioState(
 
     @rx.event
     def toggle_details(self, key: str):
-        """`0082`. Open or close one *Details*; nothing else reads which are open."""
+        """Open or close one *Details*; nothing else reads which are open."""
         self.open_details = ([k for k in self.open_details if k != key]
                              if key in self.open_details else [*self.open_details, key])
 
@@ -1595,9 +1559,8 @@ class StudioState(
 
     @rx.event
     async def stop_step(self, unit: str):
-        """`0034` R6. Stop one unit's running step. Every rule is `Service.stop_step`'s --
-        a missing name, nothing running, a step already writing its artifact -- and its
-        refusal is shown as its words. The streaming handler sees the `stopped` outcome."""
+        """Stop one unit's running step; every rule is `Service.stop_step`'s. The streaming
+        handler sees the `stopped` outcome."""
         self.error = ""
         try:
             done = await SERVICE.stop_step(self.cwd, unit, "")
@@ -1627,14 +1590,13 @@ class StudioState(
     async def run_step(self):
         """Run the unit's next step, streaming what comes back.
 
-        `background=True` is the difference between a board and a frozen page. A generator
-        event handler holds the state lock for its whole life, so a step that takes minutes
-        would lock every other control. A background handler takes the lock in short
-        bursts, which is why every write below sits inside `async with self`.
+        `background=True` matters: a generator handler holds the state lock for its whole
+        life, so a step that takes minutes would lock every other control. A background
+        handler takes the lock in short bursts, so every write below sits in `async with self`.
         """
         async with self:
-            # `0034`. No "already running" check of the page's own: whether this unit may
-            # start a step is the service's to refuse, and its `Invalid` lands in `_fail`.
+            # No "already running" check of the page's own: whether this unit may start a
+            # step is the service's to refuse, and its `Invalid` lands in `_fail`.
             unit, stage, cwd = self.unit_id, self.next_stage, self.cwd
             if not (unit and stage and cwd):
                 self.notice = "There is no next step to run."
@@ -1661,10 +1623,8 @@ class StudioState(
                         self.notice = (
                             f"{stage} {outcome}" + (f" — wrote {written}" if written else "")
                         )
-                        # `0030_a-unit-branch-starts-from-a-stale-main`. `describe_base`
-                        # is the one sentence saying a step's base may be stale; this page
-                        # only appends the string the service already worked out, never
-                        # its own reading of `payload["base"]`.
+                        # `describe_base` is the one sentence saying a step's base may be
+                        # stale; the page only appends it.
                         stale = describe_base(payload.get("base"))
                         if stale:
                             self.notice += " " + stale
@@ -1672,15 +1632,14 @@ class StudioState(
             async with self:
                 self._fail(e)
         finally:
-            # Re-read rather than patch. The artifact on disk is the truth about a stage's
-            # status, and this is the moment it changed.
+            # Re-read rather than patch: the artifact on disk is the truth about a stage's status.
             async with self:
                 await self._load_board()
                 self._load_timeline()
                 self._load_artifact()
                 self._load_activity()
-        # `0024`. The stage that ran is behind the unit now; ask again what is next. This
-        # names a stage and runs nothing — a person still presses the button (R5).
+        # The stage that ran is behind the unit now; ask again what is next. This names a
+        # stage and runs nothing.
         return StudioState.load_next
 
     # -- sessions ------------------------------------------------------------
@@ -1696,11 +1655,8 @@ class StudioState(
 
     @rx.event
     def new_session(self):
-        """A session exists once something has been said in it, so this only clears the view.
-
-        The SDK owns session identity. Inventing one here would put an id on the page that
-        nothing on disk has ever heard of.
-        """
+        """A session exists once something has been said in it, so this only clears the view;
+        the SDK owns session identity."""
         if not self.cwd:
             self.notice = "Choose a workspace first."
             return
@@ -1711,7 +1667,7 @@ class StudioState(
 
     @rx.event
     def open_message(self, index: int):
-        """`0053` R10. Show one cut message whole, from the copy `_load_history` kept.
+        """Show one cut message whole, from the copy `_load_history` kept.
 
         Messages `send` adds are never cut and come after every message of `_history`, so
         an index into `messages` below its length is the same message there."""
@@ -1746,9 +1702,7 @@ class StudioState(
                     self.messages = list(self.messages)
                     yield
                 elif kind == "done" and isinstance(payload, dict):
-                    # The SDK resolves the id. Taking it from here rather than inventing
-                    # one is what keeps the page's idea of a session and the store's idea
-                    # of it the same thing.
+                    # The SDK resolves the id; take it from here rather than inventing one.
                     self.session_id = payload.get("session_id") or self.session_id
         except Exception as e:
             self._fail(e)

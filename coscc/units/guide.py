@@ -1,9 +1,7 @@
-"""What the board's guide says (`0101` R10), with no I/O: every function here is pure.
+"""What the board's guide says, with no I/O: every function here is pure.
 
-Three lists for a person who has no operator beside them: what runs now, what waits for
-them and where to do it, and what Jera decided for them lately. `Service._guide_block` hands
-in what it already read — the running entries, the autopilot's stops, the board's run-log
-rows — and shows what comes back. Nothing here decides anything the autopilot does.
+Three lists for a person: what runs now, what waits for them and where to do it, and what
+Jera decided for them lately. `Service._guide_block` hands in what it already read.
 """
 
 from __future__ import annotations
@@ -13,9 +11,8 @@ from typing import Any, Iterable
 
 from coscc.agent import precedent
 
-# What one stop asks of a person, and where on the page to do it: `(do, screen, tab)`. `tab`
-# is one of `coscc/web/place.py` `TABS` for `screen` `unit`. Every stop kind of
-# `autopilot.STOP_KINDS` but `full`, which only waits for a free place.
+# What one stop asks of a person: `(do, screen, tab)`, `tab` one of `coscc/web/place.py` `TABS`.
+# Every stop kind of `autopilot.STOP_KINDS` but `full`, which only waits for a free place.
 TODO: dict[str, tuple[str, str, str]] = {
     "a": ("Answer its open questions.", "unit", "questions"),
     "b": ("Decide what it waits on.", "unit", "overview"),
@@ -27,7 +24,7 @@ TODO: dict[str, tuple[str, str, str]] = {
     "cap": ("Raise the daily cap, or wait for tomorrow.", "settings", ""),
     "shortlist": ("Put units on the shortlist.", "backlog", ""),
 }
-# `spec.md` R10: at most this many of Jera's answers, from this many days back.
+# At most this many of Jera's answers, from this many days back.
 DECIDED_MAX = 10
 DECIDED_DAYS = 7
 

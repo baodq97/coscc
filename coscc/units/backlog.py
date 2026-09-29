@@ -1,16 +1,10 @@
-"""`0074`. Which units are waiting, what each is worth and costs, and the order to take them.
+"""Which units are waiting, what each is worth and costs, and the order to take them.
 
-Display only (`intent.md ## Answers, câu 5`): nothing here reaches `cos.mjs`, a gate, `next`
-or the run button. What it reads is the board (`board.read`'s units) and four kinds of
-run-log record; what it returns is a fold of them. There is no stored "current shortlist"
-anywhere — the last record wins, the way `transitions` are read (`spec.md`, Design).
-
-Every function here is pure: no file, no database, no session. The service reads, calls in,
-and writes. A record that does not parse — a hand edit, a field of the wrong type — is
-skipped and named in `problems`; nothing here raises on data, because `fold` runs on every
-board read and a raise there is a 500 on every screen (`plan.md` Risk 1).
-
-The numbers below are chosen, not measured (`spec.md` C5).
+Display only: nothing here reaches `cos.mjs`, a gate, `next` or the run button. It reads the
+board's units and four kinds of run-log record and returns a fold of them; the last record
+wins. Every function is pure. A record that does not parse is skipped and named in
+`problems`; nothing raises on data, because `fold` runs on every board read.
+The numbers below are chosen, not measured.
 """
 
 from __future__ import annotations
@@ -26,7 +20,7 @@ from coscc.units.hold import _line_problem
 VALUES = range(1, 6)
 EFFORTS = ("S", "M", "L")
 # The first two are symmetric, the last two have a direction: `unit` replaces `other`,
-# `unit` depends on `other` (`spec.md ## Answers, câu 1` added the fourth).
+# `unit` depends on `other`.
 RELATIONS = ("liên quan", "trùng", "thay thế", "phụ thuộc")
 SYMMETRIC = ("liên quan", "trùng")
 OPS = ("add", "remove")
@@ -34,7 +28,7 @@ SHORTLIST_MAX = 7
 BASIS_MAX = 500
 TERCILE_MIN = 6
 SIMILAR_MAX = 3
-# `intent.md ## Answers, câu 4`, word for word; `check_estimate` matches an agent's basis on these.
+# Word for word; `check_estimate` matches an agent's basis on these.
 VALUE_GOALS = ("bớt can thiệp tay", "bớt chi phí", "nỗi đau đã gặp thật")
 KINDS = ("estimate-value", "relation", "shortlist", "estimate")
 AGENT_PREFIX = "agent:"
@@ -44,16 +38,15 @@ def is_agent(by: str) -> bool:
     return str(by or "").startswith(AGENT_PREFIX)
 
 
-# -- the set being ranked ---------------------------------------------------------------
 
 
 def in_backlog(unit: dict[str, Any]) -> bool:
-    """R1. Has an idea or intent, is not finished, closed (rejected) or dropped."""
+    """Has an idea or intent, is not finished, closed (rejected) or dropped."""
     has_start = any(
         r.get("stage") in ("idea", "intent") and (r.get("status") or "not started") != "not started"
         for r in unit.get("stages") or []
     )
-    # `0139` R11: the code `next` answered with, never its words.
+    # The code `next` answered with, never its words.
     why = str(unit.get("why") or "")
     if not has_start or why in ("finished", "rejected"):
         return False
@@ -72,19 +65,18 @@ def _status_of(unit: dict[str, Any]) -> str:
     return "backlog" if in_backlog(unit) else "other"
 
 
-# -- effort, from the run log --------------------------------------------------------------
 
 
 def _unknown_cost(rows: list[dict[str, Any]]) -> bool:
-    """`0092` R11. At least one run of the unit ended with no cost reported."""
+    """At least one run of the unit ended with no cost reported."""
     return journal.totals_of(rows)["unknown"] > 0
 
 
 def measured(timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """R4, R5. `{unit: {cost_usd, turns}}` for every finished unit with a reported cost.
+    """`{unit: {cost_usd, turns}}` for every finished unit with a reported cost.
 
-    `0092` R11: a unit with any run whose cost is unknown is left out -- neither met nor
-    missed, and in no tercile or median (spec C8). `undetermined` names those.
+    A unit with any run whose cost is unknown is left out of every tercile and median;
+    `undetermined` names those.
     """
     out: dict[str, dict[str, Any]] = {}
     for u in units:
@@ -99,7 +91,7 @@ def measured(timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[st
 
 
 def undetermined(timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[str, Any]]) -> list[str]:
-    """`0092` R11. The finished units `measured` leaves out for a cost nobody knows, by name."""
+    """The finished units `measured` leaves out for a cost nobody knows, by name."""
     return sorted(
         u["name"] for u in units
         if u.get("why") == "finished" and _unknown_cost(timelines.get(u.get("name") or "", []))
@@ -124,10 +116,9 @@ def _median(values: list[float]) -> float:
 
 
 def effort_from(similar: Iterable[str], found: dict[str, dict[str, Any]], undetermined: int = 0) -> dict[str, Any]:
-    """R4, R5. `{effort, effort_source, effort_basis}`; `effort` is `None` for a guess.
+    """`{effort, effort_source, effort_basis}`; `effort` is `None` for a guess.
 
-    `0092` R11: how many finished units were left out for an unknown cost is said in
-    `effort_basis`, in English (spec C9), so the smaller set is never hidden.
+    How many finished units were left out for an unknown cost is said in `effort_basis`.
     """
     got = _effort_from(similar, found)
     if undetermined > 0:
@@ -160,11 +151,10 @@ def _effort_from(similar: Iterable[str], found: dict[str, dict[str, Any]]) -> di
     }
 
 
-# -- checks -----------------------------------------------------------------------------
 
 
 def check_estimate(value: Any, effort: Any, basis: Any, by: Any, agent: bool) -> str:
-    """R2, R3, R7. The first reason this estimate is refused, or `""`."""
+    """The first reason this estimate is refused, or `""`."""
     if isinstance(value, bool) or not isinstance(value, int) or value not in VALUES:
         return f"value must be a whole number 1–5, got {value!r}"
     if effort not in EFFORTS:
@@ -207,7 +197,7 @@ def check_relation(
     unit: str, other: str, rtype: str, op: str, reason: str, by: str,
     store_names: Iterable[str], active: list[dict[str, Any]], agent: bool = False,
 ) -> str:
-    """R8 and `spec.md ## Answers, câu 1`. The first reason this is refused, or `""`."""
+    """The first reason this is refused, or `""`."""
     names = set(store_names)
     if rtype not in RELATIONS:
         return f"type must be one of {', '.join(RELATIONS)}, got {rtype!r}"
@@ -245,7 +235,7 @@ def check_relation(
 
 
 def check_shortlist(names: Any, backlog: Iterable[str], estimates: dict[str, dict[str, Any]]) -> str:
-    """R10. No ceiling on `lệch` positions (`spec.md ## Answers, câu 2`)."""
+    """No ceiling on `lệch` positions."""
     if not isinstance(names, list) or not names:
         return "the shortlist is empty"
     if len(names) > SHORTLIST_MAX:
@@ -263,7 +253,6 @@ def check_shortlist(names: Any, backlog: Iterable[str], estimates: dict[str, dic
     return ""
 
 
-# -- folding the records ------------------------------------------------------------------
 
 
 def _estimate_problem(r: dict[str, Any]) -> str:
@@ -273,7 +262,7 @@ def _estimate_problem(r: dict[str, Any]) -> str:
 
 
 def estimates_of(records: Iterable[dict[str, Any]], problems: list[str] | None = None) -> dict[str, dict[str, Any]]:
-    """R6. Per unit: `effective`, `person` (latest), `agent` (latest), `history`."""
+    """Per unit: `effective`, `person` (latest), `agent` (latest), `history`."""
     out: dict[str, dict[str, Any]] = {}
     for r in records:
         if r.get("kind") != "estimate-value":
@@ -292,7 +281,7 @@ def estimates_of(records: Iterable[dict[str, Any]], problems: list[str] | None =
 
 
 def relations_of(records: Iterable[dict[str, Any]], problems: list[str] | None = None) -> list[dict[str, Any]]:
-    """R8. The relations in effect: the last record of each key decides."""
+    """The relations in effect: the last record of each key decides."""
     state: dict[tuple[str, str, str], dict[str, Any] | None] = {}
     for r in records:
         if r.get("kind") != "relation":
@@ -323,7 +312,7 @@ def computed_order(
     estimated: dict[str, dict[str, Any]], relations: list[dict[str, Any]],
     numbers: dict[str, Any], statuses: dict[str, str],
 ) -> tuple[list[str], list[dict[str, str]]]:
-    """R11 and `câu 1`. Kahn over `phụ thuộc`, best-ready first by value, effort, number.
+    """Kahn over `phụ thuộc`, best-ready first by value, effort, number.
 
     `estimated` is the backlog units with an estimate in effect. An edge to a finished unit
     is met; one to a unit outside `estimated` is ignored with a warning. A cycle (only a
@@ -341,7 +330,7 @@ def computed_order(
         status = statuses.get(other, "missing")
         if status == "finished":
             continue
-        # `0082` D32: the app's own words, in English (S6).
+        # The app's own words, in English.
         why = {"dropped": "is dropped", "rejected": "was rejected", "backlog": "has no estimate",
                "missing": "is not in the store"}.get(status, "is not in the backlog")
         warnings.append({"unit": r["unit"], "text": f"depends on {other}, but {other} {why}; ignored in the order"})
@@ -376,7 +365,7 @@ def shortlist_of(records: Iterable[dict[str, Any]]) -> tuple[dict[str, Any] | No
 
 
 def stamp(records: Iterable[dict[str, Any]], unit: str) -> dict[str, Any]:
-    """R14. Where `unit` stands in the shortlist in effect now."""
+    """Where `unit` stands in the shortlist in effect now."""
     last, seq = shortlist_of(records)
     if last is None:
         return {"rank": None, "of": None, "record": None}
@@ -391,7 +380,7 @@ def stamp(records: Iterable[dict[str, Any]], unit: str) -> dict[str, Any]:
 def _warnings_for(
     shortlist: list[str], relations: list[dict[str, Any]], statuses: dict[str, str],
 ) -> dict[str, list[str]]:
-    """R9, plus the dependency cases `câu 1` brings. Warn, never remove."""
+    """Warn on dependency cases, never remove."""
     out: dict[str, list[str]] = {n: [] for n in shortlist}
     pos = {n: i for i, n in enumerate(shortlist)}
     for r in relations:
@@ -505,7 +494,7 @@ def fold(
         "suggested": order[:SHORTLIST_MAX],
         "undiscriminating": len(backlog) <= SHORTLIST_MAX,
         "measured_count": len(found),
-        # `0092` R11: finished units left out of `measured_count` for a cost nobody knows.
+        # Finished units left out of `measured_count` for a cost nobody knows.
         "undetermined_count": len(list(undetermined)),
         "terciles": cuts,
         "history": history,
@@ -515,7 +504,7 @@ def fold(
 
 
 def _differs(est: dict[str, Any]) -> dict[str, Any] | None:
-    """R6: the agent's latest, when a person's estimate is in effect and says otherwise."""
+    """The agent's latest, when a person's estimate is in effect and says otherwise."""
     person, agent = est.get("person"), est.get("agent")
     if not person or not agent:
         return None
@@ -524,13 +513,12 @@ def _differs(est: dict[str, Any]) -> dict[str, Any] | None:
     return _brief(agent)
 
 
-# -- the agent's proposal ----------------------------------------------------------------
 
 
 def build_prompt(
     backlog_texts: list[dict[str, str]], finished_rows: list[dict[str, Any]], undetermined: int = 0,
 ) -> str:
-    """R17. Instructions in English; the three value goals stay in the words `check_estimate` matches."""
+    """Instructions in English; the three value goals stay in the words `check_estimate` matches."""
     lines = [
         "You estimate the backlog of a software project. You have no tools but `submit`.",
         "",
@@ -565,7 +553,7 @@ def build_prompt(
                 lines += [f"**{head}**", b[key].strip()]
     lines += ["", "## Finished units", ""]
     if undetermined > 0:
-        # `0092` R11: never listed, and never hidden.
+        # Never listed, and never hidden.
         lines += [f"({undetermined} finished units have an unknown cost and are left out)", ""]
     if not finished_rows:
         lines.append("(none with a recorded cost)")
@@ -585,7 +573,7 @@ def title_of(text: str) -> str:
     return first[0].lstrip("# ").strip() if first else ""
 
 
-# `0136` R2, R9. Why a proposal is `failed` when the session handed back no object.
+# Why a proposal is `failed` when the session handed back no object.
 NO_OBJECT = "no-submission: the session handed back no estimate through submit"
 
 
@@ -594,11 +582,11 @@ def parse_proposal(
     found: dict[str, dict[str, Any]], session: str, active: list[dict[str, Any]],
     workspace: str = "", undetermined: int = 0,
 ) -> dict[str, Any]:
-    """R18. `{records, rejected, failed}`. Relations are checked one after another, so two in
+    """`{records, rejected, failed}`. Relations are checked one after another, so two in
     one object cannot close a cycle between them.
 
-    `submitted` is the object the session handed back through `submit` (`0136` R9), `None`
-    when there is none; its reply is never read. Every record carries `authority: agent`."""
+    `submitted` is the object the session handed back through `submit`, `None` when there is
+    none; its reply is never read. Every record carries `authority: agent`."""
     entries = submitted.get("units") if isinstance(submitted, dict) else None
     if not isinstance(entries, list):
         return {"records": [], "rejected": [], "failed": NO_OBJECT}

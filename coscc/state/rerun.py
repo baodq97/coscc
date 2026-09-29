@@ -1,8 +1,7 @@
 """Running a stage of a unit again: the stages offered, the one chosen and the confirmation.
 
-Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
-keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
-because this module cannot import `coscc.state` at the top (`spike.md ## U1`).
+Handlers import `SERVICE` and `StudioState` in their bodies: this module cannot import
+`coscc.state` at the top.
 """
 
 from __future__ import annotations
@@ -13,16 +12,15 @@ from coscc.service import Invalid, describe_base
 
 
 class RerunMixin(rx.State, mixin=True):
-    # `0017`. Per unit: where its worktree is and what preparing it said, as one line.
-    # Backend only since `0053`: the page reads the open unit's line, `unit_tree`.
+    # Per unit: where its worktree is and what preparing it said, as one line. Backend only;
+    # the page reads the open unit's line, `unit_tree`.
     _trees: dict[str, str] = {}
 
     @rx.var
     def unit_tree(self) -> str:
         return self._trees.get(self.unit_id, "")
-    # `0054` R9. The accepted stages `cos.mjs rerun` says may run again, and for each the
-    # stages that then run again after it (R2). Set only by `load_next`, from
-    # `SERVICE.rerun_offers`; nothing here works either out. The rest is what a person chose.
+    # The accepted stages `cos.mjs rerun` says may run again, and for each the stages that
+    # then run after it. Set only by `load_next`; the rest is what a person chose.
     rerun_stages: list[str] = []
     rerun_later: dict[str, list[str]] = {}
     rerun_stage: str = ""
@@ -31,10 +29,10 @@ class RerunMixin(rx.State, mixin=True):
 
     @rx.var
     def rerun_after(self) -> list[str]:
-        """`0054` R2. The stages that run again after the chosen one, as `cos.mjs` listed them."""
+        """The stages that run again after the chosen one, as `cos.mjs` listed them."""
         return self.rerun_later.get(self.rerun_stage, [])
 
-    # -- running an accepted stage again (`0054` R9) -----------------------------
+    # -- running an accepted stage again -----------------------------
 
     @rx.event
     def set_rerun_stage(self, value: str):
@@ -56,8 +54,7 @@ class RerunMixin(rx.State, mixin=True):
 
     @rx.event(background=True)
     async def run_rerun(self):
-        """Run the chosen stage again with the note, streaming what comes back, as `run_step`
-        does. Whether it may run is the service's: every refusal is its `Invalid`."""
+        """Run the chosen stage again with the note, streaming as `run_step` does."""
         from coscc.state import SERVICE, StudioState
         async with self:
             unit, stage, cwd, note = self.unit_id, self.rerun_stage, self.cwd, self.rerun_note
@@ -85,7 +82,7 @@ class RerunMixin(rx.State, mixin=True):
                         outcome = payload.get("outcome") or ""
                         written = payload.get("artifact") or ""
                         self.notice = f"{stage} {outcome}" + (f" — wrote {written}" if written else "")
-                        # `0054` R8: the service found `pr.md` without its `## Answers`.
+                        # The service found `pr.md` without its `## Answers`.
                         if payload.get("answers_lost"):
                             self.notice += " The session removed the answers pr.md carried."
                         stale = describe_base(payload.get("base"))

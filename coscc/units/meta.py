@@ -1,15 +1,14 @@
-"""`0135`. A unit's metadata, kept in `cos.db`, and the snapshot `cos.mjs --state` reads.
+"""A unit's metadata, kept in `cos.db`, and the snapshot `cos.mjs --state` reads.
 
-Spec Design 1-3. Four writers and one reader:
+Four writers and one reader:
 
 - `import_store`, once per store: everything `cos.mjs meta` reads off its markdown, in one
-  `Data.write()` keyed in `migrations`, so it can neither run twice nor stop halfway (R3).
-- `ingest`, at the end of every step that finished (R7): what changed in one unit's files.
-- `add_answer` and `add_hold` (R8): a person's answer or hold, which no file carries any more.
-- `snapshot`: the JSON `--state` reads, from the tables above and the fold over `transitions`.
+  `Data.write()` keyed in `migrations`, so it can neither run twice nor stop halfway.
+- `ingest`, at the end of every step that finished: what changed in one unit's files.
+- `add_answer` and `add_hold`: a person's answer or hold, which no file carries.
+- `snapshot`: the JSON `--state` reads, from the tables and the fold over `transitions`.
 
-There is no parser here (spec Design 2). Every read of a file is `cos.mjs meta`, the parsers
-`status` used before this unit, so Python holds no second copy of the grammar.
+There is no parser here: every read of a file is `cos.mjs meta`.
 """
 
 from __future__ import annotations
@@ -27,19 +26,17 @@ from coscc.data import Data, now
 from coscc.units.history import History
 from coscc.units.states import Machine
 
-# Seconds. `meta` over the 135 units of this repository's own store took 0.3s on 2026-09-28;
-# like `board.TIMEOUT`, this turns a hung child into an error rather than bounding the work.
+# Seconds. Like `board.TIMEOUT`, turns a hung child into an error rather than bounding the work.
 TIMEOUT = 30.0
 
 SOURCE = "import:0135"
-# `0139` R5: the source every row of the PR machine carries (`prmachine.Machine._apply`), the
-# guards that move where its pull request stands (`prmachine.state`), and the one that is `merged`.
+# The source every row of the PR machine carries (`prmachine.Machine._apply`), the guards that
+# move where its pull request stands (`prmachine.state`), and the one that is `merged`.
 PR_SOURCE = "prmachine:%"
 PR_MOVES = ("branch-named", "ship-ready", "merge-read", "close-read")
 MERGED = "merge-read"
-# The roads a merge was recorded by before the machine: this import, and a `ship` session,
-# which `0139` R12 took away. A unit the machine never touched is merged when its last
-# `ship.md` transition is `accepted` from one of them, and on no other.
+# The roads a merge was recorded by outside the machine: the import, and a `ship` session. A unit
+# the machine never touched is merged when its last `ship.md` transition is `accepted` from one.
 SHIPPED_BEFORE_THE_MACHINE = (SOURCE, "run:ship")
 
 _UNIT_RE = re.compile(r"(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)")
@@ -51,8 +48,7 @@ class MetaError(RuntimeError):
 
 
 def read(store: str | Path, *args: str) -> dict[str, Any]:
-    """`cos.mjs --root <store> meta [args]`, parsed. This app's copy of the script, as
-    `coscc/units/board.py` runs it, for the reason its docstring gives."""
+    """`cos.mjs --root <store> meta [args]`, parsed, using this app's copy of the script."""
     argv = ["node", str(harness.script()), "--root", str(store), "meta", *args]
     try:
         done = subprocess.run(
@@ -75,10 +71,10 @@ def _no_status(artifact: str, raw: str | None, machine: Machine) -> str:
 
 
 def authority_of(via: str | None, text: str | None) -> str:
-    """`0136` R15, of an answer read from a file, which does not say whose it was: Jera's,
-    `Via: precedent.`, is `agent`; one opening a line with `precedent.DELEGATION` was given
-    under a delegation, `delegated`; any other is `person`, as the answer route defaults.
-    Read only on an import, once; an answer the app takes now is classified by its road."""
+    """The authority of an answer read from a file, which does not say whose it was.
+
+    Jera's (`Via: precedent.`) is `agent`; one opening with `precedent.DELEGATION` is `delegated`;
+    any other is `person`. Read only on an import."""
     if via == precedent.VIA:
         return "agent"
     if any(line.startswith(precedent.DELEGATION) for line in (text or "").splitlines()):
@@ -89,9 +85,8 @@ def authority_of(via: str | None, text: str | None) -> str:
 class UnitMeta:
     """The metadata of every unit under one working folder, as `History` is its transitions.
 
-    `workspace` is the key `transitions` already uses, the workspace's resolved path
-    (`Service._journal_key`); a workspace's *name* appears only in the snapshot, where a
-    unit's `Depends on:` refers to another by it.
+    `workspace` is the key `transitions` uses, the resolved path; a workspace's name appears
+    only in the snapshot, where `Depends on:` refers to another by it.
     """
 
     def __init__(
@@ -105,7 +100,6 @@ class UnitMeta:
         self.machine = self.history.machine
         self.root = str(self.history.working_dir)
 
-    # -- import, once per store ----------------------------------------------
 
     def import_key(self, workspace: str) -> str:
         return f"unit-meta:0135:{self.root}/{workspace}"
@@ -114,9 +108,7 @@ class UnitMeta:
         return f"unit-meta:0136-authority:{self.root}/{workspace}"
 
     def classify_answers(self, workspace: str) -> None:
-        """`0136` R15, once per store: the answers `0135`'s import read from files before a
-        row said whose answer it was, classified as `authority_of` classifies one it reads now.
-        Every answer since carries its own, from the road it came by (`Service._append_answers`)."""
+        """Once per store: classify the answers an older import read from files, as `authority_of` does."""
         key = self.authority_key(workspace)
         if self.data.has_run(key):
             return
@@ -137,11 +129,10 @@ class UnitMeta:
         return self.data.has_run(self.import_key(workspace))
 
     def import_store(self, workspace: str, store: str | Path) -> list[dict[str, Any]] | None:
-        """Every directory under the store's `.cos/`, read once, in one transaction (R3).
+        """Every directory under the store's `.cos/`, read once, in one transaction.
 
-        Returns the fields that could not be read, `(unit, artifact, field, reason, raw)`,
-        or `None` when the store was imported already. A second call adds no row: the
-        `migrations` key stops it, and every appended row carries a `once_key` besides.
+        Returns the fields that could not be read, `(unit, artifact, field, reason, raw)`, or
+        `None` when the store was imported already.
         """
         key = self.import_key(workspace)
         if self.data.has_run(key):
@@ -160,7 +151,6 @@ class UnitMeta:
             Data.mark_run(conn, self.authority_key(workspace))
         return unknowns
 
-    # -- ingest, at the end of a step ----------------------------------------
 
     def ingest(
         self,
@@ -174,18 +164,14 @@ class UnitMeta:
         wrote: str | None = None,
         decided: Collection[str] = (),
     ) -> list[dict[str, Any]]:
-        """R7: read one unit's files through `cos.mjs meta`, and write what changed.
+        """Read one unit's files through `cos.mjs meta`, and write what changed.
 
         Only an artifact whose text differs from the last one read (`unit_seen`) is written:
         a transition when the fold differs from its status, its questions, and from
-        `intent.md` its `Type:` and links. `wrote`, the artifact the step itself writes, is
-        the exception: it always gets its transition, as it had one per step since `0014`
-        R6, because rewriting a settled artifact is the event `0013` counts. Answers and
-        holds are not read: since `0135` the app writes them here and nowhere else. Raises
-        `MetaError` or `sqlite3.Error`; the caller records the failure (spec C3).
-
-        `0136` R4: an artifact in `decided` takes its status and its questions from the
-        object its run submitted (`record_result`), so neither is read from its file here.
+        `intent.md` its `Type:` and links. `wrote`, the artifact the step itself writes, always
+        gets its transition. Answers and holds are not read. An artifact in `decided` takes
+        its status and questions from the object its run submitted (`record_result`).
+        Raises `MetaError` or `sqlite3.Error`; the caller records the failure.
         """
         found = read(store, unit)
         meta = (found.get("units") or {}).get(unit) or {}
@@ -207,7 +193,7 @@ class UnitMeta:
             )
 
     def refresh_ideas(self, workspace: str, store: str | Path) -> None:
-        """The store's ideas again, after the app wrote one (`coscc/service/ideas.py`)."""
+        """The store's ideas again, after the app wrote one."""
         found = read(store)
         with self.data.write() as conn:
             self._write_ideas(conn, workspace, found.get("ideas"))
@@ -247,7 +233,7 @@ class UnitMeta:
         for artifact, a in changed:
             conn.execute(f"DELETE FROM unit_unknowns WHERE {_ONE} AND artifact = ?", (*scope, artifact))
             if artifact in decided:
-                # `0136` R4: its `Status:` and `## Open questions` are prose for a reader now.
+                # Its `Status:` and `## Open questions` are prose for a reader now.
                 conn.execute(
                     "INSERT INTO unit_seen (root, workspace, unit, artifact, sha256, questions) VALUES (?, ?, ?, ?, ?, 1) "
                     "ON CONFLICT (root, workspace, unit, artifact) DO UPDATE SET sha256 = excluded.sha256",
@@ -317,9 +303,8 @@ class UnitMeta:
         self, conn: sqlite3.Connection, workspace: str, unit: str, stage: str, artifact: str,
         submitted: Mapping[str, Any],
     ) -> None:
-        """`0136` R4. What a stage result carries beside its transition, in the caller's
-        transaction (`transitions.apply(also=…)`): its row in `stage_results`, and the
-        artifact's open questions, which the snapshot reads as it read them from the file."""
+        """What a stage result carries beside its transition, in the caller's transaction: its
+        row in `stage_results`, and the artifact's open questions."""
         obj = dict(submitted.get("object") or {})
         scope = (self.root, workspace, unit)
         conn.execute(
@@ -338,7 +323,7 @@ class UnitMeta:
             "ON CONFLICT (root, workspace, unit, artifact) DO UPDATE SET questions = 1",
             (*scope, artifact),
         )
-        # R6: impl's claims, each against the round whose open findings guard `impl-claim` read.
+        # impl's claims, each against the round whose open findings guard `impl-claim` read.
         conn.executemany(
             "INSERT INTO impl_claims (at, root, workspace, unit, run, round, finding) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [(now(), *scope, str(submitted.get("run") or ""), int(submitted.get("claims_round") or 0), str(f))
@@ -346,10 +331,9 @@ class UnitMeta:
         )
 
     def record_round(self, conn: sqlite3.Connection, workspace: str, unit: str, submitted: Mapping[str, Any]) -> None:
-        """`0136` R5. A review round and its findings, in the caller's transaction. `n` and
-        `head` are the app's: the number the runner wrote the round under and the head it read
-        when the run opened (R3 c); `screens` is the object's list with where the app read
-        they were taken."""
+        """A review round and its findings, in the caller's transaction. `n` and `head` are the
+        app's: the round number and the head read when the run opened; `screens` is the object's
+        list with where the app read they were taken."""
         obj = dict(submitted.get("object") or {})
         screens = {**dict(submitted.get("screens") or {}), "shots": list(obj.get("screens") or ())}
         cur = conn.execute(
@@ -376,7 +360,6 @@ class UnitMeta:
             ],
         )
 
-    # -- answers and holds, which only the app writes -------------------------
 
     def _answer(self, conn, workspace, unit, artifact, ref, text, by, date, via, once_key="",
                 authority="unknown") -> None:
@@ -399,9 +382,8 @@ class UnitMeta:
         by: str, date: str, via: str, conn: sqlite3.Connection | None = None,
         authority: str = "unknown",
     ) -> None:
-        """R8. `ref` is a question's number or a finding's `F<k>`; the last row for it wins.
-        `authority` (`0136` R8, R15) is `person`, `delegated` or `agent`: whose answer it is,
-        which no name in `by` settles."""
+        """`ref` is a question's number or a finding's `F<k>`; the last row for it wins.
+        `authority` is `person`, `delegated` or `agent`: whose answer it is, which no name in `by` settles."""
         if conn is not None:
             return self._answer(conn, workspace, unit, artifact, ref, text, by, date, via, authority=authority)
         with self.data.write() as c:
@@ -411,16 +393,15 @@ class UnitMeta:
         self, workspace: str, unit: str, state: str, reason: str,
         by: str, date: str, via: str, conn: sqlite3.Connection | None = None,
     ) -> None:
-        """R8. `state` is `paused`, `dropped` or `active`; `cos.mjs` folds the rows."""
+        """`state` is `paused`, `dropped` or `active`; `cos.mjs` folds the rows."""
         if conn is not None:
             return self._hold(conn, workspace, unit, state, reason, by, date, via)
         with self.data.write() as c:
             self._hold(c, workspace, unit, state, reason, by, date, via)
 
-    # -- reading --------------------------------------------------------------
 
     def unknowns(self, workspaces: Iterable[str] | None = None) -> list[dict[str, Any]]:
-        """Every field an import could not read, for `/settings` (R4). Not failed ingests."""
+        """Every field an import could not read, for `/settings`. Not failed ingests."""
         sql = "SELECT workspace, unit, artifact, field, reason, raw FROM unit_unknowns WHERE root = ? AND field <> 'ingest'"
         args: list[Any] = [self.root]
         wanted = list(workspaces) if workspaces is not None else None
@@ -431,16 +412,12 @@ class UnitMeta:
             return [dict(r) for r in conn.execute(sql + " ORDER BY workspace, unit, artifact, field", args)]
 
     def snapshot(self, own: str, names: Mapping[str, str], units_: Iterable[str] | None = None) -> dict[str, Any]:
-        """Spec Design 3: what `cos.mjs --state` reads, for the store `own` and every
-        workspace `names` maps a name to. One query per table, never one per unit.
+        """What `cos.mjs --state` reads, for the store `own` and every workspace `names` maps a name to.
 
-        Units are keyed `<name>/<unit>`. `own`'s name is the one `names` gives it, or `""`
-        for a workspace with none. `not started`, the fold's word for no transition, is no
-        status at all here, as a missing file is to `cos.mjs`.
-
-        `units_` narrows it to those units of `own` and every unit their `Depends on:` may
-        name, which is all `gate`, `next` and `unit-branch` read: R10 measured a `next` given
-        every unit of this repository's store slower than one reading its files.
+        One query per table. Units are keyed `<name>/<unit>`; `own`'s name is the one `names`
+        gives it, or `""`. `not started` is no status at all here. `units_` narrows it to those
+        units of `own` and every unit their `Depends on:` may name, which is all `gate`,
+        `next` and `unit-branch` read.
         """
         named = dict(names)
         own_name = next((n for n, k in named.items() if k == own), "")
@@ -494,12 +471,10 @@ class UnitMeta:
                 a = artifact(r)
                 if a is not None and r["to_state"] != self.machine.absent:
                     a["status"] = r["to_state"]
-                    # `0136` R14: whose skip it was, which `cos.mjs` stops the unit on unless it
-                    # was a person's or their delegate's. Only on a skip, which is all it reads.
+                    # Whose skip it was: `cos.mjs` stops the unit unless a person's or their delegate's.
                     if r["to_state"] == "skipped":
                         a["authority"] = r["authority"]
-            # `0139` R5: whether the unit is merged, which a `Depends on:` naming it reads. The
-            # machine's own fold where it moved the unit at all; else a ship recorded before it.
+            # Whether the unit is merged: the machine's own fold where it moved the unit, else a ship recorded outside it.
             moved: set[tuple[str, str]] = set()
             for r in rows(
                 f"SELECT workspace, unit, guard FROM transitions WHERE id IN (SELECT MAX(id) FROM transitions "
@@ -517,8 +492,7 @@ class UnitMeta:
                 e = entry(r)
                 if e is not None and (r["workspace"], r["unit"]) not in moved:
                     e["merged"] = r["to_state"] == "accepted" and r["source"] in SHIPPED_BEFORE_THE_MACHINE
-            # `0136` R4: the last stage result of each stage, which `cos.mjs` reads a spec's
-            # `U<n>` and a spike's verdicts from rather than from the file.
+            # The last stage result of each stage, which `cos.mjs` reads a spec's `U<n>` and a spike's verdicts from.
             for r in rows(
                 "SELECT workspace, unit, stage, object FROM stage_results WHERE id IN "
                 "(SELECT MAX(id) FROM stage_results WHERE {where} GROUP BY workspace, unit, stage)"
@@ -526,8 +500,7 @@ class UnitMeta:
                 a = artifact({"workspace": r["workspace"], "unit": r["unit"], "artifact": f"{r['stage']}.md"})
                 if a is not None:
                     a["result"] = json.loads(r["object"])
-            # `0136` R5: every round a review handed back, which `cos.mjs` reads in place of
-            # the round of the same number in `review.md`.
+            # Every round a review handed back, read in place of the round of the same number in `review.md`.
             by_id: dict[int, dict[str, Any]] = {}
             for r in rows("SELECT id, workspace, unit, n, head, verdict, screens FROM review_rounds WHERE {where} ORDER BY n"):
                 a = artifact({"workspace": r["workspace"], "unit": r["unit"], "artifact": "review.md"})

@@ -1,18 +1,10 @@
 """What the code decides about a gathered entry, after `knowledge.validate` and before the save.
 
-`0108_the-knowledge-store-fills-with-stale-notes-about-old-code`. A session writes the
-statement; everything that can be read instead of believed is read here: the date from the
-run log (R1), a tool's version from the workspace's pins (R4), that a `Ref:` still exists on
-the ref the `Reader` names (R5), and that no source says it was not run (R6). `admit` never
-fails a batch: what it cannot admit it drops, with a reason, into the batch's `dropped` (R8).
-
-`0131`: the share of `tool:` entries is no longer a rule (R6), and no unit may be the only
-source of more than `ONE_UNIT` entries (R5). The ref is `origin/main` just fetched by
-`fresh_main` (R11), and `health` is what `coscc knowledge show`, `measure` and a gather write
-to `knowledge.HEALTH` (R12).
-
-It does not import `coscc/knowledge/gather.py`, so `gather` and `knowledge_cli` both can import it.
-Everything but `_git` and what calls it is pure.
+A session writes the statement; everything that can be read instead of believed is read here:
+the date from the run log, a tool's version from the workspace's pins, that a `Ref:` still
+exists on the ref the `Reader` names, and that no source says it was not run. `admit` never
+fails a batch: what it cannot admit it drops, with a reason, into `dropped`. It does not import
+`coscc/knowledge/gather.py`. Everything but `_git` and what calls it is pure.
 """
 
 from __future__ import annotations
@@ -36,10 +28,10 @@ TIMEOUT = 60.0
 
 STAGE_OF = {"spike.md": "spike", "review.md": "review", "spec.md": "spec", "plan.md": "plan"}
 
-# `0131` R5. The entries whose every `Source:` is one unit, per unit. Chosen, not measured.
+# Cap on entries whose every `Source:` is one unit, per unit. Chosen, not measured.
 ONE_UNIT = 2
 
-# R6. Compared after NFC and casefold; `build_prompt` copies them into the prompt (R9).
+# Compared after NFC and casefold; `build_prompt` copies them into the prompt.
 MARKERS = (
     "not run", "not measured", "not verified", "unverified", "derived",
     "không kiểm", "chưa kiểm", "không chạy", "chưa chạy", "không đo", "chưa đo",
@@ -73,7 +65,7 @@ def git_runs() -> bool:
 
 
 def workspaces(end_rows: Iterable[dict[str, Any]]) -> dict[str, str]:
-    """R11. `{slot: path}` of every distinct `workspace` the rows carry that is an absolute
+    """`{slot: path}` of every distinct `workspace` the rows carry that is an absolute
     path to a directory there now. A value already a slot names no path."""
     out: dict[str, str] = {}
     for w in sorted({str(r.get("workspace") or "") for r in end_rows}):
@@ -91,14 +83,12 @@ def _utc(at: Any) -> datetime | None:
 
 
 def date_sources(end_rows: Iterable[dict[str, Any]], found: Iterable[dict[str, str]]) -> dict[str, dict[str, str]]:
-    """R1. `{label: {date, at, slot, path}}` for every source a `done` `end` row of its unit
-    and stage dates: the latest such row's `at` in UTC, and its UTC day. `spike.md` is dated by
-    `spike`, `review.md` by `review`, and since `0131` `spec.md` by `spec` and `plan.md` by
-    `plan`. A source no row dates is not in the map.
+    """`{label: {date, at, slot, path}}` for every source a `done` `end` row of its unit and
+    stage dates: the latest such row's `at` in UTC, and its UTC day. A source no row dates is
+    not in the map.
 
-    The run log records `workspace` as a path (`spike.md ## U1`), so it goes through
-    `units.slot`; a value already a slot is compared as it is. `path` is `""` when
-    `workspaces` cannot give one (R11)."""
+    The run log records `workspace` as a path, so it goes through `units.slot`; a value already
+    a slot is compared as it is. `path` is `""` when `workspaces` cannot give one."""
     rows = [r for r in end_rows if r.get("kind") == "end"]
     paths = workspaces(rows)
     slots: dict[str, str] = {}
@@ -125,13 +115,13 @@ def date_sources(end_rows: Iterable[dict[str, Any]], found: Iterable[dict[str, s
 
 
 def tool_name(scope: str) -> str:
-    """R4. The name of a `tool:` scope, lower case, `_` read as `-`; a version is not kept."""
+    """The name of a `tool:` scope, lower case, `_` read as `-`; a version is not kept."""
     rest = scope[len("tool:"):].split()
     return rest[0].lower().replace("_", "-") if rest else ""
 
 
 def pins(path: str, commit: str) -> dict[str, str]:
-    """R4. `{name: version}` at `commit`: `python` from `.python-version`, every package of
+    """`{name: version}` at `commit`: `python` from `.python-version`, every package of
     `uv.lock` by its name as `tool_name` reads one. A name `uv.lock` holds at more than one
     version has no pin: which one is the tool's is not known. An absent file gives nothing."""
     out: dict[str, str] = {}
@@ -155,8 +145,7 @@ def pins(path: str, commit: str) -> dict[str, str]:
 
 
 class Reader:
-    """The git reads of one gather or one check, each asked once, all on `ref`: `main` as it
-    was, `origin/main` after `fresh_main` (`0131` R11), `HEAD` for a step (R9)."""
+    """The git reads of one gather or one check, each asked once, all on `ref`."""
 
     def __init__(self, ref: str = "main") -> None:
         self.ref = ref
@@ -178,7 +167,7 @@ class Reader:
         return self._pins[(path, commit)]
 
     def ref_exists(self, path: str, ref: str) -> tuple[bool, str]:
-        """R5. `<path>` is in `git ls-tree -r --name-only <ref>`, and `::<symbol>`, when
+        """`<path>` is in `git ls-tree -r --name-only <ref>`, and `::<symbol>`, when
         there is one, matches `\\b<symbol>\\b` in `git show <ref>:<path>`."""
         file, _, symbol = ref.partition("::")
         file, symbol = file.strip(), symbol.strip()
@@ -207,13 +196,13 @@ _FOLDED = tuple(_fold(m) for m in MARKERS)
 
 
 def unmeasured(text: str) -> bool:
-    """R6. Whether `text` holds one of `MARKERS`."""
+    """Whether `text` holds one of `MARKERS`."""
     folded = _fold(text)
     return any(m in folded for m in _FOLDED)
 
 
 def subjects(e: dict[str, Any]) -> list[str]:
-    """R6. A `tool:` entry's tool name; a `workspace:` entry's `Ref:` paths and symbols."""
+    """A `tool:` entry's tool name; a `workspace:` entry's `Ref:` paths and symbols."""
     if e["scope"].startswith("tool:"):
         return [tool_name(e["scope"])]
     out: list[str] = []
@@ -224,7 +213,7 @@ def subjects(e: dict[str, Any]) -> list[str]:
 
 
 def counted(e: dict[str, Any], texts: dict[str, str]) -> list[str]:
-    """R6. The labels an entry cites that still count for it: a source with a line holding
+    """The labels an entry cites that still count for it: a source with a line holding
     both a marker and one of the entry's subjects does not, nor one `texts` no longer holds."""
     patterns = [re.compile(r"(?<![\w-])" + re.escape(_fold(s)) + r"(?![\w-])") for s in subjects(e) if s]
     out = []
@@ -245,11 +234,10 @@ def admit(new: list[dict[str, Any]], others: list[dict[str, Any]], ctx: dict[str
     `new` are the entries the batch's session returned and `validate` passed, `others` the
     store's entries it was not given. `ctx` carries `dates` (`date_sources`), `texts` (label
     to the source's text with `## Answers` cut), `workspaces` (`workspaces`) and `git` (a
-    `Reader`). In the order of `spec.md` Design 5: the date (R1), the version (R4), the size,
-    the refs of every `workspace:` entry old and new (R5, R11), what was not measured (R6),
-    then, since `0131` R5, no unit the only source of more than `ONE_UNIT` entries across the
-    store. The share of `tool:` entries (`0108` R7) is gone (`0131` R6). A `GitError` drops
-    the entry it met, with `detail`, and never the batch."""
+    `Reader`). In the order of the date, the version, the size, the refs of every
+    `workspace:` entry old and new, what was not measured, then no unit the only source of more
+    than `ONE_UNIT` entries across the store. A `GitError` drops the entry it met, with
+    `detail`, and never the batch."""
     dates: dict[str, dict[str, str]] = ctx["dates"]
     texts: dict[str, str] = ctx["texts"]
     paths: dict[str, str] = ctx["workspaces"]
@@ -318,7 +306,7 @@ def admit(new: list[dict[str, Any]], others: list[dict[str, Any]], ctx: dict[str
             continue
         store.append(e)
 
-    # `0131` R5: of the entries one unit is the only source of, the newest `ONE_UNIT` stay,
+    # Of the entries one unit is the only source of, the newest `ONE_UNIT` stay,
     # by `Measured:`, a tie to the higher id.
     alone: dict[str, list[dict[str, Any]]] = {}
     for e in store:
@@ -362,13 +350,13 @@ def _workspace_verdict(e: dict[str, Any], paths: dict[str, str], git: Reader) ->
 
 def tool_paths(entries: Iterable[dict[str, Any]], paths: dict[str, str]) -> dict[str, str]:
     """The workspaces a `tool:` entry is checked in: those some `workspace:` entry names,
-    or every one when none does, as `0108`'s `check` chose them."""
+    or every one when none does."""
     wanted = sorted({e["scope"][len("workspace:"):] for e in entries if e["scope"].startswith("workspace:")})
     return {slot: paths[slot] for slot in wanted if slot in paths} if wanted else dict(paths)
 
 
 def health(entries: Iterable[dict[str, Any]], paths: dict[str, str], reader: Reader) -> dict[str, str]:
-    """`0131` R12, R13. `{"K<n>": "" | why}`: whether each entry is still true of `reader.ref`
+    """`{"K<n>": "" | why}`: whether each entry is still true of `reader.ref`
     in the workspaces `paths` names. What an entry points at is checked — a pinned version, a
     path, a name in a file — never its sentence. Raises `GitError`."""
     entries = list(entries)
@@ -381,16 +369,15 @@ def health(entries: Iterable[dict[str, Any]], paths: dict[str, str], reader: Rea
 
 
 def save_health(data_dir: str | os.PathLike[str] | None, shas: dict[str, str], found: dict[str, str]) -> None:
-    """`0131` R12: the whole of `knowledge.HEALTH`, through `knowledge.save`."""
+    """Write the whole of `knowledge.HEALTH` through `knowledge.save`."""
     record = {"sha": dict(sorted(shas.items())), "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
               "entries": found}
     knowledge.save(knowledge.path_of(data_dir) / knowledge.HEALTH, json.dumps(record, indent=2, sort_keys=True) + "\n")
 
 
 async def fresh_main(path: str | os.PathLike[str]) -> str:
-    """`0131` R11. `origin/main` of `path`, just fetched, as a full SHA. The fetch goes
-    through `fetches` — in the app its shared table, at a terminal a table of that process
-    alone, which only the one retry of a ref-lock race covers (C8). Raises `GitError` when the
+    """`origin/main` of `path`, just fetched, as a full SHA. The fetch goes through `fetches`
+    — in the app its shared table, at a terminal a table of that process alone. Raises `GitError` when the
     fetch fails or no SHA reads: nothing is then checked on what the ref held before."""
     from coscc.git import fetches, gitops
 

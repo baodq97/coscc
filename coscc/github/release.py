@@ -1,19 +1,16 @@
-"""Cutting a release from the board (`0046`).
+"""Cutting a release from the board.
 
-Not a stage. `.claude/scripts/cos.mjs` defines the loop and this module adds nothing to it;
-it writes no artifact. A release is two presses a person makes: *Prepare* opens a pull
-request that changes the five declared versions and nothing else (R6, R7), and *Merge and
-tag* merges it once its required checks are green and pushes `vX.Y.Z` onto the merge commit
-(R9, R10). Pushing the tag is what builds the release, on GitHub.
+Not a stage; writes no artifact. A release is two presses: *Prepare* opens a pull request that
+changes the five declared versions and nothing else, and *Merge and tag* merges it once its
+required checks are green and pushes `vX.Y.Z` onto the merge commit (the tag builds the release).
 
-Every press leaves one `release` record in the run log (R15). The state is read again from
-git and `gh` on every board read, never from this process's memory (R12).
+Every press leaves one `release` record in the run log. State is read again from git and `gh`
+on every board read, never from memory.
 
-Grammar is `cos.mjs`'s, run from the workspace's own checkout (`check-tag`, `check-branch`)
-and from the release worktree (`check-version`). The regular expressions here only sort
-versions and keep a string from being read as a flag.
+Grammar is `cos.mjs`'s (`check-tag`, `check-branch`, `check-version`). The regular expressions
+here only sort versions and keep a string from being read as a flag.
 
-The pure functions come first; the `gh`, `node` and `uv` calls after them.
+Pure functions come first; the `gh`, `node` and `uv` calls after them.
 """
 
 from __future__ import annotations
@@ -30,10 +27,10 @@ from coscc.github import integrate
 STATES = ("nothing", "ready", "pr-open", "merged-untagged", "tagged", "published", "unknown")
 OUTCOMES = ("opened", "merged", "tagged", "refused", "failed")
 PHASES = ("prepare", "publish")
-# The button each state carries (R12); a state absent here has none.
+# The button each state carries; a state absent here has none.
 BUTTON = {"ready": "prepare", "pr-open": "publish", "merged-untagged": "publish"}
 
-# R7: the four files a release commit may change, and nothing else.
+# The four files a release commit may change, and nothing else.
 VERSION_FILES = ("pyproject.toml", "package.json", "package-lock.json", "uv.lock")
 BRANCH_PREFIX = "chore/release-"
 SCRIPT = Path(".claude") / "scripts" / "cos.mjs"
@@ -43,9 +40,7 @@ LOCK_TIMEOUT = 300.0
 # Seconds. `cos.mjs` reads a few files and prints one line. Chosen, not measured.
 COS_TIMEOUT = 30.0
 
-# R16, with `spec.md ## Answers, câu 4`. Since `0070` every route sits behind the master
-# password, so "no login" is no longer true; what is true is said instead. The page shows
-# `CONSEQUENCE["release"]` beside the button (S2); this whole string is in `/api/board`.
+# The page shows `CONSEQUENCE["release"]` beside the button; this whole string is in `/api/board`.
 WARNING = (
     "Whoever holds the password or a live session can open a pull request, merge it into main "
     "and push a tag — publishing a release — under this machine's gh login. The default bind "
@@ -55,7 +50,7 @@ WARNING = (
 _TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 _VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _BRANCH = re.compile(r"^chore/release-(\d+)-(\d+)-(\d+)$")
-# Conventional Commits' `feat`, with or without a scope and `!` (`spec.md ## Answers, câu 3`).
+# Conventional Commits' `feat`, with or without a scope and `!`.
 _FEAT = re.compile(r"^feat(?:\([^)]*\))?!?:")
 _URL_NUMBER = re.compile(r"/pull/(\d+)\s*$")
 _GREEN = ("pass", "skipping")
@@ -65,7 +60,6 @@ class ReleaseError(Exception):
     """A `gh`, `node` or `uv` call that failed, carrying the tool's own words."""
 
 
-# --- pure --------------------------------------------------------------------
 
 
 def version_of(text: str) -> tuple[int, int, int] | None:
@@ -75,14 +69,15 @@ def version_of(text: str) -> tuple[int, int, int] | None:
 
 
 def candidates(tags: list[str]) -> list[str]:
-    """Every `vX.Y.Z` among `tags`, highest first. `check-tag` still decides which is a
-    release (R1 a); the caller asks it in this order and keeps the first."""
+    """Every `vX.Y.Z` among `tags`, highest first. `check-tag` still decides which is a release;
+    the caller asks it in this order and keeps the first.
+    """
     shaped = [t for t in tags if _TAG.fullmatch(t or "")]
     return sorted(shaped, key=lambda t: version_of(t) or (0, 0, 0), reverse=True)
 
 
 def branch_name(version: str) -> str:
-    """`chore/release-X-Y-Z`. `cos.mjs check-branch` is asked about it before it is cut (R6.3)."""
+    """`chore/release-X-Y-Z`. `cos.mjs check-branch` is asked about it before it is cut."""
     return BRANCH_PREFIX + version.replace(".", "-")
 
 
@@ -97,9 +92,9 @@ def is_feat(subject: str) -> bool:
 
 
 def match_commits(commits: list[dict], units: list[dict]) -> dict[str, list[dict]]:
-    """R1 b, d; R2. A commit belongs to a unit when the `(#N)` its subject ends in is the
-    pull request the store names for it (`integrate.pr_number_of`). Any other commit is
-    kept, in `unmatched`."""
+    """A commit belongs to a unit when the `(#N)` its subject ends in is the pull request the store
+    names for it (`integrate.pr_number_of`). Any other commit is kept, in `unmatched`.
+    """
     by_pr: dict[int, dict] = {}
     for u in units:
         number = (u.get("pr") or {}).get("number") if isinstance(u.get("pr"), dict) else None
@@ -121,10 +116,11 @@ def match_commits(commits: list[dict], units: list[dict]) -> dict[str, list[dict
 
 
 def propose(last_tag: str, units: list[dict], unmatched: list[dict]) -> tuple[str, str]:
-    """R4, widened by `spec.md ## Answers, câu 3`: `(proposed, reason)`.
+    """`(proposed, reason)`.
 
     Minor when a unit is `Type: feat` or an unmatched subject opens with `feat`; patch when
-    anything else is new; nothing when nothing is. Never major: no answer asked for one."""
+    anything else is new; nothing when nothing is. Never major.
+    """
     v = version_of(last_tag)
     if v is None:
         return "", "no release yet"
@@ -137,7 +133,7 @@ def propose(last_tag: str, units: list[dict], unmatched: list[dict]) -> tuple[st
 
 
 def version_problem(version: str, check_tag_code: int, check_tag_out: str, last_tag: str, on_remote: bool) -> str:
-    """R5, in its order: `""` when `version` may be released."""
+    """In its order: `""` when `version` may be released."""
     if check_tag_code != 0:
         return f"v{version} is not a release tag: {check_tag_out.strip() or 'check-tag refused it'}"
     if check_tag_out.strip() == "prerelease":
@@ -161,10 +157,11 @@ def refusal(
     state: str,
     unreadable: str = "",
 ) -> str:
-    """R13, in its order: the first condition that does not hold, or `""`.
+    """In its order: the first condition that does not hold, or `""`.
 
-    `unreadable` is why the facts R13 needs could not be read — `gh`, git or
-    `pyproject.toml`, the tool's own words — so check-version is never named for it."""
+    `unreadable` is why the facts could not be read (`gh`, git or `pyproject.toml`, the tool's
+    own words), so check-version is never named for it.
+    """
     if active:
         return "a release is already running for this workspace"
     if phase == "prepare" and open_release_pr is not None:
@@ -184,7 +181,7 @@ def refusal(
 
 
 def checks_problem(checks: list[dict] | str | None) -> str:
-    """R9 a: `""` when every required check is green, else why not."""
+    """`""` when every required check is green, else why not."""
     if isinstance(checks, str):
         return checks
     if not checks:
@@ -199,7 +196,7 @@ def checks_problem(checks: list[dict] | str | None) -> str:
 
 
 def publish_problem(checks: list[dict] | str | None, pr_head: str, opened_head: str, tag_known: bool, version: str) -> str:
-    """R9: `""` when *Merge and tag* may run on an open release pull request."""
+    """`""` when *Merge and tag* may run on an open release pull request."""
     if not opened_head:
         return "this pull request was not opened by the app"
     if pr_head != opened_head:
@@ -219,10 +216,11 @@ def classify(
     tags: list[str],
     last_record: dict | None,
 ) -> dict[str, Any]:
-    """R12: the state, its reason and the version it is about, from what git and `gh` said.
+    """The state, its reason and the version it is about, from what git and `gh` said.
 
     Order: an open release pull request; a version on `origin/main` above the last tag that
-    has no tag; new commits; the last tag this app pushed; nothing."""
+    has no tag; new commits; the last tag this app pushed; nothing.
+    """
     if open_pr is not None:
         version = version_of_branch(str(open_pr.get("headRefName") or ""))
         return {"state": "pr-open", "reason": f"release pull request #{open_pr.get('number')} is open",
@@ -246,8 +244,9 @@ _PROJECT_VERSION = re.compile(r'^\s*"?version"?\s*[:=]\s*"([^"]*)",?\s*$')
 
 
 def extra_diff(diff_text: str, old: str, new: str) -> list[str]:
-    """R7: every file or line in `git diff -U0` that is not `old` turning into `new` on a
-    version line of one of `VERSION_FILES`. Empty when the commit may be made."""
+    """Every file or line in `git diff -U0` that is not `old` turning into `new` on a version line
+    of one of `VERSION_FILES`. Empty when the commit may be made.
+    """
     extra: list[str] = []
     current = ""
     removed: list[str] = []
@@ -286,7 +285,7 @@ def extra_diff(diff_text: str, old: str, new: str) -> list[str]:
 
 
 def pr_body(version: str, units: list[dict], unmatched: list[dict]) -> str:
-    """R6.9: the pull request's body lists what the release carries (R1 b, d)."""
+    """The pull request's body lists what the release carries."""
     lines = [f"Release {version}, prepared from the coscc board.", "", f"## Units ({len(units)})", ""]
     lines += [f"- {u['name']} ({u.get('type') or 'no type'}) #{u['pr']} {u['sha'][:7]}" for u in units] or ["- none"]
     lines += ["", f"## Commits with no unit ({len(unmatched)})", ""]
@@ -309,8 +308,9 @@ def record(
     merge_sha: str = "",
     detail: str = "",
 ) -> dict[str, Any]:
-    """R15: the one record every press leaves, whatever happened. `unit` is empty and
-    `stage` is `release`, so the run log's columns are filled; the time is `Journal.append`'s."""
+    """The one record every press leaves, whatever happened. `unit` is empty and `stage` is
+    `release`, so the run log's columns are filled; the time is `Journal.append`'s.
+    """
     if outcome not in OUTCOMES:
         raise ValueError(f"outcome must be one of {', '.join(OUTCOMES)}, got {outcome!r}")
     if phase not in PHASES:
@@ -374,7 +374,6 @@ def set_version_text(name: str, text: str, old: str, new: str) -> str:
     raise ReleaseError(f"not a version file: {name}")
 
 
-# --- gh, node, uv ------------------------------------------------------------
 
 
 async def _gh(argv: list[str], cwd: str) -> tuple[int, str, str]:
@@ -395,7 +394,7 @@ def release_prs(prs: list[dict]) -> list[dict]:
 
 
 async def merged_release_pr(root: str, branch: str) -> dict:
-    """R12: the merged pull request of one release branch, `{number, merge_sha, head}`."""
+    """The merged pull request of one release branch, `{number, merge_sha, head}`."""
     code, out, err = await _gh(
         ["pr", "list", "--state", "merged", "--head", branch,
          "--json", "number,mergeCommit,headRefOid", "--limit", "5"], root)
@@ -413,7 +412,7 @@ async def merged_release_pr(root: str, branch: str) -> dict:
 
 
 async def create_pr(tree: str, branch: str, title: str, body: str) -> int:
-    """R6.9. The pull request's number, read off the URL `gh` prints."""
+    """The pull request's number, read off the URL `gh` prints."""
     code, out, err = await _gh(
         ["pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", body], tree)
     if code != 0:
@@ -425,7 +424,7 @@ async def create_pr(tree: str, branch: str, title: str, body: str) -> int:
 
 
 async def merge_pr(tree: str, n: int, head: str) -> None:
-    """R10.1. Squash, delete the branch, and only if the head is still the one the app pushed."""
+    """Squash, delete the branch, and only if the head is still the one the app pushed."""
     code, out, err = await _gh(
         ["pr", "merge", str(int(n)), "--squash", "--delete-branch", "--match-head-commit", head], tree)
     if code != 0:
@@ -433,7 +432,7 @@ async def merge_pr(tree: str, n: int, head: str) -> None:
 
 
 async def merge_commit(tree: str, n: int) -> str:
-    """R10.2. The merge commit, asked up to `integrate.POLL_TRIES` times."""
+    """The merge commit, asked up to `integrate.POLL_TRIES` times."""
     said = ""
     for attempt in range(integrate.POLL_TRIES):
         code, out, err = await _gh(["pr", "view", str(int(n)), "--json", "state,mergeCommit"], tree)
@@ -454,7 +453,7 @@ async def merge_commit(tree: str, n: int) -> str:
 
 
 async def release_status(root: str, tag: str) -> dict[str, str]:
-    """R11. `{release, release_url, workflow, workflow_url}`, each `""` when unread."""
+    """`{release, release_url, workflow, workflow_url}`, each `""` when unread."""
     out_: dict[str, str] = {"release": "", "release_url": "", "workflow": "", "workflow_url": ""}
     try:
         code, out, _ = await _gh(["release", "view", tag, "--json", "url,isDraft"], root)
@@ -476,8 +475,9 @@ async def release_status(root: str, tag: str) -> dict[str, str]:
 
 
 async def cos(where: Path, *args: str, timeout: float = COS_TIMEOUT) -> tuple[int, str]:
-    """`node <where>/.claude/scripts/cos.mjs <args>`, never the packaged copy: the packaged
-    one has no version files beside it (spec, Design). `(exit code, stdout or stderr)`."""
+    """`node <where>/.claude/scripts/cos.mjs <args>`, never the packaged copy: the packaged one has
+    no version files beside it. `(exit code, stdout or stderr)`.
+    """
     script = Path(where) / SCRIPT
     if not script.is_file():
         return 2, f"no {SCRIPT.as_posix()} in this checkout"
@@ -505,7 +505,7 @@ async def _run(argv: list[str], cwd: Path, timeout: float) -> tuple[int, str]:
 
 
 async def set_versions(tree: Path, old: str, new: str) -> None:
-    """R6.5, R8: the three hand-edited files, then `uv lock`. No `uv sync`, `npm ci` or build."""
+    """The three hand-edited files, then `uv lock`. No `uv sync`, `npm ci` or build."""
     for name in ("pyproject.toml", "package.json", "package-lock.json"):
         path = Path(tree) / name
         try:

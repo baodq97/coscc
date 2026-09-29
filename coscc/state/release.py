@@ -1,8 +1,6 @@
-"""The board's *Release* panel (`0046`): what it shows, copied from the board's `release`
-block, and its two buttons.
+"""The board's *Release* panel: the board's `release` block, and its two buttons.
 
-`StudioState` inherits it. Nothing here decides: whether a press may run is
-`Service.release_prepare`/`release_publish`'s answer, shown as it is.
+Nothing here decides: whether a press may run is `Service.release_prepare`/`release_publish`'s answer.
 """
 
 from __future__ import annotations

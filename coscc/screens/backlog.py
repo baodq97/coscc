@@ -1,6 +1,4 @@
-"""The Backlog screen: its rows, the editor and the shortlist.
-Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
-"""
+"""The Backlog screen: its rows, the editor and the shortlist."""
 
 from __future__ import annotations
 
@@ -18,12 +16,12 @@ _BACKLOG_WIDE = rx.breakpoints(initial="none", md="block")
 
 
 def _backlog_row(row: rx.Var[BacklogRow], shortlisted: bool) -> rx.Component:
-    """`0082` R10. One unit: its rank, estimate and who made it, and *Edit* in the row."""
+    """One unit: its rank, estimate and who made it, and *Edit* in the row."""
     editing = P.backlog_editing == row.unit
     cell = lambda value, width, **kw: s.text(value, size="1", width=width, flex_shrink="0", **kw)  # noqa: E731
     return rx.box(
         rx.hstack(
-            # `0082` F4: a unit with no estimate has no computed place, and reads "—" like its value.
+            # A unit with no estimate has no computed place, and reads "—" like its value.
             cell(rx.cond(row.rank > 0, "#" + row.rank.to_string(), "—"), "36px"),
             rx.text(row.unit, size="2", font_family=_MONO, flex="1", min_width="96px", overflow_wrap="anywhere"),
             cell(row.value, "44px"),
@@ -88,9 +86,7 @@ def _backlog_editor(row: rx.Var[BacklogRow]) -> rx.Component:
 
 
 def _backlog_screen() -> rx.Component:
-    """`0074`, on its own route since `0082` R10: the shortlist and the rest as one table.
-
-    Display only: nothing here reaches the run button, a gate or `next` (`0074` R15)."""
+    """The shortlist and the rest as one table. Display only: nothing here reaches the run button, a gate or `next`."""
     head = rx.hstack(
         *(s.text(label, size="1", weight="medium", width=w, flex_shrink="0") for label, w in
           (("Rank", "36px"),)),
@@ -111,7 +107,7 @@ def _backlog_screen() -> rx.Component:
             rx.cond(P.backlog_recorded != "", s.text(P.backlog_recorded, size="1", margin_bottom="8px")),
             head,
             rx.foreach(P.backlog_rows, lambda r: _backlog_row(r, True)),
-            # `0082` F3: one sentence for an empty shortlist, whether or not one was ever saved.
+            # One sentence for an empty shortlist, whether or not one was ever saved.
             rx.cond(P.backlog_rows.length() == 0,
                     s.text(rx.cond(P.backlog_recorded != "", "No unit is on the saved shortlist.",
                                    "No shortlist saved yet."), size="1", padding="10px 0")),

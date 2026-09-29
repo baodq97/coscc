@@ -1,31 +1,21 @@
-"""The steps the app went down under, ended at the next start (`0092` R5).
+"""Ends the steps the app went down under, at the next start.
 
-A board step's runner writes its `end` record when the step ends. When the app itself ends
-first -- a restart, an update, SIGTERM, SIGKILL -- nothing does: the runner deliberately
-writes no `end` for an app going down (`0073` C6, C9), the recorder only `abandon()`s, and
-the `start` stays "ended, unknown" with the turns it ran nowhere in the run log.
+When the app ends first (restart, update, SIGTERM, SIGKILL) no `end` is written for a running
+step, so its `start` stays "ended, unknown". At the next start, before the server serves and
+before the purge, every `run` that meets all of these is given the `end` it never got:
 
-So at the next start, before the server serves and before `0073`'s purge, every `run` that
-meets all four of R5's conditions is given the `end` it never got:
-
-- its `start` carries a `pid` (a `start` written before `0092` never does, and is left
-  exactly as it is -- R9);
+- its `start` carries a `pid`;
 - no `end` names its `run`;
 - its `step_runs` row has no `ended_at`;
 - that `pid` is not a live process.
 
-The `end` says `failed`, "the app went down while the step ran", `recovered: true`, no
-`cost_usd` and `cost_unknown: true`, and the turns the recorder stored. The row in
-`step_runs` is then closed at its last stored event, so the watch pane stops reading
-`ended-unknown` for a step the run log calls `failed`.
+The `end` says `failed`, `recovered: true`, `cost_unknown: true` and the stored turns. The
+`step_runs` row is closed at its last stored event.
 
-**A live `pid` is never touched**, this process's own included: that is a step still
-running, or a second copy of the app on the same data root (`.claude/rules/coscc-events.md`).
-A `pid` the system has since given to some other process reads as alive too, and the step
-keeps its "ended, unknown" -- the safe way to be wrong. The check is one machine's: a copy
-of the app on another machine sharing the data root over a network drive would have its
-running steps ended here (`spec.md` C4). On anything but POSIX, `os.kill` ends a process
-rather than asking after it, so there nothing is recovered at all.
+A live `pid` is never touched, this process's own included: it is a running step or a second
+copy of the app on the same data root. A `pid` reused by another process reads as alive too
+(the safe way to be wrong). The check is one machine's. Off POSIX, `os.kill` ends a process
+rather than asking, so nothing is recovered.
 """
 
 from __future__ import annotations
@@ -60,8 +50,8 @@ def _recover_one(data: Data, row: dict[str, Any]) -> bool:
     if any(r.get("kind") == "end" and r.get("run") == run for r in records):
         return False
     if any(r.get("kind") == "suspend" and (r.get("owner") or {}).get("run") == run for r in records):
-        # `0138`. An update paused it, and its step goes on under a new `run`: that one writes
-        # the `end`. Only this run's own row is closed.
+        # An update paused it, and its step goes on under a new `run`: that one writes the `end`.
+        # Only this run's own row is closed.
         data.step_run_close(run, row["last_at"] or row["started_at"], row["lost"])
         return False
     if not starts or not isinstance(starts[-1].get("pid"), int):
@@ -82,8 +72,7 @@ def _recover_one(data: Data, row: dict[str, Any]) -> bool:
 
 
 def recover(data: Data) -> int:
-    """R5. End every run the app went down under; how many were. One run's error does not
-    stop the others."""
+    """End every run the app went down under; returns how many. One run's error does not stop the others."""
     recovered = 0
     for row in data.step_runs_open():
         try:
@@ -94,6 +83,5 @@ def recover(data: Data) -> int:
 
 
 def recover_on_start(config: Any) -> int:
-    """What `coscc/run.py` calls before the purge: a `Data` built from `config`, and nothing
-    else of the app."""
+    """What `coscc/run.py` calls before the purge: a `Data` built from `config`, nothing else."""
     return recover(Data(config.data_dir))

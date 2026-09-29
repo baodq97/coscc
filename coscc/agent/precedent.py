@@ -1,31 +1,20 @@
 """Jera: an agent that answers a unit's open questions from precedent.
 
-`0044_open-questions-wait-for-the-originator-even-when-precedent-answers-them`. Not a stage
-and unknown to `cos.mjs`: one tool-less session per press of *Ask Jera*, or per pick of the
-autopilot (`0101` R1), under the grant `precedent` (`coscc/agent/policy.py`) with a ceiling
-set by the prompt's length (`grant_for_prompt`). Everything it may read is in its prompt;
-since `0136` R8 everything it decides is one object it hands back through `submit`, which
-the app filters and writes. Its reply is not read.
-`Service.precedent` is the one caller that writes; `scripts/verify_0044.py --measure` asks
-and writes nothing.
+Not a stage and unknown to `cos.mjs`: one tool-less session per press of *Ask Jera* or per
+autopilot pick, under the grant `precedent` (`coscc/agent/policy.py`) with a ceiling set by the
+prompt's length (`grant_for_prompt`). Everything it may read is in its prompt; everything it
+decides is one object handed back through `submit`, which the app filters and writes. Its reply
+is not read. `Service.precedent` is the one caller that writes. Every function here but `ask`
+is pure.
 
-Every function here but `ask` is pure: no disk, no network, no clock.
-
-What is decided here, and what is not:
-- The store of precedent (`entries`) is the Settings text and every answer in force in the
-  same workspace, less Jera's own and the asked unit's (`spec.md` R8). An answer a later
-  block replaced is not precedent: it is a decision that was changed (`plan.md`, *Những gì
-  cố ý không làm*).
+- The store (`entries`) is the Settings text and every answer in force in the same workspace,
+  less Jera's own and the asked unit's. A replaced answer is not precedent.
 - A verdict `answer` survives only with every citation in that store, or `practice` on a
-  question of category `other` (`0101` R6), and a category outside the four that need a
-  person (`verdicts`, R4-R6; `0101` R7). Which category a question is in is still Jera's
-  word (`spec.md` C2), and so is which best practice `practice` stands for (`0101` C2);
-  nothing here can check either.
-- Since `0137` every entry says who decided it (`decided_by`: `originator`, `delegated` or
-  `inferred`), and a verdict `answer` that cites no `originator` or `delegated` entry and
-  no `practice` needs a person (`verdicts`, R8): an agent's inference never settles a
-  question by itself. The label is only as true as the name in `Answered by:` (`0137`
-  spec ## Concerns).
+  question of category `other`, and a category outside the four that need a person
+  (`verdicts`). The category and what `practice` stands for are Jera's word; nothing checks them.
+- Every entry says who decided it (`decided_by`: `originator`, `delegated` or `inferred`); an
+  `answer` citing no `originator` or `delegated` entry and no `practice` needs a person, so an
+  agent's inference never settles a question. The label is only as true as `Answered by:`.
 """
 
 from __future__ import annotations
@@ -41,10 +30,8 @@ AGENT = "Jera"
 VIA = "precedent"
 ACTOR = f"agent:{AGENT}"
 
-# `0101` R7, `intent.md ## Answers, câu 4`. A question in one of these is a person's, whatever
-# precedent says, and no text in Settings removes one (`0101` C1). `0044`'s
-# `business-tradeoff` is gone (`0101` C3): a reply still saying it is a category the app
-# does not know, and needs a person.
+# A question in one of these is a person's, whatever precedent says, and no text in Settings
+# removes one. A reply naming a category the app does not know needs a person.
 NEEDS_PERSON = (
     "product-direction",
     "security-or-permissions",
@@ -54,21 +41,19 @@ NEEDS_PERSON = (
 CATEGORIES = NEEDS_PERSON + ("other",)
 ANSWER, PERSON = "answer", "needs-person"
 
-# `0101` R6. The one citation that is no entry of the store: a best practice Jera names in
-# `text`. It settles only a question of category `other`, and has no source anyone can check.
+# The one citation that is no entry of the store: a best practice Jera names in `text`. It
+# settles only a question of category `other`, and has no source anyone can check.
 PRACTICE = "practice"
 
-# `0101` R5. A session's ceiling grows with its prompt. The line runs through two sessions
-# measured with a cold cache: 64220 characters cost $0.486468 (`0101` spike.md ## U2, run 1),
-# 178405 cost $1.213064 (`0101` spec.md R5 point 2). The margin 1.25 and the cap $3.00 are
-# chosen, not measured.
+# A session's ceiling grows with its prompt. The line runs through two cold-cache sessions:
+# 64220 characters cost $0.486468, 178405 cost $1.213064. The margin 1.25 and the cap $3.00
+# are chosen, not measured.
 PRECEDENT_FLOOR_USD = 1.00
 PRECEDENT_MAX_USD = 3.00
 _USD_FIXED, _USD_PER_CHAR, _MARGIN = 0.08, 0.0000064, 1.25
 
-# `0101` R8. What the prompt says about deciding, unless Settings holds `decision_rules`.
-# Words to the model, so English; no person, company or repository is named (`intent.md
-# ## Answers`, câu 6).
+# What the prompt says about deciding, unless Settings holds `decision_rules`. Words to the
+# model, so English; no person, company or repository is named.
 DEFAULT_RULES = (
     "Decide a question yourself when precedent below settles it, or when it is of category "
     "`other` and a widely accepted best practice settles it. Leave it to the person when it is "
@@ -80,44 +65,44 @@ DEFAULT_RULES = (
 # The last line of every block Jera writes; `cites_of` reads it back for the board.
 CITES = "Tiền lệ:"
 
-# `spec.md` R4. Said for a question the reply left out or said nothing usable about.
+# Said for a question the reply left out or said nothing usable about.
 NOT_ANSWERED = "Jera did not answer this question."
 
-# `0136` R2, R8. Why a run is `failed` when Jera called `submit` with nothing it kept.
+# Why a run is `failed` when Jera called `submit` with nothing it kept.
 NO_OBJECT = "no-submission: Jera handed back no verdicts through submit"
 
-# `0137` R1. Who decided an entry, computed on every read and never typed by anyone.
+# Who decided an entry, computed on every read and never typed by anyone.
 ORIGINATOR, DELEGATED, INFERRED = "originator", "delegated", "inferred"
 WHO = (ORIGINATOR, DELEGATED, INFERRED)
 
-# `0137` R2. Names that are an agent's whatever the agent table says: Jera, and Leif, who
-# answers in the originator's place from outside the app.
+# Names that are an agent's whatever the agent table says: Jera, and Leif, who answers in the
+# originator's place from outside the app.
 AGENTS_ALWAYS = ("Jera", "Leif")
 
-# `0137` R10. The last line of a block written under a delegation, `Theo ủy quyền: D<n>`.
+# The last line of a block written under a delegation, `Theo ủy quyền: D<n>`.
 DELEGATION = "Theo ủy quyền:"
 _DELEGATION_LINE = re.compile(r"^Theo ủy quyền: (D\d+)$")
 
 # The fixed word `Answered by:` carries when a request names nobody (`service.common.OWNER`).
 OWNER = "owner"
 
-# `0137` R8. The reason a verdict citing only inferences needs a person.
+# The reason a verdict citing only inferences needs a person.
 ONLY_INFERRED = "It rests only on agents' inferences."
 
-# `0137` R3. What each kind of entry says of itself.
+# What each kind of entry says of itself.
 PREFS_SOURCE = "Settings: Decision preferences"
 EVERY_WORKSPACE, THIS_WORKSPACE, NO_END = "every workspace", "this workspace", "no end date"
 ANSWER_SCOPE, ANSWER_TERM = "that question of that unit", "until a later block replaces it"
 
 
 def is_jera(name: Any) -> bool:
-    """`spec.md` R11: the one name a person may not answer under."""
+    """The one name a person may not answer under."""
     return str(name or "").strip().lower() == AGENT.lower()
 
 
 def opens_with(by: Any, names: Iterable[Any]) -> bool:
-    """`0137` R1: `by` opens with one of `names`, case aside, and the name ends there or at a
-    character that is not a letter — `Leif (CoS)` does, `Leifson` does not."""
+    """`by` opens with one of `names`, case aside, and the name ends there or at a character
+    that is not a letter: `Leif (CoS)` does, `Leifson` does not."""
     b = str(by or "").strip().casefold()
     for n in names:
         n = str(n or "").strip().casefold()
@@ -127,7 +112,7 @@ def opens_with(by: Any, names: Iterable[Any]) -> bool:
 
 
 def is_agent_name(by: Any, names: Iterable[Any]) -> bool:
-    """`0137` R2. `by` is an agent's: it opens with a name in `names` or `AGENTS_ALWAYS`."""
+    """`by` is an agent's: it opens with a name in `names` or `AGENTS_ALWAYS`."""
     return opens_with(by, [*names, *AGENTS_ALWAYS])
 
 
@@ -136,7 +121,7 @@ def decision_id(d: Mapping[str, Any]) -> str:
 
 
 def in_force(d: Mapping[str, Any], day: str, workspace: str) -> bool:
-    """`0137` R4. Decision `d` holds on `day` (ISO) in `workspace` (a slot): from its first day,
+    """Decision `d` holds on `day` (ISO) in `workspace` (a slot): from its first day,
     to its last if it has one, before the day it was withdrawn, and in its workspace or all."""
     day = str(day or "")
     start, until = str(d.get("from_day") or ""), str(d.get("until_day") or "")
@@ -146,7 +131,7 @@ def in_force(d: Mapping[str, Any], day: str, workspace: str) -> bool:
 
 
 def delegation_of(text: Any) -> str:
-    """`0137` R10. The `D<n>` of a block's last non-empty line `Theo ủy quyền: D<n>`, else `""`."""
+    """The `D<n>` of a block's last non-empty line `Theo ủy quyền: D<n>`, else `""`."""
     lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
     found = _DELEGATION_LINE.match(lines[-1]) if lines else None
     return found.group(1) if found else ""
@@ -154,7 +139,7 @@ def delegation_of(text: Any) -> str:
 
 def decided_by(answer: Mapping[str, Any], workspace: str, decisions: Iterable[Mapping[str, Any]],
                mine: Iterable[str], agents: Iterable[str]) -> str:
-    """`0137` R1. Who decided one answer in force, in this order:
+    """Who decided one answer in force, in this order:
 
     1. `delegated`: its last line cites a `delegation` in force on its `Date:` in this
        workspace, and `by` opens with the name of the agent that delegation names;
@@ -181,14 +166,13 @@ def entry_id(unit: str, artifact: str, n: Any) -> str:
 def entries(units: Iterable[dict[str, Any]], prefs_text: str, exclude_units: Iterable[str], *,
             workspace: str = "", decisions: Iterable[Mapping[str, Any]] = (), mine: Iterable[str] = (),
             agents: Iterable[str] = (), today: str = "") -> list[dict[str, str]]:
-    """`spec.md` R8, `0137` R3. `[{id, text, who, source, scope, term}]`: each paragraph of the
-    Settings text as `pref:<k>`, each of the person's `decisions` in force `today` in
-    `workspace` as `D<n>`, then each answer in force the board read carries (`answers`,
-    `coscc/units/board.py`), which also has its `date`.
+    """`[{id, text, who, source, scope, term}]`: each paragraph of the Settings text as
+    `pref:<k>`, each of the person's `decisions` in force `today` in `workspace` as `D<n>`,
+    then each answer in force the board read carries (`answers`, `coscc/units/board.py`).
 
     Left out: an answer Jera gave (by its name or by `Via: precedent`), and every answer of a
-    unit in `exclude_units` — the asked unit itself, so a question never cites its own
-    answer. Leif's answers stay in (`spec.md` C3), labelled `inferred` (`0137` R1)."""
+    unit in `exclude_units`, so a question never cites its own answer. Leif's answers stay
+    in, labelled `inferred`."""
     out: list[dict[str, str]] = []
     paragraphs = [p.strip() for p in re.split(r"\n[ \t]*\n", prefs_text or "") if p.strip()]
     for k, p in enumerate(paragraphs, 1):
@@ -228,9 +212,9 @@ def entries(units: Iterable[dict[str, Any]], prefs_text: str, exclude_units: Ite
 
 
 def asked(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """`spec.md` R2. The questions Jera is given: not answered, not in `review.md`, on a unit
+    """The questions Jera is given: not answered, not in `review.md`, on a unit that is
     that is neither finished nor closed. `[{unit, artifact, n, text}]`."""
-    # `0136` R11: by the rule of `decide` that answered, never by the words of `next`.
+    # By the rule of `decide` that answered, never by the words of `next`.
     if str(unit.get("why") or "") in ("finished", "rejected"):
         return []
     return [
@@ -242,24 +226,22 @@ def asked(unit: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def ceiling(chars: int) -> float:
-    """`0101` R5. The `max_budget_usd` of a Jera session whose prompt is `chars` long: the
-    measured line with its margin, up to the next $0.05, and never under $1.00. Past
-    `PRECEDENT_MAX_USD` no session opens; that is the caller's to refuse."""
+    """The `max_budget_usd` of a Jera session whose prompt is `chars` long: the measured line
+    with its margin, up to the next $0.05, and never under $1.00. Past `PRECEDENT_MAX_USD` no
+    session opens; that is the caller's to refuse."""
     raw = _MARGIN * (_USD_FIXED + _USD_PER_CHAR * max(0, int(chars)))
     # Rounded before the ceiling, so a float's last bit does not add a step.
     return max(PRECEDENT_FLOOR_USD, round(math.ceil(round(raw * 20, 9)) / 20, 2))
 
 
 def grant_for_prompt(grant: Any, prompt: str) -> Any:
-    """`0101` R5, Design 2. The grant `precedent` with the ceiling of this prompt; `Grant` is
-    frozen, so a copy."""
+    """The grant `precedent` with the ceiling of this prompt; `Grant` is frozen, so a copy."""
     return dataclasses.replace(grant, max_budget_usd=ceiling(len(prompt)))
 
 
 def build_prompt(questions: list[dict[str, Any]], store: list[dict[str, str]], rules: str = DEFAULT_RULES) -> str:
-    """`spec.md` Design 4. In English; the text Jera writes is Vietnamese because it goes into
-    `.cos/`. No path and no workspace name: only questions, the rules in force (`0101` R8)
-    and the store, by id."""
+    """In English; the text Jera writes is Vietnamese because it goes into `.cos/`. No path
+    and no workspace name: only questions, the rules in force and the store, by id."""
     lines = [
         f"You are {AGENT}. You answer the open questions of one unit of work from precedent: "
         "decisions already made in this project, listed under *Precedent* below. You have no "
@@ -300,7 +282,7 @@ def build_prompt(questions: list[dict[str, Any]], store: list[dict[str, str]], r
     ]
     for q in questions:
         lines += ["", f"### {q['artifact']}, question {q['n']}", str(q.get("text") or "").strip()]
-    # `0137` R7. Outside `## Rules`, so `decision_rules` cannot take it out.
+    # Outside `## Rules`, so `decision_rules` cannot take it out.
     lines += ["", "## Precedent", "", WEIGHING]
     for who, title, said, same in _PARTS:
         part = [e for e in store if e.get("who", INFERRED) == who]
@@ -322,7 +304,7 @@ def build_prompt(questions: list[dict[str, Any]], store: list[dict[str, str]], r
     return "\n".join(lines) + "\n"
 
 
-# `0137` R7. The three things the prompt always says about weighing precedent.
+# The three things the prompt always says about weighing precedent.
 WEIGHING = (
     "An entry under *Agents' inferences* never settles a question by itself: an `answer` must "
     "also cite an entry of one of the other two parts, or `practice`. When an inference "
@@ -330,9 +312,8 @@ WEIGHING = (
     "agent it names decide, and only the kind of question it says it covers."
 )
 
-# `0137` R7. The three parts of `## Precedent`, in order: who, heading, the sentence saying
-# what every entry in it holds for, and that scope and term, which an entry repeats only when
-# its own differ.
+# The three parts of `## Precedent`, in order: who, heading, the sentence saying what every
+# entry in it holds for, and that scope and term, which an entry repeats only when its own differ.
 _PARTS = (
     (ORIGINATOR, "The person's decisions",
      "A preference or decision holds in every workspace with no end date unless it says otherwise; "
@@ -358,17 +339,16 @@ def _number(value: Any) -> int | None:
 
 def verdicts(submitted: Mapping[str, Any] | None, questions: list[dict[str, Any]],
              who: Mapping[str, str]) -> dict[str, Any]:
-    """`spec.md` R4, R5, R6. `{failed, verdicts, ignored}`.
+    """`{failed, verdicts, ignored}`.
 
-    `submitted` is the object Jera handed back through `submit` (`0136` R8), `None` when it
-    handed back none; the reply's words are never read for it. `who` maps every id of the
-    store Jera was given to who decided that entry (`0137` R1).
+    `submitted` is the object Jera handed back through `submit`, `None` when none; the reply's
+    words are never read. `who` maps every id of the store to who decided that entry.
 
-    `failed` is a reason when there is no object, and then nothing else is read.
-    Otherwise `verdicts` has one element per question in `questions`, in their order, each
-    `{artifact, n, question, verdict, category, text, reason, cites}`. An element naming a
-    question not in `questions` — any `review.md`, any `F<n>` — is `ignored` and reaches
-    nothing. Every downgrade to `needs-person` says why in `reason`.
+    `failed` is a reason when there is no object, and then nothing else is read. Otherwise
+    `verdicts` has one element per question in `questions`, in order, each `{artifact, n,
+    question, verdict, category, text, reason, cites}`. An element naming a question not in
+    `questions` (any `review.md`, any `F<n>`) is `ignored`. Every downgrade to `needs-person`
+    says why in `reason`.
     """
     data = (submitted or {}).get("verdicts") if isinstance(submitted, Mapping) else None
     if not isinstance(data, list):
@@ -424,7 +404,7 @@ def verdicts(submitted: Mapping[str, Any] | None, questions: list[dict[str, Any]
             elif unknown:
                 why = f"It cites {', '.join(unknown)}, which is not in the precedent it was given."
             elif PRACTICE in cites and category != "other":
-                # `0101` R6: a best practice stands in for precedent on `other` alone.
+                # A best practice stands in for precedent on `other` alone.
                 why = f"It cites {PRACTICE}, which settles only a question of category other."
             elif category in NEEDS_PERSON:
                 why = f"Its category, {category}, needs a person."
@@ -433,7 +413,7 @@ def verdicts(submitted: Mapping[str, Any] | None, questions: list[dict[str, Any]
             elif any(line.lstrip().startswith("#") for line in text.splitlines()):
                 why = "A line of it starts with #, which an answer may not."
             elif not any(c == PRACTICE or who.get(c) in (ORIGINATOR, DELEGATED) for c in cites):
-                # `0137` R8, last so it counts only what no older reason already took.
+                # Last, so it counts only what no older reason already took.
                 why = ONLY_INFERRED
             if why:
                 v.update(verdict=PERSON, reason=why)
@@ -476,12 +456,11 @@ async def ask(sessions: Any, cwd: str, prompt: str, grant: Any, model: str | Non
     failure)`: `end` holds `session_id`, `cost` and `terminal_reason`; `failure` is `""`
     unless the session broke or stopped at a ceiling, which counts as broken.
 
-    `owner` and `resume` are `0138`'s, as `Sessions.stream` takes them: a session an update
-    pauses raises `Suspended` out of here, and one taken up again goes on from its row.
+    `owner` and `resume` are as `Sessions.stream` takes them: a session an update pauses raises
+    `Suspended` out of here, and one taken up again goes on from its row.
 
-    `channel` (`0136` R8) is the `submit.Collector` the session hands its object to; the
-    grant must carry `submits` for the gate to let the call through. A knowledge batch
-    passes none, and its session has no tool at all."""
+    `channel` is the `submit.Collector` the session hands its object to; the grant must carry
+    `submits` for the gate to let the call through. A knowledge batch passes none."""
     from coscc.runner import CEILING_MARKERS, Denials, permission_gate
     from coscc.agent.sessions import StepHandle, Suspended
     from coscc.agent.submit import SERVER

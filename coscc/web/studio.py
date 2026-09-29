@@ -1,9 +1,4 @@
-"""Presentation primitives for the page. Python styles, no service dependencies.
-
-Written for the prototype and kept unchanged since, which is the point:
-the look the originator approved is this file, and swapping the data underneath it did
-not require touching it.
-"""
+"""Presentation primitives for the page. Python styles, no service dependencies."""
 
 import reflex as rx
 
@@ -99,10 +94,8 @@ def native_select(*children, **props) -> rx.Component:
 
 
 def details(is_open, on_toggle, label, *children, **props) -> rx.Component:
-    """`0082` R6. A disclosure for internal detail — a path, a full sha, a UUID, a variable
-    name. Opened by a state var through `rx.cond`, not `<details>`: while closed, what it
-    holds is not in the DOM at all, so nothing on the screen shows it (`ui-standard.md` S3).
-    """
+    """A disclosure for internal detail (path, full sha, UUID). Opened by a state var through
+    `rx.cond`, so while closed what it holds is not in the DOM at all."""
     return rx.box(
         rx.button(
             rx.cond(is_open, rx.icon("chevron-down", size=13), rx.icon("chevron-right", size=13)),

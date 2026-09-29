@@ -1,12 +1,8 @@
-"""`coscc knowledge ...`: the terminal's way into the knowledge store (`0090` R9).
+"""`coscc knowledge ...`: the terminal's way into the knowledge store.
 
-Reached from `coscc/run.py` alone, imported there lazily, like `reset-password`. No route,
-button or autopilot pass reaches this module (`cli_test.py` holds that), so the one command
-here that spends quota, `gather --yes`, needs a shell on this machine. Since `0131` the app
-also gathers by itself after a ship, through `coscc/service/knowledge.py` and not through here.
-
-`show` (`0131` R13, which took `0108`'s `check` into it) and `measure` (R22) spend nothing and
-fetch `origin/main` first; both write `knowledge.HEALTH` and nothing else.
+Reached only from `coscc/run.py`; no route, button or autopilot pass reaches it, so
+`gather --yes`, the one command that spends quota, needs a shell. `show` and `measure` spend
+nothing, fetch `origin/main` first and write only `knowledge.HEALTH`.
 
 Exit codes: 0 done, 1 failed with a reason, 2 misuse or refused.
 """
@@ -49,11 +45,9 @@ def _options(args: list[str], flags: set[str], valued: set[str]) -> dict[str, st
 
 
 def show(data_dir, say: Callable[[str], None]) -> int:
-    """`0131` R13. The store's path, header and entries by scope; each entry checked on an
-    `origin/main` fetched now, written to `knowledge.HEALTH`; and for each workspace how many
-    entries apply, how many pass on which `origin/main`, and how many its prompt would carry.
-    A broken entry is never counted as applying. `1` an entry is broken or a fetch failed, `2`
-    the store, the run log or git cannot be read."""
+    """Print the store's entries by scope, each checked on a fresh `origin/main` (saved to
+    `knowledge.HEALTH`), and per workspace how many apply, pass and would be carried.
+    `1` an entry is broken or a fetch failed, `2` the store, run log or git cannot be read."""
     directory = knowledge.path_of(data_dir)
     path = directory / knowledge.STORE
     say(f"store: {path}")
@@ -129,7 +123,7 @@ def _gather(config, opts: dict[str, str | bool], say: Callable[[str], None]) -> 
         return 2
     from coscc.runlog.journal import Journal
 
-    # Before the plan, so a dry run refuses a run log or a git it cannot read too (`0108` R12).
+    # Before the plan, so a dry run refuses an unreadable run log or git too.
     journal = Journal(config.working_dir, config.data_dir)
     try:
         planned = gather.plan_of(config.data_dir, mode, journal)
@@ -141,7 +135,6 @@ def _gather(config, opts: dict[str, str | bool], say: Callable[[str], None]) -> 
         return 1
     n, parts = len(planned["sources"]), len(planned["batches"])
     if planned["resumed"]:
-        # `0107` R6: what is left of it, and what that may cost.
         say(f"an unfinished --all ({knowledge.path_of(config.data_dir) / gather.PROGRESS}): "
             f"{planned['passed']} source(s) passed; {parts} batch(es) left, at most ${planned['ceiling_usd']:.2f}")
     say(f"{n} source(s) in {parts} batch(es); at most ${planned['ceiling_usd']:.2f}, {parts} × the "

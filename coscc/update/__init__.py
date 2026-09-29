@@ -1,24 +1,10 @@
 """Updating the app from the board: the pure half, and what `main` runs after uvicorn stops.
 
-`.cos/0068_updating-the-app-is-a-manual-reinstall`. The state machine that decides when to
-apply lives in `coscc/update/updater.py`; this module holds only what that machine and `run.main`
-both need, and what can be tested without a server:
+The state machine that decides when to apply lives in `coscc/update/updater.py`; this module holds what it and `run.main` both need and what can be tested without a server: `identity`, `candidate`, `fetch_into` and `finish`.
 
-- `identity` — which version and commit this process runs, and whether this install is the
-  one shape an update can be applied to (R1, R2);
-- `candidate` and `fetch_into` — which release counts, and getting it onto disk checked
-  (R4, R5);
-- `finish` — R12 steps 8 to 10, run by `run.main` after `uvicorn.Server.run()` returns.
+**Standard library only, and every import at the top.** `finish` runs after `uv tool install --force` has replaced the venv under this process: a module imported lazily from then on would be read from the new version, or from a half-written tree.
 
-**Standard library only, and every import at the top.** `finish` runs after `uv tool
-install --force` has replaced the venv under this very process (R12 step 8): a module
-imported lazily from then on would be read from the new version, or from a half-written
-tree. `coscc/update/update_test.py` pins that nothing is imported while `finish` runs.
-
-**The source is a constant.** No environment variable and no request reaches `SOURCE`, and
-`fetch_into` takes its opener as a Python argument so a test does not go to the network
-(R3, R15). A checksum from the same release as the wheel catches a torn or swapped file; it
-does not catch a compromised repository (spec C5).
+**The source is a constant.** No environment variable and no request reaches `SOURCE`, and `fetch_into` takes its opener as an argument so a test does not go to the network. A checksum from the same release catches a torn or swapped file, not a compromised repository.
 """
 
 from __future__ import annotations
@@ -43,12 +29,11 @@ DOWNLOAD_PREFIX = SOURCE + "/releases/download/"
 SUMS = "SHA256SUMS"
 MANIFEST = "manifest.json"
 
-# Chosen by the spec (C11), not measured: a wheel is a few MB.
+# A wheel is a few MB.
 MAX_BYTES = 50 * 1024 * 1024
 INSTALL_TIMEOUT = 120
 # `EX_TEMPFAIL`. Any non-zero code brings the service back under `Restart=on-failure`;
-# this one says "on purpose" to a person reading `journalctl`. Spec C7: systemd still
-# counts it as a failure.
+# this one says "on purpose" to a person reading `journalctl`, though systemd counts it as a failure.
 EXIT_CODE = 75
 
 # The package root, `coscc/`, one up from this package: where a wheel holds `_build.json`.
@@ -77,9 +62,7 @@ def running_version() -> str:
 def public(version: str) -> tuple[int, int, int] | None:
     """`X.Y.Z` of a version, local part dropped, as numbers. `None` when not that shape.
 
-    A tag has already passed `cos.mjs check-tag` before it gets here, so every release is
-    `X.Y.Z`; comparing three integers is the whole of PEP 440 this needs (plan, "Không dùng
-    `packaging`").
+    A tag has passed `cos.mjs check-tag`, so every release is `X.Y.Z`; three integers are all the PEP 440 this needs.
     """
     m = _PUBLIC.fullmatch(version.split("+", 1)[0])
     return tuple(int(p) for p in m.groups()) if m else None  # type: ignore[return-value]
@@ -91,7 +74,7 @@ def local_commit(version: str) -> str:
     return tail[1:] if tail.startswith("g") else ""
 
 
-# --- which build is running (R1, R2) -------------------------------------------------
+# --- which build is running ----------------------------------------------------------
 
 
 def build_commit(stamp: Path = BUILD_STAMP) -> str | None:
@@ -133,10 +116,9 @@ def _unit_lines(text: str, key: str) -> list[str]:
 def service_shape(
     config: Any, packaged: bool, prefix: str | None = None, executable: str | None = None
 ) -> tuple[str, str, dict[str, str]]:
-    """R2, in order: `("service", "", details)`, or `("unavailable", <first false one>, {})`.
+    """`("service", "", details)`, or `("unavailable", <first false one>, {})`.
 
-    `details` carries what the install step needs and must not take from a request: the
-    `uv` to run, the tool and bin directories this process was installed into.
+    `details` carries what the install step needs and must not take from a request: the `uv` to run, the tool and bin directories this process was installed into.
     """
     prefix = sys.prefix if prefix is None else prefix
     executable = os.path.abspath(sys.argv[0]) if executable is None else executable
@@ -179,7 +161,7 @@ def identity(
     repo: Path = REPO,
     version: str | None = None,
 ) -> dict[str, Any]:
-    """R1 and R2. Computed once at startup; no network."""
+    """Computed once at startup; no network."""
     version = running_version() if version is None else version
     commit = build_commit(stamp) if packaged else checkout_commit(repo)
     shape, reason, details = service_shape(config, packaged, prefix, executable)
@@ -195,7 +177,7 @@ def identity(
     }
 
 
-# --- which release counts, and getting it onto disk (R4, R5) -------------------------
+# --- which release counts, and getting it onto disk ----------------------------------
 
 
 def wheel_name(version: str) -> str:
@@ -212,13 +194,9 @@ def release_urls(tag: str) -> tuple[str, str]:
 def candidate(
     release: Any, running: str, check_tag: Callable[[str], str]
 ) -> dict[str, str] | None:
-    """R4: a release worth downloading, or `None` — never an error.
+    """A release worth downloading, or `None`, never an error.
 
-    `release` is the JSON `releases/latest` returned. All four must hold: `check-tag` says
-    `release`; its version is higher than the one running; it carries the wheel of that
-    version and `SHA256SUMS`, each exactly once; both download URLs are under
-    `SOURCE/releases/download/<tag>/`. A release carries `install.sh` too
-    (`.github/workflows/release.yml`), and that is not a reason to refuse it.
+    `release` is the JSON `releases/latest` returned. All four must hold: `check-tag` says `release`; its version is higher than the one running; it carries the wheel of that version and `SHA256SUMS`, each exactly once; both download URLs are under `SOURCE/releases/download/<tag>/`. Other assets (`install.sh`) are no reason to refuse it.
     """
     if not isinstance(release, dict):
         return None
@@ -292,11 +270,9 @@ def _download(opener: Callable[[str], Any], url: str, to: Path, limit: int) -> N
 def fetch_into(
     channel_dir: Path, cand: dict[str, str], opener: Callable[[str], Any], limit: int = MAX_BYTES
 ) -> dict[str, Any]:
-    """R5. Download a release's wheel and `SHA256SUMS` into `channel_dir`, checked.
+    """Download a release's wheel and `SHA256SUMS` into `channel_dir`, checked.
 
-    Written under temporary names, renamed in only after the wheel's sha256 matches its
-    line in `SHA256SUMS`, and only then is the channel's previous wheel removed. Returns
-    `{"state": "ready"|"checksum"|"error", ...}`; a mismatch leaves nothing behind.
+    Written under temporary names, renamed in only after the wheel's sha256 matches its line in `SHA256SUMS`, and only then is the channel's previous wheel removed. Returns `{"state": "ready"|"checksum"|"error", ...}`; a mismatch leaves nothing behind.
     """
     channel_dir.mkdir(parents=True, exist_ok=True)
     name = cand["wheel_name"]
@@ -321,7 +297,7 @@ def fetch_into(
     for old in channel_dir.glob("*.whl"):
         if old.name != name:
             _unlink(old)
-    # A local build promoted into `current/` left its manifest; it now describes a wheel
+    # A local build promoted into `current/` left its manifest, which now describes a wheel
     # that is gone, and `verified_wheel` reads a manifest before `SHA256SUMS`.
     _unlink(channel_dir / MANIFEST)
     return {"state": "ready", "wheel": str(channel_dir / name), "version": cand["version"], "sha256": got}
@@ -338,8 +314,7 @@ def _unlink(*paths: Path) -> None:
 def verified_wheel(directory: Path) -> dict[str, Any] | None:
     """The one wheel in `directory`, if its sha256 matches what was recorded beside it.
 
-    Recorded means `manifest.json` (a local build, R6) or `SHA256SUMS` (a release, R5). R12
-    step 1 calls this on the target and on `current/` right before anything changes.
+    Recorded means `manifest.json` (a local build) or `SHA256SUMS` (a release). Called on the target and on `current/` right before anything changes.
     """
     wheels = sorted(directory.glob("*.whl")) if directory.is_dir() else []
     if len(wheels) != 1:
@@ -396,7 +371,7 @@ def tail(path: Path | str, lines: int = 40) -> str:
 def rollback_command(
     uv: str, tool_dir: str, bin_dir: str, old_wheel: str, db: str, backup: str
 ) -> str:
-    """R13: how a person goes back by hand when nothing on the board can (spec C1)."""
+    """How a person goes back by hand when nothing on the board can."""
     return "\n".join([
         "systemctl --user stop coscc",
         f"cp {backup} {db}",
@@ -406,13 +381,12 @@ def rollback_command(
     ])
 
 
-# --- the hand-off to `main` (R12 steps 7 to 10) -----------------------------------
+# --- the hand-off to `main` -------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Handoff:
-    """What the updater leaves for `main`: every path is derived from this process and the
-    data root, never from a request (R15)."""
+    """What the updater leaves for `main`: every path is derived from this process and the data root, never from a request."""
 
     target_wheel: str
     target_version: str
@@ -458,13 +432,9 @@ def take_handoff() -> Handoff | None:
 
 
 def finish(h: Handoff) -> int:
-    """R12 steps 8 to 10, after uvicorn has returned. Always returns `EXIT_CODE`.
+    """Runs after uvicorn has returned. Always returns `EXIT_CODE`.
 
-    `applied` — the target installed and reports its version. `failed` — the install
-    failed and the old version still answers (`spike.md ## U4` step 4: a failed install
-    leaves the old one standing). Anything else reinstalls the current wheel: `rolled-back`
-    when that reports the old version, `broken` when it does not either, with the command
-    to repair it already in the log.
+    `applied`: the target installed and reports its version. `failed`: the install failed and the old version still answers. Anything else reinstalls the current wheel: `rolled-back` when that reports the old version, `broken` when it does not either, with the command to repair it already in the log.
     """
     env = {**h.env, "UV_OFFLINE": "1", "UV_TOOL_DIR": h.tool_dir, "UV_TOOL_BIN_DIR": h.bin_dir}
     coscc = str(Path(h.bin_dir) / "coscc")

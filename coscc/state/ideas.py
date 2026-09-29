@@ -1,8 +1,7 @@
-"""An idea several units share: starting one, its page, and opening a unit from it (`0040`).
+"""An idea several units share: starting one, its page, and opening a unit from it.
 
-Split the way `coscc/state/backlog.py` is (`0095`). `StudioState` inherits it; a handler that
-needs `SERVICE` imports it in its body, because this module cannot import `coscc.state` at
-the top. Every decision is `Service`'s; these only copy and ask.
+`StudioState` inherits it; a handler imports `SERVICE` in its body because this module
+cannot import `coscc.state` at the top. Every decision is `Service`'s.
 """
 
 from __future__ import annotations
@@ -13,8 +12,8 @@ from coscc.service import Invalid
 from coscc.state.views import ChildRow, IdeaRow, child_rows, idea_rows
 from coscc.web import place
 
-# The first item of *Depends on*: a select cannot hold an empty value, and without one a
-# dependency once chosen could not be taken back (`0040` review round 1, F3).
+# The first item of *Depends on*: a select cannot hold an empty value, so a chosen
+# dependency could not otherwise be taken back.
 NO_DEPENDENCY = "No dependency"
 
 
@@ -82,7 +81,7 @@ class IdeasMixin(rx.State, mixin=True):
 
     @rx.event
     def create_idea(self):
-        """`0040` R15 (1). Start an idea in this workspace and go to its page."""
+        """Start an idea in this workspace and go to its page."""
         from coscc.state import SERVICE
 
         try:
@@ -95,8 +94,8 @@ class IdeasMixin(rx.State, mixin=True):
 
     @rx.event
     async def open_child(self):
-        """`0040` R15 (1). Open a unit from this idea in the workspace chosen, then read the
-        page again. The unit is made in that workspace's store, not this one's."""
+        """Open a unit from this idea in the workspace chosen; the unit is made in that
+        workspace's store, not this one's."""
         from coscc.state import SERVICE
 
         where = next((w.id for w in self.workspaces if w.name == self.child_ws), "")

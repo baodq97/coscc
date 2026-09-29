@@ -1,22 +1,10 @@
 """What a plan says about how hard its work is, and what the app runs it as.
 
-`0033_impl-runs-one-model-whatever-the-plan-demands`. A plan's header declares
-`Impl: routine` or `Impl: novel` (spec R1). This module turns that into the **effective**
-label a step runs under, and says where it came from:
-
-- `forced` — `## Files that change` names a file in `SECURITY_SURFACE` (R3);
-- `missing` — the plan declares nothing usable, and nothing is cheaper to be wrong about
-  than running it as `novel` (R5, spec C3);
-- `escalated` — a `routine` plan whose earlier `impl` run stopped at `max_turns`, so this
-  one runs as `novel` (R4). A budget stop does not escalate;
-- `declared` — otherwise, what the plan said.
-
-**The label opens and closes nothing.** It picks a model and an effort in
-`coscc/agent/models.py`; `cos.mjs` never reads it (R11). The rule that forces `novel` reads only
-what the plan lists, so a file the impl touches without the plan naming it escapes it
-(spec C2) — the escalation is the only net left behind that.
-
-Nothing here raises. A plan that cannot be read is `missing`.
+A plan's header declares `Impl: routine` or `Impl: novel`; this turns that into the
+effective label and its source: `forced` (`## Files that change` names a `SECURITY_SURFACE`
+file), `missing` (nothing usable declared; run as `novel`), `escalated` (a `routine` plan
+whose earlier `impl` stopped at `max_turns`; a budget stop does not escalate), `declared`.
+The label picks a model and effort in `models.py`; `cos.mjs` never reads it. Nothing raises.
 """
 
 from __future__ import annotations
@@ -24,10 +12,8 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
-# The one list of files where a mistake costs the most (spec R2, `0033 intent.md ## Answers,
-# câu 2`). `coscc/agent/sessions.py` stands for `_options`: a list of files cannot name a
-# function, so every plan touching that file is forced (spec C4). Pinned by
-# `coscc/agent/labels_test.py`; nothing else in the code may hold a copy.
+# The files where a mistake costs the most. `coscc/agent/sessions.py` stands for `_options`
+# (a list of files cannot name a function). Pinned by `coscc/agent/labels_test.py`.
 SECURITY_SURFACE = (
     "coscc/agent/policy.py",
     "coscc/agent/sessions.py",
@@ -84,8 +70,7 @@ def listed_paths(plan_text: str | None) -> set[str]:
 
 
 def _stopped_at_max_turns(end: dict[str, Any], before: Iterable[dict[str, Any]]) -> bool:
-    """An `end` that was `exhausted` on `max_turns`. An `end` written before `0033` carries
-    no `terminal`; the `attempt` row `0019` writes just before it does."""
+    """An `end` that was `exhausted` on `max_turns`."""
     if end.get("outcome") != "exhausted":
         return False
     terminal = end.get("terminal")
@@ -107,7 +92,7 @@ def label_for(
 ) -> tuple[str | None, str | None, str | None]:
     """`(label_declared, label, label_source)` for one step. Never raises.
 
-    A stage at or before `plan` has no label: its plan is not written yet (spec R10).
+    A stage at or before `plan` has no label: its plan is not written yet.
     `impl_history` is the unit's run log records for stage `impl`, oldest first.
     """
     try:

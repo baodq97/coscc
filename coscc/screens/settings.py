@@ -1,6 +1,4 @@
-"""The Settings screen: knobs, grants, models and the autopilot's settings.
-Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
-"""
+"""The Settings screen: knobs, grants, models and the autopilot's settings."""
 
 from __future__ import annotations
 
@@ -53,8 +51,7 @@ def _grant_row(grant: rx.Var[GrantRow]) -> rx.Component:
             width="100%", align="center", wrap="wrap",
         ),
         s.text(grant.consequence, size="1", margin_top="6px"),
-        # `0082` F2: a grant's tools and commands are lists (S5), shown only when opened, as
-        # the next-step panel's are (D72).
+        # A grant's tools and commands are lists, shown only when opened.
         _details("grant-" + grant.stage, "What it may use",
                  _name_list("Tools", grant.tool_list), _name_list("Commands", grant.command_list),
                  margin_top="4px"),
@@ -64,8 +61,7 @@ def _grant_row(grant: rx.Var[GrantRow]) -> rx.Component:
 
 
 def _model_row(row: rx.Var[ModelRow]) -> rx.Component:
-    """`0004_no-setting-says-which-model-runs-a-stage`. One stage, or chat: how many agents
-    run it, on what model, and where that model came from."""
+    """One stage, or chat: how many agents run it, on what model, and where that model came from."""
     return rx.box(
         rx.hstack(
             s.badge(row.name, "iris"),
@@ -91,7 +87,7 @@ def _model_row(row: rx.Var[ModelRow]) -> rx.Component:
             ),
             width="100%", align="center", margin_top="8px",
         ),
-        # `0033`: the effort, with its own source and its own override. Chat has none.
+            # The effort, with its own source and its own override. Chat has none.
         rx.cond(
             row.has_effort,
             rx.hstack(
@@ -136,7 +132,7 @@ def _agent_field(row: rx.Var[AgentRow], field: str, value, source, width: str) -
 
 
 def _agent_row(row: rx.Var[AgentRow]) -> rx.Component:
-    """`0036` R2. One agent: its four fields, each with its source, saved as one form.
+    """One agent: its four fields, each with its source, saved as one form.
     The plain element, not `rx.form`, which would add a Radix package to the bundle."""
     return rx.el.form(
         rx.el.input(type="hidden", name="key", value=row.key),
@@ -145,7 +141,7 @@ def _agent_row(row: rx.Var[AgentRow]) -> rx.Component:
             s.badge(row.key, "iris"),
             rx.spacer(),
             rx.button("Save", type="submit", size="1"),
-            # S8: hidden, not greyed, while the row has nothing to reset.
+            # Hidden, not greyed, while the row has nothing to reset.
             rx.cond(row.overridden,
                     rx.button("Reset", type="button", on_click=P.reset_agent(row.key), size="1",
                               variant="soft")),
@@ -167,13 +163,12 @@ def _agent_row(row: rx.Var[AgentRow]) -> rx.Component:
 
 
 def _autopilot_settings() -> rx.Component:
-    """`0043` R2. This workspace's autopilot; the cap is the whole app's. A refusal comes
-    back from `Service.set_autopilot` as the page's notice, verbatim."""
+    """This workspace's autopilot; the cap is the whole app's. A refusal comes back from `Service.set_autopilot` as the page's notice, verbatim."""
     return s.panel(
         s.section_head("Autopilot", rx.icon("bot", size=18, color=s.MUTED)),
         _settings_row(
             "Run the next stage", "Starts each unit's next stage without a press, and spends quota.",
-            # S8: off loopback it cannot be turned on, and the reason stands in its place.
+            # Off loopback it cannot be turned on, and the reason stands in its place.
             rx.cond((P.ap_refused != "") & ~P.ap_on, s.text(P.ap_refused, size="1", max_width="320px"),
                     rx.switch(checked=P.ap_on, on_change=P.set_autopilot_on, id="autopilot-on",
                               aria_label="Autopilot")),
@@ -206,7 +201,7 @@ def _autopilot_settings() -> rx.Component:
 
 
 def _decision_row(row: rx.Var[DecisionRow]) -> rx.Component:
-    """`0137` R5. One decision, its days for a reader (S4), its workspace by name (S3)."""
+    """One decision, its days for a reader, its workspace by name."""
     return rx.table.row(
         rx.table.cell(s.badge(row.id, "iris")),
         rx.table.cell(rx.text(row.kind, size="1")),
@@ -221,7 +216,7 @@ def _decision_row(row: rx.Var[DecisionRow]) -> rx.Component:
         rx.table.cell(rx.text(row.from_day, size="1", white_space="nowrap")),
         rx.table.cell(rx.text(row.until, size="1", white_space="nowrap")),
         rx.table.cell(s.badge(row.state, rx.cond(row.in_force, "grass", "gray"))),
-        # S8: only a decision in force can be withdrawn; the others show no button.
+        # Only a decision in force can be withdrawn; the others show no button.
         rx.table.cell(rx.cond(row.in_force,
                               rx.button("Withdraw", on_click=P.withdraw_decision(row.id), size="1",
                                         variant="soft"))),
@@ -235,8 +230,7 @@ def _decision_field(label: str, control: rx.Component) -> rx.Component:
 
 
 def _decisions_panel() -> rx.Component:
-    """`0137` R4, R5. The person's decisions and delegations, which Jera reads as theirs. No
-    name is asked (S7): what is typed here is recorded as the person's."""
+    """The person's decisions and delegations, which Jera reads as theirs. No name is asked: what is typed here is recorded as the person's."""
     form = P.decision_form
     return s.panel(
         s.section_head("Decisions", rx.icon("stamp", size=18, color=s.MUTED)),
@@ -289,7 +283,7 @@ def _name_row(row: rx.Var[NameRow]) -> rx.Component:
 
 
 def _names_panel() -> rx.Component:
-    """`0137` R6. Who answered as the person before the app stopped asking; off by default."""
+    """Who answered as the person before the app stopped asking; off by default."""
     return s.panel(
         s.section_head("Names in answers", rx.icon("user-check", size=18, color=s.MUTED)),
         s.text("Turn on the names that were you, and Jera reads their answers as yours.", size="1"),
@@ -314,7 +308,7 @@ def _import_row(row: rx.Var[ImportRow]) -> rx.Component:
 
 
 def _import_panel() -> rx.Component:
-    """`0135` R4. The fields the import could not read, which the board treats as unknown."""
+    """The fields the import could not read, which the board treats as unknown."""
     return s.panel(
         s.section_head("Import report", rx.icon("file_question", size=18, color=s.MUTED)),
         s.text("The board treats each field listed here as unknown.", size="1"),
@@ -372,7 +366,7 @@ def _settings() -> rx.Component:
                               s.badge(rx.cond(P.loopback_only, "local", "network"),
                                       rx.cond(P.loopback_only, "grass", "amber"))),
                 _settings_row("Fallback model", "Used by chat.", s.badge(P.model, "gray")),
-                # `0082` D39, D40, D43: the paths, the address and the variable names.
+                # The paths, the address and the variable names.
                 _details("where", "Details",
                          s.text("workspaces (COS_WORKING_DIR): "
                                 + rx.cond(P.working_dir != "", P.working_dir, "not set"),
@@ -393,7 +387,7 @@ def _settings() -> rx.Component:
             columns=rx.breakpoints(initial="1", lg="2"), gap="16px", width="100%",
             align_items="start",
         ),
-        # `0044` R8a. What Jera may cite besides earlier answers, one paragraph per entry.
+        # What Jera may cite besides earlier answers, one paragraph per entry.
         s.panel(
             s.section_head("Decision preferences", rx.icon("scroll-text", size=18, color=s.MUTED)),
             s.text("Jera reads this word for word as precedent, so keep company names out of it.",
@@ -407,7 +401,7 @@ def _settings() -> rx.Component:
                       id="save-decision-preferences"),
             id="preferences-panel",
         ),
-        # `0101` R8. What Jera's prompt says about deciding; empty is the app's default.
+        # What Jera's prompt says about deciding; empty is the app's default.
         s.panel(
             s.section_head("Decision rules", rx.icon("list-checks", size=18, color=s.MUTED)),
             s.text("Questions of product direction, security, significant spend or outside "
@@ -431,7 +425,7 @@ def _settings() -> rx.Component:
             rx.foreach(P.grants, _grant_row),
             id="grants-panel",
         ),
-        # `0036` R2. Who each stage's session is told it is.
+        # Who each stage's session is told it is.
         s.panel(
             s.section_head("Agents", rx.icon("users", size=18, color=s.MUTED)),
             s.text("A change applies to the next step that starts.", size="1"),
@@ -451,7 +445,7 @@ def _settings() -> rx.Component:
             rx.foreach(P.model_rows, _model_row),
             id="models-panel",
         ),
-        # `0082` R9: the update panel lives here now.
+        # The update panel.
         _update_panel(),
         spacing="5", width="100%",
     )

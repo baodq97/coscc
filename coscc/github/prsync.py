@@ -1,21 +1,16 @@
-"""`pr.md`'s title and body, put onto its pull request after a `pr` step (`0055`).
+"""Puts `pr.md`'s title and body onto its pull request after a `pr` step.
 
-**What this module may do on GitHub, and nothing more.** It reads a pull request's title and
-body (`gh pr view <url> --json title,body`) and replaces them (`gh pr edit <url>
-[--title=<title>] --body-file -`). No other flag: no `--base`, no `--add-*`, no
-`--remove-*`, nothing that merges, closes or comments. The title and body are what
-`cos.mjs pr-text` cut from the unit's own `pr.md`; no caller can hand it other words, and
-the service never passes anything else.
+Only reads title and body (`gh pr view --json title,body`) and replaces them (`gh pr edit
+--title=<title> --body-file -`); no other flag. The text is what `cos.mjs pr-text` cut from
+`pr.md`.
 
-**It overwrites.** A description a person edited on GitHub after the step is replaced, and
-the old text is kept nowhere (`intent.md ## Answers, câu 3`: `pr.md` is the source). When
-both already match, nothing is written.
+It overwrites: a description edited on GitHub is replaced and the old text is kept nowhere.
+When both already match, nothing is written.
 
-**Why `--title=<title>` is one argv.** A title that begins with `-` then cannot be read as a
-flag. The URL cannot either: it is checked against `prcomment.PR_URL_RE` first.
+`--title=<title>` is one argv so a title starting with `-` is not read as a flag; the URL is
+checked against `prcomment.PR_URL_RE` first.
 
-`sync` never raises. A failure comes back as `Result("failed", reason=...)` with gh's own
-words; `pr.md` is already written and nothing here touches it.
+`sync` never raises: a failure comes back as `Result("failed", reason=...)`.
 """
 
 from __future__ import annotations
@@ -41,7 +36,7 @@ def same(a: str, b: str) -> bool:
 
 
 def edit_argv(url: str, title: str | None) -> list[str]:
-    """The one `gh pr edit` this module runs. The terminal line in `write-pr` builds the same."""
+    """The one `gh pr edit` this module runs."""
     return ["pr", "edit", url, *([f"--title={title}"] if title else []), "--body-file", "-"]
 
 
@@ -54,9 +49,8 @@ async def sync(
 ) -> Result:
     """Put `title` and `body` on the pull request at `url` unless they are there. Never raises.
 
-    `title` None leaves the title on GitHub as it is. `run` defaults to `prcomment._gh`,
-    looked up at call time so a test can replace it, and so the timeout is
-    `prcomment.TIMEOUT` per call.
+    `title` None leaves the GitHub title as it is. `run` defaults to `prcomment._gh`, looked up at
+    call time; the timeout is `prcomment.TIMEOUT` per call.
     """
     run = run or prcomment._gh
     if not url or not prcomment.PR_URL_RE.match(url):

@@ -1,7 +1,5 @@
 """Watching a running step: the events it recorded, a page at a time or followed live.
-
-Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
-"""
+Mixed into `Service`; no fields."""
 
 from __future__ import annotations
 
@@ -17,15 +15,15 @@ from coscc.service.common import Invalid
 
 class WatchMixin:
 
-    # -- watching a step (`0073`) ---------------------------------------------
+    # -- watching a step ------------------------------------------------------
     #
-    # Two reads and nothing else: no row, no transition, no artifact, no gate asked, and
-    # nothing reaches the step (R15). Whoever holds the password or a live session reads
-    # every command, path, thought and tool output a step saw (R16).
+    # Two reads and nothing else: no row, no transition, no artifact, no gate, and nothing
+    # reaches the step. Whoever holds the password or a live session reads every command,
+    # path, thought and tool output a step saw.
 
     def _run_of(self, cwd: str, unit: str, run: str) -> tuple[events.Recorder | None, dict[str, Any] | None]:
-        """The recorder running `run`, or its index row -- refused unless it is `unit`'s, in
-        this workspace. `(None, None)` for a `run` the run log names with no index row yet."""
+        """The recorder running `run`, or its index row; refused unless it is `unit`'s, in this
+        workspace. `(None, None)` for a `run` the run log names with no index row yet."""
         self._workspace_or_refuse(cwd)
         key = self._journal_key(cwd)
         if not run:
@@ -56,14 +54,12 @@ class WatchMixin:
         self, cwd: str, unit: str, run: str, before: int | None = None,
         limit: int = events.PAGE_DEFAULT, seq: int | None = None,
     ) -> dict[str, Any]:
-        """R7. The last `limit` events of `run` below `before`, oldest first -- or, with `seq`,
-        that one event whole as stored. The same answer while the step runs (from memory)
-        and after it ended (from `step_events`).
+        """The last `limit` events of `run` below `before`, oldest first, or with `seq` that one
+        event whole as stored. Same answer while the step runs (memory) and after (`step_events`).
 
-        `status`: `running` while this process runs it; `purged` once R14 took its events;
-        `ended` with an end; `ended-unknown` when its index row has none -- `0051`'s "a
-        `start` with no `end`", read off the index row; `none` for a `run` the run log names
-        that never got an index row, as when the app went down before the first write."""
+        `status`: `running` while this process runs it; `purged` once its events were purged;
+        `ended` with an end; `ended-unknown` when its index row has none; `none` for a `run`
+        the run log names that never got an index row (the app went down before the first write)."""
         recorder, row = self._run_of(cwd, unit, run)
         limit = max(1, min(events.PAGE_MAX, int(limit)))
         out: dict[str, Any] = {
@@ -108,13 +104,12 @@ class WatchMixin:
     async def follow_events(
         self, cwd: str, unit: str, run: str, after: int = 0, gather: float = 0.0,
     ) -> AsyncIterator[tuple[str, Any]]:
-        """R8. `("events", [...])` for every event of a running `run` past `after`, in order,
-        none twice, until its `end`; `("cut", n)` when this follower fell `SUB_LIMIT` behind
-        (read again from `n`); one `("status", page)` when the `run` is not running here.
+        """`("events", [...])` for every event of a running `run` past `after`, in order, none
+        twice, until its `end`; `("cut", n)` when this follower fell `SUB_LIMIT` behind (read
+        again from `n`); one `("status", page)` when the `run` is not running here.
 
-        Subscribes before it reads what is there (`spike.md ## U3`). `gather` > 0 holds each
-        batch up to that many seconds, as the page does; an empty batch comes every
-        `IDLE_WAKE` seconds with nothing new, so a caller can notice it should stop."""
+        Subscribes before it reads what is there. `gather` > 0 holds each batch up to that many
+        seconds; an empty batch comes every `IDLE_WAKE` seconds so a caller can notice it should stop."""
         recorder, _ = self._run_of(cwd, unit, run)
         if recorder is None:
             yield ("status", self.events_page(cwd, unit, run, limit=1))
@@ -165,5 +160,5 @@ class WatchMixin:
             recorder.unsubscribe(q)
 
     async def purge_events(self) -> tuple[int, int]:
-        """R14, for a caller that holds a `Service`; `coscc/run.py` calls `events.purge_on_start`."""
+        """For a caller that holds a `Service`; `coscc/run.py` calls `events.purge_on_start`."""
         return await events.purge(Data(self.config.data_dir), self._journal())

@@ -1,31 +1,15 @@
-"""The workspace list, and the reason a bad entry cannot become a bad path.
+"""The workspace list, and why a bad entry cannot become a bad path.
 
-The safety property here is a data shape, not a check. A stored entry holds a `name` —
-**one path segment** — and never an absolute path, so there is no field in which a
-hand-edited store could put `/etc`. The real path is built from the working folder on every
-read (`spec.md` R12). `is_under` stays as a second layer, but the first layer is that
-the dangerous value has nowhere to live. Since the move to SQLite that is stronger: the
-table has **no column** for a path at all.
+A stored entry holds a `name` (one path segment), never an absolute path, and the table has no
+column for a path, so a hand-edited store has nowhere to put `/etc`. The real path is built
+from the working folder on every read; `is_under` is a second layer.
 
-This is the first state the app owns. It holds workspaces and labels, and nothing else:
-conversation content belongs to the SDK's session store, which stays the one source of
-truth for anything said.
+Holds workspaces and labels only; conversation content belongs to the SDK's session store.
+Rows live in the app's SQLite database (`coscc/data.py`), one per `(root, name)`.
 
-**Where it lives, and why that changed.** This was once a JSON file inside the
-working folder, replaced by `rename` on every write, with a `flock` beside it. It is now
-rows in the app's own SQLite database under the data root (`coscc/data.py`), because
-`intent.md` asked for one durable place that exists whether or not a working folder
-does. One row per `(root, name)`, so one database serves every working folder on the
-machine and a workspace still cannot be named outside its own root.
-
-**Concurrency, and why the transaction is where it is.** Measurement of the old
-arrangement: four processes adding five workspaces each to one working folder left 8 of 20,
-with no error anywhere. The loss was never two writes colliding — it was two
-read-then-write sequences interleaving, each reading the old list and each writing back
-what it computed. That is why every mutation below runs inside `Data.write`, which opens
-`BEGIN IMMEDIATE`: the transaction covers the whole read-modify-write, exactly as the file
-lock did. `spec.md` C2 is explicit that swapping the mechanism does not carry the
-proof across — `scripts/verify_0004.py` is what decides it, and it still measures 20.
+Every mutation runs inside `Data.write` (`BEGIN IMMEDIATE`) so the whole read-modify-write is
+one transaction: concurrent read-then-write sequences otherwise interleave and lose entries
+without any error (`scripts/verify_0004.py` proves it with four processes).
 """
 
 from __future__ import annotations
@@ -38,13 +22,11 @@ from pathlib import Path
 
 from coscc.data import BUSY_TIMEOUT, Busy, Data, now
 
-# Kept as the name callers already pass to `transaction(timeout=...)` and patch in tests.
-# The value is the same 10 seconds the file lock waited, now enforced by SQLite's
+# The name callers pass to `transaction(timeout=...)` and tests patch; enforced by SQLite's
 # `busy_timeout` (`coscc/data.py`).
 LOCK_TIMEOUT = BUSY_TIMEOUT
 
-# One path segment. No separators, no `.`/`..`, bounded length. `spec.md` R12 lists
-# the inputs this has to turn away.
+# One path segment. No separators, no `.`/`..`, bounded length.
 _NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 LABEL_MAX = 200
 
@@ -91,13 +73,10 @@ class Entry:
 class Store:
     """The workspace list for one working folder, kept in the app's own database.
 
-    Every method re-reads. That is deliberate: `spec.md` R21 wants membership decided
-    at read time, and a cached list is exactly the thing that made an earlier gate safe for a
-    reason that no longer holds.
+    Every method re-reads: membership is decided at read time and a cache would go stale.
 
-    `data` is the app's data root. It is passed in rather than defaulted at the call sites
-    so that a test, or a proof driving four processes at a temporary root, cannot reach the
-    real `~/.cos` by forgetting an argument.
+    `data` is the app's data root, passed in so a test cannot reach the real `~/.cos` by
+    forgetting an argument.
     """
 
     def __init__(
@@ -113,26 +92,20 @@ class Store:
     def transaction(self, timeout: float | None = None):
         """Hold the list exclusively for one read-modify-write.
 
-        Delegates to `Data.write`, which is the only place `BEGIN IMMEDIATE` is issued.
-        Kept as a method because callers already frame multi-step work with it, and
-        because the timeout has to be one value a test can shorten — a test that had to
-        wait the real deadline would not be run.
+        Delegates to `Data.write`, the only place `BEGIN IMMEDIATE` is issued; the timeout is one
+        value a test can shorten.
         """
         with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
             yield conn
 
-    # -- reading ------------------------------------------------------------
 
     def entries(self) -> list[Entry]:
         """Entries from the database, with anything unusable dropped rather than repaired.
 
-        A name that does not pass `valid_name` is ignored, not corrected: the database is
-        editable by hand like the file before it, and a repair would write back something
-        the user did not ask for. Dropping it keeps the invariant without touching their
-        data.
+        A name failing `valid_name` is ignored, not corrected: the database is editable by hand and
+        a repair would write back something the user did not ask for.
 
-        Order is insertion order. `add` re-inserts an existing name, so re-adding moves an
-        entry to the end — the behaviour the JSON list had.
+        Order is insertion order; re-adding moves an entry to the end.
         """
         with self.data.connect() as conn:
             rows = conn.execute(
@@ -160,8 +133,7 @@ class Store:
     def resolves_to_entry(self, directory: str) -> bool:
         """Membership: some entry's built path equals this directory.
 
-        Both layers apply. `is_under` alone would accept any subdirectory of the working
-        folder, including ones nobody added.
+        Both layers apply: `is_under` alone would accept any subdirectory of the working folder.
         """
         try:
             target = Path(directory).expanduser().resolve()
@@ -171,14 +143,11 @@ class Store:
             return False
         return any(self.path_of(e.name) == target for e in self.entries())
 
-    # -- writing ------------------------------------------------------------
 
     def add(self, name: str, label: str = "") -> Entry:
         require_name(name)
         with self.transaction() as conn:
-            # Delete then insert rather than upsert, so the row takes a new rowid and the
-            # entry moves to the end of the list. That is what the JSON version did, and
-            # `entries` orders by rowid.
+            # Delete then insert, so the row takes a new rowid and moves to the end (`entries` orders by rowid).
             conn.execute(
                 "DELETE FROM workspaces WHERE root = ? AND name = ?", (self._root, name)
             )
@@ -201,7 +170,7 @@ class Store:
             return Entry(name=name, label=cleaned)
 
     def remove(self, name: str) -> None:
-        """Drops the entry. Never touches the directory — `spec.md` R18 and C6."""
+        """Drops the entry. Never touches the directory."""
         require_name(name)
         with self.transaction() as conn:
             changed = conn.execute(

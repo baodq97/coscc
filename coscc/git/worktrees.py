@@ -1,24 +1,11 @@
 """Where a unit's working tree is, and the one place that makes, prepares and removes it.
 
-`0017`. Every unit of a workspace used to share the workspace's one working tree, so
-cutting one unit's branch took another unit's branch away from under it (measured
-2026-09-23: `0016`'s intent ran while the tree stood on `0015`'s branch). Now each unit
-gets a `git worktree` of its own, outside the workspace, and **the workspace itself stays
-on `main` and is never worked in** (`0017` `intent.md ## Answers, câu 5`).
-
-What goes where:
-
-- **Artifacts stay in the store** (`coscc/units/__init__.py`). A worktree holds code only, so
-  `cos.mjs` is asked with `--root <store> --repo <worktree>` — the store for the unit,
-  the worktree for its branch and pull request. `0017` `plan.md` records why this departs
-  from the spec, which wrote as if artifacts were in the repository.
-- **The tree** is `<data root>/worktrees/<slot>/<unit>`: a pure function of the workspace
-  and the unit, found again through `git worktree list`, never through a table this app
-  keeps. It can never be inside the workspace or inside the installed package.
-- **What preparing it said** is `<tree>.prepare.json`, beside the tree rather than in it,
-  so it is not a file in anybody's `git status`.
-
-Nothing here decides a stage: whether a unit is `finished` comes from `cos.mjs`.
+Each unit gets a `git worktree` outside the workspace; **the workspace itself stays on
+`main` and is never worked in**. Artifacts stay in the store, so `cos.mjs` is asked with
+`--root <store> --repo <worktree>`. The tree is `<data root>/worktrees/<slot>/<unit>`, a
+pure function of workspace and unit, found again through `git worktree list`. What
+preparing it said is `<tree>.prepare.json`, beside the tree so it is not in `git status`.
+Nothing here decides a stage.
 """
 
 from __future__ import annotations
@@ -42,12 +29,11 @@ from coscc.units import BadUnit
 
 WORKTREES_DIR = "worktrees"
 
-# Seconds, per preparing command. **Chosen, not measured**: `0017` spec Concern 8 records
-# that there is no source for what a `uv sync` or an `npm ci` costs here. It exists to turn
-# a hung install into a reported failure, not to bound an ordinary one.
+# # Seconds, per preparing command. Chosen, not measured; it turns a hung install into a
+# # reported failure.
 PREPARE_TIMEOUT = 600.0
 
-# How much of a failed command's output is kept for the page. Chosen, not measured.
+# # How much of a failed command's output is kept for the page.
 TAIL_CHARS = 2000
 
 
@@ -74,8 +60,9 @@ RELEASE_TREE = gitops.RELEASE_TREE
 
 
 def release_path(workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None) -> Path:
-    """`0046`. The workspace's one release worktree, beside its units' trees. `release` is
-    not a `NNNN_slug`, so no unit's tree can be named the same."""
+    """The workspace's one release worktree, beside its units' trees. `release` is not a
+    `NNNN_slug`, so no unit's tree can be named the same.
+    """
     where = (Data(data_dir).root / WORKTREES_DIR / units.slot(workspace) / RELEASE_TREE).resolve()
     for forbidden in (Path(units.key(workspace)), _package_dir()):
         if where == forbidden or forbidden in where.parents:
@@ -116,18 +103,8 @@ async def _branch_exists(root: Path, name: str) -> bool:
 async def _fetch_or_refuse(where_repo: Path, branch: str) -> dict[str, Any]:
     """Fetch `origin/main` in `where_repo`, refusing to go on when that fails.
 
-    `0030` review round 1, F2. Neither of `ensure`'s two "open onto an existing branch"
-    paths cuts `branch` — it was already cut at a terminal, the way `.claude/CLAUDE.md`
-    step 4 still does it — so the reason to refuse here is not that a stale `main` would
-    name the wrong pull request base (only `start_branch`, which does cut a branch, has
-    that reason). It is narrower: `câu 1` asks every path that opens a tree onto an
-    existing branch to agree on when doing so is safe, and a fetch that failed is the one
-    thing both paths can check for without guessing. So both call this, and neither
-    proceeds past it — whether or not the unit already had a (still detached) tree is not
-    a reason for the two to disagree.
-
-    Since `0048` the fetch goes through `fetches`, and what it returns — `{outcome,
-    attempts, age}` — comes back for `_base_against_origin` to carry.
+    Both paths that open a tree onto an existing branch call this and agree on when that is
+    safe. Returns the `fetches` result `{outcome, attempts, age}` for `_base_against_origin`.
     """
     try:
         return await fetches.fetch(where_repo)
@@ -143,10 +120,9 @@ async def _base_against_origin(
 ) -> dict[str, Any]:
     """`{ref, sha, fresh, behind, reason, fetch}` for `branch_sha` against `origin/main`.
 
-    Never refuses and never rebases (`intent.md ## Answers, câu 3`): a branch behind is
-    reported, not fixed — `gh pr update-branch --rebase` is what the `reason` points to.
-    `fetch` is what `_fetch_or_refuse` returned, and `fresh` also needs it to be younger
-    than `fetches.REUSE_SECONDS` (`0048` R7).
+    Never refuses and never rebases: a branch behind is reported, and `gh pr update-branch
+    --rebase` is what `reason` points to. `fresh` also needs `fetch` younger than
+    `fetches.REUSE_SECONDS`.
     """
     origin_ref = f"origin/{gitops.TRUNK}"
     origin_sha = await gitops.rev_parse(where_repo, f"refs/remotes/{origin_ref}")
@@ -169,7 +145,7 @@ async def _base_against_origin(
 
 
 def _stale(fetched: dict[str, Any]) -> str:
-    """Empty when the fetch behind a `sha` is young enough to call it fresh (`0048` R7)."""
+    """Empty when the fetch behind a `sha` is young enough to call it fresh."""
     if fetched["age"] < fetches.REUSE_SECONDS:
         return ""
     return (
@@ -186,17 +162,13 @@ async def ensure(
 ) -> dict[str, Any]:
     """The unit's worktree, made if it is not there yet.
 
-    Returns `{path, branch, created, switched}`, and also `base` when this call is the one
-    that opened the tree onto an existing branch (`_base_against_origin`). `switched` is
-    true when the workspace was moved back to `main` to make this possible — the one thing
-    here that touches the workspace's own tree, done only when that tree is clean (`0017`
-    spec, câu 2) and only once the fetch this call needed has already succeeded (`0030`
-    review round 2, F5) — so a refusal that follows never has to explain a workspace that
-    already moved.
+    Returns `{path, branch, created, switched}`, and also `base` when this call opened the tree
+    onto an existing branch. `switched` is true when the workspace was moved back to `main`,
+    the one touch of the workspace's own tree, only when clean and only after the needed fetch
+    has succeeded, so a later refusal never follows a workspace that already moved.
 
-    Raises `GitError` with a reason a person can act on when opening onto an existing
-    branch needed a fetch that failed (`_fetch_or_refuse`), or when the workspace is dirty
-    and standing on the branch this unit needs.
+    Raises `GitError` when the needed fetch failed, or the workspace is dirty and standing on
+    the branch this unit needs.
     """
     root = Path(units.key(workspace))
     where = path(workspace, unit, data_dir)
@@ -206,10 +178,9 @@ async def ensure(
         return {"path": str(where), "branch": found["branch"], "created": False, "switched": False}
 
     if found is not None:
-        # A detached tree made when the unit was created, before it had a branch. Fetch
-        # inside the tree first — it is a separate directory from the workspace, so this
-        # never touches the workspace — and only once it has either succeeded or found
-        # nothing to move does `_step_aside` touch the workspace (F5).
+        # A detached tree made before the unit had a branch. Fetch inside the tree first (a separate
+        # directory from the workspace); only after that succeeds or finds nothing to move does
+        # `_step_aside` touch the workspace.
         tree = Path(found["path"])
         fetched = await _fetch_or_refuse(tree, branch)
         switched = await _step_aside(root, branch)
@@ -223,11 +194,8 @@ async def ensure(
 
     where.parent.mkdir(parents=True, exist_ok=True)
     if wanted:
-        # No tree at all yet, but the branch already exists — same situation as the block
-        # above except that this unit never had a (detached) tree to fetch inside, so the
-        # fetch runs in the workspace instead. `_fetch_or_refuse` is the same call either
-        # way, which is the point (F2); it still runs before `_step_aside` touches the
-        # workspace, for the same reason (F5).
+        # No tree yet but the branch exists: the fetch runs in the workspace, through the same
+        # `_fetch_or_refuse`, and still before `_step_aside`.
         fetched = await _fetch_or_refuse(root, branch)
         switched = await _step_aside(root, branch)
         await gitops.worktree_add(root, where, branch)
@@ -245,15 +213,11 @@ async def ensure(
 
 
 async def _step_aside(root: Path, branch: str) -> bool:
-    """Move the workspace to `main` when it is standing on `branch`, freeing `branch` for
-    a unit's worktree. `False` when the workspace was standing on something else already.
+    """Move the workspace to `main` when it is standing on `branch`, freeing `branch` for a
+    unit's worktree. `False` when the workspace was standing on something else.
 
-    `0030` review round 2, F5: `ensure` calls this only after the fetch it needed has
-    already succeeded. Before this fix, `switch_trunk` ran first, so a fetch that then
-    failed left the workspace on `main` anyway while `_fetch_or_refuse` still raised
-    "Nothing in the repository changed" — true of the rest of the repository, but no
-    longer of the workspace's checked-out branch. Calling this last keeps that sentence
-    true: everything that can still refuse has refused before the one mutation here runs.
+    Called only after the fetch has succeeded, so everything that can still refuse has refused
+    before this one mutation runs.
     """
     if await gitops.current_branch(root) != branch:
         return False
@@ -274,18 +238,12 @@ async def refresh_base(
 ) -> dict[str, Any]:
     """Bring a unit's still-detached tree to the fetched tip of `origin/main`, and say so.
 
-    `0030` R1, R5, R6. Unlike `ensure`, this never raises: a step on a detached tree runs
-    whether or not the fetch succeeds, and this is the one place that decides what to say
-    about it (`intent.md ## Answers, câu 2`). Returns `{ref, sha, fresh, reason}` — `sha`
-    is the short remote tip once known, `fresh` is whether the tree ended up there, and
-    `reason` is empty exactly when `fresh` is true.
-
-    When the tree is actually moved, the record `prepare()` left is deleted: it describes
-    a tree at the commit it was prepared at, and that commit just changed (R6).
-
-    Since `0048` every answer also carries `fetch`, `{outcome, attempts, age}` from
-    `fetches` — `failed` with `age` None when there was no fetch to show — and `fresh`
-    also needs that fetch to be younger than `fetches.REUSE_SECONDS` (R6, R7).
+    Never raises: a step on a detached tree runs whether or not the fetch succeeds. Returns
+    `{ref, sha, fresh, reason, fetch}`: `sha` is the short remote tip once known, `fresh` is
+    whether the tree ended up there (and the fetch is younger than `fetches.REUSE_SECONDS`),
+    `reason` is empty exactly when `fresh`, `fetch` is `failed` with `age` None when there was
+    none. When the tree moves, the record `prepare()` left is deleted, as it describes the old
+    commit.
     """
     ref = f"origin/{gitops.TRUNK}"
     found = await find(workspace, unit, data_dir)
@@ -323,16 +281,14 @@ async def refresh_base(
     return {"ref": ref, "sha": sha[:7], "fresh": not stale, "reason": stale, "fetch": fetched}
 
 
-# --- preparing ---------------------------------------------------------------
+# # --- preparing ---------------------------------------------------------------
 
 
 def commands(tree: Path) -> list[list[str]]:
     """What makes this tree able to run its tests, guessed from the files in it.
 
-    `0017` `spec.md ## Answers, câu 1`: *"có `uv.lock` thì `uv sync --frozen`, có
-    `package-lock.json` thì `npm ci`, và build frontend nếu repository có"*. The frontend
-    build is recognised by one readable sign — `coscc-build` under `[project.scripts]`
-    (`pyproject.toml:38-45`) — so this is only ever checked against this repository.
+    `uv.lock` gives `uv sync --frozen`, `package-lock.json` gives `npm ci`, and the frontend is
+    built when `coscc-build` is under `[project.scripts]`.
     """
     out: list[list[str]] = []
     if (tree / "uv.lock").is_file():
@@ -357,10 +313,8 @@ def _outside(entry: str, roots: list[Path]) -> bool:
 
 
 def clean_path(workspace: str | os.PathLike[str] | None) -> str:
-    """`PATH` without any entry under the workspace or the installed package.
-
-    An entry under the workspace is usually its `.venv/bin`, and a command run for a unit
-    that finds the workspace's interpreter first is running the workspace's code.
+    """`PATH` without any entry under the workspace or the installed package, whose `.venv/bin`
+    would run the workspace's code instead of the tree's.
     """
     roots = [_package_dir()]
     if workspace:
@@ -376,18 +330,13 @@ def prepare_env(
 ) -> dict[str, str]:
     """The environment a preparing command runs in. Built from nothing.
 
-    `VIRTUAL_ENV` and `REFLEX_WEB_WORKDIR` point into the tree: `0014`'s lesson is that a
-    build reading this process's `REFLEX_WEB_WORKDIR` compiles into the installed package.
+    `VIRTUAL_ENV` and `REFLEX_WEB_WORKDIR` point into the tree: a build reading this process's
+    `REFLEX_WEB_WORKDIR` compiles into the installed package. `config.PROTECTED_DB_VAR` names
+    this app's `cos.db` so a `Data` in the branch's install scripts refuses to open it.
+    `data_dir` is the app's data root, `None` meaning `~/.cos`.
 
-    `config.PROTECTED_DB_VAR` names this app's `cos.db` (`0076` R4): these commands are the
-    branch's own install scripts, and a `Data` in them refuses to open it. `data_dir` is
-    the app's data root, `None` meaning the default `~/.cos`.
-
-    No `CLAUDE*`, `ANTHROPIC*`, `COS_*` or `__REFLEX_*` name reaches the command because
-    none of the six names below is one — not because anything filters. A seventh name
-    added here is the only way one could; `worktrees_test.py` asserts on the result with
-    those names set in this process. (Until the `0017` review, F5, a filter loop ran over
-    these five and could never remove anything.)
+    No `CLAUDE*`, `ANTHROPIC*`, `COS_*` or `__REFLEX_*` name reaches the command because none of
+    the names below is one; nothing filters. `worktrees_test.py` asserts this.
     """
     return {
         "PATH": clean_path(workspace),
@@ -428,8 +377,8 @@ async def prepare(
 ) -> dict[str, Any]:
     """Run `commands(tree)` in order, stop at the first that fails, and record the result.
 
-    Returns and writes `{ok, command, exit_code, tail, commands}`. `command` is the one
-    that failed, or empty. Never raises for a failing command: R6 wants it *shown*.
+    Returns and writes `{ok, command, exit_code, tail, commands}`; `command` is the one that
+    failed, or empty. Never raises for a failing command: it is shown.
     """
     tree = Path(tree)
     run = run or _run
@@ -463,7 +412,7 @@ def describe_failure(result: dict[str, Any]) -> str:
     )
 
 
-# --- removing (`0017` R10) ---------------------------------------------------
+# # --- removing ----------------------------------------------------------------
 
 GhRun = Callable[[list[str], str, str | None], Awaitable[tuple[int, str, str]]]
 
@@ -497,8 +446,8 @@ async def remove_if_finished(
         pr_url = str((board_unit.get("pr") or {}).get("url") or "")
         if not prcomment.PR_URL_RE.fullmatch(pr_url):
             return {"removed": False, "reason": "no pull request url"}
-        # Before `gh`, not after: `board()` calls this on every read, and a dirty tree
-        # would otherwise cost a network call each time (`0017` review, F4).
+        # Before `gh`: `board()` calls this on every read, and a dirty tree would otherwise cost a
+        # network call each time.
         if not await gitops.is_clean(tree):
             return {"removed": False, "reason": "worktree has uncommitted changes"}
         said = await prcomment._call(

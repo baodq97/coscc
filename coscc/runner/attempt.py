@@ -1,5 +1,5 @@
-"""What a step may do and what it left: the permission gate, the snapshot of a failed
-attempt, and writing the artifact. Split from `coscc/runner/__init__.py` (`0095`).
+"""What a step may do and what it left: the permission gate, the snapshot of a failed attempt,
+and writing the artifact.
 """
 
 from __future__ import annotations
@@ -29,20 +29,19 @@ from coscc.runner.review import merge_review
 class Denials:
     """Counts what a step was refused, and keeps the first few reasons.
 
-    Counting matters more than it looks. A step that finished having been told no fifty
-    times did not do what it was asked; it worked around it, and the journal is the only
-    place that difference is visible afterwards.
+    The count matters: a step told no fifty times worked around it, and the journal is the
+    only place that shows it.
     """
 
     KEEP = 5
 
     def __init__(self) -> None:
         self.count = 0
-        # `0130` R3. Of `count`, the refusals of a run in the background.
+        # Of `count`, the refusals of a run in the background.
         self.background = 0
         self.reasons: list[str] = []
-        # `0073`. Told of every refusal, with what was asked, when a step has a recorder.
-        # `KEEP` still bounds only `reasons`, so the `end` record's `denied` is unchanged.
+        # Told of every refusal, with what was asked, when a step has a recorder. `KEEP` bounds only
+        # `reasons`.
         self.listener: Any = None
 
     def record(self, tool: str, reason: str, tool_input: Any = None) -> None:
@@ -54,16 +53,14 @@ class Denials:
         if self.listener is not None:
             try:
                 self.listener(tool, tool_input, reason)
-            except Exception:  # noqa: BLE001 - `0073` R5: the recorder never reaches the gate
+            except Exception:  # noqa: BLE001 - the recorder never reaches the gate
                 pass
 
 
-# `0037_board-sessions-run-without-claude-codes-system-prompt`. What a board step holding
-# any tool runs on, instead of the empty system prompt the SDK sends when none is set.
-# Without it a step with `Read` and `Grep` had no guidance on using them, and searched
-# with `grep` through Bash instead. Bare on purpose: no `append`. It grants nothing —
-# `permission_gate` below and the grant's own tool list still decide every call — and a
-# tool-less step (`idea`, `intent`) and chat never get it. A copy is what goes out.
+# # What a board step holding any tool runs on, instead of the empty system prompt the SDK
+# # sends when none is set; without it a step with `Read` and `Grep` searches with `grep`
+# # through Bash. Bare on purpose: it grants nothing (`permission_gate` and the grant's tool
+# # list still decide every call), and tool-less steps and chat never get it. A copy goes out.
 CLAUDE_CODE_PRESET: dict[str, str] = {"type": "preset", "preset": "claude_code"}
 
 
@@ -77,9 +74,8 @@ def permission_gate(
 ):
     """The callback the SDK asks before every tool call.
 
-    This is the enforcement `spec.md` R10 asks for, and it is separate from the tool list
-    on purpose: the list was measured, and it does not cover every source of capability.
-    `read_also` and `lease` (`0035`) are passed to `decide` unchanged.
+    Separate from the tool list on purpose: the list does not cover every source of
+    capability. `read_also` and `lease` are passed to `decide` unchanged.
     """
 
     async def can_use_tool(tool: str, tool_input: dict, context: Any):
@@ -95,12 +91,9 @@ def permission_gate(
 async def snapshot(cwd: str, session_id: str) -> tuple[dict[str, Any], BaseException | None]:
     """What a stopped step left behind: git state and a transcript excerpt, read-only.
 
-    `0019_a-failed-step-destroys-the-work-that-succeeded` plan step 5 / `spec.md` R1
-    d-g, R2, R3. Every field is attempted independently so one failing costs only that
-    field, recorded under `snapshot_errors` rather than raised. Returns `(fields,
-    pending)`: `pending` is a `CancelledError` this was interrupted by, for the caller to
-    re-raise once it has written what it has (`spec.md` C8) — a step killed mid-snapshot
-    must not look like one that was never captured at all.
+    Every field is attempted independently; a failure is recorded under `snapshot_errors`.
+    Returns `(fields, pending)`: `pending` is a `CancelledError` this was interrupted by, for
+    the caller to re-raise once it has written what it has.
     """
     fields: dict[str, Any] = {
         "head": None, "branch": None, "base": None, "base_ref": None,
@@ -176,7 +169,7 @@ def _fmt_num(value: Any, suffix: str = "") -> str:
 def describe_attempt(found: dict[str, Any]) -> str:
     """The `# The attempt before this one` section, in English (instructions to the model).
 
-    `found` is `Journal.failed_attempts`'s return value: `0019` plan step 5.
+    `found` is `Journal.failed_attempts`'s return value.
     """
     attempt = found.get("attempt")
     latest = found.get("latest") or {}
@@ -238,8 +231,8 @@ def describe_attempt(found: dict[str, Any]) -> str:
                 f"{_fmt_num(e.get('turns'), ' turns')}, cost {_fmt_num(e.get('cost_usd'), ' USD')}"
             )
 
-    # `0085` R11. A review that ran out of turns and left no round: what it had opened, read
-    # from its events by `Journal.failed_attempts`. Nothing of it is in `review.md`.
+    # A review that ran out of turns and left no round: what it had opened, read from its events
+    # by `Journal.failed_attempts`. Nothing of it is in `review.md`.
     opened = found.get("opened")
     if opened is not None:
         lines.append("")
@@ -270,11 +263,9 @@ def describe_attempt(found: dict[str, Any]) -> str:
 
 
 async def _head_of(cwd: str) -> str:
-    """The commit a step ran on, for its `start` record — `""` when there is none to name.
+    """The commit a step ran on, for its `start` record, `""` when there is none to name.
 
-    `0020` R5: the outcome is measured by checking a `spec.md`'s citations at the commit
-    the stage read, and until this the run log never said which commit that was. A failure
-    here costs the record one field; it never stops the step.
+    A failure costs the record one field; it never stops the step.
     """
     path = Path(cwd)
     if not (path / ".git").exists():
@@ -294,10 +285,9 @@ async def _tree_state(path: str) -> tuple[str, str]:
 
 
 def describe_tree_change(before: tuple[str, str], after: tuple[str, str]) -> str:
-    """`""` when the two `(HEAD, porcelain)` readings agree, else what moved (`0039` R13).
+    """`""` when the two `(HEAD, porcelain)` readings agree, else what moved.
 
-    Lists the porcelain lines on one side only — a new file, a file edited, one reverted —
-    and a `HEAD` that moved as `HEAD <a>→<b>`.
+    Lists the porcelain lines on one side only, and a `HEAD` that moved as `HEAD <a>→<b>`.
     """
     parts: list[str] = []
     if before[0] != after[0]:
@@ -313,27 +303,21 @@ def describe_tree_change(before: tuple[str, str], after: tuple[str, str]) -> str
 def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | None = None) -> None:
     """Write an artifact the app writes, from `text`, or raise the reason it is not one.
 
-    `0080` spec *Design* 3: one check and one write, for a step's reply, a spike's progress
-    file and a review's closing turn alike. `text` is everything the session said, or at its
-    ceiling what it said after its last tool call; the artifact is what follows its last
-    title line (`0099` R1). `blocks`, when given, is how
-    many pieces the session said it in, for the reason (R5). Synchronous on purpose -- see
-    the comment where `Runner.run` calls it.
+    One check and one write, for a step's reply, a spike's progress file and a review's closing
+    turn. `text` is everything the session said, or at its ceiling what it said after its last
+    tool call; the artifact is what follows its last title line. `blocks`, when given, is how
+    many pieces the session said it in, for the reason. Synchronous on purpose: see the comment
+    where `Runner.run` calls it.
     """
-    # `0025` `spec.md` R1-R6. The reply's own `## Answers`, if it has one, is never what
-    # reaches disk (R3) -- only the section already there is, and it is read as late as
-    # this module ever reads anything: right here, after every `await` in this step has
-    # already happened, not at the step's start (R6). Nothing between this read and the
-    # write below can yield, so a block a person appended while the step ran is still on
-    # disk when this runs and is carried through untouched.
+    # The reply's own `## Answers` never reaches disk; only the section already there does, read
+    # as late as possible (after every `await` of the step, with no yield before the write), so a
+    # block a person appended while the step ran is carried through untouched.
     body = strip_answers(from_title(_unfence(text), artifact) + "\n")
-    # `0099` R3, R4. Asked of what will be written, below the reply's own `## Answers`
-    # cut, and before the file is even read: a refusal leaves it byte for byte. Until
-    # `0099` this asked for a `Status:` anywhere, and a file that lost its first piece
-    # passed on one its body happened to quote.
+    # Asked of what will be written, below the reply's own `## Answers` cut, and before the file
+    # is read: a refusal leaves it byte for byte.
     problem = opening_problem(body, artifact)
     if problem:
-        # `0127`: typed, so `Runner.run` can tell this refusal from the others by its class.
+        # Typed, so `Runner.run` can tell this refusal from the others by its class.
         raise OpeningError(opening_reason(artifact, problem, blocks), problem)
     target = directory / artifact
     try:
@@ -343,13 +327,10 @@ def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | Non
     section = answers_section(raw)
     above = raw[: len(raw) - len(section)] if section is not None else raw
     if artifact == "review.md":
-        # `merge_review` never sees the Answers section, so its own rounds regex has
-        # nothing of that shape to (not) swallow (spec.md Design). Its refusals are
-        # unchanged: a reply that rewrites an earlier round, or adds none, still raises
-        # before anything below is written (R4, R5).
+        # `merge_review` never sees the Answers section. A reply that rewrites an earlier round, or
+        # adds none, still raises before anything below is written.
         body = merge_review(above.decode("utf-8", errors="replace"), body)
-        # R3 asks it of the merged text. Its header is the reply's, so this answers as the
-        # check above did; asked again so what reaches disk is what was checked.
+        # Asked of the merged text so what reaches disk is what was checked.
         problem = opening_problem(body, artifact)
         if problem:
             raise OpeningError(opening_reason(artifact, problem, blocks), problem)

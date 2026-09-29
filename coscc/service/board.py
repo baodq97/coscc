@@ -1,6 +1,6 @@
 """The board: every unit of a workspace with its stage, what is running on it and its worktree.
 
-Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+A mixin with no fields, which `Service` inherits.
 """
 
 from __future__ import annotations
@@ -44,20 +44,20 @@ from coscc.service.common import (
 )
 
 
-# `0051` spec, answer 4: an `ended, unknown` row stops being shown this long after it began,
-# unless a later `start` of the same unit retired it first.
+# An `ended, unknown` row stops being shown this long after it began, unless a later `start`
+# of the same unit retired it first.
 UNKNOWN_END_FOR = timedelta(hours=24)
 
 
 def waits_for(unit: dict[str, Any]) -> list[str]:
-    """`0040` R15 (3). The units `impl` waits on, when `cos.mjs` said it waits; else none."""
+    """The units `impl` waits on, when `cos.mjs` said it waits; else none."""
     if unit.get("why") != "dependency":
         return []
     return [d["ref"] for d in unit.get("depends_on") or [] if d.get("merged") is not True]
 
 
 def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, Any]]) -> None:
-    """`0021` D4. Give every review round a `comment`: on the pull request, or not and why.
+    """Give every review round a `comment`: on the pull request, or not and why.
 
     Read off the run log, never stored beside the round: a `posted` or `already` row for
     the round means it is there. Anything else -- including a round written at a terminal,
@@ -82,9 +82,9 @@ def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, 
 
 
 def _attach_precedent(units_: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
-    """`0044` R10. On each question: `by_jera`, its `cites` and the words it `said` when the
-    answer in force is Jera's, and — while it is still unanswered — `needs_person`,
-    `proposal` and `reason` from the last `precedent` row for it. Display only: `cos.mjs` never sees any of this (R9)."""
+    """On each question: `by_jera`, its `cites` and the words it `said` when the answer in
+    force is Jera's, and — while it is still unanswered — `needs_person`, `proposal` and
+    `reason` from the last `precedent` row for it. Display only: `cos.mjs` never sees this."""
     last: dict[tuple[str, str, Any], dict[str, Any]] = {}
     for r in rows:
         last[(str(r.get("unit") or ""), str(r.get("artifact") or ""), r.get("n"))] = r
@@ -96,7 +96,7 @@ def _attach_precedent(units_: list[dict[str, Any]], rows: list[dict[str, Any]]) 
             row = last.get((unit["name"], str(q.get("artifact") or ""), q.get("n"))) or {}
             waiting = not q.get("answered") and row.get("verdict") == precedent_mod.PERSON
             q["by_jera"] = jera
-            # `0136` R15: whose the answer in force is, as the app recorded it.
+            # Whose the answer in force is, as the app recorded it.
             q["authority"] = str(said.get("authority") or "") if q.get("answered") else ""
             q["cites"] = precedent_mod.cites_of(str(said.get("text") or "")) if jera else []
             q["said"] = precedent_mod.words_of(str(said.get("text") or "")) if jera else ""
@@ -106,9 +106,9 @@ def _attach_precedent(units_: list[dict[str, Any]], rows: list[dict[str, Any]]) 
 
 
 def answerable(unit: dict[str, Any]) -> bool:
-    """`0082` R11. Whether the board invites an answer on this unit: not once it is finished,
-    closed or dropped. The answer route itself is unchanged."""
-    # `0139` R11: `next`'s code, never its words.
+    """Whether the board invites an answer on this unit: not once it is finished, closed or
+    dropped."""
+    # `next`'s code, never its words.
     why = str(unit.get("why") or "")
     dropped = (unit.get("hold") or {}).get("state") == "dropped"
     return not (why in ("finished", "rejected") or dropped)
@@ -121,9 +121,8 @@ class BoardMixin:
     def _journal(self) -> Journal | None:
         """The run log, or `None` when there is no working folder to keep it in.
 
-        Unset `COS_WORKING_DIR` and the app behaves as it did before the store — which now also means
-        the board is read-only: there is nowhere to record a mode, so every step reads
-        `manual` and nothing can be started. That is the safe direction to fail in.
+        Unset `COS_WORKING_DIR` means the board is read-only: there is nowhere to record a mode,
+        so every step reads `manual` and nothing can be started. That is the safe way to fail.
         """
         return (
             Journal(self.config.working_dir, self.config.data_dir)
@@ -131,7 +130,7 @@ class BoardMixin:
             else None
         )
 
-    # `0050`. Check-and-mark with no `await` in any of these, so nothing on the event loop
+    # Check-and-mark with no `await` in any of these, so nothing on the event loop
     # can come between the look and the write.
     def _busy(self, key: str, unit: str) -> str:
         """What holds this unit, in the one sentence every refusal carries, or `""`."""
@@ -162,10 +161,10 @@ class BoardMixin:
         return str(Path(cwd).expanduser().resolve())
 
     def _app_identity(self) -> dict[str, str]:
-        """`0094` R13: the running build's version and commit, for a step's `start` row.
+        """The running build's version and commit, for a step's `start` row.
 
         `Updater.me` is `update.identity`, computed once and kept. Anything failing is two
-        empty strings, which `verify_0094 --measure` counts apart; it never stops a step.
+        empty strings; it never stops a step.
         """
         try:
             me = self.updater.me()
@@ -181,7 +180,7 @@ class BoardMixin:
         return units.root(cwd, self.config.data_dir)
 
     def _peer_table(self) -> tuple[list[tuple[str, str]], list[str]]:
-        """`0040` R14. Every workspace as `(name, path)`, and what was left out and why.
+        """Every workspace as `(name, path)`, and what was left out and why.
 
         A name two workspaces share is given for neither: a reference to it could mean
         either store. A name `valid_name` refuses (an env workspace's basename can be one)
@@ -207,14 +206,14 @@ class BoardMixin:
     def _snapshot(
         self, cwd: str, units_: Iterable[str] | None = None, peers: list[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
-        """`0135` spec Design 3. What `cos.mjs --state` decides on: `cwd`'s units and those of
-        every workspace a link may name, from `cos.db`; `units_` narrows it as
-        `UnitMeta.snapshot` says. A store not imported yet is imported first (R3).
+        """What `cos.mjs --state` decides on: `cwd`'s units and those of every workspace a link
+        may name, from `cos.db`; `units_` narrows it as `UnitMeta.snapshot` says. A store not
+        imported yet is imported first.
 
         Raises `Invalid` when an import cannot run: a board read on metadata nobody could
         read would show every unit as not started. So also when `cos.db` cannot be read, in one
         sentence that names the workspace; the error, which may name the database's path, goes
-        to the log (review F11, S3). `peers` is `_peer_table`'s, when the caller read it already.
+        to the log. `peers` is `_peer_table`'s, when the caller read it already.
         """
         meta = self._unit_meta()
         own = self._journal_key(cwd)
@@ -225,7 +224,7 @@ class BoardMixin:
                 if not (units.root(key, self.config.data_dir) / units.COS_DIR).is_dir():
                     continue
                 if meta.imported(key):
-                    # `0136` R15: the answers imported before a row said whose each was.
+                    # The answers imported before a row said whose each was.
                     meta.classify_answers(key)
                     self._imported.add(key)
                 else:
@@ -241,7 +240,7 @@ class BoardMixin:
         return snap["units"].get(f"{snap['workspace']}/{unit}") or {}
 
     def _write_step_state(self, cwd: str, unit: str) -> str:
-        """`0135`. The snapshot a step that runs `cos.mjs` itself hands `--state` — the `pr`
+        """The snapshot a step that runs `cos.mjs` itself hands `--state` — the `pr`
         step's `pr-text`, the `ship` step's gate — which refuse to decide without one. Written
         as the step begins, under the data root beside `spikes/`, never in a store, and
         replaced by the next step of the unit. `""` when it could not be written: the step
@@ -255,7 +254,7 @@ class BoardMixin:
         return str(path)
 
     def _import(self, meta: UnitMeta, key: str) -> None:
-        """R3, R4. One store into `cos.db`, once; what it could not read, if anything, goes to
+        """One store into `cos.db`, once; what it could not read, if anything, goes to
         the log and to one `import` row of the run log. A store with no `.cos/` yet is left
         for later."""
         store = units.root(key, self.config.data_dir)
@@ -265,12 +264,11 @@ class BoardMixin:
             unknowns = meta.import_store(key, store)
         except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
             # The workspace by name and the error in the log: `key` is a path, and `Busy` and
-            # `MetaError` carry the database's path or `cos.mjs`'s stderr (S3).
+            # `MetaError` carry the database's path or `cos.mjs`'s stderr.
             print(f"coscc: the units of {key} could not be imported: {e}", file=sys.stderr)
             name = self._workspace_name(key) or "a workspace"
             raise Invalid(f"the units of {name} could not be imported") from e
-        # Only when there is something to report, so a store read cleanly adds no row: a
-        # board read writes nothing to the run log (`0047` R9).
+        # Only when there is something to report, so a store read cleanly adds no row.
         if not unknowns:
             return
         for u in unknowns:
@@ -283,7 +281,7 @@ class BoardMixin:
                 pass
 
     async def _import_rounds(self, cwd: str, units_: list[dict[str, Any]]) -> None:
-        """`0136`: the review rounds only the prose of a store holds, into `cos.db`, on the
+        """The review rounds only the prose of a store holds, into `cos.db`, on the
         first board read that finds the store unimported (`coscc/units/prose_import.py`). The
         board this read shows is the same either way. One that cannot write goes to the log and
         is tried on the next read."""
@@ -331,11 +329,10 @@ class BoardMixin:
         except Unavailable as e:
             raise Invalid(str(e)) from e
         await self._import_rounds(cwd, data["units"])
-        # `0040` R14, R15. Only when there is something to say, so every other payload is
-        # what it was.
+        # Only when there is something to say.
         if peer_problems:
             data["peer_problems"] = peer_problems
-        # `0036` R5. Each stage column's agent, by the one lookup, for the page to show only.
+        # Each stage column's agent, by the one lookup, for the page to show only.
         # A stage the table has no row for is left out, and its column has no glyph.
         overrides = self._agent_overrides()[0]
         data["stage_agents"] = {}
@@ -361,8 +358,8 @@ class BoardMixin:
         if journal is not None:
             try:
                 modes = journal.modes(key)
-                # One read for every unit's cost, comment attempts (`0021` D4) and, since
-                # `0074`, the backlog's records. Asking `totals` per unit re-scanned the
+                # One read for every unit's cost, comment attempts and the backlog's
+                # records. Asking `totals` per unit re-scanned the
                 # working folder N times for the rows this already has.
                 rows = journal.records(key)
             except Busy as e:
@@ -375,7 +372,7 @@ class BoardMixin:
             verdicts = []
         _attach_comment_state(data["units"], comments)
         _attach_precedent(data["units"], verdicts)
-        # `0074`. Display only: nothing below reads it, and `next`/`blocked` are untouched.
+        # Display only: nothing below reads it, and `next`/`blocked` are untouched.
         data["backlog"] = {
             **backlog.fold(
                 data["units"], ranking, backlog.measured(timelines, data["units"]),
@@ -396,63 +393,61 @@ class BoardMixin:
                 # `manual` is the default because starting work is a decision someone has
                 # to make, not one an unset value should make for them.
                 row["mode"] = modes.get((unit["name"], row["stage"]), "manual")
-                # The mode is a label since `0020`; the grant follows the stage alone.
+                # The mode is a label; the grant follows the stage alone.
                 grant = grant_for(row["stage"])
-                # Carried to the page so `spec.md` C4 can be met where the button is: what
-                # a step will be allowed to do has to be readable before it is started.
+                # Carried to the page: what a step will be allowed to do has to be readable
+                # before it is started.
                 row["grants"] = list(grant.tools)
                 row["warning"] = grant.warning
                 row["consequence"] = consequence(row["stage"])
-                # `0019` plan step 6 / `spec.md` R5. From the same `timelines` read above —
-                # no second scan of the run log. `status` (and the lanes) stays read from
-                # the artifact alone (C6); this is a second, separate field.
+                # From the same `timelines` read above, no second scan of the run log.
+                # `status` stays read from the artifact alone; this is a separate field.
                 row["last_run"] = unit_last_runs.get(row["stage"])
             unit["cost"] = (
                 totals_of(timelines.get(unit["name"], [])) if journal is not None else {}
             )
-            # `0047` R8, R9. A label and nothing else: a deadline passing writes no row and
+            # A label and nothing else: a deadline passing writes no row and
             # starts no step.
             unit["outcome_label"] = outcome_label(
                 unit.get("outcome"), date.today(), finished=unit.get("why") == "finished"
             )
-            # `0082` R11, R12. Decided here so the page only shows them.
+            # Decided here so the page only shows them.
             unit["answerable"] = answerable(unit)
             unit["attention_reason"] = attention_reason(unit)
-            # `0136` R22. The code the last autopilot pass held the unit back with, and its
+            # The code the last autopilot pass held the unit back with, and its
             # detail (`overlap-pr #7`); display only, and nothing while the autopilot is off.
             held = (self._autopilot_held.get(key) or {}).get(unit["name"])
             unit["held"] = " ".join(p for p in held if p) if held else ""
 
         await self._attach_worktrees(cwd, data["units"])
-        # `0046`: one `gh pr list` for the whole read, asked only by whichever block needs it.
+        # One `gh pr list` for the whole read, asked only by whichever block needs it.
         prs = self._prs_once(cwd)
         asks = await self._attach_integration(cwd, data["units"], journal, key, prs)
         data["release"] = await self._attach_release(cwd, data["units"], journal, key, prs)
         for unit in data["units"]:
-            # `0100` R3. From the timelines read above: no second scan of the run log.
+            # From the timelines read above: no second scan of the run log.
             ended = [r for r in timelines.get(unit["name"], []) if r.get("ended") is not None]
             unit["state"] = unit_state(unit, ended[-1] if ended else None, unit.pop("ci_held", None))
 
         data["recording"] = journal is not None
-        # `0043` R9. Display only: the page shows it and decides nothing from it.
+        # Display only: the page shows it and decides nothing from it.
         data["autopilot"] = self._autopilot_block(key)
-        # `0101` R10. Display only, from the rows read above: no second read of the run log.
+        # Display only, from the rows read above: no second read of the run log.
         data["guide"] = self._guide_block(key, verdicts)
         data["read_only_because"] = (
             None if journal is not None
             else "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR"
         )
         if not data["units"]:
-            # `0001_product-describes-a-state-it-is-not-in` R6, R7, R8. The board reads the
-            # store, and a host repository can have a `.cos/` full of units the store never
-            # heard of. The page has to be able to say which directory it read and how many
-            # units sit in the one it did not. Counted on every call: R8 forbids a cache.
+            # A host repository can have a `.cos/` full of units the store never heard of, so
+            # the page can say which directory it read and how many units sit in the other.
+            # Counted on every call, never cached.
             data["empty"] = {
                 "store": str(self._units_root(cwd)),
                 "host": units.key(cwd),
                 "host_units": units.host_unit_count(cwd),
             }
-        # `0100` R6. Started last and never awaited: their answers count from the next read.
+        # Started last and never awaited: their answers count from the next read.
         self._ask_ci(asks)
         return data
 
@@ -473,10 +468,10 @@ class BoardMixin:
         return prs
 
     def _mark_running(self, key: str, unit: str, stage: str, kind: str) -> str:
-        """`0051` R1. Put one entry in `_running` and return its id, for the `finally` to pop.
+        """Put one entry in `_running` and return its id, for the `finally` to pop.
 
         `started` is stamped by the same clock `Journal.append` uses, so it reads like an
-        `at`. `turns` and `cost_usd` stay `None` while the session runs (R5).
+        `at`. `turns` and `cost_usd` stay `None` while the session runs.
         """
         rid = uuid.uuid4().hex
         self._running[rid] = {
@@ -486,7 +481,7 @@ class BoardMixin:
         return rid
 
     def _running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-        """`running`'s `running`, from memory alone: what `_guide_block` reads too (`0101`)."""
+        """`running`'s `running`, from memory alone: what `_guide_block` reads too."""
         running: dict[str, list[dict[str, Any]]] = {}
         for entry in self._running.values():
             if entry["workspace"] != key:
@@ -497,21 +492,21 @@ class BoardMixin:
             running.setdefault(entry["unit"], []).append({
                 "kind": kind, "stage": entry["stage"], "agent": agent,
                 "started": entry["started"], "turns": entry["turns"], "cost_usd": entry["cost_usd"],
-                # `0073` R1. A board step's events; `""` for an integration or an estimate.
+                # A board step's events; `""` for an integration or an estimate.
                 "run": entry.get("run", ""),
             })
         return running
 
     def running(self, cwd: str) -> dict[str, Any]:
-        """`0051` R2. What has an agent working in this workspace now, and what ended unseen.
+        """What has an agent working in this workspace now, and what ended unseen.
 
         `running` is `_running` for this workspace, one element per entry, by unit.
         `unknown_end` is every `start` the run log holds without an `end` that no entry
-        accounts for (R6): the unit has nothing running here, no later `start` of the unit
-        retired it, and it is younger than `UNKNOWN_END_FOR` (spec, answer 4). Matched by
+        accounts for: the unit has nothing running here, no later `start` of the unit
+        retired it, and it is younger than `UNKNOWN_END_FOR`. Matched by
         unit, not by session: `_active` allows one per unit per process, so a unit with an
         entry has no other `start` open in this process — only one another process wrote,
-        and that one is shown as ended (spec C2, answer 3).
+        and that one is shown as ended.
 
         Reads memory and the run log, nothing else: no `git`, no `gh`, no `cos.mjs`, and
         writes nothing. A busy run log is a `note`, not a refusal — the board asks this
@@ -519,7 +514,7 @@ class BoardMixin:
         """
         self._workspace_or_refuse(cwd)
         key = self._journal_key(cwd)
-        # `0036` R5: through the one lookup, so an override shows here too. Read once per call.
+        # Through the one lookup, so an override shows here too. Read once per call.
         overrides = self._agent_overrides()[0]
         running = self._running_here(key, overrides)
         out: dict[str, Any] = {"running": running, "unknown_end": {}}
@@ -536,7 +531,7 @@ class BoardMixin:
             if unit in running:
                 continue
             rows = [
-                # `0036` R7: the name the `start` carries, or its stage's for an older one.
+                # The name the `start` carries, or its stage's for an older one.
                 {"stage": r["stage"], "started": r["started"], "agent": agents.of_record(r, overrides)}
                 for r in found["open"]
                 if r.get("started") and r["started"] == found["last_start"]
@@ -547,16 +542,15 @@ class BoardMixin:
         return out
 
     async def _attach_worktrees(self, cwd: str, units_: list[dict[str, Any]]) -> None:
-        """`0017`. Give every unit `worktree: {path, branch, prepare}`, or `None`.
+        """Give every unit `worktree: {path, branch, prepare}`, or `None`.
 
         One `git worktree list` for the whole board. A `finished` unit that still has a tree
-        is cleaned up here (R10), so a unit shipped at a terminal is cleaned up too — at the
+        is cleaned up here, so a unit shipped at a terminal is cleaned up too — at the
         cost of a `gh pr view` (up to 30s) on **every** board read for as long as the tree
         stays: once, when the removal succeeds; on each read after, when it does not
         (`gh` failing, the pull request not merged, the local branch off the merged head).
         Nothing remembers a refusal, so a transient `gh` error is retried rather than
-        believed. A dirty tree is refused before `gh` is asked. (Plan Risk 7; `0017`
-        review F4 — this docstring said "the first time" until then.)
+        believed. A dirty tree is refused before `gh` is asked.
         """
         root = Path(cwd).expanduser().resolve()
         try:

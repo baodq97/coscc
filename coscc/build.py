@@ -1,32 +1,9 @@
 """Building the page, and the one place that answers "is the build current?".
 
-The build step is manual, and `spec.md` C3 named what that costs: edit the page,
-forget to rebuild, and every check opens the previous bundle, finds it healthy, and reports
-success. That is the same failure this unit exists to stop — green evidence about something
-that is not what is running — only harder to see.
-
-So building writes a fingerprint beside the output, and anything that serves or measures
-the page asks here first. `run.py` refuses to start on a stale build; `verify_0003.py`
-refuses to measure one.
-
-**This module is about a checkout, and only a checkout.** `0011` added a second
-shape -- a wheel carrying its own bundle under `coscc/_web/` -- and nothing in that
-shape reaches this file: `coscc/run.py` branches on `frontend.is_packaged()` before
-asking anything here, so the only two callers of `check()` outside the tests
-(`coscc/run.py` and `scripts/proof_harness.py`) are both checkout paths. The
-question this module answers -- "is the bundle older than the source?" -- has no
-meaning in a wheel, where the two travel in the same file and cannot drift. That is
-why no packaged fingerprint was built; `plan.md` records the decision.
-
-**What the fingerprint covers, and what it cannot.** The compiled bundle is decided by the
-component tree in `coscc/screens/__init__.py`, its state in `coscc/state/__init__.py` (with the modules
-each was split into, `0095`), the shared theme and presentation
-modules, `rxconfig.py` (which bakes in the backend address), and the Reflex version that
-compiled it. Those inputs are fingerprinted. Anything else
-that could change the output — a plugin, an environment variable read during the build —
-is **not** covered, and there is no automatic way to notice. If you change how the page is
-produced, check that it lands in `_SOURCES` or the fingerprint will say "current" about a
-bundle that is not.
+Building writes a fingerprint beside the output; `run.py` refuses to start on a stale
+build. Only a checkout is covered: a wheel carries its bundle and source together, so
+they cannot drift. Anything that changes the output but is not in `_SOURCES` (a plugin, an
+environment variable read during the build) goes unnoticed: add it there.
 """
 
 from __future__ import annotations
@@ -42,15 +19,14 @@ from coscc.config import Config, from_env
 REPO = Path(__file__).resolve().parent.parent
 MARKER = ".coscc-build.json"
 
-# Relative to the repo root. See the module docstring for the limits of this list.
+# Relative to the repo root.
 _SOURCES = (
     "coscc/coscc.py",
     "coscc/web/ui.py",
     "coscc/web/studio.py",
     "coscc/screens/__init__.py",
     "coscc/state/__init__.py",
-    # `0095`: the modules `screens.py` and `state.py` were split into. `build_test` fails
-    # when one is missing.
+    # `build_test` fails when one is missing.
     "coscc/screens/common.py",
     "coscc/screens/chrome.py",
     "coscc/screens/overview.py",
@@ -75,8 +51,7 @@ _SOURCES = (
     "rxconfig.py",
 )
 
-# States `check` can return. `unbuilt` and `missing` are different: one means no output at
-# all, the other means output produced by something that did not leave a fingerprint.
+# `unbuilt`: no output at all. `missing`: output without a fingerprint.
 OK = "ok"
 STALE = "stale"
 MISSING = "missing"
@@ -155,9 +130,7 @@ def check(config: Config, built: Path, root: Path = REPO) -> tuple[str, str]:
 
     reasons = []
     if found.get("host") != want["host"] or found.get("port") != want["port"]:
-        # The failure of 2026-09-21: in a checkout the bundle hardcodes the backend
-        # address and cannot be moved, so a build
-        # aimed elsewhere renders a page that never connects.
+        # The bundle hardcodes the backend address; a build aimed elsewhere never connects.
         reasons.append(
             f"built for {found.get('host')}:{found.get('port')}, "
             f"serving {want['host']}:{want['port']}"

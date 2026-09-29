@@ -1,6 +1,4 @@
-"""The frame every screen sits in: the sidebar, the top bar, the status bar and the banners.
-Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
-"""
+"""The frame every screen sits in: the sidebar, the top bar, the status bar and the banners."""
 
 from __future__ import annotations
 
@@ -86,9 +84,8 @@ def _sidebar() -> rx.Component:
                       on_click=P.navigate("settings"), variant="ghost", size="1", margin_top="12px"),
             padding="14px", background=rx.color("grass", 2),
         ),
-        # `0070` R7. A same-origin `fetch`, not a `<form>`: how Reflex renders a form's
-        # `action` was not measured, and a `fetch` to this origin carries the cookie and a
-        # matching `Origin`. The guard ends the session whatever the page does next.
+        # A same-origin `fetch`, not a `<form>`: it carries the cookie and a matching `Origin`.
+        # The guard ends the session whatever the page does next.
         rx.button("Log out", rx.icon("log-out", size=14), id="logout",
                   on_click=rx.call_script(
                       "fetch('/logout',{method:'POST',credentials:'same-origin'})"
@@ -125,7 +122,7 @@ def _topbar() -> rx.Component:
                   color_scheme="gray", aria_label="Search the studio",
                   display=rx.breakpoints(initial="none", md="flex")),
         rx.cond(P.loading, rx.spinner(size="2")),
-        # `spec.md` R23: the mode has to be changeable from the page and survive a reload.
+        # The mode has to be changeable from the page and survive a reload.
         # `scripts/verify_0003.py` looks for this id.
         rx.box(rx.color_mode.button(), id="color-mode"),
         align="center", gap="12px", width="100%", min_height="68px",
@@ -135,7 +132,7 @@ def _topbar() -> rx.Component:
 
 
 def _status_bar() -> rx.Component:
-    """How many workspaces. The two roots are on Settings, inside *Details* (`0082` D26)."""
+    """How many workspaces. The two roots are on Settings, inside *Details*."""
     return rx.flex(
         rx.spacer(),
         s.text(P.workspaces.length().to_string() + " workspace(s)", size="1",
@@ -147,10 +144,7 @@ def _status_bar() -> rx.Component:
 def _banners(where: str = "page") -> rx.Component:
     """The one `notice` and one `error`, drawn where `where` says.
 
-    `0071` R7, R8: drawn twice — at the top of the page (`page-*`, which the older proofs
-    read) and at the top of the unit dialog (`detail-*`), which covers the page's copy.
-    Both read the same two fields and dismiss through the same handler, so they cannot
-    disagree.
+    Drawn twice: at the top of the page (`page-*`) and at the top of the unit dialog (`detail-*`), which covers the page's copy. Both read the same fields and dismiss through the same handler.
     """
     return rx.vstack(
         rx.cond(
@@ -174,7 +168,7 @@ def _banners(where: str = "page") -> rx.Component:
     )
 
 
-# --- notices (`0113`) --------------------------------------------------------
+# --- notices -----------------------------------------------------------------
 
 
 def _css(color) -> str:
@@ -182,14 +176,11 @@ def _css(color) -> str:
     return f"var(--{color.color}-{color.shade})"
 
 
-# R9, R10, measured as `spike.md ## U2`. One `fetch` of `/api/notices/follow` per tab, read a
-# line at a time, outside Reflex: no state, no websocket, no `on_load`/`on_mount`, and a stack
-# appended to `document.body` that no hydration or route change touches. 40 s with no byte
-# (a `beat` comes every 15 s) aborts it; it connects again after 1 s, doubling to 30 s, with
-# `after` = the cursor — as it does each time the server ends the stream, every 30 s. The
-# cursor moves only once the notice's node is in the DOM, and a notice never moves it down,
-# whichever tab writes it; a `head` line sets it, since one comes only when there was none or
-# it was past every row. A 401 goes to the login page and does not connect again.
+# One `fetch` of `/api/notices/follow` per tab, read a line at a time outside Reflex, so no
+# hydration or route change touches the stack appended to `document.body`. 40 s with no byte
+# (a `beat` comes every 15 s) aborts it; it reconnects after 1 s, doubling to 30 s, with
+# `after` = the cursor. The cursor moves only once the notice's node is in the DOM, and
+# never down; a `head` line sets it. A 401 goes to the login page and does not reconnect.
 _NOTICE_JS = """
 (function () {
   if (window.__coscc_notices) return;

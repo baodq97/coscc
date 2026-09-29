@@ -1,13 +1,8 @@
 """The knowledge store, as the app reaches it: a gather after a ship, and the Knowledge page.
 
-`0131_the-knowledge-store-goes-stale-after-one-gather`. The one service module that may import
-what gathers or measures (`coscc/knowledge/cli_test.py` holds that), and `_gather_soon` is
-called from one place, `_drive`, once a `ship` step ends `done` with `COS_KNOWLEDGE` on (R1).
-Before `0131` only a terminal gathered (`0090` R9); the grant is still `knowledge`, still in
-`TERMINAL_ONLY`, still with no tool (spec Design 1): what changed is who calls it.
-
-`knowledge_page` reads and writes nothing else: the store, `knowledge.HEALTH` and `cos.db` at
-`mode=ro`. It fetches nothing and gathers nothing (R24, Design 3).
+The one service module that may import what gathers or measures. `_gather_soon` is called
+from `_drive` once a `ship` step ends `done` with `COS_KNOWLEDGE` on. `knowledge_page` reads
+the store, `knowledge.HEALTH` and `cos.db` at `mode=ro`; it fetches and gathers nothing.
 """
 
 from __future__ import annotations
@@ -23,7 +18,7 @@ from coscc.knowledge import gather, measure
 from coscc.runlog.journal import BadRecord, Busy
 from coscc.update import updater as updater_mod
 
-# R25 (3): how many steps the page lists.
+# # How many steps the page lists.
 RECENT = 20
 
 
@@ -38,12 +33,12 @@ def _sources(entry: dict[str, Any]) -> list[dict[str, str]]:
 class KnowledgeMixin:
 
     def _gather_soon(self, cwd: str, unit: str, key: str) -> None:
-        """R1. Start `unit`'s gather in the background and return at once; the task is kept,
-        so nothing collects it while it runs.
+        """Start `unit`'s gather in the background and return at once; the task is kept, so nothing
+        collects it while it runs.
 
-        `0138` review round 1, F2: not once Apply is pressed, which waits for a gather already
-        running and must not wait for one begun after. The refusal is the gather's own
-        `knowledge` record, `refused`, so the Knowledge page's last gather says it."""
+        Not once Apply is pressed, which waits for a gather already running and must not wait for
+        one begun after. The refusal is the gather's own `knowledge` record, `refused`.
+        """
         try:
             self.updater.refuse_mechanical_while_updating()
         except updater_mod.Refused as e:
@@ -65,10 +60,10 @@ class KnowledgeMixin:
     async def _gather_unit(self, cwd: str, unit: str, key: str) -> dict[str, Any] | None:
         """One gather of `unit`, its record, or `None` when it did not run. Never raises.
 
-        With no run log it does not run: a gather that spent and could not be recorded is
-        money nobody can count (`coscc/knowledge/cli.py`). Its `Sessions` is its own: `gather`
-        narrows `membership` to the store's directory, which on the app's would refuse every
-        step after it (plan Risk 2). It is listed while it runs, so an update waits for it."""
+        With no run log it does not run: spend that cannot be recorded cannot be counted. Its
+        `Sessions` is its own, since `gather` narrows `membership` to the store's directory, which
+        would refuse every later step on the app's. It is listed while it runs, so an update waits.
+        """
         journal = self._journal()
         if journal is None:
             return None
@@ -85,9 +80,10 @@ class KnowledgeMixin:
             self.updater.job_ended()
 
     def knowledge_page(self, cwd: str) -> dict[str, Any]:
-        """R24-R26. What the Knowledge page shows of this workspace: the entries it receives
-        with what the last check said of each, the last gather, the steps that were handed the
-        store, and the measure as the run log stands, unfetched."""
+        """What the Knowledge page shows of this workspace: the entries it receives with what the last
+        check said of each, the last gather, the steps that were handed the store, and the measure
+        as the run log stands, unfetched.
+        """
         self._workspace_or_refuse(cwd)
         slot = units.slot(cwd)
         out: dict[str, Any] = {"slot": slot, "note": "", "entries": [], "checked": None,
@@ -115,7 +111,7 @@ class KnowledgeMixin:
             out["entries"].append({
                 "id": k, "scope": e["scope"], "statement": e["statement"], "measured": e.get("measured") or "",
                 "sources": _sources(e), "refs": list(e.get("refs") or []),
-                # `None`: no check has read it (R26).
+                # `None`: no check has read it.
                 "broken": verdict if isinstance(verdict, str) else None,
             })
 

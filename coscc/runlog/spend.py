@@ -1,12 +1,10 @@
-"""Where the money went, from a workspace's run log (`0093`). Pure: no I/O, no clock but `now`.
+"""Where the money went, from a workspace's run log. Pure: no I/O, no clock but `now`.
 
-Named `spend`, not `cost`, so it is not confused with `cost_test.py`, which tests
-`sessions._cumulative`.
+Named `spend`, not `cost`, so it is not confused with `cost_test.py`.
 
-Only `end` records are added. An `attempt` repeats the cost of the step it belongs to, and
-an `estimate` summary repeats its own step's (`0093` spec C1): adding them would count one
-dollar twice. An `end` whose `cost_usd` is absent or null is a step whose cost is not known,
-never zero — the same as SQLite's `SUM` skipping a `NULL`, which is what R4 compares against.
+Only `end` records are added: an `attempt` or an `estimate` summary repeats its step's cost,
+so adding them would count it twice. An `end` whose `cost_usd` is absent or null is unknown,
+never zero, like SQLite's `SUM` skipping a `NULL`.
 """
 
 from __future__ import annotations
@@ -18,8 +16,8 @@ from typing import Any, Iterable
 from coscc.runlog import journal
 from coscc.runlog.journal import TOKEN_FIELDS
 
-# `0093` R10. Chosen, not measured (spec C3), except the 15 USD, `review` > 3 and `spec` > 2
-# that `intent.md ## Answers, câu 2` names. Leif (CoS) decides a change to any of them.
+# Chosen, not measured, except the 15 USD, `review` > 3 and `spec` > 2. Leif (CoS) decides a
+# change to any of them.
 BUDGET_USD = 15.0
 RERUN_LIMIT = {"review": 3}
 RERUN_DEFAULT = 2
@@ -87,12 +85,12 @@ def _day(at: Any, tz: tzinfo | None) -> str:
 
 
 def local_day(at: Any, tz: tzinfo | None = None) -> str:
-    """`_day`, public: `0043`'s daily cap counts days the way this screen does."""
+    """`_day`, public: the daily cap counts days the way this screen does."""
     return _day(at, tz)
 
 
 def offset(tz: tzinfo | None = None) -> str:
-    """`UTC+07:00`: today's offset of the zone the days are counted in (R3)."""
+    """`UTC+07:00`: today's offset of the zone the days are counted in."""
     delta = datetime.now(tz).astimezone(tz).utcoffset()
     minutes = int(delta.total_seconds() // 60) if delta is not None else 0
     sign = "+" if minutes >= 0 else "-"
@@ -118,7 +116,7 @@ def _waste_row(kind: str, acc: dict[str, Any], note: int | None = None) -> dict[
 
 
 def _per_turn(record: dict[str, Any]) -> float | None:
-    """Tokens per turn of one `end`, or None when it is not a valid step for R10."""
+    """Tokens per turn of one `end`, or None when it is not a valid step."""
     try:
         turns = int(record.get("turns") or 0)
     except (TypeError, ValueError):
@@ -133,11 +131,11 @@ def model(
     rounds: dict[str, list[str]] | None = None,
     tz: tzinfo | None = None,
 ) -> dict[str, Any]:
-    """Every figure of the *Cost* screen (`0093` R1–R3, R6–R11), from one workspace's records.
+    """Every figure of the *Cost* screen, from one workspace's records.
 
     `records` in the order they were written, as `Journal.records` returns them. `rounds` is
-    each unit's review verdicts, oldest first, from the board's read (R9). `tz` is the zone
-    days are counted in; None is this machine's, which is what `date(at, 'localtime')` uses.
+    each unit's review verdicts, oldest first, from the board's read. `tz` is the zone days are
+    counted in; None is this machine's, which is what `date(at, 'localtime')` uses.
     """
     records = list(records)
     rounds = rounds or {}
@@ -166,7 +164,7 @@ def model(
         key=lambda r: r["key"], reverse=True,
     )
 
-    # R7, one kind at a time. A step may sit in several (C7), so nothing adds them up.
+    # One kind at a time. A step may sit in several, so nothing adds them up.
     failed = _zero()
     again = _zero()
     seen: set[tuple[str, str]] = set()
@@ -182,9 +180,9 @@ def model(
             _add(again, r)
         seen.add((unit, stage))
 
-    # R8. Paired the way the timeline pairs them, to read the `start`'s `integrate_state`.
+    # Paired the way the timeline pairs them, to read the `start`'s `integrate_state`.
     # `_fold` counts an `end` as reporting its cost when the key is there, null or not; a
-    # null is dropped first so it is unknown here too, as in every other total (R5).
+    # null is dropped first so it is unknown here too.
     integrate = {"conflicting": _zero(), "other": _zero(), "none": _zero()}
     paired = [
         {k: v for k, v in r.items() if k != "cost_usd"} if r.get("kind") == "end" and _usd(r) is None else r
@@ -202,7 +200,7 @@ def model(
             else:
                 acc["usd"] = (acc["usd"] or 0.0) + float((row.get("cost") or {}).get("cost_usd") or 0.0)
 
-    # R9. Rounds counted from `review.md`; money only from the `review` steps that said which
+    # Rounds counted from `review.md`; money only from the `review` steps that said which
     # verdicts they wrote. A round no step claims is counted, and its money is not recorded.
     requested = _zero()
     claimed: dict[str, int] = {}
@@ -256,7 +254,7 @@ def _anomalies(
     unit_rows: list[dict[str, Any]],
     per_pair: dict[tuple[str, str], list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    """R10's four kinds, in that order, each the latest first."""
+    """The four kinds, each the latest first."""
     def row(kind, unit, stage, ended, value, limit, usd) -> dict[str, Any]:
         return {
             "kind": kind, "unit": unit, "stage": stage, "ended": ended,

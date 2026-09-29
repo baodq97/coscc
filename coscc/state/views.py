@@ -1,6 +1,5 @@
 """What the page shows, before it is state: the rows and cards `StudioState` holds, and the
-pure functions that build them from what `Service` returns. Split from `coscc/state/__init__.py`
-(`0095`), which re-exports every name.
+pure functions that build them from what `Service` returns.
 """
 
 from __future__ import annotations
@@ -20,13 +19,10 @@ NAVIGATION = (
     ("overview", "Overview", "house"),
     ("workspaces", "Workspaces", "layers"),
     ("board", "Board", "columns-3"),
-    # `0082` R10. The backlog left the board for a route of its own.
     ("backlog", "Backlog", "list-ordered"),
     ("sessions", "Sessions", "messages-square"),
     ("activity", "Activity & usage", "chart-no-axes-combined"),
-    # `0093` R1.
     ("cost", "Cost", "circle-dollar-sign"),
-    # `0131` R24.
     ("knowledge", "Knowledge", "book-open"),
     ("settings", "Settings", "settings-2"),
 )
@@ -41,25 +37,23 @@ STATUS_COLOR = {
     "draft": "amber",
     "skipped": "gray",
     "rejected": "red",
-    # A reviewer looked and asked for changes: waiting on someone, like a draft, but not
-    # the same colour, because it is not unfinished writing — it is a verdict.
+    # A reviewer asked for changes: waiting on someone like a draft, but a verdict, so another colour.
     "changes-requested": "orange",
     "not started": "gray",
 }
 
 def _cell_label(row: dict) -> tuple[str, str]:
-    """The chip text and colour for one stage row (`0019` plan step 7, `spec.md` R5).
+    """The chip text and colour for one stage row, an entry of `Service.board`'s `stages`.
 
-    `row` is one entry of `Service.board`'s `stages` list. Only the "no artifact, last run
-    failed" case departs from the ordinary `status`/`STATUS_COLOR` pair — everything else
-    is unchanged, so a stage with an artifact never shows a stale failure again.
+    Only the "no artifact, last run failed" case departs from the ordinary
+    `status`/`STATUS_COLOR` pair, so a stage with an artifact never shows a stale failure.
     """
     status = row.get("status") or ""
     last_run = row.get("last_run")
     if status == "not started" and last_run and last_run.get("outcome") != "done":
         turns, cost = last_run.get("turns"), last_run.get("cost_usd")
         outcome = last_run.get("outcome")
-        # `0092` R8 a: turns and cost are each known or not, and each is said as it is.
+        # Turns and cost are each known or not, and each is said as it is.
         if turns is None and cost is None:
             return f"not started · {outcome} · turns and cost unknown", "amber"
         said_turns = "turns unknown" if turns is None else f"{turns} turns"
@@ -74,10 +68,9 @@ MARK_COLORS = ("iris", "grass", "blue", "amber", "plum", "cyan")
 
 
 def tree_line(tree: dict | None) -> str:
-    """`0017` R6. A unit's worktree and its preparation, as the page says it.
+    """A unit's worktree and its preparation, as the page says it.
 
-    A failure names the command and its exit code, never just *failed*: the person has to
-    be able to run that command themselves.
+    A failure names the command and its exit code so the person can run it themselves.
     """
     if not tree or not tree.get("path"):
         return ""
@@ -117,10 +110,9 @@ class Cell:
 
     stage: str = ""
     status: str = ""
-    # `0019` plan step 7 / `spec.md` R5. What the chip actually shows. Equal to `status`
-    # except when the artifact is absent and the last run of this stage failed — then it
-    # names the failure instead of the bare word "not started". `status` itself keeps
-    # meaning only what the artifact says (C6); this is a second, cosmetic field.
+    # What the chip shows. Equal to `status` except when the artifact is absent and the
+    # last run of this stage failed; then it names the failure. `status` keeps meaning only
+    # what the artifact says.
     label: str = ""
     mode: str = "manual"
     color: str = "gray"
@@ -128,18 +120,16 @@ class Cell:
     grants: str = ""
     warning: str = ""
     opens_tools: bool = False
-    # `0082` R8: the one sentence the page keeps beside Run.
+    # The one sentence the page keeps beside Run.
     consequence: str = ""
-    # `idea` is the one optional stage and it gates nothing. Carried here so the run
-    # button can skip it: the board card says "Next: write-pr" and a button offering to
-    # run `idea` beside it is two answers to one question.
+    # `idea` is the one optional stage and it gates nothing; carried so the run button can skip it.
     optional: bool = False
 
 
 @dataclasses.dataclass
 class Question:
-    """`0016`. One numbered item under an artifact's `## Open questions`, as `cos.mjs`
-    read it. Nothing here parses an artifact; every field is copied from `status --json`."""
+    """One numbered item under an artifact's `## Open questions`, as `cos.mjs` read it;
+    every field is copied from `status --json`."""
 
     # `<artifact>#<n>`: one string the page can bind a text box to.
     key: str = ""
@@ -149,11 +139,11 @@ class Question:
     answered: bool = False
     # Whether this is the artifact the unit's open count is taken from.
     counted: bool = False
-    # `0028`. What the row shows as its name: the number for a numbered question, `F<n>` for
-    # a review finding the last round confirmed needs a person (`number` is 0 for those).
+    # What the row shows as its name: the number for a numbered question, `F<n>` for a
+    # review finding the last round confirmed needs a person (`number` is 0 for those).
     label: str = ""
-    # `0044` R10, all decided by `Service.board`. `by_jera`: the answer in force is Jera's,
-    # which `said` this and cites `cites`. `needs_person`: Jera's last run said a person must
+    # All decided by `Service.board`. `by_jera`: the answer in force is Jera's, which
+    # `said` this and cites `cites`. `needs_person`: Jera's last run said a person must
     # answer it, with its `proposal` and `reason`.
     by_jera: bool = False
     cites: list[str] = dataclasses.field(default_factory=list)
@@ -161,16 +151,14 @@ class Question:
     needs_person: bool = False
     proposal: str = ""
     reason: str = ""
-    # `0136` R15. Whose decision the answer in force is, in words (`AUTHORITY_LABEL`); `""`
-    # while unanswered.
+    # Whose decision the answer in force is, in words (`AUTHORITY_LABEL`); `""` while unanswered.
     authority: str = ""
 
 
 @dataclasses.dataclass
 class Round:
-    """`0021`. One round of `review.md` and whether it is on the pull request as a comment.
-    The round is `cos.mjs`'s; whether it is posted is `Service.board`'s reading of the run
-    log. Nothing here decides either."""
+    """One round of `review.md` and whether it is on the pull request as a comment. The
+    round is `cos.mjs`'s; whether it is posted is `Service.board`'s reading of the run log."""
 
     number: int = 0
     verdict: str = ""
@@ -185,8 +173,7 @@ class Unit:
     id: str = ""
     title: str = ""
     summary: str = ""
-    # The last stage with an artifact: the one the Artifact tab opens. Not the column,
-    # which is `at` (`0100` R2).
+    # The last stage with an artifact: the one the Artifact tab opens. Not the column, which is `at`.
     stage: str = ""
     owner: str = "You"
     mode: str = "manual"
@@ -196,16 +183,15 @@ class Unit:
     progress: int = 0
     problems: str = ""
     cells: list[Cell] = dataclasses.field(default_factory=list)
-    # `0016` R8. How many questions in the counted artifact nobody has answered, taken
-    # from `cos.mjs` (`open`) and never recounted (R7). Since `0100` an open question
-    # makes the unit's state *Needs you* (`intent.md ## Answers, câu 3`).
+    # How many questions in the counted artifact nobody has answered, taken from `cos.mjs`
+    # (`open`) and never recounted. An open question makes the unit's state *Needs you*.
     open_questions: int = 0
     questions: list[Question] = dataclasses.field(default_factory=list)
-    # `0021`. The pull request `pr.md` names, and every review round with its comment state.
+    # The pull request `pr.md` names, and every review round with its comment state.
     pr_url: str = ""
     rounds: list[Round] = dataclasses.field(default_factory=list)
-    # `0035` R1/R3/R8/R13. Copied from `Service.board`'s `integration`; empty state means
-    # the unit is outside the window. `integrate_button` is the service's decision (R3).
+    # Copied from `Service.board`'s `integration`; empty state means the unit is outside
+    # the window. `integrate_button` is the service's decision.
     integration_state: str = ""
     integration_reason: str = ""
     integration_behind: str = ""
@@ -213,7 +199,7 @@ class Unit:
     integrate_button: bool = False
     integration_warnings: list[str] = dataclasses.field(default_factory=list)
     integration_needs_person: list[str] = dataclasses.field(default_factory=list)
-    # `0047` R8. Copied from `Service.board`'s `outcome_label`; empty text means no label.
+    # Copied from `Service.board`'s `outcome_label`; empty text means no label.
     # `outcome_form` is the service's decision: the unit is finished.
     outcome_text: str = ""
     outcome_color: str = "gray"
@@ -225,31 +211,31 @@ class Unit:
     outcome_hint: str = ""
     outcome_invalid: int = 0
     outcome_form: bool = False
-    # `0051`. What is running on this unit now, or ended unseen: one line each, copied from
-    # `Service.running` by `_activities`. Never from `StudioState.running` (R8).
+    # What is running on this unit now, or ended unseen: one line each, copied from
+    # `Service.running` by `_activities`.
     live: list[Activity] = dataclasses.field(default_factory=list)
-    # `0045`. The hold `cos.mjs` read (`paused`, `dropped`, or empty) and the moves it allows
-    # from there, copied from the board. The page offers one button per move and decides none.
+    # The hold `cos.mjs` read (`paused`, `dropped`, or empty) and the moves it allows from
+    # there, copied from the board. The page offers one button per move and decides none.
     hold_state: str = ""
     hold_reason: str = ""
     hold_by: str = ""
     hold_date: str = ""
     hold_moves: list[str] = dataclasses.field(default_factory=list)
-    # `0081` R8. Whether `cos.mjs` says the unit used its review rounds with findings still
-    # open, copied from the board. The page offers *Allow one more review round* off this alone.
+    # Whether `cos.mjs` says the unit used its review rounds with findings still open. The
+    # page offers *Allow one more review round* off this alone.
     more_rounds: bool = False
-    # `0074`. The unit's place in the shortlist in effect, 0 when it has none, and its
-    # relations in one line (R9). Labels only.
+    # The unit's place in the shortlist in effect, 0 when it has none, and its relations
+    # in one line. Labels only.
     shortlist_rank: int = 0
     relations_text: str = ""
-    # `0082` R11, R12. The service's decisions: whether the board invites an answer, and
-    # what a unit in *Needs you* waits on.
+    # The service's decisions: whether the board invites an answer, and what a unit in
+    # *Needs you* waits on.
     answerable: bool = True
     attention_reason: str = ""
-    # `0100` R2, R3. The stage whose column the unit sits in, as `cos.mjs` sent it, and the
-    # state shown: `Service.board`'s decision (`decided_*`), with `Running` laid over it by
-    # `service.shown_state` alone (Design 5). `ci_line` is the dialog's CI line (R7), and
-    # `state_reason` the `attention_reason` its header shows beside the state (review F1).
+    # The stage whose column the unit sits in, as `cos.mjs` sent it, and the state shown:
+    # `Service.board`'s decision (`decided_*`), with `Running` laid over it by
+    # `service.shown_state` alone. `ci_line` is the dialog's CI line, and `state_reason`
+    # the `attention_reason` its header shows beside the state.
     at: str = ""
     state: str = ""
     state_label: str = ""
@@ -259,20 +245,20 @@ class Unit:
     decided_state: str = ""
     decided_label: str = ""
     decided_color: str = "gray"
-    # `0040` R15 (3, 4). The idea the unit was opened from, its `Repo:`, and the unit it waits
-    # on, each with the address it links to; empty when it has none. `link_fields` copies them.
+    # The idea the unit was opened from, its `Repo:`, and the unit it waits on, each with
+    # the address it links to; empty when it has none. `link_fields` copies them.
     idea_ref: str = ""
     idea_href: str = ""
     repo: str = ""
     waits_for: str = ""
     waits_for_href: str = ""
-    # `0136` R22. The code the last autopilot pass held the unit back with (`overlap-pr #7`).
+    # The code the last autopilot pass held the unit back with (`overlap-pr #7`).
     held: str = ""
 
 
 @dataclasses.dataclass
 class IdeaRow:
-    """`0040` R15 (1). One idea on the Board of its home workspace."""
+    """One idea on the Board of its home workspace."""
 
     id: str = ""
     title: str = ""
@@ -282,7 +268,7 @@ class IdeaRow:
 
 @dataclasses.dataclass
 class ChildRow:
-    """`0040` R15 (2). One unit an idea lists, as the `/idea` page shows it."""
+    """One unit an idea lists, as the `/idea` page shows it."""
 
     ref: str = ""
     unit: str = ""
@@ -313,7 +299,7 @@ def _idea_href(ref: str, home: str) -> str:
 
 
 def link_fields(u: dict, home: str) -> dict:
-    """`0040`. A board unit's links, as `Unit` fields. Copies what `Service.board` sent."""
+    """A board unit's links, as `Unit` fields. Copies what `Service.board` sent."""
     idea = str(u.get("idea") or "")
     waits = [str(x) for x in u.get("waits_for") or []]
     return {
@@ -351,10 +337,9 @@ def child_rows(page: dict) -> list[ChildRow]:
 
 @dataclasses.dataclass
 class Card:
-    """`0053` R7. One card: only what a card, a List row, *Pick up where you left off*, a
-    Usage row and the command palette draw. The page receives this list once; the whole
-    `Unit` of the one unit open is `current_unit`, and every other `Unit` stays on the server
-    (`_full`). Each field is copied from that `Unit` by `_card`."""
+    """One card: only what a card, a List row, *Pick up where you left off*, a Usage row
+    and the command palette draw. The page receives this list once; the whole `Unit` of the
+    one unit open is `current_unit`, and every other `Unit` stays on the server (`_full`)."""
 
     id: str = ""
     title: str = ""
@@ -382,13 +367,13 @@ class Card:
     state: str = ""
     state_label: str = ""
     state_color: str = "gray"
-    # `0040` R15 (3). The unit `impl` waits on, when it waits.
+    # The unit `impl` waits on, when it waits.
     waits_for: str = ""
     held: str = ""
 
 
 def _card(u: Unit) -> Card:
-    """`0053`. A `Unit` as its card. Copies; decides nothing."""
+    """A `Unit` as its card. Copies; decides nothing."""
     return Card(
         id=u.id, title=u.title, summary=u.summary, mode=u.mode, owner=u.owner, progress=u.progress, tokens=u.tokens, usd=u.usd,
         token_count=u.token_count, has_problem=u.problems != "", open_questions=u.open_questions,
@@ -402,8 +387,8 @@ def _card(u: Unit) -> Card:
 
 
 def _ci_line(ci: dict | None) -> str:
-    """`0100` R7. The service's CI answer as one line, `""` where it gives none. The time
-    is for a reader (S4); no SHA (S3)."""
+    """The service's CI answer as one line, `""` where it gives none. The time is for a
+    reader; no SHA."""
     if not ci:
         return ""
     read = " · read " + present.when(ci.get("at")) if ci.get("read") else ""
@@ -415,8 +400,8 @@ def _ci_line(ci: dict | None) -> str:
 
 
 def _shown(u: Unit, read: dict) -> dict:
-    """`0100` Design 5. The `state*` fields of `u` under one `Service.running` answer: the
-    service's own choice between its two answers, never one made here."""
+    """The `state*` fields of `u` under one `Service.running` answer: the service's own
+    choice between its two answers, never one made here."""
     shown = shown_state(
         {"state": u.decided_state, "label": u.decided_label, "color": u.decided_color},
         (read.get("running") or {}).get(u.id),
@@ -427,7 +412,7 @@ def _shown(u: Unit, read: dict) -> dict:
 
 @dataclasses.dataclass
 class UsageRow:
-    """`0053` R11. One line of *Usage by work unit*."""
+    """One line of *Usage by work unit*."""
 
     id: str = ""
     title: str = ""
@@ -438,8 +423,8 @@ class UsageRow:
 
 @dataclasses.dataclass
 class SpendRow:
-    """`0093` R1–R3, R11. One unit, stage or day of the *Cost* screen: money read by
-    `present.money`, and beside it the steps whose cost is not known (R5)."""
+    """One unit, stage or day of the *Cost* screen: money read by `present.money`, and
+    beside it the steps whose cost is not known."""
 
     key: str = ""
     usd: str = ""
@@ -450,7 +435,7 @@ class SpendRow:
 
 @dataclasses.dataclass
 class TokenRow:
-    """`0093` R6. The four kinds of token for the workspace or one stage, each `1,234 (12%)`."""
+    """The four kinds of token for the workspace or one stage, each `1,234 (12%)`."""
 
     scope: str = ""
     input: str = ""
@@ -462,7 +447,7 @@ class TokenRow:
 
 @dataclasses.dataclass
 class WasteRow:
-    """`0093` R7–R9. One kind of waste; `sub` is a line under the kind above it."""
+    """One kind of waste; `sub` is a line under the kind above it."""
 
     label: str = ""
     count: str = ""
@@ -473,7 +458,7 @@ class WasteRow:
 
 @dataclasses.dataclass
 class AnomalyRow:
-    """`0093` R10. One anomaly, its measure and threshold in one cell."""
+    """One anomaly, its measure and threshold in one cell."""
 
     key: str = ""
     kind: str = ""
@@ -484,7 +469,7 @@ class AnomalyRow:
     usd: str = ""
 
 
-# `0093`. The words each kind of `spend.model` reads as. Labels only.
+# The words each kind of `spend.model` reads as. Labels only.
 WASTE_LABEL = {
     "exhausted-or-failed": ("Exhausted or failed", False),
     "run-again": ("Stage run again", False),
@@ -503,7 +488,7 @@ NO_UNIT = "No unit"
 
 
 def _unknown(n) -> str:
-    """`0093` R5: said beside the money, or nothing when every cost is known."""
+    """Said beside the money, or nothing when every cost is known."""
     n = int(n or 0)
     return f"{n} unknown" if n else ""
 
@@ -542,14 +527,14 @@ def _waste_rows(rows: list[dict]) -> list[WasteRow]:
         out.append(WasteRow(label=label, count=f"{int(r.get('count') or 0):,}", usd=present.money(r.get("usd")),
                             unknown=_unknown(r.get("unknown")), sub=sub))
         if r["kind"] == "changes-requested":
-            # R9, C5: the rounds no `review` step claimed are counted; their money is not known.
+            # The rounds no `review` step claimed are counted; their money is not known.
             out.append(WasteRow(label="not recorded", count=f"{int(r.get('note') or 0):,}",
                                 usd="not recorded", sub=True))
     return out
 
 
 def _measured(a: dict) -> str:
-    """`0093` R10: the measure and the threshold, `$18.40 > $15`, `4 runs > 3`."""
+    """The measure and the threshold, `$18.40 > $15`, `4 runs > 3`."""
     value, limit = a.get("value"), a.get("limit")
     if a["kind"] == "over-budget":
         return f"{present.money(value)} > ${limit:g}"
@@ -573,14 +558,13 @@ def _anomaly_rows(rows: list[dict]) -> list[AnomalyRow]:
     ]
 
 
-# `0053` R10. A chat message longer than this many characters is sent cut to it, with a
-# button to fetch the rest. Chosen, not measured; `spec.md ## Answers, câu 1` accepted it.
+# A chat message longer than this many characters is sent cut to it, with a button to fetch the rest.
 MESSAGE_CUT = 4000
 
 
 @dataclasses.dataclass
 class BacklogRow:
-    """`0074`. One line of the Backlog panel, copied from `Service.board`'s `backlog`."""
+    """One line of the Backlog panel, copied from `Service.board`'s `backlog`."""
 
     rank: int = 0
     unit: str = ""
@@ -594,7 +578,7 @@ class BacklogRow:
 
 
 def _estimated_by(by) -> str:
-    """`0082` D68: an agent's estimate reads `agent`; its session id stays in the API."""
+    """An agent's estimate reads `agent`; its session id stays in the API."""
     by = str(by or "")
     return "agent" if by.startswith("agent:") else by
 
@@ -619,8 +603,8 @@ def _backlog_row(entry: dict, rank: int) -> BacklogRow:
 
 
 def _relations_text(relations: list | None) -> str:
-    """R9. `thay thế` and `phụ thuộc` read from the side they are on; the other two either way.
-    `0082` D31: in English, from `present`'s tables; the stored words are unchanged."""
+    """`thay thế` and `phụ thuộc` read from the side they are on; the other two either way.
+    In English, from `present`'s tables; the stored words are unchanged."""
     def word(r: dict) -> str:
         if r.get("direction") == "in" and r.get("type") in present.RELATION_LABEL_IN:
             return present.RELATION_LABEL_IN[r["type"]]
@@ -632,22 +616,22 @@ def _relations_text(relations: list | None) -> str:
 
 
 def backlog_view(data: dict) -> dict:
-    """`0074`. The panel's fields from the board's `backlog`; copies, decides nothing."""
+    """The panel's fields from the board's `backlog`; copies, decides nothing."""
     b = data.get("backlog") or {}
     cuts = b.get("terciles")
-    # `0082` D32: one English sentence; the cost thresholds stay in the API and in `backlog`.
+    # One English sentence; the cost thresholds stay in the API and in `backlog`.
     note = (f"Only {len(b.get('backlog') or [])} units wait, so a shortlist of 7 picks nothing out."
             if b.get("undiscriminating") else "")
     record = b.get("shortlist_record") or {}
     return {
         "backlog_rows": [_backlog_row(e, int(e.get("rank") or 0)) for e in b.get("shortlist") or []],
-        # `0082` R10: a unit with no estimate is a row too, with value and effort empty.
+        # A unit with no estimate is a row too, with value and effort empty.
         "backlog_rest": [_backlog_row(e, int(e.get("computed") or 0)) for e in b.get("order") or []]
         + [BacklogRow(unit=str(n), value="—", effort="—") for n in b.get("unestimated") or []],
         "shortlist_draft": [str(e.get("unit") or "") for e in b.get("shortlist") or []],
         "backlog_unestimated": list(b.get("unestimated") or []),
         "backlog_note": note,
-        # `0092` R11: the finished units measured, and those left out for an unknown cost.
+        # The finished units measured, and those left out for an unknown cost.
         "backlog_measured": (
             f"{int(b.get('measured_count') or 0)} finished units measured; "
             f"{int(b.get('undetermined_count') or 0)} left out, cost unknown."
@@ -676,7 +660,7 @@ def _outcome_fields(label: dict | None) -> dict:
         str(x) for x in (label.get("source") or label.get("reason"), label.get("note")) if x
     )
     return {
-        # `0082` D22: the English label; the API keeps `text` as it was.
+        # The English label; the API keeps `text` as it was.
         "outcome_text": str(label.get("label") or label.get("text") or ""),
         "outcome_color": str(label.get("color") or "gray"),
         "outcome_detail": detail,
@@ -692,7 +676,7 @@ def _outcome_fields(label: dict | None) -> dict:
 
 @dataclasses.dataclass
 class Activity:
-    """`0051`. One line on a card: a session running on the unit, or one that ended unseen.
+    """One line on a card: a session running on the unit, or one that ended unseen.
 
     Every field is copied from `Service.running`; the page chooses only the words.
     """
@@ -703,17 +687,17 @@ class Activity:
     agent: str = ""
     stage: str = ""
     started: str = ""
-    # Empty when unknown, never `0` (R5): today they are always unknown while a step runs.
+    # Empty when unknown, never `0`: they are always unknown while a step runs.
     turns: str = ""
     cost: str = ""
     # `step`, `gebo`, `rebase` or `unknown`.
     kind: str = ""
-    # `0073`. The step's `run`, what the watch pane opens; empty for anything else.
+    # The step's `run`, what the watch pane opens; empty for anything else.
     run: str = ""
 
 
 def _activities(unit: str, read: dict) -> list[Activity]:
-    """`0051` R3, R6. `Service.running`'s answer for one unit, as the lines its card shows."""
+    """`Service.running`'s answer for one unit, as the lines its card shows."""
     out: list[Activity] = []
     for row in (read.get("running") or {}).get(unit) or []:
         agent = row.get("agent") or {}
@@ -738,27 +722,22 @@ def _activities(unit: str, read: dict) -> list[Activity]:
     return out
 
 
-# `0051` R3. Seconds between two asks of `Service.running` while the Board is shown. Chosen,
-# half of the 10s the intent accepted, not measured.
+# Seconds between two asks of `Service.running` while the Board is shown.
 RUNNING_POLL = 5
 
-# `0051`. The tabs (client tokens) with a `poll_running` loop alive in this process. Kept in
-# the process rather than in the page's state: a state var would outlive the loop it stands
-# for across a restart, and the Board would never ask again.
+# The tabs (client tokens) with a `poll_running` loop alive in this process. Kept here, not in
+# page state: a state var would outlive its loop across a restart and the Board would never ask again.
 _POLLING: set[str] = set()
 
-# `0051` review round 1, F2. How many asks in a row must find the tab's token unmapped
-# before its loop ends. Reflex unmaps a token on every socket drop and maps it again on
-# reconnect, so one miss is a flaky network as often as a closed tab. Chosen: 12 asks,
-# one minute at `RUNNING_POLL`; not measured.
+# How many asks in a row must find the tab's token unmapped before its loop ends. Reflex
+# unmaps a token on every socket drop and maps it again on reconnect, so one miss is often
+# a flaky network, not a closed tab.
 GONE_AFTER = 12
 
 
-# `0056` review round 1, F2. The `cos.mjs next` asks in flight, by (workspace, unit). The next
-# navigation cancels an arrival's `on_load` chain, and the `load_next` it chained with it; the
-# ask itself — `node`, the `gh` it calls, a `git worktree add` in `worktrees.ensure` — runs on
-# in a task of its own, awaited through `asyncio.shield`, so nothing is left running unread
-# and the next arrival at that unit waits for it instead of starting a second beside it.
+# The `cos.mjs next` asks in flight, by (workspace, unit). Navigation cancels an arrival's
+# `on_load` chain, but the ask itself runs on in a task of its own behind `asyncio.shield`,
+# so the next arrival at that unit waits for it instead of starting a second.
 _ASKING: dict[tuple[str, str], asyncio.Task] = {}
 
 
@@ -784,9 +763,8 @@ def _asking(ask, cwd: str, unit: str, join: bool) -> asyncio.Future:
 def _tab_gone(token: str) -> bool:
     """Whether the tab behind `token` has no socket open to this process any more.
 
-    Without this a loop started by a tab that was then closed would ask every
-    `RUNNING_POLL` seconds until the app stopped. Where no socket server exists at all —
-    in-process, as the proofs drive the state — nobody can be gone.
+    Without this a loop of a closed tab would ask until the app stopped. Where no socket
+    server exists (in-process, as the proofs drive the state) nobody can be gone.
     """
     app_module = sys.modules.get("coscc.coscc")
     namespace = getattr(getattr(app_module, "app", None), "event_namespace", None)
@@ -810,7 +788,7 @@ def _hold_fields(u: dict) -> dict:
 def _hold_detail(row: dict) -> str:
     """The Activity detail of one `hold` run-log row after its unit: reason, name, and each
     side effect that did not finish with what it said — a failed close names the pull
-    requests already closed, and nothing retries it (review round 1, F2)."""
+    requests already closed, and nothing retries it."""
     detail = f" / {row.get('reason', '')} / by {row.get('by', '')}"
     for e in row.get("effects") or []:
         if e.get("result") != "done":
@@ -838,7 +816,7 @@ def _integration_fields(info: dict | None) -> dict:
 class Message:
     role: str = ""
     text: str = ""
-    # `0053` R10. How many characters of `text` were not sent, 0 when it is whole.
+    # How many characters of `text` were not sent, 0 when it is whole.
     cut: int = 0
 
 
@@ -852,7 +830,7 @@ class Conversation:
 
 @dataclasses.dataclass
 class AutopilotStop:
-    """`0043` R9. One unit the autopilot will not start anything on, and why."""
+    """One unit the autopilot will not start anything on, and why."""
 
     unit: str = ""
     kind: str = ""
@@ -861,15 +839,15 @@ class AutopilotStop:
 
 @dataclasses.dataclass
 class RunningStep:
-    """`0034`. One board step running now, as `Service.running_steps` lists it."""
+    """One board step running now, as `Service.running_steps` lists it."""
 
     unit: str = ""
     stage: str = ""
     started_at: str = ""
     stopping: bool = False
-    # `0073`. What the watch pane opens.
+    # What the watch pane opens.
     run: str = ""
-    # `0114` R1: `integration` has no watch pane and no Stop.
+    # `integration` has no watch pane and no Stop.
     kind: str = "step"
 
 
@@ -890,15 +868,15 @@ class Run:
     # else sends the only person who can fix it to the database -- and for a prose stage
     # this is where the reply it was paid for comes back (`coscc/runner/__init__.py`, `_with_reply`).
     detail: str = ""
-    # `0073`. The step's `run`, empty for one written before `0073` (R13).
+    # The step's `run`, empty for a row without one.
     run: str = ""
-    # `0089`. The row's own `_details` key: `run`, or `<stage>-<i>` when that is empty.
+    # The row's own `_details` key: `run`, or `<stage>-<i>` when that is empty.
     key: str = ""
 
 
 @dataclasses.dataclass
 class Move:
-    """`0136` R20. One transition of a unit's timeline: what moved and when, the label of the
+    """One transition of a unit's timeline: what moved and when, the label of the
     guard that decided it and whose decision it was. The guard's id, the full SHA it read
     and the run's id are for *Details* alone."""
 
@@ -913,8 +891,8 @@ class Move:
     key: str = ""
 
 
-# `0136` R15. Each authority in words, for a reader rather than a column name; a row from
-# before `0136`, or an answer imported unclassified, says nobody recorded one.
+# Each authority in words, for a reader rather than a column name; an answer imported
+# unclassified says nobody recorded one.
 AUTHORITY_LABEL = {
     "person": "By a person", "delegated": "By their delegate", "agent": "By an agent", "code": "By the app",
 }
@@ -922,8 +900,7 @@ NO_AUTHORITY = "Author not recorded"
 
 
 def _moves(rows: list[dict]) -> list[Move]:
-    """`0136` R20. The timeline's transitions, as `Service.timeline` sent them, newest first so
-    the decisions of late reach the top. Copies."""
+    """The timeline's transitions, as `Service.timeline` sent them, newest first. Copies."""
     out = []
     for i, r in reversed(list(enumerate(rows))):
         authority = str(r.get("authority") or "")
@@ -943,7 +920,7 @@ def _moves(rows: list[dict]) -> list[Move]:
 
 @dataclasses.dataclass
 class WatchEvent:
-    """`0073` R10, R12. One event of the watch pane, as `events.collapse` shaped it. Never
+    """One event of the watch pane, as `events.collapse` shaped it. Never
     more than the collapsed body: the whole of one opened event is `watch_open_text`."""
 
     seq: int = 0
@@ -958,24 +935,21 @@ class WatchEvent:
     persisted: str = ""
 
 
-# `0073`. The most events the watch pane holds at once. Every frame carries the whole list
-# (`spike.md ## U4`: about 2 062 bytes an event at the collapsed size), so the list has a
-# ceiling: 400 × 2 062 ≈ 825 KB at worst -- a multiplication, not a measurement, under the
-# 1 031 008 bytes U4 measured within 2 s on loopback. Chosen.
+# The most events the watch pane holds at once. Every frame carries the whole list
+# (about 2 KB an event at the collapsed size), so the list has a ceiling.
 WATCH_WINDOW = 400
 
-# Seconds the pane gathers new events before it sends them (`spike.md ## U3`).
+# Seconds the pane gathers new events before it sends them.
 WATCH_GATHER = 0.5
 
-# `0073` R13, in English since `0089` (S6): no longer R13's words (`.cos/0089_*/spec.md` C1).
 NO_RUN_NOTE = "no event stream: this step ran before events were recorded"
 
 
-# `0089` R11 (D55). What the board says in place of the service's `read_only_because`, which
-# names `COS_WORKING_DIR` and stays as it is for the API (`coscc/web/board_api_test.py`).
+# What the board says in place of the service's `read_only_because`, which names
+# `COS_WORKING_DIR` and stays as it is for the API.
 READ_ONLY_NOTE = "No working folder is set, so nothing can be recorded."
 
-# `0043` R9. A label for each of R6's stops (a–f) and the cap; the page words, not a decision.
+# A label for each autopilot stop (a–f) and the cap; the page words, not a decision.
 AUTOPILOT_STOP_LABEL = {
     "a": "Open question", "b": "Needs a person", "c": "Ship waits", "d": "Integration needs a person",
     "e": "Last step did not finish", "f": "Blocked", "cap": "Daily cap", "shortlist": "No shortlist",
@@ -984,7 +958,7 @@ AUTOPILOT_STOP_LABEL = {
 
 @dataclasses.dataclass
 class GuideItem:
-    """`0101` R10. One line of the board's guide, copied from `Service._guide_block`: a unit,
+    """One line of the board's guide, copied from `Service._guide_block`: a unit,
     what it is (a stage and its agent, a thing to do, or a question Jera answered), a line
     below it, and where the link goes (`""` for none)."""
 
@@ -1003,7 +977,7 @@ def _number(text: str, kind: type) -> object:
 
 
 def _watch_note(page: dict) -> str:
-    """R13. The line the pane shows so it is never empty without a reason."""
+    """The line the pane shows so it is never empty without a reason."""
     notes: list[str] = []
     status = page.get("status")
     if status == "purged":
@@ -1044,15 +1018,14 @@ class Knob:
 
 @dataclasses.dataclass
 class ModelRow:
-    """`0004_no-setting-says-which-model-runs-a-stage`. One stage, or chat, as Settings
-    shows it. Every field is copied from `Service.stage_models`; nothing is resolved here."""
+    """One stage, or chat, as Settings shows it. Every field is copied from `Service.stage_models`; nothing is resolved here."""
 
     name: str = ""
     agents: int = 1
     model: str = ""
     source: str = ""
     overridden: bool = False
-    # `0033`: the effort beside the model, looked up on its own. `chat` has none.
+    # The effort beside the model, looked up on its own. `chat` has none.
     effort: str = ""
     effort_source: str = ""
     effort_overridden: bool = False
@@ -1061,7 +1034,7 @@ class ModelRow:
 
 @dataclasses.dataclass
 class AgentRow:
-    """`0036` R2. One row of the agent table as Settings shows it: each field and where it
+    """One row of the agent table as Settings shows it: each field and where it
     came from. Copied from `Service.agent_table`; nothing is resolved here."""
 
     key: str = ""
@@ -1078,7 +1051,7 @@ class AgentRow:
 
 @dataclasses.dataclass
 class DecisionRow:
-    """`0137` R5. One of the person's decisions as Settings shows it. Copied from
+    """One of the person's decisions as Settings shows it. Copied from
     `Service.decisions_table`, the days through `present.day`; nothing is decided here."""
 
     id: str = ""
@@ -1097,7 +1070,7 @@ class DecisionRow:
 
 @dataclasses.dataclass
 class NameRow:
-    """`0137` R6. One name found in `Answered by:`, as `Service.answer_names` returned it."""
+    """One name found in `Answered by:`, as `Service.answer_names` returned it."""
 
     name: str = ""
     count: int = 0
@@ -1106,7 +1079,7 @@ class NameRow:
 
 @dataclasses.dataclass
 class ImportRow:
-    """`0135` R4. One field an import could not read, as `Service.settings` returned it."""
+    """One field an import could not read, as `Service.settings` returned it."""
 
     workspace: str = ""
     unit: str = ""
@@ -1132,33 +1105,30 @@ class GrantRow:
 
 
 def _run_target(data: dict) -> tuple[str, str]:
-    """`0024`. The stage the run button offers and the sentence beside it, copied from
-    `Service.next_step` -- which is `cos.mjs next`'s answer.
+    """The stage the run button offers and the sentence beside it, copied from
+    `Service.next_step`, which is `cos.mjs next`'s answer.
 
-    Until `0024` the page worked this out for itself: "the first required stage with no
-    artifact". That was a second copy of the loop `.claude/CLAUDE.md` forbids, and once a
-    review asked for changes both `impl.md` and `review.md` existed, so it offered `ship`,
-    whose gate was closed, and nothing else. Nothing here reads `action` to pick a stage.
+    The page must not work the stage out itself: that would be a second copy of the loop.
+    Nothing here reads `action` to pick a stage.
     """
     return str(data.get("stage") or ""), str(data.get("action") or "")
 
 
 def _run_waiting(data: dict) -> list[str]:
-    """`0028`. The findings `cos.mjs next` says a person is awaited on, copied. Kept apart
-    from `_run_target` so that function's answer is what it was; nothing here decides whether
-    anyone is awaited."""
+    """The findings `cos.mjs next` says a person is awaited on, copied; nothing here
+    decides whether anyone is awaited."""
     return [str(x) for x in data.get("waiting") or []]
 
 
 def _run_dropped(data: dict) -> list[str]:
-    """`0027` review F1. The ids `cos.mjs next` says the last review round left out, copied,
-    so the page lists them rather than reading them out of `action`."""
+    """The ids `cos.mjs next` says the last review round left out, copied, so the page
+    lists them rather than reading them out of `action`."""
     return [str(x) for x in data.get("dropped") or []]
 
 
 def _key_label(key: str) -> str:
-    """`0071` R3. A Questions row's key as a person reads it: `intent.md#1` is
-    `question 1 of intent.md`, `review.md#F2` is `finding F2 of review.md`."""
+    """A Questions row's key as a person reads it: `intent.md#1` is
+    `question 1 of intent.md`, `review.md#F<k>` is `finding F<k> of review.md`."""
     artifact, _, number = key.rpartition("#")
     kind = "finding" if number.startswith("F") else "question"
     return f"{kind} {number} of {artifact}"
@@ -1176,7 +1146,7 @@ def _tokens(cost: dict) -> tuple[int, str]:
 
 
 def _job_line(job: dict) -> str:
-    """`0068` R10: one running job, as the confirmation lists it."""
+    """One running job, as the confirmation lists it."""
     kind = job.get("kind", "")
     if kind == "chat":
         what = f"chat {job.get('session_id') or '(new session)'} in {job.get('workspace', '')}"
@@ -1188,7 +1158,7 @@ def _job_line(job: dict) -> str:
 
 
 def _channel_line(channel: dict) -> str:
-    """`0068`: one channel's state as the panel says it."""
+    """One channel's state as the panel says it."""
     state = str(channel.get("state") or "")
     parts = [state]
     if channel.get("version"):
@@ -1202,15 +1172,15 @@ COST_NOTE = "Added up from each finished run"
 
 
 def cost_note(total: dict) -> str:
-    """`0092` R8 c. The Cost tile's caption, saying how many runs it could not add (S1)."""
+    """The Cost tile's caption, saying how many runs it could not add."""
     n = int(total.get("unknown") or 0)
     return f"{COST_NOTE}; {n} run(s) with unknown cost" if n > 0 else COST_NOTE
 
 
 def _usd(cost: dict) -> str:
     usd = float(cost.get(COST_USD) or 0.0)
-    # `0092` R8 b, c. Runs whose cost nobody knows are never shown as `—` or as nothing:
-    # the known part is added, and the rest said to be unknown.
+    # Runs whose cost nobody knows are never shown as `—` or as nothing: the known part
+    # is added, and the rest said to be unknown.
     unknown = int(cost.get("unknown") or 0) > 0
     if not usd:
         return "unknown" if unknown else "—"
@@ -1220,7 +1190,7 @@ def _usd(cost: dict) -> str:
 
 
 def _title_of(unit_name: str) -> str:
-    """`0006_demo-data-and-no-durable-store` reads as `Demo data and no durable store`.
+    """`NNNN_demo-data-and-no-durable-store` reads as `Demo data and no durable store`.
 
     The slug is the only human-written name a unit has before its artifacts are read, and
     reading eight files per card to find a better one would make opening the board cost a
@@ -1237,13 +1207,11 @@ def _initials(name: str) -> str:
 
 
 def _questions(unit: dict) -> tuple[int, list[Question]]:
-    """`0016` R7. The open count and the questions of one board unit, copied from what
-    `cos.mjs` sent through `coscc/units/board.py`. Nothing is counted here: `open` is taken as
-    sent, so the page and `status --json` cannot disagree.
+    """The open count and the questions of one board unit, copied from what `cos.mjs` sent.
+    `open` is taken as sent, so the page and `status --json` cannot disagree.
 
-    `0028`: the findings `cos.mjs` lists in `personFindings` follow, one row each, keyed
-    `review.md#F<n>` and answered into `review.md`. They are not counted into `open`, which
-    stays `cos.mjs`'s number."""
+    The findings `cos.mjs` lists in `personFindings` follow, one row each, keyed
+    `review.md#F<n>`. They are not counted into `open`."""
     return int(unit.get("open") or 0), [
         Question(
             key=f"{q['artifact']}#{q['n']}",
@@ -1278,7 +1246,7 @@ def _questions(unit: dict) -> tuple[int, list[Question]]:
 
 
 def _rounds(unit: dict) -> list[Round]:
-    """`0021`. Each review round as `Service.board` sent it, with its comment state."""
+    """Each review round as `Service.board` sent it, with its comment state."""
     out = []
     for r in unit.get("rounds") or []:
         c = r.get("comment") or {}

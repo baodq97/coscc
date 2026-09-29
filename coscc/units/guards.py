@@ -1,17 +1,10 @@
-"""Every guard of the three machines `0136` puts in scope, as pure functions.
+"""Every guard of the three machines (unit, run, pull request), as pure functions.
 
-`.cos/0136_transitions-are-decided-by-parsing-prose` R1: each transition of the unit, the run
-and the pull request is decided by exactly one guard, and each guard has an id fixed here and
-a one-sentence English label. The lane config (`coscc/units/lanes.json`, loaded by
-`coscc/units/states.py`) chooses a guard for each transition from `TRANSITIONS` below; it can
-choose, never switch one off.
-
-A guard reads structured input — rows of `cos.db`, a read of git or `gh` — and nothing else.
-It never opens a file an agent wrote: that is the whole point of the unit, and
-`coscc/units/no_prose_decides_test.py` is what keeps it so once the parsers are gone.
-
-`REASONS` is the one definition of the reason codes (R11). A guard that answers a code not in
-it is refused at the answer, not at the reader, so a typo cannot reach the autopilot.
+Each transition is decided by exactly one guard, with a fixed id and a one-sentence English
+label; the lane config chooses a guard for each transition from `TRANSITIONS`, never switches
+one off. A guard reads structured input (rows of `cos.db`, a read of git or `gh`) and never
+opens a file an agent wrote. `REASONS` is the one definition of the reason codes: a guard
+that answers a code not in it is refused at the answer.
 """
 
 from __future__ import annotations
@@ -20,17 +13,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-# R11. The closed table. The first group is the `why` column `cos.mjs next` already writes;
-# the second is what R11 and R22 add, which `cos.mjs` hands out as `reasons` beside its
-# words (`guards_test.py` reads every `why: '…'` and `code('…')` back out of it); the third
-# is what the guards below refuse with.
+# The closed table. First group: the `why` column `cos.mjs next` writes; second: codes `cos.mjs`
+# hands out as `reasons` beside its words (`guards_test.py` reads them back out of it); third:
+# what the guards below refuse with.
 REASONS = (
     # `cos.mjs next`'s `why`, and a hold's move.
     "dependency", "unreadable", "finished", "paused", "dropped", "needs-person",
     "spike-fails", "spike-missing", "missing", "rejected", "stale", "review-incomplete",
     "ship-refused", "draft", "awaits-person", "person-answered", "changes-requested",
-    # R11, R22. `gate-closed`: a gate closed for a reason with no code of its own (a title,
-    # a screenshot, a moved head); its words say which.
+    # `gate-closed`: a gate closed for a reason with no code of its own; its words say which.
     "ci-pending", "ci-red", "ci-unfixable", "waiting-on", "recording-ship", "closed",
     "overlap-pr", "needs-idea", "gate-closed",
     # The guards' own refusals.
@@ -38,7 +29,7 @@ REASONS = (
     "agent-cannot-skip", "no-submission", "bad-branch", "not-merged", "not-closed",
 )
 
-# R14's vocabulary for who may skip a stage. `agent` and `code` never may.
+# Who may skip a stage. `agent` and `code` never may.
 DECIDERS = ("person", "delegated")
 
 
@@ -76,7 +67,7 @@ class Guard:
 
 
 def _same_run(inputs: Mapping[str, Any]) -> bool:
-    """R3 a: the object came from the run the app has open for this unit and stage."""
+    """The object came from the run the app has open for this unit and stage."""
     run = str(inputs.get("run") or "")
     return bool(run) and run == str(inputs.get("open_run") or "")
 
@@ -93,7 +84,7 @@ def stage_result(inputs: Mapping[str, Any]) -> Verdict:
 
 
 def review_round(inputs: Mapping[str, Any]) -> Verdict:
-    """`run`, `open_run`; `head`, the SHA the app recorded when the review run opened (R3 c)."""
+    """`run`, `open_run`; `head`, the SHA the app recorded when the review run opened."""
     reasons = []
     if not _same_run(inputs):
         reasons.append("wrong-run")
@@ -103,7 +94,7 @@ def review_round(inputs: Mapping[str, Any]) -> Verdict:
 
 
 def impl_claim(inputs: Mapping[str, Any]) -> Verdict:
-    """`claims`, the `F<k>` ids; `open_findings`, the open ids of the last round (R6)."""
+    """`claims`, the `F<k>` ids; `open_findings`, the open ids of the last round."""
     open_ids = set(inputs.get("open_findings") or ())
     if any(c not in open_ids for c in inputs.get("claims") or ()):
         return _closed("not-open-finding")
@@ -111,7 +102,7 @@ def impl_claim(inputs: Mapping[str, Any]) -> Verdict:
 
 
 def skip_decision(inputs: Mapping[str, Any]) -> Verdict:
-    """`authority` of the decision to skip spec or plan (R14)."""
+    """`authority` of the decision to skip spec or plan."""
     return OPEN if inputs.get("authority") in DECIDERS else _closed("agent-cannot-skip")
 
 
@@ -128,25 +119,23 @@ def spike_holds(inputs: Mapping[str, Any]) -> Verdict:
 
 
 def dependency_merged(inputs: Mapping[str, Any]) -> Verdict:
-    """`depends`, `[{ref, merged}]` with `merged` read from the PR/CI machine (R10)."""
+    """`depends`, `[{ref, merged}]` with `merged` read from the PR/CI machine."""
     if any(not d.get("merged") for d in inputs.get("depends") or ()):
         return _closed("waiting-on")
     return OPEN
 
 
 def _same_commit(a: str, b: str) -> bool:
-    """One commit named twice, the shorter a prefix of the longer: a round read from prose
-    before `0136` may name a short SHA."""
+    """One commit named twice, the shorter a prefix of the longer (a round from prose may name a short SHA)."""
     return bool(a) and bool(b) and (a == b or (min(len(a), len(b)) >= 7 and (a.startswith(b) or b.startswith(a))))
 
 
 def ship_ready(inputs: Mapping[str, Any]) -> Verdict:
     """`ci` at `head`; `reviewed_head`, the head the last passing round recorded; `verdict` of
-    that round; `head`, the one this guard itself read, which the merge is pinned to (R10).
+    that round; `head`, the one this guard read, which the merge is pinned to.
 
-    `rebased`, `{reviewed, head}`: the `ship` gate's read that `head` is a clean rebase of
-    `reviewed` (`0067`), which stands in for a round of `head` when `reviewed` is the head the
-    round recorded. The gate reads git; the guard only matches the two commits it names."""
+    `rebased`, `{reviewed, head}`: the gate's read that `head` is a clean rebase of `reviewed`,
+    which stands in for a round of `head`. The guard only matches the two commits it names."""
     ci = inputs.get("ci")
     reasons = []
     if ci == "pending" or ci is None:
@@ -175,12 +164,12 @@ def ship_ready(inputs: Mapping[str, Any]) -> Verdict:
 
 
 def run_submitted(inputs: Mapping[str, Any]) -> Verdict:
-    """`submitted`: whether the `submit` handler accepted an object during the run (R2)."""
+    """`submitted`: whether the `submit` handler accepted an object during the run."""
     return OPEN if inputs.get("submitted") else _closed("no-submission")
 
 
 def branch_named(inputs: Mapping[str, Any]) -> Verdict:
-    """`branch_ok`: what `cos.mjs check-branch` said of the unit's branch (R12)."""
+    """`branch_ok`: what `cos.mjs check-branch` said of the unit's branch."""
     return OPEN if inputs.get("branch_ok") else _closed("bad-branch")
 
 
@@ -191,7 +180,7 @@ def ci_at_head(inputs: Mapping[str, Any]) -> Verdict:
 
 
 def merge_read(inputs: Mapping[str, Any]) -> Verdict:
-    """`merge_commit`, as `gh pr view --json state,mergeCommit` gave it (R13)."""
+    """`merge_commit`, as `gh pr view --json state,mergeCommit` gave it."""
     return OPEN if str(inputs.get("merge_commit") or "") else _closed("not-merged")
 
 
@@ -218,8 +207,7 @@ GUARDS: dict[str, Guard] = {
     )
 }
 
-# R1. Each machine's transitions, and the guards the lane config may choose from for each.
-# A config must name one for every transition here; it cannot leave one out.
+# Each machine's transitions and the guards the lane config may choose from; a config must name one for every transition.
 TRANSITIONS: dict[str, dict[str, tuple[str, ...]]] = {
     "unit": {
         "result": ("stage-result",),

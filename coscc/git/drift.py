@@ -1,13 +1,7 @@
-"""Which files `main` changed since a unit's plan was written (`0042`).
+"""Which files `main` changed since a unit's plan was written.
 
-A plan is accepted on one commit of `main`; its `impl` may start several merges later. This
-works out, before an `impl` step, which of the files the plan's `## Files that change` names
-`main` has changed since then — without a session, from the run log, `plan.md` and two local
-`git` commands.
-
-Four pure parts, so the matching is testable without a repository, and one `compute` that
-calls `git`. `describe` is the one place the sentence is built, for the reason
-`service.describe_base` is. Nothing here reads a gate, writes an artifact or fetches.
+Read before an `impl` step from the run log, `plan.md` and two local `git` commands; no
+session. Pure helpers plus `compute`, the only part that calls `git`.
 """
 
 from __future__ import annotations
@@ -25,11 +19,7 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def files_section(plan_text: str) -> str | None:
-    """`## Files that change` up to the next `## ` heading or the end, `None` without one.
-
-    `### ` stays inside. `## Answers`, which the app appends, always starts a new section,
-    so an answer never counts as a file the plan names (`spec.md` R3).
-    """
+    """`## Files that change` up to the next `## ` heading or the end, `None` without one."""
     lines = plan_text.splitlines()
     for i, line in enumerate(lines):
         if line.rstrip() == HEADING:
@@ -42,12 +32,10 @@ def files_section(plan_text: str) -> str | None:
 
 
 def mentioned(section: str, paths: list[str]) -> list[str]:
-    """The `paths` that appear in `section` whole, not as part of a longer path (R3).
+    """The `paths` that appear in `section` whole, not as part of a longer path.
 
-    Walks from the diff's side, so nothing here is a path taken from the plan. Before a
-    path: start of line, whitespace, `` ` ``, `(`, `|` or `*`; after it: end of line,
-    whitespace, `` ` ``, `:`, `)`, `,`, `|` or `*`. A negated class also matches at either
-    end of a line, so neither needs its own branch.
+    Before a path: start of line, whitespace, `` ` ``, `(`, `|` or `*`; after it: end of line,
+    whitespace, `` ` ``, `:`, `)`, `,`, `|` or `*`. The negated class also matches at line ends.
     """
     found = {
         d for d in paths
@@ -59,9 +47,7 @@ def mentioned(section: str, paths: list[str]) -> list[str]:
 def plan_head(records: list[dict[str, Any]]) -> tuple[str, str]:
     """`(sha, "")` for the commit the last `done` run of `plan` ran on, or `("", reason)`.
 
-    The `head` of its `start` record, not `base.sha` (`spec.md ## Answers, câu 1`). A
-    `start` counts when the next `plan` start-or-end after it is an `end` with outcome
-    `done`; `attempt` and `denial` rows are filtered out first, as `failed_attempts` does.
+    Uses the `head` of the `start` record, not `base.sha`.
     """
     seq = [
         r for r in records
@@ -115,10 +101,10 @@ def describe(drift: dict[str, Any]) -> str:
 async def compute(
     records: list[dict[str, Any]], plan_text: str | None, tree: str | Path | None
 ) -> dict[str, Any]:
-    """`{plan_sha, main_sha, files, checked, reason}` (`spec.md` R6). Never raises (R8).
+    """`{plan_sha, main_sha, files, checked, reason}`. Never raises.
 
-    Anything that fails is `checked: False` with its reason and `files: None` — never an
-    empty list, which would say "nothing changed" about something nobody checked (R4).
+    A failure is `checked: False` with its reason and `files: None`, never an empty list,
+    which would claim "nothing changed" about something nobody checked.
     """
     out: dict[str, Any] = {
         "plan_sha": None, "main_sha": None, "files": None, "checked": False, "reason": "",
@@ -137,13 +123,13 @@ async def compute(
             out["reason"] = "no worktree"
             return out
         path = Path(tree)
-        # The ref as the step's own preparation left it; no fetch here (R2).
+        # The ref as the step's own preparation left it; no fetch here.
         out["main_sha"] = await gitops.rev_parse(path, TRUNK_REF)
         changed = await gitops.diff_names(path, plan_sha, out["main_sha"])
         out["files"] = mentioned(section, changed)
         out["checked"] = True
         return out
-    except Exception as e:  # noqa: BLE001 -- R8: a failure here must never stop the step.
+    except Exception as e:  # noqa: BLE001 -- a failure here must never stop the step.
         out["files"] = None
         out["checked"] = False
         out["reason"] = str(e) or type(e).__name__

@@ -1,6 +1,6 @@
 """Integrating a branch with `main`, and running, driving and stopping one step of a unit.
 
-Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+A mixin with no fields, which `Service` inherits.
 """
 
 from __future__ import annotations
@@ -46,17 +46,17 @@ from coscc.service.common import (
 )
 
 
-# `0054` R6. The longest note a rerun takes, in characters. Chosen by the spec, not measured.
+# The longest note a rerun takes, in characters. Chosen, not measured.
 RERUN_NOTE_MAX = 4000
 
-# `0111` R5. What the page says when a retake of the screenshots refuses `review`: one
-# sentence, no commit, path or log line (S1, S3, S6). The rest is in the `screens` record.
+# What the page says when a retake of the screenshots refuses `review`: one
+# sentence, no commit, path or log line. The rest is in the `screens` record.
 RETAKE_REFUSED = "The screenshots could not be taken again after the branch was rewritten, so review did not start."
 
 
 def _answers_kept(path: Path, before: bytes) -> bool:
-    """`0054` R8. Whether `path` still ends with the `## Answers` section it had, `before`,
-    byte for byte. A `pr` step writes `pr.md` itself, and since `0115` R7 an `impl` step
+    """Whether `path` still ends with the `## Answers` section it had, `before`,
+    byte for byte. A `pr` step writes `pr.md` itself, and an `impl` step
     `impl.md`, so nothing else guards that section."""
     try:
         return path.read_bytes().endswith(before)
@@ -65,7 +65,7 @@ def _answers_kept(path: Path, before: bytes) -> bool:
 
 
 def integration_since_review(journal: Journal, key: str, unit: str) -> dict[str, Any] | None:
-    """`0035` R10: the latest `pushed` integration recorded after the last `review` step
+    """The latest `pushed` integration recorded after the last `review` step
     that ended `done`, or None. Read by id order, which is the order the rows were written."""
     try:
         rows = journal.records(key, unit)
@@ -79,31 +79,31 @@ def integration_since_review(journal: Journal, key: str, unit: str) -> dict[str,
             found = None
     return found
 
-# `0100` R6. Seconds a held CI answer is trusted before a board read asks `gh` again, in the
+# Seconds a held CI answer is trusted before a board read asks `gh` again, in the
 # background. Chosen, not measured.
 CI_REFRESH = 60.0
 
 
 class StepsMixin:
 
-    # -- integration (`0035`) -------------------------------------------------
+    # -- integration -------------------------------------------------
 
     async def _attach_integration(
         self, cwd: str, units_: list[dict[str, Any]], journal: Journal | None, key: str, prs_once=None,
     ) -> list[tuple[tuple[str, str], str, int, str]]:
-        """R1/R2. Give every unit `integration: {...}` when it sits in the window, else None.
+        """Give every unit `integration: {...}` when it sits in the window, else None.
 
         **Reads only.** One `gh pr list` for the workspace (up to `integrate.GH_TIMEOUT`),
         `git` counts against the `origin/main` the last fetch brought — no fetch here — and
         `gh pr checks` only for a unit whose head is the one its last integration pushed.
         Nothing here writes a record, calls `update-branch` or opens a session.
 
-        `0100` R6. Also gives each unit in the window `ci_held`, the held CI answer when it
+        Also gives each unit in the window `ci_held`, the held CI answer when it
         is for the head `gh pr list` just returned, and returns the CI asks `board` starts
         once it has answered: `(slot, tree, pr number, head)` for each unit with no answer
         for that head, or one older than `CI_REFRESH`, and no ask already running.
 
-        `0139` R8: the answer is the `pull_requests` row's, which only a `ci-at-head`
+        The answer is the `pull_requests` row's, which only a `ci-at-head`
         transition writes. `gh`'s error is no answer, so it stays in `_ci`, held only so it
         is not asked again before `CI_REFRESH`.
         """
@@ -114,7 +114,7 @@ class StepsMixin:
             return []
         root = Path(cwd).expanduser().resolve()
         last = self._last_integrations(journal, key)
-        # `0046`: the board's one `gh pr list`, shared with the release block.
+        # The board's one `gh pr list`, shared with the release block.
         prs: list[dict[str, Any]] | str = await (prs_once or self._prs_once(cwd))()
         asks: list[tuple[tuple[str, str], str, int, str]] = []
         oldest = datetime.fromisoformat(_now()) - timedelta(seconds=CI_REFRESH)
@@ -137,7 +137,7 @@ class StepsMixin:
         return asks
 
     def _held_ci(self, key: str, unit: str, number: int, head: str) -> dict[str, Any] | None:
-        """`0139` R8. The row's answer at `head`, else `gh`'s last error there, else `None`."""
+        """The row's answer at `head`, else `gh`'s last error there, else `None`."""
         try:
             held = prmachine.ci_held(self._unit_meta().history, key, number, head)
         except Exception:  # noqa: BLE001 — a board read never fails on this
@@ -148,7 +148,7 @@ class StepsMixin:
         return error if error is not None and error.get("head") == head else None
 
     def _ask_ci(self, asks: list[tuple[tuple[str, str], str, int, str]]) -> None:
-        """`0100` R6. One background `gh pr checks` per ask, none awaited. `0139` R8: its
+        """One background `gh pr checks` per ask, none awaited. Its
         answer is recorded by `prmachine.record_ci`, through `ci-at-head`, on the unit's
         `pull_requests` row; `gh`'s error is held in `_ci` with the time it was read, so it
         is not asked again before `CI_REFRESH` either."""
@@ -220,9 +220,9 @@ class StepsMixin:
         state = verdict["state"]
         review_status = next((r.get("status") or "" for r in u.get("stages") or [] if r.get("stage") == "review"), "")
         gebo = state in integrate.GEBO_STATES
-        # `0052`: a `current` unit also has the button, since the count may be against a
-        # stale `origin/main` and only a press fetches (R3). Both mechanical states may fall
-        # to Gebo when GitHub refuses the rebase (spec, answer 1), and the page says so.
+        # A `current` unit also has the button, since the count may be against a
+        # stale `origin/main` and only a press fetches. Both mechanical states may fall
+        # to Gebo when GitHub refuses the rebase, and the page says so.
         fallback = state in ("current", "behind")
         return {
             "state": state,
@@ -244,25 +244,25 @@ class StepsMixin:
     async def integrate(
         self, cwd: str, unit: str, started_by: str = "person",
     ) -> AsyncIterator[tuple[str, Any]]:
-        """`0035`. Integrate one unit, on a person's request. Streams like `run_step`.
+        """Integrate one unit, on a person's request. Streams like `run_step`.
 
-        `0043`: or on the autopilot's, which passes `started_by="autopilot"`; every record
-        this writes carries it (R3). No route passes it.
+        Or on the autopilot's, which passes `started_by="autopilot"`; every record this writes
+        carries it. No route passes it.
 
-        Refuses before anything changes (R12), and every refusal, push or failure leaves one
-        `integration` record (R9). `behind` goes the mechanical road (R4); `conflicting`
-        and `red-after-integration` open Gebo (R5).
+        Refuses before anything changes, and every refusal, push or failure leaves one
+        `integration` record. `behind` goes the mechanical road; `conflicting` and
+        `red-after-integration` open Gebo.
 
-        `0052`: a press inside the window fetches `origin/main` first, through the `0048`
+        A press inside the window fetches `origin/main` first, through the fetch
         coordinator and before the lock, so the count is against the trunk as it is now; a
         failed fetch goes on with the ref it has and says so. It also reads GitHub's
         `mergeStateStatus`, only to record it. A mechanical road whose `update-branch`
         exits non-zero opens Gebo with that code and gh's words.
 
-        `0114`: a rebase left in progress by an integration this run log shows cut is
-        aborted first (R4). A local head that is not the pull request's is read against it
-        (R5): `behind` follows it with no session; `ahead` or `diverged` opens Gebo to push
-        what was never pushed, in every state (R6).
+        A rebase left in progress by an integration this run log shows cut is aborted first.
+        A local head that is not the pull request's is read against it: `behind` follows it
+        with no session; `ahead` or `diverged` opens Gebo to push what was never pushed, in
+        every state.
         """
         try:
             integrate.check_started_by(started_by)
@@ -288,7 +288,7 @@ class StepsMixin:
         last = self._last_integrations(journal, key).get(unit)
         info = None
         pr = (found.get("pr") or {}).get("number")
-        # Spread into every record this press writes (`0052` R5; `started_by`, `0043` R3).
+        # Spread into every record this press writes.
         seen: dict[str, Any] = {"fetch": None, "merge_state": "", "started_by": started_by, "completion": None}
         if found.get("between_pr_and_ship") and found.get("pr"):
             try:
@@ -319,7 +319,7 @@ class StepsMixin:
             tree_found = None
         tree = Path(tree_found["path"]) if tree_found else None
 
-        # `0114` R4: what the app did to the tree before deciding, at the head of every
+        # What the app did to the tree before deciding, at the head of every
         # record this press writes.
         before: list[str] = []
 
@@ -367,7 +367,7 @@ class StepsMixin:
                         how_said = how_said or str(e)
                 how = integrate.relation(local_head, pr_head, *answers)
                 if how == "diverged":
-                    # Review F1: only a local head on a newer `main` than the pull request's is
+                    # Only a local head on a newer `main` than the pull request's is
                     # a rebase that was never pushed; the other way round, the pull request was
                     # rebased elsewhere and pushing the tree would undo that.
                     newer = None
@@ -405,14 +405,14 @@ class StepsMixin:
                 ))
                 raise Invalid(reason)
             if state == "behind" and how not in integrate.COMPLETION:
-                # `0138` R3: an Apply waits for a mechanical integration, so none begins once
+                # An Apply waits for a mechanical integration, so none begins once
                 # one is pressed.
                 self._refuse_mechanical_while_updating()
             mark = self._take(key, unit, "integrate")
-            # `0114` R6: commits never pushed go to Gebo whatever the state.
+            # Commits never pushed go to Gebo whatever the state.
             completing = how in integrate.COMPLETION
-            # `0051` spec, answer 1: Gebo shows as running under its agent name; a mechanical
-            # rebase has no agent and shows as rebasing. The same condition as below.
+            # Gebo shows as running under its agent name; a mechanical rebase has no agent and
+            # shows as rebasing. The same condition as below.
             rid = self._mark_running(
                 key, unit, "integrate", "rebase" if state == "behind" and not completing else "gebo")
         try:
@@ -426,10 +426,9 @@ class StepsMixin:
                     rec = write(rec)
                     yield ("done", {"integration": rec})
                     return
-                # `0052`, spec answer 1: GitHub refused the rebase, and the press agreed to
-                # Gebo for that. The board shows Gebo from here on, not a rebase.
+                # GitHub refused the rebase, and the press agreed to Gebo for that. The board shows Gebo from here on, not a rebase.
                 self._running[rid]["kind"] = "gebo"
-                # `0138`: an update waits for a mechanical integration, and a Gebo session is
+                # An update waits for a mechanical integration, and a Gebo session is
                 # paused instead, so one waiting on this can go ahead.
                 self.updater.job_ended()
             async for item in self._integrate_gebo(
@@ -442,17 +441,16 @@ class StepsMixin:
             self._release(key, unit, mark)
             self._running.pop(rid, None)
             self.updater.job_ended()
-            # `0043` R5 a.
             self._autopilot_nudge(key)
 
     async def _integrate_mechanical(
         self, key: str, unit: str, pr: int, tree: Path, branch: str, head_before: str, origin_sha: str,
         seen: dict[str, Any],
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """R4. GitHub rebases, the local branch follows. No session.
+        """GitHub rebases, the local branch follows. No session.
 
         `(record, None)`, or `(None, {code, said})` when `update-branch` exited non-zero and
-        the pull request's head is still `head_before` — the caller then opens Gebo (`0052`).
+        the pull request's head is still `head_before` — the caller then opens Gebo.
         A `gh` that could not run or did not answer in time, and a head that has not moved
         yet, stay `failed`: there is no exit code to go on, and GitHub may still be
         rebasing, which a Gebo session would race.
@@ -465,7 +463,7 @@ class StepsMixin:
             return integrate.record(**base, head_after="", outcome="failed", detail=str(e)), None
         if code != 0:
             refused = {"code": code, "said": said or "gh refused"}
-            # `0052` review F1: a non-zero exit does not rule out that GitHub took the command.
+            # A non-zero exit does not rule out that GitHub took the command.
             # Gebo's lease would then refuse its push while the head read afterwards counted as
             # Gebo's — so the head is read once, and a moved one opens no session.
             try:
@@ -514,15 +512,15 @@ class StepsMixin:
         seen: dict[str, Any], refused_update: dict[str, Any] | None = None,
         completion: dict[str, Any] | None = None, resume: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
-        """R5–R8. One Gebo session; the outcome is read from GitHub afterwards.
+        """One Gebo session; the outcome is read from GitHub afterwards.
 
-        `refused_update`: the `update-branch` refusal that opened it (`0052`), carried into
+        `refused_update`: the `update-branch` refusal that opened it, carried into
         the prompt and the press's one record.
 
-        `completion` (`0114` R6, R7): the local head to push as it is. A pull request that
+        `completion`: the local head to push as it is. A pull request that
         ends on any other head is `failed`, whoever pushed it.
 
-        `resume` (`0138`): a `suspend` row of this session. It goes on from its safe point
+        `resume`: a `suspend` row of this session. It goes on from its safe point
         with the row's `message`, writes no `start`, and ends as it would have.
         """
         root = Path(cwd).expanduser().resolve()
@@ -530,14 +528,14 @@ class StepsMixin:
         rel = was.get("rel") or {} if resume is not None else await self._related(
             root, unit, data, head_before, origin_sha)
         units_root = self._units_root(cwd)
-        # `0036` R3, R7, R8: the `integrate` row, read once for the prompt, the records and
+        # The `integrate` row, read once for the prompt, the records and
         # the session's commit attribution.
         agent = self._agent("integrate")
         grant = grant_for("integrate")
         name = agent["name"] if agent is not None else ""
         start_at = was.get("start_at")
         if resume is None:
-            # `0094` R14: by path; Gebo reads what it needs of them (`integrate.read_paths`).
+            # By path; Gebo reads what it needs of them (`integrate.read_paths`).
             own = {}
             for artifact in ("intent.md", "spec.md", "plan.md", "impl.md"):
                 path = Path(directory).resolve() / artifact
@@ -560,17 +558,17 @@ class StepsMixin:
                     prompt_chars=len(prompt), granted=list(grant.tools),
                     max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source,
                     pointed=list(own), app_version=app["version"], app_commit=app["commit"],
-                    # `0093` R8: what opened this session, for *Integrate for a conflict*.
+                    # What opened this session, for *Integrate for a conflict*.
                     integrate_state=info["state"],
                     **({"agent": name} if name else {}),
-                    # `0131` R18: every `start` of the unit says its arm, or `measure` drops it.
+                    # Every `start` of the unit says its arm, or `measure` drops it.
                     **({knowledge.TRIAL_FIELD: {"arm": knowledge.arm(unit)}} if self.config.knowledge else {}),
                 ).get("at")
             except (BadRecord, Busy):
                 pass
         else:
             prompt, model = str(resume.get("message") or ""), resume.get("model")
-        # `0138`: all `resume_integration` needs to take this session up again, no git read.
+        # All `resume_integration` needs to take this session up again, no git read.
         owner = {
             "kind": "integrate", "workspace": key, "workspace_dir": cwd, "unit": unit,
             "stage": "integrate", "start_at": start_at, "max_turns": grant.max_turns,
@@ -580,7 +578,7 @@ class StepsMixin:
         }
         end: dict[str, Any] = {}
         failure = ""
-        # `0136` R7: what Gebo says needs a person is the object it hands back, not its words.
+        # What Gebo says needs a person is the object it hands back, not its words.
         collector = submit_mod.Collector("integrate")
         try:
             async for kind, payload in integrate.run_gebo(
@@ -594,7 +592,7 @@ class StepsMixin:
                 else:
                     end = payload
         except Suspended:
-            # `0138`: paused by an update, with its `suspend` row. No `end` and no record.
+            # Paused by an update, with its `suspend` row. No `end` and no record.
             raise
         except Exception as e:  # noqa: BLE001 — recorded, never swallowed silently
             failure = f"the session failed: {e}"
@@ -616,7 +614,7 @@ class StepsMixin:
         if outcome == "failed" and not submit_mod.submitted(collector):
             details.append("no-submission: the session handed back no result through submit")
         if outcome == "pushed":
-            # `0052` review round 2, F1: a head that moved is Gebo's push only if Gebo's tree
+            # A head that moved is Gebo's push only if Gebo's tree
             # ends on it. A GitHub rebase finishing late, which the lease then refused Gebo's
             # push over, is not — the tree follows it as on the mechanical road.
             try:
@@ -635,7 +633,7 @@ class StepsMixin:
                     details.append(f"the local branch was moved to {head_now[:7]}")
                 except GitError as e:
                     details.append(f"the local branch was not moved: {e}")
-        # `0114` R7: the completion road pushes the local head as it was, or nothing.
+        # The completion road pushes the local head as it was, or nothing.
         if completion is not None and outcome == "pushed" and head_now != completion["local_head"]:
             outcome = "failed"
             details.append(
@@ -663,7 +661,7 @@ class StepsMixin:
     async def _related(
         self, root: Path, unit: str, data: dict[str, Any], head: str, origin_sha: str
     ) -> dict[str, list[dict[str, Any]]]:
-        """R7, from git. A failure leaves a list empty rather than stopping the step."""
+        """From git. A failure leaves a list empty rather than stopping the step."""
         try:
             base = await gitops.merge_base_of(root, head, origin_sha)
             mine = await gitops.files_between(root, base, head)
@@ -695,7 +693,7 @@ class StepsMixin:
         return integrate.related(commits, mine, data["units"], others, unit)
 
     async def _cleanup(self, cwd: str, unit: str) -> dict[str, Any]:
-        """R10 after a `ship` step. Never raises; says what it did or why not."""
+        """After a `ship` step. Never raises; says what it did or why not."""
         try:
             data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
         except Unavailable as e:
@@ -706,14 +704,13 @@ class StepsMixin:
         return await worktrees.remove_if_finished(cwd, unit, found, self.config.data_dir)
 
     async def _after_end(self, cwd: str, unit: str, stage: str, key: str) -> None:
-        """`0113` R4, R5, after a step's `done` and its `end`: a `questions` record when the
-        unit is left with open questions, and after `ship` a `ship` record saying whether it
-        merged. Never raises, like `_cleanup`: a record that cannot be written changes
-        nothing about the step.
+        """After a step's `done` and its `end`: a `questions` record when the unit is left with
+        open questions, and after `ship` a `ship` record saying whether it merged. Never raises,
+        like `_cleanup`: a record that cannot be written changes nothing about the step.
 
-        R5 says `next`; `why` is `decide`'s, read off the files by `cos.mjs status` as
-        `board.read` copies it, without asking `gh` as `next` would,
-        so `ship-refused` can also be a merge whose branch deletion failed (plan Risk 4)."""
+        `why` is `decide`'s, read off the files by `cos.mjs status` as `board.read` copies it,
+        without asking `gh` as `next` would, so `ship-refused` can also be a merge whose branch
+        deletion failed."""
         try:
             journal = self._journal()
             if journal is None:
@@ -735,17 +732,16 @@ class StepsMixin:
             return
 
     async def next_step(self, cwd: str, unit: str) -> dict[str, Any]:
-        """`0024`. The one stage the run button may offer, and why -- `cos.mjs next`'s answer.
+        """The one stage the run button may offer, and why -- `cos.mjs next`'s answer.
 
         Read with the same store and the same `repo=cwd` that `run_step` hands the gate, so
-        the stage offered and the gate that will be asked read one checkout (`0024` spec,
-        *Repo mà `cos.mjs` đọc*). Nothing here chooses a stage.
+        the stage offered and the gate that will be asked read one checkout. Nothing here chooses a stage.
         """
         self._workspace_or_refuse(cwd)
         if not unit:
             raise Invalid("name a work unit")
         self._unit_dir(cwd, unit)
-        # `0045` R15. Asked first with no `--repo`, which reads files only: a held unit is
+        # Asked first with no `--repo`, which reads files only: a held unit is
         # answered here, before `_worktree` could reopen the tree a drop just removed.
         try:
             held = await board_reader.next_step(self._units_root(cwd), unit, repo=None, state=self._snapshot(cwd, [unit]))
@@ -757,7 +753,7 @@ class StepsMixin:
                 "waiting": [], "dropped": [], "hold": held["hold"],
                 "reasons": list(held.get("reasons") or []),
             }
-        # `0017`. The unit's worktree is the checkout its branch and pull request are read
+        # The unit's worktree is the checkout its branch and pull request are read
         # from. None when there is none to open, and `cos.mjs` then keeps `review` and
         # `ship` closed rather than read the workspace's branch, which is not this unit's.
         # A workspace that is not a git repository has no worktrees, and is read as it
@@ -775,19 +771,19 @@ class StepsMixin:
             "cwd": cwd,
             "unit": unit,
             **{k: found[k] for k in ("stage", "action", "blocked")},
-            # `0028`. The findings a person is awaited on, copied from `cos.mjs next`.
+            # The findings a person is awaited on, copied from `cos.mjs next`.
             "waiting": list(found.get("waiting") or []),
-            # `0027`. The ids the last review round left out, copied from `cos.mjs next`.
+            # The ids the last review round left out, copied from `cos.mjs next`.
             "dropped": list(found.get("dropped") or []),
-            # `0106`. The stage a fully answered draft would run again; only the autopilot
+            # The stage a fully answered draft would run again; only the autopilot
             # reads it.
             "rerun": str(found.get("rerun") or ""),
-            # `0136` R11. The codes the autopilot branches on, copied from `cos.mjs next`.
+            # The codes the autopilot branches on, copied from `cos.mjs next`.
             "reasons": list(found.get("reasons") or []),
         }
 
     async def rerun_offers(self, cwd: str, unit: str) -> dict[str, Any]:
-        """`0054` R1, R2. The accepted stages `unit` may run again, each with the stages that
+        """The accepted stages `unit` may run again, each with the stages that
         then run again after it -- `cos.mjs rerun`'s answer, copied: `{unit, offers: [{stage,
         later}], why}`. Files only: no worktree is opened and no `gh` is asked. Nothing here
         chooses a stage."""
@@ -841,13 +837,13 @@ class StepsMixin:
         from one board read, so a step cannot run against a different idea of the unit
         than the one the page is showing.
 
-        `started_by` (`0043` R3) is `autopilot` only when the autopilot calls this; no route
+        `started_by` is `autopilot` only when the autopilot calls this; no route
         passes it, so a request cannot say it is the autopilot.
 
-        `rerun` (`0054` R6) runs an accepted stage again, with a person's `note`. Whether the
+        `rerun` runs an accepted stage again, with a person's `note`. Whether the
         stage may, and the `### Rerun` block appended to `intent.md` before the session
         starts, are `cos.mjs rerun`'s. Refused for the autopilot and for a note over
-        `RERUN_NOTE_MAX`; an empty note is not refused (`spec.md ## Answers, câu 2`).
+        `RERUN_NOTE_MAX`; an empty note is not refused.
         """
         try:
             integrate.check_started_by(started_by)
@@ -861,11 +857,11 @@ class StepsMixin:
                 "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR"
             )
 
-        # `0050` R4. The unit is held from here, before the first `await`: a second request
+        # The unit is held from here, before the first `await`: a second request
         # for any stage of it is refused before it reads the board, opens a worktree, runs
-        # the gate or fetches -- not after all of that, as it was (`spike.md ## U1`). Until
-        # the step is handed to `_drive` the mark is this frame's to return, on every road
-        # out: a refusal, an exception, or a cancel when the client goes away (R5).
+        # the gate or fetches. Until the step is handed to `_drive` the mark is this frame's
+        # to return, on every road out: a refusal, an exception, or a cancel when the client
+        # goes away.
         key = self._journal_key(cwd)
         mark = self._take(key, unit, "step", stage)
         handed = False
@@ -883,13 +879,13 @@ class StepsMixin:
             row = next((r for r in found["stages"] if r["stage"] == stage), None)
             if row is None:
                 raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
-            # `0045` R4/R15. `cos.mjs`'s own field, read before any worktree is opened — the gate
+            # `cos.mjs`'s own field, read before any worktree is opened — the gate
             # below would refuse too, but only after `_worktree` had reopened a dropped tree.
             held = found.get("hold")
             if held:
                 raise Invalid(f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it")
 
-            # `0054` R6. Before a worktree is opened or the gate asked. Whether `stage` may run
+            # Before a worktree is opened or the gate asked. Whether `stage` may run
             # again, and the block that says so, are `cos.mjs`'s; its refusal is passed on.
             note = str(note or "").strip()
             rerun_block = ""
@@ -906,16 +902,10 @@ class StepsMixin:
                     raise Invalid(str(asked["error"]))
                 rerun_block = str(asked.get("block") or "")
 
-            # `.claude/CLAUDE.md` invariant 2: *"Ask `cos.mjs gate` before a stage and stop
-            # when it exits non-zero."* Until 2026-09-23 this app did neither. It read the
-            # board, found the row, and started the session -- so the board would run `ship`
-            # on a unit whose `intent.md` was still a draft, and the only thing standing
-            # between it and that was a sentence in a skill file addressed to a session that
-            # often has no way to run a command.
-            #
-            # Asked here rather than in `Runner` because a refusal must arrive before any
+            # `cos.mjs gate` is asked here, not left to the skill: a session often cannot run
+            # a command. Here rather than in `Runner` because a refusal must arrive before any
             # money is spent, and `run_step` is the last place that is still true.
-            # `0017`. Every step runs in the unit's own worktree. A workspace that is not a git
+            # Every step runs in the unit's own worktree. A workspace that is not a git
             # repository has none, and its steps run where they always did — there is no
             # branch there for another unit to take away.
             is_repo = (Path(cwd).expanduser().resolve() / ".git").exists()
@@ -926,12 +916,11 @@ class StepsMixin:
                 except (GitError, BadUnit) as e:
                     raise Invalid(f"{unit} has no worktree and one could not be opened: {e}") from e
             work = tree["path"] if tree else cwd
-            # `0039` R13. A spike is watched through the worktree's `HEAD` and `git status`;
+            # A spike is watched through the worktree's `HEAD` and `git status`;
             # with no git there is nothing to watch, so it does not run at all.
             if stage == "spike" and tree is None:
                 raise Invalid("spike needs a git worktree to watch, and this workspace is not a git repository")
-            # `0030_a-unit-branch-starts-from-a-stale-main` R1/R4/R5. A tree already on its
-            # branch carries whatever `_worktree` read when it was opened onto it (or nothing,
+            # A tree already on its branch carries whatever `_worktree` read when it was opened onto it (or nothing,
             # when it was already there before this call); a tree still detached is refreshed
             # now, on the spot, because a session about to run on it is about to read it.
             base: dict[str, Any] | None = None
@@ -940,29 +929,29 @@ class StepsMixin:
                     base = tree.get("base")
                 else:
                     base = await worktrees.refresh_base(cwd, unit, self.config.data_dir)
-            # `0049` R7. `pr.md`'s title and body go up before the `ship` gate compares the
+            # `pr.md`'s title and body go up before the `ship` gate compares the
             # title, so one a person changed on GitHub, or a `pr` step left behind, does not
             # close it. Never raises; when it fails, the gate decides.
             if stage == "ship":
                 await self._sync_pr(cwd, unit, None, stage="ship")
             try:
                 # `work` is the checkout the `review` and `ship` gates read git and the pull
-                # request from (`0015`). The store has no git to read.
+                # request from. The store has no git to read.
                 answer = await board_reader.gate(
                     self._units_root(cwd), unit, stage, repo=work, state=self._snapshot(cwd, [unit])
                 )
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             allowed, said = answer
-            # `0136` R11: the codes go with the words, so no reader downstream parses these.
+            # The codes go with the words, so no reader downstream parses these.
             gate_reasons = tuple(getattr(answer, "reasons", ()))
             if not allowed:
                 raise Refused(said, gate_reasons)
 
-            # `0136` R12, R13. `pr` and `ship` run no session: the PR machine pushes, opens or
+            # `pr` and `ship` run no session: the PR machine pushes, opens or
             # merges, and records each move through its guard. The mark is this frame's, as for
             # any refusal above, and is given back by the `finally` below.
-            # A `pr` run again (`0054`) has its block appended as any rerun, and the note reaches
+            # A `pr` run again has its block appended as any rerun, and the note reaches
             # no prompt: the app writes `pr.md` again from the unit's metadata.
             if stage in prmachine.STAGES:
                 if rerun:
@@ -972,7 +961,7 @@ class StepsMixin:
                 return
 
             if stage == "impl" and tree is not None:
-                # R6. A tree that cannot run its tests turns every `impl` red from the start, so
+                # A tree that cannot run its tests turns every `impl` red from the start, so
                 # the step is not started on one. Tried once more first: a network blip is the
                 # ordinary reason, and the page has nothing better to offer than *try again*.
                 prepared = worktrees.read_prepare(Path(work))
@@ -981,7 +970,7 @@ class StepsMixin:
                 if not prepared.get("ok"):
                     raise Invalid(worktrees.describe_failure(prepared))
 
-            # `0111` R1-R7. A UI unit whose branch was rewritten since `impl` took its
+            # A UI unit whose branch was rewritten since `impl` took its
             # screenshots has them taken again, here, before any money is spent; a retake that
             # fails refuses the step, and no round is spent on a stale manifest.
             screens_note = ""
@@ -990,40 +979,37 @@ class StepsMixin:
 
             directory = self._unit_dir(cwd, unit)
             mode = journal.modes(key).get((unit, stage), "manual")
-            # `0021` D3. The rounds `review.md` held before this step, so that the ones it adds
+            # The rounds `review.md` held before this step, so that the ones it adds
             # can be told apart afterwards. Taken from the board already read above.
             rounds_before = (
                 {r.get("n") for r in found.get("rounds") or []}
                 if row["file"] == "review.md" else None
             )
-            # `0027` R6. From the same board: a last round `cos.mjs` read as unfinished, and the
+            # From the same board: a last round `cos.mjs` read as unfinished, and the
             # ids it dropped, for the review that runs again. Whether it counts is not asked here.
             last_round = (found.get("rounds") or [None])[-1] if row["file"] == "review.md" else None
             unfinished_kw = (
                 {"unfinished_round": {"n": last_round["n"], "dropped": list(last_round["dropped"])}}
                 if last_round and last_round.get("unfinished") else {}
             )
-            # `0136` R6. The findings the last round left open, which an `impl` may claim only a
+            # The findings the last round left open, which an `impl` may claim only a
             # person can close: guard `impl-claim` reads them when its object arrives.
             if rounds_before:
                 unfinished_kw["rounds_known"] = tuple(sorted(n for n in rounds_before if isinstance(n, int)))
             if stage in ("impl", "implement") and found.get("rounds"):
                 last = found["rounds"][-1]
                 unfinished_kw.update(open_findings=tuple(last.get("open_ids") or ()), claims_round=last.get("n"))
-            # `0004_no-setting-says-which-model-runs-a-stage`. Resolved after the gate, so a
-            # refused step reads nothing more. `stage` was checked against the board above.
-            # `0033`: with the plan's label, the effort and, for `impl`, which run this is.
-            # `0019` plan step 6 / `spec.md` R6. Read after the gate, before any money is
-            # spent — the same place `model` is resolved. `Runner` does not read the run log
-            # itself; `build_prompt` only places what it is handed, the same as `base_note`.
+            # Resolved after the gate, so a refused step reads nothing more: the plan's label,
+            # the effort and, for `impl`, which run this is, read before any money is spent.
+            # `Runner` does not read the run log itself; `build_prompt` only places what it is
+            # handed, the same as `base_note`.
             try:
                 config = self._stage_config(stage, list(data["stages"]), directory, journal, key, unit)
                 failed = journal.failed_attempts(key, unit, stage)
             except Busy as e:
                 raise Invalid(str(e)) from e
-            # `0123` R7. A return to `impl` in the model trial (`0139` R16) asks `next` once
+            # A return to `impl` in the model trial, or with `COS_KNOWLEDGE` on, asks `next` once
             # whether CI sent it back; `_ci_red` never raises, so nothing here refuses the step.
-            # `0131` R19: with `COS_KNOWLEDGE` on too, into the same field.
             in_trial = modeltrial.FIELD in (config.get("trial_record") or {})
             if (in_trial or self.config.knowledge) and (config.get("impl_run") or 0) > 1:
                 config.setdefault("trial_record", {})[efforttrial.CI_RED] = await self._ci_red(cwd, unit, work)
@@ -1031,15 +1017,15 @@ class StepsMixin:
             if rounds_before is not None:
                 async def end_fields() -> dict[str, Any]:
                     return await self._findings_added(cwd, unit, rounds_before)
-            # `0035` R10. The integration pushed since the last review round, for `review` only.
+            # The integration pushed since the last review round, for `review` only.
             integration_note = ""
             if stage == "review":
                 since = integration_since_review(journal, key, unit)
                 integration_note = (
                     integrate.describe_for_review(since, self._agent_overrides()[0]) if since else ""
                 )
-            # `0042`. Which files the plan names `main` changed since the plan ran, for `impl`
-            # only. Unlike `failed_attempts` above, nothing here may refuse the step (R8): a
+            # Which files the plan names `main` changed since the plan ran, for `impl`
+            # only. Unlike `failed_attempts` above, nothing here may refuse the step: a
             # busy run log, an unreadable `plan.md` or a bug in `drift.py` is "could not check".
             plan_drift: dict[str, Any] | None = None
             if stage in ("impl", "implement"):
@@ -1049,12 +1035,12 @@ class StepsMixin:
                         (directory / "plan.md").read_text(encoding="utf-8"),
                         tree["path"] if tree else None,
                     )
-                except Exception as e:  # noqa: BLE001 — R8, recorded as the reason
+                except Exception as e:  # noqa: BLE001 — recorded as the reason
                     plan_drift = {
                         "plan_sha": None, "main_sha": None, "files": None,
                         "checked": False, "reason": str(e) or type(e).__name__,
                     }
-            # `0110` R6/R7. What the reviews of the units the board above read as finished said
+            # What the reviews of the units the board above read as finished said
             # about the files the plan names, for `impl` only; every other stage is handed no
             # key. Like `plan_drift`, nothing in `for_step` may refuse the step.
             prior_kw: dict[str, Any] = {}
@@ -1065,26 +1051,25 @@ class StepsMixin:
                     directory / "plan.md",
                     unit,
                 )
-            # `0096` R9, R11. The files the plan names, as they stand in the tree the step runs
+            # The files the plan names, as they stand in the tree the step runs
             # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
             plan_kw: dict[str, Any] = {}
             if stage in ("impl", "implement"):
                 plan_kw = planmap.for_step(directory / "plan.md", work)
-            # `0074` R14. Where the unit stood in the shortlist in effect as it started, for the
+            # Where the unit stood in the shortlist in effect as it started, for the
             # outcome's measurement. Like `plan_drift`, nothing here may refuse the step.
             try:
                 shortlist = backlog.stamp(journal.records(key, kind="shortlist"), unit)
             except Exception as e:  # noqa: BLE001 — recorded as the reason
                 shortlist = {"rank": None, "of": None, "record": None, "error": str(e) or type(e).__name__}
-            # `0041` R2's lookup was for a `pr` session; since `0136` R12 `pr` has none, and the
-            # PR machine asks `gh pr list` itself.
+            # `pr` opens no session: the PR machine asks `gh pr list` itself.
             pr_note, pr_before = "", None
-            # `0090` R1-R4. The store, read once, only with the flag on and only for the stages
+            # The store, read once, only with the flag on and only for the stages
             # that receive it; off, nothing is read and `Runner.run` is handed no key at all, so
-            # its prompt and its `start` record are what they were (R2). A store that cannot be
+            # its prompt and its `start` record are unchanged. A store that cannot be
             # read never refuses the step (`knowledge.for_step`).
-            # `0131` R16-R18: with the flag on every stage says the unit's arm, and only the `on`
-            # arm reads the store, checked on the step's `HEAD` (R9) off the event loop, since
+            # With the flag on every stage says the unit's arm, and only the `on`
+            # arm reads the store, checked on the step's `HEAD` off the event loop, since
             # each git read may take `admit.TIMEOUT`.
             knowledge_kw: dict[str, Any] = {}
             if self.config.knowledge:
@@ -1093,10 +1078,9 @@ class StepsMixin:
                 if arm == knowledge.ON and stage in knowledge.STAGES:
                     knowledge_kw.update(await asyncio.to_thread(
                         knowledge.for_step, self.config.data_dir, units.slot(cwd), work))
-            # `0115` R7. After the last refusal that reads nothing more, before any money is
+            # After the last refusal that reads nothing more, before any money is
             # spent: every `impl` step writes `impl.md` itself, so only a comparison afterwards
-            # can tell whether its `## Answers` survived. (`0054` R8 read `pr.md`'s too, while a
-            # `pr` session wrote it.)
+            # can tell whether its `## Answers` survived.
             answers_before: bytes | None = None
             if stage == "impl":
                 try:
@@ -1110,10 +1094,10 @@ class StepsMixin:
 
                 async def end_fields() -> dict[str, Any]:
                     return {"answers_kept": _answers_kept(kept_in, kept_from)}
-            # `0040` R12, R13. Only for a unit an idea lists, and only for `intent` and `impl`;
-            # every other step is handed no key, so its prompt and its gate are what they were.
+            # Only for a unit an idea lists, and only for `intent` and `impl`;
+            # every other step is handed no key.
             link_kw: dict[str, Any] = {}
-            # `0135` R8. The answers and holds the prompt renders, from the database.
+            # The answers and holds the prompt renders, from the database.
             link_kw["meta"] = self._meta_of(cwd, unit)
             state_file = self._write_step_state(cwd, unit)
             if state_file:
@@ -1127,22 +1111,22 @@ class StepsMixin:
                 if siblings_note:
                     link_kw.update(siblings_note=siblings_note, read_also=sibling_paths)
             runner = Runner(self.sessions, journal, app=self._app_identity())
-            # `0034` R11. The registry is what the page lists and what a Stop finds; the mark
+            # The registry is what the page lists and what a Stop finds; the mark
             # taken above is what everything else asks. The same start time for both, and no
-            # `await` between the listing and the phase (`0050` R3).
+            # `await` between the listing and the phase.
             try:
                 running = self.steps.claim(key, unit, stage, started_at=mark.started_at)
             except steps_mod.Busy as e:
                 raise Invalid(str(e)) from e
             mark.phase = "running"
-            # `0039` R12: emptied before the step, whatever an earlier one left, and removed
-            # after it however it ends -- in `_drive`, so a client that drops the stream no
-            # longer decides when (`0034`).
+            # Emptied before the step, whatever an earlier one left, and removed
+            # after it however it ends -- in `_drive`, so a client that drops the stream does
+            # not decide when.
             scratch = units.spike_dir(cwd, unit, self.config.data_dir) if stage == "spike" else None
             rid = self._mark_running(key, unit, stage, "step")
             queue: asyncio.Queue = asyncio.Queue()
             running.listeners.add(queue)
-            # `0073` R1. The step's `run` and recorder, from here to the task with no `await`
+            # The step's `run` and recorder, from here to the task with no `await`
             # between, so every list that names the step names its `run` too.
             run = uuid.uuid4().hex
             recorder = events.Recorder(
@@ -1178,7 +1162,7 @@ class StepsMixin:
                     end_fields=end_fields,
                     pr_note=pr_note,
                     pr_before=pr_before,
-                    # `0036` R3, R7, R8. The stage's row with today's overrides, read once
+                    # The stage's row with today's overrides, read once
                     # as the step starts: a rename later reaches the next step, not this one.
                     agent=self._agent(stage),
                     **knowledge_kw,
@@ -1191,9 +1175,9 @@ class StepsMixin:
                     **({"watch": work} if scratch is not None else {}),
                     # The same: `Runner.run` writes `person` when it is not named.
                     **({"started_by": started_by} if started_by != "person" else {}),
-                    # `0054`. The same again: only a rerun names them.
+                    # The same again: only a rerun names them.
                     **({"rerun": True, "rerun_note": note} if rerun else {}),
-                    # `0138`. What `resume_step` needs of this step, in its `suspend` row.
+                    # What `resume_step` needs of this step, in its `suspend` row.
                     owner_extra={
                         "workspace_dir": cwd,
                         "rounds_before": sorted(rounds_before) if rounds_before is not None else None,
@@ -1211,7 +1195,7 @@ class StepsMixin:
             handed = True
         finally:
             if not handed:
-                # `0050` review round 1, F1. Past `claim`, the listing and the `0051` entry
+                # Past `claim`, the listing and the `_running` entry
                 # are this frame's to return too, or `/api/board/steps` keeps a step that
                 # never started and the next request gets past the mark to `claim` again.
                 self._release(key, unit, mark)
@@ -1220,7 +1204,7 @@ class StepsMixin:
                 if running is not None:
                     self.steps.release(running)
                     self.updater.job_ended()
-        # `0034` R3/R4. Only the reader lives here. A reader that goes away -- a closed
+        # Only the reader lives here. A reader that goes away -- a closed
         # tab, a dropped NDJSON client -- takes its queue with it and nothing else: the
         # step runs on to its own end in `_drive`. Stopping it is `stop_step`, and only that.
         try:
@@ -1237,11 +1221,11 @@ class StepsMixin:
     async def _retake_screens(
         self, cwd: str, key: str, journal: Journal, unit: str, work: str, started_by: str,
     ) -> str:
-        """`0111`. Ask `cos.mjs screens`; when it says to, take the screenshots again under
-        `_screens_lock`, judge the result (R4) and record it (R6). Returns the section for the
-        `review` prompt (R7), `""` when nothing was taken. A retake that fails raises
-        `Invalid` with `RETAKE_REFUSED`; what went wrong is only in its record (R5). No tracked
-        file is put back; `.screens/` is, by `retake.take` (review round 1, F1)."""
+        """Ask `cos.mjs screens`; when it says to, take the screenshots again under
+        `_screens_lock`, judge the result and record it. Returns the section for the `review`
+        prompt, `""` when nothing was taken. A retake that fails raises `Invalid` with
+        `RETAKE_REFUSED`; what went wrong is only in its record. No tracked file is put back;
+        `.screens/` is, by `retake.take`."""
         try:
             asked = await board_reader.screens(self._units_root(cwd), unit, work, state=self._snapshot(cwd, [unit]))
         except Unavailable as e:
@@ -1251,9 +1235,9 @@ class StepsMixin:
         old = asked.get("manifest") or {}
         addresses = [str(a) for a in old.get("addresses") or []]
         async with self._screens_lock:
-            # Review round 1, F3. Asked again past the lock, which another retake may have held
+            # Asked again past the lock, which another retake may have held
             # for minutes; from here to the end of `take` a pending update waits for it.
-            # `0138` R3: and none begins once Apply is pressed.
+            # And none begins once Apply is pressed.
             self._refuse_mechanical_while_updating()
             rid = uuid.uuid4().hex
             self._retakes[rid] = {"workspace": key, "unit": unit, "started": _now()}
@@ -1276,7 +1260,7 @@ class StepsMixin:
         try:
             journal.append(retake.record(key, unit, old, result, ok, detail, started_by))
         except (BadRecord, Busy) as e:
-            # Review round 1, F2: only a retake that was taken may say it was.
+            # Only a retake that was taken may say it was.
             if not ok:
                 raise Invalid(RETAKE_REFUSED) from e
             raise Invalid(f"the screenshots were taken again, but the run log could not record it: {e}") from e
@@ -1285,7 +1269,7 @@ class StepsMixin:
         return retake.describe_for_review(old, result.get("manifest_after") or {})
 
     def _never_driven(self, running: steps_mod.Running, mark: steps_mod.Mark, rid: str) -> None:
-        """`0050` review round 2, F2. A task cancelled before its first turn -- a Stop queued
+        """A task cancelled before its first turn -- a Stop queued
         ahead of it, or an update's `shutdown` -- never enters `_drive`, so its `finally` never runs.
         That `finally` is the only thing that frees the mark once the step is handed over, so
         a mark still held when the task is done means the body never ran: give back what it
@@ -1294,7 +1278,7 @@ class StepsMixin:
             return
         self._release(running.workspace, running.unit, mark)
         self._running.pop(rid, None)
-        # `0073`. Never started, so it wrote nothing and has nothing to say.
+        # Never started, so it wrote nothing and has nothing to say.
         self._recorders.pop(running.run, None)
         self.steps.release(running)
         self.updater.job_ended()
@@ -1309,14 +1293,13 @@ class StepsMixin:
         rounds_before: set[Any] | None, rid: str, scratch: Path | None, kwargs: dict[str, Any],
         answers_before: bytes | None = None, resumed: bool = False,
     ) -> None:
-        """One board step, start to end, as its own task (`0034`).
+        """One board step, start to end, as its own task.
 
-        What `run_step` used to do inline, unchanged, except that every item goes to the
-        step's listeners with `put_nowait` -- this never waits on a reader -- and that a
-        `stopped` step records no transition, cleans nothing and posts nothing (R9).
+        Every item goes to the step's listeners with `put_nowait` -- this never waits on a
+        reader -- and a `stopped` step records no transition, cleans nothing and posts nothing.
 
-        `answers_before` (`0054` R8) is `pr.md`'s `## Answers` as a `pr` rerun found it, or
-        (`0115` R7) `impl.md`'s as an `impl` step found it; a `done` that no longer ends with
+        `answers_before` is `pr.md`'s `## Answers` as a `pr` rerun found it, or `impl.md`'s
+        as an `impl` step found it; a `done` that no longer ends with
         it says `answers_lost`.
         """
 
@@ -1325,18 +1308,18 @@ class StepsMixin:
                 q.put_nowait(item)
 
         told_done = False
-        # `0113` R4, R5: `_after_end` runs last, only on this.
+        # `_after_end` runs last, only on this.
         ended_done = False
         recorder = running.handle.recorder
-        # `0073`. A cancel with no Stop behind it is the app going down (spec C9).
+        # A cancel with no Stop behind it is the app going down.
         going_down = False
-        # `0138`. Paused by an update: the next start takes the step up in the directory it had.
+        # Paused by an update: the next start takes the step up in the directory it had.
         suspended = False
         try:
             if recorder is not None:
                 recorder.start()
             if scratch is not None and not resumed:
-                # `0138`: a spike taken up again goes on in the directory it had.
+                # A spike taken up again goes on in the directory it had.
                 shutil.rmtree(scratch, ignore_errors=True)
                 scratch.mkdir(parents=True)
             async for item in runner.run(**kwargs, running=running):
@@ -1345,8 +1328,8 @@ class StepsMixin:
                     if item[1].get("outcome") != "stopped":
                         item = ("done", {**item[1], **await self._ingest(cwd, unit, item[1], artifact)})
                     if rounds_before is not None and item[1].get("outcome") == "done":
-                        # After `Runner` has written `review.md` (`runner.py:442`), never
-                        # before: the artifact does not wait on GitHub (`0021` R6).
+                        # After `Runner` has written `review.md`, never
+                        # before: the artifact does not wait on GitHub.
                         item = (
                             "done",
                             {**item[1], "comments": await self._post_new_rounds(cwd, unit, rounds_before)},
@@ -1364,7 +1347,7 @@ class StepsMixin:
             tell(("raise", Invalid(str(e))))
             told_done = True
         except Suspended:
-            # `0138`. An update paused the step and wrote its `suspend` row; like the app
+            # An update paused the step and wrote its `suspend` row; like the app
             # going down, nothing is ended, nudged or recorded as a transition here.
             going_down = suspended = True
         except asyncio.CancelledError:
@@ -1385,7 +1368,7 @@ class StepsMixin:
             entry = self._running.pop(rid, None)
             task = asyncio.current_task()
             if entry is not None and task is not None:
-                # `0138` review round 3, F6: off the board from here, and until this task
+                # Off the board from here, and until this task
                 # ends -- its recorder, `_after_end` -- an Apply's settle still waits for it.
                 self._finishing[rid] = (entry, task)
             try:
@@ -1393,12 +1376,12 @@ class StepsMixin:
                     shutil.rmtree(scratch, ignore_errors=True)
                 self.steps.release(running)
                 self.updater.job_ended()
-                # `0043` R5 a: after the mark is gone, so the pass sees the unit free.
+                # A: after the mark is gone, so the pass sees the unit free.
                 if not going_down:
                     self._autopilot_nudge(running.workspace)
                 if recorder is not None and not recorder.closed:
                     # The runner closes it on every road that writes an `end`. Left open means the
-                    # app is going down -- what can be written is, with no `end` (C9) -- or the
+                    # app is going down -- what can be written is, with no `end` -- or the
                     # runner raised before its own `finally`, which is an ending like any other.
                     if going_down:
                         await recorder.abandon()
@@ -1407,7 +1390,7 @@ class StepsMixin:
                 if recorder is not None:
                     self._recorders.pop(recorder.run, None)
                 if ended_done and not going_down and stage not in autopilot.NOT_STEPS:
-                    # `0113` R4, R5. After the runner's `end`, which it writes before it yields
+                    # After the runner's `end`, which it writes before it yields
                     # `done`, and after the mark is given back: the board read it costs holds
                     # neither the reader's `done` nor the unit.
                     await self._after_end(cwd, unit, stage, running.workspace)
@@ -1415,7 +1398,7 @@ class StepsMixin:
                 self._finishing.pop(rid, None)
 
     def _pr_machine(self) -> prmachine.Machine:
-        """`0136`. The PR machine over the same history and run log as every other transition."""
+        """The PR machine over the same history and run log as every other transition."""
         meta = self._unit_meta()
         return prmachine.Machine(meta.history, self._journal() or Journal(meta.root, self.config.data_dir))
 
@@ -1423,10 +1406,10 @@ class StepsMixin:
         self, cwd: str, key: str, unit: str, stage: str, tree: dict[str, Any] | None, started_by: str,
         again: bool = False, rebased: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """`0136` R12, R13: one `pr` or `ship`, with no session, no `start` and no `end` row;
-        what it did is its transitions and, for `ship`, the `ship` row notices read (`0113`).
+        """One `pr` or `ship`, with no session, no `start` and no `end` row;
+        what it did is its transitions and, for `ship`, the `ship` row notices read.
         Returns the `done` item a session's step would have ended with. `rebased` is the
-        `ship` gate's clean-rebase read (`0067`), which guard `ship-ready` takes."""
+        `ship` gate's clean-rebase read, which guard `ship-ready` takes."""
         if tree is None:
             raise Invalid(f"{stage} needs the unit's git worktree, and this workspace is not a git repository")
         work = Path(tree["path"])
@@ -1451,7 +1434,7 @@ class StepsMixin:
             "model_source": None, "mechanical": out.as_dict(),
         }
         if stage == "pr" and out.ok:
-            # `0055` R3, `0122` R4: the title and body the app wrote go onto a pull request it
+            # The title and body the app wrote go onto a pull request it
             # found open rather than created, and the scope is read once, as after a session.
             done["pr_sync"] = await self._sync_pr(cwd, unit, out.url if out.result in ("found", "already") else "")
         refused = False
@@ -1462,10 +1445,10 @@ class StepsMixin:
                 cleanup = await self._shipped(cwd, key, unit, "shipped" if merged else "refused")
                 if merged:
                     done["cleanup"] = cleanup
-        # `0136` review round 1, F2: with no `end`, this is what the autopilot's stop `e` reads
-        # as the unit's last word, so a `pr` or `ship` that failed or was refused stops it for a
-        # person as a failed session did, and one that did its work lifts that stop. Review round
-        # 2, F6: `merge_refused` is a merge GitHub refused after the machine requested it.
+        # With no `end`, this is what the autopilot's stop `e` reads as the unit's last word, so
+        # a `pr` or `ship` that failed or was refused stops it for a person as a failed session
+        # did, and one that did its work lifts that stop. `merge_refused` is a merge GitHub
+        # refused after the machine requested it.
         try:
             self._journal().append({
                 "kind": autopilot.PR_MACHINE, "workspace": key, "unit": unit, "stage": stage,
@@ -1477,10 +1460,9 @@ class StepsMixin:
         return done
 
     async def _shipped(self, cwd: str, key: str, unit: str, result: str) -> dict[str, Any] | None:
-        """The `ship` row notices read (`0113`), and after a merge the cleanup and the gather
-        (`0131` R1, once, in the background). From `_mechanical`, and from the PR reader and the
-        start-up reconcile when they record a merge no `ship` step follows any more (`0136`
-        review round 1, F3). Never raises; the cleanup's answer after a merge, else `None`."""
+        """The `ship` row notices read, and after a merge the cleanup and the gather (once, in
+        the background). From `_mechanical`, and from the PR reader and the start-up reconcile
+        when they record a merge no `ship` step follows any more. Never raises; the cleanup's answer after a merge, else `None`."""
         try:
             self._journal().append({"kind": "ship", "workspace": key, "unit": unit, "stage": "ship", "result": result})
         except (BadRecord, Busy, AttributeError):
@@ -1493,8 +1475,7 @@ class StepsMixin:
         return cleanup
 
     async def reconcile_prs(self) -> list[dict[str, Any]]:
-        """`0136` spec Design "Đối soát sau khởi động lại": every unit left at
-        `merge-requested` is read once from GitHub; a merged one is recorded and none is
+        """Every unit left at `merge-requested` is read once from GitHub; a merged one is recorded and none is
         merged. Never raises: a start-up that cannot read goes on as it would have."""
         try:
             machine = self._pr_machine()
@@ -1514,7 +1495,7 @@ class StepsMixin:
             done = []
             for u in pending:
                 for o in await machine.reconcile([u]):
-                    # F3, as the reader: the journal key is the resolved path, so it is the cwd.
+                    # The journal key is the resolved path, so it is the cwd.
                     if o.result == "recorded":
                         await self._shipped(u.workspace, u.workspace, u.name, "shipped")
                     done.append(o.as_dict())
@@ -1523,7 +1504,7 @@ class StepsMixin:
             return [{"result": "failed", "detail": str(e) or type(e).__name__}]
 
     async def stop_step(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
-        """Stop one running board step (`0034` R2, R5, R6). The route and the page's
+        """Stop one running board step. The route and the page's
         button both call this, and nothing else.
 
         `by` is a name the person typed, not an identity: the password names nobody. What it
@@ -1537,8 +1518,8 @@ class StepsMixin:
 
     async def _stop_running(self, key: str, unit: str, by: str) -> dict[str, Any]:
         """The Stop itself: an `end` record with `stopped` and `stopped_by`, or none for a
-        step cancelled before its first turn. `0068`'s "apply now" shared it until `0138`."""
-        # `0114` R2: an integration is listed beside the steps but has no Stop; say what
+        step cancelled before its first turn."""
+        # An integration is listed beside the steps but has no Stop; say what
         # holds the unit rather than that nothing runs.
         mark = self._active.get((key, unit))
         if mark is not None and mark.kind == "integrate":
@@ -1553,9 +1534,9 @@ class StepsMixin:
         return {"unit": running.unit, "stage": running.stage, "stopped_by": running.stopped_by}
 
     def running_steps(self, cwd: str) -> list[dict[str, Any]]:
-        """The board steps running now in this workspace (`0034` R13). This process only.
+        """The board steps running now in this workspace. This process only.
 
-        `0114` R1: and every integration, from its `_running` entry to the `finally` that
+        Also every integration, from its `_running` entry to the `finally` that
         pops it, with `kind: "integration"` and no `run`; a step is `kind: "step"`. A restart
         that asks this sees an integration it would cut."""
         self._workspace_or_refuse(cwd)

@@ -1,26 +1,17 @@
-"""One review round, posted to the pull request as one ordinary comment (`0021`).
+"""One review round, posted to the pull request as one ordinary comment.
 
-**What this module may do on GitHub, and nothing more.** It reads a pull request's comments
-(`gh pr view <url> --json comments`) and adds one comment to it (`gh pr comment <url>
---body-file -`). It never calls `gh pr review` -- not `--approve`, not `--request-changes`,
-not `--comment` -- because a review is GitHub's word for an approval decision and this is
-an agent session's word about an agent's work (`0021` spec R5). It never edits or deletes a
-comment. The body is built only from text already in `review.md`; no caller can hand it
-other words.
+Only reads comments (`gh pr view --json comments`) and adds one (`gh pr comment`). Never calls
+`gh pr review` (that is an approval decision) and never edits or deletes a comment. The body
+is built only from text already in `review.md`.
 
-**Why the pull request is named by its URL.** The URL comes from the unit's own `pr.md`,
-so `gh` needs no guess about which repository is meant, and a branch deleted by
-`--delete-branch` after the merge does not matter. The regex below also keeps a string
-starting with `-` from reaching `gh` as a flag.
+The pull request is named by the URL in `pr.md`, so no repository is guessed and a deleted
+branch does not matter; the regex keeps a `-` prefix from reaching `gh` as a flag.
 
-**"Exactly one comment per round"** is kept by the marker on the body's last line: before
-posting, the comments already on the pull request are read, and one whose last non-empty
-line is this round's marker means the round is already there. That covers a post that
-reached GitHub but whose answer was lost. It does not cover two processes posting at the
-same instant; `coscc/service/__init__.py` holds a lock for that within one process.
+One comment per round: the body's last line is a marker, and a comment already carrying this
+round's marker means the round is posted (covers a post whose answer was lost). Two processes
+posting at once are not covered; `coscc/service/__init__.py` holds a lock within one process.
 
-`post` never raises. A failure comes back as `Result("failed", reason=...)` with gh's own
-words, so the caller -- which has already written `review.md` -- loses nothing.
+`post` never raises: a failure comes back as `Result("failed", reason=...)`.
 """
 
 from __future__ import annotations
@@ -33,8 +24,7 @@ from typing import Awaitable, Callable
 
 from coscc.agent.harness import child_env
 
-# Chosen, not measured: the same figure as `coscc/units/board.py` `GATE_TIMEOUT`, the other place
-# this app waits on `gh` talking to GitHub.
+# Chosen, not measured: matches `coscc/units/board.py` `GATE_TIMEOUT`, the other wait on `gh`.
 TIMEOUT = 30.0
 
 PR_URL_RE = re.compile(r"^https://[^\s/]+/[^\s/]+/[^\s/]+/pull/\d+$")
@@ -46,10 +36,10 @@ def marker(unit: str, n: int) -> str:
 
 
 def first_line(unit: str, n: int, author: str = "") -> str:
-    """Says where the comment came from, before anything else (`0021` spec R4).
+    """Says where the comment came from, before anything else.
 
-    `author` is the `review` agent's label, `<Name> (agent, review)`, read from the agent
-    table as the round is posted (`0036` R6); `""` names no agent."""
+    `author` is the `review` agent's label, `<Name> (agent, review)`; `""` names no agent.
+    """
     who = f"{author}, an agent session" if author else "an agent session"
     return (
         f"**coscc review, round {n} of {unit}.** Written by {who}, not a person. "
@@ -60,8 +50,8 @@ def first_line(unit: str, n: int, author: str = "") -> str:
 def body(unit: str, n: int, verdict: str | None, text: str, author: str = "") -> str:
     """The whole comment. Pure: the same round and author always give the same body.
 
-    The round's text goes in verbatim -- no summary, no cut (`0021` spec R3). A round too
-    long for GitHub fails to post and shows as not posted, rather than posting short.
+    The round's text goes in verbatim. A round too long for GitHub fails to post rather than
+    posting short.
     """
     return (
         f"{first_line(unit, n, author)}\n\n"
@@ -139,9 +129,8 @@ async def post(
 ) -> Result:
     """Post one round unless it is already there. Never raises.
 
-    `run` defaults to `_gh`, looked up at call time so a test can replace the module's.
-    `author` goes into the first line (`0036` R6); the marker does not carry it, so a round
-    posted before a rename is still found as `already`.
+    `run` defaults to `_gh`, looked up at call time so a test can replace it. `author` goes into
+    the first line, not the marker, so a round posted before a rename is still found as `already`.
     """
     run = run or _gh
     if not pr_url:

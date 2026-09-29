@@ -1,18 +1,8 @@
-"""`0136` step 14, in part: the review rounds a `review.md` holds only in prose, read into
-`review_rounds` once per store.
+"""Review rounds a `review.md` holds only in prose, read into `review_rounds` once per store.
 
-Since `13177e4` a round is the object its run hands back, and guard `ship-ready`
-(`coscc/github/prmachine.py`) reads only those rows. A round written before that is prose, so a
-unit reviewed then could not be shipped from the board. This reads each such round once, from
-what `cos.mjs` `parseReview` already made of it (`coscc/units/board.py` `_rounds_of`), and
-writes it through `UnitMeta.record_round`, the writer a submitted round goes through. After it,
-`cos.mjs` `reviewFrom` reads the row in place of the file's round.
-
-A round is imported only when what `reviewFrom` rebuilds from the row reads exactly as the file
-did: every finding `<location> — <severity> — [S<n> ]<text>` with a label the object allows,
-screens with a header that parsed and at least one shot, and a verdict an object may carry.
-Anything else — an `incomplete` round among them — stays in the file and is read from it as
-before. Nothing here is asked again once the store's key is in `migrations`.
+A round is imported only when what `reviewFrom` rebuilds from the row reads exactly as the
+file did; anything else stays in the file. It is written through `UnitMeta.record_round`.
+Nothing here runs again once the store's key is in `migrations`.
 """
 
 from __future__ import annotations
@@ -28,7 +18,7 @@ SOURCE = "prose-import"
 VERDICTS = ("pass", "changes-requested", "needs-person")
 LABELS = ("open", "fixed", "needs-person", "claim-rejected", "answered")
 
-# `cos.mjs` `SEVERITY`, whole: the location is one token, as `write-review` writes it.
+# `cos.mjs` `SEVERITY`, whole: the location is one token.
 _FINDING_TEXT = re.compile(r"(\S+)\s+—\s+(high|medium|low)\s+—\s+(.*)", re.IGNORECASE | re.DOTALL)
 _LOCATION = re.compile(r"(.+?):(\d[\d,\-–]*)")
 _RULE = re.compile(r"(S\d+)\s+(.*)", re.DOTALL)
@@ -39,8 +29,7 @@ def key(root: str, workspace: str) -> str:
 
 
 def finding_of(f: Mapping[str, Any]) -> dict[str, Any] | None:
-    """One finding as the `review-round` object carries it, or `None` when its line would not
-    read back the same."""
+    """One finding as the `review-round` object carries it, or `None` when it would not read back the same."""
     m = _FINDING_TEXT.fullmatch(str(f.get("text") or "").strip())
     label = f.get("label")
     if m is None or label not in LABELS or not f.get("id"):
@@ -59,8 +48,7 @@ def finding_of(f: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def round_of(r: Mapping[str, Any], heads: Mapping[str, str]) -> dict[str, Any] | None:
-    """What `UnitMeta.record_round` takes, from one round `_rounds_of` carried. `heads` maps the
-    SHA the prose names to the full one git resolved; one it could not keeps the prose's."""
+    """What `UnitMeta.record_round` takes, from one round `_rounds_of` carried; `heads` maps a prose SHA to the full one."""
     if r.get("verdict") not in VERDICTS or not isinstance(r.get("n"), int):
         return None
     findings = [finding_of(f) for f in r.get("found") or []]
@@ -83,8 +71,7 @@ def round_of(r: Mapping[str, Any], heads: Mapping[str, str]) -> dict[str, Any] |
 def import_rounds(
     meta: UnitMeta, workspace: str, units_: Iterable[Mapping[str, Any]], heads: Mapping[str, str],
 ) -> list[tuple[str, int]] | None:
-    """Once per store, in one transaction with its `migrations` mark. Returns `(unit, n)` of
-    each round imported, or `None` when the store's rounds were imported already."""
+    """Once per store, in one transaction with its `migrations` mark. Returns `(unit, n)` per round imported, or `None` if already done."""
     k = key(meta.root, workspace)
     if meta.data.has_run(k):
         return None

@@ -1,15 +1,8 @@
 """`coscc effort measure`: did a routine `impl` at a higher effort take fewer turns?
 
-`0123_no-one-knows-if-each-stage-runs-at-the-right-effort` R8-R11. Reads `cos.db` with
-`sqlite3` in `mode=ro` through `coscc/knowledge/measure.py`'s own reader, chooses the workspace by its
-rule, and imports nothing of the web app. Run it at a terminal: inside a step `cos.db` is a
-tripwire (`.claude/rules/coscc-sessions.md`).
-
-The arm is read from the `start` records, never worked out again from a name (spec Design,
-part 2). The fields are the ones `coscc/runner/__init__.py` writes, by the names in
-`coscc/knowledge/efforttrial.py`: rename one there and this reads nothing, silently
-(`.claude/rules/coscc-data.md`), which `coscc/knowledge/effort_measure_test.py` guards by writing its
-fixture through the same names.
+Reads `cos.db` read-only through `coscc/knowledge/measure.py`'s reader; run it at a terminal,
+since inside a step `cos.db` is a tripwire. The arm is read from the `start` records by the
+names in `coscc/knowledge/efforttrial.py`: rename one there and this reads nothing, silently.
 """
 
 from __future__ import annotations
@@ -23,8 +16,6 @@ from coscc.agent import labels
 from coscc.knowledge import efforttrial
 from coscc.knowledge import measure as reader
 
-# `intent.md ## Answers`, câu 1, 2, 3 and 6: 10 units a side, 20% fewer turns, by 2026-11-30
-# read in UTC, and no more cost, changes-requested rounds or red-CI returns.
 GROUP = 10
 TARGET = 0.20
 DEADLINE = "2026-11-30"
@@ -56,7 +47,7 @@ def _arm_of(start: dict[str, Any]) -> str | None:
 
 
 def failed(unit: dict[str, Any]) -> list[int]:
-    """Every one of R9's six conditions `unit` fails, by number."""
+    """The numbers of the six inclusion conditions `unit` fails."""
     starts = [s for s in unit["starts"] if s.get("stage") == efforttrial.STAGE]
     ends = [e for e in unit["ends"] if e.get("stage") == efforttrial.STAGE]
     out = []
@@ -71,7 +62,6 @@ def failed(unit: dict[str, Any]) -> list[int]:
         for s in starts if s.get("label") == labels.ROUTINE
     ):
         out.append(3)
-    # A unit with no `end` of `impl` has no run to compare (plan step 7).
     if not ends or not all(_number(e.get("turns")) and _number(e.get("cost_usd")) for e in ends):
         out.append(4)
     if any(
@@ -85,8 +75,7 @@ def failed(unit: dict[str, Any]) -> list[int]:
 
 
 def metrics(unit: dict[str, Any]) -> dict[str, Any]:
-    """R10. Every `end` of `impl` counts, the fixes after a review or CI and a run escalated to
-    `novel` among them (spec C3)."""
+    """Every `end` of `impl` counts, fixes after review or CI and `novel` escalations included."""
     ends = [e for e in unit["ends"] if e.get("stage") == efforttrial.STAGE]
     return {
         "turns": sum(e["turns"] for e in ends),
@@ -118,7 +107,7 @@ def _side(found: dict[str, dict[str, Any]], names: list[str]) -> dict[str, Any]:
 
 
 def measure(rows: list[dict[str, Any]], slot: str, today: str | None = None) -> dict[str, Any]:
-    """R9-R11 over one workspace's records."""
+    """The verdict over one workspace's records."""
     found = reader.units_of(rows, slot)
     taken: dict[str, list[tuple[str, str]]] = {arm: [] for arm in ARMS}
     excluded = []
@@ -128,7 +117,7 @@ def measure(rows: list[dict[str, Any]], slot: str, today: str | None = None) -> 
         if not shipped or shipped[:10] > DEADLINE:
             continue
         starts = [s for s in unit["starts"] if s.get("stage") == efforttrial.STAGE]
-        # Before the flag: in no arm, and not listed either (spec Out of scope).
+        # Before the flag: in no arm, and not listed either.
         if not any(efforttrial.FIELD in s for s in starts):
             continue
         why = failed(unit)
