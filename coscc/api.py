@@ -16,6 +16,7 @@ when absent; neither is an identity. Tests that build this app alone drive it wi
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
@@ -28,6 +29,8 @@ from coscc.service.common import Invalid
 from coscc.service.common import NotUpdatable
 from coscc.service.common import Updating
 from coscc.agent.sessions import Refused, Sessions
+
+log = logging.getLogger(__name__)
 
 
 def _bad(message: str, status: int = 400) -> JSONResponse:
@@ -457,6 +460,7 @@ def build(config: Config | None = None) -> FastAPI:
                     else:
                         yield out({"type": "done", **payload})
             except Exception as e:
+                log.exception("the backlog proposal stream failed")
                 yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
@@ -601,6 +605,7 @@ def build(config: Config | None = None) -> FastAPI:
                     else:
                         yield out({"type": "done", **payload})
             except Exception as e:
+                log.exception("the step stream failed")
                 yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
@@ -772,6 +777,7 @@ def build(config: Config | None = None) -> FastAPI:
                     else:
                         yield out({"type": "done", **payload})
             except Exception as e:
+                log.exception("the integration stream failed")
                 yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
@@ -804,6 +810,7 @@ def build(config: Config | None = None) -> FastAPI:
                 async for kind, payload in stream:
                     yield out({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
             except Exception as e:
+                log.exception("the release stream failed")
                 yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
@@ -915,7 +922,9 @@ def build(config: Config | None = None) -> FastAPI:
                         yield out({"type": "done", **payload})
             except Refused as e:
                 yield out({"type": "error", "error": str(e)})
-            except Exception as e:  # surfaced as data; the process keeps serving
+            except Exception as e:
+                # Surfaced as data; the process keeps serving.
+                log.exception("the chat stream failed")
                 yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")

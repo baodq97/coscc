@@ -6,11 +6,14 @@ Handlers import `SERVICE` in their bodies: this module cannot import `coscc.stat
 
 from __future__ import annotations
 
+import logging
 import reflex as rx
 
 from coscc.state import present
 from coscc.service.common import Invalid
 from coscc.state.views import DecisionRow, _key_label
+
+log = logging.getLogger(__name__)
 
 # The fields of the decision form, and what each starts as.
 DECISION_FORM = {
@@ -152,7 +155,9 @@ class AnswersMixin(rx.State, mixin=True):
         except Invalid as e:
             self._fail(e)
             return
-        except Exception as e:  # noqa: BLE001 - an unexpected failure is shown, not lost
+        except Exception as e:
+            # An unexpected failure is shown, not lost.
+            log.exception("the answer failed")
             # Not "nothing was written": a failure may come after the answer's row, which the
             # artifact cannot show; the Questions tab, read again, can.
             self.error = (
@@ -171,7 +176,9 @@ class AnswersMixin(rx.State, mixin=True):
         try:
             await self._load_board()
             self._load_artifact()
-        except Exception as e:  # noqa: BLE001 - the answer is written; say so regardless
+        except Exception as e:
+            # The answer is written; say so regardless.
+            log.exception("the board could not be read again after an answer")
             self.notice += f" The board could not be read again: {type(e).__name__}: {e}"
 
     @rx.event

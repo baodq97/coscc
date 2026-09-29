@@ -393,18 +393,16 @@ class TheServerIsHeld(unittest.TestCase):
         def fails(config):
             raise RuntimeError("busy")
 
-        import contextlib
-        import io
-
-        err = io.StringIO()
-        with mock.patch.object(events, "purge_on_start", fails), contextlib.redirect_stderr(err):
+        with (
+            mock.patch.object(events, "purge_on_start", fails),
+            self.assertLogs("coscc.run", "ERROR") as log,
+        ):
             run.purge_events(object())
-        self.assertIn("step events were not purged this start", err.getvalue())
+        self.assertEqual(log.records[0].getMessage(), "step events were not purged this start")
+        self.assertIsInstance(log.records[0].exc_info[1], RuntimeError)
 
-    def test_a_recovery_that_fails_is_one_line_and_the_app_goes_on(self):
-        """One line on stderr, and `main` still reaches the purge and the server."""
-        import contextlib
-        import io
+    def test_a_recovery_that_fails_is_logged_and_the_app_goes_on(self):
+        """One log record with its traceback, and `main` still reaches the purge and the server."""
         from unittest import mock
 
         from coscc.runlog import recovery
@@ -412,15 +410,14 @@ class TheServerIsHeld(unittest.TestCase):
         def fails(config):
             raise RuntimeError("busy")
 
-        err = io.StringIO()
         with (
             mock.patch.object(recovery, "recover_on_start", fails),
-            contextlib.redirect_stderr(err),
+            self.assertLogs("coscc.run", "ERROR") as log,
         ):
             run.recover_steps(object())
-        lines = err.getvalue().splitlines()
-        self.assertEqual(len(lines), 1)
-        self.assertIn("were not ended this start: RuntimeError: busy", lines[0])
+        [record] = log.records
+        self.assertIn("were not ended this start", record.getMessage())
+        self.assertEqual(str(record.exc_info[1]), "busy")
 
         order: list[str] = []
 
@@ -428,7 +425,7 @@ class TheServerIsHeld(unittest.TestCase):
             order.append("recover")
             raise RuntimeError("busy")
 
-        with contextlib.redirect_stderr(io.StringIO()):
+        with self.assertLogs("coscc.run", "ERROR"):
             code, _ = self.main_with(lambda server: None, order, recover=fails_in_order)
         self.assertEqual((code, order), (None, ["recover", "purge", "server"]))
 

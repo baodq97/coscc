@@ -445,14 +445,18 @@ _COLUMNS = (
 )
 
 
-class Incompatible(RuntimeError):
+class Unusable(RuntimeError):
+    """`cos.db` cannot be used now: one of the three below."""
+
+
+class Incompatible(Unusable):
     """The database on disk was written by a newer version of this app.
 
     Raised rather than worked around: guessing risks a corrupted history that looks fine.
     """
 
 
-class Protected(RuntimeError):
+class Protected(Unusable):
     """This database belongs to the app that started this process, which must not open it.
 
     A step's code once migrated the running app's `cos.db` to a schema the app could not
@@ -462,7 +466,7 @@ class Protected(RuntimeError):
     """
 
 
-class Busy(RuntimeError):
+class Busy(Unusable):
     """Something else held the database past the timeout: an error that names the file, never a hang."""
 
 

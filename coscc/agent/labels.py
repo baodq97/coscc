@@ -9,8 +9,11 @@ The label picks a model and effort in `models.py`; `cos.mjs` never reads it. Not
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Iterable
+
+log = logging.getLogger(__name__)
 
 # The files where a mistake costs the most. `coscc/agent/sessions.py` stands for `_options`
 # (a list of files cannot name a function). Pinned by `tests/agent/test_labels.py`.
@@ -113,5 +116,7 @@ def label_for(
                 if rec.get("kind") == "end" and _stopped_at_max_turns(rec, history[:i]):
                     return said, NOVEL, ESCALATED
         return said, said, DECLARED
-    except Exception:  # noqa: BLE001 — a label is never a reason for a step not to run
+    except Exception:
+        # A label is never a reason for a step not to run.
+        log.exception("the label of a step could not be read")
         return MISSING, NOVEL, MISSING

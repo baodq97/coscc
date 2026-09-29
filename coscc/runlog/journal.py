@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import threading
 import uuid
@@ -30,6 +31,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from coscc.data import BUSY_TIMEOUT, Data, now as _now
+
+log = logging.getLogger(__name__)
 
 VERSION = 1
 
@@ -684,7 +687,9 @@ class Journal:
                 if isinstance(path, str) and path and path not in paths:
                     paths.append(path)
             return {"paths": paths}
-        except Exception as e:  # noqa: BLE001 - `Busy` included: the step still runs
+        except Exception as e:
+            # `Busy` included: the step still runs.
+            log.exception("the paths a step touched could not be read")
             return {"error": f"{type(e).__name__}: {e}"}
 
 

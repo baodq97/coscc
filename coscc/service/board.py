@@ -6,8 +6,8 @@ A mixin with no fields, which `Service` inherits.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
-import sys
 import uuid
 from collections import Counter
 from collections.abc import Iterable
@@ -42,6 +42,8 @@ from coscc.service.common import (
     outcome_label,
     unit_state,
 )
+
+log = logging.getLogger(__name__)
 
 
 # An `ended, unknown` row stops being shown this long after it began, unless a later `start`
@@ -144,7 +146,9 @@ class BoardMixin:
         try:
             me = self.updater.me()
             return {"version": str(me.get("version") or ""), "commit": str(me.get("commit") or "")}
-        except Exception:  # noqa: BLE001 — a record field, never a reason to refuse a step
+        except Exception:
+            # A record field, never a reason to refuse a step.
+            log.exception("the version of the app could not be read")
             return {"version": "", "commit": ""}
 
     def _units_root(self, cwd: str) -> Path:
@@ -214,7 +218,7 @@ class BoardMixin:
                     self._import(meta, key)
             return meta.snapshot(own, names, units_)
         except (Busy, sqlite3.Error, OSError) as e:
-            print(f"coscc: the units of {own} could not be read: {e}", file=sys.stderr)
+            log.warning("the units of %s could not be read: %s", own, e)
             raise Invalid(
                 f"the units of {self._workspace_name(own) or 'a workspace'} could not be read"
             ) from e
@@ -252,16 +256,15 @@ class BoardMixin:
         except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
             # The workspace by name and the error in the log: `key` is a path, and `Busy` and
             # `MetaError` carry the database's path or `cos.mjs`'s stderr.
-            print(f"coscc: the units of {key} could not be imported: {e}", file=sys.stderr)
+            log.warning("the units of %s could not be imported: %s", key, e)
             name = self._workspace_name(key) or "a workspace"
             raise Invalid(f"the units of {name} could not be imported") from e
         # Only when there is something to report, so a store read cleanly adds no row.
         if not unknowns:
             return
         for u in unknowns:
-            print(
-                f"coscc: import {key}: {u['unit']} {u['artifact']} {u['field']}: {u['reason']}",
-                file=sys.stderr,
+            log.warning(
+                "import %s: %s %s %s: %s", key, u["unit"], u["artifact"], u["field"], u["reason"]
             )
         journal = self._journal()
         if journal is not None:
@@ -294,7 +297,7 @@ class BoardMixin:
                     pass
             prose_import.import_rounds(meta, key, units_, heads)
         except (Busy, sqlite3.Error, OSError) as e:
-            print(f"coscc: the review rounds of {key} could not be imported: {e}", file=sys.stderr)
+            log.warning("the review rounds of %s could not be imported: %s", key, e)
 
     def _workspace_name(self, cwd: str) -> str:
         """The name the app shows for `cwd`, or "" when it is not one of the workspaces."""

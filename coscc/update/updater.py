@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import http.client
 import json
+import logging
 import os
 import re
 import secrets
@@ -34,6 +35,9 @@ from coscc import auth, frontend
 from coscc.agent import harness
 from coscc.git import fetches
 from coscc.data import Data
+
+# `log` is an update's or a build's log file, everywhere below.
+logger = logging.getLogger(__name__)
 
 CHECK_EVERY = 6 * 60 * 60
 CHECK_TAG_TIMEOUT = 10
@@ -87,7 +91,7 @@ def _stamp() -> str:
 
 def _urlopen(url: str):
     request = urllib.request.Request(url, headers={"User-Agent": "coscc-updater"})
-    return urllib.request.urlopen(request, timeout=HTTP_TIMEOUT)  # noqa: S310 - constant URLs only
+    return urllib.request.urlopen(request, timeout=HTTP_TIMEOUT)  # constant URLs only
 
 
 def backup_db(src: Path, dst: Path) -> bool:
@@ -270,8 +274,9 @@ class Updater:
                     **extra,
                 }
             )
-        except Exception:  # noqa: BLE001 - a busy log must not stop an update or a check
-            pass
+        except Exception:
+            # A busy log must not stop an update or a check.
+            logger.exception("the update log row was not written")
 
     # -- Checker -------------------------------------------------------------
 
@@ -611,7 +616,9 @@ class Updater:
             handed = update.SERVER.hand_off(handoff)
             if not handed:
                 self._fail("uvicorn.Server was gone before it was asked to stop", log)
-        except Exception as e:  # noqa: BLE001 - the panel says what went wrong
+        except Exception as e:
+            # The panel says what went wrong.
+            logger.exception("the update could not be applied")
             self._fail(f"{type(e).__name__}: {e}", log)
         finally:
             # Handed off, the lock stays held: this process exits with the wheels as they were.
@@ -624,7 +631,9 @@ class Updater:
         """Every session was paused and the hand-off then failed, so this process goes on serving: it takes them up now, `_fail` having closed the window, rather than leave their rows to whichever start comes next, over units that moved on."""
         try:
             await self.service.resume_after_update()
-        except Exception as e:  # noqa: BLE001 - the panel says what went wrong
+        except Exception as e:
+            # The panel says what went wrong.
+            logger.exception("the paused sessions were not taken up again")
             said = f"the paused sessions were not taken up again: {type(e).__name__}: {e}"
             self.error = {
                 **(self.error or {}),
@@ -757,7 +766,7 @@ class Updater:
             name = self.config.update_local_from or ""
             try:
                 workspace = self.service.store.path_of(name)
-            except Exception as e:  # noqa: BLE001 - a bad name is a reason, not a crash
+            except Exception as e:
                 raise _BuildFailed(f"workspace {name!r}: {e}") from e
             if not (workspace / ".git").exists():
                 raise _BuildFailed(f"workspace {name!r} does not exist or is not a git checkout")
@@ -766,7 +775,7 @@ class Updater:
                 raise _BuildFailed(f"the origin of {name!r} is not github.com/baodq97/coscc")
             try:
                 await fetches.fetch(workspace)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 raise _BuildFailed(f"fetching origin/main failed: {e}") from e
             tmp.parent.mkdir(parents=True, exist_ok=True)
             if (
@@ -830,7 +839,8 @@ class Updater:
                 "log_tail": update.tail(log, LOG_TAIL),
             }
             result = "cut"
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
+            logger.exception("the local build failed")
             self.local = {
                 "state": "error",
                 "reason": f"{type(e).__name__}: {e}",

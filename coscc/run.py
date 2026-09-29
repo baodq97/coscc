@@ -11,6 +11,7 @@ the bundle is rewritten to the one being served (`coscc/frontend.py`).
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -26,12 +27,18 @@ MOUNT_FLAG = "__REFLEX_MOUNT_FRONTEND_COMPILED_APP"
 
 REPO = Path(__file__).resolve().parent.parent
 
+log = logging.getLogger(__name__)
+
 
 def main(argv: list[str] | None = None) -> None:
     args = sys.argv[1:] if argv is None else argv
     if args:
         _answer_and_stop(args)
         return
+
+    # Every logger to stderr, which journald timestamps; the app's own from `info` up.
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("coscc").setLevel(logging.INFO)
 
     # Set before importing the app: Reflex reads it while composing the ASGI stack.
     os.environ.setdefault(MOUNT_FLAG, "1")
@@ -85,35 +92,29 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def recover_steps(config) -> None:
-    """End the steps the app went down under. A failure is one stderr line; the app starts anyway."""
+    """End the steps the app went down under. A failure is logged; the app starts anyway."""
     from coscc.runlog import recovery
 
     try:
         runs = recovery.recover_on_start(config)
-    except Exception as e:  # noqa: BLE001 - `Busy`, `Protected`, anything
-        print(
-            f"coscc: steps the app went down under were not ended this start: {type(e).__name__}: {e}",
-            file=sys.stderr,
-        )
+    except Exception:
+        log.exception("steps the app went down under were not ended this start")
         return
     if runs:
-        print(f"steps the app went down under, ended as failed: {runs}")
+        log.info("steps the app went down under, ended as failed: %s", runs)
 
 
 def purge_events(config) -> None:
-    """Purge old step events. A failure is one stderr line; the app starts anyway."""
+    """Purge old step events. A failure is logged; the app starts anyway."""
     from coscc.runlog import events
 
     try:
         runs, freed = events.purge_on_start(config)
-    except Exception as e:  # noqa: BLE001 - `Busy`, `Protected`, anything
-        print(
-            f"coscc: step events were not purged this start: {type(e).__name__}: {e}",
-            file=sys.stderr,
-        )
+    except Exception:
+        log.exception("step events were not purged this start")
         return
     if runs:
-        print(f"step events purged: {runs} run(s), {freed} bytes")
+        log.info("step events purged: %s run(s), %s bytes", runs, freed)
 
 
 def installed_version() -> str:

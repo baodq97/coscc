@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ from coscc.github import prmachine
 from coscc.config import LOOPBACK
 from coscc.runner import SESSIONS_PER_STEP
 from coscc.service.common import Invalid
+
+log = logging.getLogger(__name__)
 
 
 def _whole_at_least_one(value: Any) -> bool:
@@ -115,7 +118,9 @@ class ModelsMixin:
                 self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit])
             )
             return autopilot.is_ci_red(found)
-        except Exception:  # noqa: BLE001 — recorded as null
+        except Exception:
+            # Recorded as null.
+            log.exception("whether the CI of %s is red could not be read", unit)
             return None
 
     async def _findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, Any]:

@@ -6,6 +6,7 @@ A mixin with no fields, which `Service` inherits.
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import uuid
 from datetime import datetime, timedelta
@@ -45,6 +46,8 @@ from coscc.service.common import (
     describe_base,
     step_cwd,
 )
+
+log = logging.getLogger(__name__)
 
 
 # The longest note a rerun takes, in characters. Chosen, not measured.
@@ -158,7 +161,9 @@ class StepsMixin:
         """The row's answer at `head`, else `gh`'s last error there, else `None`."""
         try:
             held = prmachine.ci_held(self._unit_meta().history, key, number, head)
-        except Exception:  # noqa: BLE001 — a board read never fails on this
+        except Exception:
+            # A board read never fails on this.
+            log.exception("the CI hold of %s could not be read", unit)
             held = None
         if held is not None:
             return held
@@ -185,7 +190,9 @@ class StepsMixin:
                     self._pr_machine().record_ci(
                         u, number, head, [c for c in checks if isinstance(c, dict)]
                     )
-                except Exception as e:  # noqa: BLE001 — a background ask never raises
+                except Exception as e:
+                    # A background ask never raises.
+                    log.exception("the CI answer of %s could not be recorded", u)
                     self._ci[slot] = {
                         "head": head,
                         "error": f"the CI answer could not be recorded: {e}",
@@ -778,7 +785,9 @@ class StepsMixin:
         except Suspended:
             # Paused by an update, with its `suspend` row. No `end` and no record.
             raise
-        except Exception as e:  # noqa: BLE001 — recorded, never swallowed silently
+        except Exception as e:
+            # Recorded, never swallowed silently.
+            log.exception("the integration session of %s failed", unit)
             failure = f"the session failed: {e}"
         details = [failure] if failure else []
         try:
@@ -948,7 +957,9 @@ class StepsMixin:
                         "result": result,
                     }
                 )
-        except Exception:  # noqa: BLE001 — `Unavailable`, `BadRecord`, `Busy` included
+        except Exception:
+            # `Unavailable`, `BadRecord`, `Busy` included.
+            log.exception("what follows the %s of %s was not done", stage, unit)
             return
 
     async def next_step(self, cwd: str, unit: str) -> dict[str, Any]:
@@ -1315,7 +1326,9 @@ class StepsMixin:
                         (directory / "plan.md").read_text(encoding="utf-8"),
                         tree["path"] if tree else None,
                     )
-                except Exception as e:  # noqa: BLE001 — recorded as the reason
+                except Exception as e:
+                    # Recorded as the reason.
+                    log.exception("the plan drift of %s could not be read", unit)
                     plan_drift = {
                         "plan_sha": None,
                         "main_sha": None,
@@ -1332,7 +1345,9 @@ class StepsMixin:
             # outcome's measurement. Like `plan_drift`, nothing here may refuse the step.
             try:
                 shortlist = backlog.stamp(journal.records(key, kind="shortlist"), unit)
-            except Exception as e:  # noqa: BLE001 — recorded as the reason
+            except Exception as e:
+                # Recorded as the reason.
+                log.exception("the shortlist rank of %s could not be read", unit)
                 shortlist = {
                     "rank": None,
                     "of": None,
@@ -1880,7 +1895,9 @@ class StepsMixin:
                         await self._shipped(u.workspace, u.workspace, u.name, "shipped")
                     done.append(o.as_dict())
             return done
-        except Exception as e:  # noqa: BLE001 — a start-up is never stopped by this
+        except Exception as e:
+            # A start-up is never stopped by this.
+            log.exception("the pull requests could not be reconciled")
             return [{"result": "failed", "detail": str(e) or type(e).__name__}]
 
     async def stop_step(self, cwd: str, unit: str, by: str) -> dict[str, Any]:

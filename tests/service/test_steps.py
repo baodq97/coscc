@@ -83,7 +83,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         other = self.root / "other"
         if not other.exists():
             subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True)
-        run = lambda *a: subprocess.run(  # noqa: E731
+        run = lambda *a: subprocess.run(
             [
                 "git",
                 "-C",
@@ -465,7 +465,6 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
     def test_a_failed_ingest_is_on_the_step_and_in_the_database(self):
         """The step still ends `done`, and the failure is kept, not dropped. What is kept is one
         fixed sentence; the error, which may carry a path, goes to the log."""
-        import io
         from unittest import mock
 
         from coscc.units import meta
@@ -481,7 +480,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         error = meta.MetaError("cos.mjs meta did not run: /home/x/cos.mjs --root /home/x/units")
         with (
             mock.patch.object(meta, "read", side_effect=error),
-            mock.patch("sys.stderr", new_callable=io.StringIO) as log,
+            self.assertLogs("coscc", "WARNING") as log,
         ):
             _, payload = asyncio.run(go())[-1]
         self.assertEqual(payload["outcome"], "done")
@@ -491,11 +490,10 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
                 "SELECT unit, field, reason FROM unit_unknowns WHERE field = 'ingest'"
             ).fetchall()
         self.assertEqual(tuple(row), (self.made["unit"], "ingest", "its files could not be read"))
-        self.assertIn("/home/x/units", log.getvalue())
-        self.assertIn(self.made["unit"], log.getvalue())
+        self.assertIn("/home/x/units", log.output[-1])
+        self.assertIn(self.made["unit"], log.output[-1])
 
     def test_a_failed_ingest_on_the_database_names_no_path(self):
-        import io
         from unittest import mock
 
         from coscc.data import Busy
@@ -504,7 +502,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         busy = Busy(self.service.config.data_dir + "/cos.db")
         with (
             mock.patch("coscc.units.meta.UnitMeta.ingest", side_effect=busy),
-            mock.patch("sys.stderr", new_callable=io.StringIO) as log,
+            self.assertLogs("coscc", "WARNING") as log,
         ):
             said = asyncio.run(
                 self.service._ingest(
@@ -512,7 +510,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
                 )
             )
         self.assertEqual(said, {"ingest_error": "the database could not be written"})
-        self.assertIn("cos.db", log.getvalue())
+        self.assertIn("cos.db", log.output[-1])
 
     def test_a_failed_step_records_nothing(self):
         class Empty:

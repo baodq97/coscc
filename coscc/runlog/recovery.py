@@ -20,11 +20,14 @@ rather than asking, so nothing is recovered.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 from coscc.data import Data
 from coscc.runlog.journal import Journal
+
+log = logging.getLogger(__name__)
 
 DETAIL = "the app went down while the step ran"
 
@@ -85,7 +88,9 @@ def recover(data: Data) -> int:
     for row in data.step_runs_open():
         try:
             recovered += int(_recover_one(data, row))
-        except Exception:  # noqa: BLE001 - that run keeps "ended, unknown"; the next start tries again
+        except Exception:
+            # That run keeps "ended, unknown"; the next start tries again.
+            log.exception("a step the app went down under was not ended")
             continue
     return recovered
 

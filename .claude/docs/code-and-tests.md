@@ -9,8 +9,9 @@ uv run ruff format && uv run ruff check --fix   # then npm test
 uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you changed
 ```
 
-- `ruff check`: the pyflakes rules only (`F`): unused imports and variables, undefined names,
-  redefinitions. No style rule.
+- `ruff check`: the pyflakes rules (`F`): unused imports and variables, undefined names,
+  redefinitions; the blind-`except` rules (`BLE`, `S110`, `S112`, below); and `RUF100`, a
+  `noqa` nothing needs. No style rule.
 - `ruff format --check`: one format, line length 100. Never format by hand.
 - `ty check`: types, on `coscc/` and `scripts/`, not on `tests/` (running them checks them).
   - Off everywhere: `unresolved-attribute`, `invalid-argument-type`, `invalid-assignment` and
@@ -29,6 +30,18 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
 
 Fix the code, not the check. A rule is switched off only in `pyproject.toml`, with its reason. A
 `# noqa` or `# ty: ignore` names its rule and says why on the same line.
+
+## Errors and logs
+
+- Catch an error by its type. A read or write of `cos.db` raises `data.Unusable` (`Busy`,
+  `Protected`, `Incompatible`), `sqlite3.Error` or `OSError`.
+- `except Exception` is for what nobody expected. It calls `log.exception(...)`, so the
+  traceback reaches the log, then records or shows what the caller needs.
+- Only cleanup on the way out (a close, a kill, a disconnect) or a poll that fails the same way
+  whenever the machine is offline swallows silently, with `# noqa: BLE001` and why.
+- A module logs through `log = logging.getLogger(__name__)`; `run.py` configures it once
+  (journald adds the time). `print` is for the command line's output only.
+- A failure that repeats on every read is a bug to fix, not a line to log each time.
 
 ## Layers
 

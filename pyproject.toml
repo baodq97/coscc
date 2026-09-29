@@ -47,7 +47,8 @@ coscc-build = "coscc.build:main"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["F"]
+# `BLE`, `S110`, `S112`: a blind `except` logs its traceback, or says in a `noqa` why not.
+select = ["F", "BLE", "S110", "S112", "RUF100"]
 
 [tool.ty.src]
 # Tests are checked by running them.

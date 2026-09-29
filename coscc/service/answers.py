@@ -4,9 +4,9 @@ request, transitions, answers, outcomes, holds and review rounds allowed."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import sqlite3
-import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -24,7 +24,7 @@ from coscc.units.history import UNKNOWN, BadTransition
 from coscc.data import Data
 from coscc.units.meta import DELEGATION, MetaError, UnitMeta
 from coscc.runlog.journal import BadRecord, Journal
-from coscc.data import Busy
+from coscc.data import Busy, Unusable
 from coscc.units import submit
 from coscc.units import transitions
 from coscc.agent import steps as steps_mod
@@ -32,6 +32,8 @@ from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
 from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
+
+log = logging.getLogger(__name__)
 
 # The kinds of a decision, the longest text one may carry (chosen, not measured), and the
 # agent a delegation may name: Leif answers in the person's place from outside the app.
@@ -199,7 +201,9 @@ class AnswersMixin:
                     scope = await prscope.read(url, text.get("scope"), where)
         except Unavailable as e:
             detail = str(e)
-        except Exception as e:  # noqa: BLE001 — the step is done whatever this does
+        except Exception as e:
+            # The step is done whatever this does.
+            log.exception("the %s of %s could not be read", stage, unit)
             detail = str(e) or type(e).__name__
         record: dict[str, Any] = {"unit": unit, "stage": stage, "pr": url}
         if stage == "pr":
@@ -262,10 +266,7 @@ class AnswersMixin:
             # One fixed sentence on the card and the step, the error in the log: `MetaError`
             # carries `cos.mjs`'s stderr or its argv, `Busy` the database's path.
             # A `BadTransition` names a status and nothing else.
-            print(
-                f"coscc: {unit} in {workspace} could not be read after its step: {e}",
-                file=sys.stderr,
-            )
+            log.warning("%s in %s could not be read after its step: %s", unit, workspace, e)
             if isinstance(e, BadTransition):
                 reason = str(e) or "a status it read is not one the app records"
             elif isinstance(e, (Busy, sqlite3.Error)):
@@ -646,7 +647,7 @@ class AnswersMixin:
         except (BadRecord, Busy, sqlite3.Error, OSError) as e:
             # The error goes to the log, not the dialog: `Busy` names the database's path.
             said = ", ".join(f"{w['artifact']} {w['question']}" for w in written)
-            print(f"coscc: the answer was not recorded ({said}): {e}", file=sys.stderr)
+            log.warning("the answer was not recorded (%s): %s", said, e)
             raise Invalid(f"the answer was not recorded ({said})") from e
 
     def _append_one(
@@ -730,7 +731,7 @@ class AnswersMixin:
             raise Invalid(f"a delegation is named D<n>, got {delegation!r}")
         try:
             rows = Data(self.config.data_dir).decisions()
-        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+        except (Unusable, sqlite3.Error, OSError) as e:
             raise Invalid(f"the decisions could not be read, so nothing was written: {e}") from e
         d = next((d for d in rows if decision_id(d) == cited), None)
         if d is None:
@@ -758,7 +759,7 @@ class AnswersMixin:
         names = {units.slot(r["path"]): str(r["name"]) for r in rows}
         try:
             found = Data(self.config.data_dir).decisions()
-        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+        except (Unusable, sqlite3.Error, OSError) as e:
             raise Invalid(f"The decisions could not be read: {e}") from e
         out = []
         for d in found:
@@ -785,7 +786,7 @@ class AnswersMixin:
     def add_decision(self, fields: dict[str, Any]) -> dict[str, Any]:
         """One new decision from the Settings form, or `Invalid` with one sentence. `from` is
         today, set here: a form that took it could date a decision before the blocks it relabels."""
-        get = lambda k: str(fields.get(k) or "").strip()  # noqa: E731
+        get = lambda k: str(fields.get(k) or "").strip()
         kind, text, source, until, where = (
             get("kind"),
             get("text"),
@@ -846,7 +847,7 @@ class AnswersMixin:
                 from_day=today,
                 until_day=until,
             )
-        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+        except (Unusable, sqlite3.Error, OSError) as e:
             raise Invalid(f"The decision could not be saved: {e}") from e
         return {"added": f"D{n}", **self.decisions_table()}
 
@@ -862,7 +863,7 @@ class AnswersMixin:
             raise Invalid(f"{cited} is {row['state']} already.")
         try:
             Data(self.config.data_dir).decision_withdraw(int(cited[1:]), today)
-        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+        except (Unusable, sqlite3.Error, OSError) as e:
             raise Invalid(f"{cited} could not be withdrawn: {e}") from e
         return {"withdrawn": cited, **self.decisions_table()}
 
@@ -1096,7 +1097,7 @@ class AnswersMixin:
                 )
             except (BadRecord, Busy, sqlite3.Error, OSError) as e:
                 done = "; ".join(f"{x['effect']}: {x['result']}" for x in effects)
-                print(f"coscc: the hold of {unit} was not recorded: {e}", file=sys.stderr)
+                log.warning("the hold of %s was not recorded: %s", unit, e)
                 raise Invalid("the hold was not recorded" + (f" ({done})" if done else "")) from e
         finally:
             if mark is not None:

@@ -59,6 +59,9 @@ def round_of(r: Mapping[str, Any], heads: Mapping[str, str]) -> dict[str, Any] |
     findings = [finding_of(f) for f in r.get("found") or []]
     if any(f is None for f in findings):
         return None
+    # A round naming one finding twice cannot be one row per finding.
+    if len({f["id"] for f in findings}) != len(findings):
+        return None
     screens = r.get("screens")
     shots: list[dict[str, Any]] = []
     if screens:

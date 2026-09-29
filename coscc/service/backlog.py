@@ -4,6 +4,7 @@ and a unit's history. A mixin with no fields."""
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -29,6 +30,8 @@ from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, OWNER
+
+log = logging.getLogger(__name__)
 
 
 def _labelled(row: dict[str, Any]) -> dict[str, Any]:
@@ -333,7 +336,9 @@ class BacklogMixin:
                 # An update paused it and wrote its `suspend` row; no `end` here.
                 ended = True
                 raise
-            except Exception as e:  # noqa: BLE001 — recorded as the reason
+            except Exception as e:
+                # Recorded as the reason.
+                log.exception("the estimate session failed")
                 failure = f"the session failed: {e}"
             if used_up and not failure:
                 failure = f"the session stopped at a ceiling ({used_up}) before the update"
@@ -377,7 +382,7 @@ class BacklogMixin:
                         )
                     )(rec)
                 else:
-                    check = lambda live: ""  # noqa: E731
+                    check = lambda live: ""
                 try:
                     self._append_checked(journal, rec, check)
                     written += 1

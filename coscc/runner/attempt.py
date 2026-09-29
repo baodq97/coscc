@@ -5,6 +5,7 @@ and writing the artifact.
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,8 @@ from coscc.runner.reply import (
 )
 from coscc.runner.prompt import answers_section, strip_answers, with_answers
 from coscc.runner.review import merge_review
+
+log = logging.getLogger(__name__)
 
 
 class Denials:
@@ -53,8 +56,9 @@ class Denials:
         if self.listener is not None:
             try:
                 self.listener(tool, tool_input, reason)
-            except Exception:  # noqa: BLE001 - the recorder never reaches the gate
-                pass
+            except Exception:
+                # The recorder never reaches the gate.
+                log.exception("a refused tool was not recorded")
 
 
 # # What a board step holding any tool runs on, instead of the empty system prompt the SDK

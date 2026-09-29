@@ -5,7 +5,6 @@ changed it."""
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import shutil
 import subprocess
@@ -522,11 +521,11 @@ class TheImportReport(unittest.TestCase):
         busy = Busy(self.service.config.data_dir + "/cos.db")
         with (
             mock.patch("coscc.units.meta.UnitMeta.unknowns", side_effect=busy),
-            mock.patch("sys.stderr", new_callable=io.StringIO) as log,
+            self.assertLogs("coscc", "WARNING") as log,
         ):
             report = self.service.settings()["import_report"]
         self.assertEqual(report, {"rows": [], "problem": "The import report could not be read."})
-        self.assertIn("cos.db", log.getvalue())
+        self.assertIs(log.records[-1].exc_info[1], busy)
 
     def test_an_import_that_fails_names_the_workspace_and_logs_the_error(self):
         from coscc.data import Busy
@@ -536,13 +535,13 @@ class TheImportReport(unittest.TestCase):
         busy = Busy(self.service.config.data_dir + "/cos.db")
         with (
             mock.patch("coscc.units.meta.UnitMeta.import_store", side_effect=busy),
-            mock.patch("sys.stderr", new_callable=io.StringIO) as log,
+            self.assertLogs("coscc", "WARNING") as log,
         ):
             with self.assertRaises(Invalid) as said:
                 self.service._snapshot(self.cwd)
         self.assertEqual(str(said.exception), "the units of proj could not be imported")
-        self.assertIn("cos.db", log.getvalue())
-        self.assertIn(self.service._journal_key(self.cwd), log.getvalue())
+        self.assertIn("cos.db", log.output[-1])
+        self.assertIn(self.service._journal_key(self.cwd), log.output[-1])
 
 
 if __name__ == "__main__":

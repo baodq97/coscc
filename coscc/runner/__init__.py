@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -68,6 +69,8 @@ from coscc.runner.attempt import (
     describe_tree_change,
     _write_artifact,
 )
+
+log = logging.getLogger(__name__)
 
 # Who started a step or an integration: the autopilot, or a request to a route (a person on
 # the board, `curl`, or an agent at a terminal, which the app cannot tell apart).
@@ -623,8 +626,9 @@ class Runner:
                 return
             try:
                 self.journal.set_trial_model(journal_key, unit, stage, trial_at, said)
-            except Exception:  # noqa: BLE001 — a measurement, never a reason to fail the step
-                pass
+            except Exception:
+                # A measurement, never a reason to fail the step.
+                log.exception("the trial model of %s %s was not recorded", unit, stage)
             trial_at = None
 
         # What is left of the two ceilings after the part of the session before the cut.
@@ -869,6 +873,7 @@ class Runner:
             if _hit_ceiling(terminal):
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal} — {detail}"
         except Exception as e:
+            log.exception("the session of %s %s failed", unit, stage)
             error = {"type": type(e).__name__, "message": str(e)}
             detail = _with_reply(f"{type(e).__name__}: {e}", _joined(pieces))
             if _hit_ceiling(terminal):
@@ -907,7 +912,9 @@ class Runner:
                         # what it does for one.
                         shutting_down = True
                         progress_pending = e
-                except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                except Exception as e:
+                    # The `end` row never depends on it.
+                    log.exception("the progress file of %s was not read", unit)
                     spike_md = "unusable"
                     said = f"the progress file was not read: {type(e).__name__}: {e}"
                     detail = f"{detail}\n--- {said} ---" if detail else said
@@ -1003,7 +1010,9 @@ class Runner:
                     # Paused by an update, like the main reply: no `end`.
                     shutting_down = True
                     closing_pending = e
-                except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                except Exception as e:
+                    # The `end` row never depends on it.
+                    log.exception("the closing turn of %s %s failed", unit, stage)
                     closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
                     review_md, said = (
                         "none",
@@ -1109,7 +1118,9 @@ class Runner:
                 except Suspended as e:
                     shutting_down = True
                     opening_pending = e
-                except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                except Exception as e:
+                    # The `end` row never depends on it.
+                    log.exception("the opening turn of %s %s failed", unit, stage)
                     closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
                     opening, said = (
                         "none",
@@ -1175,7 +1186,9 @@ class Runner:
                     except Suspended as e:
                         shutting_down = True
                         submit_pending = e
-                    except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                    except Exception as e:
+                        # The `end` row never depends on it.
+                        log.exception("the repair turn of %s %s failed", unit, stage)
                         submit_turn = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
                         said = f"the repair turn failed: {type(e).__name__}: {e}"
                     if why and not shutting_down:
@@ -1217,7 +1230,9 @@ class Runner:
                         encoding="utf-8",
                     )
                     channel.extra = {"n": number, "screens": screens}
-                except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                except Exception as e:
+                    # The `end` row never depends on it.
+                    log.exception("the review round of %s was not written", unit)
                     outcome = "failed"
                     error = {"type": type(e).__name__, "message": str(e)}
                     detail = f"review.md: the round was not written from its object: {type(e).__name__}: {e}"
@@ -1248,13 +1263,17 @@ class Runner:
             if recorder is not None and not shutting_down:
                 try:
                     lost = await recorder.close(outcome, detail)
-                except Exception:  # noqa: BLE001 - how many is unknown, so all of them
+                except Exception:
+                    # How many is unknown, so all of them.
+                    log.exception("the events of %s %s were not closed", unit, stage)
                     lost = max(1, int(getattr(recorder, "seq", 0) or 0))
                 run_fields = {"run": recorder.run, "events_lost": lost}
                 if outcome != "done":
                     try:
                         stored, stored_from = await recorder.stored_turns()
-                    except Exception:  # noqa: BLE001 - the `end` row never depends on it
+                    except Exception:
+                        # The `end` row never depends on it.
+                        log.exception("the stored turns of %s %s were not read", unit, stage)
                         stored = None
             # A step that did not finish counts its turns from its events, and keeps the CLI's own count,
             # when one came, as `cli_turns`. With no `ResultMessage` there is no `cost_usd` at all, never
@@ -1315,6 +1334,7 @@ class Runner:
                         **fields,
                     )
                 except Exception:
+                    log.exception("the attempt record of %s %s was not written", unit, stage)
                     # A failure here must not change the outcome or the `end` record that follows. The attempt
                     # record is best-effort; the run log's `end` row is the one thing never put at risk.
                     pass
@@ -1323,6 +1343,7 @@ class Runner:
                 try:
                     extra = dict(await end_fields())
                 except Exception:
+                    log.exception("the end fields of %s %s were not read", unit, stage)
                     # The same rule as the attempt record: the `end` row never depends on it.
                     extra = {}
             if record and trial_at is not None:
