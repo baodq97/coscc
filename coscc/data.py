@@ -260,7 +260,7 @@ CREATE TABLE IF NOT EXISTS unit_links (
     """-- One row per file under `.cos/ideas/`: `read` is what `cos.mjs meta` read of it, as
 -- JSON (`{title, status, units, problems}`), replaced whole on the next read. Not a column
 -- per field: an idea has no transitions, and a `status` column here would be the current
--- state `0013` R1 keeps out of every table (`coscc/units/history_test.py`).
+-- state `0013` R1 keeps out of every table (`tests/units/test_history.py`).
 CREATE TABLE IF NOT EXISTS idea_meta (
     root      TEXT NOT NULL,
     workspace TEXT NOT NULL,
@@ -375,7 +375,7 @@ CREATE TABLE IF NOT EXISTS review_rounds (
     """-- `0136` R5: the findings of one round. `finding` is `F<k>`; `open` is 1 while the finding
 -- is `[open]`, and `label` the word the round gave it (`open`, `fixed`, `needs-person`,
 -- `claim-rejected`, `answered`), what a reader of that one round sees, not a status that
--- moves (`coscc/units/history_test.py`). `rule` is `S<n>` or ''.
+-- moves (`tests/units/test_history.py`). `rule` is `S<n>` or ''.
 CREATE TABLE IF NOT EXISTS review_findings (
     round    INTEGER NOT NULL,
     finding  TEXT NOT NULL,

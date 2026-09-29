@@ -23,9 +23,6 @@ build-backend = "uv_build"
 # documents; uv's default is `src/`.
 module-root = ""
 module-name = "coscc"
-# Tests and their fixtures sit beside the code they test, and stay out of the wheel.
-wheel-exclude = ["**/*_test.py", "**/testdata/**"]
-source-exclude = ["**/*_test.py", "**/testdata/**"]
 
 [dependency-groups]
 dev = [
@@ -54,7 +51,7 @@ select = ["F"]
 
 [tool.ty.src]
 # Tests are checked by running them.
-exclude = ["**/*_test.py"]
+exclude = ["tests/**"]
 
 [tool.ty.rules]
 # Reflex `Var` fields, and `Service` mixins reaching attributes another mixin sets: ty follows
@@ -70,6 +67,5 @@ include = ["coscc/screens/**", "coscc/state/**"]
 rules = { unsupported-operator = "ignore", deprecated = "ignore", no-matching-overload = "ignore", invalid-return-type = "ignore" }
 
 [tool.pytest.ini_options]
-testpaths = ["coscc"]
-python_files = ["*_test.py"]
+testpaths = ["tests"]
 addopts = "-q -p no:cacheprovider"

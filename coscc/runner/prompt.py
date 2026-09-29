@@ -307,7 +307,7 @@ def harness_advice(directory: Path, state_file: str | Path | None = None) -> str
 
 # # The stages whose prompt names the unit's artifacts by path instead of carrying them, and
 # # the one artifact each still carries whole. Every one may `Read` the unit's folder
-# # (`Runner.run` hands it to `decide` as `unit_dir`); `coscc/runner/prompt_test.py`
+# # (`Runner.run` hands it to `decide` as `unit_dir`); `tests/runner/test_prompt.py`
 # # `EveryPathAPromptNamesCanBeRead` fails the day one cannot.
 _EMBED: dict[str, tuple[str, ...]] = {
     "impl": ("plan.md",),

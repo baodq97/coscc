@@ -13,7 +13,7 @@ paths:
   - Denied by words: `gh api`, `gh repo sync`, `gh extension`, `git send-pack`, `git http-push`,
     and an alias, include or `GIT_CONFIG_*` made during the step. Any program it may start
     (`node -e`, `python -c`, a script it wrote) can push past the lease, as can an alias already
-    in a git config (`coscc/agent/policy_test.py`, `test_the_known_limit`). What stops a force
+    in a git config (`tests/agent/test_policy.py`, `test_the_known_limit`). What stops a force
     on `main` is the GitHub ruleset, not this grant.
   - Gebo may read its unit's folder and the intent, spec and plan of related units
     (`read_paths`); not a sandbox while it has `cat`.

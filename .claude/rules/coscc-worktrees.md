@@ -30,7 +30,7 @@ paths:
   `## Files that change`, and puts them under *The files main changed since the plan*.
   - The diff does not fetch; `plan_drift.main_sha` in the `start` record says which `main` it
     used, and a merge landing just before `impl` is not seen
-    (`coscc/service/steps_test.py`, `test_a_merge_under_thirty_seconds_after_the_plans_fetch_is_not_seen`).
+    (`tests/service/test_steps.py`, `test_a_merge_under_thirty_seconds_after_the_plans_fetch_is_not_seen`).
   - Any failure is `checked: false` with a reason and never stops the step. A terminal step gets
     none of this.
 - A `review` step can run the branch's code with no session: when `cos.mjs screens` says a UI

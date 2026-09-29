@@ -94,7 +94,7 @@ session is seeded (`0113` plan, *Proof*).
   many can pile up, is not measured (spec C6; the spike saw one still open 46 s after the
   cut). Nothing is lost by it.
 - **A record another process writes arrives up to 15 s late**; one this process writes rings
-  the bell and arrives at once. Measured in `service/notices_test.py`, not in production.
+  the bell and arrives at once. Measured in `service/test_notices.py`, not in production.
 - **An autopilot stop reaches the run log only when a pass runs**, every 5 minutes or after a
   step ends (spec C1): the stream is prompt about the log, not about the stop.
 - **`ship-refused` can be a merge that happened.** `why` is read off the files after the step;

@@ -28,12 +28,12 @@ Branch on `reasons` codes (`coscc/units/guards.py`), never on their words.
 - Branches and tags: `<type>/<slug>` (feat fix docs refactor test chore perf build ci revert),
   `vX.Y.Z`, `vX.Y.Z-rc.N`. Never compose one by hand: `unit-branch`, `check-branch`, `check-tag`.
 - One branch and one PR per change, squashed, rebased onto `main` (never merge `main` in).
-- No unit or requirement ids in comments, docstrings, names or rules (`coscc/comments_test.py`).
-- Import downwards, from the defining module (`coscc/layers_test.py`); tests are
-  `<module>_test.py` (`.claude/docs/code-and-tests.md`).
+- No unit or requirement ids in comments, docstrings, names or rules (`tests/test_comments.py`).
+- Import downwards, from the defining module (`tests/test_layers.py`); `tests/` mirrors
+  `coscc/` (`.claude/docs/code-and-tests.md`).
 - Code little and simple; split a file only when needed.
-- Take unit paths from `new-path`. Cite committed files by path and lines. Cut a figure with
-  no source.
+- Take unit paths from `new-path`. Cite committed files by path and lines. Cut unsourced
+  figures.
 
 ## Architecture
 

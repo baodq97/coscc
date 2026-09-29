@@ -1,7 +1,5 @@
 """Where the money went, from a workspace's run log. Pure: no I/O, no clock but `now`.
 
-Named `spend`, not `cost`, so it is not confused with `cost_test.py`.
-
 Only `end` records are added: an `attempt` or an `estimate` summary repeats its step's cost,
 so adding them would count it twice. An `end` whose `cost_usd` is absent or null is unknown,
 never zero, like SQLite's `SUM` skipping a `NULL`.

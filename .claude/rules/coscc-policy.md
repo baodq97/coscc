@@ -1,7 +1,7 @@
 ---
 paths:
   - "coscc/agent/policy.py"
-  - "coscc/agent/policy_test.py"
+  - "tests/agent/test_policy.py"
 ---
 
 # Things that break here
@@ -14,10 +14,10 @@ paths:
 - The mode grants nothing: the default button pushes and merges whatever mode is set.
 - The read boundary is not a sandbox. `Read`, `Glob` and `Grep` are held to the unit's worktree
   and folder, but `impl`, `spike` and Gebo have `cat`; `check_command` reads only a redirect's
-  target; a `Glob` is checked up to its first wildcard (`coscc/agent/policy_test.py`,
+  target; a `Glob` is checked up to its first wildcard (`tests/agent/test_policy.py`,
   `TheReadBoundaryIsNotASandbox`). A worktree's `.git` is a file outside both roots, so
   `review` gets the head in its prompt. Prompts name artifacts by path and rely on this
-  boundary allowing the read; narrowing it turns `coscc/runner/prompt_test.py` red.
+  boundary allowing the read; narrowing it turns `tests/runner/test_prompt.py` red.
 - `impl` can read a sibling repository and cannot be kept from writing it. `_git_into` refuses
   `-C`, `--git-dir`, `--work-tree`, `-c` or `GIT_*=` landing there; a subcommand's path and
   `python` are not read (`test_the_known_limit_of_git_into`).

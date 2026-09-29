@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 # The closed table. First group: the `why` column `cos.mjs next` writes; second: codes `cos.mjs`
-# hands out as `reasons` beside its words (`guards_test.py` reads them back out of it); third:
+# hands out as `reasons` beside its words (`test_guards.py` reads them back out of it); third:
 # what the guards below refuse with.
 REASONS = (
     # `cos.mjs next`'s `why`, and a hold's move.

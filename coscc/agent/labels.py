@@ -13,7 +13,7 @@ import re
 from typing import Any, Iterable
 
 # The files where a mistake costs the most. `coscc/agent/sessions.py` stands for `_options`
-# (a list of files cannot name a function). Pinned by `coscc/agent/labels_test.py`.
+# (a list of files cannot name a function). Pinned by `tests/agent/test_labels.py`.
 SECURITY_SURFACE = (
     "coscc/agent/policy.py",
     "coscc/agent/sessions.py",
