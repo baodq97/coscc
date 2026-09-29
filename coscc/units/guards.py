@@ -134,9 +134,19 @@ def dependency_merged(inputs: Mapping[str, Any]) -> Verdict:
     return OPEN
 
 
+def _same_commit(a: str, b: str) -> bool:
+    """One commit named twice, the shorter a prefix of the longer: a round read from prose
+    before `0136` may name a short SHA."""
+    return bool(a) and bool(b) and (a == b or (min(len(a), len(b)) >= 7 and (a.startswith(b) or b.startswith(a))))
+
+
 def ship_ready(inputs: Mapping[str, Any]) -> Verdict:
     """`ci` at `head`; `reviewed_head`, the head the last passing round recorded; `verdict` of
-    that round; `head`, the one this guard itself read, which the merge is pinned to (R10)."""
+    that round; `head`, the one this guard itself read, which the merge is pinned to (R10).
+
+    `rebased`, `{reviewed, head}`: the `ship` gate's read that `head` is a clean rebase of
+    `reviewed` (`0067`), which stands in for a round of `head` when `reviewed` is the head the
+    round recorded. The gate reads git; the guard only matches the two commits it names."""
     ci = inputs.get("ci")
     reasons = []
     if ci == "pending" or ci is None:
@@ -153,9 +163,13 @@ def ship_ready(inputs: Mapping[str, Any]) -> Verdict:
     elif verdict != "pass":
         reasons.append("review-incomplete")
     head = str(inputs.get("head") or "")
+    reviewed = str(inputs.get("reviewed_head") or "")
+    rebased = inputs.get("rebased") or {}
+    clean = isinstance(rebased, Mapping) and _same_commit(str(rebased.get("head") or ""), head) and _same_commit(
+        str(rebased.get("reviewed") or ""), reviewed)
     if not head:
         reasons.append("no-head")
-    elif head != str(inputs.get("reviewed_head") or ""):
+    elif head != reviewed and not clean:
         reasons.append("head-moved")
     return _closed(*reasons) if reasons else OPEN
 
@@ -195,7 +209,7 @@ GUARDS: dict[str, Guard] = {
         Guard("skip-decision", "Spec or plan is skipped only on the decision of a person or their delegate.", skip_decision),
         Guard("spike-holds", "Plan opens only once every unmeasured item of the spec has a spike verdict of holds.", spike_holds),
         Guard("dependency-merged", "Impl opens only once every unit it depends on has merged.", dependency_merged),
-        Guard("ship-ready", "Ship opens only on green CI and a passing review of the very head being merged.", ship_ready),
+        Guard("ship-ready", "Ship opens only on green CI and a passing review of the head being merged, or of one it is a clean rebase of.", ship_ready),
         Guard("run-submitted", "A run ends done only once the app has received its object.", run_submitted),
         Guard("branch-named", "A pull request is opened only from a branch the harness's grammar accepts.", branch_named),
         Guard("ci-at-head", "CI moves only on a read of the required checks at the head the machine holds.", ci_at_head),

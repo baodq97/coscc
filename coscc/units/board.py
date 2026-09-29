@@ -50,14 +50,25 @@ class Unavailable(Exception):
 
 class Gate(tuple):
     """`gate`'s answer: `(open, what it said)`, unpacked as it always was, and `reasons`, the
-    codes beside the words (`0136` R11), which the app branches on instead of them."""
+    codes beside the words (`0136` R11), which the app branches on instead of them.
+    `rebased`, `{reviewed, head}`, only when `ship` opened on a clean rebase (`0067`)."""
 
     reasons: tuple[str, ...]
+    rebased: dict[str, str] | None
 
-    def __new__(cls, opened: bool, said: str, reasons: tuple[str, ...] = ()) -> "Gate":
+    def __new__(cls, opened: bool, said: str, reasons: tuple[str, ...] = (),
+                rebased: dict[str, str] | None = None) -> "Gate":
         answer = super().__new__(cls, (opened, said))
         answer.reasons = tuple(reasons)
+        answer.rebased = rebased
         return answer
+
+
+def _rebased(data: dict[str, Any]) -> dict[str, str] | None:
+    got = data.get("rebased")
+    if not isinstance(got, dict) or not all(isinstance(got.get(k), str) and got.get(k) for k in ("reviewed", "head")):
+        return None
+    return {"reviewed": got["reviewed"], "head": got["head"]}
 
 
 def _codes(data: dict[str, Any]) -> tuple[str, ...]:
@@ -396,7 +407,7 @@ async def gate(
         except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
             raise Unavailable(f"the harness script did not return JSON: {e}") from e
         said = "\n".join(lines).strip()
-        return Gate(code == 0, said or f"the gate exited {code} and said nothing", _codes(data))
+        return Gate(code == 0, said or f"the gate exited {code} and said nothing", _codes(data), _rebased(data))
     said = (out_text + err_text).strip()
     return Gate(False, said or f"the gate exited {code} and said nothing")
 

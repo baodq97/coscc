@@ -1935,7 +1935,7 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
         async def tree(*a, **kw):
             return {"path": str(self.repo), "branch": "feat/a-problem", "base": None}
 
-        async def mechanical(cwd, key, unit, stage, tree, started_by, again=False):
+        async def mechanical(cwd, key, unit, stage, tree, started_by, again=False, rebased=None):
             return {"unit": unit, "stage": stage, "outcome": "done"}
 
         async def go(stage):
@@ -2224,8 +2224,9 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
         self.unit = create_sync(service, str(self.repo), "a-problem", "words")["unit"]
         return service
 
-    def drive(self, service: Service, stage: str, outcome: str) -> list[tuple]:
-        """One step whose runner ends `outcome`, and every `_gather_soon` it made."""
+    def drive(self, service: Service, stage: str, outcome: str, rebased: dict | None = None) -> list[tuple]:
+        """One step whose runner ends `outcome`, and every `_gather_soon` it made. What the
+        stand-in machine's `ship` was handed is kept in `self.shipped_with`."""
         from coscc.units import board as board_reader
         from coscc.github import integrate
 
@@ -2237,7 +2238,10 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
                 yield ("done", {"outcome": outcome})
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
-            return True, f"open: {stage} may proceed"
+            return board_reader.Gate(True, f"open: {stage} may proceed", (), rebased)
+
+        self.shipped_with: list[dict | None] = []
+        shipped_with = self.shipped_with
 
         async def tree(*a, **kw):
             return {"path": str(self.repo), "branch": "feat/a-problem", "base": None}
@@ -2259,10 +2263,11 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
             history = service._unit_meta().history
 
             async def open_pr(self, u, again=False):
-                return prmachine.Outcome("opened" if outcome == "done" else "failed")
+                return prmachine.Outcome("opened" if outcome == "done" else "failed", detail="" if outcome == "done" else "gh down")
 
-            async def ship(self, u, authority="person"):
-                return prmachine.Outcome("merged" if outcome == "done" else "failed")
+            async def ship(self, u, authority="person", rebased=None):
+                shipped_with.append(rebased)
+                return prmachine.Outcome("merged" if outcome == "done" else "failed", detail="" if outcome == "done" else "gh down")
 
         async def on_branch(*a, **kw):
             return "feat/a-problem"
@@ -2294,6 +2299,15 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
         service = self.service(True)
         scheduled = self.drive(service, "ship", "done")
         self.assertEqual(scheduled, [(str(self.repo), self.unit, service._journal_key(str(self.repo)))])
+
+    def test_the_gates_clean_rebase_reaches_the_machines_guard(self):
+        """`0136` review round 1, F1."""
+        service = self.service(False)
+        rebased = {"reviewed": "a" * 40, "head": "b" * 40}
+        self.drive(service, "ship", "done", rebased=rebased)
+        self.assertEqual(self.shipped_with, [rebased])
+        self.drive(self.service(False), "ship", "done")
+        self.assertEqual(self.shipped_with, [None])
 
     def test_a_failed_ship_or_the_flag_off_schedules_none(self):
         for on, stage, outcome in ((True, "ship", "failed"), (False, "ship", "done"), (True, "pr", "done")):

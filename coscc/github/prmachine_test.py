@@ -188,6 +188,24 @@ class ShipIsMechanical(Fixture):
                 self.assertEqual(gh.count("pr", "merge"), 0)
                 self.assertEqual(self.rows("ship.md"), [])
 
+    def test_a_clean_rebase_the_gate_read_merges_pinned_to_the_new_head(self):
+        """Review round 1, F1: after a rebase `0067` accepts, `ship` merges the new head
+        without another round; a rebase of some other commit does not."""
+        new = "b" * 40
+        gh = FakeGh(head=new)
+        m = self.opened(gh)
+        self.a_round(head=HEAD)
+        refused = run(m.ship(self.unit(), rebased={"reviewed": "c" * 40, "head": new}))
+        self.assertEqual((refused.result, refused.reasons), ("refused", ("head-moved",)))
+        out = run(m.ship(self.unit(), rebased={"reviewed": HEAD, "head": new}))
+        self.assertEqual(out.result, "merged")
+        merge = next(c for c in gh.calls if c[:2] == ["pr", "merge"])
+        self.assertEqual(merge[-1], new)
+        [requested] = [r for r in self.rows("ship.md") if r["guard"] == "ship-ready"]
+        inputs = json.loads(requested["inputs"])
+        self.assertEqual((inputs["reviewed_head"], inputs["head"], inputs["rebased"]),
+                         (HEAD, new, {"reviewed": HEAD, "head": new}))
+
     def test_no_round_the_app_holds_is_no_pass(self):
         gh = FakeGh()
         m = self.opened(gh)

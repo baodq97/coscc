@@ -116,6 +116,21 @@ class TheGuards(unittest.TestCase):
         )
         self.assertEqual(guards.ship_ready({**ok, "verdict": None}).reasons, ("review-incomplete",))
 
+    def test_ship_takes_the_gates_clean_rebase_of_the_reviewed_head(self):
+        """Review round 1, F1: `0067`'s clean rebase stands in for a round of the new head, but
+        only for the two commits the guard itself holds."""
+        reviewed, head = "a" * 40, "b" * 40
+        ok = {"ci": "green", "verdict": "pass", "head": head, "reviewed_head": reviewed}
+        self.assertEqual(guards.ship_ready(ok).reasons, ("head-moved",))
+        self.assertEqual(guards.ship_ready({**ok, "rebased": {"reviewed": reviewed, "head": head}}), OPEN)
+        self.assertEqual(guards.ship_ready({**ok, "rebased": {"reviewed": reviewed[:7], "head": head}}), OPEN,
+                         "a round read from prose names a short SHA")
+        for other in ({"reviewed": "c" * 40, "head": head}, {"reviewed": reviewed, "head": "c" * 40},
+                      {"reviewed": reviewed[:3], "head": head}, {"head": head}, "yes"):
+            self.assertEqual(guards.ship_ready({**ok, "rebased": other}).reasons, ("head-moved",), other)
+        self.assertEqual(guards.ship_ready({**ok, "ci": "red", "rebased": {"reviewed": reviewed, "head": head}}).reasons,
+                         ("ci-red",))
+
     def test_a_run_that_submitted_nothing_is_not_done(self):
         self.assertEqual(guards.run_submitted({"submitted": True}), OPEN)
         self.assertEqual(guards.run_submitted({}).reasons, ("no-submission",))

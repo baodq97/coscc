@@ -429,10 +429,12 @@ class Machine:
         return Outcome(result, number, str(view.get("url") or ""), head, commit, guard=applied.guard,
                        transition=(applied.row or {}).get("id"))
 
-    async def ship(self, u: Unit, authority: str = "person") -> Outcome:
+    async def ship(self, u: Unit, authority: str = "person", rebased: dict[str, str] | None = None) -> Outcome:
         """R13. Reconcile first; a merge made anywhere else is only recorded. Otherwise guard
         `ship-ready` reads CI at the head this read found, and the last round the app holds;
-        open, it records `merge-requested`, merges pinned to that head, and records `merged`."""
+        open, it records `merge-requested`, merges pinned to that head, and records `merged`.
+        `rebased` is the `ship` gate's read that the head is a clean rebase of a reviewed
+        commit (`0067`); the guard takes it only when both commits match its own inputs."""
         now = state(self.history, u.workspace, u.name)
         if now["state"] == "merged":
             return Outcome("already", now.get("number"), merge_commit=str(now.get("merge_commit") or ""))
@@ -457,6 +459,8 @@ class Machine:
             "reviewed_head": round_["head"] if round_ else "",
             "round": round_n,
         }
+        if rebased:
+            inputs["rebased"] = dict(rebased)
         applied = self._apply(u, "merge-requested", SHIP_FILE, "draft", inputs, authority)
         if not applied.open:
             return Outcome("refused", number, head=head, reasons=applied.reasons, guard=applied.guard)

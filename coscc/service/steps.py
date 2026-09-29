@@ -944,7 +944,8 @@ class StepsMixin:
             if stage in prmachine.STAGES:
                 if rerun:
                     await self._append_to_answers(self._unit_dir(cwd, unit) / "intent.md", "\n" + rerun_block, "a rerun")
-                yield ("done", await self._mechanical(cwd, key, unit, stage, tree, started_by, again=rerun))
+                yield ("done", await self._mechanical(cwd, key, unit, stage, tree, started_by, again=rerun,
+                                                      rebased=getattr(answer, "rebased", None)))
                 return
 
             if stage == "impl" and tree is not None:
@@ -1396,11 +1397,12 @@ class StepsMixin:
 
     async def _mechanical(
         self, cwd: str, key: str, unit: str, stage: str, tree: dict[str, Any] | None, started_by: str,
-        again: bool = False,
+        again: bool = False, rebased: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """`0136` R12, R13: one `pr` or `ship`, with no session, no `start` and no `end` row;
         what it did is its transitions and, for `ship`, the `ship` row notices read (`0113`).
-        Returns the `done` item a session's step would have ended with."""
+        Returns the `done` item a session's step would have ended with. `rebased` is the
+        `ship` gate's clean-rebase read (`0067`), which guard `ship-ready` takes."""
         if tree is None:
             raise Invalid(f"{stage} needs the unit's git worktree, and this workspace is not a git repository")
         work = Path(tree["path"])
@@ -1416,7 +1418,7 @@ class StepsMixin:
         if stage == "pr":
             out = await machine.open_pr(u, again=again)
         else:
-            out = await machine.ship(u, authority="code" if started_by == "autopilot" else "person")
+            out = await machine.ship(u, authority="code" if started_by == "autopilot" else "person", rebased=rebased)
         artifact = prmachine.PR_FILE if stage == "pr" else prmachine.SHIP_FILE
         done: dict[str, Any] = {
             "unit": unit, "stage": stage, "outcome": "done" if out.ok else "failed",

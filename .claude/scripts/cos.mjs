@@ -2930,6 +2930,8 @@ export function openLines(stage, unitName, { head = null, rebased = null, retry 
 
 // `--json` (`0136` R11): the same lines as one JSON object on stdout, `{ok, lines, reasons}`,
 // and the same exit code. The app asks this way, so it reads the codes and not the words.
+// `rebased` is added only when `ship` opened on a clean rebase (`0067` R6): the app's guard
+// `ship-ready` takes it in place of a round of the new head.
 function cmdGate(unitName, stage, cosDir, repoDir, limit, state, json = false) {
   if (!unitName || !stage) {
     console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}> [--json] [--repo <dir>] --state <file|->`)
@@ -2945,7 +2947,7 @@ function cmdGate(unitName, stage, cosDir, repoDir, limit, state, json = false) {
   const lines = ok
     ? openLines(stage, unitName, { head, rebased, retry, merged })
     : [`blocked: ${stage} cannot proceed for ${unitName}`, ...need.map((n) => `  - ${n}`)]
-  if (json) console.log(JSON.stringify({ ok, lines, reasons }))
+  if (json) console.log(JSON.stringify(rebased ? { ok, lines, reasons, rebased } : { ok, lines, reasons }))
   else for (const line of lines) (ok ? console.log : console.error)(line)
   return ok ? 0 : 1
 }

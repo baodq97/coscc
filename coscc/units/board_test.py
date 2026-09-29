@@ -944,3 +944,16 @@ class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
             [u] = run(board.read(d))["units"]
             nxt = run(board.next_step(d, "0001_x"))
         self.assertEqual((u["idea"], u["repo"], u["depends_on"], nxt["why"]), ("", "", [], ""))
+
+
+class TheGateHandsOnACleanRebase(unittest.TestCase):
+    """`0136` review round 1, F1: `gate --json`'s `rebased` reaches the app, and nothing else does."""
+
+    def test_only_two_named_commits_are_taken(self):
+        both = {"reviewed": "a" * 40, "head": "b" * 40}
+        self.assertEqual(_board._rebased({"rebased": both}), both)
+        for bad in ({}, {"rebased": None}, {"rebased": {"reviewed": "a"}}, {"rebased": {"reviewed": "", "head": "b"}},
+                    {"rebased": "yes"}):
+            self.assertIsNone(_board._rebased(bad), bad)
+        self.assertEqual(_board.Gate(True, "open", (), both).rebased, both)
+        self.assertIsNone(_board.Gate(True, "open").rebased)
