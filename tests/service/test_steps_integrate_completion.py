@@ -93,7 +93,7 @@ class ACutIntegration(unittest.TestCase):
         shared = mock.patch.object(fetches, "shared", fetches.Fetches())
         shared.start()
         self.addCleanup(shared.stop)
-        self.key = self.service._journal_key(self.cwd)
+        self.key = self.service.ws.key(self.cwd)
         self.updates = 0
         patch = mock.patch.object(integrate, "_gh", self._gh)
         patch.start()
@@ -110,7 +110,7 @@ class ACutIntegration(unittest.TestCase):
 
     def cut(self) -> None:
         """What the restart left: Gebo's `start`, and nothing after it."""
-        self.service._journal().started(
+        self.service.ws.journal().started(
             self.key, self.unit, "integrate", "manual", started_by="autopilot", head=self.P
         )
 
@@ -152,7 +152,7 @@ class ACutIntegration(unittest.TestCase):
         return 1, "", f"stand-in gh: unexpected {argv}"
 
     def records(self, kind: str) -> list[dict]:
-        return self.service._journal().records(self.key, kind=kind)
+        return self.service.ws.journal().records(self.key, kind=kind)
 
     def press(self, act=None) -> dict:
         self.service.sessions = StandIn(act or self._no_act)
@@ -187,7 +187,7 @@ class ACutIntegration(unittest.TestCase):
             self.service.autopilot_stop(self.key)
             self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
             self.service._autopilot_cwd[self.key] = self.cwd
-            self.service._journal().append(
+            self.service.ws.journal().append(
                 {
                     "kind": "shortlist",
                     "workspace": self.key,

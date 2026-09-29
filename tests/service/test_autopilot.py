@@ -69,7 +69,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         )
         self.service = Service(self.config, Sessions(self.config))
         self.ws = str(workspace)
-        self.key = self.service._journal_key(self.ws)
+        self.key = self.service.ws.key(self.ws)
         # A pass every 5 minutes would never come in a test; the loop's first pass does.
         self.addAsyncCleanup(self.service.shutdown)
 
@@ -89,7 +89,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 
     def rows(self, unit: str) -> list[tuple]:
         """The answers `cos.db` holds for `unit`, `(artifact, ref, answered_by, via, text)`."""
-        with self.service._unit_meta().data.connect() as conn:
+        with self.service.ws.unit_meta().data.connect() as conn:
             return [
                 tuple(r)
                 for r in conn.execute(
@@ -329,7 +329,7 @@ class OnTheRealLoop(_Base):
         self.assertEqual(self.rows(unit), [("intent.md", "1", "owner", "product", "một")])
         self.assertNotIn(
             "### Câu 1",
-            (self.service._unit_dir(self.ws, unit) / "intent.md").read_text(encoding="utf-8"),
+            (self.service.ws.unit_dir(self.ws, unit) / "intent.md").read_text(encoding="utf-8"),
         )
         found = autopilot.measure_reruns(
             Journal(self.config.working_dir, self.config.data_dir).records(),
@@ -382,7 +382,7 @@ class OnTheRealLoop(_Base):
 
     async def test_a_draft_impl_is_answered_and_journalled_as_impl(self):
         unit = await self.unit("impl-asks")
-        d = self.service._unit_dir(self.ws, unit)
+        d = self.service.ws.unit_dir(self.ws, unit)
         (d / "spec.md").write_text(
             "# Spec: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8"
         )
@@ -407,7 +407,7 @@ class OnTheRealLoop(_Base):
 
     async def impl_asks(self, slug: str) -> tuple[str, Path, str]:
         unit = await self.unit(slug, "Status: accepted.\n\n## Open questions\n\n1. Một?")
-        d = self.service._unit_dir(self.ws, unit)
+        d = self.service.ws.unit_dir(self.ws, unit)
         (d / "spec.md").write_text(
             "# Spec: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8"
         )
@@ -537,7 +537,7 @@ class Scripted(_Base):
             "reasons": list(reasons),
         }
         if plan is not None:
-            d = self.service._unit_dir(self.ws, name)
+            d = self.service.ws.unit_dir(self.ws, name)
             d.mkdir(parents=True, exist_ok=True)
             (d / "plan.md").write_text(
                 f"# Plan\n\n## Files that change\n\n{plan}\n\n## Order\n", encoding="utf-8"
@@ -1750,8 +1750,8 @@ class Scripted(_Base):
             return list(files)
 
         machine = prmachine.Machine(
-            self.service._unit_meta().history,
-            self.service._journal(),
+            self.service.ws.unit_meta().history,
+            self.service.ws.journal(),
             gh=gh,
             push=push,
             head=head,
@@ -1761,7 +1761,7 @@ class Scripted(_Base):
         return machine
 
     async def an_open_pr(self, machine, name):
-        d = self.service._unit_dir(self.ws, name)
+        d = self.service.ws.unit_dir(self.ws, name)
         d.mkdir(parents=True, exist_ok=True)
         out = await machine.open_pr(
             prmachine.Unit(self.key, name, d, self.ws, "fix/x", "fix/x", "fix")
@@ -1840,7 +1840,7 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0002_b", "impl", "autopilot")])
         self.assertEqual(gh.count("pr", "merge"), 0, "a merge made elsewhere is only recorded")
         # No `ship` step follows it, so the reader writes what one did.
-        ships = [(r["unit"], r["result"]) for r in self.service._journal().records(kind="ship")]
+        ships = [(r["unit"], r["result"]) for r in self.service.ws.journal().records(kind="ship")]
         self.assertEqual((ships, cleaned), ([("0001_a", "shipped")], ["0001_a"]))
 
     async def test_a_merge_the_start_up_reconcile_records_leaves_the_ship_row(self):
@@ -1854,7 +1854,7 @@ class Scripted(_Base):
                 "VALUES ('2026-09-29', ?, ?, '0001_a', 1, 'r', ?, 'pass', '[]')",
                 (str(machine.history.working_dir), self.key, test_prmachine.HEAD),
             )
-        d = self.service._unit_dir(self.ws, "0001_a")
+        d = self.service.ws.unit_dir(self.ws, "0001_a")
         with self.assertRaises(test_prmachine.Crash):
             await machine.ship(
                 prmachine.Unit(self.key, "0001_a", d, self.ws, "fix/x", "fix/x", "fix")
@@ -1868,7 +1868,7 @@ class Scripted(_Base):
         self.service._cleanup = cleanup
         got = await self.service.reconcile_prs()
         self.assertEqual([o["result"] for o in got], ["recorded"])
-        ships = [(r["unit"], r["result"]) for r in self.service._journal().records(kind="ship")]
+        ships = [(r["unit"], r["result"]) for r in self.service.ws.journal().records(kind="ship")]
         self.assertEqual(
             (ships, cleaned, gh.count("pr", "merge")), ([("0001_a", "shipped")], ["0001_a"], 1)
         )

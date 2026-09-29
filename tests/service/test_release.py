@@ -243,10 +243,10 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.addCleanup(shared.stop)
         self.service = self.fx.service()
         self.fx.units(self.service)
-        self.key = self.service._journal_key(self.fx.cwd)
+        self.key = self.service.ws.key(self.fx.cwd)
 
     def records(self) -> list[dict]:
-        return self.service._journal().records(self.key, kind="release")
+        return self.service.ws.journal().records(self.key, kind="release")
 
     def block(self) -> dict:
         return asyncio.run(self.service.board(self.fx.cwd))["release"]

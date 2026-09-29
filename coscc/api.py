@@ -72,7 +72,7 @@ def build(config: Config | None = None) -> FastAPI:
 
     @api.get("/api/workspaces")
     async def get_workspaces() -> Any:
-        return service.workspaces()
+        return service.ws.all()
 
     @api.post("/api/workspaces")
     async def add_workspace(request: Request) -> Any:
@@ -85,7 +85,7 @@ def build(config: Config | None = None) -> FastAPI:
         except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         try:
-            return await service.add_workspace(
+            return await service.ws.add(
                 str(body.get("name", "")),
                 label=str(body.get("label", "") or ""),
                 repo_url=(body.get("repo_url") or None),
@@ -100,7 +100,7 @@ def build(config: Config | None = None) -> FastAPI:
         except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         try:
-            return service.set_label(name, str(body.get("label", "") or ""))
+            return service.ws.set_label(name, str(body.get("label", "") or ""))
         except Invalid as e:
             return _bad(str(e))
 
@@ -108,7 +108,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def remove_workspace(name: str) -> Any:
         """Removes the entry. The directory on disk is left alone."""
         try:
-            return service.remove_workspace(name)
+            return service.ws.remove(name)
         except Invalid as e:
             return _bad(str(e))
 
@@ -207,7 +207,7 @@ def build(config: Config | None = None) -> FastAPI:
     @api.post("/api/workspaces/{name}/pull")
     async def pull_workspace(name: str) -> Any:
         try:
-            return await service.pull_workspace(name)
+            return await service.ws.pull(name)
         except Invalid as e:
             return _bad(str(e))
 

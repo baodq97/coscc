@@ -100,8 +100,8 @@ class _Base(unittest.TestCase):
             data_dir=str(self.root / "data"),
         )
         self.service = Service(config, Sessions(config))
-        self.journal = self.service._journal()
-        self.key = self.service._journal_key(self.cwd)
+        self.journal = self.service.ws.journal()
+        self.key = self.service.ws.key(self.cwd)
         self.unit = create_sync(self.service, self.cwd, "a-problem", "words")["unit"]
         self.tree = self.root / "tree"
         self.tree.mkdir()
@@ -331,7 +331,7 @@ class TakingUpAfterAnUpdate(_Base):
 
         cases = {
             "the workspace was taken off the list": lambda: mock.patch.object(
-                self.service, "_is_member", lambda cwd: False
+                self.service.ws, "is_member", lambda cwd: False
             ),
             "an update is being applied": lambda: mock.patch.object(
                 self.service.updater, "window", True
@@ -451,7 +451,7 @@ class TakingUpAfterAnUpdate(_Base):
         async def go():
             async for _ in Runner(sessions, self.journal).run(
                 workspace=self.cwd,
-                directory=self.service._unit_dir(self.cwd, self.unit),
+                directory=self.service.ws.unit_dir(self.cwd, self.unit),
                 journal_key=self.key,
                 unit=self.unit,
                 stage="plan",
@@ -544,7 +544,7 @@ class APausedOwnerEndsNothing(_Base):
             raise Suspended("paused for an update")
 
         self.service.sessions.stream = stream  # type: ignore[method-assign]
-        unit_dir = self.service._unit_dir(self.cwd, self.unit)
+        unit_dir = self.service.ws.unit_dir(self.cwd, self.unit)
         (unit_dir / "intent.md").write_text(
             "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n",
             encoding="utf-8",

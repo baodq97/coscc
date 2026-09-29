@@ -628,7 +628,7 @@ class StudioState(
             return
 
     def _load_workspaces(self) -> None:
-        data = SERVICE.workspaces()
+        data = SERVICE.ws.all()
         self.working_dir = data.get("working_dir") or ""
         rows = data.get("workspaces") or []
         self.workspaces = [

@@ -18,22 +18,8 @@ CHAT_TURNS = 1
 class SessionsMixin:
     # -- sessions -----------------------------------------------------------
 
-    def _is_member(self, cwd: str) -> bool:
-        """The single membership question: env list, or a store entry under the root."""
-        if self.config.is_workspace(cwd):
-            return True
-        return self.store is not None and self.store.resolves_to_entry(cwd)
-
-    def _workspace_or_refuse(self, cwd: str) -> str:
-        """The single gate. Every capability below goes through it."""
-        # Asked on every read, never cached: the entry has to name a segment that
-        # resolves back under the root, so hand-editing the store cannot widen it.
-        if self._is_member(cwd):
-            return cwd
-        raise Invalid(f"not a configured workspace: {cwd}")
-
     def sessions_for(self, cwd: str, limit: int | None = None) -> dict[str, Any]:
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         rows = reader.list_for_directory(cwd, limit=limit)
         for row in rows:
             # Terminal sessions show up here too; this flag says which may be written to.
@@ -41,7 +27,7 @@ class SessionsMixin:
         return {"cwd": cwd, "sessions": rows}
 
     def history(self, cwd: str, session_id: str) -> dict[str, Any]:
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         if not session_id:
             raise Invalid("session_id is required")
         return {
@@ -55,7 +41,7 @@ class SessionsMixin:
         Separate from `stream` because a generator's first item is pulled only after the
         caller has committed to streaming, when the status line is gone.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         self._refuse_while_updating()
         if not text.strip():
             raise Invalid("text is required")
@@ -79,7 +65,7 @@ class SessionsMixin:
         extra: dict[str, Any] = {
             "owner": {
                 "kind": "chat",
-                "workspace": self._journal_key(cwd),
+                "workspace": self.ws.key(cwd),
                 "workspace_dir": cwd,
                 "unit": "",
                 "stage": "",
@@ -105,13 +91,13 @@ class SessionsMixin:
             if item[0] == "done":
                 # One record per turn: the model a *new* client is created with. A client
                 # already live keeps the model it was made with.
-                journal = self._journal()
+                journal = self.ws.journal()
                 if journal is not None:
                     try:
                         journal.append(
                             {
                                 "kind": "chat",
-                                "workspace": self._journal_key(cwd),
+                                "workspace": self.ws.key(cwd),
                                 "unit": "",
                                 "stage": "",
                                 "model": model,

@@ -714,7 +714,6 @@ class _Page:
         for name, value in {
             "settings": counted("settings", {"knobs": [], "grants": []}),
             "preferences": counted("preferences", {}),
-            "workspaces": counted("workspaces", workspaces),
             "stage_models": acounted("stage_models", {"rows": [], "problems": []}),
             "branch_here": acounted("branch_here", {"branch": "main"}),
             "board": acounted("board", self.BOARD),
@@ -732,6 +731,9 @@ class _Page:
             "next_step": mock.AsyncMock(side_effect=page.Invalid("not asked in this test")),
         }.items():
             stack.enter_context(mock.patch.object(page.SERVICE, name, value))
+        stack.enter_context(
+            mock.patch.object(page.SERVICE.ws, "all", counted("workspaces", workspaces))
+        )
         stack.enter_context(mock.patch.object(page.rx, "redirect", redirect))
         stack.enter_context(mock.patch.object(page, "RUNNING_POLL", 0.05))
         return stack

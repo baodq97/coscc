@@ -163,7 +163,7 @@ def _answer_and_stop(args: list[str]) -> None:
 def _state(target: str) -> int:
     """Print the snapshot `cos.mjs --state` reads for workspace `target` (board name or path).
 
-    A store not imported yet is imported first. Workspaces are named as `Service._peer_table`
+    A store not imported yet is imported first. Workspaces are named as `Workspaces.peer_table`
     names them: a shared name, or one `valid_name` refuses, gets none.
     """
     import json
@@ -198,7 +198,7 @@ def _state(target: str) -> int:
 
 
 def _workspace(config, data, target: str) -> tuple[dict[str, str], str | None]:
-    """Every workspace by board name (as `Service._peer_table`), and the key of `target`, or `None` (stderr says so)."""
+    """Every workspace by board name (as `Workspaces.peer_table`), and the key of `target`, or `None` (stderr says so)."""
     from collections import Counter
     from pathlib import Path
 

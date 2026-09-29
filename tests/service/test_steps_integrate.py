@@ -139,7 +139,7 @@ class GeboThroughTheService(unittest.TestCase):
         git(self.workspace, "branch", BRANCH, f"origin/{BRANCH}")
         self.tree = Path(asyncio.run(self.service._worktree(self.cwd, self.unit))["path"])
         self.head_before = self.remote_head()
-        self.key = self.service._journal_key(self.cwd)
+        self.key = self.service.ws.key(self.cwd)
         patch = mock.patch.object(integrate, "_gh", self._gh)
         patch.start()
         self.addCleanup(patch.stop)
@@ -192,7 +192,7 @@ class GeboThroughTheService(unittest.TestCase):
         return asyncio.run(go())
 
     def records(self, kind: str) -> list[dict]:
-        return self.service._journal().records(self.key, kind=kind)
+        return self.service.ws.journal().records(self.key, kind=kind)
 
     def rebase(self, tree: Path) -> None:
         git(tree, "rebase", "origin/main", check=False)
@@ -629,7 +629,7 @@ class AStaleOriginMain(unittest.TestCase):
         self.addCleanup(shared.stop)
         commit(seed, "main\n", "main")
         self.head_before = self.remote_head()
-        self.key = self.service._journal_key(self.cwd)
+        self.key = self.service.ws.key(self.cwd)
         self.updates = 0
         patch = mock.patch.object(integrate, "_gh", self._gh)
         patch.start()
@@ -690,7 +690,7 @@ class AStaleOriginMain(unittest.TestCase):
         return asyncio.run(go())
 
     def records(self, kind: str) -> list[dict]:
-        return self.service._journal().records(self.key, kind=kind)
+        return self.service.ws.journal().records(self.key, kind=kind)
 
     def integration(self) -> dict:
         board = asyncio.run(self.service.board(self.cwd))
@@ -754,7 +754,7 @@ class AStaleOriginMain(unittest.TestCase):
         `origin/main`; the integration is one too, recording its call. Returns the board's row
         before and after, the calls, and the stops the pass left."""
         head = self.remote_head()
-        (self.service._unit_dir(self.cwd, self.unit) / "review.md").write_text(
+        (self.service.ws.unit_dir(self.cwd, self.unit) / "review.md").write_text(
             f"# Review: fixture\nAuthor: t. Status: accepted.\n\n## Round 1\n\nReviewed: {head}. Verdict: pass.\n\n"
             "### Findings\n\n### What was not reviewed\n\nnothing\n",
             encoding="utf-8",
@@ -787,7 +787,7 @@ class AStaleOriginMain(unittest.TestCase):
             self.service.autopilot_stop(self.key)
             self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
             self.service._autopilot_cwd[self.key] = self.cwd
-            self.service._journal().append(
+            self.service.ws.journal().append(
                 {
                     "kind": "shortlist",
                     "workspace": self.key,
@@ -954,7 +954,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.service._ci, {}, "an answer is not held in memory")
         held = prmachine.ci_held(
-            self.service._unit_meta().history, self.service._journal_key(self.cwd), PR, self.head
+            self.service.ws.unit_meta().history, self.service.ws.key(self.cwd), PR, self.head
         )
         self.assertEqual(held["ci"], "red")
         u = await self.read()

@@ -35,7 +35,7 @@ class AutopilotMixin:
         """Run a pass now and every `POLL_SECONDS` after, for as long as the switch is on. A second
         call for a workspace already running does nothing.
         """
-        key = self._journal_key(cwd)
+        key = self.ws.key(cwd)
         self._autopilot_cwd[key] = cwd
         task = self._autopilot_tasks.get(key)
         if task is not None and not task.done():
@@ -62,10 +62,10 @@ class AutopilotMixin:
     def autopilot_resume(self) -> list[str]:
         """At start-up, every workspace whose switch is on starts again. Returns them."""
         started = []
-        for row in self.workspaces()["workspaces"]:
+        for row in self.ws.all()["workspaces"]:
             if row["missing"]:
                 continue
-            if self._autopilot_values(self._journal_key(row["path"]))["autopilot"]:
+            if self._autopilot_values(self.ws.key(row["path"]))["autopilot"]:
                 self.autopilot_start(row["path"])
                 started.append(row["path"])
         return started
@@ -117,9 +117,9 @@ class AutopilotMixin:
 
         def directory_of(unit: str) -> Path:
             try:
-                return self._unit_dir(cwd, unit)
+                return self.ws.unit_dir(cwd, unit)
             except Invalid:
-                return self._units_root(cwd) / unit
+                return self.ws.units_root(cwd) / unit
 
         got = await self._pr_machine().read(str(root), key, directory_of)
         if not got.moved:
@@ -168,7 +168,7 @@ class AutopilotMixin:
     def _autopilot_files(self, cwd: str, unit: str) -> set[str] | None:
         try:
             return autopilot.files_of(
-                (self._unit_dir(cwd, unit) / "plan.md").read_text(encoding="utf-8")
+                (self.ws.unit_dir(cwd, unit) / "plan.md").read_text(encoding="utf-8")
             )
         except Invalid, OSError:
             return None
@@ -219,7 +219,7 @@ class AutopilotMixin:
         else:
             after = {**{u: s for u, s in before.items() if u not in asked}, **found}
         self._autopilot_stops[key] = after
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is None:
             return
         for unit in sorted(set(before) | set(after)):
@@ -257,7 +257,7 @@ class AutopilotMixin:
                 # `COS_HOST` can change after the switch was turned on.
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": refused}})
                 return
-            journal = self._journal()
+            journal = self.ws.journal()
             if journal is None:
                 return
             data = await self.board(cwd)
@@ -611,7 +611,7 @@ class AutopilotMixin:
         }
         if not on:
             return block
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is not None:
             try:
                 block["cap"] = self._autopilot_cap(

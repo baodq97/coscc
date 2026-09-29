@@ -81,19 +81,19 @@ class TheGateWithAStore(unittest.TestCase):
     def test_a_stored_workspace_passes_the_gate(self):
         (self.root / "repo").mkdir()
         s = self._svc()
-        s.store.add("repo", "My repo")
+        s.ws.store.add("repo", "My repo")
         self.assertEqual(s.sessions_for(str(self.root / "repo"))["cwd"], str(self.root / "repo"))
 
     def test_a_hand_edited_entry_pointing_outside_closes_every_path(self):
         s = self._svc()
         # What somebody with `sqlite3` on the command line could type. The name is
         # rejected on read, so the row exists and the workspace does not.
-        with s.store.data.write() as conn:
+        with s.ws.store.data.write() as conn:
             for name in ("/etc", "../../etc"):
                 conn.execute(
                     "INSERT INTO workspaces (root, name, label, added_at) "
                     "VALUES (?, ?, '', '2026-01-01T00:00:00+00:00')",
-                    (str(s.store.working_dir), name),
+                    (str(s.ws.store.working_dir), name),
                 )
         for call in (
             lambda: s.sessions_for("/etc"),
@@ -105,7 +105,7 @@ class TheGateWithAStore(unittest.TestCase):
 
     def test_a_sibling_of_the_working_folder_is_refused(self):
         s = self._svc()
-        s.store.add("repo")
+        s.ws.store.add("repo")
         with self.assertRaises(Invalid):
             s.check_send(str(self.root.parent), "hi")
 
@@ -118,32 +118,32 @@ class TheGateWithAStore(unittest.TestCase):
     def test_removing_a_workspace_closes_the_gate_again(self):
         (self.root / "repo").mkdir()
         s = self._svc()
-        s.store.add("repo")
+        s.ws.store.add("repo")
         s.sessions_for(str(self.root / "repo"))
-        s.store.remove("repo")
+        s.ws.store.remove("repo")
         with self.assertRaises(Invalid):
             s.check_send(str(self.root / "repo"), "hi")
 
     def test_no_working_folder_means_no_store_and_behaviour(self):
         config = Config(workspaces=(REPO,))
         s = Service(config, Sessions(config))
-        self.assertIsNone(s.store)
-        self.assertEqual(s.workspaces()["paths"], [REPO])
+        self.assertIsNone(s.ws.store)
+        self.assertEqual(s.ws.all()["paths"], [REPO])
 
     def test_the_count_is_reported_and_tracks_both_sources(self):
         (self.root / "a").mkdir()
         config = Config(workspaces=(REPO,), working_dir=str(self.root), data_dir=str(self.root))
         s = Service(config, Sessions(config))
-        self.assertEqual(s.workspaces()["count"], 1)
-        s.store.add("a")
-        self.assertEqual(s.workspaces()["count"], 2)
-        s.store.remove("a")
-        self.assertEqual(s.workspaces()["count"], 1)
+        self.assertEqual(s.ws.all()["count"], 1)
+        s.ws.store.add("a")
+        self.assertEqual(s.ws.all()["count"], 2)
+        s.ws.store.remove("a")
+        self.assertEqual(s.ws.all()["count"], 1)
 
     def test_a_missing_directory_is_flagged_not_hidden(self):
         s = self._svc()
-        s.store.add("gone")
-        row = next(r for r in s.workspaces()["workspaces"] if r["name"] == "gone")
+        s.ws.store.add("gone")
+        row = next(r for r in s.ws.all()["workspaces"] if r["name"] == "gone")
         self.assertTrue(row["missing"])
 
 
@@ -159,7 +159,7 @@ class OneMembershipQuestion(unittest.TestCase):
             (root / "repo").mkdir()
             config = Config(workspaces=(), working_dir=str(root), data_dir=str(root))
             s = Service(config, Sessions(config))
-            s.store.add("repo")
+            s.ws.store.add("repo")
             self.assertTrue(s.sessions.membership(str(root / "repo")))
 
     def test_the_session_layer_still_refuses_what_the_gate_refuses(self):
@@ -231,7 +231,7 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
                 data_dir=str(root / "data"),
             )
             service = Service(config, Sessions(config))
-            asyncio.run(service.add_workspace("proj"))
+            asyncio.run(service.ws.add("proj"))
 
             originals = (harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS)
             harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")

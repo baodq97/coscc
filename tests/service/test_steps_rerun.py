@@ -59,10 +59,10 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.unit = asyncio.run(self.service.create_unit(self.cwd, "awaiting-ship", "words"))[
             "unit"
         ]
-        self.dir = self.service._unit_dir(self.cwd, self.unit)
+        self.dir = self.service.ws.unit_dir(self.cwd, self.unit)
         for name, text in ARTIFACTS.items():
             (self.dir / name).write_text(text, encoding="utf-8")
-        self.store = self.service._units_root(self.cwd)
+        self.store = self.service.ws.units_root(self.cwd)
         self.seen: list[dict] = []
         self.items: list[tuple] = []
 
@@ -119,9 +119,9 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
             return SHA
 
         def machine():
-            meta = self.service._unit_meta()
+            meta = self.service.ws.unit_meta()
             return prmachine.Machine(
-                meta.history, self.service._journal(), gh=gh, push=pushed, head=head
+                meta.history, self.service.ws.journal(), gh=gh, push=pushed, head=head
             )
 
         async def on_branch(*a, **k):

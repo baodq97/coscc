@@ -468,8 +468,8 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertEqual((mine[0]["actor"], mine[0]["path"]), ("human:Phong", "intent.md"))
 
     def test_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
-        journal = self.service._journal()
-        key = self.service._journal_key(self.cwd)
+        journal = self.service.ws.journal()
+        key = self.service.ws.key(self.cwd)
         before = len(journal.records(key))
         self.assertEqual(self.board_unit()["outcome_label"]["kind"], "due")
         self.board_unit()

@@ -140,7 +140,7 @@ class ResumeMixin:
         # The pause is over once its rows are taken up, here after a failed hand-off; a new
         # process never had it.
         self.sessions.paused = False
-        journal = self._journal()
+        journal = self.ws.journal()
         said: list[dict[str, Any]] = []
         starts: list[Any] = []
         try:
@@ -222,7 +222,7 @@ class ResumeMixin:
         before the autopilot's, so nothing comes between this and that."""
         cwd, key = str(owner.get("workspace_dir") or ""), str(owner.get("workspace") or "")
         try:
-            self._workspace_or_refuse(cwd)
+            self.ws.check(cwd)
             self._refuse_while_updating()
         except Invalid as e:
             return str(e)
@@ -273,8 +273,8 @@ class ResumeMixin:
         owner = record["owner"]
         key, cwd = str(owner["workspace"]), str(owner["workspace_dir"])
         unit, stage, artifact = str(owner["unit"]), str(owner["stage"]), str(owner["artifact"])
-        journal = self._journal()
-        directory = self._unit_dir(cwd, unit)
+        journal = self.ws.journal()
+        directory = self.ws.unit_dir(cwd, unit)
         mark = self._take(key, unit, "step", stage)
         try:
             running = self.steps.claim(key, unit, stage, started_at=mark.started_at)
@@ -361,7 +361,7 @@ class ResumeMixin:
         key, cwd, unit = str(owner["workspace"]), str(owner["workspace_dir"]), str(owner["unit"])
         mark = self._take(key, unit, "integrate")
         rid = self._mark_running(key, unit, "integrate", "gebo")
-        journal = self._journal()
+        journal = self.ws.journal()
 
         def write(rec: dict[str, Any]) -> dict[str, Any]:
             try:

@@ -142,12 +142,12 @@ class NoticesMixin:
 
     def notice_scope(self, workspace: str) -> str | None:
         """The journal key to narrow to, `None` for every workspace; an unknown workspace or a stream with no run log is refused."""
-        if self._journal() is None:
+        if self.ws.journal() is None:
             raise Invalid("there is no working folder, so there is no run log to follow")
         if not workspace:
             return None
-        self._workspace_or_refuse(workspace)
-        return self._journal_key(workspace)
+        self.ws.check(workspace)
+        return self.ws.key(workspace)
 
     async def follow_notices(
         self,
@@ -163,7 +163,7 @@ class NoticesMixin:
         A record this process appends rings `BELL` and is read at once; one another process
         appends is read at the next wake. The ticket is armed before each read, so a ring
         during the read is not missed."""
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is None:
             raise Invalid("there is no working folder, so there is no run log to follow")
         loop = asyncio.get_running_loop()

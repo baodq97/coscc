@@ -160,7 +160,7 @@ class StepsMixin:
     def _held_ci(self, key: str, unit: str, number: int, head: str) -> dict[str, Any] | None:
         """The row's answer at `head`, else `gh`'s last error there, else `None`."""
         try:
-            held = prmachine.ci_held(self._unit_meta().history, key, number, head)
+            held = prmachine.ci_held(self.ws.unit_meta().history, key, number, head)
         except Exception:
             # A board read never fails on this.
             log.exception("the CI hold of %s could not be read", unit)
@@ -318,24 +318,24 @@ class StepsMixin:
             check_started_by(started_by)
         except ValueError as e:
             raise Invalid(str(e)) from e
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         self._refuse_while_updating()
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is None:
             raise Invalid(
                 "no working folder is set, so an integration cannot be recorded — set COS_WORKING_DIR"
             )
         if not unit:
             raise Invalid("name a work unit")
-        directory = self._unit_dir(cwd, unit)
+        directory = self.ws.unit_dir(cwd, unit)
         try:
-            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+            data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
         found = next((u for u in data["units"] if u["name"] == unit), None)
         if found is None:
             raise Invalid(f"no such work unit in this workspace: {unit}")
-        key = self._journal_key(cwd)
+        key = self.ws.key(cwd)
         root = Path(cwd).expanduser().resolve()
         last = self._last_integrations(journal, key).get(unit)
         info = None
@@ -366,7 +366,9 @@ class StepsMixin:
         pr_head = (info or {}).get("pr_head", "")
         origin_sha = (info or {}).get("origin_sha", "")
         try:
-            branch = units.branch_name(cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
+            branch = units.branch_name(
+                cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit])
+            )
         except CannotCreate, BadUnit:
             branch = ""
         tree_found = None
@@ -679,7 +681,7 @@ class StepsMixin:
             if resume is not None
             else await self._related(root, unit, data, head_before, origin_sha)
         )
-        units_root = self._units_root(cwd)
+        units_root = self.ws.units_root(cwd)
         # The `integrate` row, read once for the prompt, the records and
         # the session's commit attribution.
         agent = self._agent("integrate")
@@ -907,7 +909,7 @@ class StepsMixin:
     async def _cleanup(self, cwd: str, unit: str) -> dict[str, Any]:
         """After a `ship` step. Never raises; says what it did or why not."""
         try:
-            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+            data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
         except Unavailable as e:
             return {"removed": False, "reason": str(e)}
         found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -924,10 +926,10 @@ class StepsMixin:
         without asking `gh` as `next` would, so `ship-refused` can also be a merge whose branch
         deletion failed."""
         try:
-            journal = self._journal()
+            journal = self.ws.journal()
             if journal is None:
                 return
-            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+            data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
             found = next((u for u in data["units"] if u["name"] == unit), None)
             if found is None:
                 return
@@ -968,15 +970,15 @@ class StepsMixin:
         Read with the same store and the same `repo=cwd` that `run_step` hands the gate, so
         the stage offered and the gate that will be asked read one checkout. Nothing here chooses a stage.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         if not unit:
             raise Invalid("name a work unit")
-        self._unit_dir(cwd, unit)
+        self.ws.unit_dir(cwd, unit)
         # Asked first with no `--repo`, which reads files only: a held unit is
         # answered here, before `_worktree` could reopen the tree a drop just removed.
         try:
             held = await board_reader.next_step(
-                self._units_root(cwd), unit, repo=None, state=self._snapshot(cwd, [unit])
+                self.ws.units_root(cwd), unit, repo=None, state=self.ws.snapshot(cwd, [unit])
             )
         except Unavailable as e:
             raise Invalid(str(e)) from e
@@ -1002,7 +1004,7 @@ class StepsMixin:
             repo = cwd
         try:
             found = await board_reader.next_step(
-                self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit])
+                self.ws.units_root(cwd), unit, repo=repo, state=self.ws.snapshot(cwd, [unit])
             )
         except Unavailable as e:
             raise Invalid(str(e)) from e
@@ -1026,13 +1028,13 @@ class StepsMixin:
         then run again after it -- `cos.mjs rerun`'s answer, copied: `{unit, offers: [{stage,
         later}], why}`. Files only: no worktree is opened and no `gh` is asked. Nothing here
         chooses a stage."""
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         if not unit:
             raise Invalid("name a work unit")
-        self._unit_dir(cwd, unit)
+        self.ws.unit_dir(cwd, unit)
         try:
             found = await board_reader.rerun(
-                self._units_root(cwd), unit, state=self._snapshot(cwd, [unit])
+                self.ws.units_root(cwd), unit, state=self.ws.snapshot(cwd, [unit])
             )
         except Unavailable as e:
             raise Invalid(str(e)) from e
@@ -1042,15 +1044,15 @@ class StepsMixin:
 
     async def set_mode(self, cwd: str, unit: str, stage: str, mode: str) -> dict[str, Any]:
         """Choose how one step runs. Validated against the board, not against a second list."""
-        self._workspace_or_refuse(cwd)
-        journal = self._journal()
+        self.ws.check(cwd)
+        journal = self.ws.journal()
         if journal is None:
             raise Invalid(
                 "no working folder is set, so a mode cannot be recorded — set COS_WORKING_DIR"
             )
 
         try:
-            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+            data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
 
@@ -1061,7 +1063,7 @@ class StepsMixin:
             raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
 
         try:
-            journal.set_mode(self._journal_key(cwd), unit, stage, mode)
+            journal.set_mode(self.ws.key(cwd), unit, stage, mode)
         except BadRecord as e:
             raise Invalid(str(e)) from e
         except Busy as e:
@@ -1095,9 +1097,9 @@ class StepsMixin:
             check_started_by(started_by)
         except ValueError as e:
             raise Invalid(str(e)) from e
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         self._refuse_while_updating()
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is None:
             raise Invalid(
                 "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR"
@@ -1108,14 +1110,14 @@ class StepsMixin:
         # the gate or fetches. Until the step is handed to `_drive` the mark is this frame's
         # to return, on every road out: a refusal, an exception, or a cancel when the client
         # goes away.
-        key = self._journal_key(cwd)
+        key = self.ws.key(cwd)
         mark = self._take(key, unit, "step", stage)
         handed = False
         running: steps_mod.Running | None = None
         rid: str | None = None
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+                data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
 
@@ -1148,7 +1150,7 @@ class StepsMixin:
                     )
                 try:
                     asked = await board_reader.rerun(
-                        self._units_root(cwd), unit, stage, state=self._snapshot(cwd, [unit])
+                        self.ws.units_root(cwd), unit, stage, state=self.ws.snapshot(cwd, [unit])
                     )
                 except Unavailable as e:
                     raise Invalid(str(e)) from e
@@ -1198,7 +1200,11 @@ class StepsMixin:
                 # `work` is the checkout the `review` and `ship` gates read git and the pull
                 # request from. The store has no git to read.
                 answer = await board_reader.gate(
-                    self._units_root(cwd), unit, stage, repo=work, state=self._snapshot(cwd, [unit])
+                    self.ws.units_root(cwd),
+                    unit,
+                    stage,
+                    repo=work,
+                    state=self.ws.snapshot(cwd, [unit]),
                 )
             except Unavailable as e:
                 raise Invalid(str(e)) from e
@@ -1216,7 +1222,7 @@ class StepsMixin:
             if stage in prmachine.STAGES:
                 if rerun:
                     await self._append_to_answers(
-                        self._unit_dir(cwd, unit) / "intent.md", "\n" + rerun_block, "a rerun"
+                        self.ws.unit_dir(cwd, unit) / "intent.md", "\n" + rerun_block, "a rerun"
                     )
                 yield (
                     "done",
@@ -1252,7 +1258,7 @@ class StepsMixin:
             if stage == "review" and tree is not None:
                 screens_note = await self._retake_screens(cwd, key, journal, unit, work, started_by)
 
-            directory = self._unit_dir(cwd, unit)
+            directory = self.ws.unit_dir(cwd, unit)
             mode = journal.modes(key).get((unit, stage), "manual")
             # The rounds `review.md` held before this step, so that the ones it adds
             # can be told apart afterwards. Taken from the board already read above.
@@ -1379,7 +1385,7 @@ class StepsMixin:
             # every other step is handed no key.
             link_kw: dict[str, Any] = {}
             # The answers and holds the prompt renders, from the database.
-            link_kw["meta"] = self._meta_of(cwd, unit)
+            link_kw["meta"] = self.ws.meta_of(cwd, unit)
             state_file = self._write_step_state(cwd, unit)
             if state_file:
                 link_kw["state_file"] = state_file
@@ -1532,7 +1538,7 @@ class StepsMixin:
         `.screens/` is, by `retake.take`."""
         try:
             asked = await board_reader.screens(
-                self._units_root(cwd), unit, work, state=self._snapshot(cwd, [unit])
+                self.ws.units_root(cwd), unit, work, state=self.ws.snapshot(cwd, [unit])
             )
         except Unavailable as e:
             raise Invalid(str(e)) from e
@@ -1743,9 +1749,9 @@ class StepsMixin:
 
     def _pr_machine(self) -> prmachine.Machine:
         """The PR machine over the same history and run log as every other transition."""
-        meta = self._unit_meta()
+        meta = self.ws.unit_meta()
         return prmachine.Machine(
-            meta.history, self._journal() or Journal(meta.root, self.config.data_dir)
+            meta.history, self.ws.journal() or Journal(meta.root, self.config.data_dir)
         )
 
     async def _mechanical(
@@ -1770,7 +1776,7 @@ class StepsMixin:
         work = Path(tree["path"])
         try:
             expected = await asyncio.to_thread(
-                units.branch_name, cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit])
+                units.branch_name, cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit])
             )
             branch = await gitops.current_branch(work)
         except (CannotCreate, BadUnit, GitError) as e:
@@ -1778,7 +1784,7 @@ class StepsMixin:
         u = prmachine.Unit(
             key,
             unit,
-            self._unit_dir(cwd, unit),
+            self.ws.unit_dir(cwd, unit),
             str(work),
             branch,
             expected,
@@ -1827,7 +1833,7 @@ class StepsMixin:
         # did, and one that did its work lifts that stop. `merge_refused` is a merge GitHub
         # refused after the machine requested it.
         try:
-            self._journal().append(
+            self.ws.journal().append(
                 {
                     "kind": autopilot.PR_MACHINE,
                     "workspace": key,
@@ -1849,7 +1855,7 @@ class StepsMixin:
         """The `ship` row notices read, and after a merge the cleanup. From `_mechanical`, and from the PR reader and the start-up reconcile
         when they record a merge no `ship` step follows any more. Never raises; the cleanup's answer after a merge, else `None`."""
         try:
-            self._journal().append(
+            self.ws.journal().append(
                 {"kind": "ship", "workspace": key, "unit": unit, "stage": "ship", "result": result}
             )
         except BadRecord, Busy, AttributeError:
@@ -1880,7 +1886,7 @@ class StepsMixin:
                     prmachine.Unit(
                         ws,
                         unit,
-                        self._unit_dir(ws, unit),
+                        self.ws.unit_dir(ws, unit),
                         str(tree if tree.is_dir() else ws),
                         "",
                         "",
@@ -1909,9 +1915,9 @@ class StepsMixin:
         all when the cancel lands before the step's first turn (`_never_driven`). It opens
         and closes no gate, and starts nothing.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         name = (by or "").strip() or OWNER
-        return await self._stop_running(self._journal_key(cwd), unit, name)
+        return await self._stop_running(self.ws.key(cwd), unit, name)
 
     async def _stop_running(self, key: str, unit: str, by: str) -> dict[str, Any]:
         """The Stop itself: an `end` record with `stopped` and `stopped_by`, or none for a
@@ -1936,8 +1942,8 @@ class StepsMixin:
         Also every integration, from its `_running` entry to the `finally` that
         pops it, with `kind: "integration"` and no `run`; a step is `kind: "step"`. A restart
         that asks this sees an integration it would cut."""
-        self._workspace_or_refuse(cwd)
-        key = self._journal_key(cwd)
+        self.ws.check(cwd)
+        key = self.ws.key(cwd)
         rows = [{**r, "kind": "step"} for r in self.steps.listing(key)]
         rows += [
             {

@@ -76,10 +76,10 @@ class Place1(unittest.TestCase):
         repo = str(self.repo)
         opened, _ = asyncio.run(
             board_reader.gate(
-                self.service._units_root(repo),
+                self.service.ws.units_root(repo),
                 self.unit,
                 "plan",
-                state=self.service._snapshot(repo, [self.unit]),
+                state=self.service.ws.snapshot(repo, [self.unit]),
             )
         )
         return opened
@@ -125,9 +125,9 @@ class Place1(unittest.TestCase):
         repo = str(self.repo)
         said = asyncio.run(
             board_reader.next_step(
-                self.service._units_root(repo),
+                self.service.ws.units_root(repo),
                 self.unit,
-                state=self.service._snapshot(repo, [self.unit]),
+                state=self.service.ws.snapshot(repo, [self.unit]),
             )
         )
         self.assertEqual(said["stage"], "spike")
@@ -228,11 +228,11 @@ class _Review(unittest.TestCase):
     def _status(self) -> dict:
         """The unit as `cos.mjs status --json` reads it from the app's snapshot."""
         repo = str(self.repo)
-        source, stdin = board_reader._source(self.service._snapshot(repo, [self.unit]))
+        source, stdin = board_reader._source(self.service.ws.snapshot(repo, [self.unit]))
         argv = [
             str(harness.script()),
             "--root",
-            str(self.service._units_root(repo)),
+            str(self.service.ws.units_root(repo)),
             *source,
             "status",
             "--json",
@@ -419,7 +419,7 @@ class _Asked(unittest.TestCase):
         from coscc.runlog.journal import Journal
 
         journal = Journal(Path(self.config.working_dir), Path(self.config.data_dir))
-        key = self.service._journal_key(str(self.repo))
+        key = self.service.ws.key(str(self.repo))
         return [r for r in journal.records(key, unit, kind="end") if r.get("stage") == stage][-1]
 
 
@@ -442,7 +442,7 @@ class Place5(_Asked):
         from coscc.runlog.journal import Journal
 
         journal = Journal(Path(self.config.working_dir), Path(self.config.data_dir))
-        return journal.records(self.service._journal_key(str(self.repo)), kind="estimate-value")
+        return journal.records(self.service.ws.key(str(self.repo)), kind="estimate-value")
 
     def _one(self, value: int) -> dict:
         return {

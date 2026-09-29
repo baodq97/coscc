@@ -345,8 +345,8 @@ class MatchesTheRunsTable(unittest.TestCase):
         time.tzset()
 
     def _write(self):
-        j = self.service._journal()
-        key = self.service._journal_key(REPO)
+        j = self.service.ws.journal()
+        key = self.service.ws.key(REPO)
         steps = [
             ("0001_a", "spec", "done", "2026-09-23T03:00:00+00:00", {"cost_usd": 1.234567}),
             ("0001_a", "plan", "done", "2026-09-24T16:59:59+00:00", {"cost_usd": 0.004561}),

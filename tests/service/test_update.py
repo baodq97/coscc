@@ -97,7 +97,7 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         s.sessions.suspend_all = suspend_all  # type: ignore[method-assign]
         written = await s.suspend_sessions("an")
         self.assertEqual(len(written), 1)
-        rows = s._journal().unresumed()
+        rows = s.ws.journal().unresumed()
         self.assertEqual(
             [(r["unit"], r["stage"], r["by"], r["session_id"], r["safe_uuid"]) for r in rows],
             [("0001_a", "impl", "an", "sid", "u1")],

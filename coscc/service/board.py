@@ -9,8 +9,6 @@ import json
 import logging
 import sqlite3
 import uuid
-from collections import Counter
-from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -23,16 +21,13 @@ from coscc.github import integrate
 from coscc.units.board import Unavailable
 from coscc.data import Data, now as _now
 from coscc.git.gitops import GitError
-from coscc.runlog.journal import BadRecord, Journal, last_runs, timelines_of, totals_of
+from coscc.runlog.journal import last_runs, timelines_of, totals_of
 from coscc.data import Busy
-from coscc.units.history import BadTransition
-from coscc.units.meta import MetaError, UnitMeta
 from coscc.agent.policy import grant_for
 from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit
-from coscc.service.store import valid_name
 from coscc.service.common import (
     CONSEQUENCE,
     Invalid,
@@ -95,18 +90,6 @@ def answerable(unit: dict[str, Any]) -> bool:
 class BoardMixin:
     # -- board --------------------------------------------------------------
 
-    def _journal(self) -> Journal | None:
-        """The run log, or `None` when there is no working folder to keep it in.
-
-        Unset `COS_WORKING_DIR` means the board is read-only: there is nowhere to record a mode,
-        so every step reads `manual` and nothing can be started. That is the safe way to fail.
-        """
-        return (
-            Journal(self.config.working_dir, self.config.data_dir)
-            if self.config.working_dir
-            else None
-        )
-
     # Check-and-mark with no `await` in any of these, so nothing on the event loop
     # can come between the look and the write.
     def _busy(self, key: str, unit: str) -> str:
@@ -127,16 +110,6 @@ class BoardMixin:
         if self._active.get((key, unit)) is mark:
             del self._active[(key, unit)]
 
-    @staticmethod
-    def _journal_key(cwd: str) -> str:
-        """How a workspace is named in the journal.
-
-        The resolved path, not a store name: an env-declared workspace has no name at all
-        (`config.is_workspace`), and a path is the one identifier both kinds have. The
-        cost is that moving a workspace detaches its history from it.
-        """
-        return str(Path(cwd).expanduser().resolve())
-
     def _app_identity(self) -> dict[str, str]:
         """The running build's version and commit, for a step's `start` row.
 
@@ -151,83 +124,6 @@ class BoardMixin:
             log.exception("the version of the app could not be read")
             return {"version": "", "commit": ""}
 
-    def _units_root(self, cwd: str) -> Path:
-        """Where this workspace's units live. One question, asked of one module.
-
-        `coscc/units/__init__.py` owns the answer; this is the only place in the service that asks.
-        """
-        return units.root(cwd, self.config.data_dir)
-
-    def _peer_table(self) -> tuple[list[tuple[str, str]], list[str]]:
-        """Every workspace as `(name, path)`, and what was left out and why.
-
-        A name two workspaces share is given for neither: a reference to it could mean
-        either store. A name `valid_name` refuses (an env workspace's basename can be one)
-        could not be a reference at all.
-        """
-        rows = self.workspaces()["workspaces"]
-        count = Counter(str(r["name"]) for r in rows)
-        peers: list[tuple[str, str]] = []
-        problems: list[str] = []
-        for name, n in count.items():
-            if n > 1:
-                problems.append(
-                    f"Two workspaces are named {name}, so neither is linked by that name."
-                )
-        for r in rows:
-            name = str(r["name"])
-            if count[name] == 1 and valid_name(name):
-                peers.append((name, str(r["path"])))
-        return peers, problems
-
-    def _peers(self) -> list[tuple[str, Path]]:
-        """Every named workspace as `(name, store root)`, the stores an `Idea:` may name."""
-        return [(name, self._units_root(path)) for name, path in self._peer_table()[0]]
-
-    def _snapshot(
-        self,
-        cwd: str,
-        units_: Iterable[str] | None = None,
-        peers: list[tuple[str, str]] | None = None,
-    ) -> dict[str, Any]:
-        """What `cos.mjs --state` decides on: `cwd`'s units and those of every workspace a link
-        may name, from `cos.db`; `units_` narrows it as `UnitMeta.snapshot` says. A store not
-        imported yet is imported first.
-
-        Raises `Invalid` when an import cannot run: a board read on metadata nobody could
-        read would show every unit as not started. So also when `cos.db` cannot be read, in one
-        sentence that names the workspace; the error, which may name the database's path, goes
-        to the log. `peers` is `_peer_table`'s, when the caller read it already.
-        """
-        meta = self._unit_meta()
-        own = self._journal_key(cwd)
-        names = {
-            name: self._journal_key(path)
-            for name, path in (self._peer_table()[0] if peers is None else peers)
-        }
-        try:
-            for key in {own, *names.values()} - self._imported:
-                # A workspace with no units yet has nothing to import: one `stat`, not a query.
-                if not (units.root(key, self.config.data_dir) / units.COS_DIR).is_dir():
-                    continue
-                if meta.imported(key):
-                    # The answers imported before a row said whose each was.
-                    meta.classify_answers(key)
-                    self._imported.add(key)
-                else:
-                    self._import(meta, key)
-            return meta.snapshot(own, names, units_)
-        except (Busy, sqlite3.Error, OSError) as e:
-            log.warning("the units of %s could not be read: %s", own, e)
-            raise Invalid(
-                f"the units of {self._workspace_name(own) or 'a workspace'} could not be read"
-            ) from e
-
-    def _meta_of(self, cwd: str, unit: str) -> dict[str, Any]:
-        """`unit`'s entry in the snapshot, `{}` when the app has none."""
-        snap = self._snapshot(cwd, [unit])
-        return snap["units"].get(f"{snap['workspace']}/{unit}") or {}
-
     def _write_step_state(self, cwd: str, unit: str) -> str:
         """The snapshot a step that runs `cos.mjs` itself hands `--state` — the `pr`
         step's `pr-text`, the `ship` step's gate — which refuse to decide without one. Written
@@ -238,48 +134,19 @@ class BoardMixin:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
-                json.dumps(self._snapshot(cwd, [unit]), ensure_ascii=False), encoding="utf-8"
+                json.dumps(self.ws.snapshot(cwd, [unit]), ensure_ascii=False), encoding="utf-8"
             )
         except OSError, Invalid:
             return ""
         return str(path)
-
-    def _import(self, meta: UnitMeta, key: str) -> None:
-        """One store into `cos.db`, once; what it could not read, if anything, goes to
-        the log and to one `import` row of the run log. A store with no `.cos/` yet is left
-        for later."""
-        store = units.root(key, self.config.data_dir)
-        if not (store / units.COS_DIR).is_dir():
-            return
-        try:
-            unknowns = meta.import_store(key, store)
-        except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
-            # The workspace by name and the error in the log: `key` is a path, and `Busy` and
-            # `MetaError` carry the database's path or `cos.mjs`'s stderr.
-            log.warning("the units of %s could not be imported: %s", key, e)
-            name = self._workspace_name(key) or "a workspace"
-            raise Invalid(f"the units of {name} could not be imported") from e
-        # Only when there is something to report, so a store read cleanly adds no row.
-        if not unknowns:
-            return
-        for u in unknowns:
-            log.warning(
-                "import %s: %s %s %s: %s", key, u["unit"], u["artifact"], u["field"], u["reason"]
-            )
-        journal = self._journal()
-        if journal is not None:
-            try:
-                journal.append({"kind": "import", "workspace": key, "unknowns": unknowns})
-            except BadRecord, Busy:
-                pass
 
     async def _import_rounds(self, cwd: str, units_: list[dict[str, Any]]) -> None:
         """The review rounds only the prose of a store holds, into `cos.db`, on the
         first board read that finds the store unimported (`coscc/units/prose_import.py`). The
         board this read shows is the same either way. One that cannot write goes to the log and
         is tried on the next read."""
-        meta = self._unit_meta()
-        key = self._journal_key(cwd)
+        meta = self.ws.unit_meta()
+        key = self.ws.key(cwd)
         try:
             if meta.data.has_run(prose_import.key(meta.root, key)):
                 return
@@ -299,20 +166,6 @@ class BoardMixin:
         except (Busy, sqlite3.Error, OSError) as e:
             log.warning("the review rounds of %s could not be imported: %s", key, e)
 
-    def _workspace_name(self, cwd: str) -> str:
-        """The name the app shows for `cwd`, or "" when it is not one of the workspaces."""
-        here = Path(cwd).expanduser().resolve()
-        for r in self.workspaces()["workspaces"]:
-            if Path(r["path"]).expanduser().resolve() == here:
-                return str(r["name"])
-        return ""
-
-    def _unit_dir(self, cwd: str, unit: str) -> Path:
-        try:
-            return units.unit_dir(cwd, unit, self.config.data_dir)
-        except BadUnit as e:
-            raise Invalid(str(e)) from e
-
     async def board(self, cwd: str) -> dict[str, Any]:
         """Every unit in this workspace, each with its eight stages, modes and cost.
 
@@ -320,11 +173,11 @@ class BoardMixin:
         and they are joined here rather than stored together. Storing them together is how
         a board starts disagreeing with the files it claims to describe.
         """
-        self._workspace_or_refuse(cwd)
-        peers, peer_problems = self._peer_table()
+        self.ws.check(cwd)
+        peers, peer_problems = self.ws.peer_table()
         try:
             data = await board_reader.read(
-                self._units_root(cwd), state=self._snapshot(cwd, peers=peers)
+                self.ws.units_root(cwd), state=self.ws.snapshot(cwd, peers=peers)
             )
         except Unavailable as e:
             raise Invalid(str(e)) from e
@@ -345,7 +198,7 @@ class BoardMixin:
                     "meaning": row["meaning"],
                     "role": row["role"],
                 }
-        name = self._workspace_name(cwd)
+        name = self.ws.name(cwd)
         for unit in data["units"]:
             if unit.get("repo") and name and unit["repo"] != name:
                 unit["problems"] = [
@@ -354,8 +207,8 @@ class BoardMixin:
                 ]
             unit["waits_for"] = waits_for(unit)
 
-        journal = self._journal()
-        key = self._journal_key(cwd)
+        journal = self.ws.journal()
+        key = self.ws.key(cwd)
         modes: dict[tuple[str, str], str] = {}
         timelines: dict[str, list[dict[str, Any]]] = {}
         comments: list[dict[str, Any]] = []
@@ -451,7 +304,7 @@ class BoardMixin:
             # the page can say which directory it read and how many units sit in the other.
             # Counted on every call, never cached.
             data["empty"] = {
-                "store": str(self._units_root(cwd)),
+                "store": str(self.ws.units_root(cwd)),
                 "host": units.key(cwd),
                 "host_units": units.host_unit_count(cwd),
             }
@@ -531,13 +384,13 @@ class BoardMixin:
         writes nothing. A busy run log is a `note`, not a refusal — the board asks this
         every few seconds, and a lock someone else holds must not break the board.
         """
-        self._workspace_or_refuse(cwd)
-        key = self._journal_key(cwd)
+        self.ws.check(cwd)
+        key = self.ws.key(cwd)
         # Through the one lookup, so an override shows here too. Read once per call.
         overrides = self._agent_overrides()[0]
         running = self._running_here(key, overrides)
         out: dict[str, Any] = {"running": running, "unknown_end": {}}
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is None:
             return out
         try:

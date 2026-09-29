@@ -233,7 +233,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
             str(self.repo),
             unit,
             str(self.root / "data"),
-            self.service._snapshot(str(self.repo), [unit]),
+            self.service.ws.snapshot(str(self.repo), [unit]),
         )
         subprocess.run(
             ["git", "-C", str(tree), "switch", "--no-track", "-c", branch],
@@ -325,8 +325,8 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         return self.service.sessions.prompts[-1], self._start(unit, "impl")
 
     def _start(self, unit: str, stage: str) -> dict:
-        records = self.service._journal().records(
-            self.service._journal_key(str(self.repo)), unit, kind="start"
+        records = self.service.ws.journal().records(
+            self.service.ws.key(str(self.repo)), unit, kind="start"
         )
         return [r for r in records if r["stage"] == stage][-1]
 
@@ -485,7 +485,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
             _, payload = asyncio.run(go())[-1]
         self.assertEqual(payload["outcome"], "done")
         self.assertEqual(payload["ingest_error"], "its files could not be read")
-        with self.service._unit_meta().data.connect() as conn:
+        with self.service.ws.unit_meta().data.connect() as conn:
             [row] = conn.execute(
                 "SELECT unit, field, reason FROM unit_unknowns WHERE field = 'ingest'"
             ).fetchall()
@@ -569,7 +569,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         (Path(self.made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
-        self.key = self.service._journal_key(str(self.repo))
+        self.key = self.service.ws.key(str(self.repo))
 
     def _run(self, stage: str = "spec") -> list:
         async def go():
@@ -783,7 +783,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         return agen
 
     def _ends(self, unit):
-        journal = self.service._journal()
+        journal = self.service.ws.journal()
         return [r for r in journal.records() if r["kind"] == "end" and r["unit"] == unit]
 
     def test_a_reader_that_leaves_does_not_take_the_step_with_it(self):
@@ -792,7 +792,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         async def go():
             agen = await self._first_chunk(a)
             await agen.aclose()  # the NDJSON client went away
-            running = self.service.steps.get(self.service._journal_key(self.ws), a["unit"])
+            running = self.service.steps.get(self.service.ws.key(self.ws), a["unit"])
             self.assertIsNotNone(running)
             self._release(a)
             await running.task
@@ -829,7 +829,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
             said = await self.service.stop_step(self.ws, a["unit"], "Lan")
             self.assertEqual(said, {"unit": a["unit"], "stage": "spec", "stopped_by": "Lan"})
             # A second press is the same stop.
-            running = self.service.steps.get(self.service._journal_key(self.ws), a["unit"])
+            running = self.service.steps.get(self.service.ws.key(self.ws), a["unit"])
             if running is not None:
                 await self.service.stop_step(self.ws, a["unit"], "Minh")
             rest = [i async for i in agen]
@@ -982,8 +982,8 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
             self.assertNotIn("CANARY-0019-EXCERPT", json.dumps(payload))
         # And the attempt record itself does carry it — otherwise this test would pass
         # for the wrong reason.
-        [attempt] = self.service._journal().records(
-            self.service._journal_key(str(self.repo)), unit, kind="attempt"
+        [attempt] = self.service.ws.journal().records(
+            self.service.ws.key(str(self.repo)), unit, kind="attempt"
         )
         self.assertEqual(attempt["excerpt"], "CANARY-0019-EXCERPT")
 
@@ -1147,8 +1147,8 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
             return asyncio.run(go())
 
     def _starts(self):
-        journal = self.service._journal()
-        return journal.records(self.service._journal_key(str(self.repo)), kind="start")
+        journal = self.service.ws.journal()
+        return journal.records(self.service.ws.key(str(self.repo)), kind="start")
 
     def test_a_plan_naming_the_security_surface_runs_as_novel(self):
         (self.dir / "plan.md").write_text(
@@ -1285,8 +1285,8 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
             return asyncio.run(go())
 
     def _starts(self):
-        journal = self.service._journal()
-        return journal.records(self.service._journal_key(str(self.repo)), kind="start")
+        journal = self.service.ws.journal()
+        return journal.records(self.service.ws.key(str(self.repo)), kind="start")
 
     def _prefs(self):
         from coscc.agent import models
@@ -1587,7 +1587,7 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
         service = self._service(self.RunsOut())
         out = self._run(service)
         self.assertEqual(out[-1][1]["outcome"], "exhausted", out[-1])
-        written = Path(service._unit_dir(str(self.repo), self.unit)) / "spike.md"
+        written = Path(service.ws.unit_dir(str(self.repo), self.unit)) / "spike.md"
         self.assertEqual(written.read_text(encoding="utf-8"), self.RunsOut.PROGRESS)
         self.assertFalse(self.scratch.exists())
 
@@ -1659,7 +1659,9 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
         self.assertEqual(out[-1][1]["outcome"], "done", out[-1])
         self.assertEqual(probe.seen, [(str(self.scratch), [], str(self.repo))])
         self.assertFalse(self.scratch.exists())
-        self.assertTrue((Path(service._unit_dir(str(self.repo), self.unit)) / "spike.md").exists())
+        self.assertTrue(
+            (Path(service.ws.unit_dir(str(self.repo), self.unit)) / "spike.md").exists()
+        )
 
     def test_the_scratch_is_gone_when_the_session_fails(self):
         probe = self.Probe(fail=True)
@@ -1790,7 +1792,9 @@ class APrStepIsMechanical(unittest.TestCase):
         )
         self.assertEqual(gh.of("create"), [])
         self.assertTrue(self._pushed())
-        text = (self.service._unit_dir(str(self.repo), unit) / "pr.md").read_text(encoding="utf-8")
+        text = (self.service.ws.unit_dir(str(self.repo), unit) / "pr.md").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("# PR: fix(0001): a problem", text)
         self.assertEqual(done["pr_sync"]["existed"], True)
 
@@ -1810,9 +1814,9 @@ class APrStepIsMechanical(unittest.TestCase):
         self.assertEqual(done["outcome"], "failed")
         self.assertIn("error connecting", done["error"])
         self.assertEqual(gh.of("create"), [])
-        history = self.service._unit_meta().history
+        history = self.service.ws.unit_meta().history
         self.assertEqual(
-            history.transitions(self.service._journal_key(str(self.repo)), unit, "pr.md"), []
+            history.transitions(self.service.ws.key(str(self.repo)), unit, "pr.md"), []
         )
 
 
@@ -1919,7 +1923,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
         unit = self._typed_unit()
         self._git("branch", "fix/a-problem")
-        directory = self.service._unit_dir(str(self.repo), unit)
+        directory = self.service.ws.unit_dir(str(self.repo), unit)
         if prepare:
             prepare(directory)
         replies = self.Replies(text, hold)
@@ -1958,8 +1962,8 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             mock.patch("coscc.git.gh.run", gh),
         ):
             out = asyncio.run(go())
-        rows = self.service._journal().records(
-            self.service._journal_key(str(self.repo)), unit, kind="pr-sync"
+        rows = self.service.ws.journal().records(
+            self.service.ws.key(str(self.repo)), unit, kind="pr-sync"
         )
         return out[-1][1], rows, directory
 
@@ -2144,8 +2148,8 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             self._run(None, gh, stage="ship", prepare=self._pr_md(self.ACCEPTED), gate=closed)
         self.assertIn("carries the title", str(refused.exception))
         self.assertEqual(asked, ["ship"])
-        [row] = self.service._journal().records(
-            self.service._journal_key(str(self.repo)), kind="pr-sync"
+        [row] = self.service.ws.journal().records(
+            self.service.ws.key(str(self.repo)), kind="pr-sync"
         )
         self.assertEqual(
             (row["stage"], row["outcome"], row["detail"]),
@@ -2453,7 +2457,7 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         class Machine:
             """`pr` and `ship` end through the PR machine, not a runner."""
 
-            history = service._unit_meta().history
+            history = service.ws.unit_meta().history
 
             async def open_pr(self, u, again=False):
                 return prmachine.Outcome(
@@ -2513,16 +2517,16 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
             with self.subTest(stage=stage, outcome=outcome):
                 service = self.service()
                 # Each subtest makes a new unit over the same data root, so only its own rows count.
-                before = len(service._journal().records(kind=autopilot.PR_MACHINE))
+                before = len(service.ws.journal().records(kind=autopilot.PR_MACHINE))
                 self.drive(service, stage, outcome)
-                [rec] = service._journal().records(kind=autopilot.PR_MACHINE)[before:]
+                [rec] = service.ws.journal().records(kind=autopilot.PR_MACHINE)[before:]
                 self.assertEqual(
                     (rec["unit"], rec["stage"], rec["outcome"], rec["started_by"]),
                     (self.unit, stage, outcome, "person"),
                 )
                 self.assertEqual(rec["detail"], "" if outcome == "done" else "gh down")
                 self.assertFalse(rec["merge_refused"])
-                self.assertEqual(service._journal().records(kind="end"), [])
+                self.assertEqual(service.ws.journal().records(kind="end"), [])
 
     def test_a_merge_github_refused_after_the_machine_requested_it_says_so(self):
         """The autopilot stops `f` on it, not `e`."""
@@ -2531,11 +2535,11 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         service = self.service()
         with mock.patch.object(prmachine, "state", lambda *a: {"state": "merge-requested"}):
             self.drive(service, "ship", "failed")
-        [rec] = service._journal().records(kind=autopilot.PR_MACHINE)
+        [rec] = service.ws.journal().records(kind=autopilot.PR_MACHINE)
         self.assertEqual(
             (rec["outcome"], rec["merge_refused"], rec["detail"]), ("failed", True, "gh down")
         )
-        [ship] = service._journal().records(kind="ship")
+        [ship] = service.ws.journal().records(kind="ship")
         self.assertEqual(ship["result"], "refused")
 
 
@@ -2562,10 +2566,10 @@ class _AReviewStep:
         self.taken: list[list[str]] = []
 
     def screens_records(self) -> list[dict]:
-        journal = self.service._journal()
+        journal = self.service.ws.journal()
         return [
             r
-            for r in journal.records(self.service._journal_key(str(self.repo)))
+            for r in journal.records(self.service.ws.key(str(self.repo)))
             if r.get("kind") == "screens"
         ]
 
@@ -2727,7 +2731,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                     self.service._retake_screens(
                         str(self.repo),
                         "k",
-                        self.service._journal(),
+                        self.service.ws.journal(),
                         self.unit,
                         str(self.repo),
                         "person",
@@ -2756,7 +2760,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                     self.service._retake_screens(
                         str(self.repo),
                         "k",
-                        self.service._journal(),
+                        self.service.ws.journal(),
                         self.unit,
                         str(self.repo),
                         "person",
@@ -2826,7 +2830,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                 self.service._retake_screens(
                     str(self.repo),
                     "k",
-                    self.service._journal(),
+                    self.service.ws.journal(),
                     self.unit,
                     str(self.repo),
                     "person",
@@ -2864,7 +2868,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                         self.service._retake_screens(
                             str(self.repo),
                             "k",
-                            self.service._journal(),
+                            self.service.ws.journal(),
                             self.unit,
                             str(self.repo),
                             "person",
@@ -2897,7 +2901,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             }
 
         async def go():
-            journal = self.service._journal()
+            journal = self.service.ws.journal()
             await asyncio.gather(
                 *(
                     self.service._retake_screens(
@@ -2915,8 +2919,8 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         self.assertEqual(most[0], 1)
 
     def test_activity_shows_no_screens_record(self):
-        journal = self.service._journal()
-        key = self.service._journal_key(str(self.repo))
+        journal = self.service.ws.journal()
+        key = self.service.ws.key(str(self.repo))
         journal.append(
             {
                 "kind": "screens",

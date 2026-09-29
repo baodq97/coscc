@@ -116,7 +116,7 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
         self.assertEqual(self.service._running, {})
 
     def test_a_step_refused_as_busy_leaves_none_and_keeps_the_other(self):
-        key = self.service._journal_key(str(self.repo))
+        key = self.service.ws.key(str(self.repo))
         self.service._take(key, self.unit, "step", "spec")
         self.service._running["other"] = {"workspace": key, "unit": self.unit}
         with self.assertRaises(Invalid) as caught:
@@ -143,8 +143,8 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
         )
         self.service = Service(config, Sessions(config))
         self.cwd = str(self.repo)
-        self.key = self.service._journal_key(self.cwd)
-        self.journal = self.service._journal()
+        self.key = self.service.ws.key(self.cwd)
+        self.journal = self.service.ws.journal()
 
     def test_an_entry_and_its_own_start_show_only_as_running(self):
         self.service._mark_running(self.key, "0009_x", "impl", "step")
@@ -209,7 +209,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
         self.assertEqual(self.service.running(self.cwd)["unknown_end"], {})
 
     def test_two_workspaces_do_not_mix(self):
-        other_key = self.service._journal_key(str(self.other))
+        other_key = self.service.ws.key(str(self.other))
         self.service._mark_running(other_key, "0009_x", "spec", "step")
         self.journal.started(other_key, "0010_y", "spec", "manual")
         self.assertEqual(self.service.running(self.cwd), {"running": {}, "unknown_end": {}})
@@ -261,8 +261,8 @@ class TheGuide(unittest.TestCase):
         )
         self.service = Service(config, Sessions(config))
         self.cwd = str(root / "work" / "proj")
-        self.key = self.service._journal_key(self.cwd)
-        self.journal = self.service._journal()
+        self.key = self.service.ws.key(self.cwd)
+        self.journal = self.service.ws.journal()
 
     def block(self) -> dict:
         with mock.patch.object(self.service, "_autopilot_values", return_value={"autopilot": True}):

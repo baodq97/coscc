@@ -80,7 +80,7 @@ class AnswersMixin:
         What happened to each is in the run log; the board shows a failed one as *not on the PR*.
         """
         try:
-            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+            data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
         except Unavailable as e:
             return [{"round": None, "state": "failed", "url": "", "reason": str(e)}]
         found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -100,14 +100,14 @@ class AnswersMixin:
         The body is built from the round as `cos.mjs` read it; nothing a caller sends reaches
         GitHub but the unit's name and the round's number. Not an approval; no gate reads it.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         try:
             n = int(round_n)
         except TypeError, ValueError:
             raise Invalid(f"a round is named by its number, got {round_n!r}") from None
         async with self._comment_lock:
             try:
-                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+                data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -143,7 +143,7 @@ class AnswersMixin:
         )
         record: dict[str, Any] = {
             "kind": "pr-comment",
-            "workspace": self._journal_key(cwd),
+            "workspace": self.ws.key(cwd),
             "unit": unit,
             "stage": "review",
             "round": n,
@@ -154,7 +154,7 @@ class AnswersMixin:
             record["detail"] = result.reason
         else:
             record["comment_url"] = result.url
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is not None:
             try:
                 journal.append(record)
@@ -179,7 +179,7 @@ class AnswersMixin:
         scope: dict[str, Any] | None = None
         try:
             text = await board_reader.pr_text(
-                self._units_root(cwd), unit, state=self._snapshot(cwd, [unit])
+                self.ws.units_root(cwd), unit, state=self.ws.snapshot(cwd, [unit])
             )
             url = str(text.get("url") or "")
             if "error" in text:
@@ -213,19 +213,13 @@ class AnswersMixin:
             record["detail"] = detail
         if scope is not None:
             record["scope"] = scope
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is not None:
             try:
-                journal.append({"kind": "pr-sync", "workspace": self._journal_key(cwd), **record})
+                journal.append({"kind": "pr-sync", "workspace": self.ws.key(cwd), **record})
             except Busy, BadRecord, OSError:
                 pass
         return record
-
-    def _unit_meta(self) -> UnitMeta:
-        """The unit metadata store. Unlike `_history` there is one with no working folder too,
-        keyed by the data directory: every board read needs a snapshot."""
-        data = Data(self.config.data_dir)
-        return UnitMeta(self.config.working_dir or data.root, data)
 
     async def _ingest(
         self, cwd: str, unit: str, done: dict[str, Any], wrote: str | None = None
@@ -242,15 +236,15 @@ class AnswersMixin:
         """
         if done.get("outcome") != "done":
             return {}
-        meta = self._unit_meta()
-        workspace = self._journal_key(cwd)
+        meta = self.ws.unit_meta()
+        workspace = self.ws.key(cwd)
         stage = str(done.get("stage") or "")
         submitted = done.get("submitted") if wrote else None
         try:
             await asyncio.to_thread(
                 meta.ingest,
                 workspace,
-                self._units_root(cwd),
+                self.ws.units_root(cwd),
                 unit,
                 actor=f"stage:{stage}",
                 session=str(done.get("session_id") or "") or UNKNOWN,
@@ -292,7 +286,7 @@ class AnswersMixin:
         """The stage result a run submitted, as the status of `artifact`: one transition
         through guard `stage-result`, and the rows `UnitMeta.record_result` writes, in one
         transaction with its event."""
-        journal = self._journal() or Journal(meta.root, self.config.data_dir)
+        journal = self.ws.journal() or Journal(meta.root, self.config.data_dir)
         obj = dict(submitted.get("object") or {})
         applied = transitions.apply(
             meta.history,
@@ -330,7 +324,7 @@ class AnswersMixin:
         through guard `review-round`, reading the head the app recorded when the run opened,
         and the round's rows, in one transaction with its event. The verdict reaches the
         history whole, `changes-requested` and all."""
-        journal = self._journal() or Journal(meta.root, self.config.data_dir)
+        journal = self.ws.journal() or Journal(meta.root, self.config.data_dir)
         obj = dict(submitted.get("object") or {})
         applied = transitions.apply(
             meta.history,
@@ -358,7 +352,7 @@ class AnswersMixin:
         """`cwd`'s ideas into `cos.db` again, after the app wrote one. A failure is left to
         the board: `cos.mjs` then reports the idea link it cannot find."""
         try:
-            self._unit_meta().refresh_ideas(self._journal_key(cwd), self._units_root(cwd))
+            self.ws.unit_meta().refresh_ideas(self.ws.key(cwd), self.ws.units_root(cwd))
         except MetaError, Busy, sqlite3.Error, OSError:
             pass
 
@@ -380,7 +374,7 @@ class AnswersMixin:
         `## Units`. A failed append leaves a unit the idea does not list, which `cos.mjs`
         reports and whose `impl` it keeps shut.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         if depends_on and not idea:
             raise Invalid(
                 "depends_on needs an idea: it names a unit already under the idea's Units."
@@ -440,7 +434,7 @@ class AnswersMixin:
                 return {"path": found["path"], "branch": found["branch"]}
             try:
                 branch = units.branch_name(
-                    cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit])
+                    cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit])
                 )
                 await gitops.rev_parse(Path(cwd).expanduser().resolve(), f"refs/heads/{branch}")
             except CannotCreate, BadUnit, GitError:
@@ -481,7 +475,7 @@ class AnswersMixin:
         entered on Settings; `_append_one` checks it and ends the row's text with
         `Theo ủy quyền: D<n>`, which is what reads it back as `delegated`.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         name = str(answered_by or "").strip() or OWNER
         done = await self._append_answers(
             cwd,
@@ -495,7 +489,7 @@ class AnswersMixin:
         )
         written = done["written"][0]
         # The answer itself starts nothing; a pass may, if the switch is on.
-        self._autopilot_nudge(self._journal_key(cwd))
+        self._autopilot_nudge(self.ws.key(cwd))
         return {
             "unit": unit,
             "artifact": written["artifact"],
@@ -528,7 +522,7 @@ class AnswersMixin:
         written: list[dict[str, Any]] = []
         async with self._answer_lock:
             try:
-                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+                data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
 
@@ -560,7 +554,7 @@ class AnswersMixin:
             for w in written:
                 try:
                     history.add_output(
-                        self._journal_key(cwd),
+                        self.ws.key(cwd),
                         unit,
                         w["artifact"].removesuffix(".md"),
                         "deliverable",
@@ -593,8 +587,8 @@ class AnswersMixin:
         """
         if not written:
             return
-        key = self._journal_key(cwd)
-        meta = self._unit_meta()
+        key = self.ws.key(cwd)
+        meta = self.ws.unit_meta()
 
         def rows(conn) -> None:
             for w, text in zip(written, texts):
@@ -611,7 +605,7 @@ class AnswersMixin:
                     authority=authority,
                 )
 
-        journal = self._journal()
+        journal = self.ws.journal()
         try:
             if journal is None:
                 with meta.data.write() as conn:
@@ -708,7 +702,7 @@ class AnswersMixin:
         # A stage outside the prose ones writes its artifact with its own tools whenever it
         # likes, so the questions may be renumbered while it runs. Checked with no `await`
         # before the write, like `_take`.
-        mark = self._active.get((self._journal_key(cwd), unit))
+        mark = self._active.get((self.ws.key(cwd), unit))
         if mark is not None and mark.kind == "step" and not policy.is_prose_stage(mark.stage):
             row = next((r for r in found.get("stages") or [] if r.get("stage") == mark.stage), None)
             if row is not None and row.get("file") == artifact:
@@ -755,7 +749,7 @@ class AnswersMixin:
         """Every decision, withdrawn and expired included, each with its `state` and its
         workspace by name, and the workspace names the form offers."""
         today = date.today().isoformat()
-        rows = self.workspaces()["workspaces"]
+        rows = self.ws.all()["workspaces"]
         names = {units.slot(r["path"]): str(r["name"]) for r in rows}
         try:
             found = Data(self.config.data_dir).decisions()
@@ -818,11 +812,7 @@ class AnswersMixin:
         slot = ""
         if where and where.casefold() not in ("all", "all workspaces"):
             slot = next(
-                (
-                    units.slot(r["path"])
-                    for r in self.workspaces()["workspaces"]
-                    if r["name"] == where
-                ),
+                (units.slot(r["path"]) for r in self.ws.all()["workspaces"] if r["name"] == where),
                 "",
             )
             if not slot:
@@ -887,7 +877,7 @@ class AnswersMixin:
         Not an approval; no gate reads it. `recorded_by` and `measured_by` are names somebody
         typed, so both are claims. `source` is not checked against anything.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         name = str(recorded_by or "").strip() or OWNER
         measurer = str(measured_by or "").strip()
         word = str(result or "").strip()
@@ -896,7 +886,7 @@ class AnswersMixin:
         text = str(note or "").strip("\n")
         async with self._answer_lock:
             try:
-                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+                data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
 
@@ -927,7 +917,7 @@ class AnswersMixin:
             if any(line.lstrip().startswith("#") for line in [src, why, *text.splitlines()]):
                 raise Invalid("no line of an outcome may start with #")
 
-            path = self._unit_dir(cwd, unit) / "intent.md"
+            path = self.ws.unit_dir(cwd, unit) / "intent.md"
             try:
                 existing = path.read_text(encoding="utf-8")
             except OSError as e:
@@ -970,7 +960,7 @@ class AnswersMixin:
         if history is not None:
             try:
                 history.add_output(
-                    self._journal_key(cwd),
+                    self.ws.key(cwd),
                     unit,
                     "intent",
                     "deliverable",
@@ -1031,8 +1021,8 @@ class AnswersMixin:
         caller typed. Refused while a step or an integration of this unit runs; it holds
         that same mark itself while it writes, so no step can begin halfway through.
         """
-        self._workspace_or_refuse(cwd)
-        journal = self._journal()
+        self.ws.check(cwd)
+        journal = self.ws.journal()
         if journal is None:
             raise Invalid(
                 "no working folder is set, so a hold cannot be recorded — set COS_WORKING_DIR"
@@ -1042,8 +1032,8 @@ class AnswersMixin:
         to = str(to or "").strip()
         reason = str(reason or "").strip()
         by = str(by or "").strip() or OWNER
-        self._unit_dir(cwd, unit)
-        key = self._journal_key(cwd)
+        self.ws.unit_dir(cwd, unit)
+        key = self.ws.key(cwd)
         # No `await` between the check and the take: the same mark `run_step` and
         # `integrate` take, so neither starts while this writes. When the unit is already
         # held, the board is still read, so a move refused for another reason says that one.
@@ -1051,7 +1041,7 @@ class AnswersMixin:
         mark = self._take(key, unit, "hold") if held is None else None
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+                data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -1068,7 +1058,7 @@ class AnswersMixin:
             if to == "dropped":
                 try:
                     branch = units.branch_name(
-                        cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit])
+                        cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit])
                     )
                 except CannotCreate, BadUnit:
                     branch = ""
@@ -1077,7 +1067,7 @@ class AnswersMixin:
                 effects.append(await hold_rules.remove_tree(cwd, unit, self.config.data_dir))
             # The hold's row and its run-log record in one transaction, after the effects
             # the record names.
-            meta = self._unit_meta()
+            meta = self.ws.unit_meta()
             try:
                 journal.append_with(
                     [
@@ -1121,18 +1111,18 @@ class AnswersMixin:
         none. Refused while a step or an integration of this unit runs; it holds that same
         mark itself while it writes.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         if not unit:
             raise Invalid("name a work unit")
         by = str(by or "").strip() or OWNER
-        directory = self._unit_dir(cwd, unit)
-        key = self._journal_key(cwd)
+        directory = self.ws.unit_dir(cwd, unit)
+        key = self.ws.key(cwd)
         # No `await` between the check and the take, as in `hold`.
         held = self._active.get((key, unit))
         mark = self._take(key, unit, "more-rounds") if held is None else None
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+                data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)

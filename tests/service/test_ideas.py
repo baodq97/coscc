@@ -56,17 +56,17 @@ class Fixture(unittest.TestCase):
 class PeersAreEveryWorkspaceByName(Fixture):
     def test_argv_carries_one_peer_per_workspace(self):
         self.assertEqual(
-            self.service._peers(),
+            self.service.ws.peers(),
             [
-                ("proj", self.service._units_root(self.proj)),
-                ("api", self.service._units_root(self.api)),
+                ("proj", self.service.ws.units_root(self.proj)),
+                ("api", self.service.ws.units_root(self.api)),
             ],
         )
 
     def test_two_workspaces_with_one_name_are_left_out_and_reported(self):
         other = _repo(self.root / "c" / "proj")
         service = self.make(self.proj, self.api, other)
-        peers, problems = service._peer_table()
+        peers, problems = service.ws.peer_table()
         self.assertEqual([n for n, _ in peers], ["api"])
         self.assertEqual(
             problems, ["Two workspaces are named proj, so neither is linked by that name."]
@@ -124,11 +124,11 @@ class AUnitOpenedFromAnIdea(Fixture):
         self.assertNotIn("- proj:", note)
 
     def test_a_brief_with_an_idea_is_refused_and_nothing_is_made(self):
-        before = self.run_(board_reader.read(self.service._units_root(self.api)))["count"]
+        before = self.run_(board_reader.read(self.service.ws.units_root(self.api)))["count"]
         with self.assertRaises(Invalid):
             self.run_(self.service.create_unit(self.api, "again", "a copy", idea=self.idea["ref"]))
         self.assertEqual(
-            self.run_(board_reader.read(self.service._units_root(self.api)))["count"], before
+            self.run_(board_reader.read(self.service.ws.units_root(self.api)))["count"], before
         )
 
     def test_the_idea_page_lists_each_child_with_repo_stage_and_waits_for(self):
