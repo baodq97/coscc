@@ -49,6 +49,14 @@ class ARoundIsWrittenFromItsObject(unittest.TestCase):
         out = replace_new_rounds(text, {1}, "## Round 2\n\nrendered")
         self.assertEqual(out, "# Review: x\nStatus: draft.\n\n## Round 1\n\nold\n\n## Round 2\n\nrendered\n\n## Answers\n\n### Câu 1\nkept\n")
 
+    def test_the_header_takes_the_status_the_object_gave(self):
+        """Review round 1, F5: not the session's word, and only the header's."""
+        text = ("# Review: x\nPR: pr.md. Status: accepted.\n\n## Round 1\n\nStatus: draft.\n\n"
+                "## Round 2\n\nStatus: accepted.\n")
+        out = replace_new_rounds(text, {1}, "## Round 2\n\nrendered", "changes-requested")
+        self.assertEqual(out, "# Review: x\nPR: pr.md. Status: changes-requested.\n\n## Round 1\n\nStatus: draft.\n\n"
+                              "## Round 2\n\nrendered\n")
+
 
 class MergeReview(unittest.TestCase):
     def test_the_first_round_needs_nothing_on_disk(self):

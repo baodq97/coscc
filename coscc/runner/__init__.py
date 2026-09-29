@@ -1202,7 +1202,9 @@ class Runner:
                     text = _read(directory / artifact)
                     new = [r for r in _rounds(text) if _round_number(r) not in (rounds_before or set())]
                     rendered = render_round(new[-1] if new else "## Round", number, head, channel.received["object"], screens)
-                    (directory / artifact).write_text(replace_new_rounds(text, rounds_before or set(), rendered), encoding="utf-8")
+                    status = submit_mod.ROUND_STATES[str(channel.received["object"]["verdict"])]
+                    (directory / artifact).write_text(
+                        replace_new_rounds(text, rounds_before or set(), rendered, status), encoding="utf-8")
                     channel.extra = {"n": number, "screens": screens}
                 except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
                     outcome = "failed"

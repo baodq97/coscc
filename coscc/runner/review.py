@@ -117,9 +117,16 @@ def render_round(section: str, n: int, head: str, obj: dict[str, Any], screens: 
     return "\n".join(out).rstrip()
 
 
-def replace_new_rounds(text: str, before: set[int], rendered: str) -> str:
+def replace_new_rounds(text: str, before: set[int], rendered: str, status: str | None = None) -> str:
     """`review.md` with every round not numbered in `before` taken out and `rendered` put
-    where the first of them stood; the header and every earlier round are left byte for byte."""
+    where the first of them stood; every earlier round is left byte for byte, and so is the
+    header, but for the value of its first `Status:` when `status` is given (`0136` review
+    round 1, F5: the state the round's object gave the artifact, not the session's word)."""
+    if status is not None:
+        first = re.search(r"^## Round \d+\b", text, re.MULTILINE)
+        m = HEADER_STATUS_RE.search(text, 0, first.start() if first else len(text))
+        if m is not None:
+            text = text[:m.start(1)] + status + text[m.end(1):]
     kept: list[str] = []
     placed = False
     last = 0

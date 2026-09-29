@@ -186,7 +186,8 @@ offers no third.
 ## Output
 
 One file, `review.md`, in the unit's directory. The header line is rewritten each round to
-carry the current status; everything under it is appended.
+carry the current status; everything under it is appended. Since `0136` the app sets that
+`Status:` from the verdict your round's object hands back.
 
 ```markdown
 # Review: <title>
