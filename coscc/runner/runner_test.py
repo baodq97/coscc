@@ -1775,19 +1775,6 @@ class AStepRecordsTheModelTrial(AStepRecordsTheBaseItRanOn):
         self.assertEqual(start[modeltrial.FIELD]["model"], "claude-opus-5-5[1m]")
 
 
-class AStepRecordsThePriorFindingsItCarried(AStepRecordsTheBaseItRanOn):
-    """`0110` R7: the record handed in is the record written, and none is no field."""
-
-    def test_no_record_handed_in_leaves_no_field(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertNotIn("prior_findings", self._start_record(d))
-
-    def test_the_record_handed_in_is_the_record_written(self):
-        record = {"bytes": 0, "lines": 0, "units": 0, "dropped": 0}
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(self._start_record(d, prior_findings_record=record)["prior_findings"], record)
-
-
 class AReviewAfterAnUnfinishedRoundIsHandedIt(unittest.TestCase):
     """`0027` R6. `Runner.run` passes `unfinished_round` to the prompt and nowhere else."""
 

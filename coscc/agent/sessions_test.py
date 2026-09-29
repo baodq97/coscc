@@ -239,7 +239,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
 
         self.assertEqual(_options(Config(), "/p", None).agents, None)
         options = _options(Config(), "/p", None, agents=SUBAGENTS)
-        self.assertEqual(sorted(options.agents), ["scout", "tester"])
+        self.assertEqual(sorted(options.agents), ["scout"])
         for name, spec in SUBAGENTS.items():
             with self.subTest(helper=name):
                 self.assertEqual(options.agents[name].tools, spec["tools"])

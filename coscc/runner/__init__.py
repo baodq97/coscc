@@ -48,8 +48,6 @@ from coscc.runner.prompt import (
     _BLOCK_HEAD,
     JERA_ADVICE,
     KNOWLEDGE_ADVICE,
-    PRIOR_FINDINGS_HEADING,
-    PRIOR_FINDINGS_ADVICE,
     PLAN_MAP_HEADING,
     PLAN_MAP_ADVICE,
     COMMANDS_HEADING,
@@ -389,8 +387,6 @@ class Runner:
         knowledge_trial: dict[str, Any] | None = None,
         rerun: bool = False,
         rerun_note: str = "",
-        prior_findings: str = "",
-        prior_findings_record: dict[str, Any] | None = None,
         plan_map: str = "",
         plan_map_record: dict[str, Any] | None = None,
         unfinished_round: dict[str, Any] | None = None,
@@ -417,7 +413,7 @@ class Runner:
 
         `model`, `model_source`, `effort`, the label fields, `impl_run`, `base`, `plan_drift`,
         `shortlist`, `started_by` (`person` or `autopilot`, else `ValueError`), `knowledge*`,
-        `trial_record`, `knowledge_trial`, `prior_findings*`, `plan_map*`, `rerun*`, `agent`
+        `trial_record`, `knowledge_trial`, `plan_map*`, `rerun*`, `agent`
         (the stage's resolved agent-table row; a preset session gets its commit attribution as
         `settings`) and `meta` (the unit's snapshot entry) are carried into the prompt or the
         `start` record and nowhere else; this module reads no git and decides no meaning.
@@ -493,7 +489,6 @@ class Runner:
                 knowledge=knowledge,
                 rerun=rerun,
                 rerun_note=rerun_note,
-                prior_findings=prior_findings,
                 plan_map=plan_map,
                 commands=grant.commands if stage in ("impl", "implement") else (),
                 unfinished_round=unfinished_round,
@@ -577,14 +572,7 @@ class Runner:
                 **({KNOWLEDGE_TRIAL_FIELD: knowledge_trial} if knowledge_trial is not None else {}),
                 # Every routine `impl`'s `model_trial`, and `ci_red`.
                 **(trial_record or {}),
-                # Every `impl` start, `bytes: 0` when nothing matched, so "nothing to hand" is told from an
-                # older build.
-                **(
-                    {"prior_findings": prior_findings_record}
-                    if prior_findings_record is not None
-                    else {}
-                ),
-                # The same: every `impl` start, `bytes: 0` when the plan names no file.
+                # Every `impl` start, `bytes: 0` when the plan names no file.
                 **({"plan_map": plan_map_record} if plan_map_record is not None else {}),
                 # Only on a stage run again from the board.
                 **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),

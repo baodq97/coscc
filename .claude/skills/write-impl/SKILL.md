@@ -11,25 +11,25 @@ a diff. The code is in git; do not copy it here.
 ## What you are given (trust it)
 
 The plan (accepted) is in the prompt, with the answers already given, any files `main` changed
-since the plan, earlier findings on these files, the files' line maps and the commands this
+since the plan, the files' line maps and the commands this
 step may run. Do not re-read what the prompt carries or re-verify the plan. From the board the
 gate was asked (the prompt says so); at a terminal run `cos.mjs gate <unit> impl` first and stop on
 non-zero.
 
 ## Reading the tree
 
+- The line map in the prompt says where things are. `Read` only the range you are about to
+  edit (`offset`/`limit`), never a whole large file.
 - Put `Read`, `Grep` and `Glob` calls that do not depend on each other in one turn.
-- Open the files the plan's `## Files that change` names together, in one turn, at the start
-  of the session.
-- From the board you have two helpers (the `Agent` tool), each on its own context:
-  `scout` for "where is X in these files" (it returns a `path:line` map) and `tester` for
-  running named test commands (it returns only failures). Trust their reports; re-read only
-  what one marks "unsure". Open a file yourself when you are about to edit it.
+- For "where is X" across big files, ask `scout` (the `Agent` tool, on its own context): it
+  returns a `path:line` map. Trust it; re-read only what it marks "unsure".
+- The plan is complete. Do not open `intent.md`, `spec.md` or `spike.md` unless the plan cites
+  a section of one.
 
 ## Work
 
-1. Read the plan's files, then write the code. Run the tests of the files you change while
-   working, through `tester`; run `npm test` once at the end.
+1. Write the code from the plan. Run the tests of the files you change while working; run
+   `npm test` once at the end.
 2. Commit. Each claim in `impl.md` names a commit.
 3. If a file `main` changed contradicts the plan, stop before editing it: record it under
    `## What is still open`, `Status: draft`, and leave `plan.md` alone. Otherwise note what you

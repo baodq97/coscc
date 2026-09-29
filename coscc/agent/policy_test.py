@@ -181,16 +181,26 @@ class OnlyImplStartsHelpers(unittest.TestCase):
                 self.assertTrue(set(spec["tools"]) <= set(IMPL.tools))
                 self.assertNotIn(policy.AGENT_TOOL, spec["tools"])
         self.assertEqual(policy.SUBAGENTS["scout"]["tools"], list(READ_TOOLS))
-        self.assertEqual(policy.SUBAGENTS["tester"]["tools"], list(policy.EXEC_TOOLS))
+        self.assertEqual(list(policy.SUBAGENTS), ["scout"])
 
     def test_only_a_named_helper_may_be_started(self):
-        self.assertEqual(decide(IMPL, policy.AGENT_TOOL, {"subagent_type": "tester"}, "/tmp"), "")
+        self.assertEqual(decide(IMPL, policy.AGENT_TOOL, {"subagent_type": "scout"}, "/tmp"), "")
         for other in ("general-purpose", "Explore", None):
             with self.subTest(subagent_type=other):
                 self.assertIn(
                     "only these helpers", decide(IMPL, policy.AGENT_TOOL, {"subagent_type": other}, "/tmp")
                 )
         self.assertIn("was not granted", decide(grant_for("review"), policy.AGENT_TOOL, {"subagent_type": "scout"}, "/tmp"))
+
+
+class WritesUnderTheUnitsTmpDirectory(unittest.TestCase):
+    UNIT_DIR = "/tmp/data/units/ws-abc/.cos/0001_a-problem"
+
+    def test_impl_may_write_where_a_redirect_may_and_nowhere_else_in_tmp(self):
+        for path, allowed in (("/tmp/0001_a-problem/x", True), ("/tmp/other/x", False)):
+            with self.subTest(path=path):
+                got = decide(IMPL, "Write", {"file_path": path}, "/tmp/ws", self.UNIT_DIR)
+                self.assertEqual(got == "", allowed, got)
 
 
 class AToolNobodyGrantedIsRefused(unittest.TestCase):

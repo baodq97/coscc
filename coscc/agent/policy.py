@@ -80,16 +80,6 @@ SUBAGENTS = {
         "tools": list(READ_TOOLS),
         "model": "sonnet",
     },
-    "tester": {
-        "description": "Runs the named test commands and reports only failures.",
-        "prompt": (
-            "Run only the test commands you are given, as given. Report the pass and fail "
-            "counts, then each failure: test name, the assertion, `path:line`. No passing "
-            "output, no advice. Never edit a file and never run anything else."
-        ),
-        "tools": list(EXEC_TOOLS),
-        "model": "sonnet",
-    },
 }
 
 # Commands `impl` may run, matched on the first word of every segment of the command line.
@@ -1216,8 +1206,12 @@ def decide(
         roots, reason = _roots(workspace, unit_dir)
         if reason:
             return reason
+        # Where a redirect may write (`_in_step_tmp`), the write tools may too, for a step that can run commands.
+        from pathlib import Path
+
+        unit = Path(unit_dir).name if unit_dir and any(t in grant.tools for t in EXEC_TOOLS) else ""
         for raw in _paths_in(tool_input):
-            if not _inside(raw, roots, None):
+            if not _inside(raw, roots, None) and not _in_step_tmp(_Redirect(">", "", raw, False), unit):
                 return f"writing outside the workspace is not allowed: {raw}"
 
     if tool in READ_TOOLS:

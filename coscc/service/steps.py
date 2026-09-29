@@ -21,7 +21,7 @@ from coscc import knowledge
 from coscc.agent import agents, harness
 from coscc.agent import submit as submit_mod
 from coscc.github import integrate, prmachine
-from coscc.units import planmap, priorfindings, retake
+from coscc.units import planmap, retake
 from coscc.units.board import Unavailable
 from coscc.data import Data, now as _now
 from coscc.git.gitops import GitError
@@ -1040,17 +1040,6 @@ class StepsMixin:
                         "plan_sha": None, "main_sha": None, "files": None,
                         "checked": False, "reason": str(e) or type(e).__name__,
                     }
-            # What the reviews of the units the board above read as finished said
-            # about the files the plan names, for `impl` only; every other stage is handed no
-            # key. Like `plan_drift`, nothing in `for_step` may refuse the step.
-            prior_kw: dict[str, Any] = {}
-            if stage in ("impl", "implement"):
-                prior_kw = priorfindings.for_step(
-                    units.cos_dir(cwd, self.config.data_dir),
-                    [u["name"] for u in data["units"] if u.get("why") == "finished"],
-                    directory / "plan.md",
-                    unit,
-                )
             # The files the plan names, as they stand in the tree the step runs
             # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
             plan_kw: dict[str, Any] = {}
@@ -1166,7 +1155,6 @@ class StepsMixin:
                     # as the step starts: a rename later reaches the next step, not this one.
                     agent=self._agent(stage),
                     **knowledge_kw,
-                    **prior_kw,
                     **plan_kw,
                     **unfinished_kw,
                     **link_kw,

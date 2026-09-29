@@ -17,7 +17,7 @@ from typing import Any
 from coscc.units.autopilot import files_of
 from coscc.git.drift import files_section
 
-# The bytes of the whole section, advice aside: twice `priorfindings.CAP_BYTES`.
+# The bytes of the whole section, advice aside: twice what earlier reviews once took.
 CAP_BYTES = 12288
 
 _PY = re.compile(r"^(async\s+def|def|class)\s+(\w+)")
