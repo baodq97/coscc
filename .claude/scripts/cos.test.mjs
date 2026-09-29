@@ -4830,3 +4830,62 @@ test('status --json of the fixture store is what it was before meta existed', ()
   const before = JSON.parse(readFileSync(META_BEFORE, 'utf8'))
   assert.deepEqual({ ...now, root: before.root }, before)
 })
+
+// --- every fixture unit answers as it did before lanes ------------------------------
+
+// `next`, `status --json` and `gate` at every stage, for each unit of the two stores the
+// suite reads from disk, hashed and compared to what they printed before lanes existed. The
+// three fields a lane adds are dropped first; every other byte must stay.
+const LANE_FIELDS = ['lane', 'enteredFast', 'laneMissing']
+const withoutLane = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => !LANE_FIELDS.includes(k)))
+const digest = (x) => createHash('sha256').update(JSON.stringify(x)).digest('hex').slice(0, 16)
+function answersOf(root) {
+  const ask = (...args) => {
+    const out = cli('--root', root, ...args)
+    return { status: out.status, stdout: out.stdout.replaceAll(root, '<root>'), stderr: out.stderr }
+  }
+  const status = ask('status', '--json')
+  const json = JSON.parse(status.stdout)
+  const got = { status: digest({ ...status, stdout: JSON.stringify({ ...json, units: json.units.map(withoutLane) }, null, 2) }) }
+  const names = readdirSync(join(root, '.cos'), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== 'ideas').map((e) => e.name).sort()
+  for (const name of names) {
+    const next = ask('next', name)
+    const said = [{ ...next, stdout: JSON.stringify(withoutLane(JSON.parse(next.stdout))) }]
+    for (const stage of STAGE_NAMES) said.push(ask('gate', name, stage, '--json'))
+    got[name] = digest(said)
+  }
+  return got
+}
+
+test('next, status --json and gate at every stage answer every fixture unit as before lanes', () => {
+  assert.deepEqual(answersOf(META_STORE), {
+    status: '22c7b2f418dc630d',
+    '0003_old-unit': '9fef610ffae6d63e',
+    '0010_full-loop': 'b103dea258de2696',
+    '0011_paused-then-resumed': '6d7a53343fc70702',
+    '0012_dropped': 'eddb2787b7ff4218',
+    '0013_open-question': 'e904c9e2b67edeee',
+    '0014_changes-requested': 'cf41c58bcf374bf2',
+    '0015_no-status': 'c5b22eadb152cebe',
+    '0016_bad-status': '4bf913f48bd50e56',
+    '0017_linked': '3f2e9fb7181b04fe',
+    'not_a-unit': '8fcb06c009c258ce',
+  })
+  assert.deepEqual(answersOf(REPO), {
+    status: '7acae9a577d92d16',
+    '0001_no-session-management': '9bb372122b1bf9bd',
+    '0002_no-workspace-management': 'b1b6d1b170a9f610',
+    '0003_unproven-page': '022e4485bd8fd4d4',
+    '0004_silent-concurrent-loss': 'acdf8bfd272af144',
+    '0005_hand-driven-invisible-loop': 'b45cc856d51e8110',
+    '0006_demo-data-and-no-durable-store': 'c993c9250f778c88',
+    '0007_stale-claims-and-dead-code': 'c2990668f97ee979',
+    '0008_personal-name-blocks-publishing': '38b54d01234f23d8',
+    '0009_branch-and-release-conventions': 'b52c01881a10d51e',
+    '0010_harness-restates-rules-and-omits-steps': '81f0ea52396808d9',
+    '0011_no-install-path-on-a-clean-machine': '4ec160a0d97b4112',
+    '0012_installed-copy-runs-no-stage': '500b3104e58b22a3',
+    '0013_board-cannot-say-what-happened': '5faddaa084429bc8',
+    '0014_product-cannot-start-a-work-unit': 'b74827525ff9828d',
+  })
+})
