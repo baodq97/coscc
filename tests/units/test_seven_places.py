@@ -69,7 +69,10 @@ class Place1(unittest.TestCase):
         use_sessions(self.service, Replies())
 
         async def go():
-            return [item async for item in self.service.run_step(str(self.repo), self.unit, "spec")]
+            return [
+                item
+                async for item in self.service.steps.run_step(str(self.repo), self.unit, "spec")
+            ]
 
         return asyncio.run(go())[-1][1]
 
@@ -120,7 +123,10 @@ class Place1(unittest.TestCase):
         use_sessions(self.service, Replies())
 
         async def go():
-            return [item async for item in self.service.run_step(str(self.repo), self.unit, "spec")]
+            return [
+                item
+                async for item in self.service.steps.run_step(str(self.repo), self.unit, "spec")
+            ]
 
         self.assertEqual(asyncio.run(go())[-1][1]["outcome"], "done")
         repo = str(self.repo)
@@ -146,7 +152,10 @@ class Place1(unittest.TestCase):
         use_sessions(self.service, Silent())
 
         async def go():
-            return [item async for item in self.service.run_step(str(self.repo), self.unit, "spec")]
+            return [
+                item
+                async for item in self.service.steps.run_step(str(self.repo), self.unit, "spec")
+            ]
 
         done = asyncio.run(go())[-1][1]
         # One repair turn on the session, holding `submit`, and then `failed`.
@@ -207,7 +216,9 @@ class _Review(unittest.TestCase):
             return True, f"open: {stage} may proceed"
 
         async def go():
-            return [item async for item in self.service.run_step(str(self.repo), self.unit, stage)]
+            return [
+                item async for item in self.service.steps.run_step(str(self.repo), self.unit, stage)
+            ]
 
         with mock.patch.object(board_reader, "gate", open_gate):
             return asyncio.run(go())[-1][1]
@@ -360,7 +371,7 @@ class Place4(unittest.TestCase):
 
         async def go():
             done = {}
-            async for kind, payload in self.service.integrate(self.cwd, self.unit):
+            async for kind, payload in self.service.steps.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done

@@ -47,7 +47,7 @@ class Holds:
     `(journal key, unit)`, each taken before its first `await` and checked-and-marked with no
     `await` between, so nothing on the event loop can come between the look and the write.
     `running`: what the board shows, by an id private to this process; display only, `marks`
-    does the refusing. `finishing`: a step's `_after_end`, run after its `running` entry and
+    does the refusing. `finishing`: a step's `after_end`, run after its `running` entry and
     mark are gone; not shown on the board, but an Apply's settle waits for it.
     """
 
@@ -391,7 +391,7 @@ def unit_state(
 def shown_state(
     decided: dict[str, Any], running_rows: list[dict[str, Any]] | None
 ) -> dict[str, Any]:
-    """`Running` while `Service.running` lists a session of the unit, below rules 1-3 and above
+    """`Running` while `Board.running` lists a session of the unit, below rules 1-3 and above
     the rest. `running_rows` is that answer's `running` entry for the unit."""
     if running_rows and decided.get("state") not in COLLAPSED_STATES:
         return _state("running")

@@ -66,6 +66,8 @@ class StandIn:
         self.order: list[str] = []
         self.sessions = _Sessions(self.order)
         self.shut = 0
+        # `Service.resume`, the part that takes the paused sessions up again.
+        self.resume = self
 
     def _update_waited(self):
         return list(self.jobs)
@@ -504,13 +506,13 @@ class TheSequence(_Base):
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
         seen: list[bool] = []
-        taken = self.service.resume_after_update
+        taken = self.service.resume.resume_after_update
 
         async def take_up():
             seen.append(u.window)
             return await taken()
 
-        self.service.resume_after_update = take_up  # type: ignore[method-assign]
+        self.service.resume.resume_after_update = take_up  # type: ignore[method-assign]
         update.SERVER.hand_off = lambda handoff: False  # type: ignore[method-assign]
         try:
             u = self.make_real()

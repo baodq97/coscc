@@ -174,7 +174,7 @@ class ThePageHoldsNoRunningFlagOfItsOwn(unittest.TestCase):
 
     def test_stop_step_asks_the_service(self):
         text = ast.unparse(self.methods["stop_step"])
-        self.assertIn("SERVICE.stop_step(", text)
+        self.assertIn("SERVICE.steps.stop_step(", text)
 
     def test_run_step_has_no_already_running_check_of_its_own(self):
         text = ast.unparse(self.methods["run_step"])
@@ -184,7 +184,7 @@ class ThePageHoldsNoRunningFlagOfItsOwn(unittest.TestCase):
 
     def test_the_list_comes_from_the_service(self):
         text = ast.unparse(self.methods["_load_running"])
-        self.assertIn("SERVICE.running_steps(", text)
+        self.assertIn("SERVICE.steps.running_steps(", text)
 
 
 class TheRunButtonHoldsNoCopyOfTheLoop(unittest.TestCase):
@@ -234,7 +234,7 @@ class TheRunButtonHoldsNoCopyOfTheLoop(unittest.TestCase):
             if isinstance(n, ast.Call) and ast.unparse(n.func) == "_run_target"
         ]
         self.assertEqual(len(calls), 1)
-        self.assertIn("SERVICE.next_step", ast.unparse(calls[0]))
+        self.assertIn("SERVICE.steps.next_step", ast.unparse(calls[0]))
 
     def test_load_next_runs_in_the_background(self):
         decorators = [ast.unparse(d) for d in self.methods["load_next"].decorator_list]
@@ -351,7 +351,7 @@ class ACardShowsWhatServiceRunningSaid(unittest.TestCase):
         for fn in (functions["_activities"], methods["_apply_running"], methods["poll_running"]):
             with self.subTest(fn=fn.name):
                 self.assertNotIn("self.running", ast.unparse(fn))
-        self.assertIn("SERVICE.running", ast.unparse(methods["poll_running"]))
+        self.assertIn("SERVICE.boards.running", ast.unparse(methods["poll_running"]))
         decorators = [ast.unparse(d) for d in methods["poll_running"].decorator_list]
         self.assertIn("rx.event(background=True)", decorators)
 
@@ -392,7 +392,7 @@ class OneLoopPerTab(unittest.TestCase):
 
         with (
             mock.patch.object(page, "RUNNING_POLL", 0.1),
-            mock.patch.object(page.SERVICE, "running", running),
+            mock.patch.object(page.SERVICE.boards, "running", running),
         ):
             alive, asked, still = asyncio.run(go())
         self.assertTrue(alive)
@@ -433,7 +433,7 @@ class OneLoopPerTab(unittest.TestCase):
             mock.patch.object(page, "GONE_AFTER", 4),
             mock.patch.object(page, "_tab_gone", lambda t: gone["now"]),
             mock.patch.object(
-                page.SERVICE, "running", lambda cwd: {"running": {}, "unknown_end": {}}
+                page.SERVICE.boards, "running", lambda cwd: {"running": {}, "unknown_end": {}}
             ),
         ):
             after_drop, after_close = asyncio.run(go())
@@ -512,7 +512,7 @@ class ChangingWorkspaceForgetsTheOldRead(unittest.TestCase):
                     return [(u.id, len(u.live)) for u in studio.cards]
 
         with (
-            mock.patch.object(page.SERVICE, "running", lambda cwd: running_in[cwd]),
+            mock.patch.object(page.SERVICE.boards, "running", lambda cwd: running_in[cwd]),
             mock.patch.object(page.SERVICE.backlog, "branch_here", branch_here),
             mock.patch.object(page.SERVICE, "board", read_board),
             mock.patch.object(
@@ -563,7 +563,7 @@ class AnIntegrationIsListedWithTheSteps(unittest.TestCase):
             async with manager.modify_state(_key(token)) as root:
                 studio = await root.get_state(page.StudioState)
                 studio.cwd = "/w"
-                with mock.patch.object(page.SERVICE, "running_steps", lambda cwd: listed):
+                with mock.patch.object(page.SERVICE.steps, "running_steps", lambda cwd: listed):
                     studio._load_running()
                 return [(r.unit, r.kind, r.run) for r in studio.running_steps]
 
@@ -726,8 +726,8 @@ class _Page:
                 "activity_and_usage", {"events": [], "total": {}}
             ),
             "update_status": counted("update_status", {}),
-            "running": counted("running", {"running": {}, "unknown_end": {}}),
-            "running_steps": counted("running_steps", []),
+            "boards.running": counted("running", {"running": {}, "unknown_end": {}}),
+            "steps.running_steps": counted("running_steps", []),
             "backlog.timeline": counted("timeline", {"runs": []}),
             "activity.cost": counted("cost", {"recording": False}),
             "activity.unit_cost": counted(
@@ -737,8 +737,10 @@ class _Page:
                 "artifact", {"file": "impl.md", "exists": False, "text": ""}
             ),
             # Read only on arriving at Settings.
-            "decisions_table": counted("decisions_table", {"rows": [], "workspaces": ["a", "b"]}),
-            "next_step": mock.AsyncMock(side_effect=page.Invalid("not asked in this test")),
+            "answers.decisions_table": counted(
+                "decisions_table", {"rows": [], "workspaces": ["a", "b"]}
+            ),
+            "steps.next_step": mock.AsyncMock(side_effect=page.Invalid("not asked in this test")),
         }.items():
             part, _, method = name.rpartition(".")
             owner = getattr(page.SERVICE, part) if part else page.SERVICE
@@ -993,7 +995,7 @@ class AnArrivalReadsOnce(unittest.TestCase):
 
             manager, processor, _ = _processor(token)
             arrive = _arrival(manager, processor, token)
-            with mock.patch.object(page.SERVICE, "next_step", next_step):
+            with mock.patch.object(page.SERVICE.steps, "next_step", next_step):
                 async with processor:
                     await arrive("/unit?ws=a&id=0009_x", "s1")
                     await arrive("/unit?ws=a&id=0009_x&tab=timeline", "s1")
@@ -1348,7 +1350,7 @@ def _sample_read(token: str, then=None, fake: _Page | None = None):
             await asyncio.sleep(0.15)
             return full, cards, more
 
-    with fake.patches(), mock.patch.object(page.SERVICE, "running", lambda cwd: _LIVE):
+    with fake.patches(), mock.patch.object(page.SERVICE.boards, "running", lambda cwd: _LIVE):
         return asyncio.run(go())
 
 

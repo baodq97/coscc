@@ -752,7 +752,7 @@ async def pr_for_branch(tree: str, branch: str) -> dict:
 
 
 # Said in the two branches where the step ends with a pull request to put pr.md onto;
-# `coscc/service/__init__.py` `_sync_pr` does it.
+# `coscc/service/answers.py` `sync_pr` does it.
 PR_SYNC_NOTE = (
     "After this step ends, the app puts pr.md's title and body onto the pull request "
     "itself; do not run `gh pr edit`."

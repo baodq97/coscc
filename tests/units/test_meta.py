@@ -53,8 +53,8 @@ def kept_fields(unit: dict) -> dict:
 
 def ingest(service, cwd: str, unit: str) -> None:
     """Test glue (plan Risk 4): a file a test wrote by hand reaches `cos.db` the way a finished
-    step's does, through `Service._ingest`."""
-    done = asyncio.run(service._ingest(cwd, unit, {"outcome": "done", "stage": "test"}))
+    step's does, through `Answers.ingest`."""
+    done = asyncio.run(service.answers.ingest(cwd, unit, {"outcome": "done", "stage": "test"}))
     assert not done, done
 
 
@@ -511,7 +511,7 @@ class TheImportReport(unittest.TestCase):
 
     def test_a_store_read_cleanly_has_no_row(self):
         self.store.mkdir(parents=True)
-        asyncio.run(self.service.create_unit(self.cwd, "a-problem", "x"))
+        asyncio.run(self.service.answers.create_unit(self.cwd, "a-problem", "x"))
         asyncio.run(self.service.board(self.cwd))
         self.assertEqual(
             self.service.activity.settings()["import_report"], {"rows": [], "problem": ""}

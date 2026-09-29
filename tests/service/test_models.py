@@ -51,7 +51,8 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
     def _run(self, stage: str):
         async def go():
             return [
-                i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)
+                i
+                async for i in self.service.steps.run_step(str(self.repo), self.made["unit"], stage)
             ]
 
         return asyncio.run(go())

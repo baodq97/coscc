@@ -33,6 +33,13 @@ from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
 from coscc.service.autopilot import autopilot_values
 from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
+from coscc.config import Config
+from coscc.service.workspaces import Workspaces
+from coscc.service.common import Holds
+from coscc.service.agents import Agents
+from coscc.service.backlog import Backlog
+from coscc.service.ideas import Ideas
+from collections.abc import Callable
 
 log = logging.getLogger(__name__)
 
@@ -74,8 +81,34 @@ def opens_with(by: Any, names: Any) -> bool:
     return False
 
 
-class AnswersMixin:
-    async def _post_new_rounds(self, cwd: str, unit: str, before: set[Any]) -> list[dict[str, Any]]:
+class Answers:
+    def __init__(
+        self,
+        config: Config,
+        ws: Workspaces,
+        holds: Holds,
+        agents: Agents,
+        backlog: Backlog,
+        ideas: Ideas,
+        nudge: Callable[..., None],
+    ) -> None:
+        self.config = config
+        self.ws = ws
+        self.holds = holds
+        self.agents = agents
+        self.backlog = backlog
+        self.ideas = ideas
+        self.nudge = nudge
+        # Held across read-check-append so two answers arriving together cannot interleave.
+        # The page and the API share this instance, so one lock covers both.
+        self._answer_lock = asyncio.Lock()
+        # Held across read-comments-then-post, so two presses of *Post to PR* for one round
+        # run in turn and the second finds the first's marker. One process only.
+        self._comment_lock = asyncio.Lock()
+        # Per workspace, created on first use.
+        self._create_locks: dict[str, asyncio.Lock] = {}
+
+    async def post_new_rounds(self, cwd: str, unit: str, before: set[Any]) -> list[dict[str, Any]]:
         """Post every round the step just added. Never raises.
 
         What happened to each is in the run log; the board shows a failed one as *not on the PR*.
@@ -163,12 +196,12 @@ class AnswersMixin:
                 pass
         return {"unit": unit, "round": n, "pr": pr_url, **result.as_dict()}
 
-    async def _sync_pr(
+    async def sync_pr(
         self, cwd: str, unit: str, pr_before: str | None, stage: str = "pr"
     ) -> dict[str, Any]:
         """Put `pr.md`'s title and body onto its pull request. Never raises.
 
-        Called by `_drive` after a `pr` step that was not stopped, and by `run_step` before
+        Called by `drive` after a `pr` step that was not stopped, and by `run_step` before
         it asks the gate of a `ship` step; `stage` names which. The words are `cos.mjs
         pr-text`'s; `prsync` compares and writes. A `pr.md` that is not accepted or names no
         pull request is `skipped` with no `gh` call. One `pr-sync` row says how it went
@@ -222,7 +255,7 @@ class AnswersMixin:
                 pass
         return record
 
-    async def _ingest(
+    async def ingest(
         self, cwd: str, unit: str, done: dict[str, Any], wrote: str | None = None
     ) -> dict[str, Any]:
         """The one read of a unit's files after a step that finished, prose or not: what
@@ -404,7 +437,7 @@ class AnswersMixin:
                 self.ideas.refresh_ideas(linked["home"])
             # The new unit's row, and its `idea.md`'s status.
             made.update(
-                await self._ingest(cwd, made["unit"], {"outcome": "done", "stage": "create"})
+                await self.ingest(cwd, made["unit"], {"outcome": "done", "stage": "create"})
             )
             try:
                 made["worktree"] = await worktrees.ensure(
@@ -414,7 +447,7 @@ class AnswersMixin:
                 made["worktree"] = {"path": "", "error": str(e)}
         return made
 
-    async def _worktree(self, cwd: str, unit: str, strict: bool = False) -> dict[str, Any] | None:
+    async def worktree(self, cwd: str, unit: str, strict: bool = False) -> dict[str, Any] | None:
         """The unit's worktree, opened on its branch if the branch exists and it is not.
 
         None when there is none and none can be opened — the workspace is dirty on the
@@ -482,7 +515,7 @@ class AnswersMixin:
         )
         written = done["written"][0]
         # The answer itself starts nothing; a pass may, if the switch is on.
-        self._autopilot_nudge(self.ws.key(cwd))
+        self.nudge(self.ws.key(cwd))
         return {
             "unit": unit,
             "artifact": written["artifact"],
@@ -972,7 +1005,7 @@ class AnswersMixin:
             "date": today,
         }
 
-    async def _append_to_answers(self, path: Path, block: str, what: str) -> None:
+    async def append_to_answers(self, path: Path, block: str, what: str) -> None:
         """Append `block` to the end of `path`, under its `## Answers`, opening that section
         when the file has none; never rewrites a byte above it. Under `_answer_lock`.
         `what` names the block in the refusal when a section follows `## Answers`, where an
@@ -1125,7 +1158,7 @@ class AnswersMixin:
             if said:
                 raise Invalid(said)
             today = date.today().isoformat()
-            await self._append_to_answers(
+            await self.append_to_answers(
                 directory / "review.md", more_rounds_rules.block(by, today), "a round"
             )
         finally:

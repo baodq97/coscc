@@ -174,7 +174,7 @@ class Fixture:
 
     def units(self, service: Service) -> None:
         for slug, kind, pr in (("one-thing", "feat", 11), ("two-thing", "fix", 12)):
-            made = asyncio.run(service.create_unit(self.cwd, slug, "fixture"))
+            made = asyncio.run(service.answers.create_unit(self.cwd, slug, "fixture"))
             directory = Path(made["path"])
             (directory / "intent.md").write_text(
                 f"# Intent: {slug}\nAuthor: t. Type: {kind}. Status: accepted.\n", encoding="utf-8"

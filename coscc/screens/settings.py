@@ -233,7 +233,7 @@ def _agent_row(row: rx.Var[AgentRow]) -> rx.Component:
 
 
 def _autopilot_settings() -> rx.Component:
-    """This workspace's autopilot; the cap is the whole app's. A refusal comes back from `Service.set_autopilot` as the page's notice, verbatim."""
+    """This workspace's autopilot; the cap is the whole app's. A refusal comes back from `Autopilot.set_setting` as the page's notice, verbatim."""
     return s.panel(
         s.section_head("Autopilot", rx.icon("bot", size=18, color=s.MUTED)),
         _settings_row(

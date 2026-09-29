@@ -628,7 +628,7 @@ def compose_prompt(
 
     # The last round asked for changes but dropped ids an earlier round raised, so `cos.mjs` does
     # not count it and sent the unit here again. The block above may say nothing is left open;
-    # this says why the review runs anyway. The ids are `cos.mjs`'s, carried by `service.run_step`.
+    # this says why the review runs anyway. The ids are `cos.mjs`'s, carried by `service.steps.run_step`.
     if stage == "review" and unfinished_round:
         number = int(unfinished_round["n"])
         dropped = ", ".join(f"`{i}`" for i in unfinished_round.get("dropped") or [])
@@ -711,26 +711,26 @@ def compose_prompt(
             "`### What was not reviewed`; the `ship` gate will stay closed, which is right."
         )
 
-    # Only when the last run of this unit and stage did not end `done`. `service.run_step` decides
+    # Only when the last run of this unit and stage did not end `done`. `service.steps.run_step` decides
     # that and builds this string (`journal.failed_attempts` + `describe_attempt`); this only
     # places it, like `base_note`.
     if last_attempt:
         included.append("last-attempt")
         parts.append(f"# The attempt before this one\n\n{last_attempt}")
 
-    # Only for `review`, and only when `service.run_step` found an integration recorded after the
+    # Only for `review`, and only when `service.steps.run_step` found an integration recorded after the
     # last review round; built by `integrate.describe_for_review`, heading included.
     if integration_note and stage == "review":
         included.append("integration")
         parts.append(integration_note.rstrip())
 
-    # Only for `review`, and only when `service.run_step` took the screenshots again before it;
+    # Only for `review`, and only when `service.steps.run_step` took the screenshots again before it;
     # built by `retake.describe_for_review`, heading included.
     if screens_note and stage == "review":
         included.append("screens")
         parts.append(screens_note.rstrip())
 
-    # Only for `pr`; `service.run_step` looked the pull request up and
+    # Only for `pr`; `service.steps.run_step` looked the pull request up and
     # `integrate.describe_pr_lookup` built the block, heading included.
     if pr_note and stage == "pr":
         included.append("pull-request")

@@ -1,4 +1,4 @@
-"""Tests for `AnswersMixin` in `coscc/service/answers.py`, split from
+"""Tests for `Answers` in `coscc/service/answers.py`, split from
 `tests/service/test_service.py`."""
 
 from __future__ import annotations
@@ -104,7 +104,9 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
     def _post(self, gh, n):
 
         with mock.patch("coscc.git.gh.run", gh):
-            return asyncio.run(self.service.post_review_comment(str(self.repo), self.unit, n))
+            return asyncio.run(
+                self.service.answers.post_review_comment(str(self.repo), self.unit, n)
+            )
 
     def _run_review(self, gh):
         from coscc.units import board as board_reader
@@ -114,7 +116,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
         async def go():
             out = []
-            async for item in self.service.run_step(str(self.repo), self.unit, "review"):
+            async for item in self.service.steps.run_step(str(self.repo), self.unit, "review"):
                 out.append(item)
             return out
 
@@ -205,7 +207,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         gh = FakeGh()
 
         async def go():
-            async for _ in self.service.run_step(str(self.repo), self.unit, "spec"):
+            async for _ in self.service.steps.run_step(str(self.repo), self.unit, "spec"):
                 pass
 
         with mock.patch("coscc.git.gh.run", gh):
@@ -239,8 +241,8 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
         async def both():
             return await asyncio.gather(
-                self.service.post_review_comment(str(self.repo), self.unit, 1),
-                self.service.post_review_comment(str(self.repo), self.unit, 1),
+                self.service.answers.post_review_comment(str(self.repo), self.unit, 1),
+                self.service.answers.post_review_comment(str(self.repo), self.unit, 1),
             )
 
         with mock.patch("coscc.git.gh.run", gh):
@@ -307,7 +309,7 @@ class ADelegatedAnswer(unittest.TestCase):
                 "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n## Open questions\n\n1. One?\n2. Two?\n",
                 encoding="utf-8",
             )
-            added = service.add_decision(
+            added = service.answers.add_decision(
                 {
                     "kind": "delegation",
                     "text": "Leif đặt tên.",
@@ -317,9 +319,13 @@ class ADelegatedAnswer(unittest.TestCase):
                 }
             )["added"]
             asyncio.run(
-                service.answer(cwd, made["unit"], "intent.md", 1, "Có.", "Leif (CoS)", added)
+                service.answers.answer(
+                    cwd, made["unit"], "intent.md", 1, "Có.", "Leif (CoS)", added
+                )
             )
-            asyncio.run(service.answer(cwd, made["unit"], "intent.md", 2, "Không.", "Leif (CoS)"))
+            asyncio.run(
+                service.answers.answer(cwd, made["unit"], "intent.md", 2, "Không.", "Leif (CoS)")
+            )
             [u] = asyncio.run(service.board(cwd))["units"]
             self.assertEqual(
                 {a["n"]: a["authority"] for a in u["answers"]}, {1: "delegated", 2: "person"}
@@ -359,7 +365,7 @@ class RecordingAnOutcome(unittest.TestCase):
             "recorded_by": "Phong",
             **over,
         }
-        return asyncio.run(self.service.record_outcome(self.cwd, self.unit, **kw))
+        return asyncio.run(self.service.answers.record_outcome(self.cwd, self.unit, **kw))
 
     def board_unit(self):
         [u] = asyncio.run(self.service.board(self.cwd))["units"]
@@ -431,7 +437,7 @@ class RecordingAnOutcome(unittest.TestCase):
 
     async def _missing(self) -> str:
         try:
-            await self.service.record_outcome(
+            await self.service.answers.record_outcome(
                 self.cwd, "0099_nothing", "đạt", "agent", "x", "", "", "P"
             )
         except Invalid as e:

@@ -71,7 +71,9 @@ class RerunMixin(rx.State, mixin=True):
 
         listed = False
         try:
-            async for kind, payload in SERVICE.run_step(cwd, unit, stage, rerun=True, note=note):
+            async for kind, payload in SERVICE.steps.run_step(
+                cwd, unit, stage, rerun=True, note=note
+            ):
                 async with self:
                     if not listed:
                         listed = True

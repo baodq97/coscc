@@ -1,6 +1,6 @@
 # Board steps: what they record, stop and share
 
-Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/board/running`, `Service.run_step`, `coscc/agent/steps.py` or `runner.describe_attempt`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/board/running`, `Steps.run_step`, `coscc/agent/steps.py` or `runner.describe_attempt`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
 - **`/api/timeline` returns what a failed paid step replied.** A step whose reply
   could not be used (`0014`) keeps the last `REPLY_KEPT` characters of it, 2000
@@ -33,7 +33,7 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
   trace is that one `end` record. A Stop whose
   cancel reaches the step's task before its first turn leaves no trace at all: the runner
   never ran, so there is neither `start` nor `end`, and only the Stop's own reply names
-  `stopped_by` (`Service._never_driven`, since `0050`). A step that
+  `stopped_by` (`Steps.never_driven`, since `0050`). A step that
   has begun writing its artifact refuses the stop. A step stopped before its session
   reported a cost records `cost_unknown` and no cost at all, so Activity reads it as free.
   Stopping a `pr` or `ship` midway can leave a pushed branch or a merged pull request with

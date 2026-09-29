@@ -1,11 +1,7 @@
-"""The board: every unit of a workspace with its stage, what is running on it and its worktree.
-
-A mixin with no fields, which `Service` inherits.
-"""
+"""The board: every unit of a workspace with its stage, what is running on it and its worktree."""
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
@@ -17,7 +13,6 @@ from coscc.agent import agents
 from coscc.units import board as board_reader
 from coscc.git import gitops
 from coscc.units.board import Unavailable
-from coscc.data import Data
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import last_runs, timelines_of, totals_of
 from coscc.data import Busy
@@ -35,6 +30,12 @@ from coscc.service.common import (
     outcome_label,
     unit_state,
 )
+from coscc.config import Config
+from coscc.service.workspaces import Workspaces
+from coscc.service.common import Holds
+from coscc.service.agents import Agents
+from coscc.service.release import Release
+from coscc.service.steps import Steps
 
 log = logging.getLogger(__name__)
 
@@ -85,38 +86,24 @@ def answerable(unit: dict[str, Any]) -> bool:
     return not (why in ("finished", "rejected") or dropped)
 
 
-class BoardMixin:
+class Board:
+    def __init__(
+        self,
+        config: Config,
+        ws: Workspaces,
+        holds: Holds,
+        agents: Agents,
+        release: Release,
+        steps: Steps,
+    ) -> None:
+        self.config = config
+        self.ws = ws
+        self.holds = holds
+        self.agents = agents
+        self.release = release
+        self.steps = steps
+
     # -- board --------------------------------------------------------------
-
-    def _app_identity(self) -> dict[str, str]:
-        """The running build's version and commit, for a step's `start` row.
-
-        `Updater.me` is `update.identity`, computed once and kept. Anything failing is two
-        empty strings; it never stops a step.
-        """
-        try:
-            me = self.updater.me()
-            return {"version": str(me.get("version") or ""), "commit": str(me.get("commit") or "")}
-        except Exception:
-            # A record field, never a reason to refuse a step.
-            log.exception("the version of the app could not be read")
-            return {"version": "", "commit": ""}
-
-    def _write_step_state(self, cwd: str, unit: str) -> str:
-        """The snapshot a step that runs `cos.mjs` itself hands `--state` — the `pr`
-        step's `pr-text`, the `ship` step's gate — which refuse to decide without one. Written
-        as the step begins, under the data root beside `spikes/`, never in a store, and
-        replaced by the next step of the unit. `""` when it could not be written: the step
-        still runs, and the command it runs says what is missing."""
-        path = Data(self.config.data_dir).root / "state" / units.slot(cwd) / f"{unit}.json"
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(self.ws.snapshot(cwd, [unit]), ensure_ascii=False), encoding="utf-8"
-            )
-        except OSError, Invalid:
-            return ""
-        return str(path)
 
     async def _import_rounds(self, cwd: str, units_: list[dict[str, Any]]) -> None:
         """The review rounds only the prose of a store holds, into `cos.db`, on the
@@ -144,7 +131,7 @@ class BoardMixin:
         except (Busy, sqlite3.Error, OSError) as e:
             log.warning("the review rounds of %s could not be imported: %s", key, e)
 
-    async def board(self, cwd: str) -> dict[str, Any]:
+    async def read(self, cwd: str) -> dict[str, Any]:
         """Every unit in this workspace, each with its eight stages, modes and cost.
 
         The status of a stage comes from the artifact and the mode comes from the journal,
@@ -250,15 +237,11 @@ class BoardMixin:
             # Decided here so the page only shows them.
             unit["answerable"] = answerable(unit)
             unit["attention_reason"] = attention_reason(unit)
-            # The code the last autopilot pass held the unit back with, and its
-            # detail (`overlap-pr #7`); display only, and nothing while the autopilot is off.
-            held = (self._autopilot_held.get(key) or {}).get(unit["name"])
-            unit["held"] = " ".join(p for p in held if p) if held else ""
 
         await self._attach_worktrees(cwd, data["units"])
         # One `gh pr list` for the whole read, asked only by whichever block needs it.
         prs = open_prs_once(cwd)
-        asks = await self._attach_integration(cwd, data["units"], journal, key, prs)
+        asks = await self.steps.attach_integration(cwd, data["units"], journal, key, prs)
         data["release"] = await self.release.attach_release(cwd, data["units"], journal, key, prs)
         for unit in data["units"]:
             # From the timelines read above: no second scan of the run log.
@@ -268,10 +251,6 @@ class BoardMixin:
             )
 
         data["recording"] = journal is not None
-        # Display only: the page shows it and decides nothing from it.
-        data["autopilot"] = self._autopilot_block(key)
-        # Display only.
-        data["guide"] = self._guide_block(key)
         data["read_only_because"] = (
             None
             if journal is not None
@@ -287,11 +266,11 @@ class BoardMixin:
                 "host_units": units.host_unit_count(cwd),
             }
         # Started last and never awaited: their answers count from the next read.
-        self._ask_ci(asks)
+        self.steps.ask_ci(asks)
         return data
 
-    def _running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-        """`running`'s `running`, from memory alone: what `_guide_block` reads too."""
+    def running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        """`running`'s `running`, from memory alone: what `guide_block` reads too."""
         running: dict[str, list[dict[str, Any]]] = {}
         for entry in self.holds.running.values():
             if entry["workspace"] != key:
@@ -332,7 +311,7 @@ class BoardMixin:
         key = self.ws.key(cwd)
         # Through the one lookup, so an override shows here too. Read once per call.
         overrides = self.agents.agent_overrides()[0]
-        running = self._running_here(key, overrides)
+        running = self.running_here(key, overrides)
         out: dict[str, Any] = {"running": running, "unknown_end": {}}
         journal = self.ws.journal()
         if journal is None:

@@ -22,7 +22,7 @@ async def resume_after_update() -> None:
 
     A Reflex lifespan task, because `api.py`'s lifespan is never run by the real stack.
     """
-    await API.state.service.resume_after_update()
+    await API.state.service.resume.resume_after_update()
 
 
 app.register_lifespan_task(resume_after_update)

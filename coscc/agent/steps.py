@@ -80,7 +80,7 @@ class Running:
     # point is refused rather than honoured halfway.
     sealed: bool = False
     listeners: set = field(default_factory=set)
-    # The id of this step's events, set by `Service.run_step`. Empty for a row made any other way.
+    # The id of this step's events, set by `Steps.run_step`. Empty for a row made any other way.
     run: str = ""
 
 

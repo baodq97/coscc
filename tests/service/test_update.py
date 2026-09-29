@@ -1,4 +1,5 @@
-"""Tests for `UpdateMixin` in `coscc/service/update.py`, split from `tests/service/test_service.py`."""
+"""Tests for updating the app through `Service` (`coscc/service/__init__.py`,
+`coscc/service/update.py`), split from `tests/service/test_service.py`."""
 
 from __future__ import annotations
 
@@ -28,9 +29,9 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
 
         self.s.updater.window = True
         with self.assertRaises(Updating):
-            await self.s.run_step(self.tmp.name, "0001_a", "impl").__anext__()
+            await self.s.steps.run_step(self.tmp.name, "0001_a", "impl").__anext__()
         with self.assertRaises(Updating):
-            await self.s.integrate(self.tmp.name, "0001_a").__anext__()
+            await self.s.steps.integrate(self.tmp.name, "0001_a").__anext__()
         with self.assertRaises(Updating):
             self.s.chat.check_send(self.tmp.name, "hi")
         self.s.updater.window = False
@@ -38,12 +39,12 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
 
     async def test_apply_waits_only_for_a_mechanical_integration_or_a_retake(self):
         # A step, an estimate and a chat turn are paused, not waited for.
-        self.s.steps.claim("/w", "0001_a", "impl")
+        self.s.steps.registry.claim("/w", "0001_a", "impl")
         self.s.holds.mark_running("/w", "0002_b", "integrate", "rebase")
         self.s.holds.mark_running("/w", "0003_c", "impl", "step")
         self.s.holds.mark_running("/w", "", "estimate", "estimate")
         self.s.sessions._begin_turn("/w", "sid")
-        self.s._retakes["r"] = {"workspace": "/w", "unit": "0005_e", "started": "t"}
+        self.s.steps.retakes["r"] = {"workspace": "/w", "unit": "0005_e", "started": "t"}
         waited = sorted((j["stage"], j["unit"]) for j in self.s._update_waited())
         self.assertEqual(waited, [("integrate", "0002_b"), ("screens", "0005_e")])
 

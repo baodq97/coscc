@@ -175,7 +175,7 @@ class StudioState(
     empty_host: str = ""
     empty_host_units: int = 0
     recording: bool = False
-    # `Service.running`'s latest answer, kept so a board read that rebuilds every card can
+    # `Board.running`'s latest answer, kept so a board read that rebuilds every card can
     # put `live` back on at once. Backend only.
     _running_read: dict = {}
     query: str = ""
@@ -270,7 +270,7 @@ class StudioState(
     # The agent table, and why a field fell back. Each row is its own form.
     agent_rows: list[AgentRow] = []
     agent_problems: list[str] = []
-    # One workspace's autopilot settings, as `Service.autopilot_settings` has them.
+    # One workspace's autopilot settings, as `Autopilot.settings` has them.
     ap_on: bool = False
     ap_may_ship: bool = False
     ap_max_parallel: str = ""
@@ -623,7 +623,7 @@ class StudioState(
         if not self.cwd:
             return
         try:
-            self._show_autopilot(SERVICE.autopilot_settings(self.cwd))
+            self._show_autopilot(SERVICE.autopilot.settings(self.cwd))
         except Invalid:
             return
 
@@ -667,7 +667,7 @@ class StudioState(
                         "run": r.get("run") or "",
                     }
                 )
-                for r in SERVICE.running_steps(self.cwd)
+                for r in SERVICE.steps.running_steps(self.cwd)
             ]
         except Invalid:
             self.running_steps = []
@@ -797,7 +797,7 @@ class StudioState(
         self._set_current()
 
     def _apply_running(self, read: dict) -> None:
-        """Put one `Service.running` answer on every card. Decides nothing.
+        """Put one `Board.running` answer on every card. Decides nothing.
 
         The cards are sent again only when a card's `live` or covered state changed, and the
         open unit only when its own did: an ask that changes nothing sends neither."""
@@ -1163,7 +1163,7 @@ class StudioState(
             # The last read answered for the workspace just left; a unit of the same name
             # here must not show its session.
             try:
-                self._running_read = SERVICE.running(cwd)
+                self._running_read = SERVICE.boards.running(cwd)
             except Invalid:
                 self._running_read = {}
             yield
@@ -1235,7 +1235,7 @@ class StudioState(
 
     @rx.event(background=True)
     async def poll_running(self):
-        """Ask `Service.running` every `RUNNING_POLL` seconds while the Board shows.
+        """Ask `Board.running` every `RUNNING_POLL` seconds while the Board shows.
 
         The one source for every card's `live`, whichever tab, route or process started the
         step. One loop per tab: a second start while one lives returns at once. It ends when
@@ -1258,7 +1258,7 @@ class StudioState(
                     if self.screen != "board" or not self.cwd:
                         return
                     try:
-                        read = SERVICE.running(self.cwd)
+                        read = SERVICE.boards.running(self.cwd)
                     except Invalid:
                         read = {}
                     self._apply_running(read)
@@ -1367,7 +1367,7 @@ class StudioState(
 
     @rx.event
     def set_autopilot_on(self, value: bool):
-        """Whether it may be turned on is `Service.set_autopilot`'s call."""
+        """Whether it may be turned on is `Autopilot.set_setting`'s call."""
         self._change_autopilot("autopilot", bool(value))
 
     @rx.event
@@ -1392,7 +1392,7 @@ class StudioState(
 
     def _change_autopilot(self, name: str, value) -> None:
         try:
-            self._show_autopilot(SERVICE.set_autopilot(self.cwd, name, value))
+            self._show_autopilot(SERVICE.autopilot.set_setting(self.cwd, name, value))
         except Invalid as e:
             self.notice = str(e)
             self._load_autopilot()
@@ -1482,14 +1482,16 @@ class StudioState(
         waiting: list[str] = []
         dropped: list[str] = []
         try:
-            stage, said = _run_target(found := await _asking(SERVICE.next_step, cwd, unit, join))
+            stage, said = _run_target(
+                found := await _asking(SERVICE.steps.next_step, cwd, unit, join)
+            )
             waiting = _run_waiting(found)
             dropped = _run_dropped(found)
         except Invalid as e:
             stage, said = "", str(e)
         # Files only, after `next` has answered; a refusal offers nothing.
         try:
-            offers = list((await SERVICE.rerun_offers(cwd, unit)).get("offers") or [])
+            offers = list((await SERVICE.steps.rerun_offers(cwd, unit)).get("offers") or [])
         except Invalid:
             offers = []
         later = {str(o.get("stage") or ""): [str(x) for x in o.get("later") or []] for o in offers}
@@ -1540,11 +1542,11 @@ class StudioState(
     @rx.event
     @rx.event
     async def stop_step(self, unit: str):
-        """Stop one unit's running step; every rule is `Service.stop_step`'s. The streaming
+        """Stop one unit's running step; every rule is `Steps.stop_step`'s. The streaming
         handler sees the `stopped` outcome."""
         self.error = ""
         try:
-            done = await SERVICE.stop_step(self.cwd, unit, "")
+            done = await SERVICE.steps.stop_step(self.cwd, unit, "")
             self.notice = f"Stopping {done['unit']} {done['stage']} (by {done['stopped_by']})."
         except Invalid as e:
             self._fail(e)
@@ -1560,7 +1562,7 @@ class StudioState(
             self.notice = "There is no next step to set a mode on."
             return
         try:
-            await SERVICE.set_mode(self.cwd, self.unit_id, stage, value)
+            await SERVICE.steps.set_mode(self.cwd, self.unit_id, stage, value)
         except Invalid as e:
             self._fail(e)
             return
@@ -1588,7 +1590,7 @@ class StudioState(
 
         listed = False
         try:
-            async for kind, payload in SERVICE.run_step(cwd, unit, stage):
+            async for kind, payload in SERVICE.steps.run_step(cwd, unit, stage):
                 async with self:
                     if not listed:
                         # The step is in the service's list from its first item on.

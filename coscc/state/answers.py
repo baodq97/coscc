@@ -85,7 +85,7 @@ class AnswersMixin(rx.State, mixin=True):
         from coscc.state import SERVICE
 
         try:
-            self._show_decisions(SERVICE.decisions_table())
+            self._show_decisions(SERVICE.answers.decisions_table())
         except Invalid as e:
             self._fail(e)
 
@@ -96,14 +96,14 @@ class AnswersMixin(rx.State, mixin=True):
 
     @rx.event
     def add_decision(self):
-        """Whether the form may be saved is `Service.add_decision`'s call."""
+        """Whether the form may be saved is `Answers.add_decision`'s call."""
         from coscc.state import SERVICE
 
         form = dict(self.decision_form)
         if form.get("workspace") == DECISION_FORM["workspace"]:
             form["workspace"] = ""
         try:
-            done = SERVICE.add_decision(form)
+            done = SERVICE.answers.add_decision(form)
         except Invalid as e:
             self.notice = str(e)
             return
@@ -116,7 +116,7 @@ class AnswersMixin(rx.State, mixin=True):
         from coscc.state import SERVICE
 
         try:
-            self._show_decisions(SERVICE.withdraw_decision(decision_id))
+            self._show_decisions(SERVICE.answers.withdraw_decision(decision_id))
         except Invalid as e:
             self.notice = str(e)
             return
@@ -124,7 +124,7 @@ class AnswersMixin(rx.State, mixin=True):
 
     @rx.event
     async def answer_question(self, key: str):
-        """Send one answer; whether it may be written is `Service.answer`'s.
+        """Send one answer; whether it may be written is `Answers.answer`'s.
 
         Every press ends in an answer written or a reason shown. The `yield` after raising
         `answering_key` sends it to the browser. A second press is queued behind the first,
@@ -149,7 +149,7 @@ class AnswersMixin(rx.State, mixin=True):
         self.answering_key = key
         yield
         try:
-            done = await SERVICE.answer(
+            done = await SERVICE.answers.answer(
                 self.cwd, self.unit_id, artifact, number, self.answer_text, ""
             )
         except Invalid as e:
@@ -215,7 +215,7 @@ class AnswersMixin(rx.State, mixin=True):
         )
         self.recording_outcome = True
         try:
-            done = await SERVICE.record_outcome(
+            done = await SERVICE.answers.record_outcome(
                 self.cwd,
                 self.unit_id,
                 result,
@@ -240,7 +240,7 @@ class AnswersMixin(rx.State, mixin=True):
 
     @rx.event
     async def post_review_comment(self, number: int):
-        """Post one review round to the pull request; `Service.post_review_comment` decides.
+        """Post one review round to the pull request; `Answers.post_review_comment` decides.
 
         The `yield` after raising `posting_round` sends it to the browser: without it the
         flag is set and cleared inside one delta and the button never locks for the up to
@@ -252,7 +252,7 @@ class AnswersMixin(rx.State, mixin=True):
         self.posting_round = int(number)
         yield
         try:
-            done = await SERVICE.post_review_comment(self.cwd, self.unit_id, number)
+            done = await SERVICE.answers.post_review_comment(self.cwd, self.unit_id, number)
         except Invalid as e:
             self.notice = str(e)
             return
@@ -271,7 +271,7 @@ class AnswersMixin(rx.State, mixin=True):
 
     @rx.event
     async def integrate(self):
-        """Integrate the open unit; whether it may, and which road, is `Service.integrate`'s.
+        """Integrate the open unit; whether it may, and which road, is `Steps.integrate`'s.
         The `yield` sends `integrating` to the browser."""
         from coscc.state import SERVICE
 
@@ -281,7 +281,7 @@ class AnswersMixin(rx.State, mixin=True):
         yield
         done: dict = {}
         try:
-            async for kind, payload in SERVICE.integrate(self.cwd, self.unit_id):
+            async for kind, payload in SERVICE.steps.integrate(self.cwd, self.unit_id):
                 if kind == "done":
                     done = payload.get("integration") or {}
         except Invalid as e:
@@ -317,7 +317,7 @@ class AnswersMixin(rx.State, mixin=True):
     @rx.event
     @rx.event
     async def set_hold(self, to: str):
-        """Pause, drop or resume the open unit; `Service.hold` decides. Starts nothing: the
+        """Pause, drop or resume the open unit; `Answers.hold` decides. Starts nothing: the
         run button still waits for a person."""
         from coscc.state import SERVICE, StudioState
 
@@ -326,7 +326,7 @@ class AnswersMixin(rx.State, mixin=True):
         self.holding = True
         yield
         try:
-            done = await SERVICE.hold(self.cwd, self.unit_id, to, self.hold_reason, "")
+            done = await SERVICE.answers.hold(self.cwd, self.unit_id, to, self.hold_reason, "")
         except Invalid as e:
             self.notice = f"Not changed: {e}"
             return
@@ -348,7 +348,7 @@ class AnswersMixin(rx.State, mixin=True):
 
     @rx.event
     async def allow_more_rounds(self):
-        """Allow the open unit one more review round; `Service.more_rounds` decides. Starts
+        """Allow the open unit one more review round; `Answers.more_rounds` decides. Starts
         nothing: the run button still waits for a person."""
         from coscc.state import SERVICE, StudioState
 
@@ -357,7 +357,7 @@ class AnswersMixin(rx.State, mixin=True):
         self.granting_round = True
         yield
         try:
-            done = await SERVICE.more_rounds(self.cwd, self.unit_id, "")
+            done = await SERVICE.answers.more_rounds(self.cwd, self.unit_id, "")
         except Invalid as e:
             self.notice = f"Not changed: {e}"
             return
