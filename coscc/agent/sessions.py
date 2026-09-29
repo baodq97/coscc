@@ -723,6 +723,19 @@ def _options(
         # `resume_drops_turn` is never set: the CLI refused 3 of 5 cuts made mid-turn with
         # it (`0138 spike.md ## U2`, point 8), and without it took all five.
         options.resume_session_at = resume_at
+        # `0139` R15: the resumed session keeps the system prompt it recorded at its start, and
+        # reads no skill or rule an update changed in between. Only a preset or a custom
+        # prompt carries `snapshot` (`0139 spike.md ## U1`); the file form cannot, so it
+        # becomes an empty custom prompt with the same file appended -- never the file's text
+        # as a value in argv, which is `0088` F1's `E2BIG`.
+        sp = options.system_prompt
+        if isinstance(sp, dict) and sp.get("type") == "file":
+            options.extra_args["append-system-prompt-file"] = sp["path"]
+            options.system_prompt = {"type": "custom", "prompt": "", "snapshot": True}
+        elif isinstance(sp, dict):
+            options.system_prompt = {**sp, "snapshot": True}
+        else:
+            options.system_prompt = {"type": "custom", "prompt": "", "snapshot": True}
     return options
 
 

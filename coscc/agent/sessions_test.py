@@ -1504,6 +1504,32 @@ class ASessionIsKnownWhileItRuns(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(options.resume_drops_turn)
         self.assertIsNone(_options(Config(), "/tmp", None).resume_session_at)
 
+    def test_every_resume_builds_options_with_snapshot(self):
+        # `0139` R15, each form the start path can take: a preset, the file form, and none.
+        from coscc.agent.instructions_test import plant
+        from coscc.runner import CLAUDE_CODE_PRESET
+
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as data:
+            plant(Path(d))
+            written = str(Path(data) / sessions.PROMPT_FILE)
+            preset = _options(Config(), d, "sid", system_prompt=CLAUDE_CODE_PRESET, data_dir=data, resume_at="u")
+            bare = _options(Config(), d, "sid", data_dir=data, resume_at="u")
+        empty = _options(Config(), "/tmp", "sid", resume_at="u")
+        self.assertEqual(preset.system_prompt, {"type": "preset", "preset": "claude_code", "snapshot": True})
+        self.assertEqual(preset.extra_args, {"append-system-prompt-file": written})
+        # The file is still appended, never passed as a value in argv (`0088` F1).
+        self.assertEqual(bare.system_prompt, {"type": "custom", "prompt": "", "snapshot": True})
+        self.assertEqual(bare.extra_args, {"append-system-prompt-file": written})
+        self.assertEqual(empty.system_prompt, {"type": "custom", "prompt": "", "snapshot": True})
+        self.assertNotIn("snapshot", CLAUDE_CODE_PRESET)
+
+    def test_a_new_session_carries_no_snapshot_key(self):
+        from coscc.runner import CLAUDE_CODE_PRESET
+
+        self.assertIsNone(_options(Config(), "/tmp", None).system_prompt)
+        started = _options(Config(), "/tmp", "sid", system_prompt=CLAUDE_CODE_PRESET)
+        self.assertNotIn("snapshot", started.system_prompt)
+
     async def test_a_stream_learns_its_session_id_from_init(self):
         s = Sessions(Config(workspaces=("/tmp",)))
         _FakeClient.messages = [_init("sid-i"), _result("sid-i")]

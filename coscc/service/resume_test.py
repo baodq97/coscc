@@ -173,6 +173,14 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual((row["by"], row["result"]), ("app", "resumed"))
         self.assertEqual(self.journal.unresumed(), [])
 
+    def test_a_resumed_row_records_snapshot(self):
+        # `0139` R15.
+        self.taken()
+        self.paused()
+        self.up()
+        [row] = self.journal.records(self.key, kind="resume")
+        self.assertEqual((row["result"], row["system_prompt"]), ("resumed", "snapshot"))
+
     def assert_failed(self, why: str) -> None:
         [end] = self.ends()
         self.assertEqual((end["unit"], end["stage"], end["outcome"]), (self.unit, "plan", "failed"))
