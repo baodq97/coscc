@@ -45,7 +45,9 @@ def _package_dir() -> Path:
     return Path(coscc.__file__).resolve().parent
 
 
-def path(workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLike[str] | None = None) -> Path:
+def path(
+    workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLike[str] | None = None
+) -> Path:
     """The unit's worktree. Deterministic in (workspace, unit); refused anywhere unsafe."""
     if not units.UNIT_RE.fullmatch(unit or ""):
         raise BadUnit(f"not a work unit name: {unit!r}")
@@ -59,7 +61,9 @@ def path(workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLi
 RELEASE_TREE = gitops.RELEASE_TREE
 
 
-def release_path(workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None) -> Path:
+def release_path(
+    workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None
+) -> Path:
     """The workspace's one release worktree, beside its units' trees. `release` is not a
     `NNNN_slug`, so no unit's tree can be named the same.
     """
@@ -78,11 +82,13 @@ def read_prepare(tree: Path) -> dict[str, Any] | None:
     """What the last preparation of this tree said, or None if it was never prepared."""
     try:
         return json.loads(prepare_record(tree).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
-async def find(workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLike[str] | None = None) -> dict[str, str] | None:
+async def find(
+    workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLike[str] | None = None
+) -> dict[str, str] | None:
     """The unit's worktree as git lists it (`path`, `branch`, `head`), or None."""
     want = path(workspace, unit, data_dir)
     root = Path(units.key(workspace))
@@ -188,7 +194,10 @@ async def ensure(
         branch_sha = await gitops.rev_parse(tree, "HEAD")
         base = await _base_against_origin(tree, branch, branch_sha, fetched)
         return {
-            "path": str(where), "branch": branch, "created": False, "switched": switched,
+            "path": str(where),
+            "branch": branch,
+            "created": False,
+            "switched": switched,
             "base": base,
         }
 
@@ -203,7 +212,10 @@ async def ensure(
         base = await _base_against_origin(root, branch, branch_sha, fetched)
         found = await find(workspace, unit, data_dir) or {"branch": ""}
         return {
-            "path": str(where), "branch": found["branch"], "created": True, "switched": switched,
+            "path": str(where),
+            "branch": found["branch"],
+            "created": True,
+            "switched": switched,
             "base": base,
         }
     sha = await gitops.rev_parse(root, f"refs/heads/{gitops.TRUNK}")
@@ -249,7 +261,10 @@ async def refresh_base(
     found = await find(workspace, unit, data_dir)
     if found is None:
         return {
-            "ref": ref, "sha": "", "fresh": False, "reason": "no worktree to refresh",
+            "ref": ref,
+            "sha": "",
+            "fresh": False,
+            "reason": "no worktree to refresh",
             "fetch": {"outcome": "failed", "attempts": 0, "age": None},
         }
     tree = Path(found["path"])
@@ -257,7 +272,10 @@ async def refresh_base(
         fetched = await fetches.fetch(tree)
     except fetches.FetchFailed as e:
         return {
-            "ref": ref, "sha": "", "fresh": False, "reason": str(e),
+            "ref": ref,
+            "sha": "",
+            "fresh": False,
+            "reason": str(e),
             "fetch": {"outcome": "failed", "attempts": e.attempts, "age": None},
         }
     try:
@@ -297,7 +315,7 @@ def commands(tree: Path) -> list[list[str]]:
         out.append(["npm", "ci"])
     try:
         project = tomllib.loads((tree / "pyproject.toml").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         project = {}
     if "coscc-build" in ((project.get("project") or {}).get("scripts") or {}):
         out.append(["uv", "run", "coscc-build"])
@@ -307,7 +325,7 @@ def commands(tree: Path) -> list[list[str]]:
 def _outside(entry: str, roots: list[Path]) -> bool:
     try:
         p = Path(entry).resolve()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
     return not any(p == r or r in p.parents for r in roots)
 
@@ -384,7 +402,10 @@ async def prepare(
     run = run or _run
     todo = commands(tree)
     result: dict[str, Any] = {
-        "ok": True, "command": "", "exit_code": 0, "tail": "",
+        "ok": True,
+        "command": "",
+        "exit_code": 0,
+        "tail": "",
         "commands": [" ".join(c) for c in todo],
     }
     env = prepare_env(tree, workspace, data_dir)

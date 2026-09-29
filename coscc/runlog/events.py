@@ -114,7 +114,8 @@ def _result_fields(message: Any) -> dict[str, Any]:
         "cost_usd": getattr(message, "total_cost_usd", None),
         **{name: int(total.get(name) or 0) for name in TOKEN_FIELDS},
         "duration_ms": int(getattr(message, "duration_ms", 0) or 0),
-        "terminal_reason": getattr(message, "terminal_reason", None) or getattr(message, "subtype", None),
+        "terminal_reason": getattr(message, "terminal_reason", None)
+        or getattr(message, "subtype", None),
     }
 
 
@@ -159,7 +160,6 @@ class Recorder:
         self._message_ids: set[str] = set()
         self._task: asyncio.Task | None = None
         self._opened = False
-
 
     def _emit(self, kind: str, **fields: Any) -> None:
         try:
@@ -221,8 +221,11 @@ class Recorder:
                     "persisted_size": persisted.get("persistedOutputSize"),
                 }
             self._emit(
-                "tool_result", tool_use_id=block.tool_use_id, is_error=bool(block.is_error),
-                content=block.content, **extra,
+                "tool_result",
+                tool_use_id=block.tool_use_id,
+                is_error=bool(block.is_error),
+                content=block.content,
+                **extra,
             )
         else:
             self._emit("system", **_system_fields(block))
@@ -230,7 +233,6 @@ class Recorder:
     def denied(self, tool: str, tool_input: Any, reason: str) -> None:
         """`denied`: one refusal of the grant's gate. Every one, not the first five."""
         self._emit("denied", tool=tool, input=tool_input, reason=reason)
-
 
     def subscribe(self, after: int) -> tuple[asyncio.Queue, list[dict[str, Any]]]:
         """Register first, then read what is there: nothing falls between."""
@@ -240,7 +242,6 @@ class Recorder:
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self.subscribers.discard(q)
-
 
     def start(self) -> None:
         """Begin writing. The index row goes first, so a step cut off early still has one."""
@@ -252,7 +253,12 @@ class Recorder:
         stores nothing twice."""
         if not self._opened:
             self.data.step_run_open(
-                self.run, self.root, self.workspace, self.unit, self.stage, self.started_at,
+                self.run,
+                self.root,
+                self.workspace,
+                self.unit,
+                self.stage,
+                self.started_at,
                 timeout=timeout,
             )
             self._opened = True
@@ -301,9 +307,16 @@ class Recorder:
             self.lost += len(self.pending)
             self.pending.clear()
         try:
-            await asyncio.wait_for(asyncio.to_thread(
-                self.data.step_run_close, self.run, now_ms(), self.lost, timeout=CLOSE_WAIT,
-            ), CLOSE_WAIT * 2)
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.data.step_run_close,
+                    self.run,
+                    now_ms(),
+                    self.lost,
+                    timeout=CLOSE_WAIT,
+                ),
+                CLOSE_WAIT * 2,
+            )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -316,9 +329,14 @@ class Recorder:
         Never raises, bar a cancel.
         """
         try:
-            n = await asyncio.wait_for(asyncio.to_thread(
-                self.data.step_turns, self.run, timeout=CLOSE_WAIT,
-            ), CLOSE_WAIT * 2)
+            n = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.data.step_turns,
+                    self.run,
+                    timeout=CLOSE_WAIT,
+                ),
+                CLOSE_WAIT * 2,
+            )
             return int(n), "events"
         except asyncio.CancelledError:
             raise
@@ -337,8 +355,6 @@ class Recorder:
             await asyncio.wait_for(self._flush(CLOSE_WAIT), CLOSE_WAIT * 2)
         except BaseException:  # noqa: BLE001 - best effort, on the way out
             pass
-
-
 
 
 def _clip(text: str) -> tuple[str, bool]:
@@ -403,7 +419,7 @@ def when(at_ms: Any) -> str:
     """`at` as the page prints it: UTC, to the millisecond."""
     try:
         moment = datetime.fromtimestamp(int(at_ms) / 1000, tz=timezone.utc)
-    except (TypeError, ValueError, OverflowError, OSError):
+    except TypeError, ValueError, OverflowError, OSError:
         return ""
     return moment.strftime("%H:%M:%S.") + f"{moment.microsecond // 1000:03d}"
 
@@ -440,11 +456,12 @@ def full_text(event: dict[str, Any]) -> str:
     return _body(event)
 
 
-
-
 async def purge(
-    data: Any, journal: Any, now: int | None = None,
-    keep_days: int = KEEP_DAYS, keep_bytes: int = KEEP_BYTES,
+    data: Any,
+    journal: Any,
+    now: int | None = None,
+    keep_days: int = KEEP_DAYS,
+    keep_bytes: int = KEEP_BYTES,
 ) -> tuple[int, int]:
     """At startup only. Whole runs, oldest first: past `keep_days`, then while the total is over
     `keep_bytes`. Index rows stay, with `purged_at`. One `events-purge` row in the run log when
@@ -457,7 +474,8 @@ async def purge(
     runs, freed = await asyncio.to_thread(data.step_events_purge, older_than, keep_bytes, iso_now())
     if runs and journal is not None:
         await asyncio.to_thread(
-            journal.append, {"kind": "events-purge", "workspace": "", "runs": runs, "bytes": freed},
+            journal.append,
+            {"kind": "events-purge", "workspace": "", "runs": runs, "bytes": freed},
         )
     return runs, freed
 

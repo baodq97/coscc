@@ -18,7 +18,6 @@ from coscc.service.common import Invalid
 
 
 class WorkspacesMixin:
-
     # -- workspaces ---------------------------------------------------------
 
     def workspaces(self) -> dict[str, Any]:

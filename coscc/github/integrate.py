@@ -60,8 +60,6 @@ def check_started_by(value: str) -> str:
     return value
 
 
-
-
 def needs_checks(pr_row: dict | str, last_record: dict | None) -> bool:
     """Whether `classify` needs the required checks: only when the pull request's head is the one
     the last integration pushed. Most board reads therefore cost no extra `gh`.
@@ -93,15 +91,21 @@ def classify(
     if needs_checks(pr_row, last_record):
         if isinstance(checks, str):
             return {"state": "unknown", "reason": checks}
-        red = [str(c.get("name") or "?") for c in (checks or []) if str(c.get("bucket") or "") in _RED]
+        red = [
+            str(c.get("name") or "?") for c in (checks or []) if str(c.get("bucket") or "") in _RED
+        ]
         if red:
             return {
                 "state": "red-after-integration",
-                "reason": "required checks red on the head the last integration pushed: " + ", ".join(red),
+                "reason": "required checks red on the head the last integration pushed: "
+                + ", ".join(red),
                 "red": red,
             }
     if missing > 0:
-        return {"state": "behind", "reason": f"{missing} commit(s) behind origin/main {origin_sha[:7]}"}
+        return {
+            "state": "behind",
+            "reason": f"{missing} commit(s) behind origin/main {origin_sha[:7]}",
+        }
     return {"state": "current", "reason": ""}
 
 
@@ -148,7 +152,11 @@ def cut_integration(records: list[dict], unit: str, running: bool) -> dict | Non
 
 
 def relation(
-    local: str, pr: str, local_in_pr: bool | None, pr_in_local: bool | None, newer: bool | None = True,
+    local: str,
+    pr: str,
+    local_in_pr: bool | None,
+    pr_in_local: bool | None,
+    newer: bool | None = True,
 ) -> str:
     """How the local head stands to the pull request's head.
 
@@ -240,7 +248,11 @@ def refusal(
 
 
 def warnings(
-    rounds: list[dict], review_status: str, gebo: bool, grant_warning: str, fallback: bool = False,
+    rounds: list[dict],
+    review_status: str,
+    gebo: bool,
+    grant_warning: str,
+    fallback: bool = False,
     name: str = "",
 ) -> list[str]:
     """What the page says before the button is pressed. `fallback`: the press goes the mechanical
@@ -311,12 +323,14 @@ def related(
         if not shared:
             continue
         n = pr_number_of(str(c.get("subject") or ""))
-        merged.append({
-            "sha": c.get("sha", ""),
-            "subject": c.get("subject", ""),
-            "unit": by_pr.get(n) if n is not None else None,
-            "files": shared,
-        })
+        merged.append(
+            {
+                "sha": c.get("sha", ""),
+                "subject": c.get("subject", ""),
+                "unit": by_pr.get(n) if n is not None else None,
+                "files": shared,
+            }
+        )
     open_ = []
     for o in others:
         if o.get("unit") == self_unit:
@@ -419,7 +433,8 @@ def record(
         "merge_state": merge_state,
         "update_branch": (
             {"code": update_branch.get("code"), "said": str(update_branch.get("said") or "")}
-            if update_branch else None
+            if update_branch
+            else None
         ),
         "started_by": started_by,
         "completion": _completion_of(completion),
@@ -434,7 +449,9 @@ def _completion_of(completion: dict | None) -> dict | None:
     return {
         "relation": str(completion.get("relation") or ""),
         "local_head": str(completion.get("local_head") or ""),
-        "cut": {"at": str(cut.get("at") or ""), "head": str(cut.get("head") or "")} if cut else None,
+        "cut": {"at": str(cut.get("at") or ""), "head": str(cut.get("head") or "")}
+        if cut
+        else None,
     }
 
 
@@ -457,7 +474,9 @@ def outcome_of_session(head_before: str, head_now: str, needs_person: list[str])
     return "failed"
 
 
-def describe_for_review(rec: dict[str, Any], overrides: dict[str, dict[str, str]] | None = None) -> str:
+def describe_for_review(
+    rec: dict[str, Any], overrides: dict[str, dict[str, str]] | None = None
+) -> str:
     """The section the next `review` prompt carries.
 
     A completion says what it pushed (local commits nobody had pushed) and that the app opened
@@ -522,7 +541,10 @@ def build_prompt(
     The app does not rebase to find the conflicting files first: that would write to the tree
     before the session began, which must be clean.
     """
-    parts = ([agents.identity_section(agent), ""] if agent is not None else []) + [skill.strip(), ""]
+    parts = ([agents.identity_section(agent), ""] if agent is not None else []) + [
+        skill.strip(),
+        "",
+    ]
     parts.append(f"# This integration\n\nUnit: `{unit}`. Branch: `{branch}`. Pull request: #{pr}.")
     parts.append(f"State: `{state}` — {reason}")
     parts.append(f"Head at start: `{head_before}`. `origin/main` at start: `{origin_sha}`.")
@@ -548,13 +570,19 @@ def build_prompt(
     if rel.get("merged"):
         for m in rel["merged"]:
             who = m.get("unit") or "no unit found"
-            parts.append(f"- `{str(m.get('sha'))[:7]}` {m.get('subject')} — unit: {who}; files: {', '.join(m['files'])}")
+            parts.append(
+                f"- `{str(m.get('sha'))[:7]}` {m.get('subject')} — unit: {who}; files: {', '.join(m['files'])}"
+            )
     else:
         parts.append("- none")
     parts.append("\n# Other open units touching the same files (read only, never change them)\n")
     if rel.get("open"):
         for o in rel["open"]:
-            files = ", ".join(o["files"]) if o.get("files") is not None else "no local commit, files not compared"
+            files = (
+                ", ".join(o["files"])
+                if o.get("files") is not None
+                else "no local commit, files not compared"
+            )
             parts.append(f"- {o['unit']}: {files}")
     else:
         parts.append("- none")
@@ -608,15 +636,17 @@ def _completion_section(completion: dict, branch: str, pr_head: str) -> str:
     return "\n".join(lines)
 
 
-
-
 async def _gh(argv: list[str], cwd: str) -> tuple[int, str, str]:
     """One `gh` call, as `prcomment._gh` makes it: exit code and both streams."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "gh", *argv, cwd=cwd, env=child_env(),
+            "gh",
+            *argv,
+            cwd=cwd,
+            env=child_env(),
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
     except OSError as e:
         raise IntegrateError(f"gh could not be started: {e}") from e
@@ -625,7 +655,9 @@ async def _gh(argv: list[str], cwd: str) -> tuple[int, str, str]:
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        raise IntegrateError(f"gh {' '.join(argv[:2])} did not answer within {GH_TIMEOUT:.0f}s") from None
+        raise IntegrateError(
+            f"gh {' '.join(argv[:2])} did not answer within {GH_TIMEOUT:.0f}s"
+        ) from None
     return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 
@@ -636,8 +668,16 @@ def _said(out: str, err: str) -> str:
 async def open_prs(root: str) -> list[dict]:
     """Every open pull request in one call: number, head, head branch, mergeable."""
     code, out, err = await _gh(
-        ["pr", "list", "--state", "open", "--json", "number,headRefOid,headRefName,mergeable",
-         "--limit", "200"],
+        [
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--json",
+            "number,headRefOid,headRefName,mergeable",
+            "--limit",
+            "200",
+        ],
         root,
     )
     if code != 0:
@@ -651,7 +691,9 @@ async def open_prs(root: str) -> list[dict]:
 
 async def required_checks(tree: str, n: int) -> list[dict]:
     """The same call the `review` gate makes (`cos.mjs`, `pr checks --required`)."""
-    code, out, err = await _gh(["pr", "checks", str(int(n)), "--required", "--json", "name,bucket"], tree)
+    code, out, err = await _gh(
+        ["pr", "checks", str(int(n)), "--required", "--json", "name,bucket"], tree
+    )
     # `gh pr checks` exits 8 while checks are pending and 1 when one failed; both still
     # print the JSON, which is what is read.
     try:
@@ -681,7 +723,7 @@ async def merge_state(tree: str, n: int) -> str:
         return ""
     try:
         return str(json.loads(out).get("mergeStateStatus") or "")
-    except (ValueError, AttributeError):
+    except ValueError, AttributeError:
         return ""
 
 
@@ -707,8 +749,18 @@ async def pr_for_branch(tree: str, branch: str) -> dict:
         return {"state": "unknown", "reason": "this checkout is on no branch"}
     try:
         code, out, err = await _gh(
-            ["pr", "list", "--head", branch, "--state", "open",
-             "--json", "url,number,mergeable,headRefOid", "--limit", "5"],
+            [
+                "pr",
+                "list",
+                "--head",
+                branch,
+                "--state",
+                "open",
+                "--json",
+                "url,number,mergeable,headRefOid",
+                "--limit",
+                "5",
+            ],
             tree,
         )
     except IntegrateError as e:
@@ -774,8 +826,6 @@ def describe_pr_lookup(rec: dict) -> str:
     )
 
 
-
-
 async def run_gebo(
     sessions: Any,
     *,
@@ -825,8 +875,18 @@ async def run_gebo(
     if resume is not None:
         turns, budget, used_up = ceilings_left(grant.max_turns, grant.max_budget_usd, resume)
         if used_up:
-            yield ("end", {"reply": "", "session_id": resume.get("session_id", ""), "terminal_reason": used_up,
-                           "cost": {}, "denials": 0, "denied": None, "background": 0})
+            yield (
+                "end",
+                {
+                    "reply": "",
+                    "session_id": resume.get("session_id", ""),
+                    "terminal_reason": used_up,
+                    "cost": {},
+                    "denials": 0,
+                    "denied": None,
+                    "background": 0,
+                },
+            )
             return
         kwargs["resume_at"] = resume.get("safe_uuid")
     async for kind, payload in sessions.stream(

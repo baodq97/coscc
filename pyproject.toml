@@ -2,21 +2,16 @@
 name = "coscc"
 version = "0.14.0"
 description = "Web app that lists, creates and resumes Claude Code sessions across projects"
-# Every measurement this repository records is taken on the interpreter in
-# `.python-version`, and after 0007 that is 3.14. A floor naming an older one would be the
-# same kind of untrue sentence this unit exists to remove. 0011 gives this app its first
-# downstream — someone running install.sh on a machine of their own — but the floor still
-# does not shut them out: install.sh installs `uv` before anything else, and `uv` provisions
-# whatever interpreter this line names, so nobody downstream needs 3.14 already on the
-# machine for this to work. Measured 2026-09-22: `uv python list --only-downloads`
-# offers cpython-3.14.7, and `uv tool install` takes `--no-python-downloads` to turn
-# that off, so it is on by default.
+# `install.sh` installs `uv` first, and `uv` provisions this interpreter, so no machine needs
+# 3.14 already.
 requires-python = ">=3.14"
 dependencies = [
     "claude-agent-sdk>=0.2.161",
     "reflex>=0.9.12",
     "fastapi>=0.141.1",
     "argon2-cffi>=25.1.0",
+    "reflex-base>=0.9.12",
+    "uvicorn>=0.53.0",
 ]
 
 [build-system]
@@ -24,14 +19,13 @@ requires = ["uv_build>=0.12,<0.13"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-# Flat layout: the package sits at the repo root beside rxconfig.py, because that is the
-# only layout Reflex documents (`spec.md` R1). uv's default is `src/`, so this line is
-# what reconciles the two.
+# Flat layout: the package sits at the repo root beside rxconfig.py, the only layout Reflex
+# documents; uv's default is `src/`.
 module-root = ""
 module-name = "coscc"
-# Tests sit beside the code they test; they stay in the repository and out of the wheel.
-wheel-exclude = ["**/*_test.py"]
-source-exclude = ["**/*_test.py"]
+# Tests and their fixtures sit beside the code they test, and stay out of the wheel.
+wheel-exclude = ["**/*_test.py", "**/testdata/**"]
+source-exclude = ["**/*_test.py", "**/testdata/**"]
 
 [dependency-groups]
 dev = [
@@ -39,6 +33,8 @@ dev = [
     "playwright>=1.63.0",
     "pytest>=9.1.1",
     "pytest-xdist>=3.8.0",
+    "ruff>=0.16.9",
+    "ty>=0.0.84",
 ]
 
 [project.scripts]
@@ -49,6 +45,29 @@ coscc = "coscc.run:main"
 # Building through here rather than calling `reflex export` directly is what leaves the
 # fingerprint that `run.py` checks. See coscc/build.py.
 coscc-build = "coscc.build:main"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["F"]
+
+[tool.ty.src]
+# Tests are checked by running them.
+exclude = ["**/*_test.py"]
+
+[tool.ty.rules]
+# Reflex `Var` fields, and `Service` mixins reaching attributes another mixin sets: ty follows
+# neither, so these four report about 2,000 false findings.
+unresolved-attribute = "ignore"
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+not-subscriptable = "ignore"
+
+[[tool.ty.overrides]]
+# Reflex components and state: `str + Var`, `~Var` and event namespaces type as errors.
+include = ["coscc/screens/**", "coscc/state/**"]
+rules = { unsupported-operator = "ignore", deprecated = "ignore", no-matching-overload = "ignore", invalid-return-type = "ignore" }
 
 [tool.pytest.ini_options]
 testpaths = ["coscc"]

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc.service import Invalid, describe_base
+from coscc.service.common import Invalid
+from coscc.service.common import describe_base
 
 
 class RerunMixin(rx.State, mixin=True):
@@ -19,6 +20,7 @@ class RerunMixin(rx.State, mixin=True):
     @rx.var
     def unit_tree(self) -> str:
         return self._trees.get(self.unit_id, "")
+
     # The accepted stages `cos.mjs rerun` says may run again, and for each the stages that
     # then run after it. Set only by `load_next`; the rest is what a person chose.
     rerun_stages: list[str] = []
@@ -56,6 +58,7 @@ class RerunMixin(rx.State, mixin=True):
     async def run_rerun(self):
         """Run the chosen stage again with the note, streaming as `run_step` does."""
         from coscc.state import SERVICE, StudioState
+
         async with self:
             unit, stage, cwd, note = self.unit_id, self.rerun_stage, self.cwd, self.rerun_note
             self.rerun_confirming = False
@@ -81,7 +84,9 @@ class RerunMixin(rx.State, mixin=True):
                             self.error = payload["error"]
                         outcome = payload.get("outcome") or ""
                         written = payload.get("artifact") or ""
-                        self.notice = f"{stage} {outcome}" + (f" — wrote {written}" if written else "")
+                        self.notice = f"{stage} {outcome}" + (
+                            f" — wrote {written}" if written else ""
+                        )
                         # The service found `pr.md` without its `## Answers`.
                         if payload.get("answers_lost"):
                             self.notice += " The session removed the answers pr.md carried."

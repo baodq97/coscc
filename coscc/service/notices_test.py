@@ -1,9 +1,8 @@
-"""Tests for `NoticesMixin` in `coscc/service/notices.py` (`0113` R1, R6–R8, R13).
+"""Tests for `NoticesMixin` in `coscc/service/notices.py`.
 
 The generator is read directly, with `beat` shortened: `httpx.ASGITransport` collects a whole
 response body, so a stream that lasts `notices.LIFETIME_SECONDS` is read through it only with
-that shortened (`api_test.py`).
-"""
+that shortened (`api_test.py`)."""
 
 from __future__ import annotations
 
@@ -19,14 +18,22 @@ from coscc.web import auth
 from coscc.runlog import notices
 from coscc.config import Config
 from coscc.runlog.journal import BELL, Journal
-from coscc.service import Invalid, Service
+from coscc.service import Service
+from coscc.service.common import Invalid
 from coscc.agent.sessions import Sessions
 
 BEAT = 0.3
 
 
 def stop(key: str, unit: str = "0001_a", kind: str = "a") -> dict:
-    return {"kind": "autopilot-stop", "workspace": key, "unit": unit, "stage": "", "stop": kind, "reason": "r"}
+    return {
+        "kind": "autopilot-stop",
+        "workspace": key,
+        "unit": unit,
+        "stage": "",
+        "stop": kind,
+        "reason": "r",
+    }
 
 
 class FollowingNotices(unittest.IsolatedAsyncioTestCase):
@@ -37,8 +44,11 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         self.ws, self.other = root / "work" / "proj", root / "work" / "other"
         self.ws.mkdir(parents=True)
         self.other.mkdir(parents=True)
-        self.config = Config(workspaces=(str(self.ws), str(self.other)), working_dir=str(root / "work"),
-                             data_dir=str(root / "data"))
+        self.config = Config(
+            workspaces=(str(self.ws), str(self.other)),
+            working_dir=str(root / "work"),
+            data_dir=str(root / "data"),
+        )
         self.service = Service(self.config, Sessions(self.config))
         self.key = self.service._journal_key(str(self.ws))
         self.journal = Journal(self.config.working_dir, self.config.data_dir)
@@ -49,7 +59,9 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
             await s.aclose()
 
     def follow(self, after=None, workspace="", beat=BEAT, lifetime=None):
-        s = self.service.follow_notices(self.service.notice_scope(workspace), after, beat=beat, lifetime=lifetime)
+        s = self.service.follow_notices(
+            self.service.notice_scope(workspace), after, beat=beat, lifetime=lifetime
+        )
         self.streams.append(s)
         return s
 
@@ -60,7 +72,9 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         """The next `n` notice lines, skipping beats."""
         out, deadline = [], time.monotonic() + within
         while len(out) < n:
-            line = await asyncio.wait_for(stream.__anext__(), max(0.01, deadline - time.monotonic()))
+            line = await asyncio.wait_for(
+                stream.__anext__(), max(0.01, deadline - time.monotonic())
+            )
             if line["type"] == "notice":
                 out.append(line)
         return out
@@ -81,7 +95,15 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
     async def test_with_after_every_notice_past_it_comes_first_in_id_order_once(self):
         first = self.append(stop(self.key, "0001_a"))
         ids = [self.append(stop(self.key, u)) for u in ("0002_b", "0003_c")]
-        self.append({"kind": "start", "workspace": self.key, "unit": "0003_c", "stage": "spec", "mode": "manual"})
+        self.append(
+            {
+                "kind": "start",
+                "workspace": self.key,
+                "unit": "0003_c",
+                "stage": "spec",
+                "mode": "manual",
+            }
+        )
         s = self.follow(after=first)
         got = await self.notices(s, 2)
         self.assertEqual([n["id"] for n in got], ids)
@@ -90,7 +112,7 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(line["id"], later)
 
     async def test_an_after_past_every_row_is_a_head_and_what_lands_next_arrives(self):
-        # Review round 1, F2: a cursor kept from a run log since deleted or replaced.
+        # A cursor kept from a run log since deleted or replaced.
         now = self.append(stop(self.key))
         s = self.follow(after=now + 1000)
         [head] = await self.lines(s, 1)
@@ -128,7 +150,15 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         try:
             conn.execute(
                 "INSERT INTO runs (at, root, workspace, unit, stage, kind, record) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (record["at"], self.journal._root, self.key, "0001_a", "", "autopilot-stop", json.dumps(record)),
+                (
+                    record["at"],
+                    self.journal._root,
+                    self.key,
+                    "0001_a",
+                    "",
+                    "autopilot-stop",
+                    json.dumps(record),
+                ),
             )
             conn.commit()
         finally:
@@ -144,7 +174,7 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(beat, {"type": "beat", "id": head["id"]})
 
     async def test_a_stream_ends_once_its_lifetime_is_over_and_nothing_is_skipped(self):
-        # Review round 1, F1: the login door is asked once per request, so the stream ends.
+        # The login door is asked once per request, so the stream ends.
         s = self.follow(beat=60, lifetime=0.5)
         await self.lines(s, 1)
         began = time.monotonic()

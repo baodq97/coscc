@@ -107,7 +107,12 @@ def step_fields(steps: list[dict[str, Any]]) -> dict[str, Any]:
     cost = [p["end"].get("cost_usd") or 0 for p in steps]
     duration = [p["end"].get("duration_ms") or 0 for p in steps]
     per_turn = [
-        (e.get("input_tokens", 0) + e.get("cache_creation_tokens", 0) + e.get("cache_read_tokens", 0)) / t
+        (
+            e.get("input_tokens", 0)
+            + e.get("cache_creation_tokens", 0)
+            + e.get("cache_read_tokens", 0)
+        )
+        / t
         for e, t in ((p["end"], p["end"].get("turns") or 0) for p in steps)
         if t
     ]
@@ -134,11 +139,13 @@ def event_fields(conn: sqlite3.Connection, steps: list[dict[str, Any]]) -> dict[
         run = p["end"].get("run")
         if not run:
             continue
-        counts = dict(conn.execute(
-            "SELECT kind, count(*) FROM step_events WHERE run = ? AND kind IN ('turn', 'tool_use') "
-            "GROUP BY kind",
-            (run,),
-        ).fetchall())
+        counts = dict(
+            conn.execute(
+                "SELECT kind, count(*) FROM step_events WHERE run = ? AND kind IN ('turn', 'tool_use') "
+                "GROUP BY kind",
+                (run,),
+            ).fetchall()
+        )
         if not counts:
             continue
         event_steps += 1
@@ -237,14 +244,17 @@ def quality_fields(
     """Shipped is a `ship.md` -> `accepted` transition in the window; (a) counts only the
     `impl` starts in the window, (b) reads `review.md` from the unit store.
     """
-    shipped = sorted({
-        unit for unit, at in conn.execute(
-            "SELECT unit, at FROM transitions "
-            "WHERE workspace = ? AND artifact = 'ship.md' AND to_state = 'accepted'",
-            (workspace,),
-        ).fetchall()
-        if _in(at, since, until)
-    })
+    shipped = sorted(
+        {
+            unit
+            for unit, at in conn.execute(
+                "SELECT unit, at FROM transitions "
+                "WHERE workspace = ? AND artifact = 'ship.md' AND to_state = 'accepted'",
+                (workspace,),
+            ).fetchall()
+            if _in(at, since, until)
+        }
+    )
     starts: dict[str, int] = {}
     for unit, at in conn.execute(
         "SELECT unit, at FROM runs WHERE workspace = ? AND kind = 'start' AND stage = 'impl'",
@@ -271,8 +281,12 @@ def quality_fields(
 
 
 def measure(
-    workspace: str, data_root: str | Path, since: str | None, until: str | None,
-    files: list[str] | None = None, first: int = 20,
+    workspace: str,
+    data_root: str | Path,
+    since: str | None,
+    until: str | None,
+    files: list[str] | None = None,
+    first: int = 20,
 ) -> dict[str, Any]:
     key = units.key(workspace)
     conn = open_db(data_root)
@@ -301,18 +315,30 @@ def outcome(fields: dict[str, Any]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m coscc.runlog.turnstats", description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="python -m coscc.runlog.turnstats", description=__doc__.split("\n\n")[0]
+    )
     parser.add_argument("--workspace", required=True, help="the repository the steps ran for")
     parser.add_argument("--since", help="first start time counted, as the run log writes it")
     parser.add_argument("--until", help="first start time not counted")
-    parser.add_argument("--data-root", default=DEFAULT_DIR, help=f"where cos.db is (default {DEFAULT_DIR})")
+    parser.add_argument(
+        "--data-root", default=DEFAULT_DIR, help=f"where cos.db is (default {DEFAULT_DIR})"
+    )
     parser.add_argument("--outcome", action="store_true", help="then say whether spec.md R7 holds")
-    parser.add_argument("--files", nargs="+", metavar="PATH",
-                        help="paths from the repository's root; adds the touched_* fields (0095 R9)")
-    parser.add_argument("--first", type=int, default=20, help="touched steps the touched_* means are over")
+    parser.add_argument(
+        "--files",
+        nargs="+",
+        metavar="PATH",
+        help="paths from the repository's root; adds the touched_* fields (0095 R9)",
+    )
+    parser.add_argument(
+        "--first", type=int, default=20, help="touched steps the touched_* means are over"
+    )
     args = parser.parse_args(argv)
     try:
-        fields = measure(args.workspace, args.data_root, args.since, args.until, args.files, args.first)
+        fields = measure(
+            args.workspace, args.data_root, args.since, args.until, args.files, args.first
+        )
     except (Refused, sqlite3.Error) as e:
         print(f"turnstats: {e}", file=sys.stderr)
         return 2

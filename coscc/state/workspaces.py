@@ -7,12 +7,11 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc.service import Invalid
+from coscc.service.common import Invalid
 from coscc.state.views import Workspace
 
 
 class WorkspacesMixin(rx.State, mixin=True):
-
     # -- workspaces
     workspaces: list[Workspace] = []
     cwd: str = ""
@@ -60,6 +59,7 @@ class WorkspacesMixin(rx.State, mixin=True):
     async def save_workspace(self):
         """Adopt, clone, or relabel. Which one is `Service`'s decision, not this file's."""
         from coscc.state import SERVICE
+
         self.busy, self.form_error = True, ""
         yield
         try:
@@ -93,6 +93,7 @@ class WorkspacesMixin(rx.State, mixin=True):
     async def remove_workspace(self):
         """De-lists only. The directory stays on disk."""
         from coscc.state import SERVICE
+
         name, self.remove_name = self.remove_name, ""
         if not name:
             return
@@ -108,6 +109,7 @@ class WorkspacesMixin(rx.State, mixin=True):
     @rx.event
     async def pull(self, name: str):
         from coscc.state import SERVICE
+
         self.busy, self.error = True, ""
         yield
         try:

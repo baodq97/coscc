@@ -16,7 +16,7 @@ at the moment of use, in `can_use_tool`.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 
 from coscc.agent.labels import NOVEL
 
@@ -75,7 +75,7 @@ SUBAGENTS = {
         "prompt": (
             "You are given files and a question. Answer with a short map of `path:line` "
             "entries, one per line, each with a few words on what is there; at most 30 "
-            "lines. Write \"unsure\" beside anything you did not confirm. Never edit."
+            'lines. Write "unsure" beside anything you did not confirm. Never edit.'
         ),
         "tools": list(READ_TOOLS),
         "model": "sonnet",
@@ -85,9 +85,31 @@ SUBAGENTS = {
 # Commands `impl` may run, matched on the first word of every segment of the command line.
 # Deliberately short: enough to check its own work, not a shell.
 IMPL_COMMANDS = (
-    "git", "npm", "node", "uv", "python", "python3", "pytest",
-    "ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "diff", "mkdir", "true",
-    "echo", "printf", "test", "which", "pwd", "sort", "uniq",
+    "git",
+    "npm",
+    "node",
+    "uv",
+    "python",
+    "python3",
+    "pytest",
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "grep",
+    "rg",
+    "find",
+    "diff",
+    "mkdir",
+    "true",
+    "echo",
+    "printf",
+    "test",
+    "which",
+    "pwd",
+    "sort",
+    "uniq",
 )
 
 # No session merges: a pull request is merged only by the PR machine
@@ -122,18 +144,29 @@ INTEGRATE_DENIED = MERGE_IS_SHIPS + (
     (("gh", "pr", "update-branch"), "the head the push is leased to would move under it"),
     # Roads to the branch that are not `git push` and so never meet the lease: `gh api` reaches
     # `git/refs` with `force=true`. `gh pr view` and `gh pr checks` stay open.
-    (("gh", "api"), "it can move the branch on GitHub with no lease; read with `gh pr view` or `gh pr checks`"),
+    (
+        ("gh", "api"),
+        "it can move the branch on GitHub with no lease; read with `gh pr view` or `gh pr checks`",
+    ),
     (("gh", "repo", "sync"), "it can force the branch on GitHub with no lease"),
     (("gh", "extension"), "an extension is a command this grant cannot read"),
-    (("git", "send-pack"), "it pushes without the lease; push only with `git push --force-with-lease`"),
-    (("git", "http-push"), "it pushes without the lease; push only with `git push --force-with-lease`"),
+    (
+        ("git", "send-pack"),
+        "it pushes without the lease; push only with `git push --force-with-lease`",
+    ),
+    (
+        ("git", "http-push"),
+        "it pushes without the lease; push only with `git push --force-with-lease`",
+    ),
 )
 
 # An alias or an included config file made during the step renames `push` into a word
 # `_may_be_push` never sees (`git -c alias.p=push p`, `git config alias.p push`, or the same
 # through `GIT_CONFIG_*`). Matched on the whole segment, assignments included, so a commit
 # message naming one is refused too, with this reason.
-_GIT_CONFIG_ROAD = re.compile(r"(?:^|[\s='\"])(?:alias|include|includeif)\.|\bGIT_CONFIG", re.IGNORECASE)
+_GIT_CONFIG_ROAD = re.compile(
+    r"(?:^|[\s='\"])(?:alias|include|includeif)\.|\bGIT_CONFIG", re.IGNORECASE
+)
 
 # ᛈ Perthro, the spike step. `impl`'s commands without `git`: `git -C <worktree> commit` is the
 # shortest road for throwaway code into the unit's branch. Everything else is kept, because
@@ -459,7 +492,9 @@ class _Reader:
             if pending is not None:
                 raise _Stop(f"a redirect ({pending[0]}) with no target", self.at(pending[2]))
             if words or redirects:
-                out.append(_Simple(s[start:j].strip(), tuple(words), tuple(flags), tuple(redirects)))
+                out.append(
+                    _Simple(s[start:j].strip(), tuple(words), tuple(flags), tuple(redirects))
+                )
             words, flags, redirects = [], [], []
             start = j + 1
 
@@ -496,7 +531,9 @@ class _Reader:
                     op, self.i = ("&>>", k + 1) if self.char(k) == ">" else ("&>", j + 1)
                     end_word()
                     if pending is not None:
-                        raise _Stop(f"a redirect ({pending[0]}) with no target", self.at(pending[2]))
+                        raise _Stop(
+                            f"a redirect ({pending[0]}) with no target", self.at(pending[2])
+                        )
                     pending = (op, "", amp)
                 else:
                     if self.char(j) != "&":
@@ -520,8 +557,13 @@ class _Reader:
                     continue
                 op, self.i = self.redirect_op(c, j)
                 fd = ""
-                if pending is None and word is not None and word.text.isdigit() and not word.quoted \
-                        and not word.expanded:
+                if (
+                    pending is None
+                    and word is not None
+                    and word.text.isdigit()
+                    and not word.quoted
+                    and not word.expanded
+                ):
                     fd, word = word.text, None
                 end_word()
                 if pending is not None:
@@ -541,7 +583,10 @@ class _Reader:
                 end_command(self.i)
                 self.i += 1
                 if heredocs:
-                    raise _Stop(f"a here-document ({heredocs[0][0]}) with no line to end it", self.at(heredocs[0][3]))
+                    raise _Stop(
+                        f"a here-document ({heredocs[0][0]}) with no line to end it",
+                        self.at(heredocs[0][3]),
+                    )
                 return out
             else:
                 # `(` and `)` anywhere else are kept as text: bash refuses the line as a
@@ -550,10 +595,13 @@ class _Reader:
                     word = _Word(self.i)
                 self.part(word)
         if opened is not None:
-            raise _Stop(f"an unclosed {s[opened:opened + 2]}", self.at(opened))
+            raise _Stop(f"an unclosed {s[opened : opened + 2]}", self.at(opened))
         end_command(self.n)
         if heredocs:
-            raise _Stop(f"a here-document ({heredocs[0][0]}) with no line to end it", self.at(heredocs[0][3]))
+            raise _Stop(
+                f"a here-document ({heredocs[0][0]}) with no line to end it",
+                self.at(heredocs[0][3]),
+            )
         if depth:
             raise _Stop("an unclosed (", self.at(start))
         return out
@@ -605,10 +653,12 @@ class _Reader:
             logical, line_start = "", self.i
             while True:
                 if self.i >= self.n:
-                    raise _Stop(f"a here-document ({delimiter}) with no line to end it", self.at(opened))
+                    raise _Stop(
+                        f"a here-document ({delimiter}) with no line to end it", self.at(opened)
+                    )
                 nl = s.find("\n", self.i)
                 end = self.n if nl < 0 else nl
-                line = s[self.i:end]
+                line = s[self.i : end]
                 self.i = end + 1
                 if strip:
                     line = line.lstrip("\t")
@@ -645,7 +695,7 @@ class _Reader:
             close = s.find("'", self.i + 1)
             if close < 0:
                 raise _Stop("an unclosed '", self.at(self.i))
-            word.buf.append(s[self.i + 1:close])
+            word.buf.append(s[self.i + 1 : close])
             word.quoted = True
             self.i = close + 1
         elif c == '"':
@@ -717,12 +767,12 @@ class _Reader:
                 self.i = j + 1
                 self.commands(opened=opened)
             # The word keeps the text as written: nothing here is expanded.
-            word.buf.append(s[opened:self.i])
+            word.buf.append(s[opened : self.i])
         elif c == "{":
             word.expanded = True
             self.i = j + 1
             self.brace(opened)
-            word.buf.append(s[opened:self.i])
+            word.buf.append(s[opened : self.i])
         elif c == "'" and not quoted:
             self.ansi(word, j + 1)
         elif c == '"' and not quoted:
@@ -806,7 +856,7 @@ class _Reader:
         if j >= self.n:
             raise _Stop("an unclosed `", self.at(opened))
         self.i = j + 1
-        word.buf.append(s[opened:self.i])
+        word.buf.append(s[opened : self.i])
 
     def ansi(self, word: _Word, j: int) -> None:
         """`$'…'` from `j`: only `\\` means anything inside."""
@@ -826,12 +876,12 @@ class _Reader:
                     word.buf.append(_ANSI_ESCAPES[e])
                     j += 2
                     continue
-                hexa = re.match(r"x([0-9A-Fa-f]{1,2})", s[j + 1:j + 4])
+                hexa = re.match(r"x([0-9A-Fa-f]{1,2})", s[j + 1 : j + 4])
                 if hexa:
                     word.buf.append(chr(int(hexa.group(1), 16)))
                     j += 1 + len(hexa.group(0))
                     continue
-                word.buf.append(s[j:j + 2])
+                word.buf.append(s[j : j + 2])
                 j += 2
                 continue
             word.buf.append(c)
@@ -840,7 +890,9 @@ class _Reader:
 
 def _is_array_open(word: _Word, words: list[str]) -> bool:
     """`NAME=(`: an array assignment, in front of any command word."""
-    return all(_ASSIGNMENT.match(w) for w in words) and bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\+?=", word.text))
+    return all(_ASSIGNMENT.match(w) for w in words) and bool(
+        re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\+?=", word.text)
+    )
 
 
 def _read(command: str) -> _Parsed | _Unreadable:
@@ -859,12 +911,16 @@ def _read(command: str) -> _Parsed | _Unreadable:
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 # Flags a leased push may carry besides the lease: they change what is printed or tracked,
 # never what is overwritten. Anything else is refused by name.
-_PUSH_HARMLESS = frozenset({"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--porcelain"})
-_PUSH_WIDE = frozenset({"--all", "--mirror", "--tags", "--delete", "-d", "--prune", "--follow-tags"})
+_PUSH_HARMLESS = frozenset(
+    {"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--porcelain"}
+)
+_PUSH_WIDE = frozenset(
+    {"--all", "--mirror", "--tags", "--delete", "-d", "--prune", "--follow-tags"}
+)
 
 
 def check_push(words: list[str], branch: str, lease_head: str) -> str:
-    """"" if `git push <words>` is the one push allowed, else why not.
+    """ "" if `git push <words>` is the one push allowed, else why not.
 
     `words` are the tokens after `push`. The one allowed shape is `origin <branch>` or
     `origin HEAD:<branch>`, carrying exactly one `--force-with-lease=<branch>:<lease_head>`
@@ -875,7 +931,9 @@ def check_push(words: list[str], branch: str, lease_head: str) -> str:
     leases = []
     positional = []
     for token in words:
-        if token in ("--force", "-f") or (token.startswith("-") and not token.startswith("--") and "f" in token[1:]):
+        if token in ("--force", "-f") or (
+            token.startswith("-") and not token.startswith("--") and "f" in token[1:]
+        ):
             return "a push may not use --force: only --force-with-lease bound to the head this step began at"
         if token == "--force-with-lease":
             return "--force-with-lease needs a value: --force-with-lease=<branch>:<head this step began at>"
@@ -898,8 +956,10 @@ def check_push(words: list[str], branch: str, lease_head: str) -> str:
     return ""
 
 
-def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = None, unit: str = "") -> str:
-    """"" if the command may run, else why not.
+def check_command(
+    grant: Grant, command: str, lease: tuple[str, str] | None = None, unit: str = ""
+) -> str:
+    """ "" if the command may run, else why not.
 
     **A best-effort reading of a shell command, and the weakest guard here**: a first-word
     allowlist does not bound what `git` or `npm` can be told to do. What bounds the step is that
@@ -942,7 +1002,7 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
 
 
 def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) -> str:
-    """"" if one simple command may run, else why not."""
+    """ "" if one simple command may run, else why not."""
     all_words = list(simple.words)
     if not all_words:
         # Redirects alone: `_redirect_refused` has already read them.
@@ -969,8 +1029,10 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
         # value is not known here.
         for other, expanded in zip(all_words, simple.expanded):
             if expanded:
-                return f"this step may not pass {other} to {base}: a variable can hide a refused word"
-    raw = all_words[k + 1:]
+                return (
+                    f"this step may not pass {other} to {base}: a variable can hide a refused word"
+                )
+    raw = all_words[k + 1 :]
     words = _words(base, raw)
     for prefix, reason in grant.denied:
         if words[: len(prefix)] == prefix:
@@ -1009,7 +1071,7 @@ _UNIT_NAME = re.compile(r"\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 def _redirect_refused(redirect: _Redirect, unit: str) -> str:
-    """"" if the redirect may happen, else why not."""
+    """ "" if the redirect may happen, else why not."""
     if redirect.op in _READ_REDIRECTS:
         return ""
     if redirect.op == ">&" and redirect.target and _DESCRIPTOR.fullmatch(redirect.target):
@@ -1050,7 +1112,7 @@ def _in_step_tmp(redirect: _Redirect, unit: str) -> bool:
     try:
         tmp = Path("/tmp").resolve()
         rel = Path(redirect.target).resolve().relative_to(tmp)
-    except (OSError, RuntimeError, ValueError):
+    except OSError, RuntimeError, ValueError:
         return False
     return len(rel.parts) >= 2 and unit in rel.parts[0]
 
@@ -1076,7 +1138,9 @@ def _may_be_push(raw: list[str]) -> bool:
     if "push" not in raw:
         return False
     before = raw[: raw.index("push")]
-    return all(t.startswith("-") or (i and before[i - 1].startswith("-")) for i, t in enumerate(before))
+    return all(
+        t.startswith("-") or (i and before[i - 1].startswith("-")) for i, t in enumerate(before)
+    )
 
 
 def _words(base: str, rest: list[str]) -> tuple[str, ...]:
@@ -1120,7 +1184,7 @@ def decide(
     read_also: tuple[str, ...] = (),
     lease: tuple[str, str] | None = None,
 ) -> str:
-    """"" if this call may proceed, else the reason it may not.
+    """ "" if this call may proceed, else the reason it may not.
 
     Checked in this order on purpose: the tool has to be granted at all before anything about
     its arguments matters.
@@ -1178,7 +1242,9 @@ def decide(
 
         unit = Path(unit_dir).name if unit_dir and any(t in grant.tools for t in EXEC_TOOLS) else ""
         for raw in _paths_in(tool_input):
-            if not _inside(raw, roots, None) and not _in_step_tmp(_Redirect(">", "", raw, False), unit):
+            if not _inside(raw, roots, None) and not _in_step_tmp(
+                _Redirect(">", "", raw, False), unit
+            ):
                 return f"writing outside the workspace is not allowed: {raw}"
 
     if tool in READ_TOOLS:
@@ -1198,10 +1264,7 @@ def decide(
                 return "a path this step may read could not be resolved"
         for raw in _read_paths_in(tool, tool_input):
             if raw is _TRAVERSAL:
-                return (
-                    "reading outside the workspace is not allowed: "
-                    f"{tool_input.get('pattern')}"
-                )
+                return f"reading outside the workspace is not allowed: {tool_input.get('pattern')}"
             if not _inside(raw, roots, roots[0]):
                 return f"reading outside the workspace is not allowed: {raw}"
     return ""
@@ -1247,8 +1310,8 @@ def _git_into(command: str, workspace: str, read_also: tuple[str, ...]) -> str:
         if any(e for w, e in zip(words[:k], simple.expanded) if w.startswith("GIT_")):
             # What a variable holds is not known here, and `impl`'s grant lets one reach git.
             return "git may not be given a GIT_* variable's value: this step cannot read where it points"
-        rest = words[k + 1:]
-        unknown = simple.expanded[k + 1:]
+        rest = words[k + 1 :]
+        unknown = simple.expanded[k + 1 :]
         where = base
         i = 0
         while i < len(rest) and rest[i].startswith("-"):
@@ -1305,7 +1368,7 @@ def _inside(raw: str, roots: list, base) -> bool:
         if base is not None and not path.is_absolute():
             path = base / path
         target = path.resolve()
-    except (OSError, RuntimeError):
+    except OSError, RuntimeError:
         return False
     return any(target == root or root in target.parents for root in roots)
 

@@ -60,8 +60,6 @@ class ReleaseError(Exception):
     """A `gh`, `node` or `uv` call that failed, carrying the tool's own words."""
 
 
-
-
 def version_of(text: str) -> tuple[int, int, int] | None:
     """`X.Y.Z` or `vX.Y.Z` as three integers, for ordering only; None otherwise."""
     m = _TAG.fullmatch(text or "") or _VERSION.fullmatch(text or "")
@@ -110,8 +108,15 @@ def match_commits(commits: list[dict], units: list[dict]) -> dict[str, list[dict
         if u is None:
             unmatched.append({"sha": sha, "subject": subject})
         else:
-            matched.append({"name": str(u.get("name") or ""), "type": str(u.get("type") or ""),
-                            "pr": n, "sha": sha, "subject": subject})
+            matched.append(
+                {
+                    "name": str(u.get("name") or ""),
+                    "type": str(u.get("type") or ""),
+                    "pr": n,
+                    "sha": sha,
+                    "subject": subject,
+                }
+            )
     return {"units": matched, "unmatched": unmatched}
 
 
@@ -127,12 +132,16 @@ def propose(last_tag: str, units: list[dict], unmatched: list[dict]) -> tuple[st
     if not units and not unmatched:
         return "", f"nothing new since {last_tag}"
     x, y, z = v
-    if any(u.get("type") == "feat" for u in units) or any(is_feat(c.get("subject", "")) for c in unmatched):
+    if any(u.get("type") == "feat" for u in units) or any(
+        is_feat(c.get("subject", "")) for c in unmatched
+    ):
         return f"{x}.{y + 1}.0", ""
     return f"{x}.{y}.{z + 1}", ""
 
 
-def version_problem(version: str, check_tag_code: int, check_tag_out: str, last_tag: str, on_remote: bool) -> str:
+def version_problem(
+    version: str, check_tag_code: int, check_tag_out: str, last_tag: str, on_remote: bool
+) -> str:
     """In its order: `""` when `version` may be released."""
     if check_tag_code != 0:
         return f"v{version} is not a release tag: {check_tag_out.strip() or 'check-tag refused it'}"
@@ -186,16 +195,24 @@ def checks_problem(checks: list[dict] | str | None) -> str:
         return checks
     if not checks:
         return "the pull request has no required checks"
-    red = [str(c.get("name") or "?") for c in checks if str(c.get("bucket") or "") in ("fail", "cancel")]
+    red = [
+        str(c.get("name") or "?")
+        for c in checks
+        if str(c.get("bucket") or "") in ("fail", "cancel")
+    ]
     if red:
         return "required checks failed: " + ", ".join(red)
-    waiting = [str(c.get("name") or "?") for c in checks if str(c.get("bucket") or "") not in _GREEN]
+    waiting = [
+        str(c.get("name") or "?") for c in checks if str(c.get("bucket") or "") not in _GREEN
+    ]
     if waiting:
         return "required checks are still running: " + ", ".join(waiting)
     return ""
 
 
-def publish_problem(checks: list[dict] | str | None, pr_head: str, opened_head: str, tag_known: bool, version: str) -> str:
+def publish_problem(
+    checks: list[dict] | str | None, pr_head: str, opened_head: str, tag_known: bool, version: str
+) -> str:
     """`""` when *Merge and tag* may run on an open release pull request."""
     if not opened_head:
         return "this pull request was not opened by the app"
@@ -223,20 +240,30 @@ def classify(
     """
     if open_pr is not None:
         version = version_of_branch(str(open_pr.get("headRefName") or ""))
-        return {"state": "pr-open", "reason": f"release pull request #{open_pr.get('number')} is open",
-                "version": version}
+        return {
+            "state": "pr-open",
+            "reason": f"release pull request #{open_pr.get('number')} is open",
+            "version": version,
+        }
     if not last_tag:
         return {"state": "nothing", "reason": "no release yet", "version": ""}
     main, last = version_of(main_version or ""), version_of(last_tag)
     if main is not None and last is not None and main > last and f"v{main_version}" not in tags:
-        return {"state": "merged-untagged", "reason": f"{main_version} is on main and v{main_version} is not tagged",
-                "version": str(main_version)}
+        return {
+            "state": "merged-untagged",
+            "reason": f"{main_version} is on main and v{main_version} is not tagged",
+            "version": str(main_version),
+        }
     proposed, why = propose(last_tag, units, unmatched)
     if proposed:
         return {"state": "ready", "reason": "", "version": proposed}
     rec = last_record or {}
     if rec.get("outcome") == "tagged" and f"v{rec.get('version')}" == last_tag:
-        return {"state": "tagged", "reason": f"{last_tag} was pushed", "version": str(rec.get("version") or "")}
+        return {
+            "state": "tagged",
+            "reason": f"{last_tag} was pushed",
+            "version": str(rec.get("version") or ""),
+        }
     return {"state": "nothing", "reason": why, "version": ""}
 
 
@@ -274,7 +301,20 @@ def extra_diff(diff_text: str, old: str, new: str) -> list[str]:
             current = parts[1] if len(parts) == 2 else line
             if current not in VERSION_FILES:
                 extra.append(f"{current}: not one of the version files")
-        elif line.startswith(("--- ", "+++ ", "@@", "index ", "new file", "deleted file", "similarity", "rename ", "old mode", "new mode")):
+        elif line.startswith(
+            (
+                "--- ",
+                "+++ ",
+                "@@",
+                "index ",
+                "new file",
+                "deleted file",
+                "similarity",
+                "rename ",
+                "old mode",
+                "new mode",
+            )
+        ):
             continue
         elif line.startswith("-"):
             removed.append(line[1:])
@@ -286,8 +326,15 @@ def extra_diff(diff_text: str, old: str, new: str) -> list[str]:
 
 def pr_body(version: str, units: list[dict], unmatched: list[dict]) -> str:
     """The pull request's body lists what the release carries."""
-    lines = [f"Release {version}, prepared from the coscc board.", "", f"## Units ({len(units)})", ""]
-    lines += [f"- {u['name']} ({u.get('type') or 'no type'}) #{u['pr']} {u['sha'][:7]}" for u in units] or ["- none"]
+    lines = [
+        f"Release {version}, prepared from the coscc board.",
+        "",
+        f"## Units ({len(units)})",
+        "",
+    ]
+    lines += [
+        f"- {u['name']} ({u.get('type') or 'no type'}) #{u['pr']} {u['sha'][:7]}" for u in units
+    ] or ["- none"]
     lines += ["", f"## Commits with no unit ({len(unmatched)})", ""]
     lines += [f"- {c['sha'][:7]} {c['subject']}" for c in unmatched] or ["- none"]
     return "\n".join(lines) + "\n"
@@ -338,7 +385,11 @@ def opened_head(records: list[dict], version: str) -> tuple[str, int | None]:
     """The head and pull request of the last `opened` record for `version`, oldest first."""
     found: tuple[str, int | None] = ("", None)
     for r in records:
-        if r.get("kind") == "release" and r.get("outcome") == "opened" and r.get("version") == version:
+        if (
+            r.get("kind") == "release"
+            and r.get("outcome") == "opened"
+            and r.get("version") == version
+        ):
             found = (str(r.get("head") or ""), r.get("pr"))
     return found
 
@@ -374,8 +425,6 @@ def set_version_text(name: str, text: str, old: str, new: str) -> str:
     raise ReleaseError(f"not a version file: {name}")
 
 
-
-
 async def _gh(argv: list[str], cwd: str) -> tuple[int, str, str]:
     """One `gh` call, through `integrate._gh`: the same environment and `GH_TIMEOUT`."""
     try:
@@ -396,8 +445,20 @@ def release_prs(prs: list[dict]) -> list[dict]:
 async def merged_release_pr(root: str, branch: str) -> dict:
     """The merged pull request of one release branch, `{number, merge_sha, head}`."""
     code, out, err = await _gh(
-        ["pr", "list", "--state", "merged", "--head", branch,
-         "--json", "number,mergeCommit,headRefOid", "--limit", "5"], root)
+        [
+            "pr",
+            "list",
+            "--state",
+            "merged",
+            "--head",
+            branch,
+            "--json",
+            "number,mergeCommit,headRefOid",
+            "--limit",
+            "5",
+        ],
+        root,
+    )
     if code != 0:
         raise ReleaseError(_said(out, err))
     try:
@@ -407,14 +468,19 @@ async def merged_release_pr(root: str, branch: str) -> dict:
     for r in rows if isinstance(rows, list) else []:
         sha = str((r.get("mergeCommit") or {}).get("oid") or "")
         if sha:
-            return {"number": r.get("number"), "merge_sha": sha, "head": str(r.get("headRefOid") or "")}
+            return {
+                "number": r.get("number"),
+                "merge_sha": sha,
+                "head": str(r.get("headRefOid") or ""),
+            }
     raise ReleaseError(f"no merged pull request was found for {branch}")
 
 
 async def create_pr(tree: str, branch: str, title: str, body: str) -> int:
     """The pull request's number, read off the URL `gh` prints."""
     code, out, err = await _gh(
-        ["pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", body], tree)
+        ["pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", body], tree
+    )
     if code != 0:
         raise ReleaseError(_said(out, err))
     m = _URL_NUMBER.search(out.strip().splitlines()[-1] if out.strip() else "")
@@ -426,7 +492,9 @@ async def create_pr(tree: str, branch: str, title: str, body: str) -> int:
 async def merge_pr(tree: str, n: int, head: str) -> None:
     """Squash, delete the branch, and only if the head is still the one the app pushed."""
     code, out, err = await _gh(
-        ["pr", "merge", str(int(n)), "--squash", "--delete-branch", "--match-head-commit", head], tree)
+        ["pr", "merge", str(int(n)), "--squash", "--delete-branch", "--match-head-commit", head],
+        tree,
+    )
     if code != 0:
         raise ReleaseError(_said(out, err))
 
@@ -462,14 +530,26 @@ async def release_status(root: str, tag: str) -> dict[str, str]:
             out_["release"] = "draft" if data.get("isDraft") else "published"
             out_["release_url"] = str(data.get("url") or "")
         code, out, _ = await _gh(
-            ["run", "list", "--workflow", "release.yml", "--branch", tag,
-             "--json", "status,conclusion,url", "--limit", "1"], root)
+            [
+                "run",
+                "list",
+                "--workflow",
+                "release.yml",
+                "--branch",
+                tag,
+                "--json",
+                "status,conclusion,url",
+                "--limit",
+                "1",
+            ],
+            root,
+        )
         rows = json.loads(out or "[]") if code == 0 else []
         if isinstance(rows, list) and rows:
             row = rows[0]
             out_["workflow"] = str(row.get("conclusion") or row.get("status") or "")
             out_["workflow_url"] = str(row.get("url") or "")
-    except (ReleaseError, ValueError, AttributeError):
+    except ReleaseError, ValueError, AttributeError:
         pass
     return out_
 
@@ -487,8 +567,12 @@ async def cos(where: Path, *args: str, timeout: float = COS_TIMEOUT) -> tuple[in
 async def _run(argv: list[str], cwd: Path, timeout: float) -> tuple[int, str]:
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=str(cwd), env=child_env(), stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            *argv,
+            cwd=str(cwd),
+            env=child_env(),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
     except OSError as e:
         return 127, f"{argv[0]} could not be started: {e}"
@@ -499,8 +583,11 @@ async def _run(argv: list[str], cwd: Path, timeout: float) -> tuple[int, str]:
         await proc.wait()
         return 124, f"{argv[0]} did not finish within {timeout:.0f}s"
     code = proc.returncode or 0
-    text = out.decode(errors="replace").strip() if code == 0 else (
-        err.decode(errors="replace").strip() or out.decode(errors="replace").strip())
+    text = (
+        out.decode(errors="replace").strip()
+        if code == 0
+        else (err.decode(errors="replace").strip() or out.decode(errors="replace").strip())
+    )
     return code, text
 
 

@@ -18,7 +18,8 @@ from coscc.agent import transcript
 from coscc.agent import steps as steps_mod
 from coscc.data import Data
 from coscc.runlog import events
-from coscc.runlog.journal import BadRecord, Busy
+from coscc.runlog.journal import BadRecord
+from coscc.data import Busy
 from coscc.service.common import Invalid
 from coscc.service.sessions import CHAT_TURNS
 
@@ -57,12 +58,19 @@ def resume_kwargs(resume: dict[str, Any] | None, grant: Any, prompt: str) -> dic
     """The prompt, the session id and the ceilings of one tool-less session, taken up again
     from `resume` or not. `used_up` is there only when nothing is left to run with."""
     if resume is None:
-        return {"text": prompt, "session_id": None, "max_turns": grant.max_turns,
-                "max_budget_usd": grant.max_budget_usd}
+        return {
+            "text": prompt,
+            "session_id": None,
+            "max_turns": grant.max_turns,
+            "max_budget_usd": grant.max_budget_usd,
+        }
     turns, budget, used_up = transcript.ceilings_left(grant.max_turns, grant.max_budget_usd, resume)
     return {
-        "text": str(resume.get("message") or ""), "session_id": resume.get("session_id") or None,
-        "max_turns": turns, "max_budget_usd": budget, "resume_at": resume.get("safe_uuid"),
+        "text": str(resume.get("message") or ""),
+        "session_id": resume.get("session_id") or None,
+        "max_turns": turns,
+        "max_budget_usd": budget,
+        "resume_at": resume.get("safe_uuid"),
         **({"used_up": used_up} if used_up else {}),
     }
 
@@ -98,7 +106,9 @@ def moved_on(journal: Any, row: dict[str, Any]) -> str:
     if not unit:
         return ""
     try:
-        rows = journal.records(str(row.get("workspace") or ""), unit, kinds=("start", "end", "suspend"))
+        rows = journal.records(
+            str(row.get("workspace") or ""), unit, kinds=("start", "end", "suspend")
+        )
     except Busy:
         return "the run log was busy, so whether the unit moved on is unknown"
     after = False
@@ -118,7 +128,6 @@ def _spawn(coro: Any) -> asyncio.Task:
 
 
 class ResumeMixin:
-
     async def resume_after_update(self) -> list[dict[str, Any]]:
         """At start-up: each `suspend` row no start took up is taken up once, then the
         autopilot starts again. What happened to each row is returned.
@@ -153,8 +162,11 @@ class ResumeMixin:
                 key, unit = str(owner.get("workspace") or ""), str(owner.get("unit") or "")
                 held = self.steps.get(key, unit)
                 problem = self._busy(key, unit) or (
-                    steps_mod.describe(unit, steps_mod.Mark("step", held.stage, "running", held.started_at))
-                    if held is not None else ""
+                    steps_mod.describe(
+                        unit, steps_mod.Mark("step", held.stage, "running", held.started_at)
+                    )
+                    if held is not None
+                    else ""
                 )
             if not problem and kind in ("estimate", "chat"):
                 problem = self._owner_refuses(kind, owner)
@@ -165,13 +177,17 @@ class ResumeMixin:
                     problem = f"its ceiling was used up before the update: {used_up}"
             try:
                 journal.resumed(
-                    str(row.get("workspace") or ""), str(row.get("unit") or ""), str(row.get("stage") or ""),
-                    str(row.get("suspend_id") or ""), by="app", result="failed" if problem else "resumed",
+                    str(row.get("workspace") or ""),
+                    str(row.get("unit") or ""),
+                    str(row.get("stage") or ""),
+                    str(row.get("suspend_id") or ""),
+                    by="app",
+                    result="failed" if problem else "resumed",
                     # Every resume goes through `sessions._options`, which sets
                     # `snapshot` on the system prompt once `resume_at` is given.
                     **({"detail": problem} if problem else {"system_prompt": "snapshot"}),
                 )
-            except (BadRecord, Busy):
+            except BadRecord, Busy:
                 continue  # not taken: the next start sees it again
             record = {**row, "pieces": pieces, "message": resume_message(row.get("dropped"))}
             if not problem:
@@ -182,8 +198,14 @@ class ResumeMixin:
                     problem = str(e)
             if problem:
                 self._end_unresumed(journal, row, kind, problem)
-            said.append({"suspend_id": row.get("suspend_id"), "kind": kind, "result": "failed" if problem else "resumed",
-                         **({"detail": problem} if problem else {})})
+            said.append(
+                {
+                    "suspend_id": row.get("suspend_id"),
+                    "kind": kind,
+                    "result": "failed" if problem else "resumed",
+                    **({"detail": problem} if problem else {}),
+                }
+            )
         for start in starts:
             if start is not None:
                 _spawn(start)
@@ -215,12 +237,19 @@ class ResumeMixin:
             return
         try:
             journal.finished(
-                str(row.get("workspace") or ""), str(row.get("unit") or ""), str(row.get("stage") or ""),
-                "failed", detail=f"not resumed after an update: {problem}",
+                str(row.get("workspace") or ""),
+                str(row.get("unit") or ""),
+                str(row.get("stage") or ""),
+                "failed",
+                detail=f"not resumed after an update: {problem}",
                 session_id=str(row.get("session_id") or ""),
-                **({"cost_usd": row["spent_usd"]} if row.get("spent_usd") is not None else {"cost_unknown": True}),
+                **(
+                    {"cost_usd": row["spent_usd"]}
+                    if row.get("spent_usd") is not None
+                    else {"cost_unknown": True}
+                ),
             )
-        except (BadRecord, Busy):
+        except BadRecord, Busy:
             pass
 
     def _take_up(self, kind: str, record: dict[str, Any]) -> Any:
@@ -256,31 +285,73 @@ class ResumeMixin:
         mark.phase = "running"
         rid = self._mark_running(key, unit, stage, "step")
         run = uuid.uuid4().hex
-        recorder = events.Recorder(run, Data(self.config.data_dir), str(journal.working_dir), key, unit, stage)
+        recorder = events.Recorder(
+            run, Data(self.config.data_dir), str(journal.working_dir), key, unit, stage
+        )
         running.run, running.handle.recorder = run, recorder
         self._recorders[run] = recorder
         self._running[rid]["run"] = run
         rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
         end_fields = None
         if rounds is not None:
+
             async def end_fields() -> dict[str, Any]:
                 return await self._findings_added(cwd, unit, rounds)
-        extra = {k: owner.get(k) for k in (
-            "workspace_dir", "rounds_before", "pr_before", "tree", "watch", "scratch", "read_also")}
+
+        extra = {
+            k: owner.get(k)
+            for k in (
+                "workspace_dir",
+                "rounds_before",
+                "pr_before",
+                "tree",
+                "watch",
+                "scratch",
+                "read_also",
+            )
+        }
         kwargs: dict[str, Any] = dict(
-            workspace=cwd, directory=directory, journal_key=key, unit=unit, stage=stage,
-            artifact=artifact, stages=[], mode="manual", cwd=str(record.get("cwd") or cwd),
-            model=record.get("model"), effort=owner.get("effort"), label=owner.get("label"),
-            agent=self._agent(stage), end_fields=end_fields, pr_before=owner.get("pr_before"),
-            read_also=tuple(owner.get("read_also") or ()), resume=record, owner_extra=extra,
+            workspace=cwd,
+            directory=directory,
+            journal_key=key,
+            unit=unit,
+            stage=stage,
+            artifact=artifact,
+            stages=[],
+            mode="manual",
+            cwd=str(record.get("cwd") or cwd),
+            model=record.get("model"),
+            effort=owner.get("effort"),
+            label=owner.get("label"),
+            agent=self._agent(stage),
+            end_fields=end_fields,
+            pr_before=owner.get("pr_before"),
+            read_also=tuple(owner.get("read_also") or ()),
+            resume=record,
+            owner_extra=extra,
             **({"watch": owner["watch"]} if owner.get("watch") else {}),
         )
         tree = {"path": str(record.get("cwd") or "")} if owner.get("tree") else None
         scratch = Path(owner["scratch"]) if owner.get("scratch") else None
-        running.task = asyncio.create_task(self._drive(
-            running, mark, Runner(self.sessions, journal, app=self._app_identity()), cwd, unit, stage,
-            artifact, directory, tree, None, rounds, rid, scratch, kwargs, resumed=True,
-        ))
+        running.task = asyncio.create_task(
+            self._drive(
+                running,
+                mark,
+                Runner(self.sessions, journal, app=self._app_identity()),
+                cwd,
+                unit,
+                stage,
+                artifact,
+                directory,
+                tree,
+                None,
+                rounds,
+                rid,
+                scratch,
+                kwargs,
+                resumed=True,
+            )
+        )
         running.task.add_done_callback(lambda _task: self._never_driven(running, mark, rid))
         return running
 
@@ -296,16 +367,30 @@ class ResumeMixin:
         def write(rec: dict[str, Any]) -> dict[str, Any]:
             try:
                 return journal.append(rec)
-            except (BadRecord, Busy):
+            except BadRecord, Busy:
                 return rec
 
         async def go() -> None:
             try:
                 async for _ in self._integrate_gebo(
-                    cwd, key, unit, None, None, None, None, int(owner["pr"]), Path(owner["tree"]),
-                    str(owner["branch"]), str(owner["head_before"]), str(owner["origin_sha"]), journal,
-                    write, dict(owner.get("seen") or {}), owner.get("refused_update"),
-                    completion=owner.get("completion"), resume=record,
+                    cwd,
+                    key,
+                    unit,
+                    None,
+                    None,
+                    None,
+                    None,
+                    int(owner["pr"]),
+                    Path(owner["tree"]),
+                    str(owner["branch"]),
+                    str(owner["head_before"]),
+                    str(owner["origin_sha"]),
+                    journal,
+                    write,
+                    dict(owner.get("seen") or {}),
+                    owner.get("refused_update"),
+                    completion=owner.get("completion"),
+                    resume=record,
                 ):
                     pass
             finally:
@@ -319,8 +404,12 @@ class ResumeMixin:
     async def _resume_chat(self, cwd: str, record: dict[str, Any]) -> None:
         """Nobody is reading this turn now; its reply is in the session, and its `chat`
         row is written as any turn's is."""
-        async for _ in self.stream(cwd, str(record.get("message") or ""), str(record.get("session_id") or ""),
-                                   resume=record):
+        async for _ in self.stream(
+            cwd,
+            str(record.get("message") or ""),
+            str(record.get("session_id") or ""),
+            resume=record,
+        ):
             pass
 
 

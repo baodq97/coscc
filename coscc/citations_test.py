@@ -1,11 +1,8 @@
-"""`0118` R5, R6: a `path:line` citation under `.claude/` points at what it names.
+"""A `path:line` citation under `.claude/` points at what it names.
 
-A citation is a backtick span that is nothing but `path:N` or `path:N-M`. What it names is
-the last identifier of the nearest span before it, in the same paragraph, list item or table
-row, that is not itself a citation. It is green only when one of the lines it cites defines
-that name. Four citations drifted when `0095` split the files and nothing noticed; a red
-here is a citation to move, and the message says where it is and what was read.
-"""
+A citation is a backtick span that is nothing but `path:N` or `path:N-M`. What it names is the last
+identifier of the nearest span before it, in the same paragraph, list item or table row, that is not
+itself a citation. It is green only when one of the lines it cites defines that name."""
 
 from __future__ import annotations
 
@@ -18,7 +15,9 @@ from typing import NamedTuple
 REPO = Path(__file__).resolve().parents[1]
 
 SPAN = re.compile(r"`([^`]+)`")
-CITATION = re.compile(r"(?P<path>[\w.-]+(?:/[\w.-]+)*\.[A-Za-z]\w*):(?P<start>\d+)(?:-(?P<end>\d+))?")
+CITATION = re.compile(
+    r"(?P<path>[\w.-]+(?:/[\w.-]+)*\.[A-Za-z]\w*):(?P<start>\d+)(?:-(?P<end>\d+))?"
+)
 IDENT = re.compile(r"[A-Za-z_]\w*")
 FENCE = re.compile(r"\s*```")
 OPENS = re.compile(r"\s*(?:[-*+] |\d+\. |\|)")
@@ -59,7 +58,9 @@ def _blocks(text: str) -> list[tuple[int, str]]:
 def _defines(line: str, name: str) -> bool:
     n = re.escape(name)
     return bool(
-        re.match(rf"\s*(?:export\s+)?(?:async\s+)?(?:def|class|function|const|let|var)\s+{n}\b", line)
+        re.match(
+            rf"\s*(?:export\s+)?(?:async\s+)?(?:def|class|function|const|let|var)\s+{n}\b", line
+        )
         or re.match(rf"\s*[\"']?{n}[\"']?\s*(?::|=(?!=))", line)
     )
 
@@ -111,7 +112,9 @@ class TheCheckerSeesEachWayACitationBreaks(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         (self.root / "pkg").mkdir()
-        (self.root / "pkg" / "mod.py").write_text("import os\n\nLIMIT = 5\n\nprint(LIMIT)\n", encoding="utf-8")
+        (self.root / "pkg" / "mod.py").write_text(
+            "import os\n\nLIMIT = 5\n\nprint(LIMIT)\n", encoding="utf-8"
+        )
 
     def _red(self, text: str, reason: str) -> None:
         problems = check(text, "rule.md", self.root)
@@ -144,7 +147,11 @@ class TheCheckerSeesEachWayACitationBreaks(unittest.TestCase):
         self.assertEqual(check(text, "rule.md", self.root), [])
 
     def test_the_line_named_is_the_citation_s_own(self):
-        problems = check("# Title\n\n```\n`pkg/mod.py:1`\n```\n- one\n  and `LIMIT`, `pkg/mod.py:1`\n", "rule.md", self.root)
+        problems = check(
+            "# Title\n\n```\n`pkg/mod.py:1`\n```\n- one\n  and `LIMIT`, `pkg/mod.py:1`\n",
+            "rule.md",
+            self.root,
+        )
         self.assertEqual([(p.line, p.name) for p in problems], [(7, "LIMIT")])
 
 

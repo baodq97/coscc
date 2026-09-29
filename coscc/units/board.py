@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -38,8 +37,13 @@ class Gate(tuple):
     reasons: tuple[str, ...]
     rebased: dict[str, str] | None
 
-    def __new__(cls, opened: bool, said: str, reasons: tuple[str, ...] = (),
-                rebased: dict[str, str] | None = None) -> "Gate":
+    def __new__(
+        cls,
+        opened: bool,
+        said: str,
+        reasons: tuple[str, ...] = (),
+        rebased: dict[str, str] | None = None,
+    ) -> "Gate":
         answer = super().__new__(cls, (opened, said))
         answer.reasons = tuple(reasons)
         answer.rebased = rebased
@@ -48,7 +52,9 @@ class Gate(tuple):
 
 def _rebased(data: dict[str, Any]) -> dict[str, str] | None:
     got = data.get("rebased")
-    if not isinstance(got, dict) or not all(isinstance(got.get(k), str) and got.get(k) for k in ("reviewed", "head")):
+    if not isinstance(got, dict) or not all(
+        isinstance(got.get(k), str) and got.get(k) for k in ("reviewed", "head")
+    ):
         return None
     return {"reviewed": got["reviewed"], "head": got["head"]}
 
@@ -58,7 +64,9 @@ def _codes(data: dict[str, Any]) -> tuple[str, ...]:
     codes = tuple(str(c) for c in data.get("reasons") or ())
     unknown = [c for c in codes if c not in guards.REASONS]
     if unknown:
-        raise Unavailable(f"the harness script handed out a reason code the app does not know: {', '.join(unknown)}")
+        raise Unavailable(
+            f"the harness script handed out a reason code the app does not know: {', '.join(unknown)}"
+        )
     return codes
 
 
@@ -142,7 +150,10 @@ def _ideas_of(data: dict[str, Any]) -> list[dict[str, Any]]:
             "title": str(i.get("title") or ""),
             "status": str(i.get("status") or ""),
             "units": [
-                {"ref": str(x.get("ref") or ""), "depends_on": [str(d) for d in x.get("dependsOn") or []]}
+                {
+                    "ref": str(x.get("ref") or ""),
+                    "depends_on": [str(d) for d in x.get("dependsOn") or []],
+                }
                 for x in i.get("units") or []
             ],
             "problems": [str(p) for p in i.get("problems") or []],
@@ -173,9 +184,7 @@ async def read(
     except (OSError, ValueError) as e:
         # No node on PATH is the ordinary case (a systemd user service has no nvm); name the
         # PATH it looked on. `docs/install.md` carries the fix.
-        raise Unavailable(
-            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
-        ) from e
+        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
 
     except asyncio.TimeoutError:
         raise Unavailable(f"reading the board timed out after {timeout:.0f}s") from None
@@ -189,7 +198,7 @@ async def read(
         raise Unavailable(f"the harness script did not return JSON: {e}") from e
 
     stages = data.get("stages") or []
-            # The stages whose answered draft runs again, as `cos.mjs` lists them; the app keeps no copy.
+    # The stages whose answered draft runs again, as `cos.mjs` lists them; the app keeps no copy.
     after_answers = [str(s) for s in data.get("afterAnswers") or []]
     units = [
         {
@@ -232,7 +241,9 @@ async def read(
             "hold_moves": [str(x) for x in u.get("holdMoves") or []],
             # Whether the unit used its review rounds with findings still open, and how many rounds a person granted it.
             "more_rounds": bool(u.get("moreRounds")),
-            "rounds_granted": int(((u.get("artifacts") or {}).get("review.md") or {}).get("roundsGranted") or 0),
+            "rounds_granted": int(
+                ((u.get("artifacts") or {}).get("review.md") or {}).get("roundsGranted") or 0
+            ),
             # On each row too, so whoever holds one row from this read sees the same list.
             "after_answers": list(after_answers),
             # The idea the unit was opened from, its `Repo:`, and each dependency as `cos.mjs` resolved it.
@@ -301,9 +312,7 @@ async def gate(
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
         code, out_text, err_text = await _ask(argv, timeout, stdin)
     except (OSError, ValueError) as e:
-        raise Unavailable(
-            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
-        ) from e
+        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
     except asyncio.TimeoutError:
         raise Unavailable(f"asking the gate timed out after {timeout:.0f}s") from None
 
@@ -314,7 +323,12 @@ async def gate(
         except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
             raise Unavailable(f"the harness script did not return JSON: {e}") from e
         said = "\n".join(lines).strip()
-        return Gate(code == 0, said or f"the gate exited {code} and said nothing", _codes(data), _rebased(data))
+        return Gate(
+            code == 0,
+            said or f"the gate exited {code} and said nothing",
+            _codes(data),
+            _rebased(data),
+        )
     said = (out_text + err_text).strip()
     return Gate(False, said or f"the gate exited {code} and said nothing")
 
@@ -344,9 +358,7 @@ async def next_step(
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
         code, out_text, err_text = await _ask(argv, timeout, stdin)
     except (OSError, ValueError) as e:
-        raise Unavailable(
-            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
-        ) from e
+        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
     except asyncio.TimeoutError:
         raise Unavailable(f"asking what comes next timed out after {timeout:.0f}s") from None
 
@@ -377,7 +389,10 @@ async def next_step(
 
 
 async def screens(
-    units_root: str | Path, unit: str, repo: str | Path, timeout: float = GATE_TIMEOUT,
+    units_root: str | Path,
+    unit: str,
+    repo: str | Path,
+    timeout: float = GATE_TIMEOUT,
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask `cos.mjs screens` whether `unit`'s screenshots in `repo` must be taken again.
@@ -392,13 +407,19 @@ async def screens(
 
     try:
         source, stdin = _source(state)
-        argv = [str(script), "--root", str(path), *source, "screens", unit,
-                "--repo", str(Path(repo).expanduser().resolve())]
+        argv = [
+            str(script),
+            "--root",
+            str(path),
+            *source,
+            "screens",
+            unit,
+            "--repo",
+            str(Path(repo).expanduser().resolve()),
+        ]
         code, out_text, err_text = await _ask(argv, timeout, stdin)
     except (OSError, ValueError) as e:
-        raise Unavailable(
-            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
-        ) from e
+        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
     except asyncio.TimeoutError:
         raise Unavailable(f"asking about the screenshots timed out after {timeout:.0f}s") from None
 
@@ -426,16 +447,19 @@ async def pr_text(
 
     try:
         source, stdin = _source(state)
-        code, out_text, err_text = await _ask([str(script), "--root", str(path), *source, "pr-text", unit], timeout, stdin)
+        code, out_text, err_text = await _ask(
+            [str(script), "--root", str(path), *source, "pr-text", unit], timeout, stdin
+        )
     except (OSError, ValueError) as e:
-        raise Unavailable(
-            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
-        ) from e
+        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
     except asyncio.TimeoutError:
         raise Unavailable(f"reading pr.md timed out after {timeout:.0f}s") from None
 
     if code != 0:
-        return {"error": (err_text or out_text).strip() or f"the harness script exited {code}", "code": code}
+        return {
+            "error": (err_text or out_text).strip() or f"the harness script exited {code}",
+            "code": code,
+        }
     try:
         return json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
@@ -443,7 +467,10 @@ async def pr_text(
 
 
 async def rerun(
-    units_root: str | Path, unit: str, stage: str | None = None, timeout: float = TIMEOUT,
+    units_root: str | Path,
+    unit: str,
+    stage: str | None = None,
+    timeout: float = TIMEOUT,
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask `cos.mjs rerun` which accepted stages of `unit` may run again, or, with `stage`,
@@ -460,17 +487,20 @@ async def rerun(
 
     try:
         source, stdin = _source(state)
-        argv = [str(script), "--root", str(path), *source, "rerun", unit] + ([stage] if stage else [])
+        argv = [str(script), "--root", str(path), *source, "rerun", unit] + (
+            [stage] if stage else []
+        )
         code, out_text, err_text = await _ask(argv, timeout, stdin)
     except (OSError, ValueError) as e:
-        raise Unavailable(
-            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
-        ) from e
+        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
     except asyncio.TimeoutError:
         raise Unavailable(f"asking what may run again timed out after {timeout:.0f}s") from None
 
     if code != 0:
-        return {"error": (err_text or out_text).strip() or f"the harness script exited {code}", "code": code}
+        return {
+            "error": (err_text or out_text).strip() or f"the harness script exited {code}",
+            "code": code,
+        }
     try:
         return json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
@@ -504,12 +534,18 @@ def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
             answer = q.get("answer") if isinstance(q, dict) and q.get("answered") else None
             if not isinstance(answer, dict):
                 continue
-            out.append({
-                "artifact": str(artifact), "n": q.get("n"), "question": str(q.get("text") or ""),
-                "by": str(answer.get("by") or ""), "date": str(answer.get("date") or ""),
-                "via": str(answer.get("via") or ""), "text": str(answer.get("text") or ""),
-                "authority": str(answer.get("authority") or ""),
-            })
+            out.append(
+                {
+                    "artifact": str(artifact),
+                    "n": q.get("n"),
+                    "question": str(q.get("text") or ""),
+                    "by": str(answer.get("by") or ""),
+                    "date": str(answer.get("date") or ""),
+                    "via": str(answer.get("via") or ""),
+                    "text": str(answer.get("text") or ""),
+                    "authority": str(answer.get("authority") or ""),
+                }
+            )
     return out
 
 
@@ -519,17 +555,25 @@ def _person_findings_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
     for p in unit.get("personFindings") or []:
         if not isinstance(p, dict) or not p.get("id"):
             continue
-        out.append({
-            "id": str(p["id"]),
-            "reason": str(p.get("reason") or ""),
-            "answered": bool(p.get("answered")),
-        })
+        out.append(
+            {
+                "id": str(p["id"]),
+                "reason": str(p.get("reason") or ""),
+                "answered": bool(p.get("answered")),
+            }
+        )
     return out
 
 
 _OUTCOME_FIELDS = (
-    ("deadline", "deadline"), ("result", "result"), ("by", "by"), ("date", "date"),
-    ("measured_by", "measuredBy"), ("source", "source"), ("reason", "reason"), ("note", "note"),
+    ("deadline", "deadline"),
+    ("result", "result"),
+    ("by", "by"),
+    ("date", "date"),
+    ("measured_by", "measuredBy"),
+    ("source", "source"),
+    ("reason", "reason"),
+    ("note", "note"),
 )
 
 
@@ -539,7 +583,8 @@ def _outcome_of(unit: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(o, dict):
         return None
     out: dict[str, Any] = {
-        mine: (str(o[theirs]) if o.get(theirs) is not None else None) for mine, theirs in _OUTCOME_FIELDS
+        mine: (str(o[theirs]) if o.get(theirs) is not None else None)
+        for mine, theirs in _OUTCOME_FIELDS
     }
     out["invalid"] = int(o.get("invalid") or 0)
     return out
@@ -565,22 +610,31 @@ def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(r, dict):
             continue
         found = [f for f in r.get("findings") or [] if isinstance(f, dict)]
-        out.append({
-            "n": r.get("n"), "verdict": r.get("verdict"), "text": r.get("text") or "",
-            "findings": len(found),
-            "findings_open": sum(1 for f in found if f.get("label") == "open"),
-            # The ids an impl may claim only a person can close, off the same list.
-            "open_ids": [str(f.get("id")) for f in found if f.get("label") == "open"],
-            "dropped": [str(x) for x in r.get("dropped") or []],
-            "unfinished": bool(r.get("unfinished")),
-            # What `coscc/units/prose_import.py` reads a round only the prose holds from, once.
-            "reviewed": r.get("reviewed"),
-            "found": [
-                {"id": f.get("id"), "label": f.get("label"), "fixed_by": f.get("fixedBy"), "text": f.get("text")}
-                for f in found
-            ],
-            "screens": r.get("screens") if isinstance(r.get("screens"), dict) else None,
-        })
+        out.append(
+            {
+                "n": r.get("n"),
+                "verdict": r.get("verdict"),
+                "text": r.get("text") or "",
+                "findings": len(found),
+                "findings_open": sum(1 for f in found if f.get("label") == "open"),
+                # The ids an impl may claim only a person can close, off the same list.
+                "open_ids": [str(f.get("id")) for f in found if f.get("label") == "open"],
+                "dropped": [str(x) for x in r.get("dropped") or []],
+                "unfinished": bool(r.get("unfinished")),
+                # What `coscc/units/prose_import.py` reads a round only the prose holds from, once.
+                "reviewed": r.get("reviewed"),
+                "found": [
+                    {
+                        "id": f.get("id"),
+                        "label": f.get("label"),
+                        "fixed_by": f.get("fixedBy"),
+                        "text": f.get("text"),
+                    }
+                    for f in found
+                ],
+                "screens": r.get("screens") if isinstance(r.get("screens"), dict) else None,
+            }
+        )
     return out
 
 

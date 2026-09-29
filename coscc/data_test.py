@@ -1,11 +1,9 @@
 """Tests for the data root, weighted towards the two things that would fail silently.
 
-`spec.md` C2 says SQLite does not inherit the proof produced for the file lock.
-The concurrency claim itself is `scripts/verify_0004.py` — four real processes. What this
-file covers is everything around it that a unit test can actually decide: the schema
-refusal, the directory mode, the one-shot migration mark, and that `write()` really does
-serialise a read-modify-write rather than merely appearing to.
-"""
+The concurrency claim itself is `scripts/verify_0004.py` — four real processes. What this file
+covers is everything around it that a unit test can actually decide: the schema refusal, the
+directory mode, the one-shot migration mark, and that `write()` really does serialise a
+read-modify-write rather than merely appearing to."""
 
 from __future__ import annotations
 
@@ -38,7 +36,7 @@ class TheDirectoryIsMadeForYou(unittest.TestCase):
             self.assertTrue(root.is_dir())
 
     def test_it_is_not_readable_by_anyone_else(self):
-        """`spec.md` R2. It records every workspace on the machine."""
+        """It records every workspace on the machine."""
         with tempfile.TemporaryDirectory() as d:
             root = Path(d) / "cos"
             Data(root).ensure_dir()
@@ -63,7 +61,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual(Data(d).version(), SCHEMA_VERSION)
 
     def test_a_newer_database_is_refused_by_name_and_number(self):
-        """`spec.md` R5: refuse, and say both numbers. Guessing corrupts quietly."""
+        """Refuse, and say both numbers. Guessing corrupts quietly."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.version()
@@ -90,12 +88,11 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual({"migrations", "workspaces", "runs", "prefs"} - tables, set())
 
     def test_a_database_written_before_version_2_gains_the_new_tables_and_keeps_its_rows(self):
-        """`0013` step 2: adding tables needs no bespoke migration, and must lose nothing.
+        """Adding tables needs no bespoke migration, and must lose nothing.
 
         Built as a real v1 database rather than by dropping tables from a v2 one — the
         thing under test is what `_create` does when it meets a shape it did not write,
-        and a v2 database with pieces removed is not that shape.
-        """
+        and a v2 database with pieces removed is not that shape."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.ensure_dir()
@@ -123,7 +120,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual([row["name"] for row in kept], ["keep-me"])
 
     def test_a_version_2_database_gains_the_login_tables_and_keeps_its_rows(self):
-        """`0070` step 2: 3 adds `auth` and `auth_sessions` the same way 2 added its two."""
+        """3 adds `auth` and `auth_sessions` the same way 2 added its two."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.set_pref("density", "compact")
@@ -142,8 +139,8 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual(data.pref("density"), "compact")
 
     def test_a_version_3_database_gains_the_event_tables_and_keeps_its_rows(self):
-        """`0073` step 2: 4 adds `step_runs` and `step_events`, and the number had to move --
-        at 3 `_prepare` would never run `_SCHEMA` on a database already at 3."""
+        """4 adds `step_runs` and `step_events`, and the number had to move -- at 3 `_prepare` would
+        never run `_SCHEMA` on a database already at 3."""
         self.assertGreaterEqual(SCHEMA_VERSION, 4)
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
@@ -165,7 +162,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual(data.auth_password_hash(), "h")
 
     def test_a_version_4_database_gains_the_decisions_table_and_keeps_its_rows(self):
-        """`0137` step 1: 5 adds `decisions` the way 4 added its two."""
+        """5 adds `decisions` the way 4 added its two."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.set_pref("density", "compact")
@@ -180,12 +177,17 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual(data.auth_password_hash(), "h")
 
     def test_a_v5_database_rises_to_6_keeping_every_runs_and_transitions_row(self):
-        """`0135` R1: 6 adds the `unit_*` tables and `idea_meta`; the rows a v5 database
-        already had in `runs` and `transitions` are all still there after. The plan says 5:
-        `0137` took 5 on `main` first. It rises past 6 since `0136` made 7 this build's own."""
+        """6 adds the `unit_*` tables and `idea_meta`; the rows a v5 database already had in `runs`
+        and `transitions` are all still there after."""
         new = {
-            "unit_meta", "unit_links", "idea_meta", "unit_questions", "unit_answers",
-            "unit_holds", "unit_unknowns", "unit_seen",
+            "unit_meta",
+            "unit_links",
+            "idea_meta",
+            "unit_questions",
+            "unit_answers",
+            "unit_holds",
+            "unit_unknowns",
+            "unit_seen",
         }
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
@@ -215,9 +217,8 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual((runs, transitions), (1, 1))
 
     def test_a_v6_database_rises_to_7_and_its_old_transitions_say_no_guard_is_known(self):
-        """`0136` step 1: 7 adds four columns to `transitions`, two to `step_runs` and the
-        tables a submitted object lands in. A row written before them reads `unknown`, never a
-        blank (`coscc/units/history.py` R3)."""
+        """7 adds four columns to `transitions`, two to `step_runs` and the tables a submitted
+        object lands in."""
         self.assertEqual(SCHEMA_VERSION, 7)
         new = {"stage_results", "review_rounds", "review_findings", "impl_claims", "pull_requests"}
         with tempfile.TemporaryDirectory() as d:
@@ -243,15 +244,17 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                     row["name"]
                     for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 }
-                row = conn.execute("SELECT guard, authority, run, inputs FROM transitions").fetchone()
+                row = conn.execute(
+                    "SELECT guard, authority, run, inputs FROM transitions"
+                ).fetchone()
                 runs = {r[1] for r in conn.execute("PRAGMA table_info(step_runs)")}
             self.assertEqual(new - tables, set())
             self.assertEqual(tuple(row), ("unknown", "unknown", "unknown", "{}"))
             self.assertLessEqual({"head", "revisions"}, runs)
 
     def test_a_newer_database_is_still_refused(self):
-        """Was `version_5` until `0137` made 5 this build's own number, then `version_6`
-        until `0135` made 6 its own, and 7 is `0136`'s."""
+        """Was `version_5`, then `version_6`: it follows `SCHEMA_VERSION`, so a newer number is
+        never this build's own."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.version()
@@ -262,7 +265,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
 
 
 class ThePersonsDecisions(unittest.TestCase):
-    """`0137` R4: `D<n>` is never reused, and nothing is deleted."""
+    """`D<n>` is never reused, and nothing is deleted."""
 
     def _add(self, data: Data, text: str = "t") -> int:
         return data.decision_add(kind="decision", text=text, source="s", from_day="2026-09-28")
@@ -287,7 +290,7 @@ class ThePersonsDecisions(unittest.TestCase):
 
 
 class AStepsEvents(unittest.TestCase):
-    """`0073` R6, R7, R14: the two tables, as the recorder writes them and the service reads."""
+    """The two tables, as the recorder writes them and the service reads."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -342,7 +345,7 @@ class AStepsEvents(unittest.TestCase):
         self.assertEqual(self.data.step_events_purge(now - 30 * day, size, "later"), (0, 0))
 
     def test_turns_are_the_stored_turn_events_of_the_run(self):
-        """`0092` R1: three `turn`s and two `text`s count three; a run with nothing counts 0."""
+        """Three `turn`s and two `text`s count three; a run with nothing counts 0."""
         self.data.step_run_open("r", "/w", "/w/ws", "0001_a", "impl", 1000)
         kinds = ["turn", "text", "turn", "text", "turn"]
         self.data.step_events_add("r", [self.ev("r", n, kind=k) for n, k in enumerate(kinds, 1)])
@@ -350,26 +353,34 @@ class AStepsEvents(unittest.TestCase):
         self.assertEqual(self.data.step_turns("nothing"), 0)
 
     def test_tool_uses_are_that_runs_tool_use_events_in_order(self):
-        """`0085` R11: only `tool_use`, only this run, by `seq`."""
+        """Only `tool_use`, only this run, by `seq`."""
         for run in ("r", "other"):
             self.data.step_run_open(run, "/w", "/w/ws", "0001_a", "review", 1000)
         kinds = ["turn", "tool_use", "tool_result", "tool_use", "text"]
-        self.data.step_events_add("r", [self.ev("r", n, kind=k, text=str(n)) for n, k in enumerate(kinds, 1)])
+        self.data.step_events_add(
+            "r", [self.ev("r", n, kind=k, text=str(n)) for n, k in enumerate(kinds, 1)]
+        )
         self.data.step_events_add("other", [self.ev("other", 1, kind="tool_use")])
-        self.assertEqual([(e["seq"], e["kind"]) for e in self.data.step_tool_uses("r")],
-                         [(2, "tool_use"), (4, "tool_use")])
+        self.assertEqual(
+            [(e["seq"], e["kind"]) for e in self.data.step_tool_uses("r")],
+            [(2, "tool_use"), (4, "tool_use")],
+        )
         self.assertEqual(self.data.step_tool_uses("nothing"), [])
 
     def test_open_runs_leave_out_the_closed_and_the_purged(self):
-        """`0092` R5: only a row nobody closed or purged, with its last event's `at`."""
+        """Only a row nobody closed or purged, with its last event's `at`."""
         for run, started in (("open", 1000), ("empty", 2000), ("closed", 3000), ("purged", 500)):
             self.data.step_run_open(run, "/w", "/w/ws", "0001_a", "impl", started)
-        self.data.step_events_add("open", [self.ev("open", 1, at=1500), self.ev("open", 2, at=1700)])
+        self.data.step_events_add(
+            "open", [self.ev("open", 1, at=1500), self.ev("open", 2, at=1700)]
+        )
         self.data.step_run_close("closed", 3500, 0)
         self.data.step_events_add("purged", [self.ev("purged", 1, at=600)])
         self.data.step_events_purge(900, 10**9, "2026-10-01T00:00:00+00:00")
         rows = self.data.step_runs_open()
-        self.assertEqual([(r["run"], r["last_at"]) for r in rows], [("open", 1700), ("empty", None)])
+        self.assertEqual(
+            [(r["run"], r["last_at"]) for r in rows], [("open", 1700), ("empty", None)]
+        )
         self.assertEqual(rows[0]["root"], "/w")
 
     def test_opening_an_existing_database_writes_nothing(self):
@@ -399,7 +410,9 @@ class AStepsEvents(unittest.TestCase):
             procs = [
                 subprocess.Popen(
                     [sys.executable, "-c", child, d, f"k{n}"],
-                    cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                    cwd=REPO,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                 )
                 for n in range(4)
             ]
@@ -411,11 +424,8 @@ class AStepsEvents(unittest.TestCase):
 
 class WriteIsAWholeTransaction(unittest.TestCase):
     def test_a_read_modify_write_under_threads_loses_nothing(self):
-        """The in-process half of `spec.md` R9.
-
-        Not the proof — that is four processes in `scripts/verify_0004.py`. This catches
-        the cheaper mistake: forgetting `BEGIN IMMEDIATE` and letting two upgrades race.
-        """
+        """Not the proof — that is four processes in `scripts/verify_0004.py`. This catches
+        the cheaper mistake: forgetting `BEGIN IMMEDIATE` and letting two upgrades race."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.set_pref("n", 0)
@@ -441,14 +451,12 @@ class WriteIsAWholeTransaction(unittest.TestCase):
             data = Data(d)
             with self.assertRaises(RuntimeError):
                 with data.write() as conn:
-                    conn.execute(
-                        "INSERT INTO prefs (key, value) VALUES ('half', '\"written\"')"
-                    )
+                    conn.execute("INSERT INTO prefs (key, value) VALUES ('half', '\"written\"')")
                     raise RuntimeError("something went wrong half way")
             self.assertIsNone(data.pref("half"))
 
     def test_a_held_database_times_out_by_name_rather_than_hanging(self):
-        """`spec.md` R10. The error has to name the file; a bare 'database is locked' does not."""
+        """The error has to name the file; a bare 'database is locked' does not."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.version()
@@ -556,7 +564,7 @@ class Preferences(unittest.TestCase):
 
 
 class TheLoginStore(unittest.TestCase):
-    """`0070` step 2. What the guard in `coscc/web/auth.py` stands on."""
+    """What the guard in `coscc/web/auth.py` stands on."""
 
     def test_prefs_never_see_the_password_hash(self):
         with tempfile.TemporaryDirectory() as d:
@@ -622,14 +630,10 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
         production and wrong in every test, and the docstring at
         `coscc/runlog/journal.py:108-109` has said so since the class was written.
 
-        It happened anyway. `coscc/runner/runner_test.py:323` read `Journal(Path(d) / "cos.db")`
-        — one argument, where every other call in that file passes two — and for as long
-        as the schema only ever grew, nothing noticed: the suite opened the developer's
-        real database and quietly did nothing to it. `0013` took `SCHEMA_VERSION` to 2,
-        and the same line then **upgraded** that database on every `npm test`, after which
-        the installed `v0.2.3` answered 500 on every route that reads it while
-        `/api/health` still said `ok`. Measured 2026-09-22 on the machine this was written
-        on.
+        It happened anyway. `coscc/runner/runner_test.py:323` read `Journal(Path(d) / "cos.db")` —
+        one argument, where every other call in that file passes two — and for as long as the schema
+        only ever grew, nothing noticed: the suite opened the developer's real database and quietly
+        did nothing to it. Measured 2026-09-22 on the machine this was written on.
 
         **Parsed, not matched.** The first version of this check was a regular expression
         and it did not catch the line it was written for: the argument was
@@ -640,11 +644,9 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
 
         What it still cannot see: a call built through a helper, or one handed a variable
         that happens to be `None`. Narrow on purpose — it catches the exact shape that has
-        already cost something once.
-        """
+        already cost something once."""
         watched = {"Journal", "Store", "History"}
         offenders = []
-        # Every test of the package, since `0129` put most of them in subpackages.
         for path in sorted(Path(__file__).resolve().parent.rglob("*_test.py")):
             source = path.read_text(encoding="utf-8")
             for node in ast.walk(ast.parse(source, filename=str(path))):
@@ -657,9 +659,7 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
                     keyword.arg == "data" for keyword in node.keywords
                 )
                 if node.args and not gives_root:
-                    offenders.append(
-                        f"{path.name}:{node.lineno}: {name}(...) with no data root"
-                    )
+                    offenders.append(f"{path.name}:{node.lineno}: {name}(...) with no data root")
         self.assertEqual(
             offenders,
             [],
@@ -669,8 +669,8 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
 
 
 class TheRunningAppsDatabaseIsNotOpened(unittest.TestCase):
-    """`0076` R5 and R6. Each test sets or removes the variable itself, through
-    `mock.patch.dict`, so a suite run inside a step does not decide the answer."""
+    """Each test sets or removes the variable itself, through `mock.patch.dict`, so a suite run
+    inside a step does not decide the answer."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp()).resolve()

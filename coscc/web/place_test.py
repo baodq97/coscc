@@ -1,4 +1,4 @@
-"""`0056` plan step 1: the address, read and written, with nothing else in the way."""
+"""The address, read and written, with nothing else in the way."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def _read(address: str) -> Place:
 
 
 class AnAddressReadsBackAsThePlaceItWasWrittenFrom(unittest.TestCase):
-    """`spec.md` R2: every screen, every tab, with and without `ws` and a unit."""
+    """Every screen, every tab, with and without `ws` and a unit."""
 
     def _every_place(self):
         for screen, ws in itertools.product(place.SCREENS, ("", "coscc")):
@@ -30,7 +30,6 @@ class AnAddressReadsBackAsThePlaceItWasWrittenFrom(unittest.TestCase):
             with self.subTest(place=p):
                 self.assertEqual(_read(place.href(p)), p)
                 count += 1
-        # Eight screens: `/backlog` since `0082`, `/cost` since `0093`.
         self.assertEqual(count, 16 + 20)
 
     def test_no_address_ends_in_a_slash_but_the_root(self):
@@ -47,23 +46,26 @@ class AnAddressReadsBackAsThePlaceItWasWrittenFrom(unittest.TestCase):
         self.assertEqual(_read("/"), Place("overview"))
 
     def test_query_order_is_fixed(self):
-        self.assertEqual(place.href(Place("unit", "a", "0016_x", "questions")),
-                         "/unit?ws=a&id=0016_x&tab=questions")
+        self.assertEqual(
+            place.href(Place("unit", "a", "0016_x", "questions")),
+            "/unit?ws=a&id=0016_x&tab=questions",
+        )
         self.assertEqual(place.href(Place("unit", "a", "0016_x")), "/unit?ws=a&id=0016_x")
 
 
 class BothSpellingsAreOnePlace(unittest.TestCase):
-    """`spec.md` R2, C2: a direct GET lands on `/board/`, `rx.redirect` on `/board`."""
+    """A direct GET lands on `/board/`, `rx.redirect` on `/board`."""
 
     def test_trailing_slash(self):
         self.assertEqual(_read("/board"), _read("/board/"))
         self.assertEqual(_read("/board?ws=a"), _read("/board/?ws=a"))
-        self.assertEqual(_read("/unit/?ws=a&id=0016_x&tab=timeline"),
-                         Place("unit", "a", "0016_x", "timeline"))
+        self.assertEqual(
+            _read("/unit/?ws=a&id=0016_x&tab=timeline"), Place("unit", "a", "0016_x", "timeline")
+        )
 
 
 class WhatIsReadIsWhatIsWritten(unittest.TestCase):
-    """`read` corrects nothing: `arrive` decides what an odd place becomes (R8, R10)."""
+    """`read` corrects nothing: `arrive` decides what an odd place becomes."""
 
     def test_a_bogus_tab_is_kept_word_for_word(self):
         self.assertEqual(_read("/unit?ws=a&id=x&tab=bogus").tab, "bogus")
@@ -78,11 +80,12 @@ class WhatIsReadIsWhatIsWritten(unittest.TestCase):
         self.assertEqual(_read("/unit?ws=a"), Place("unit", "a"))
 
     def test_place_reads_and_writes_idea_with_ws_and_id(self):
-        """`0040` R15."""
         p = Place("idea", "proj", idea="0001_one-feature")
         self.assertEqual(place.href(p), "/idea?ws=proj&id=0001_one-feature")
         self.assertEqual(_read(place.href(p)), p)
-        self.assertEqual(_read("/idea/?ws=proj&id=0001_x&tab=questions"), Place("idea", "proj", idea="0001_x"))
+        self.assertEqual(
+            _read("/idea/?ws=proj&id=0001_x&tab=questions"), Place("idea", "proj", idea="0001_x")
+        )
         self.assertNotIn("idea", place.SCREENS)
 
     def test_a_name_with_a_space_or_ampersand_survives(self):

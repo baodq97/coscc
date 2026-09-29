@@ -124,12 +124,8 @@ def addresses(static: Path) -> set[str]:
         if not path.is_file():
             continue
         try:
-            raw = (
-                gzip.decompress(path.read_bytes())
-                if path.suffix == ".gz"
-                else path.read_bytes()
-            )
-        except (OSError, gzip.BadGzipFile):
+            raw = gzip.decompress(path.read_bytes()) if path.suffix == ".gz" else path.read_bytes()
+        except OSError, gzip.BadGzipFile:
             continue
         try:
             text = raw.decode("utf-8")

@@ -1,4 +1,4 @@
-"""`0136` R10, R12, R13: `pr` and `ship` are the app's own actions, through the PR machine."""
+"""`pr` and `ship` are the app's own actions, through the PR machine."""
 
 from __future__ import annotations
 
@@ -26,11 +26,19 @@ class Crash(BaseException):
 
 
 class FakeGh:
-    """`gh` as far as the machine asks it. `crash_after_merge` merges on GitHub and then dies
-    before the caller hears back (R13)."""
+    """`gh` as far as the machine asks it. `crash_after_merge` merges on GitHub and then dies before
+    the caller hears back."""
 
-    def __init__(self, *, open_prs=(), state="OPEN", head=HEAD, buckets=("pass",), merge_code=0,
-                 crash_after_merge=False):
+    def __init__(
+        self,
+        *,
+        open_prs=(),
+        state="OPEN",
+        head=HEAD,
+        buckets=("pass",),
+        merge_code=0,
+        crash_after_merge=False,
+    ):
         self.calls: list[list[str]] = []
         self.open_prs = list(open_prs)
         self.state = state
@@ -48,12 +56,24 @@ class FakeGh:
         if verb == ["pr", "list"]:
             return 0, json.dumps(self.open_prs), ""
         if verb == ["pr", "create"]:
-            self.open_prs = [{"number": 7, "url": "https://github.com/o/r/pull/7", "headRefOid": self.head}]
+            self.open_prs = [
+                {"number": 7, "url": "https://github.com/o/r/pull/7", "headRefOid": self.head}
+            ]
             return 0, "https://github.com/o/r/pull/7\n", ""
         if verb == ["pr", "view"]:
             merged = {"oid": MERGE} if self.state == "MERGED" else None
-            return 0, json.dumps({"state": self.state, "mergeCommit": merged, "headRefOid": self.head,
-                                  "url": "https://github.com/o/r/pull/7"}), ""
+            return (
+                0,
+                json.dumps(
+                    {
+                        "state": self.state,
+                        "mergeCommit": merged,
+                        "headRefOid": self.head,
+                        "url": "https://github.com/o/r/pull/7",
+                    }
+                ),
+                "",
+            )
         if verb == ["pr", "checks"]:
             return 0, json.dumps([{"name": "test", "bucket": b} for b in self.buckets]), ""
         if verb == ["pr", "merge"]:
@@ -61,7 +81,11 @@ class FakeGh:
                 self.state = "MERGED"
             if self.crash_after_merge:
                 raise Crash()
-            return self.merge_code, "", "" if self.merge_code == 0 else "Pull request is not mergeable"
+            return (
+                self.merge_code,
+                "",
+                "" if self.merge_code == 0 else "Pull request is not mergeable",
+            )
         raise AssertionError(f"unexpected gh call {argv}")
 
 
@@ -82,7 +106,9 @@ class Fixture(unittest.TestCase):
         self.pushed: list[tuple[str, str]] = []
 
     def unit(self, branch=BRANCH, expected=BRANCH):
-        return prmachine.Unit(WS, NAME, self.directory, str(self.directory), branch, expected, "feat")
+        return prmachine.Unit(
+            WS, NAME, self.directory, str(self.directory), branch, expected, "feat"
+        )
 
     def machine(self, gh):
         async def push(tree, branch):
@@ -112,12 +138,11 @@ class Fixture(unittest.TestCase):
     def starts(self, stage):
         with self.data.connect() as conn:
             return conn.execute(
-                "SELECT COUNT(*) FROM runs WHERE kind = 'start' AND stage = ?", (stage,)).fetchone()[0]
+                "SELECT COUNT(*) FROM runs WHERE kind = 'start' AND stage = ?", (stage,)
+            ).fetchone()[0]
 
 
 class PrIsMechanical(Fixture):
-    """R12."""
-
     def test_pr_twice_creates_one_pull_request(self):
         gh = FakeGh()
         m = self.machine(gh)
@@ -128,8 +153,10 @@ class PrIsMechanical(Fixture):
         self.assertEqual(gh.count("pr", "create"), 1)
         rows = self.rows("pr.md")
         self.assertEqual(len(rows), 1)
-        self.assertEqual((rows[0]["to_state"], rows[0]["guard"], rows[0]["authority"]),
-                         ("accepted", "branch-named", "code"))
+        self.assertEqual(
+            (rows[0]["to_state"], rows[0]["guard"], rows[0]["authority"]),
+            ("accepted", "branch-named", "code"),
+        )
         self.assertEqual(json.loads(rows[0]["inputs"])["head"], HEAD)
         self.assertEqual(self.starts("pr"), 0, "no session ran, so no start record names pr")
 
@@ -143,7 +170,9 @@ class PrIsMechanical(Fixture):
         self.assertIn("PR: https://github.com/o/r/pull/7", text)
 
     def test_an_open_pull_request_of_the_branch_is_taken_not_created(self):
-        gh = FakeGh(open_prs=[{"number": 3, "url": "https://github.com/o/r/pull/3", "headRefOid": HEAD}])
+        gh = FakeGh(
+            open_prs=[{"number": 3, "url": "https://github.com/o/r/pull/3", "headRefOid": HEAD}]
+        )
         out = run(self.machine(gh).open_pr(self.unit()))
         self.assertEqual((out.result, out.number), ("found", 3))
         self.assertEqual(gh.count("pr", "create"), 0)
@@ -156,8 +185,6 @@ class PrIsMechanical(Fixture):
 
 
 class ShipIsMechanical(Fixture):
-    """R10, R13."""
-
     def test_a_pass_on_green_ci_merges_pinned_to_the_head_it_read(self):
         gh = FakeGh()
         m = self.opened(gh)
@@ -165,12 +192,18 @@ class ShipIsMechanical(Fixture):
         out = run(m.ship(self.unit()))
         self.assertEqual((out.result, out.merge_commit), ("merged", MERGE))
         merge = next(c for c in gh.calls if c[:2] == ["pr", "merge"])
-        self.assertEqual(merge, ["pr", "merge", "7", "--squash", "--delete-branch", "--match-head-commit", HEAD])
+        self.assertEqual(
+            merge, ["pr", "merge", "7", "--squash", "--delete-branch", "--match-head-commit", HEAD]
+        )
         rows = self.rows("ship.md")
-        self.assertEqual([(r["to_state"], r["guard"]) for r in rows],
-                         [("draft", "ship-ready"), ("accepted", "merge-read")])
+        self.assertEqual(
+            [(r["to_state"], r["guard"]) for r in rows],
+            [("draft", "ship-ready"), ("accepted", "merge-read")],
+        )
         self.assertEqual(prmachine.state(self.history, WS, NAME)["state"], "merged")
-        self.assertIn("Status: accepted. Round: 1", (self.directory / "ship.md").read_text(encoding="utf-8"))
+        self.assertIn(
+            "Status: accepted. Round: 1", (self.directory / "ship.md").read_text(encoding="utf-8")
+        )
 
     def test_a_closed_guard_never_calls_merge(self):
         for gh, round_, reason in (
@@ -190,8 +223,8 @@ class ShipIsMechanical(Fixture):
                 self.assertEqual(self.rows("ship.md"), [])
 
     def test_a_clean_rebase_the_gate_read_merges_pinned_to_the_new_head(self):
-        """Review round 1, F1: after a rebase `0067` accepts, `ship` merges the new head
-        without another round; a rebase of some other commit does not."""
+        """After a rebase the gate accepts as clean, `ship` merges the new head without another
+        round; a rebase of some other commit does not."""
         new = "b" * 40
         gh = FakeGh(head=new)
         m = self.opened(gh)
@@ -204,8 +237,10 @@ class ShipIsMechanical(Fixture):
         self.assertEqual(merge[-1], new)
         [requested] = [r for r in self.rows("ship.md") if r["guard"] == "ship-ready"]
         inputs = json.loads(requested["inputs"])
-        self.assertEqual((inputs["reviewed_head"], inputs["head"], inputs["rebased"]),
-                         (HEAD, new, {"reviewed": HEAD, "head": new}))
+        self.assertEqual(
+            (inputs["reviewed_head"], inputs["head"], inputs["rebased"]),
+            (HEAD, new, {"reviewed": HEAD, "head": new}),
+        )
 
     def test_no_round_the_app_holds_is_no_pass(self):
         gh = FakeGh()
@@ -221,8 +256,11 @@ class ShipIsMechanical(Fixture):
         self.a_round()
         with self.assertRaises(Crash):
             run(m.ship(self.unit()))
-        self.assertEqual(prmachine.state(self.history, WS, NAME)["state"], "merge-requested",
-                         "step 1 was committed before the merge was asked")
+        self.assertEqual(
+            prmachine.state(self.history, WS, NAME)["state"],
+            "merge-requested",
+            "step 1 was committed before the merge was asked",
+        )
         # The restart: a new machine over the same database.
         again = self.machine(gh)
         done = run(again.reconcile([self.unit()]))
@@ -254,7 +292,9 @@ class ShipIsMechanical(Fixture):
         self.assertEqual(prmachine.state(self.history, WS, NAME)["state"], "merge-requested")
 
     def test_a_pull_request_a_session_opened_is_found_by_its_branch(self):
-        gh = FakeGh(open_prs=[{"number": 3, "url": "https://github.com/o/r/pull/3", "headRefOid": HEAD}])
+        gh = FakeGh(
+            open_prs=[{"number": 3, "url": "https://github.com/o/r/pull/3", "headRefOid": HEAD}]
+        )
         self.a_round()
         out = run(self.machine(gh).ship(self.unit()))
         self.assertEqual(out.number, 3)
@@ -262,8 +302,8 @@ class ShipIsMechanical(Fixture):
 
 
 class TheReaderRecordsWhatChanged(Fixture):
-    """R23, spec Design "Người đọc PR": each change a read finds is a transition of the
-    machine, and a read that finds none writes nothing."""
+    """Each change a read finds is a transition of the machine, and a read that finds none writes
+    nothing."""
 
     def reader(self, gh, files=("a.py",)):
         m = self.opened(gh)
@@ -296,30 +336,41 @@ class TheReaderRecordsWhatChanged(Fixture):
         self.assertEqual(prmachine.state(self.history, WS, NAME)["ci"], "green")
         checks = gh.count("pr", "checks")
         got = self.read(m)
-        self.assertEqual((got.moved, got.calls, gh.count("pr", "checks")), ([], 1, checks),
-                         "green at the same head is settled: only the list is read")
+        self.assertEqual(
+            (got.moved, got.calls, gh.count("pr", "checks")),
+            ([], 1, checks),
+            "green at the same head is settled: only the list is read",
+        )
         rows = [r for r in self.rows("pr.md") if r["guard"] == "ci-at-head"]
-        self.assertEqual([(r["to_state"], r["authority"], json.loads(r["inputs"])["ci"]) for r in rows],
-                         [("accepted", "code", "pending"), ("accepted", "code", "green")])
+        self.assertEqual(
+            [(r["to_state"], r["authority"], json.loads(r["inputs"])["ci"]) for r in rows],
+            [("accepted", "code", "pending"), ("accepted", "code", "green")],
+        )
         self.assertEqual(self.file_reads, [HEAD], "the files are read once for a head")
 
     def test_ci_is_written_only_through_ci_at_head(self):
-        # `0139` R8: opening writes the row and no answer; the reader's `ci` transition and the
-        # board's `record_ci` write it, each beside a `ci-at-head` row.
+        # Opening writes the row and no answer; the reader's `ci` transition and the board's
+        # `record_ci` write it, each beside a `ci-at-head` row.
         gh = FakeGh(buckets=("pending",))
         m = self.reader(gh)
         self.assertIsNone(prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD))
         self.read(m)
         held = prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD)
         self.assertEqual((held["head"], held["ci"]), (HEAD, "pending"))
-        self.assertTrue(m.record_ci(self.unit(), PR_NUMBER, HEAD, [{"name": "t", "bucket": "fail"}]))
+        self.assertTrue(
+            m.record_ci(self.unit(), PR_NUMBER, HEAD, [{"name": "t", "bucket": "fail"}])
+        )
         held = prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD)
         self.assertEqual((held["ci"], held["checks"]), ("red", [{"name": "t", "bucket": "fail"}]))
         self.assertEqual(prmachine.state(self.history, WS, NAME)["ci"], "red")
-        rows = [json.loads(r["inputs"])["ci"] for r in self.rows("pr.md") if r["guard"] == "ci-at-head"]
+        rows = [
+            json.loads(r["inputs"])["ci"] for r in self.rows("pr.md") if r["guard"] == "ci-at-head"
+        ]
         self.assertEqual(rows, ["pending", "red"])
         # The same answer again is no transition; only when it was read moves.
-        self.assertTrue(m.record_ci(self.unit(), PR_NUMBER, HEAD, [{"name": "t", "bucket": "fail"}]))
+        self.assertTrue(
+            m.record_ci(self.unit(), PR_NUMBER, HEAD, [{"name": "t", "bucket": "fail"}])
+        )
         self.assertEqual(len([r for r in self.rows("pr.md") if r["guard"] == "ci-at-head"]), 2)
 
     def test_a_new_head_is_read_again_with_its_files(self):
@@ -332,13 +383,17 @@ class TheReaderRecordsWhatChanged(Fixture):
         now = prmachine.state(self.history, WS, NAME)
         self.assertEqual((now["head"], now["ci"]), (other, "green"))
         self.assertEqual(self.file_reads, [HEAD, other])
-        self.assertEqual(prmachine.open_prs(self.history, WS), [{"unit": NAME, "number": 7, "files": {"a.py"}}])
+        self.assertEqual(
+            prmachine.open_prs(self.history, WS), [{"unit": NAME, "number": 7, "files": {"a.py"}}]
+        )
 
     def test_files_that_cannot_be_read_are_none(self):
-        """C12: `pick` counts that as every file."""
+        """`pick` counts that as every file."""
         m = self.reader(FakeGh(), files=None)
         self.read(m)
-        self.assertEqual(prmachine.open_prs(self.history, WS), [{"unit": NAME, "number": 7, "files": None}])
+        self.assertEqual(
+            prmachine.open_prs(self.history, WS), [{"unit": NAME, "number": 7, "files": None}]
+        )
 
     def test_a_merge_made_outside_is_recorded_and_merges_nothing(self):
         gh = FakeGh()
@@ -350,7 +405,9 @@ class TheReaderRecordsWhatChanged(Fixture):
         self.assertIn("Status: accepted", (self.directory / "ship.md").read_text(encoding="utf-8"))
         self.assertEqual(prmachine.open_prs(self.history, WS), [])
         calls = len(gh.calls)
-        self.assertEqual((self.read(m).moved, len(gh.calls)), ([], calls), "a merged one is not watched")
+        self.assertEqual(
+            (self.read(m).moved, len(gh.calls)), ([], calls), "a merged one is not watched"
+        )
 
     def test_a_closed_pull_request_sends_pr_back(self):
         gh = FakeGh()

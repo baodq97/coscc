@@ -115,9 +115,13 @@ class Fetches:
                     if attempts == 1 and is_race(e):
                         await self.sleep(RETRY_DELAY)
                         continue
-                    message = str(e) if attempts == 1 else (
-                        f"git fetch lost a ref-lock race, was retried once after "
-                        f"{RETRY_DELAY:.0f}s, and failed again. git said: {e}"
+                    message = (
+                        str(e)
+                        if attempts == 1
+                        else (
+                            f"git fetch lost a ref-lock race, was retried once after "
+                            f"{RETRY_DELAY:.0f}s, and failed again. git said: {e}"
+                        )
                     )
                     failed = FetchFailed(message, attempts)
                     self._settle(future, failed)
@@ -130,8 +134,8 @@ class Fetches:
             if not future.done():
                 reason = (
                     "the fetch this call joined was cancelled"
-                    if isinstance(e, asyncio.CancelledError) else
-                    f"the fetch this call joined did not finish: {e}"
+                    if isinstance(e, asyncio.CancelledError)
+                    else f"the fetch this call joined did not finish: {e}"
                 )
                 self._settle(future, FetchFailed(reason, attempts))
             raise

@@ -93,6 +93,7 @@ def apply(
         "authority": authority,
         "run": run,
     }
+
     def write(conn: Any) -> None:
         stored.extend(history.record_in(conn, [item]))
         if also is not None:

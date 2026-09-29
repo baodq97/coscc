@@ -1,10 +1,9 @@
-"""`0046`: both release presses through `Service`, against a bare remote and a fake `gh`.
+"""Both release presses through `Service`, against a bare remote and a fake `gh`.
 
 The fake `gh` is a script on a temporary `PATH`. It keeps its pull requests in a JSON file,
 reads heads off the bare remote, squashes a merge for real in a scratch clone and pushes it
 to `main`, and logs every call. It does not do what the real `gh pr merge --delete-branch`
-does to local branches (plan Risk 3). `scripts/verify_0046.py` drives the same `Fixture`.
-"""
+does to local branches (plan Risk 3). `scripts/verify_0046.py` drives the same `Fixture`."""
 
 from __future__ import annotations
 
@@ -22,17 +21,20 @@ from unittest import mock
 from coscc.config import Config
 from coscc.git import fetches
 from coscc.github import integrate
-from coscc.service import Invalid, Service
+from coscc.service import Service
+from coscc.service.common import Invalid
 
 REPO = Path(__file__).resolve().parents[2]
 ID = ("-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false")
 
 PYPROJECT = '[project]\nname = "fixture"\nversion = "0.1.0"\nrequires-python = ">=3.11"\ndependencies = []\n'
 PACKAGE = '{\n  "name": "fixture",\n  "version": "0.1.0",\n  "private": true\n}\n'
-LOCK = ('{\n  "name": "fixture",\n  "version": "0.1.0",\n  "lockfileVersion": 3,\n  "requires": true,\n'
-        '  "packages": {\n    "": {\n      "name": "fixture",\n      "version": "0.1.0"\n    }\n  }\n}\n')
+LOCK = (
+    '{\n  "name": "fixture",\n  "version": "0.1.0",\n  "lockfileVersion": 3,\n  "requires": true,\n'
+    '  "packages": {\n    "": {\n      "name": "fixture",\n      "version": "0.1.0"\n    }\n  }\n}\n'
+)
 
-FAKE_GH = r'''#!__PYTHON__
+FAKE_GH = r"""#!__PYTHON__
 import json, subprocess, sys, tempfile
 STATE, REMOTE = __STATE__, __REMOTE__
 ID = ["-c", "user.name=gh", "-c", "user.email=gh@example.invalid", "-c", "commit.gpgsign=false"]
@@ -90,11 +92,13 @@ if args[:2] == ["run", "list"]:
     out([{"status": "completed", "conclusion": "success", "url": "https://github.com/o/r/actions/runs/1"}]
         if ref("refs/tags/" + tag) else [])
 print("fake gh: not understood: " + " ".join(args), file=sys.stderr); sys.exit(2)
-'''
+"""
 
 
 def git(where: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(where), *ID, *args], capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(
+        ["git", "-C", str(where), *ID, *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
 
 
 class Fixture:
@@ -106,9 +110,15 @@ class Fixture:
         self.remote = base / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         self.seed = base / "seed"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.seed)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(self.seed)],
+            check=True,
+            capture_output=True,
+        )
         (self.seed / ".claude" / "scripts").mkdir(parents=True)
-        shutil.copy(REPO / ".claude" / "scripts" / "cos.mjs", self.seed / ".claude" / "scripts" / "cos.mjs")
+        shutil.copy(
+            REPO / ".claude" / "scripts" / "cos.mjs", self.seed / ".claude" / "scripts" / "cos.mjs"
+        )
         (self.seed / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
         (self.seed / "package.json").write_text(PACKAGE, encoding="utf-8")
         (self.seed / "package-lock.json").write_text(LOCK, encoding="utf-8")
@@ -118,7 +128,9 @@ class Fixture:
         git(self.seed, "tag", "v0.1.0")
         git(self.seed, "push", "-q", "origin", "main", "v0.1.0")
         if commits:
-            for i, subject in enumerate(("feat: one (#11)", "fix: two (#12)", "build(deps): bump (#13)")):
+            for i, subject in enumerate(
+                ("feat: one (#11)", "fix: two (#12)", "build(deps): bump (#13)")
+            ):
                 if subject.startswith("feat") and not feats:
                     continue
                 (self.seed / f"f{i}.txt").write_text(subject, encoding="utf-8")
@@ -126,7 +138,11 @@ class Fixture:
                 git(self.seed, "commit", "-q", "-m", subject)
             git(self.seed, "push", "-q", "origin", "main")
         self.workspace = base / "work" / "proj"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.workspace)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(self.workspace)],
+            check=True,
+            capture_output=True,
+        )
         git(self.workspace, "config", "user.name", "t")
         git(self.workspace, "config", "user.email", "t@example.invalid")
         git(self.workspace, "config", "commit.gpgsign", "false")
@@ -136,23 +152,37 @@ class Fixture:
         self.state = base / "gh.json"
         self.state.write_text("{}", encoding="utf-8")
         (self.bin / "gh").write_text(
-            FAKE_GH.replace("__PYTHON__", sys.executable).replace("__STATE__", repr(str(self.state)))
-            .replace("__REMOTE__", repr(str(self.remote))), encoding="utf-8")
+            FAKE_GH.replace("__PYTHON__", sys.executable)
+            .replace("__STATE__", repr(str(self.state)))
+            .replace("__REMOTE__", repr(str(self.remote))),
+            encoding="utf-8",
+        )
         (self.bin / "gh").chmod(0o755)
-        self.env = {"COS_DATA_DIR": str(base / "data"), "COS_WORKING_DIR": str(base / "work"),
-                    "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}"}
+        self.env = {
+            "COS_DATA_DIR": str(base / "data"),
+            "COS_WORKING_DIR": str(base / "work"),
+            "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
+        }
 
     def service(self) -> Service:
-        config = Config(workspaces=(self.cwd,), working_dir=str(self.base / "work"), data_dir=str(self.base / "data"))
+        config = Config(
+            workspaces=(self.cwd,),
+            working_dir=str(self.base / "work"),
+            data_dir=str(self.base / "data"),
+        )
         return Service(config, mock.MagicMock())
 
     def units(self, service: Service) -> None:
         for slug, kind, pr in (("one-thing", "feat", 11), ("two-thing", "fix", 12)):
             made = asyncio.run(service.create_unit(self.cwd, slug, "fixture"))
             directory = Path(made["path"])
-            (directory / "intent.md").write_text(f"# Intent: {slug}\nAuthor: t. Type: {kind}. Status: accepted.\n", encoding="utf-8")
+            (directory / "intent.md").write_text(
+                f"# Intent: {slug}\nAuthor: t. Type: {kind}. Status: accepted.\n", encoding="utf-8"
+            )
             (directory / "pr.md").write_text(
-                f"# PR: {slug}\nPR: https://github.com/o/r/pull/{pr}. Status: accepted.\n", encoding="utf-8")
+                f"# PR: {slug}\nPR: https://github.com/o/r/pull/{pr}. Status: accepted.\n",
+                encoding="utf-8",
+            )
 
     def gh_state(self) -> dict:
         return json.loads(self.state.read_text(encoding="utf-8"))
@@ -177,13 +207,17 @@ class Fixture:
         return git(self.seed, "rev-parse", "HEAD")
 
     def remote_ref(self, ref: str) -> str:
-        p = subprocess.run(["git", "--git-dir", str(self.remote), "rev-parse", "--verify", "-q", ref],
-                           capture_output=True, text=True)
+        p = subprocess.run(
+            ["git", "--git-dir", str(self.remote), "rev-parse", "--verify", "-q", ref],
+            capture_output=True,
+            text=True,
+        )
         return p.stdout.strip()
 
 
 def press(service: Service, phase: str, cwd: str, version: str) -> dict:
     """One press, as the route makes it: an `Invalid` before the first item, else the record."""
+
     async def go() -> dict:
         run = service.release_prepare if phase == "prepare" else service.release_publish
         done: dict = {}
@@ -191,6 +225,7 @@ def press(service: Service, phase: str, cwd: str, version: str) -> dict:
             if kind == "done":
                 done = payload["release"]
         return done
+
     return asyncio.run(go())
 
 
@@ -218,15 +253,20 @@ class ReleasingThroughTheService(unittest.TestCase):
 
     def test_the_board_shows_what_is_unreleased_and_proposes_a_minor(self):
         got = self.block()
-        self.assertEqual((got["state"], got["last_tag"], got["proposed"], got["count"]), ("ready", "v0.1.0", "0.2.0", 2))
-        self.assertEqual(sorted((u["type"], u["pr"]) for u in got["units"]), [("feat", 11), ("fix", 12)])
+        self.assertEqual(
+            (got["state"], got["last_tag"], got["proposed"], got["count"]),
+            ("ready", "v0.1.0", "0.2.0", 2),
+        )
+        self.assertEqual(
+            sorted((u["type"], u["pr"]) for u in got["units"]), [("feat", 11), ("fix", 12)]
+        )
         self.assertEqual([c["subject"] for c in got["unmatched"]], ["build(deps): bump (#13)"])
         self.assertEqual((got["button"], got["enabled"]), ("prepare", True))
 
     def test_a_workspace_never_released_asks_gh_nothing(self):
-        # Review F4: `gh pr list` ran on every read of a workspace with `cos.mjs`, tag or none.
-        # A fixture of its own: the shared one's units sit between `pr` and `ship`, and the
-        # integration block asks `gh` for them.
+        # `gh pr list` ran on every read of a workspace with `cos.mjs`, tag or none. A fixture of
+        # its own: the shared one's units sit between `pr` and `ship`, and the integration block
+        # asks `gh` for them.
         fx = Fixture(Path(self._tmp.name) / "untagged")
         git(fx.workspace, "tag", "-d", "v0.1.0")
         with mock.patch.dict(os.environ, fx.env):
@@ -244,7 +284,6 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertFalse(self.service._releasing)
 
     def test_gh_offline_is_named_as_gh_not_as_check_version(self):
-        # Review F6.
         self.fx.state.write_text(json.dumps({"offline": True}), encoding="utf-8")
         with self.assertRaises(Invalid) as caught:
             press(self.service, "prepare", self.fx.cwd, "0.2.0")
@@ -260,8 +299,12 @@ class ReleasingThroughTheService(unittest.TestCase):
         branch = self.fx.remote_ref("refs/heads/chore/release-0-2-0")
         self.assertEqual(branch, rec["head"])
         files = git(self.fx.workspace, "fetch", "-q", "origin", "chore/release-0-2-0") or git(
-            self.fx.workspace, "diff", "--name-only", f"{branch}~1", branch)
-        self.assertEqual(sorted(files.splitlines()), ["package-lock.json", "package.json", "pyproject.toml", "uv.lock"])
+            self.fx.workspace, "diff", "--name-only", f"{branch}~1", branch
+        )
+        self.assertEqual(
+            sorted(files.splitlines()),
+            ["package-lock.json", "package.json", "pyproject.toml", "uv.lock"],
+        )
         with self.assertRaises(Invalid) as caught:
             press(self.service, "prepare", self.fx.cwd, "0.2.0")
         self.assertIn("already open", str(caught.exception))
@@ -276,10 +319,12 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertEqual(self.fx.remote_ref("refs/tags/v0.2.0"), rec["merge_sha"])
         self.assertEqual(self.fx.remote_ref("refs/heads/main"), rec["merge_sha"])
         self.assertEqual(self.block()["state"], "published")
-        self.assertEqual([r["outcome"] for r in self.records()], ["opened", "refused", "refused", "tagged"])
+        self.assertEqual(
+            [r["outcome"] for r in self.records()], ["opened", "refused", "refused", "tagged"]
+        )
 
     def test_a_refused_push_leaves_no_branch_and_the_next_prepare_runs(self):
-        # Review F2: the local branch stayed at the release commit and blocked every retry.
+        # The local branch stayed at the release commit and blocked every retry.
         hook = self.fx.remote / "hooks" / "pre-receive"
         hook.write_text("#!/bin/sh\necho 'no credentials here' >&2\nexit 1\n", encoding="utf-8")
         hook.chmod(0o755)
@@ -294,7 +339,7 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertEqual(self.fx.remote_ref("refs/heads/chore/release-0-2-0"), rec["head"])
 
     def test_a_push_after_the_checks_passed_is_not_merged(self):
-        # Review F1: the merge used to read the pull request again and pin whatever head it found.
+        # The merge used to read the pull request again and pin whatever head it found.
         opened = press(self.service, "prepare", self.fx.cwd, "0.2.0")["head"]
         main = self.fx.remote_ref("refs/heads/main")
         real = integrate.required_checks

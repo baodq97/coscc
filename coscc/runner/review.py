@@ -66,7 +66,9 @@ def finding_line(f: dict[str, Any]) -> str:
     return "\n".join(out).rstrip()
 
 
-def render_round(section: str, n: int, head: str, obj: dict[str, Any], screens: dict[str, Any] | None) -> str:
+def render_round(
+    section: str, n: int, head: str, obj: dict[str, Any], screens: dict[str, Any] | None
+) -> str:
     """A round of `review.md` from the object its run handed back.
 
     The app decides the heading's number, the line naming the head it read and the verdict,
@@ -90,7 +92,8 @@ def render_round(section: str, n: int, head: str, obj: dict[str, Any], screens: 
             f"Taken at: {screens.get('taken') or '(no manifest)'}. Standard: {screens['standard']}. "
             f"Looked at by: {screens['by']}, from screenshots.\n\n"
             + "\n".join(
-                f"- {s['path']} — {s['size'].replace('x', '×')} — {s['address']} — {s['result']}" for s in shots
+                f"- {s['path']} — {s['size'].replace('x', '×')} — {s['address']} — {s['result']}"
+                for s in shots
             )
         )
     out = [f"## Round {n}", "", f"Reviewed: {head}. Verdict: {obj['verdict']}.", ""]
@@ -108,7 +111,9 @@ def render_round(section: str, n: int, head: str, obj: dict[str, Any], screens: 
     return "\n".join(out).rstrip()
 
 
-def replace_new_rounds(text: str, before: set[int], rendered: str, status: str | None = None) -> str:
+def replace_new_rounds(
+    text: str, before: set[int], rendered: str, status: str | None = None
+) -> str:
     """`review.md` with every round not numbered in `before` taken out and `rendered` put where
     the first of them stood. Earlier rounds and the header stay byte for byte, except the value
     of the header's first `Status:` when `status` is given.
@@ -117,12 +122,12 @@ def replace_new_rounds(text: str, before: set[int], rendered: str, status: str |
         first = re.search(r"^## Round \d+\b", text, re.MULTILINE)
         m = HEADER_STATUS_RE.search(text, 0, first.start() if first else len(text))
         if m is not None:
-            text = text[:m.start(1)] + status + text[m.end(1):]
+            text = text[: m.start(1)] + status + text[m.end(1) :]
     kept: list[str] = []
     placed = False
     last = 0
     for m in _ROUND_RE.finditer(text):
-        kept.append(text[last:m.start()])
+        kept.append(text[last : m.start()])
         last = m.end()
         if _round_number(m.group(0)) in before:
             kept.append(m.group(0))
@@ -164,7 +169,7 @@ def open_findings(text: str) -> tuple[str, int | None, str]:
     m = HEADER_STATUS_RE.search(text)
     start = text.rfind("\n", 0, m.start()) + 1 if m else 0
     end = text.find("\n", m.end()) if m else -1
-    header = text[start:end if end != -1 else len(text)].strip() if m else ""
+    header = text[start : end if end != -1 else len(text)].strip() if m else ""
     rounds = _rounds(text)
     if rounds:
         body, number = rounds[-1], _round_number(rounds[-1])

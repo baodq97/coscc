@@ -99,7 +99,7 @@ def marker_path(built: Path) -> Path:
 def read_marker(built: Path) -> dict | None:
     try:
         data = json.loads(marker_path(built).read_text())
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
 

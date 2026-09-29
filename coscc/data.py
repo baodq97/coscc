@@ -481,8 +481,8 @@ class Data:
     def __init__(self, root: str | os.PathLike[str] | None = None):
         self.root = Path(root or DEFAULT_DIR).expanduser().resolve()
         self.db_path = self.root / DB_FILENAME
-# Threads inside one process still serialise here; SQLite keeps processes apart. It stops a
-# single process from spending its busy timeout fighting itself.
+        # Threads inside one process still serialise here; SQLite keeps processes apart. It stops a
+        # single process from spending its busy timeout fighting itself.
         self._lock = threading.Lock()
 
     # -- the directory ------------------------------------------------------
@@ -490,8 +490,8 @@ class Data:
     def ensure_dir(self) -> Path:
         """Create the directory if it is not there."""
         self.root.mkdir(parents=True, exist_ok=True, mode=DIR_MODE)
-            # `mkdir(mode=...)` is a no-op on an existing directory, which an older build may
-            # have made `0o755`; tightening on every open covers it.
+        # `mkdir(mode=...)` is a no-op on an existing directory, which an older build may
+        # have made `0o755`; tightening on every open covers it.
         try:
             os.chmod(self.root, DIR_MODE)
         except OSError:
@@ -650,9 +650,14 @@ class Data:
     def has_run(self, key: str, conn: sqlite3.Connection | None = None) -> bool:
         """Whether a one-shot migration under this key has already happened."""
         if conn is not None:
-            return conn.execute("SELECT 1 FROM migrations WHERE key = ?", (key,)).fetchone() is not None
+            return (
+                conn.execute("SELECT 1 FROM migrations WHERE key = ?", (key,)).fetchone()
+                is not None
+            )
         with self.connect() as c:
-            return c.execute("SELECT 1 FROM migrations WHERE key = ?", (key,)).fetchone() is not None
+            return (
+                c.execute("SELECT 1 FROM migrations WHERE key = ?", (key,)).fetchone() is not None
+            )
 
     def import_once(
         self,
@@ -685,9 +690,7 @@ class Data:
 
         A mark written in a second transaction could survive a rollback of the first.
         """
-        conn.execute(
-            "INSERT OR IGNORE INTO migrations (key, at) VALUES (?, ?)", (key, now())
-        )
+        conn.execute("INSERT OR IGNORE INTO migrations (key, at) VALUES (?, ?)", (key, now()))
 
     # -- preferences --------------------------------------------------------
 
@@ -698,8 +701,8 @@ class Data:
             return default
         try:
             return json.loads(row["value"])
-        except (TypeError, ValueError):
-                # Hand-edited into something unreadable: back to the default, not repaired.
+        except TypeError, ValueError:
+            # Hand-edited into something unreadable: back to the default, not repaired.
             return default
 
     def set_pref(self, key: str, value: Any) -> None:
@@ -719,7 +722,7 @@ class Data:
             row = conn.execute("SELECT value FROM prefs WHERE key = ?", (key,)).fetchone()
             try:
                 current = default if row is None else json.loads(row["value"])
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 current = default
             value = change(current)
             conn.execute(
@@ -736,7 +739,7 @@ class Data:
         for row in rows:
             try:
                 out[row["key"]] = json.loads(row["value"])
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
         return out
 
@@ -757,17 +760,22 @@ class Data:
         """
         with self.connect() as conn:
             rows = conn.execute("SELECT key, value FROM prefs").fetchall()
-        return {
-            str(row["key"]): row["value"]
-            for row in rows
-            if str(row["key"]).startswith(prefix)
-        }
+        return {str(row["key"]): row["value"] for row in rows if str(row["key"]).startswith(prefix)}
 
-# -- the person's decisions ---------------------------------------------
-#
-# Only `Service` calls these, only from the Settings screen's handlers: no route writes here.
+    # -- the person's decisions ---------------------------------------------
+    #
+    # Only `Service` calls these, only from the Settings screen's handlers: no route writes here.
 
-    _DECISION_FIELDS = ("kind", "text", "source", "workspace", "agent", "covers", "from_day", "until_day")
+    _DECISION_FIELDS = (
+        "kind",
+        "text",
+        "source",
+        "workspace",
+        "agent",
+        "covers",
+        "from_day",
+        "until_day",
+    )
 
     def decisions(self) -> list[dict[str, Any]]:
         """Every decision, withdrawn and expired included, oldest first."""
@@ -791,14 +799,15 @@ class Data:
         was withdrawn already; the row is never deleted."""
         with self.write() as conn:
             cur = conn.execute(
-                "UPDATE decisions SET withdrawn = ? WHERE id = ? AND withdrawn = ''", (day, int(decision_id))
+                "UPDATE decisions SET withdrawn = ? WHERE id = ? AND withdrawn = ''",
+                (day, int(decision_id)),
             )
             return cur.rowcount > 0
 
-# -- the login ---------------------------------------------------------
-#
-# Only `coscc/web/auth.py` calls these. `prefs()` never reads these tables, so the hash has
-# no road out through Settings.
+    # -- the login ---------------------------------------------------------
+    #
+    # Only `coscc/web/auth.py` calls these. `prefs()` never reads these tables, so the hash has
+    # no road out through Settings.
 
     def auth_password_hash(self) -> str | None:
         with self.connect() as conn:
@@ -844,11 +853,15 @@ class Data:
         """
         with self.connect() as conn:
             has_password = conn.execute("SELECT 1 FROM auth WHERE id = 1").fetchone() is not None
-            row = conn.execute(
-                "SELECT token_sha256, created_at, last_used_at, expires_at "
-                "FROM auth_sessions WHERE token_sha256 = ?",
-                (token_sha256,),
-            ).fetchone() if token_sha256 else None
+            row = (
+                conn.execute(
+                    "SELECT token_sha256, created_at, last_used_at, expires_at "
+                    "FROM auth_sessions WHERE token_sha256 = ?",
+                    (token_sha256,),
+                ).fetchone()
+                if token_sha256
+                else None
+            )
         return has_password, row
 
     def auth_session_touch(self, token_sha256: str, now: int, expires_at: int) -> None:
@@ -862,12 +875,18 @@ class Data:
         with self.write() as conn:
             conn.execute("DELETE FROM auth_sessions WHERE token_sha256 = ?", (token_sha256,))
 
-# -- a step's events ----------------------------------------------------
-#
-# Written by `coscc/runlog/events.py`'s recorder from a thread, read by `Service.events_page`.
+    # -- a step's events ----------------------------------------------------
+    #
+    # Written by `coscc/runlog/events.py`'s recorder from a thread, read by `Service.events_page`.
 
     def step_run_open(
-        self, run: str, root: str, workspace: str, unit: str, stage: str, started_at: int,
+        self,
+        run: str,
+        root: str,
+        workspace: str,
+        unit: str,
+        stage: str,
+        started_at: int,
         timeout: float | None = None,
     ) -> None:
         with self.write(timeout=timeout) as conn:
@@ -878,7 +897,10 @@ class Data:
             )
 
     def step_events_add(
-        self, run: str, rows: list[dict[str, Any]], timeout: float | None = None,
+        self,
+        run: str,
+        rows: list[dict[str, Any]],
+        timeout: float | None = None,
     ) -> int:
         """Store events and count them into the index row, in one transaction. A `(run, seq)`
         already stored is ignored and not counted twice. Returns how many were new."""
@@ -903,7 +925,9 @@ class Data:
                 )
         return added
 
-    def step_run_close(self, run: str, ended_at: int, lost: int, timeout: float | None = None) -> None:
+    def step_run_close(
+        self, run: str, ended_at: int, lost: int, timeout: float | None = None
+    ) -> None:
         with self.write(timeout=timeout) as conn:
             conn.execute(
                 "UPDATE step_runs SET ended_at = ?, lost = ? WHERE run = ?",
@@ -924,9 +948,11 @@ class Data:
     def step_turns(self, run: str, timeout: float | None = None) -> int:
         """How many `turn` events of `run` are stored: counted from what reached disk, not from memory."""
         with self.connect(timeout=timeout) as conn:
-            return int(conn.execute(
-                "SELECT COUNT(*) FROM step_events WHERE run = ? AND kind = 'turn'", (run,)
-            ).fetchone()[0])
+            return int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM step_events WHERE run = ? AND kind = 'turn'", (run,)
+                ).fetchone()[0]
+            )
 
     def step_tool_uses(self, run: str, timeout: float | None = None) -> list[dict[str, Any]]:
         """Every stored `tool_use` event of `run`, oldest first: what a step that wrote nothing had opened."""
@@ -947,7 +973,9 @@ class Data:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def step_events_page(self, run: str, before: int | None, limit: int) -> tuple[list[dict[str, Any]], bool]:
+    def step_events_page(
+        self, run: str, before: int | None, limit: int
+    ) -> tuple[list[dict[str, Any]], bool]:
         """The last `limit` events with `seq < before` (all of them when `before` is None),
         oldest first, and whether any older one is stored."""
         with self.connect() as conn:
@@ -956,10 +984,14 @@ class Data:
                 (run, int(before) if before is not None else 2**62, int(limit)),
             ).fetchall()
             events = [json.loads(r["event"]) for r in reversed(rows)]
-            older = bool(events) and conn.execute(
-                "SELECT 1 FROM step_events WHERE run = ? AND seq < ? LIMIT 1",
-                (run, int(events[0]["seq"])),
-            ).fetchone() is not None
+            older = (
+                bool(events)
+                and conn.execute(
+                    "SELECT 1 FROM step_events WHERE run = ? AND seq < ? LIMIT 1",
+                    (run, int(events[0]["seq"])),
+                ).fetchone()
+                is not None
+            )
         return events, older
 
     def step_event(self, run: str, seq: int) -> dict[str, Any] | None:
@@ -969,13 +1001,16 @@ class Data:
             ).fetchone()
         return None if row is None else json.loads(row["event"])
 
-    def step_events_purge(self, older_than_ms: int, max_bytes: int, now_iso: str) -> tuple[int, int]:
+    def step_events_purge(
+        self, older_than_ms: int, max_bytes: int, now_iso: str
+    ) -> tuple[int, int]:
         """Whole runs only, index rows kept with `purged_at`: first every run begun before
         `older_than_ms`, then the oldest while the stored total is over `max_bytes`. Returns
         `(runs, bytes)` purged. One transaction."""
         runs = 0
         freed = 0
         with self.write() as conn:
+
             def drop(run: str, size: int) -> None:
                 nonlocal runs, freed
                 conn.execute("DELETE FROM step_events WHERE run = ?", (run,))

@@ -52,8 +52,12 @@ def env(data_dir: str | os.PathLike[str] | None = None) -> dict[str, str]:
 async def _git(tree: Path, *args: str) -> str:
     """What git printed, or `""` when it failed: a failure is judged, not raised."""
     proc = await asyncio.create_subprocess_exec(
-        "git", *args, cwd=str(tree),
-        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        "git",
+        *args,
+        cwd=str(tree),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
     )
     out, _ = await proc.communicate()
     return (out or b"").decode(errors="replace") if proc.returncode == 0 else ""
@@ -63,14 +67,14 @@ def _kill(proc: asyncio.subprocess.Process) -> None:
     """The whole group: `uv`, the app server and chromium. Killing only `uv` leaves port 18783 held."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError, PermissionError:
         pass
 
 
 def read_manifest(tree: Path) -> dict[str, Any] | None:
     try:
         found = json.loads((Path(tree) / MANIFEST).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     return found if isinstance(found, dict) else None
 
@@ -79,7 +83,9 @@ def _replaced(out: Path) -> list[Path]:
     """What a run of the command replaces in `out`: what `clear_out` removes, and nothing else."""
     if not out.is_dir():
         return []
-    return [f for f in [*out.glob("*.png"), *out.glob("*.txt"), out / "manifest.json"] if f.is_file()]
+    return [
+        f for f in [*out.glob("*.png"), *out.glob("*.txt"), out / "manifest.json"] if f.is_file()
+    ]
 
 
 def _keep(tree: Path) -> Path:
@@ -132,12 +138,19 @@ async def take(
 
 
 async def _run(
-    tree: Path, command: list[str], data_dir: str | os.PathLike[str] | None, timeout: float,
+    tree: Path,
+    command: list[str],
+    data_dir: str | os.PathLike[str] | None,
+    timeout: float,
 ) -> dict[str, Any]:
     started = time.monotonic()
     proc = await asyncio.create_subprocess_exec(
-        *command, cwd=str(tree), env=env(data_dir),
-        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        *command,
+        cwd=str(tree),
+        env=env(data_dir),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,
     )
     kept = bytearray()
@@ -192,10 +205,14 @@ def judge(result: dict[str, Any]) -> tuple[bool, str]:
         problems.append("no .screens/manifest.json could be read after it")
     else:
         if manifest.get("head") != head:
-            problems.append(f"the manifest names {str(manifest.get('head') or 'no head')[:12]}, not HEAD {head[:12]}")
+            problems.append(
+                f"the manifest names {str(manifest.get('head') or 'no head')[:12]}, not HEAD {head[:12]}"
+            )
         if manifest.get("dirty") is not False:
             problems.append("the manifest says the tree changed while it ran")
-    changed = _changed(str(result.get("status_before") or ""), str(result.get("status_after") or ""))
+    changed = _changed(
+        str(result.get("status_before") or ""), str(result.get("status_after") or "")
+    )
     if changed:
         problems.append("git status --porcelain changed:\n" + "\n".join(changed))
     if not problems:
@@ -205,7 +222,12 @@ def judge(result: dict[str, Any]) -> tuple[bool, str]:
 
 
 def record(
-    workspace: str, unit: str, old: dict[str, Any], result: dict[str, Any], ok: bool, detail: str,
+    workspace: str,
+    unit: str,
+    old: dict[str, Any],
+    result: dict[str, Any],
+    ok: bool,
+    detail: str,
     started_by: str,
 ) -> dict[str, Any]:
     """The one run-log line a retake leaves, taken or not."""
@@ -231,7 +253,8 @@ def _hits(manifest: dict[str, Any]) -> str:
     if not rows:
         return "- none"
     return "\n".join(
-        f"- `{h.get('address')}` — {h.get('size')} — {h.get('kind')} — {h.get('snippet')}" for h in rows
+        f"- `{h.get('address')}` — {h.get('size')} — {h.get('kind')} — {h.get('snippet')}"
+        for h in rows
     )
 
 

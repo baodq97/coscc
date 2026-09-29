@@ -30,8 +30,11 @@ Work units live in `.cos/NNNN_<slug>/`. `docs/` holds the playbook this is built
 
 ```
 node .claude/scripts/cos.mjs status   # where everything stands
-npm test                              # the harness scripts and the app
+npm test                              # lint (ruff, ty), then the harness scripts and the app
+uv run ruff format && uv run ruff check --fix   # before a commit
 ```
+
+How code and tests are checked, laid out and named: `.claude/docs/code-and-tests.md`.
 
 Copying it into another repository means copying `.claude/`. Nothing else is needed, and
 nothing lands in that repository's own tree.

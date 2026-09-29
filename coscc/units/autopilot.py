@@ -36,7 +36,19 @@ NOT_STEPS = ("precedent",)
 STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist", "reruns", "full")
 
 # Why a unit ranked higher on the shortlist was passed over, and nothing else.
-REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing", "dependency", "overlap-pr")
+REASONS = (
+    "held",
+    "finished",
+    "closed",
+    "stop",
+    "ci",
+    "running",
+    "overlap",
+    "ship-busy",
+    "missing",
+    "dependency",
+    "overlap-pr",
+)
 # The stop `e` of a unit whose screenshots could not be taken again before `review`.
 SCREENS_FAILED = "the screenshots could not be taken again before review"
 # The workspace's stop line when there is no shortlist to follow.
@@ -78,7 +90,11 @@ def is_recording_ship(answer: Any) -> bool:
 def needs_a_person(answer: Any) -> bool:
     """`next` stops for a person: review used its rounds, a spike failed too often, a red check
     no impl can fix, a pass left closed twice on one head, or a spec or plan skipped by no person."""
-    return said(answer, "needs-person") or said(answer, "awaits-person") or said(answer, "agent-cannot-skip")
+    return (
+        said(answer, "needs-person")
+        or said(answer, "awaits-person")
+        or said(answer, "agent-cannot-skip")
+    )
 
 
 def is_over(answer: Any) -> bool:
@@ -103,7 +119,9 @@ def _stop(kind: str, reason: str) -> dict[str, str]:
 def open_questions(unit_row: dict[str, Any]) -> list[dict[str, Any]]:
     """Every unanswered question of the counted artifact (`cos.mjs` `unitQuestions`): the stop `a`,
     and the `questions` record a step that ends `done` leaves."""
-    return [q for q in unit_row.get("questions") or [] if q.get("counted") and not q.get("answered")]
+    return [
+        q for q in unit_row.get("questions") or [] if q.get("counted") and not q.get("answered")
+    ]
 
 
 def _listed(questions: Iterable[dict[str, Any]]) -> str:
@@ -115,8 +133,11 @@ def skips_exhausted(nxt: dict[str, Any], last: dict[str, Any] | None, recorded: 
     the merge, unless the step that ran out was itself one (`recorded`)."""
     last = last or {}
     return (
-        last.get("kind") == "end" and last.get("stage") == "ship" and last.get("outcome") == "exhausted"
-        and nxt.get("stage") == "ship" and is_recording_ship(nxt)
+        last.get("kind") == "end"
+        and last.get("stage") == "ship"
+        and last.get("outcome") == "exhausted"
+        and nxt.get("stage") == "ship"
+        and is_recording_ship(nxt)
         and not recorded
     )
 
@@ -162,7 +183,9 @@ def stop_for(
     outcome = str((last or {}).get("outcome") or "")
     # d. Gebo's integration ended `needs-person`.
     if kind == "integration" and outcome == "needs-person":
-        said = "; ".join(str(x) for x in (last or {}).get("needs_person") or []) or "no reason given"
+        said = (
+            "; ".join(str(x) for x in (last or {}).get("needs_person") or []) or "no reason given"
+        )
         return _stop("d", f"the last integration needs a person: {said}")
     # e. The unit's last step did not end `done`. The first time a stage other than `ship` ends
     # `exhausted` is no stop: it runs again once, and the second time stops; `ship` stops the
@@ -173,8 +196,16 @@ def stop_for(
     ran_out_once = outcome == "exhausted" and (last or {}).get("stage") != "ship" and exhausted == 1
     unopened_once = _unopened(last) and unopened == 1
     skipped = skips_exhausted(nxt, last, recorded)
-    if kind == "end" and outcome != "done" and not ran_out_once and not unopened_once and not skipped:
-        return _stop("e", f"the last {last.get('stage')} step ended {outcome or 'without an outcome'}")
+    if (
+        kind == "end"
+        and outcome != "done"
+        and not ran_out_once
+        and not unopened_once
+        and not skipped
+    ):
+        return _stop(
+            "e", f"the last {last.get('stage')} step ended {outcome or 'without an outcome'}"
+        )
     if kind == "integration" and (
         outcome == "failed" or (outcome == "refused" and last.get("started_by") == "autopilot")
     ):
@@ -184,10 +215,16 @@ def stop_for(
     # `failed` session does. A merge GitHub refused stops `f` on what `gh` said, so the pass
     # can still integrate a unit the refusal left behind `main`.
     if kind == PR_MACHINE and outcome != "done":
-        detail = str(last.get("detail") or "") or ", ".join(str(r) for r in last.get("reasons") or [])
+        detail = str(last.get("detail") or "") or ", ".join(
+            str(r) for r in last.get("reasons") or []
+        )
         if last.get("merge_refused"):
             return _stop("f", f"ship was refused: {detail or 'no reason given'}")
-        return _stop("e",f"the last {last.get('stage')} was {last.get('result') or outcome}" + (f": {detail}" if detail else ""))
+        return _stop(
+            "e",
+            f"the last {last.get('stage')} was {last.get('result') or outcome}"
+            + (f": {detail}" if detail else ""),
+        )
     # The screenshots could not be taken again before `review`, which did not start. No retry:
     # a person runs it again, and a retake that is taken lifts the stop.
     if kind == "screens" and outcome == "failed":
@@ -216,7 +253,9 @@ STILL_RED = "CI is still red after the impl that followed the autopilot's last i
 
 
 def since_integration(
-    records: Iterable[dict[str, Any]], workspace: str, unit: str,
+    records: Iterable[dict[str, Any]],
+    workspace: str,
+    unit: str,
 ) -> list[dict[str, Any]] | None:
     """The unit's records after its latest `integration`, up to the first `review` `start` after
     it, or `None` when it has no `integration` or that `start` has come."""
@@ -304,10 +343,12 @@ def reservation(stage: str) -> float:
     label can give it (`coscc/agent/policy.py` `grant_for_step`)."""
     if stage == "integrate":
         return float(grant_for("integrate").max_budget_usd or 0.0)
-    return float(max(
-        grant_for_step(stage, None).max_budget_usd or 0.0,
-        grant_for_step(stage, labels.NOVEL).max_budget_usd or 0.0,
-    ))
+    return float(
+        max(
+            grant_for_step(stage, None).max_budget_usd or 0.0,
+            grant_for_step(stage, labels.NOVEL).max_budget_usd or 0.0,
+        )
+    )
 
 
 def estimate(stage: str) -> float:
@@ -316,10 +357,12 @@ def estimate(stage: str) -> float:
     own = reservation(stage)
     if own > 0:
         return own
-    return float(max(
-        [float(g.max_budget_usd or 0.0) for g in GRANTS.values()]
-        + [float(budget) for _, budget in NOVEL_CEILINGS.values()]
-    ))
+    return float(
+        max(
+            [float(g.max_budget_usd or 0.0) for g in GRANTS.values()]
+            + [float(budget) for _, budget in NOVEL_CEILINGS.values()]
+        )
+    )
 
 
 def spent_on(records: Iterable[dict[str, Any]], day: str) -> dict[str, Any]:
@@ -338,7 +381,9 @@ def spent_on(records: Iterable[dict[str, Any]], day: str) -> dict[str, Any]:
     return {"known": round(known, 6), "estimated": round(estimated, 6), "estimated_count": count}
 
 
-def open_starts(records: Iterable[dict[str, Any]], now: datetime) -> dict[tuple[str, str], dict[str, Any]]:
+def open_starts(
+    records: Iterable[dict[str, Any]], now: datetime
+) -> dict[tuple[str, str], dict[str, Any]]:
     """Every `(workspace, unit)` whose last `start` has no `end` yet and began within
     `OPEN_FOR` of `now`, with that `start`."""
     found: dict[tuple[str, str], dict[str, Any]] = {}
@@ -354,7 +399,9 @@ def open_starts(records: Iterable[dict[str, Any]], now: datetime) -> dict[tuple[
 
 
 def reserved(
-    records: Iterable[dict[str, Any]], now: datetime, active: Iterable[tuple[str, str, str]] = (),
+    records: Iterable[dict[str, Any]],
+    now: datetime,
+    active: Iterable[tuple[str, str, str]] = (),
 ) -> float:
     """What the steps running now are counted at: every open `start`, and every step this
     process holds (`(workspace, unit, stage)`) that has not written its `start` yet."""
@@ -390,7 +437,7 @@ def overlaps(a: set[str] | None, b: set[str] | None) -> bool:
 
 def unit_number(name: str) -> int:
     m = _NUMBER.match(name or "")
-    return int(m.group(1)) if m else 10 ** 9
+    return int(m.group(1)) if m else 10**9
 
 
 def pick(
@@ -422,7 +469,10 @@ def pick(
     held: dict[str, tuple[str, str]] = {}
     for c in sorted(candidates, key=lambda c: (c["rank"], c["unit"])):
         if c["unit"] in busy:
-            held[c["unit"]] = ("running", next((t["stage"] for t in taken if t["unit"] == c["unit"]), ""))
+            held[c["unit"]] = (
+                "running",
+                next((t["stage"] for t in taken if t["unit"] == c["unit"]), ""),
+            )
             continue
         if len(busy) >= max_parallel:
             break
@@ -430,17 +480,28 @@ def pick(
         if shipping is not None:
             held[c["unit"]] = ("ship-busy", shipping["unit"])
             continue
-        crossing = next((
-            t for t in taken
-            if c["stage"] in CODE_STAGES and t["stage"] in CODE_STAGES and overlaps(c.get("files"), t.get("files"))
-        ), None)
+        crossing = next(
+            (
+                t
+                for t in taken
+                if c["stage"] in CODE_STAGES
+                and t["stage"] in CODE_STAGES
+                and overlaps(c.get("files"), t.get("files"))
+            ),
+            None,
+        )
         if crossing is not None:
             held[c["unit"]] = ("overlap", crossing["unit"])
             continue
         if c["stage"] in ("impl", "implement") and c["unit"] not in with_pr:
-            blocking = next((
-                p for p in open_prs if p["unit"] != c["unit"] and overlaps(c.get("files"), p.get("files"))
-            ), None)
+            blocking = next(
+                (
+                    p
+                    for p in open_prs
+                    if p["unit"] != c["unit"] and overlaps(c.get("files"), p.get("files"))
+                ),
+                None,
+            )
             if blocking is not None:
                 held[c["unit"]] = ("overlap-pr", f"#{blocking['number']}")
                 continue
@@ -459,7 +520,9 @@ def pick(
 
 
 def reason_for(
-    nxt: dict[str, Any], stage: str, stop: dict[str, str] | None,
+    nxt: dict[str, Any],
+    stage: str,
+    stop: dict[str, str] | None,
 ) -> tuple[str, str] | None:
     """Why a unit is no candidate, as `(reason, detail)`, or `None` when it is one.
 
@@ -484,7 +547,9 @@ def reason_for(
 
 
 def passed_for(
-    units: list[str], chosen: list[str], reasons: dict[str, tuple[str, str]],
+    units: list[str],
+    chosen: list[str],
+    reasons: dict[str, tuple[str, str]],
 ) -> list[list[dict[str, str]]]:
     """For each of `chosen`, in order, every unit ranked above it on `units` that was not
     chosen before it this pass, each `{unit, reason, detail}`. A unit with no reason raises."""
@@ -492,11 +557,13 @@ def passed_for(
     for i, name in enumerate(chosen):
         before = set(chosen[:i])
         passed = []
-        for above in units[:units.index(name)]:
+        for above in units[: units.index(name)]:
             if above in before:
                 continue
             if above not in reasons:
-                raise ValueError(f"{name} would be started ahead of {above}, which has no reason recorded")
+                raise ValueError(
+                    f"{name} would be started ahead of {above}, which has no reason recorded"
+                )
             reason, detail = reasons[above]
             passed.append({"unit": above, "reason": reason, "detail": detail})
         out.append(passed)
@@ -528,24 +595,33 @@ def reruns_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stag
 def exhausted_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
     """How many steps of `stage` on `unit` ended `exhausted`, whoever started them and over the whole run log."""
     return sum(
-        1 for r in records
-        if r.get("kind") == "end" and r.get("outcome") == "exhausted" and is_step(r)
-        and r.get("workspace") == workspace and r.get("unit") == unit and r.get("stage") == stage
+        1
+        for r in records
+        if r.get("kind") == "end"
+        and r.get("outcome") == "exhausted"
+        and is_step(r)
+        and r.get("workspace") == workspace
+        and r.get("unit") == unit
+        and r.get("stage") == stage
     )
 
 
 def _lacks_opening(record: dict[str, Any]) -> bool:
     """The `detail` `opening_reason` opens with (`coscc/runner/reply.py`), for the record's own
     stage; a repair turn that failed too keeps it on the first line."""
-    return str(record.get("detail") or "").startswith(f"{record.get('stage')}.md lacks its opening:")
+    return str(record.get("detail") or "").startswith(
+        f"{record.get('stage')}.md lacks its opening:"
+    )
 
 
 def _unopened(last: dict[str, Any] | None) -> bool:
     """`last` is a prose stage's `end` that failed because its reply lacked its opening."""
     last = last or {}
     return (
-        last.get("kind") == "end" and last.get("outcome") == "failed"
-        and is_prose_stage(str(last.get("stage") or "")) and _lacks_opening(last)
+        last.get("kind") == "end"
+        and last.get("outcome") == "failed"
+        and is_prose_stage(str(last.get("stage") or ""))
+        and _lacks_opening(last)
     )
 
 
@@ -553,14 +629,21 @@ def unopened_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, st
     """How many steps of `stage` on `unit` ended `failed` because their reply lacked its
     opening, counted as `exhausted_of` counts; the two counts are apart."""
     return sum(
-        1 for r in records
-        if r.get("kind") == "end" and r.get("outcome") == "failed" and is_step(r)
-        and r.get("workspace") == workspace and r.get("unit") == unit and r.get("stage") == stage
+        1
+        for r in records
+        if r.get("kind") == "end"
+        and r.get("outcome") == "failed"
+        and is_step(r)
+        and r.get("workspace") == workspace
+        and r.get("unit") == unit
+        and r.get("stage") == stage
         and _lacks_opening(r)
     )
 
 
-def answered_since_start(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> bool:
+def answered_since_start(
+    records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str
+) -> bool:
     """Whether an `answer` record of `stage` on `unit` came after its last `start`. A run
     again that ends `draft` keeps its answered questions' numbers, so `cos.mjs next` can say
     `rerun` with no new answer behind it; without this the autopilot would rerun on every pass."""
@@ -579,7 +662,9 @@ def answer_completes(unit_row: dict[str, Any], artifact: str, answered: Iterable
     """Whether `artifact`, of a stage whose answered draft runs again, has no numbered question
     left unanswered: each is answered on the board read `unit_row` came from, or its number is
     in `answered`. Those stages are `unit_row["after_answers"]`; a row without the list completes nothing."""
-    stage = next((s.get("stage") for s in unit_row.get("stages") or [] if s.get("file") == artifact), "")
+    stage = next(
+        (s.get("stage") for s in unit_row.get("stages") or [] if s.get("file") == artifact), ""
+    )
     if not stage or stage not in (unit_row.get("after_answers") or ()):
         return False
     given = set(answered)
@@ -589,13 +674,19 @@ def answer_completes(unit_row: dict[str, Any], artifact: str, answered: Iterable
 
 def rerun_stop(artifact: str) -> dict[str, str]:
     """The draft has run again `MAX_RERUNS` times after its answers."""
-    return _stop("reruns", f"{artifact} was run again {MAX_RERUNS} times after its answers; a person decides the next run.")
+    return _stop(
+        "reruns",
+        f"{artifact} was run again {MAX_RERUNS} times after its answers; a person decides the next run.",
+    )
 
 
 def full_stop(stage: str, max_parallel: int) -> dict[str, str]:
     """A run again that `max_parallel` alone held back. Not a wait for a person."""
     running = "1 step is" if max_parallel == 1 else f"{max_parallel} steps are"
-    return _stop("full", f"{stage} waits to run again: {running} already running, the most this workspace allows.")
+    return _stop(
+        "full",
+        f"{stage} waits to run again: {running} already running, the most this workspace allows.",
+    )
 
 
 # --- what the intent's outcome is measured by ----------------------------
@@ -610,7 +701,10 @@ def started_by(record: dict[str, Any]) -> str:
 
 
 def measure(
-    records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
+    records: Iterable[dict[str, Any]],
+    workspace: str,
+    since: str,
+    until: str,
 ) -> dict[str, Any]:
     """Per unit of `workspace`, over the machine's days `since`..`until` inclusive: whether it
     reached the stop before `ship` (a `review` step ending `done` with a `pass` round), how
@@ -621,7 +715,8 @@ def measure(
     integration writes no `start`; its `integration` record counts instead.
     """
     window = [
-        r for r in records
+        r
+        for r in records
         if r.get("workspace") == workspace and since <= spend.local_day(r.get("at")) <= until
     ]
     rows = [r for r in window if is_step(r)]
@@ -644,7 +739,8 @@ def measure(
         if kind == "end":
             last_end[unit] = str(r.get("outcome") or "")
             if (
-                r.get("stage") == "review" and r.get("outcome") == "done"
+                r.get("stage") == "review"
+                and r.get("outcome") == "done"
                 and "pass" in (r.get("verdicts") or [])
             ):
                 u["reached"] = True
@@ -679,7 +775,9 @@ def _autopilot_step(r: dict[str, Any]) -> str | None:
 
 
 def measure_order(
-    records: Iterable[dict[str, Any]], workspace: str, until: str,
+    records: Iterable[dict[str, Any]],
+    workspace: str,
+    until: str,
 ) -> dict[str, Any]:
     """From `workspace`'s first `autopilot-pick` to the end of the machine's day `until`: how
     many steps the autopilot started, and every violation of the shortlist's order, each
@@ -698,7 +796,15 @@ def measure_order(
     violations: list[dict[str, Any]] = []
 
     def bad(v: str, r: dict[str, Any], stage: str, why: str) -> None:
-        violations.append({"v": v, "unit": str(r.get("unit") or ""), "stage": stage, "at": r.get("at"), "why": why})
+        violations.append(
+            {
+                "v": v,
+                "unit": str(r.get("unit") or ""),
+                "stage": stage,
+                "at": r.get("at"),
+                "why": why,
+            }
+        )
 
     steps = 0
     seen: set[str] = set()
@@ -716,10 +822,15 @@ def measure_order(
                 bad("V1", r, stage, "not on the shortlist this pick recorded")
             elif unit not in seen:
                 passed = {str(p.get("unit") or ""): p for p in r.get("passed") or []}
-                for above in names[:names.index(unit)]:
+                for above in names[: names.index(unit)]:
                     if above in passed:
                         if passed[above].get("reason") not in REASONS:
-                            bad("V2", r, stage, f"passed over {above} for {passed[above].get('reason')!r}, not a known reason")
+                            bad(
+                                "V2",
+                                r,
+                                stage,
+                                f"passed over {above} for {passed[above].get('reason')!r}, not a known reason",
+                            )
                     elif above not in same:
                         bad("V2", r, stage, f"passed over {above} with no reason")
             seen.add(unit)
@@ -745,7 +856,11 @@ def _local_midnight_utc(day: date) -> str:
 
 
 def measure_days(
-    records: Iterable[dict[str, Any]], workspace: str, since: str, until: str, cap: float,
+    records: Iterable[dict[str, Any]],
+    workspace: str,
+    since: str,
+    until: str,
+    cap: float,
 ) -> list[dict[str, Any]]:
     """Per machine's day `since`..`until` inclusive: how many integrations and failed steps
     `workspace` had, how many starts the autopilot made there, and the day's spend over every
@@ -761,12 +876,14 @@ def measure_days(
     while d <= last:
         day = d.isoformat()
         here = [
-            r for r in rows
+            r
+            for r in rows
             if r.get("workspace") == workspace and spend.local_day(r.get("at")) == day
         ]
         integrations = sum(1 for r in here if r.get("kind") == "integration")
         failed = sum(
-            1 for r in here
+            1
+            for r in here
             if r.get("kind") == "end" and r.get("outcome") in ("failed", "exhausted") and is_step(r)
         )
         starts = sum(1 for r in here if r.get("kind") == "start" and started_by(r) == "autopilot")
@@ -778,14 +895,22 @@ def measure_days(
             "ran": starts >= 1,
             "within": spent <= cap,
         }
-        out.append({
-            "day": day,
-            "utc_from": _local_midnight_utc(d),
-            "utc_to": _local_midnight_utc(d + timedelta(days=1)),
-            "integrations": integrations, "failed": failed, "autopilot_starts": starts,
-            "known": money["known"], "estimated": money["estimated"], "spent": spent, "cap": cap,
-            **clauses, "met": all(clauses.values()),
-        })
+        out.append(
+            {
+                "day": day,
+                "utc_from": _local_midnight_utc(d),
+                "utc_to": _local_midnight_utc(d + timedelta(days=1)),
+                "integrations": integrations,
+                "failed": failed,
+                "autopilot_starts": starts,
+                "known": money["known"],
+                "estimated": money["estimated"],
+                "spent": spent,
+                "cap": cap,
+                **clauses,
+                "met": all(clauses.values()),
+            }
+        )
         d += timedelta(days=1)
     return out
 
@@ -826,7 +951,7 @@ def _rerun_class(answer: dict[str, Any], later: list[dict[str, Any]]) -> tuple[s
         if after is not None and (after <= ON_TIME or (full and after <= ON_TIME_FULL)):
             return "on-time", after
         if kind == "autopilot-pick":
-            for s in later[i + 1:]:
+            for s in later[i + 1 :]:
                 if s.get("kind") == "start" and s.get("stage") == stage:
                     break
                 if s.get("kind") == "autopilot-stop" and s.get("stop") == "f":
@@ -836,7 +961,10 @@ def _rerun_class(answer: dict[str, Any], later: list[dict[str, Any]]) -> tuple[s
 
 
 def measure_reruns(
-    records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
+    records: Iterable[dict[str, Any]],
+    workspace: str,
+    since: str,
+    until: str,
 ) -> dict[str, Any]:
     """Every `answer` record of `workspace` over the machine's days `since`..`until` that
     finished the questions of a `draft` of a shortlisted unit while the autopilot was on,
@@ -850,18 +978,32 @@ def measure_reruns(
     for i, r in enumerate(rows):
         if r.get("kind") != "answer" or not since <= spend.local_day(r.get("at")) <= until:
             continue
-        if not (r.get("completes") and r.get("autopilot") and r.get("shortlisted")) or r.get("status") != "draft":
+        if (
+            not (r.get("completes") and r.get("autopilot") and r.get("shortlisted"))
+            or r.get("status") != "draft"
+        ):
             continue
         unit = r.get("unit")
         if r.get("held"):
             found, after = "held", None
         else:
-            found, after = _rerun_class(r, [x for x in rows[i + 1:] if x.get("unit") == unit])
-        cases.append({
-            "unit": unit, "stage": r.get("stage"), "artifact": r.get("artifact"),
-            "question": r.get("question"), "at": r.get("at"), "class": found, "after": after,
-        })
-    met = None if not cases else not any(c["class"] in _MISSED or c["class"].startswith("stop:") for c in cases)
+            found, after = _rerun_class(r, [x for x in rows[i + 1 :] if x.get("unit") == unit])
+        cases.append(
+            {
+                "unit": unit,
+                "stage": r.get("stage"),
+                "artifact": r.get("artifact"),
+                "question": r.get("question"),
+                "at": r.get("at"),
+                "class": found,
+                "after": after,
+            }
+        )
+    met = (
+        None
+        if not cases
+        else not any(c["class"] in _MISSED or c["class"].startswith("stop:") for c in cases)
+    )
     return {"workspace": workspace, "since": since, "until": until, "cases": cases, "met": met}
 
 
@@ -871,7 +1013,10 @@ _RAN_OUT = re.compile(r"^the last (\S+) step ended exhausted(?:;|$)")
 
 
 def measure_exhausted(
-    records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
+    records: Iterable[dict[str, Any]],
+    workspace: str,
+    since: str,
+    until: str,
 ) -> dict[str, Any]:
     """Every stop of `workspace` over the machine's days `since`..`until` on an `exhausted`
     step of a stage other than `ship`, with no other `exhausted` end of that unit and stage
@@ -884,7 +1029,11 @@ def measure_exhausted(
     violations: list[dict[str, Any]] = []
     exhausted = 0
     for r in records:
-        if r.get("workspace") != workspace or not is_step(r) or r.get("kind") not in ("end", "autopilot-stop"):
+        if (
+            r.get("workspace") != workspace
+            or not is_step(r)
+            or r.get("kind") not in ("end", "autopilot-stop")
+        ):
             continue
         if not since <= spend.local_day(r.get("at")) <= until:
             continue
@@ -901,8 +1050,12 @@ def measure_exhausted(
             violations.append({"unit": r.get("unit"), "stage": found.group(1), "at": r.get("at")})
     met = None if not exhausted else not violations
     return {
-        "workspace": workspace, "since": since, "until": until,
-        "violations": violations, "exhausted": exhausted, "met": met,
+        "workspace": workspace,
+        "since": since,
+        "until": until,
+        "violations": violations,
+        "exhausted": exhausted,
+        "met": met,
     }
 
 
@@ -911,7 +1064,10 @@ _UNOPENED_STOP = re.compile(r"^the last (\S+) step ended failed(?:;|$)")
 
 
 def measure_opening(
-    records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
+    records: Iterable[dict[str, Any]],
+    workspace: str,
+    since: str,
+    until: str,
 ) -> dict[str, Any]:
     """What became of the prose steps of `workspace` over the machine's days `since`..`until`
     whose reply lacked its opening.
@@ -937,24 +1093,47 @@ def measure_opening(
         kind = r.get("kind")
         key = (r.get("unit"), str(r.get("stage") or ""))
         if kind == "end":
-            last_failed[key] = r.get("outcome") == "failed" and is_prose_stage(key[1]) and _lacks_opening(r)
+            last_failed[key] = (
+                r.get("outcome") == "failed" and is_prose_stage(key[1]) and _lacks_opening(r)
+            )
             if last_failed[key]:
                 failed.append({"unit": key[0], "stage": key[1], "at": r.get("at")})
                 count[key] = count.get(key, 0) + 1
                 waiting.add(key)
             elif r.get("outcome") == "done" and r.get("opening") == "repaired":
-                repaired.append({"unit": key[0], "stage": key[1], "at": r.get("at"),
-                                 "cost_usd": (r.get("closing") or {}).get("cost_usd")})
+                repaired.append(
+                    {
+                        "unit": key[0],
+                        "stage": key[1],
+                        "at": r.get("at"),
+                        "cost_usd": (r.get("closing") or {}).get("cost_usd"),
+                    }
+                )
         elif kind == "start" and key in waiting:
             waiting.discard(key)
-            reruns.append({"unit": key[0], "stage": key[1], "at": r.get("at"), "started_by": started_by(r)})
+            reruns.append(
+                {"unit": key[0], "stage": key[1], "at": r.get("at"), "started_by": started_by(r)}
+            )
         elif kind == "autopilot-stop" and r.get("stop") == "e":
             found = _UNOPENED_STOP.match(str(r.get("reason") or ""))
             stopped = (r.get("unit"), found.group(1)) if found else None
             if stopped is not None and last_failed.get(stopped):
-                stops.append({"unit": stopped[0], "stage": stopped[1], "at": r.get("at"), "attempt": count[stopped]})
+                stops.append(
+                    {
+                        "unit": stopped[0],
+                        "stage": stopped[1],
+                        "at": r.get("at"),
+                        "attempt": count[stopped],
+                    }
+                )
     met = None if not failed and not repaired else not stops
     return {
-        "workspace": workspace, "since": since, "until": until,
-        "failed": failed, "repaired": repaired, "stops": stops, "reruns": reruns, "met": met,
+        "workspace": workspace,
+        "since": since,
+        "until": until,
+        "failed": failed,
+        "repaired": repaired,
+        "stops": stops,
+        "reruns": reruns,
+        "met": met,
     }

@@ -1,4 +1,4 @@
-"""Tests for the login guard, `coscc/web/auth.py` (`0070`).
+"""Tests for the login guard, `coscc/web/auth.py`.
 
 Driven over raw ASGI, scope by scope, so an HTTP request and a websocket handshake go
 through the same door the same way and a test can see whether the app behind it was ever
@@ -8,10 +8,8 @@ them needs a built bundle and `npm test` never builds. The guard decides before 
 app sees anything, so what the inner app is does not change the count;
 `scripts/verify_0070.py` makes the same count against the composed Reflex app.
 
-Nothing here disables the guard (spec R3). Every test that needs a session gets one the
-way a person does: it reads the setup token off the guard's stderr, posts `/setup`, then
-`/login`.
-"""
+Nothing here disables the guard. Every test that needs a session gets one the way a person does: it
+reads the setup token off the guard's stderr, posts `/setup`, then `/login`."""
 
 from __future__ import annotations
 
@@ -37,9 +35,9 @@ from coscc.data import Data
 
 PASSWORD = "correct horse battery staple"
 
-# What Reflex serves beside `/api`, as `spike.md ## U1` listed it: the page, a static
-# asset, the socket over polling, upload, the two pings, a path that does not exist, and a
-# CORS preflight — the one the `api_transformer` position never saw.
+# What Reflex serves beside `/api`: the page, a static asset, the socket over polling, upload,
+# the two pings, a path that does not exist, and a CORS preflight — the one the
+# `api_transformer` position never saw.
 REFLEX_PATHS = (
     ("GET", "/"),
     ("GET", "/_event/?EIO=4&transport=polling"),
@@ -49,7 +47,7 @@ REFLEX_PATHS = (
     ("GET", "/assets/x.js"),
     ("GET", "/no/such/path"),
     ("OPTIONS", "/api/board"),
-    # Every page route `coscc.py` registers, `/cost` (`0093`) included.
+    # Every page route `coscc.py` registers, `/cost` included.
     *(("GET", f"/{screen}") for screen in place.SCREENS[1:]),
     ("GET", "/unit"),
 )
@@ -122,8 +120,18 @@ def _headers(extra) -> list:
     return out
 
 
-async def http(app, method, target, *, headers=(), body=b"", form=None, cookie=None,
-               client=("10.0.0.9", 50000), recorder=None) -> Reply:
+async def http(
+    app,
+    method,
+    target,
+    *,
+    headers=(),
+    body=b"",
+    form=None,
+    cookie=None,
+    client=("10.0.0.9", 50000),
+    recorder=None,
+) -> Reply:
     path, _, query = target.partition("?")
     extra = list(headers)
     if form is not None:
@@ -132,10 +140,18 @@ async def http(app, method, target, *, headers=(), body=b"", form=None, cookie=N
     if cookie is not None:
         extra.append(("cookie", f"{auth.COOKIE}={cookie}"))
     scope = {
-        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
-        "method": method, "scheme": "http", "path": path, "raw_path": path.encode(),
-        "query_string": query.encode(), "root_path": "", "headers": _headers(extra),
-        "client": client, "server": ("testserver", 80),
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": query.encode(),
+        "root_path": "",
+        "headers": _headers(extra),
+        "client": client,
+        "server": ("testserver", 80),
     }
     inbox = [{"type": "http.request", "body": body, "more_body": False}]
 
@@ -154,7 +170,9 @@ async def http(app, method, target, *, headers=(), body=b"", form=None, cookie=N
     start = next((m for m in sent if m["type"] == "http.response.start"), None)
     content = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
     reached = bool(recorder and len(recorder.seen) > before)
-    return Reply(start and start["status"], (start or {}).get("headers", []), content, reached, sent)
+    return Reply(
+        start and start["status"], (start or {}).get("headers", []), content, reached, sent
+    )
 
 
 def ws_scope(target, headers=(), cookie=None, client=("10.0.0.9", 50001)):
@@ -163,9 +181,16 @@ def ws_scope(target, headers=(), cookie=None, client=("10.0.0.9", 50001)):
     if cookie is not None:
         extra.append(("cookie", f"{auth.COOKIE}={cookie}"))
     return {
-        "type": "websocket", "asgi": {"version": "3.0"}, "scheme": "ws", "path": path,
-        "raw_path": path.encode(), "query_string": query.encode(), "root_path": "",
-        "headers": _headers(extra), "client": client, "server": ("testserver", 80),
+        "type": "websocket",
+        "asgi": {"version": "3.0"},
+        "scheme": "ws",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": query.encode(),
+        "root_path": "",
+        "headers": _headers(extra),
+        "client": client,
+        "server": ("testserver", 80),
         "subprotocols": [],
     }
 
@@ -199,8 +224,7 @@ def refused(reply: Reply) -> bool:
 
 def tokens(err: io.StringIO) -> list[str]:
     return [
-        m.group(1) for line in err.getvalue().splitlines()
-        if (m := auth.SETUP_LINE.match(line))
+        m.group(1) for line in err.getvalue().splitlines() if (m := auth.SETUP_LINE.match(line))
     ]
 
 
@@ -214,8 +238,8 @@ class Door(unittest.IsolatedAsyncioTestCase):
         self.data = Data(self.tmp.name)
         self.api = build(Config(data_dir=self.tmp.name))
         self.events: list[dict] = []
-        # Set each time `_ws_app` records a message, so a test waits for it, not for a
-        # stretch of time (`0079`).
+        # Set each time `_ws_app` records a message, so a test waits for it, not for a stretch of
+        # time.
         self.heard = asyncio.Event()
         self.recorder = Recorder(self.api, self._ws_app)
         self.clock = Clock()
@@ -242,9 +266,16 @@ class Door(unittest.IsolatedAsyncioTestCase):
         return await http(self.guard, method, target, recorder=self.recorder, **kw)
 
     async def set_password(self, password=PASSWORD, **kw) -> Reply:
-        return await self.call("POST", "/setup", form={
-            "token": tokens(self.err)[-1], "password": password, "password_confirm": password,
-        }, **kw)
+        return await self.call(
+            "POST",
+            "/setup",
+            form={
+                "token": tokens(self.err)[-1],
+                "password": password,
+                "password_confirm": password,
+            },
+            **kw,
+        )
 
     async def login(self, password=PASSWORD, **kw) -> Reply:
         return await self.call("POST", "/login", form={"password": password}, **kw)
@@ -285,7 +316,7 @@ class Door(unittest.IsolatedAsyncioTestCase):
 
 
 class TheCount(Door):
-    """spec R11: every route, no session, and the number that is not refused is 0."""
+    """Every route, no session, and the number that is not refused is 0."""
 
     async def test_nothing_but_the_exempt_list_answers_before_a_password(self):
         self.assertGreater(len(self.requests()), 40)
@@ -335,17 +366,34 @@ class Setup(Door):
     async def test_with_a_password_setup_is_refused_or_does_nothing(self):
         cookie = (await self.set_password()).cookie()
         stored = self.data.auth_password_hash()
-        self.assertTrue(refused(await self.call("POST", "/setup", form={
-            "token": "x", "password": "b" * 20, "password_confirm": "b" * 20,
-        })))
-        with_session = await self.call("POST", "/setup", cookie=cookie, form={
-            "token": "x", "password": "b" * 20, "password_confirm": "b" * 20,
-        })
+        self.assertTrue(
+            refused(
+                await self.call(
+                    "POST",
+                    "/setup",
+                    form={
+                        "token": "x",
+                        "password": "b" * 20,
+                        "password_confirm": "b" * 20,
+                    },
+                )
+            )
+        )
+        with_session = await self.call(
+            "POST",
+            "/setup",
+            cookie=cookie,
+            form={
+                "token": "x",
+                "password": "b" * 20,
+                "password_confirm": "b" * 20,
+            },
+        )
         self.assertEqual((with_session.status, with_session.header("location")), (303, "/"))
         self.assertEqual(self.data.auth_password_hash(), stored)
 
     async def test_the_password_is_nowhere_readable(self):
-        """spec R5: not in the database's bytes, not in what the guard wrote out."""
+        """Not in the database's bytes, not in what the guard wrote out."""
         await self.set_password()
         await self.login()
         stored = self.data.auth_password_hash()
@@ -358,7 +406,7 @@ class Setup(Door):
         self.assertNotIn(stored, self.err.getvalue())
 
     async def test_each_guard_without_a_password_prints_its_own_token(self):
-        """spec R4: a new process with no password is a new token, flushed to stderr."""
+        """A new process with no password is a new token, flushed to stderr."""
         other = io.StringIO()
         auth.Guard(self.recorder, self.data, err=other)
         self.assertEqual(len(tokens(self.err)), 1)
@@ -367,7 +415,7 @@ class Setup(Door):
         self.assertGreaterEqual(len(tokens(other)[0]), 22)  # 16 bytes, url-safe base64
 
     async def test_a_reset_takes_effect_on_the_next_request(self):
-        """spec R10: the database is the channel; no restart."""
+        """The database is the channel; no restart."""
         cookie = (await self.set_password()).cookie()
         self.assertEqual((await self.call("GET", "/api/workspaces", cookie=cookie)).status, 200)
         self.data.auth_clear()
@@ -384,13 +432,13 @@ class Sessions(Door):
         for flag in ("HttpOnly", "SameSite=Lax", "Path=/", f"Max-Age={auth.SESSION_TTL}"):
             self.assertIn(flag, plain)
         self.assertNotIn("Secure", plain)
-        proxied = (await self.login(
-            client=("127.0.0.1", 40000), headers=(("x-forwarded-proto", "https"),)
-        )).header("set-cookie")
+        proxied = (
+            await self.login(client=("127.0.0.1", 40000), headers=(("x-forwarded-proto", "https"),))
+        ).header("set-cookie")
         self.assertIn("Secure", proxied)
-        faked = (await self.login(
-            client=("10.0.0.5", 40000), headers=(("x-forwarded-proto", "https"),)
-        )).header("set-cookie")
+        faked = (
+            await self.login(client=("10.0.0.5", 40000), headers=(("x-forwarded-proto", "https"),))
+        ).header("set-cookie")
         self.assertNotIn("Secure", faked)
 
     async def test_a_session_lives_thirty_days_from_last_use_and_is_touched_hourly(self):
@@ -415,7 +463,7 @@ class Sessions(Door):
         self.assertTrue(refused(await self.call("GET", "/api/workspaces", cookie=cookie)))
 
     async def test_a_page_let_through_must_be_revalidated_and_data_is_left_alone(self):
-        """`0070` review round 1 F2: a cached board after logout never reaches `/login`."""
+        """A cached board after logout never reaches `/login`."""
         cookie = (await self.set_password()).cookie()
         page = await self.call("GET", "/docs", cookie=cookie)
         self.assertEqual((page.status, page.header("cache-control")), (200, "no-cache"))
@@ -423,7 +471,6 @@ class Sessions(Door):
         self.assertEqual((data.status, data.header("cache-control")), (200, None))
 
     async def test_logout_ends_the_session(self):
-        """spec R7."""
         cookie = (await self.set_password()).cookie()
         out = await self.call("POST", "/logout", cookie=cookie)
         self.assertEqual((out.status, out.header("location")), (303, "/login"))
@@ -455,45 +502,52 @@ class Origins(Door):
     async def test_a_foreign_origin_is_refused_before_the_app(self):
         cookie = (await self.set_password()).cookie()
         foreign = await self.call(
-            "POST", "/api/units/hold", cookie=cookie,
+            "POST",
+            "/api/units/hold",
+            cookie=cookie,
             headers=(("origin", "http://evil.example:8790"),),
         )
         self.assertEqual((foreign.status, foreign.reached), (403, False))
         same = await self.call(
-            "POST", "/api/units/hold", cookie=cookie,
+            "POST",
+            "/api/units/hold",
+            cookie=cookie,
             headers=(("origin", "http://testserver"),),
         )
         self.assertTrue(same.reached)
-        null = await self.call(
-            "POST", "/logout", cookie=cookie, headers=(("origin", "null"),)
-        )
+        null = await self.call("POST", "/logout", cookie=cookie, headers=(("origin", "null"),))
         self.assertEqual(null.status, 403)
         before = len(self.recorder.seen)
         sent = await ws_handshake(
-            self.guard, "/_event/?EIO=4&transport=websocket", cookie=cookie,
+            self.guard,
+            "/_event/?EIO=4&transport=websocket",
+            cookie=cookie,
             headers=(("origin", "http://evil.example"),),
         )
         self.assertEqual(sent, [{"type": "websocket.close", "code": 1008}])
         self.assertEqual(len(self.recorder.seen), before)
 
     async def test_nothing_turns_the_guard_off(self):
-        """spec R3: no header or origin gets past without a session."""
+        """No header or origin gets past without a session."""
         for headers in (
             (("origin", "http://testserver"),),
             (("x-forwarded-for", "127.0.0.1"),),
             (("x-forwarded-proto", "https"),),
         ):
             self.assertTrue(refused(await self.call("GET", "/api/workspaces", headers=headers)))
-            self.assertTrue(refused(await self.call(
-                "GET", "/api/workspaces", headers=headers, client=("127.0.0.1", 1)
-            )))
+            self.assertTrue(
+                refused(
+                    await self.call(
+                        "GET", "/api/workspaces", headers=headers, client=("127.0.0.1", 1)
+                    )
+                )
+            )
 
 
 class Limits(Door):
     hasher_factory = FakeHasher
 
     async def test_five_failures_lock_and_the_lock_doubles_to_an_hour(self):
-        """spec R9, with a fake clock and a hasher that counts."""
         await self.set_password()
         ip = "10.0.0.9"
         calls = self.hasher.calls
@@ -520,7 +574,9 @@ class Limits(Door):
 
     async def test_setup_failures_count_too(self):
         for _ in range(5):
-            await self.call("POST", "/setup", form={"token": "x", "password": "p", "password_confirm": "p"})
+            await self.call(
+                "POST", "/setup", form={"token": "x", "password": "p", "password_confirm": "p"}
+            )
         self.assertEqual((await self.set_password()).status, 429)
         self.assertIsNone(self.data.auth_password_hash())
 
@@ -559,9 +615,7 @@ class HashConcurrency(Door):
             await asyncio.sleep(0.01)
 
     async def test_no_more_than_two_hash_at_once(self):
-        tasks = [
-            asyncio.ensure_future(self.login(client=(f"10.0.1.{i}", 1))) for i in range(3)
-        ]
+        tasks = [asyncio.ensure_future(self.login(client=(f"10.0.1.{i}", 1))) for i in range(3)]
         await self._wait_active(2)
         await asyncio.sleep(0.2)
         self.assertEqual(self.hasher.active, 2)
@@ -572,9 +626,7 @@ class HashConcurrency(Door):
 
     async def test_a_request_that_waits_too_long_is_429_and_not_hashed(self):
         with mock.patch.object(auth, "HASH_WAIT", 0.2):
-            tasks = [
-                asyncio.ensure_future(self.login(client=(f"10.0.2.{i}", 1))) for i in range(2)
-            ]
+            tasks = [asyncio.ensure_future(self.login(client=(f"10.0.2.{i}", 1))) for i in range(2)]
             await self._wait_active(2)
             late = await self.login(client=("10.0.2.9", 1))
             self.assertEqual(late.status, 429)
@@ -585,9 +637,9 @@ class HashConcurrency(Door):
 
 
 class Rechecks:
-    """Stands in for the name `asyncio` inside `coscc.web.auth` (`0079` spec R1, R5): every
-    attribute is the real one but `sleep`, where the socket watcher parks until a test
-    lets it take one look. A sleep of any other length is recorded and fails the test."""
+    """Stands in for the name `asyncio` inside `coscc.web.auth`: every attribute is the real one but
+    `sleep`, where the socket watcher parks until a test lets it take one look. A sleep of any other
+    length is recorded and fails the test."""
 
     def __init__(self):
         self.parked = asyncio.Event()
@@ -608,9 +660,9 @@ class Rechecks:
 
 
 class Sockets(Door):
-    """The socket watcher is stepped one look at a time through `Rechecks`, and every wait
-    is on an event: under load a stretch of real time was not enough (`0079`). A ceiling of
-    20 s only turns a hang into a failure."""
+    """The socket watcher is stepped one look at a time through `Rechecks`, and every wait is on an
+    event: under load a stretch of real time was not enough. A ceiling of 20 s only turns a hang
+    into a failure."""
 
     async def look(self, rechecks: Rechecks, task: asyncio.Future) -> None:
         """One look of the watcher: once it is parked, let it go, and wait until it is
@@ -631,8 +683,8 @@ class Sockets(Door):
         self.assertEqual(rechecks.odd, [])
 
     async def test_a_socket_closes_after_its_session_ends(self):
-        """spec R8, at the ASGI layer: handshake refused without a cookie, accepted with
-        one, and closed once the session is gone — the app sees a disconnect."""
+        """At the ASGI layer: handshake refused without a cookie, accepted with one, and closed once
+        the session is gone — the app sees a disconnect."""
         cookie = (await self.set_password()).cookie()
         self.assertEqual(
             await ws_handshake(self.guard, "/_event/?EIO=4&transport=websocket"),
@@ -650,9 +702,11 @@ class Sockets(Door):
 
         rechecks = Rechecks()
         with mock.patch.object(auth, "asyncio", rechecks):
-            task = asyncio.ensure_future(self.guard(
-                ws_scope("/_event/?EIO=4&transport=websocket", cookie=cookie), inbox.get, send
-            ))
+            task = asyncio.ensure_future(
+                self.guard(
+                    ws_scope("/_event/?EIO=4&transport=websocket", cookie=cookie), inbox.get, send
+                )
+            )
             await asyncio.wait_for(accepted.wait(), 20)
             self.assertEqual(sent, [{"type": "websocket.accept"}])
             self.heard.clear()
@@ -667,8 +721,8 @@ class Sockets(Door):
         self.assertEqual(self.events[-1]["type"], "websocket.disconnect")
 
     async def test_a_session_used_only_through_its_socket_lives_on(self):
-        """`intent.md ## Answers, câu 4`, `0070` review round 1 F1: the board sends every
-        event over `/_event`, so a handshake and the messages after it are use."""
+        """The board sends every event over `/_event`, so a handshake and the messages after it are
+        use."""
         cookie = (await self.set_password()).cookie()
         sha = auth._sha(cookie)
         start = self.clock.t
@@ -690,9 +744,11 @@ class Sockets(Door):
             # The handshake two hours on is a use: touched, and the 101 renews the cookie.
             # The guard touches before it accepts, so the accept is enough to wait for.
             self.clock.t = start + 7200
-            task = asyncio.ensure_future(self.guard(
-                ws_scope("/_event/?EIO=4&transport=websocket", cookie=cookie), inbox.get, send
-            ))
+            task = asyncio.ensure_future(
+                self.guard(
+                    ws_scope("/_event/?EIO=4&transport=websocket", cookie=cookie), inbox.get, send
+                )
+            )
             await asyncio.wait_for(accepted.wait(), 20)
             self.assertEqual(sent[0]["type"], "websocket.accept")
             renewed = dict(sent[0]["headers"])[b"set-cookie"].decode()
@@ -737,8 +793,8 @@ class Sockets(Door):
 
 
 class SocketsWaitOnEvents(unittest.TestCase):
-    """`0079` spec R1 and R2, held by the suite rather than by a reader: `Sockets` and
-    `Rechecks` sleep for no positive time, and every ceiling is the file's 20 s."""
+    """Held by the suite rather than by a reader: `Sockets` and `Rechecks` sleep for no positive
+    time, and every ceiling is the file's 20 s."""
 
     def test_the_socket_tests_wait_on_events_not_on_the_clock(self):
         sleeps, ceilings = [], []
@@ -756,12 +812,19 @@ class SocketsWaitOnEvents(unittest.TestCase):
                     ceilings += [k.value for k in node.keywords if k.arg == "timeout"]
 
         def zero(node):
-            return (len(node.args) == 1 and not node.keywords
-                    and isinstance(node.args[0], ast.Constant) and node.args[0].value == 0)
+            return (
+                len(node.args) == 1
+                and not node.keywords
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == 0
+            )
 
         def ceiling(node):
-            return (isinstance(node, ast.Constant) and isinstance(node.value, (int, float))
-                    and node.value >= 20)
+            return (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, (int, float))
+                and node.value >= 20
+            )
 
         self.assertEqual([ast.unparse(n) for n in sleeps if not zero(n)], [])
         self.assertGreater(len(ceilings), 0)

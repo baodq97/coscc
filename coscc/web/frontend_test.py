@@ -125,9 +125,7 @@ class WhichBundleIsUsed(unittest.TestCase):
         with mock.patch.object(frontend, "PACKAGE_WEB", packaged):
             self.assertTrue(frontend.is_packaged())
             self.assertEqual(frontend.web_dir(self.root), packaged)
-            self.assertEqual(
-                frontend.static_dir(self.root), packaged / "build" / "client"
-            )
+            self.assertEqual(frontend.static_dir(self.root), packaged / "build" / "client")
 
 
 class TheMarkerThatLetsAPackagedInstallStart(unittest.TestCase):
@@ -172,7 +170,7 @@ class TheMarkerThatLetsAPackagedInstallStart(unittest.TestCase):
         self.assertEqual(frontend.SKIP_COMPILE_VAR, "__REFLEX_SKIP_COMPILE")
 
 
-class TheCheckThatVerify0011Asserts(unittest.TestCase):
+class EventAddressesAreExact(unittest.TestCase):
     """`addresses()` is too blunt to assert against; `event_addresses()` is exact."""
 
     def setUp(self):

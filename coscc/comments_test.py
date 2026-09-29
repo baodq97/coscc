@@ -1,9 +1,7 @@
-"""Comments and docstrings say why the code is so, never which unit or requirement made it.
+"""Comments, docstrings and names say why the code is so, never which unit or requirement made it.
 
-An id (`0088`, `R3`, `spec.md C7`) or a history note in code is read again on every turn of
-every session that opens the file, and new code copies the comments around it. Code files
-carry none; test files carry no more than `TESTS_MAX` until they are cleaned too.
-"""
+An id or a history note is read again on every turn of every session that opens the file, and
+new code copies the comments around it. No file under `coscc/` carries one, tests included."""
 
 from __future__ import annotations
 
@@ -16,15 +14,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-# A unit number (`0088`, `0088_slug`), a spec/plan/spike/review id (R3, C7, U2, F4), with or
-# without the artifact in front, or a review round. `0700`-style file modes do not match.
+# A unit number, a spec/plan/spike/review id, with or without the artifact in front, or a review
+# round. `0700`-style file modes do not match.
 ID = re.compile(
     r"`0[0-3]\d\d\b|\b0[0-3]\d\d_[a-z]|\b0[0-3]\d\d\s+[RCUF]\d"
     r"|(?<![-\w])[RCUF]\d{1,2}\b|\breview round \d"
 )
 
-# Ids left in test files. Lower it whenever tests are cleaned; never raise it.
-TESTS_MAX = 2_236
+# The same ids in a function or class name: `test_r4_…`, `test_0096_…`, `TheCaseOf0096`.
+NAME = re.compile(
+    r"(?:^|_)(?:0[0-3]\d\d|[rcuf][1-9]\d?[a-z]?)(?=_|$)|0[0-3]\d\d|(?<=[a-z])[RCUF][1-9]\d?(?=[A-Z]|$)"
+)
 
 
 def _texts(source: str):
@@ -43,36 +43,42 @@ def _texts(source: str):
             yield body[0].lineno, body[0].value.value
 
 
+def _names(source: str):
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node.lineno, node.name
+
+
 def ids(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    where = path.relative_to(REPO)
     return [
-        f"{path.relative_to(REPO)}:{line}: {m.group(0)}"
-        for line, text in _texts(path.read_text(encoding="utf-8"))
-        for m in ID.finditer(text)
+        f"{where}:{line}: {m.group(0)}" for line, text in _texts(source) for m in ID.finditer(text)
+    ] + [f"{where}:{line}: {name}" for line, name in _names(source) if NAME.search(name)]
+
+
+def _files() -> list[Path]:
+    return [
+        p for p in sorted((REPO / "coscc").rglob("*.py")) if not {"_web", "_harness"} & set(p.parts)
     ]
 
 
-def _files(tests: bool) -> list[Path]:
-    return [
-        p
-        for p in sorted((REPO / "coscc").rglob("*.py"))
-        if p.name.endswith("_test.py") == tests and not {"_web", "_harness"} & set(p.parts)
-    ]
-
-
-class CommentsCarryNoIds(unittest.TestCase):
+class NoFileCarriesAnId(unittest.TestCase):
     def test_the_pattern(self):
         for text in ("`0088` R3", "see 0088_some-slug", "spec.md C7", "(R12)", "review round 2"):
             self.assertTrue(ID.search(text), text)
         for text in ("mode `0700`", "`git diff -U0`", "HTTP 404", "F<k>", "a round"):
             self.assertFalse(ID.search(text), text)
+        for name in ("test_r4_the_gate", "test_0096_rebase", "TheCaseOf0096", "TheFiveStepsOfR6"):
+            self.assertTrue(NAME.search(name), name)
+        for name in ("test_utf8_is_read", "test_sha256", "Round", "test_http_404", "diff_u0"):
+            self.assertFalse(NAME.search(name), name)
 
-    def test_code_files_carry_none(self):
-        found = [hit for path in _files(tests=False) for hit in ids(path)]
-        self.assertFalse(found, "say why in the present tense, without the id:\n" + "\n".join(found))
-
-    def test_test_files_carry_no_more_than_before(self):
-        count = sum(len(ids(path)) for path in _files(tests=True))
-        self.assertLessEqual(count, TESTS_MAX, "a test added an id to a comment or docstring")
+    def test_every_file_carries_none(self):
+        found = [hit for path in _files() for hit in ids(path)]
+        self.assertFalse(
+            found, "say why in the present tense, without the id:\n" + "\n".join(found)
+        )
 
 
 if __name__ == "__main__":

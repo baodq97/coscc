@@ -19,7 +19,6 @@ from coscc.units.board import Unavailable
 
 
 class IdeasMixin:
-
     def _workspace_by_name(self, name: str) -> str | None:
         """The one workspace called `name`, or None when there is none or more than one."""
         rows = [r for r in self.workspaces()["workspaces"] if r["name"] == name]
@@ -36,7 +35,11 @@ class IdeasMixin:
         except CannotCreate as e:
             raise Invalid(str(e)) from e
         self._refresh_ideas(cwd)
-        return {"cwd": cwd, "id": made["id"], "ref": ideas.idea_ref(name, made["id"]) if name else ""}
+        return {
+            "cwd": cwd,
+            "id": made["id"],
+            "ref": ideas.idea_ref(name, made["id"]) if name else "",
+        }
 
     def _idea_link(self, cwd: str, idea: str, brief: str, depends_on: str) -> dict[str, Any]:
         """Every check a unit opened from `idea` needs, before anything is made."""
@@ -57,7 +60,9 @@ class IdeasMixin:
         name = self._workspace_name(cwd)
         if not name or not valid_name(name) or name not in dict(self._peers()):
             raise Invalid("This workspace has no name of its own that another unit could refer to.")
-        if depends_on and depends_on not in [u["ref"] for u in ideas.read_units(ideas.read_text(path))]:
+        if depends_on and depends_on not in [
+            u["ref"] for u in ideas.read_units(ideas.read_text(path))
+        ]:
             raise Invalid(f"{depends_on} is not listed under {idea}.")
         return {"path": path, "ws": name, "home": home}
 
@@ -75,7 +80,15 @@ class IdeasMixin:
                     text = f.read_text(encoding="utf-8")
                 except OSError:
                     continue
-                out.append({"ws": name, "id": f.name[:-3], "path": f, "text": text, "units": ideas.read_units(text)})
+                out.append(
+                    {
+                        "ws": name,
+                        "id": f.name[:-3],
+                        "path": f,
+                        "text": text,
+                        "units": ideas.read_units(text),
+                    }
+                )
         return out
 
     def _idea_of(self, cwd: str, unit: str) -> dict[str, Any] | None:
@@ -91,7 +104,12 @@ class IdeasMixin:
         for found in self._ideas_everywhere():
             line = next((u for u in found["units"] if u["ref"] == me), None)
             if line is not None:
-                return {**found, "ref": ideas.idea_ref(found["ws"], found["id"]), "line": line, "me": me}
+                return {
+                    **found,
+                    "ref": ideas.idea_ref(found["ws"], found["id"]),
+                    "line": line,
+                    "me": me,
+                }
         return None
 
     def _idea_note(self, cwd: str, unit: str) -> str:
@@ -144,7 +162,8 @@ class IdeasMixin:
         note = (
             "Read these to see the other side of the contract. Do not write there: Write and Edit "
             "are refused outside this worktree, and so is git given one of them with -C, --git-dir, "
-            "--work-tree or GIT_DIR. Nothing else stops a command that writes there.\n\n" + "\n".join(lines)
+            "--work-tree or GIT_DIR. Nothing else stops a command that writes there.\n\n"
+            + "\n".join(lines)
         )
         return tuple(paths), note
 
@@ -172,24 +191,39 @@ class IdeasMixin:
             if ws not in boards:
                 where = self._workspace_by_name(ws)
                 try:
-                    boards[ws] = None if where is None else await board_reader.read(self._units_root(where), state=self._snapshot(where, peers=peers))
+                    boards[ws] = (
+                        None
+                        if where is None
+                        else await board_reader.read(
+                            self._units_root(where), state=self._snapshot(where, peers=peers)
+                        )
+                    )
                 except Unavailable:
                     boards[ws] = None
             board = boards[ws]
             found = next((u for u in (board or {}).get("units") or [] if u["name"] == unit), None)
-            waits = [d["ref"] for d in (found or {}).get("depends_on") or [] if d.get("merged") is not True]
-            rows.append({
-                "ref": line["ref"],
-                "ws": ws,
-                "unit": unit,
-                "repo": ws,
-                "missing": found is None,
-                "stage": (found or {}).get("at") or "",
-                "state": unit_state(found, None, None)["label"] if found else "missing",
-                "waits_for": waits if (found or {}).get("why") == "dependency" else [],
-                "depends_on": line["depends_on"],
-            })
-        title = next((l[len("# Idea:"):].strip() for l in text.splitlines() if l.startswith("# Idea:")), idea_id)
+            waits = [
+                d["ref"]
+                for d in (found or {}).get("depends_on") or []
+                if d.get("merged") is not True
+            ]
+            rows.append(
+                {
+                    "ref": line["ref"],
+                    "ws": ws,
+                    "unit": unit,
+                    "repo": ws,
+                    "missing": found is None,
+                    "stage": (found or {}).get("at") or "",
+                    "state": unit_state(found, None, None)["label"] if found else "missing",
+                    "waits_for": waits if (found or {}).get("why") == "dependency" else [],
+                    "depends_on": line["depends_on"],
+                }
+            )
+        title = next(
+            (l[len("# Idea:") :].strip() for l in text.splitlines() if l.startswith("# Idea:")),
+            idea_id,
+        )
         return {
             "cwd": cwd,
             "ws": name,

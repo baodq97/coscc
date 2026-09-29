@@ -5,7 +5,8 @@ A local AI-native SDLC harness. `cos.mjs` decides every gate; each stage's rules
 ## Commands
 
 ```
-npm test                                  # every test, both runtimes
+npm test                                  # lint (ruff, ty), then every test
+uv run ruff format && uv run ruff check --fix   # before a commit
 uv sync                                   # after a fresh clone
 node .claude/scripts/cos.mjs <command>:
   status [--json] · gate <unit> <stage> [--json]   # 0 open, 1 blocked with reasons, 2 misuse
@@ -19,7 +20,7 @@ Branch on `reasons` codes (`coscc/units/guards.py`), never on their words.
 
 ## Verifying your work
 
-Tests green before done. Never skip or delete a failing test: fix the code. No linter.
+`npm test` green before done. Never skip a failing test or switch a check off: fix the code.
 
 ## Conventions
 
@@ -27,18 +28,17 @@ Tests green before done. Never skip or delete a failing test: fix the code. No l
 - Branches and tags: `<type>/<slug>` (feat fix docs refactor test chore perf build ci revert),
   `vX.Y.Z`, `vX.Y.Z-rc.N`. Never compose one by hand: `unit-branch`, `check-branch`, `check-tag`.
 - One branch and one PR per change, squashed, rebased onto `main` (never merge `main` in).
-- No unit or requirement ids in comments, docstrings or rules (`coscc/comments_test.py`).
+- No unit or requirement ids in comments, docstrings, names or rules (`coscc/comments_test.py`).
+- Import from the defining module; tests are `<module>_test.py` (`.claude/docs/code-and-tests.md`).
 - Code little and simple; split a file only when needed.
 - Take unit paths from `new-path`. Cite only committed files, by path and line range. Cut a
   figure that has no source.
 
 ## Architecture
 
-A unit is `.cos/NNNN_<slug>/` holding its artifacts. Its status, `Type:`, links, questions,
-answers and holds live in the app's `cos.db`. `.claude/scripts/cos.mjs` is the one definition
-of the loop. The app runs every stage, `pr` and `ship` too. `spike` runs only when
-`spec` has an `[unmeasured] U<n>` concern. `Status: accepted` means the agent judged the
-artifact ready; nothing here is a person's approval.
+A unit is `.cos/NNNN_<slug>/` holding its artifacts; its state lives in the app's `cos.db`.
+`cos.mjs` is the one definition of the loop. The app runs every stage, `pr` and `ship` too.
+`Status: accepted` is the agent's judgement, never a person's approval.
 
 ## Things agents get wrong
 
@@ -52,7 +52,7 @@ artifact ready; nothing here is a person's approval.
 ## Docs (read when the line applies)
 
 - `.claude/docs/branches.md` — review rounds, rebasing, the branch order.
-- `.claude/docs/copying.md` — before copying `.claude/` into another repository.
+- `.claude/docs/copying.md` — copying `.claude/` elsewhere.
 - `.claude/docs/not-built.md` — before adding a route, button or grant.
 - `.claude/docs/ideas.md` — an idea shared by several units.
-- `.claude/docs/old-units.md` — reading an artifact of a unit below `0010` (with `.cos/RENAMES.md`).
+- `.claude/docs/old-units.md` — an artifact of a unit below `0010`.

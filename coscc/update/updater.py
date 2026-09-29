@@ -180,7 +180,9 @@ class Updater:
         self._report_last()
         self._read_channels()
         if self.config.update_check and self.node() is not None:
-            self._thread = threading.Thread(target=self._check_loop, name="coscc-update-check", daemon=True)
+            self._thread = threading.Thread(
+                target=self._check_loop, name="coscc-update-check", daemon=True
+            )
             self._thread.start()
 
     def stop(self) -> None:
@@ -191,7 +193,10 @@ class Updater:
         if not self.config.update_check:
             self.release = {"state": "off", "reason": "COS_UPDATE_CHECK=0"}
         elif self.node() is None:
-            self.release = {"state": "unavailable", "reason": "node cannot run, so no release can be checked"}
+            self.release = {
+                "state": "unavailable",
+                "reason": "node cannot run, so no release can be checked",
+            }
         else:
             found = update.verified_wheel(self.root / "release")
             if found and self._newer(found["version"]):
@@ -254,10 +259,17 @@ class Updater:
         if journal is None:
             return
         try:
-            journal.append({
-                "kind": "update", "workspace": "", "unit": "", "stage": "",
-                "event": event, "by": by, **extra,
-            })
+            journal.append(
+                {
+                    "kind": "update",
+                    "workspace": "",
+                    "unit": "",
+                    "stage": "",
+                    "event": event,
+                    "by": by,
+                    **extra,
+                }
+            )
         except Exception:  # noqa: BLE001 - a busy log must not stop an update or a check
             pass
 
@@ -274,7 +286,10 @@ class Updater:
             raise OSError("no node")
         out = subprocess.run(
             [node, str(harness.script()), "check-tag", tag],
-            capture_output=True, text=True, timeout=CHECK_TAG_TIMEOUT, env=self.env(),
+            capture_output=True,
+            text=True,
+            timeout=CHECK_TAG_TIMEOUT,
+            env=self.env(),
         )
         return out.stdout.strip() if out.returncode == 0 else ""
 
@@ -310,10 +325,17 @@ class Updater:
         self.release = {"state": "downloading", "version": cand["version"]}
         got = update.fetch_into(self.root / "release", cand, self._opener)
         if got["state"] == "ready":
-            self.release = {"state": "ready", **(update.verified_wheel(self.root / "release") or got)}
+            self.release = {
+                "state": "ready",
+                **(update.verified_wheel(self.root / "release") or got),
+            }
             self._record("downloaded", "", to=cand["version"], channel="release")
         elif got["state"] == "checksum":
-            self.release = {"state": "error", "reason": "checksum mismatch", "version": cand["version"]}
+            self.release = {
+                "state": "error",
+                "reason": "checksum mismatch",
+                "version": cand["version"],
+            }
             self._record("checksum-failed", "", to=cand["version"], channel="release")
         else:
             self.release = before
@@ -329,8 +351,12 @@ class Updater:
         if not self._refetchable(version):
             return
         wheel_url, sums_url = update.release_urls(f"v{version}")
-        cand = {"version": version, "wheel_name": update.wheel_name(version),
-                "wheel_url": wheel_url, "sums_url": sums_url}
+        cand = {
+            "version": version,
+            "wheel_name": update.wheel_name(version),
+            "wheel_url": wheel_url,
+            "sums_url": sums_url,
+        }
         update.fetch_into(self.root / "current", cand, self._opener)
 
     def _current_matches(self) -> dict[str, Any] | None:
@@ -357,6 +383,7 @@ class Updater:
         if channel.get("state") == "ready" and blocked:
             return {**channel, "state": "blocked", "reason": blocked}
         return dict(channel)
+
     # -- what an update waits for --------------------------------------------
 
     def waited(self) -> list[dict[str, Any]]:
@@ -382,7 +409,10 @@ class Updater:
 
     def status(self) -> dict[str, Any]:
         me = self.me()
-        out = {k: me.get(k, "") for k in ("version", "commit", "commit_label", "install", "shape", "reason", "build_id")}
+        out = {
+            k: me.get(k, "")
+            for k in ("version", "commit", "commit_label", "install", "shape", "reason", "build_id")
+        }
         if me["shape"] != "service":
             out["reason"] = f"{update.UNAVAILABLE}: {me['reason']}"
             return out
@@ -443,7 +473,9 @@ class Updater:
             if self.state != "pending":
                 self.state = "pending"
                 self.pending = {"channel": channel, "by": name, "since": update.now()}
-                self._record("pending", name, channel=channel, to=getattr(self, channel).get("version"))
+                self._record(
+                    "pending", name, channel=channel, to=getattr(self, channel).get("version")
+                )
             else:
                 self.pending = {**(self.pending or {}), "channel": channel, "by": name}
         else:
@@ -471,7 +503,11 @@ class Updater:
 
     def _fail(self, message: str, log: Path | None = None) -> None:
         self.state, self.window = "idle", False
-        self.error = {"message": message, "log": str(log or ""), "log_tail": update.tail(log, LOG_TAIL) if log else ""}
+        self.error = {
+            "message": message,
+            "log": str(log or ""),
+            "log_tail": update.tail(log, LOG_TAIL) if log else "",
+        }
 
     async def _apply(self, channel: str, by: str) -> None:
         me = self.me()
@@ -485,7 +521,9 @@ class Updater:
         try:
             # Step 1: from disk, right now, before anything changes.
             if update.SERVER.server is None:
-                return self._fail("no uvicorn.Server to stop (the app was not started with `coscc`)")
+                return self._fail(
+                    "no uvicorn.Server to stop (the app was not started with `coscc`)"
+                )
             target = update.verified_wheel(self.root / channel)
             if target is None:
                 return self._fail(f"the {channel} wheel does not match its saved checksum")
@@ -499,22 +537,32 @@ class Updater:
             # The refusal window opens first, so no new session starts from here; a failed
             # trial closes it again (`_fail`) and has touched no session.
             self.window = True
-            log.write_text(f"trial of {target['version']} from {channel}, pressed by {by}\n", encoding="utf-8")
+            log.write_text(
+                f"trial of {target['version']} from {channel}, pressed by {by}\n", encoding="utf-8"
+            )
             problem = await self._trial(target, log)
             if problem:
                 return self._fail(problem, log)
             # Step 3: nothing this waits for began during the trial; it was refused.
             if self.waited():
                 self.state, self.window = "pending", False
-                self.pending = {"channel": channel, "by": by, "since": update.now(),
-                                "reason": "an integration or a retake began during the trial"}
+                self.pending = {
+                    "channel": channel,
+                    "by": by,
+                    "since": update.now(),
+                    "reason": "an integration or a retake began during the trial",
+                }
                 self._record("pending", by, channel=channel, to=target["version"])
                 return
             # A local build is not a session, and is not taken up again.
             if self._build_task is not None and not self._build_task.done():
                 self._build_task.cancel()
-                self._record("cut", by, cut={"kind": "build", "started": self.local.get("started", "")},
-                             stopped_by=by)
+                self._record(
+                    "cut",
+                    by,
+                    cut={"kind": "build", "started": self.local.get("started", "")},
+                    stopped_by=by,
+                )
             # Every session paused, each with its `suspend` row, before the steps' tasks are cancelled below.
             paused = True
             await self.service.suspend_sessions(by)
@@ -529,7 +577,12 @@ class Updater:
             backup_db(self.db, backup)
             # Step 6.
             rollback = update.rollback_command(
-                me["uv"], me["tool_dir"], me["bin_dir"], current["wheel"], str(self.db), str(backup),
+                me["uv"],
+                me["tool_dir"],
+                me["bin_dir"],
+                current["wheel"],
+                str(self.db),
+                str(backup),
             )
             with open(log, "a", encoding="utf-8") as f:
                 f.write(
@@ -538,13 +591,21 @@ class Updater:
                     f"current wheel: {current['wheel']}\n"
                     f"\nto go back by hand:\n{rollback}\n"
                 )
-            self._record("applying", by, channel=channel, **{"from": me["version"], "to": target["version"]})
+            self._record(
+                "applying", by, channel=channel, **{"from": me["version"], "to": target["version"]}
+            )
             # Step 7.
             handoff = update.Handoff(
-                target_wheel=target["wheel"], target_version=target["version"],
-                current_wheel=current["wheel"], current_version=current["version"],
-                from_version=me["version"], uv=me["uv"], tool_dir=me["tool_dir"],
-                bin_dir=me["bin_dir"], log=str(log), last=str(self.root / "last.json"),
+                target_wheel=target["wheel"],
+                target_version=target["version"],
+                current_wheel=current["wheel"],
+                current_version=current["version"],
+                from_version=me["version"],
+                uv=me["uv"],
+                tool_dir=me["tool_dir"],
+                bin_dir=me["bin_dir"],
+                log=str(log),
+                last=str(self.root / "last.json"),
                 env=self.env(),
             )
             handed = update.SERVER.hand_off(handoff)
@@ -565,7 +626,10 @@ class Updater:
             await self.service.resume_after_update()
         except Exception as e:  # noqa: BLE001 - the panel says what went wrong
             said = f"the paused sessions were not taken up again: {type(e).__name__}: {e}"
-            self.error = {**(self.error or {}), "message": f"{(self.error or {}).get('message', '')}; {said}"}
+            self.error = {
+                **(self.error or {}),
+                "message": f"{(self.error or {}).get('message', '')}; {said}",
+            }
 
     async def _trial(self, target: dict[str, Any], log: Path) -> str:
         """`""` when the new version installed, answered and was stopped."""
@@ -576,8 +640,11 @@ class Updater:
         try:
             data.mkdir(parents=True)
             code = await self._run(
-                [self.me()["uv"], "tool", "install", "--force", target["wheel"]], log,
-                TRIAL_INSTALL_TIMEOUT, UV_TOOL_DIR=str(tools), UV_TOOL_BIN_DIR=str(bin_dir),
+                [self.me()["uv"], "tool", "install", "--force", target["wheel"]],
+                log,
+                TRIAL_INSTALL_TIMEOUT,
+                UV_TOOL_DIR=str(tools),
+                UV_TOOL_BIN_DIR=str(bin_dir),
             )
             if code != 0:
                 return "the trial install failed"
@@ -595,14 +662,23 @@ class Updater:
                 return "the trial could not run coscc reset-password on its copy of cos.db"
             port = _free_port()
             proc = await asyncio.create_subprocess_exec(
-                str(bin_dir / "coscc"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                env=self.env(COS_HOST="127.0.0.1", COS_PORT=str(port), COS_DATA_DIR=str(data),
-                             COS_UPDATE_CHECK="0"),
-                start_new_session=True, limit=OUTPUT_LINE_LIMIT,
+                str(bin_dir / "coscc"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=self.env(
+                    COS_HOST="127.0.0.1",
+                    COS_PORT=str(port),
+                    COS_DATA_DIR=str(data),
+                    COS_UPDATE_CHECK="0",
+                ),
+                start_new_session=True,
+                limit=OUTPUT_LINE_LIMIT,
             )
             token: list[str] = []
             copier = asyncio.ensure_future(_copy_output(proc.stdout, log, token))
-            failed = await _healthy(port, TRIAL_HEALTHY_WITHIN, lambda: token[-1] if token else None)
+            failed = await _healthy(
+                port, TRIAL_HEALTHY_WITHIN, lambda: token[-1] if token else None
+            )
             if failed:
                 return f"the trial failed at {failed} within {TRIAL_HEALTHY_WITHIN}s"
             return ""
@@ -617,17 +693,22 @@ class Updater:
             if copier is not None:
                 try:
                     await asyncio.wait_for(copier, TRIAL_STOP_GRACE)
-                except (asyncio.TimeoutError, Exception):  # noqa: BLE001 - the log is best-effort
+                except asyncio.TimeoutError, Exception:  # noqa: BLE001 - the log is best-effort
                     copier.cancel()
             await asyncio.to_thread(shutil.rmtree, tmp, True)
 
-    async def _run(self, cmd: list[str], log: Path, timeout: float, cwd: Path | None = None, **env: str) -> int:
+    async def _run(
+        self, cmd: list[str], log: Path, timeout: float, cwd: Path | None = None, **env: str
+    ) -> int:
         with open(log, "a", encoding="utf-8") as out:
             out.write(f"\n$ {' '.join(cmd)}\n")
             out.flush()
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=out, stderr=subprocess.STDOUT, env=self.env(**env),
+                    *cmd,
+                    stdout=out,
+                    stderr=subprocess.STDOUT,
+                    env=self.env(**env),
                     cwd=str(cwd) if cwd else None,
                 )
             except OSError as e:
@@ -635,7 +716,7 @@ class Updater:
                 return 127
             try:
                 code = await asyncio.wait_for(proc.wait(), timeout)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except asyncio.TimeoutError, asyncio.CancelledError:
                 proc.kill()
                 await proc.wait()
                 raise
@@ -654,8 +735,12 @@ class Updater:
             raise Refused(f"the local channel is not configured: {self.local.get('reason', '')}")
         if self._build_task is not None and not self._build_task.done():
             raise Refused("a build is already running")
-        self.local = {"state": "building", "started": update.now(), "by": name,
-                      "workspace": self.config.update_local_from}
+        self.local = {
+            "state": "building",
+            "started": update.now(),
+            "by": name,
+            "workspace": self.config.update_local_from,
+        }
         self._build_task = asyncio.get_running_loop().create_task(self._build(name))
         return self.status()
 
@@ -684,12 +769,22 @@ class Updater:
             except Exception as e:  # noqa: BLE001
                 raise _BuildFailed(f"fetching origin/main failed: {e}") from e
             tmp.parent.mkdir(parents=True, exist_ok=True)
-            if await self._git(workspace, ["worktree", "add", "--detach", str(tmp), "origin/main"], log) is None:
+            if (
+                await self._git(
+                    workspace, ["worktree", "add", "--detach", str(tmp), "origin/main"], log
+                )
+                is None
+            ):
                 raise _BuildFailed("could not create a temporary worktree at origin/main")
             script = tmp / "scripts" / "build_wheel.sh"
             if not script.is_file():
                 raise _BuildFailed("origin/main has no scripts/build_wheel.sh to build with")
-            code = await self._run(["bash", str(script), "--local", "--out", str(tmp / "out")], log, BUILD_TIMEOUT, cwd=tmp)
+            code = await self._run(
+                ["bash", str(script), "--local", "--out", str(tmp / "out")],
+                log,
+                BUILD_TIMEOUT,
+                cwd=tmp,
+            )
             wheels = sorted((tmp / "out").glob("*.whl"))
             if code != 0 or len(wheels) != 1:
                 raise _BuildFailed(f"the build failed (exit {code})")
@@ -697,8 +792,10 @@ class Updater:
             wheel = wheels[0]
             m = re.fullmatch(r"coscc-(.+)-py3-none-any\.whl", wheel.name)
             manifest = {
-                "version": m.group(1) if m else "", "commit": commit,
-                "sha256": update.sha256_of(wheel), "built_at": update.now(),
+                "version": m.group(1) if m else "",
+                "commit": commit,
+                "sha256": update.sha256_of(wheel),
+                "built_at": update.now(),
             }
             local = self.root / "local"
             local.mkdir(parents=True, exist_ok=True)
@@ -711,28 +808,53 @@ class Updater:
             if found and self._local_ready(found, self.me()):
                 self.local = {"state": "ready", **found, "log": str(log)}
             else:
-                self.local = {"state": "idle", "workspace": name, "log": str(log),
-                              "reason": "the new build is not newer than the running version"}
+                self.local = {
+                    "state": "idle",
+                    "workspace": name,
+                    "log": str(log),
+                    "reason": "the new build is not newer than the running version",
+                }
             result = "ok"
         except _BuildFailed as e:
-            self.local = {"state": "error", "reason": str(e), "log": str(log), "log_tail": update.tail(log, LOG_TAIL)}
+            self.local = {
+                "state": "error",
+                "reason": str(e),
+                "log": str(log),
+                "log_tail": update.tail(log, LOG_TAIL),
+            }
         except asyncio.CancelledError:
-            self.local = {"state": "error", "reason": "the build was stopped", "log": str(log), "log_tail": update.tail(log, LOG_TAIL)}
+            self.local = {
+                "state": "error",
+                "reason": "the build was stopped",
+                "log": str(log),
+                "log_tail": update.tail(log, LOG_TAIL),
+            }
             result = "cut"
         except Exception as e:  # noqa: BLE001
-            self.local = {"state": "error", "reason": f"{type(e).__name__}: {e}", "log": str(log),
-                          "log_tail": update.tail(log, LOG_TAIL)}
+            self.local = {
+                "state": "error",
+                "reason": f"{type(e).__name__}: {e}",
+                "log": str(log),
+                "log_tail": update.tail(log, LOG_TAIL),
+            }
         finally:
             if workspace is not None and tmp.exists():
                 await self._git(workspace, ["worktree", "remove", "--force", str(tmp)], log)
             await asyncio.to_thread(shutil.rmtree, tmp, True)
-            self._record("build-end", by, channel="local", result=result, to=self.local.get("version"))
+            self._record(
+                "build-end", by, channel="local", result=result, to=self.local.get("version")
+            )
             self.job_ended()
 
     async def _git(self, where: Path, args: list[str], log: Path) -> str | None:
         proc = await asyncio.create_subprocess_exec(
-            "git", "-C", str(where), *args, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT, env=self.env(),
+            "git",
+            "-C",
+            str(where),
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=self.env(),
         )
         out, _ = await asyncio.wait_for(proc.communicate(), 120)
         text = out.decode(errors="replace")
@@ -774,8 +896,13 @@ async def _copy_output(stream, log: Path, token: list[str]) -> None:
             out.flush()
 
 
-def _request(port: int, method: str, path: str, body: bytes | None = None,
-             headers: dict[str, str] | None = None) -> tuple[int, Any]:
+def _request(
+    port: int,
+    method: str,
+    path: str,
+    body: bytes | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, Any]:
     """One request to the trial, redirects not followed. `(0, None)` when nothing answered."""
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
@@ -827,7 +954,9 @@ async def _trial_step(port: int, token: Callable[[], str | None], held: dict[str
             {"token": given, "password": password, "password_confirm": password}
         ).encode()
         status, headers = await call(
-            "POST", "/setup", body=form,
+            "POST",
+            "/setup",
+            body=form,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         set_cookie = (headers.get("Set-Cookie") if headers is not None else None) or ""

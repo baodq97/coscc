@@ -1,12 +1,11 @@
-"""One step per unit, however many ask at once (`0050`).
+"""One step per unit, however many ask at once.
 
 The intent's outcome, measured in `npm test`: ten `POST /api/board/run` at the same moment,
 one process, one `(workspace, unit, stage)`, the gate open — one step starts, nine are
 refused with a reason, and the run log has one `start`. Driven in-process over ASGI, the
 way `scripts/verify_0034.py` drives it; the gate is the real `cos.mjs`, and only the session
 is a stand-in. Two processes are not measured here, and nothing claims they are
-(`intent.md ## Answers`, câu 4).
-"""
+(`intent.md ## Answers`, câu 4)."""
 
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ from coscc.units import board as board_reader
 from coscc.git import worktrees
 from coscc.web.api import build
 from coscc.config import Config
-from coscc.service import Invalid
+from coscc.service.common import Invalid
 from coscc.agent.submit_test import submits as _submits
 
 N = 10
@@ -39,10 +38,9 @@ class _Client:
 class _Sessions:
     """A session that sends one chunk, then waits until the test lets it end.
 
-    A copy of `scripts/verify_0034.py`'s `_Sessions`, cut to one unit: nothing under
-    `coscc/` imports from `scripts/`. `entered` is this copy's alone: it is set once the
-    step's session is open, so a Stop after it is one `Runner.run` catches (`0117`).
-    """
+    A copy of `scripts/verify_0034.py`'s `_Sessions`, cut to one unit: nothing under `coscc/`
+    imports from `scripts/`. `entered` is this copy's alone: it is set once the step's session is
+    open, so a Stop after it is one `Runner.run` catches."""
 
     def __init__(self) -> None:
         self.release = asyncio.Event()
@@ -58,8 +56,14 @@ class _Sessions:
             await asyncio.wait_for(self.release.wait(), 20)
             yield ("chunk", "Author: proof. Status: accepted.\n")
             await _submits(kw)
-            yield ("done", {"session_id": "s-raced", "terminal_reason": "success",
-                            "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01}})
+            yield (
+                "done",
+                {
+                    "session_id": "s-raced",
+                    "terminal_reason": "success",
+                    "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01},
+                },
+            )
         finally:
             if step is not None:
                 await step.close()
@@ -73,9 +77,13 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
         root = Path(self._tmp.name)
         workspace = root / "work" / "proj"
         workspace.mkdir(parents=True)
-        self.app = build(Config(
-            workspaces=(str(workspace),), working_dir=str(root / "work"), data_dir=str(root / "data"),
-        ))
+        self.app = build(
+            Config(
+                workspaces=(str(workspace),),
+                working_dir=str(root / "work"),
+                data_dir=str(root / "data"),
+            )
+        )
         self.service = self.app.state.service
         self.fake = _Sessions()
         self.service.sessions = self.fake
@@ -86,7 +94,9 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
         )
         self.unit = made["unit"]
         self.key = self.service._journal_key(self.ws)
-        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://proof")
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://proof"
+        )
 
         self.calls: Counter = Counter()
         real_gate = board_reader.gate
@@ -105,7 +115,9 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
         self._tmp.cleanup()
 
     def post_run(self, stage: str = "spec"):
-        return self.client.post("/api/board/run", json={"cwd": self.ws, "unit": self.unit, "stage": stage})
+        return self.client.post(
+            "/api/board/run", json={"cwd": self.ws, "unit": self.unit, "stage": stage}
+        )
 
     async def listed(self) -> list[dict]:
         return (await self.client.get("/api/board/steps", params={"cwd": self.ws})).json()
@@ -128,14 +140,17 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
         return task
 
     def records(self, kind: str) -> list[dict]:
-        return [r for r in self.service._journal().records() if r["kind"] == kind and r["unit"] == self.unit]
+        return [
+            r
+            for r in self.service._journal().records()
+            if r["kind"] == kind and r["unit"] == self.unit
+        ]
 
     async def race(self) -> tuple[list[asyncio.Task], list[httpx.Response]]:
         """Ten runs at once; returns once nine have answered and the tenth is listed.
 
-        `ASGITransport` reads the whole body before it returns, so the winner's response
-        only comes back when its stream ends (`spike.md ## U1`).
-        """
+        `ASGITransport` reads the whole body before it returns, so the winner's response only
+        comes back when its stream ends."""
         tasks = [asyncio.create_task(self.post_run()) for _ in range(N)]
 
         async def nine_answered():
@@ -162,8 +177,8 @@ class TenAtOnce(_OneUnit):
         self.assertEqual(len(self.records("start")), 1)
         refused = [r for r in answered if r.status_code == 400]
         self.assertEqual(len(refused), N - 1)
-        # R3: the stage, and the one start time the Board lists -- whether the loser met
-        # the winner still preparing or already running (`plan.md` step 3i).
+        # The stage, and the one start time the Board lists -- whether the loser met the winner
+        # still preparing or already running (`plan.md` step 3i).
         t = listed[0]["started_at"]
         for r in refused:
             said = r.json().get("error", "")
@@ -173,8 +188,8 @@ class TenAtOnce(_OneUnit):
             )
 
     async def test_losers_run_no_gate_and_no_git(self):
-        """R4: refused before the worktree, the fetch or the gate -- at HEAD all three ran
-        ten times for ten requests (`spike.md ## U1`, variant B)."""
+        """A loser is refused before the worktree, the fetch or the gate: without the mark all three
+        ran ten times for ten requests."""
         (Path(self.ws) / ".git").mkdir()
 
         async def fake_worktree(cwd, unit, strict=False):
@@ -203,8 +218,8 @@ class TenAtOnce(_OneUnit):
         tasks, _ = await self.race()
         winners = [t for t in tasks if not t.done()]
         self.assertEqual(len(winners), 1)
-        # Listed is not yet driven: a Stop before `_drive`'s first turn cancels a step that
-        # never began, and that road writes no `end` by design (`0117`).
+        # Listed is not yet driven: a Stop before `_drive`'s first turn cancels a step that never
+        # began, and that road writes no `end` by design.
         try:
             await asyncio.wait_for(self.fake.entered.wait(), 20)
         except asyncio.TimeoutError:
@@ -223,8 +238,8 @@ class TenAtOnce(_OneUnit):
 
 class AnyStageOfTheUnit(_OneUnit):
     async def test_another_stage_is_refused_while_the_winner_runs(self):
-        """R2, the sequential form the spec allows: a `plan` whose gate is closed is refused
-        as busy, not by the gate, and the gate is not asked -- the mark is asked first."""
+        """Sequentially: a `plan` whose gate is closed is refused as busy, not by the gate, and the
+        gate is not asked -- the mark is asked first."""
         task = await self.one_running()
         gates = self.calls["gate"]
         refused = await self.post_run("plan")
@@ -236,7 +251,7 @@ class AnyStageOfTheUnit(_OneUnit):
 
 
 class TheMarkIsAlwaysReturned(_OneUnit):
-    """R5: every road out of `run_step` gives the unit back."""
+    """Every road out of `run_step` gives the unit back."""
 
     async def test_after_a_gate_refusal(self):
         refused = await self.post_run("plan")
@@ -261,10 +276,17 @@ class TheMarkIsAlwaysReturned(_OneUnit):
             second = await self.post_run("spec")
             self.assertEqual(second.status_code, 400)
             self.assertIn("a spec step is being prepared since ", second.json()["error"])
-            # R7, spec C2: a hold is refused in this window too, with the same sentence.
-            hold = await self.client.post("/api/units/hold", json={
-                "cwd": self.ws, "unit": self.unit, "to": "paused", "reason": "r", "by": "Proof person",
-            })
+            # A hold is refused in this window too, with the same sentence.
+            hold = await self.client.post(
+                "/api/units/hold",
+                json={
+                    "cwd": self.ws,
+                    "unit": self.unit,
+                    "to": "paused",
+                    "reason": "r",
+                    "by": "Proof person",
+                },
+            )
             self.assertEqual(hold.status_code, 400)
             self.assertIn(second.json()["error"], hold.json()["error"])
 
@@ -285,7 +307,8 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         self.assertEqual(self.service._active, {})
 
     async def test_after_an_exception_between_the_listing_and_the_hand_over(self):
-        """Review round 1, F1: past `claim`, the listing and the `0051` entry go back too."""
+        """Past `claim`, the listing and the `_running` entry go back too."""
+
         def broken(base):
             raise RuntimeError("stand-in: describing the base broke")
 
@@ -301,8 +324,8 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         self.assertEqual((await task).status_code, 200)
 
     async def test_after_a_stop_that_cancels_the_step_before_it_began(self):
-        """Review round 2, F2: a Stop whose turn comes before `_drive`'s first one cancels a
-        task whose body never runs, so `_drive`'s `finally` cannot be what gives it back."""
+        """A Stop whose turn comes before `_drive`'s first one cancels a task whose body never runs,
+        so `_drive`'s `finally` cannot be what gives it back."""
         real_create_task = asyncio.create_task
         stops: list[asyncio.Task] = []
 
@@ -310,7 +333,11 @@ class TheMarkIsAlwaysReturned(_OneUnit):
             # The real Stop, queued ahead of `_drive`'s first turn: it finds the row `claim`
             # just listed, closes a handle with no client yet, and cancels the task.
             if getattr(coro, "__name__", "") == "_drive":
-                stops.append(real_create_task(self.service._stop_running(self.key, self.unit, "Proof person")))
+                stops.append(
+                    real_create_task(
+                        self.service._stop_running(self.key, self.unit, "Proof person")
+                    )
+                )
             return real_create_task(coro, **kw)
 
         async def drain():
@@ -350,8 +377,11 @@ class TheMarkIsAlwaysReturned(_OneUnit):
 
 class WhatElseHoldsTheUnit(_OneUnit):
     async def test_a_step_is_refused_while_a_hold_or_an_integration_holds_the_unit(self):
-        """R7, the other way round: a hold or an integration refuses a step, before the gate."""
-        for kind, said in (("hold", "a hold is being recorded since "), ("integrate", "it is being integrated since ")):
+        """A hold or an integration refuses a step, before the gate."""
+        for kind, said in (
+            ("hold", "a hold is being recorded since "),
+            ("integrate", "it is being integrated since "),
+        ):
             with self.subTest(kind=kind):
                 mark = self.service._take(self.key, self.unit, kind)
                 refused = await self.post_run("spec")

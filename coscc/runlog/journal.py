@@ -29,7 +29,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from coscc.data import BUSY_TIMEOUT, Busy, Data, now as _now
+from coscc.data import BUSY_TIMEOUT, Data, now as _now
 
 VERSION = 1
 
@@ -117,7 +117,9 @@ class Bell:
             except RuntimeError:
                 self.disarm(ticket)
 
-    async def wait(self, ticket: tuple[asyncio.AbstractEventLoop, asyncio.Event], timeout: float) -> bool:
+    async def wait(
+        self, ticket: tuple[asyncio.AbstractEventLoop, asyncio.Event], timeout: float
+    ) -> bool:
         """True when rung, False when `timeout` seconds passed first. Disarms either way."""
         try:
             await asyncio.wait_for(ticket[1].wait(), max(0.0, timeout))
@@ -155,7 +157,6 @@ class Journal:
         self._root = str(self.working_dir)
         self._imported = False
 
-
     @contextmanager
     def transaction(self, timeout: float | None = None):
         """Hold the journal exclusively. Delegates to `Data.write`; a method so callers frame work as
@@ -164,7 +165,6 @@ class Journal:
         with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
             self._import_legacy(conn)
             yield conn
-
 
     def _migration_key(self) -> str:
         return f"import-jsonl:{self._root}"
@@ -191,14 +191,13 @@ class Journal:
                 continue
             try:
                 item = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
+            except json.JSONDecodeError, ValueError:
                 continue
             if isinstance(item, dict) and item.get("kind"):
                 self._insert(conn, item)
 
     def _needs_import(self) -> bool:
         return self.legacy_path.is_file() and not self._imported
-
 
     def _insert(self, conn, record: dict[str, Any]) -> None:
         """One row. The columns are read out of the record, never supplied beside it."""
@@ -238,7 +237,10 @@ class Journal:
         return stamped
 
     def append_with(
-        self, records: list[dict[str, Any]], also: Callable[[Any], None], timeout: float | None = None,
+        self,
+        records: list[dict[str, Any]],
+        also: Callable[[Any], None],
+        timeout: float | None = None,
     ) -> list[dict[str, Any]]:
         """`append` of every record, with `also(conn)` written in the same transaction: a hold's row in
         `unit_holds` and its `hold` record here, or each answer's row in `unit_answers` and its
@@ -269,15 +271,30 @@ class Journal:
             {"kind": "mode", "workspace": workspace, "unit": unit, "stage": stage, "mode": mode}
         )
 
-    def started(self, workspace: str, unit: str, stage: str, mode: str, **extra: Any) -> dict[str, Any]:
+    def started(
+        self, workspace: str, unit: str, stage: str, mode: str, **extra: Any
+    ) -> dict[str, Any]:
         if mode not in MODES:
             raise BadRecord(f"mode must be one of {', '.join(MODES)}, got {mode!r}")
         return self.append(
-            {"kind": "start", "workspace": workspace, "unit": unit, "stage": stage, "mode": mode, **extra}
+            {
+                "kind": "start",
+                "workspace": workspace,
+                "unit": unit,
+                "stage": stage,
+                "mode": mode,
+                **extra,
+            }
         )
 
     def set_trial_model(
-        self, workspace: str, unit: str, stage: str, at: str, model: str, timeout: float | None = None,
+        self,
+        workspace: str,
+        unit: str,
+        stage: str,
+        at: str,
+        model: str,
+        timeout: float | None = None,
     ) -> bool:
         """The one field of a written `start` this log ever fills in afterwards: `model_trial.model`,
         the model the session's `init` named, which the `start` could not know when it was written.
@@ -296,14 +313,16 @@ class Journal:
                 return False
             try:
                 record = json.loads(row[1])
-            except (json.JSONDecodeError, ValueError):
+            except json.JSONDecodeError, ValueError:
                 return False
             trial = record.get("model_trial")
             if not isinstance(trial, dict) or trial.get("model"):
                 return False
             record["model_trial"] = {**trial, "model": str(model)}
-            conn.execute("UPDATE runs SET record = ? WHERE id = ?",
-                         (json.dumps(record, ensure_ascii=False, sort_keys=False), row[0]))
+            conn.execute(
+                "UPDATE runs SET record = ? WHERE id = ?",
+                (json.dumps(record, ensure_ascii=False, sort_keys=False), row[0]),
+            )
         BELL.ring()
         return True
 
@@ -313,7 +332,14 @@ class Journal:
         if outcome not in OUTCOMES:
             raise BadRecord(f"outcome must be one of {', '.join(OUTCOMES)}, got {outcome!r}")
         return self.append(
-            {"kind": "end", "workspace": workspace, "unit": unit, "stage": stage, "outcome": outcome, **extra}
+            {
+                "kind": "end",
+                "workspace": workspace,
+                "unit": unit,
+                "stage": stage,
+                "outcome": outcome,
+                **extra,
+            }
         )
 
     def attempted(self, workspace: str, unit: str, stage: str, **extra: Any) -> dict[str, Any]:
@@ -330,26 +356,39 @@ class Journal:
         """One session an update paused, with a `suspend_id` of its own. Written between a step's
         `start` and its `end`, and closing neither.
         """
-        return self.append({
-            "kind": "suspend", "workspace": workspace, "unit": unit, "stage": stage,
-            "suspend_id": uuid.uuid4().hex, **fields,
-        })
+        return self.append(
+            {
+                "kind": "suspend",
+                "workspace": workspace,
+                "unit": unit,
+                "stage": stage,
+                "suspend_id": uuid.uuid4().hex,
+                **fields,
+            }
+        )
 
-    def resumed(self, workspace: str, unit: str, stage: str, suspend_id: str, **fields: Any) -> dict[str, Any]:
+    def resumed(
+        self, workspace: str, unit: str, stage: str, suspend_id: str, **fields: Any
+    ) -> dict[str, Any]:
         """The next start took `suspend_id` up; written before it runs anything, so a start after this
         one never takes it up again.
         """
-        return self.append({
-            "kind": "resume", "workspace": workspace, "unit": unit, "stage": stage,
-            "suspend_id": suspend_id, **fields,
-        })
+        return self.append(
+            {
+                "kind": "resume",
+                "workspace": workspace,
+                "unit": unit,
+                "stage": stage,
+                "suspend_id": suspend_id,
+                **fields,
+            }
+        )
 
     def unresumed(self, timeout: float | None = None) -> list[dict[str, Any]]:
         """Every `suspend` row, in every workspace, with no `resume` naming it."""
         rows = self.records(timeout=timeout, kinds=("suspend", "resume"))
         taken = {r.get("suspend_id") for r in rows if r.get("kind") == "resume"}
         return [r for r in rows if r.get("kind") == "suspend" and r.get("suspend_id") not in taken]
-
 
     def records(
         self,
@@ -392,7 +431,7 @@ class Journal:
         for row in rows:
             try:
                 item = json.loads(row["record"])
-            except (json.JSONDecodeError, ValueError, TypeError):
+            except json.JSONDecodeError, ValueError, TypeError:
                 continue
             if isinstance(item, dict):
                 out.append(item)
@@ -411,7 +450,11 @@ class Journal:
         return int(row[0] or 0)
 
     def notice_rows(
-        self, after: int, kinds: Iterable[str], workspace: str | None = None, limit: int = 500,
+        self,
+        after: int,
+        kinds: Iterable[str],
+        workspace: str | None = None,
+        limit: int = 500,
         timeout: float | None = None,
     ) -> list[tuple[int, dict[str, Any]]]:
         """`(id, record)` for this root's rows of `kinds` past `after`, by `id`, at most `limit`,
@@ -422,9 +465,8 @@ class Journal:
             with self.transaction(timeout):
                 pass
         wanted = list(kinds)
-        sql = (
-            "SELECT id, record FROM runs WHERE root = ? AND id > ?"
-            + (f" AND kind IN ({', '.join('?' for _ in wanted)})" if wanted else " AND 0")
+        sql = "SELECT id, record FROM runs WHERE root = ? AND id > ?" + (
+            f" AND kind IN ({', '.join('?' for _ in wanted)})" if wanted else " AND 0"
         )
         args: list[Any] = [self._root, int(after), *wanted]
         if workspace is not None:
@@ -438,7 +480,7 @@ class Journal:
         for row in rows:
             try:
                 item = json.loads(row["record"])
-            except (json.JSONDecodeError, ValueError, TypeError):
+            except json.JSONDecodeError, ValueError, TypeError:
                 continue
             if isinstance(item, dict):
                 out.append((int(row["id"]), item))
@@ -456,7 +498,9 @@ class Journal:
                 found[(str(item.get("unit")), str(item.get("stage")))] = mode
         return found
 
-    def timeline(self, workspace: str, unit: str, timeout: float | None = None) -> list[dict[str, Any]]:
+    def timeline(
+        self, workspace: str, unit: str, timeout: float | None = None
+    ) -> list[dict[str, Any]]:
         """One row per run of a step, oldest first.
 
         A `start` with no `end` is a run still going or one the app was killed during; the row leaves
@@ -473,7 +517,11 @@ class Journal:
         return timelines_of(self.records(workspace, timeout=timeout))
 
     def append_checked(
-        self, record: dict[str, Any], kinds: Iterable[str], check: Any, timeout: float | None = None,
+        self,
+        record: dict[str, Any],
+        kinds: Iterable[str],
+        check: Any,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Read the records of `kinds`, let `check` refuse, and append, in one transaction.
 
@@ -496,10 +544,12 @@ class Journal:
                 + " ORDER BY id"
             )
             rows = []
-            for row in conn.execute(sql, [self._root, str(record.get("workspace") or ""), *wanted]).fetchall():
+            for row in conn.execute(
+                sql, [self._root, str(record.get("workspace") or ""), *wanted]
+            ).fetchall():
                 try:
                     item = json.loads(row["record"])
-                except (json.JSONDecodeError, ValueError, TypeError):
+                except json.JSONDecodeError, ValueError, TypeError:
                     continue
                 if isinstance(item, dict):
                     rows.append(item)
@@ -600,10 +650,15 @@ class Journal:
         # newer `end`, so this stops being the latest. `closing` says whether a closing turn ran at
         # all: none does with no session id or no head.
         if (
-            stage == "review" and latest.get("outcome") == "exhausted"
-            and latest.get("review_md") == "none" and latest.get("run")
+            stage == "review"
+            and latest.get("outcome") == "exhausted"
+            and latest.get("review_md") == "none"
+            and latest.get("run")
         ):
-            found["opened"] = {**self._opened(str(latest["run"]), timeout), "closing": "closing" in latest}
+            found["opened"] = {
+                **self._opened(str(latest["run"]), timeout),
+                "closing": "closing" in latest,
+            }
         return found
 
     def _opened(self, run: str, timeout: float | None) -> dict[str, Any]:

@@ -1,8 +1,7 @@
-"""`0048` plan step 2. The fetch coordinator: join, reuse, retry once, and never hang.
+"""The fetch coordinator: join, reuse, retry once, and never hang.
 
 Most tests hand in a fake `run` and a fake clock; the git dir each key is taken from is
-still a real `git init`. The last class fetches for real, from a bare-directory remote.
-"""
+still a real `git init`. The last class fetches for real, from a bare-directory remote."""
 
 from __future__ import annotations
 
@@ -16,16 +15,26 @@ from coscc.git import fetches, gitops
 from coscc.git.fetches import FetchFailed, Fetches
 from coscc.git.gitops import GitError
 
-RACE = (
-    "error: fetching ref refs/remotes/origin/main failed: incorrect old value provided"
-)
+RACE = "error: fetching ref refs/remotes/origin/main failed: incorrect old value provided"
 
 
 def git(where: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(where), "-c", "user.name=T", "-c", "user.email=t@example.invalid",
-         "-c", "commit.gpgsign=false", *args],
-        capture_output=True, text=True, check=True,
+        [
+            "git",
+            "-C",
+            str(where),
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
 
 
@@ -138,8 +147,10 @@ class WithAFakeRun(unittest.TestCase):
         self.assertEqual(run.calls, 2)
 
     def test_any_other_failure_and_a_timeout_are_not_retried(self):
-        for error in ("fatal: 'gone.git' does not appear to be a git repository",
-                      "git timed out after 20s: git -C"):
+        for error in (
+            "fatal: 'gone.git' does not appear to be a git repository",
+            "git timed out after 20s: git -C",
+        ):
             run = FakeRun(error, hold=0)
             with self.assertRaises(FetchFailed, msg=error) as caught:
                 asyncio.run(self.coordinator(run).fetch(self.repo))
@@ -196,7 +207,9 @@ class WithRealGit(unittest.TestCase):
 
     def _clone(self, name: str) -> Path:
         where = Path(self._tmp.name) / name
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(where)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(where)], check=True, capture_output=True
+        )
         return where
 
     def _counting(self) -> tuple[Fetches, list[Path]]:

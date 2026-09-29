@@ -1,7 +1,6 @@
-"""Tests for `coscc/runner/attempt.py`, split from `coscc/runner/runner_test.py` (`0095`).
+"""Tests for `coscc/runner/attempt.py`, split from `coscc/runner/runner_test.py`.
 
-What a failed attempt left, as the next step and the board are told it.
-"""
+What a failed attempt left, as the next step and the board are told it."""
 
 from __future__ import annotations
 
@@ -15,12 +14,12 @@ from coscc.runner.attempt import Denials, describe_attempt, permission_gate
 
 
 class DenialsCountTheBackgroundRuns(unittest.TestCase):
-    """`0130` R3."""
-
     def test_a_background_refusal_is_counted_apart_from_the_rest(self):
         denials = Denials()
         denials.record("Bash", f"run_in_background is refused: {BACKGROUND_REFUSAL}")
-        denials.record("Bash", f"`&` at character 13 runs a command in the background: {BACKGROUND_REFUSAL}")
+        denials.record(
+            "Bash", f"`&` at character 13 runs a command in the background: {BACKGROUND_REFUSAL}"
+        )
         denials.record("Bash", "this step may not run 'curl'")
         self.assertEqual((denials.count, denials.background), (3, 2))
 
@@ -29,12 +28,20 @@ class DescribeAttemptRendersTheRecord(unittest.TestCase):
     def test_a_full_attempt_names_outcome_turns_and_commits(self):
         found = {
             "attempt": {
-                "outcome": "exhausted", "terminal": "max_turns", "error": None,
-                "turns": 121, "cost_usd": 6.88, "session_id": "s-1",
-                "head": "a" * 40, "branch": "fix/x", "base": "b" * 40,
+                "outcome": "exhausted",
+                "terminal": "max_turns",
+                "error": None,
+                "turns": 121,
+                "cost_usd": 6.88,
+                "session_id": "s-1",
+                "head": "a" * 40,
+                "branch": "fix/x",
+                "base": "b" * 40,
                 "base_ref": "refs/heads/main",
                 "commits": [{"sha": "c" * 40, "subject": "did a thing"}],
-                "status": [" M a.txt"], "excerpt": "hello", "excerpt_total_chars": 5,
+                "status": [" M a.txt"],
+                "excerpt": "hello",
+                "excerpt_total_chars": 5,
                 "snapshot_errors": None,
             },
             "latest": {"at": "t0", "outcome": "exhausted", "turns": 121, "cost_usd": 6.88},
@@ -62,12 +69,12 @@ class DescribeAttemptRendersTheRecord(unittest.TestCase):
 
 
 class ThePromptSaysWhatAReviewThatWroteNothingOpened(unittest.TestCase):
-    """`0085` R11, as `describe_attempt` renders it."""
-
     LATEST = {"at": "t0", "outcome": "exhausted", "turns": 41, "cost_usd": 4.1}
 
     def render(self, opened):
-        return describe_attempt({"attempt": None, "latest": self.LATEST, "earlier": [], "opened": opened})
+        return describe_attempt(
+            {"attempt": None, "latest": self.LATEST, "earlier": [], "opened": opened}
+        )
 
     def test_the_paths_are_listed_as_opened_not_reviewed(self):
         text = self.render({"paths": ["/w/coscc/x.py", "/w/coscc/y.py"], "closing": True})
@@ -78,7 +85,7 @@ class ThePromptSaysWhatAReviewThatWroteNothingOpened(unittest.TestCase):
         self.assertIn("`review.md` holds nothing from it", text)
 
     def test_a_closing_turn_that_never_ran_is_not_told_of(self):
-        # Review F2: no session id or no head, so the app gave it none.
+        # No session id or no head, so the app gave it none.
         text = self.render({"paths": ["/w/coscc/x.py"], "closing": False})
         self.assertNotIn("the closing turn the app gave it", text)
         self.assertIn("the app could not give it a closing turn", text)
@@ -87,7 +94,10 @@ class ThePromptSaysWhatAReviewThatWroteNothingOpened(unittest.TestCase):
         self.assertIn("its recorded events have been purged", self.render({"purged": True}))
 
     def test_an_unreadable_log_is_said_to_be_unreadable(self):
-        self.assertIn("could not be read from its events: Busy: locked", self.render({"error": "Busy: locked"}))
+        self.assertIn(
+            "could not be read from its events: Busy: locked",
+            self.render({"error": "Busy: locked"}),
+        )
 
     def test_no_opened_key_adds_nothing(self):
         text = describe_attempt({"attempt": None, "latest": self.LATEST, "earlier": []})
@@ -95,8 +105,8 @@ class ThePromptSaysWhatAReviewThatWroteNothingOpened(unittest.TestCase):
 
 
 class AReplyWithoutItsOpeningIsRefusedByItsClass(unittest.TestCase):
-    """`0127` spec *Design* 1: the refusal a repair turn follows is told apart by its class,
-    and says what it said before."""
+    """The refusal a repair turn follows is told apart by its class, and says what it said
+    before."""
 
     def test_a_reply_without_its_opening_raises_an_opening_error(self):
         import tempfile
@@ -107,7 +117,9 @@ class AReplyWithoutItsOpeningIsRefusedByItsClass(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(OpeningError) as caught:
-                _write_artifact(Path(d), "plan.md", "## Files that change\n\nStatus: accepted.\n", blocks=2)
+                _write_artifact(
+                    Path(d), "plan.md", "## Files that change\n\nStatus: accepted.\n", blocks=2
+                )
             self.assertEqual(caught.exception.problem, "no `# Plan:` title")
             self.assertEqual(
                 str(caught.exception),
@@ -132,6 +144,8 @@ class AHelpersCallIsDecidedAsTheSessionsOwn(unittest.TestCase):
                 with self.subTest(agent_id=context.agent_id):
                     result = asyncio.run(gate("Bash", call, context))
                     self.assertEqual(type(result).__name__, "PermissionResultDeny")
-            allowed = asyncio.run(gate("Bash", {"command": "npm test"}, SimpleNamespace(agent_id="a1")))
+            allowed = asyncio.run(
+                gate("Bash", {"command": "npm test"}, SimpleNamespace(agent_id="a1"))
+            )
             self.assertEqual(type(allowed).__name__, "PermissionResultAllow")
             self.assertEqual(denials.count, 2)

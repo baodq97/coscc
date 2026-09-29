@@ -8,17 +8,16 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from coscc.runlog import events
 from coscc.runlog import spend
 from coscc.data import Data
-from coscc.runlog.journal import COST_FIELDS, COST_USD, Busy, add_cost, zero_cost
+from coscc.runlog.journal import COST_FIELDS, COST_USD, add_cost, zero_cost
+from coscc.data import Busy
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, grant_for_step
 from coscc.agent import labels
 from coscc.service.common import Invalid, STAGE_FILES, consequence
 
 
 class ActivityMixin:
-
     # -- activity, usage and settings ---------------------------------------
 
     def _records_or_none(self, cwd: str) -> list[dict[str, Any]] | None:
@@ -71,7 +70,9 @@ class ActivityMixin:
         for record in rows:
             if record.get("kind") != "end":
                 continue
-            bucket = per_unit.setdefault(str(record.get("unit") or ""), {**zero_cost(), "unknown": 0})
+            bucket = per_unit.setdefault(
+                str(record.get("unit") or ""), {**zero_cost(), "unknown": 0}
+            )
             add_cost(bucket, record)
             bucket["unknown"] += int(COST_USD not in record)
         total = {**zero_cost(), "unknown": 0}
@@ -105,7 +106,11 @@ class ActivityMixin:
         rows = self._records_or_none(cwd)
         if rows is None:
             return {
-                "cwd": cwd, "events": [], "total": {}, "per_unit": {}, "recording": False,
+                "cwd": cwd,
+                "events": [],
+                "total": {},
+                "per_unit": {},
+                "recording": False,
             }
         return {**self._events_of(cwd, rows, limit), **self._usage_of(cwd, rows)}
 
@@ -195,8 +200,11 @@ class ActivityMixin:
                 for stage, own in sorted(GRANTS.items())
                 for name, grant in (
                     [(stage, own)]
-                    + ([(f"{stage}:{labels.NOVEL}", grant_for_step(stage, labels.NOVEL))]
-                       if stage in NOVEL_CEILINGS else [])
+                    + (
+                        [(f"{stage}:{labels.NOVEL}", grant_for_step(stage, labels.NOVEL))]
+                        if stage in NOVEL_CEILINGS
+                        else []
+                    )
                 )
             ],
             "prose_stages": list(PROSE_STAGES),
@@ -205,14 +213,18 @@ class ActivityMixin:
 
     def _import_report(self) -> dict[str, Any]:
         """Every field an import could not read, its workspace by name, not a failed ingest: the card shows that one. A database that cannot be read is `problem`, in place of a Settings screen that does not load. What went wrong goes to the log, not the screen: `Busy` and `Incompatible` name the database's path."""
-        names = {self._journal_key(r["path"]): str(r["name"]) for r in self.workspaces()["workspaces"]}
+        names = {
+            self._journal_key(r["path"]): str(r["name"]) for r in self.workspaces()["workspaces"]
+        }
         try:
             found = self._unit_meta().unknowns()
         except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
             print(f"coscc: the import report could not be read: {e}", file=sys.stderr)
             return {"rows": [], "problem": "The import report could not be read."}
         return {
-            "rows": [{**r, "workspace": names.get(r["workspace"], "a removed workspace")} for r in found],
+            "rows": [
+                {**r, "workspace": names.get(r["workspace"], "a removed workspace")} for r in found
+            ],
             "problem": "",
         }
 

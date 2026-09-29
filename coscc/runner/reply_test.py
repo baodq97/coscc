@@ -1,8 +1,7 @@
-"""Tests for `coscc/runner/reply.py`, split from `coscc/runner/runner_test.py` (`0095`).
+"""Tests for `coscc/runner/reply.py`, split from `coscc/runner/runner_test.py`.
 
 A reply is checked before it becomes a file: its `Status:` line, its opening and its
-fences.
-"""
+fences."""
 
 from __future__ import annotations
 
@@ -32,17 +31,19 @@ class AReplyIsCheckedBeforeItBecomesAFile(unittest.TestCase):
 
 
 class TheOpeningIsCheckedBeforeAnArtifactIsWritten(unittest.TestCase):
-    """`0099` R3, R5, R9: where the artifact starts in what a session said, and the two
-    things its opening must carry."""
+    """Where the artifact starts in what a session said, and the two things its opening must carry."""
 
     PLAN = "# Plan: x\nIntent: intent.md. Status: accepted.\n\n## Body\n"
 
     def cut(self, text, artifact="plan.md"):
-        from coscc.runner import _unfence, from_title
+        from coscc.runner.reply import _unfence
+        from coscc.runner.reply import from_title
+
         return from_title(_unfence(text), artifact)
 
     def problem(self, text, artifact="plan.md"):
-        from coscc.runner import opening_problem
+        from coscc.runner.reply import opening_problem
+
         return opening_problem(text, artifact)
 
     def test_a_title_and_a_status_line_pass(self):
@@ -50,11 +51,17 @@ class TheOpeningIsCheckedBeforeAnArtifactIsWritten(unittest.TestCase):
         self.assertIsNone(self.problem("# Plan: x\n\nIntent: intent.md. Status: draft.\n"))
 
     def test_each_thing_missing_is_named(self):
-        self.assertEqual(self.problem("## Plan: x\nIntent: i. Status: accepted.\n"), "no `# Plan:` title")
-        self.assertEqual(self.problem("# Plan: x\n\n## Body\nStatus: accepted.\n"),
-                         "no `Status:` line in its header")
-        self.assertEqual(self.problem("## Body\n\nR1.\n"),
-                         "no `# Plan:` title and no `Status:` line in its header")
+        self.assertEqual(
+            self.problem("## Plan: x\nIntent: i. Status: accepted.\n"), "no `# Plan:` title"
+        )
+        self.assertEqual(
+            self.problem("# Plan: x\n\n## Body\nStatus: accepted.\n"),
+            "no `Status:` line in its header",
+        )
+        self.assertEqual(
+            self.problem("## Body\n\nR1.\n"),
+            "no `# Plan:` title and no `Status:` line in its header",
+        )
 
     def test_another_stages_title_is_no_title(self):
         self.assertEqual(self.problem("# Spec: x\nStatus: accepted.\n"), "no `# Plan:` title")
@@ -74,11 +81,13 @@ class TheOpeningIsCheckedBeforeAnArtifactIsWritten(unittest.TestCase):
         self.assertIsNone(self.problem(got))
 
     def test_text_with_no_title_comes_back_whole(self):
-        from coscc.runner import from_title
+        from coscc.runner.reply import from_title
+
         self.assertEqual(from_title("## Body\nR1.\n", "plan.md"), "## Body\nR1.\n")
 
     def test_the_reason_names_the_artifact_what_is_missing_and_the_blocks(self):
-        from coscc.runner import opening_reason
+        from coscc.runner.reply import opening_reason
+
         got = opening_reason("plan.md", "no `Status:` line in its header", 3)
         for part in ("plan.md", "no `Status:` line", "3 blocks"):
             self.assertIn(part, got)
@@ -87,7 +96,7 @@ class TheOpeningIsCheckedBeforeAnArtifactIsWritten(unittest.TestCase):
 
 
 class ARepairTurnIsAskedForTheOpening(unittest.TestCase):
-    """`0127` R3, spec *Design* 1: the typed refusal a repair turn follows, and its prompt."""
+    """The typed refusal a repair turn follows, and its prompt."""
 
     PROBLEM = "no `# Plan:` title and no `Status:` line in its header"
 
@@ -112,7 +121,9 @@ class ARepairTurnIsAskedForTheOpening(unittest.TestCase):
         from coscc.runner.reply import opening_prompt
 
         for artifact in ("idea.md", "intent.md", "spec.md", "plan.md", "review.md"):
-            self.assertIsNone(re.search(r"Status:\s*[A-Za-z]", opening_prompt(artifact, self.PROBLEM)), artifact)
+            self.assertIsNone(
+                re.search(r"Status:\s*[A-Za-z]", opening_prompt(artifact, self.PROBLEM)), artifact
+            )
 
     def test_the_review_opening_prompt_asks_for_the_new_round_only(self):
         from coscc.runner.reply import opening_prompt

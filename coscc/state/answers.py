@@ -9,16 +9,22 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.web import present
-from coscc.service import Invalid
+from coscc.service.common import Invalid
 from coscc.state.views import DecisionRow, _key_label
 
 # The fields of the decision form, and what each starts as.
-DECISION_FORM = {"kind": "decision", "text": "", "source": "", "workspace": "All workspaces", "until": "",
-                 "agent": "Leif", "covers": ""}
+DECISION_FORM = {
+    "kind": "decision",
+    "text": "",
+    "source": "",
+    "workspace": "All workspaces",
+    "until": "",
+    "agent": "Leif",
+    "covers": "",
+}
 
 
 class AnswersMixin(rx.State, mixin=True):
-
     # -- answering a question. One text box is live at a time: typing into a question's box
     # makes it the target, and the box of every other question reads empty. No name is typed;
     # the service records `owner`.
@@ -52,19 +58,29 @@ class AnswersMixin(rx.State, mixin=True):
     def _show_decisions(self, data: dict) -> None:
         self.decision_rows = [
             DecisionRow(
-                id=str(r["id"]), kind=str(r["kind"]), text=str(r["text"]), source=str(r["source"]),
-                workspace=str(r["workspace_name"]), agent=str(r.get("agent") or ""),
-                covers=str(r.get("covers") or ""), from_day=present.day(r.get("from_day")),
+                id=str(r["id"]),
+                kind=str(r["kind"]),
+                text=str(r["text"]),
+                source=str(r["source"]),
+                workspace=str(r["workspace_name"]),
+                agent=str(r.get("agent") or ""),
+                covers=str(r.get("covers") or ""),
+                from_day=present.day(r.get("from_day")),
                 until=present.day(r.get("until_day")) or "until withdrawn",
-                withdrawn=present.day(r.get("withdrawn")), state=str(r["state"]),
+                withdrawn=present.day(r.get("withdrawn")),
+                state=str(r["state"]),
                 in_force=r["state"] == "in force",
             )
             for r in data.get("rows") or []
         ]
-        self.decision_workspaces = ["All workspaces", *[str(n) for n in data.get("workspaces") or []]]
+        self.decision_workspaces = [
+            "All workspaces",
+            *[str(n) for n in data.get("workspaces") or []],
+        ]
 
     def _load_decisions(self) -> None:
         from coscc.state import SERVICE
+
         try:
             self._show_decisions(SERVICE.decisions_table())
         except Invalid as e:
@@ -79,6 +95,7 @@ class AnswersMixin(rx.State, mixin=True):
     def add_decision(self):
         """Whether the form may be saved is `Service.add_decision`'s call."""
         from coscc.state import SERVICE
+
         form = dict(self.decision_form)
         if form.get("workspace") == DECISION_FORM["workspace"]:
             form["workspace"] = ""
@@ -94,6 +111,7 @@ class AnswersMixin(rx.State, mixin=True):
     @rx.event
     def withdraw_decision(self, decision_id: str):
         from coscc.state import SERVICE
+
         try:
             self._show_decisions(SERVICE.withdraw_decision(decision_id))
         except Invalid as e:
@@ -111,9 +129,12 @@ class AnswersMixin(rx.State, mixin=True):
         first press's "Answered ..." survives.
         """
         from coscc.state import SERVICE
+
         self.error = ""
         if key != self.answer_target or not self.answer_text.strip():
-            self.error = f"Nothing was sent: you pressed Send on {_key_label(key)}, but its box is empty."
+            self.error = (
+                f"Nothing was sent: you pressed Send on {_key_label(key)}, but its box is empty."
+            )
             if self.answer_target and self.answer_text.strip():
                 self.error += (
                     f" Your text is in the box of {_key_label(self.answer_target)}, and it is "
@@ -178,15 +199,24 @@ class AnswersMixin(rx.State, mixin=True):
         """Record the open unit's outcome. A label missing from the tables goes as it is, for
         the service to refuse."""
         from coscc.state import SERVICE
-        result = {v: k for k, v in present.RESULT_LABEL.items()}.get(self.outcome_result, self.outcome_result)
+
+        result = {v: k for k, v in present.RESULT_LABEL.items()}.get(
+            self.outcome_result, self.outcome_result
+        )
         measurer = {v: k for k, v in present.MEASURER_LABEL.items()}.get(
             self.outcome_measured_by, self.outcome_measured_by
         )
         self.recording_outcome = True
         try:
             done = await SERVICE.record_outcome(
-                self.cwd, self.unit_id, result, measurer,
-                self.outcome_source, self.outcome_reason, self.outcome_note, "",
+                self.cwd,
+                self.unit_id,
+                result,
+                measurer,
+                self.outcome_source,
+                self.outcome_reason,
+                self.outcome_note,
+                "",
             )
         except Invalid as e:
             self.notice = str(e)
@@ -209,6 +239,7 @@ class AnswersMixin(rx.State, mixin=True):
         flag is set and cleared inside one delta and the button never locks for the up to
         60s `gh` may take."""
         from coscc.state import SERVICE
+
         if self.posting_round != 0:
             return
         self.posting_round = int(number)
@@ -236,6 +267,7 @@ class AnswersMixin(rx.State, mixin=True):
         """Integrate the open unit; whether it may, and which road, is `Service.integrate`'s.
         The `yield` sends `integrating` to the browser."""
         from coscc.state import SERVICE
+
         if self.integrating:
             return
         self.integrating = True
@@ -253,7 +285,11 @@ class AnswersMixin(rx.State, mixin=True):
         outcome = done.get("outcome", "")
         # The name the service wrote into the record, never one put together here.
         name = str(done.get("agent") or "")
-        who = "the app" if done.get("mode") == "mechanical" else (f"an agent ({name})" if name else "an agent")
+        who = (
+            "the app"
+            if done.get("mode") == "mechanical"
+            else (f"an agent ({name})" if name else "an agent")
+        )
         if outcome == "pushed":
             self.notice = (
                 f"Integrated by {who}: the pull request is now at {str(done.get('head_after'))[:7]}. "
@@ -262,7 +298,9 @@ class AnswersMixin(rx.State, mixin=True):
         elif outcome == "needs-person":
             self.notice = f"{name or 'The agent'} stopped: a person is needed. The contradictions are listed on the unit."
         else:
-            self.notice = f"Integration {outcome or 'ended'}: {done.get('detail') or 'see Activity'}"
+            self.notice = (
+                f"Integration {outcome or 'ended'}: {done.get('detail') or 'see Activity'}"
+            )
         await self._load_board()
 
     @rx.event
@@ -270,12 +308,12 @@ class AnswersMixin(rx.State, mixin=True):
         self.hold_reason = value
 
     @rx.event
-
     @rx.event
     async def set_hold(self, to: str):
         """Pause, drop or resume the open unit; `Service.hold` decides. Starts nothing: the
         run button still waits for a person."""
         from coscc.state import SERVICE, StudioState
+
         if self.holding:
             return
         self.holding = True
@@ -306,6 +344,7 @@ class AnswersMixin(rx.State, mixin=True):
         """Allow the open unit one more review round; `Service.more_rounds` decides. Starts
         nothing: the run button still waits for a person."""
         from coscc.state import SERVICE, StudioState
+
         if self.granting_round:
             return
         self.granting_round = True

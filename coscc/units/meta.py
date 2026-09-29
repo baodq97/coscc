@@ -57,7 +57,9 @@ def read(store: str | Path, *args: str) -> dict[str, Any]:
     except (OSError, subprocess.TimeoutExpired) as e:
         raise MetaError(f"cos.mjs meta did not run: {e}") from e
     if done.returncode != 0:
-        raise MetaError((done.stderr or done.stdout).strip() or f"cos.mjs meta exited {done.returncode}")
+        raise MetaError(
+            (done.stderr or done.stdout).strip() or f"cos.mjs meta exited {done.returncode}"
+        )
     try:
         return json.loads(done.stdout)
     except ValueError as e:
@@ -104,7 +106,6 @@ class UnitMeta:
         self.data = self.history.data
         self.machine = self.history.machine
         self.root = str(self.history.working_dir)
-
 
     def import_key(self, workspace: str) -> str:
         return f"unit-meta:0135:{self.root}/{workspace}"
@@ -156,7 +157,6 @@ class UnitMeta:
             Data.mark_run(conn, self.authority_key(workspace))
         return unknowns
 
-
     def ingest(
         self,
         workspace: str,
@@ -181,10 +181,18 @@ class UnitMeta:
         found = read(store, unit)
         meta = (found.get("units") or {}).get(unit) or {}
         with self.data.write() as conn:
-            conn.execute(f"DELETE FROM unit_unknowns WHERE {_ONE} AND field = 'ingest'", (self.root, workspace, unit))
+            conn.execute(
+                f"DELETE FROM unit_unknowns WHERE {_ONE} AND field = 'ingest'",
+                (self.root, workspace, unit),
+            )
             return self._apply(
-                conn, workspace, unit, meta, imported=False,
-                provenance={"actor": actor, "session": session, "source": source}, wrote=wrote,
+                conn,
+                workspace,
+                unit,
+                meta,
+                imported=False,
+                provenance={"actor": actor, "session": session, "source": source},
+                wrote=wrote,
                 decided=decided,
             )
 
@@ -232,11 +240,14 @@ class UnitMeta:
         unknowns: list[dict[str, Any]] = []
         items: list[dict[str, Any]] = []
         changed = [
-            (artifact, a) for artifact, a in (meta.get("artifacts") or {}).items()
+            (artifact, a)
+            for artifact, a in (meta.get("artifacts") or {}).items()
             if seen.get(artifact) != a.get("sha256") or artifact == wrote
         ]
         for artifact, a in changed:
-            conn.execute(f"DELETE FROM unit_unknowns WHERE {_ONE} AND artifact = ?", (*scope, artifact))
+            conn.execute(
+                f"DELETE FROM unit_unknowns WHERE {_ONE} AND artifact = ?", (*scope, artifact)
+            )
             if artifact in decided:
                 # Its `Status:` and `## Open questions` are prose for a reader now.
                 conn.execute(
@@ -247,18 +258,39 @@ class UnitMeta:
                 continue
             status, raw = a.get("status"), a.get("raw")
             if status is not None and self.machine.refuse(artifact, status) is None:
-                if artifact == wrote or latest.get((workspace, unit, artifact), self.machine.absent) != status:
-                    item = {"workspace": workspace, "unit": unit, "artifact": artifact, "to_state": status}
+                if (
+                    artifact == wrote
+                    or latest.get((workspace, unit, artifact), self.machine.absent) != status
+                ):
+                    item = {
+                        "workspace": workspace,
+                        "unit": unit,
+                        "artifact": artifact,
+                        "to_state": status,
+                    }
                     if imported:
-                        item.update(actor=SOURCE, session=SOURCE, source=SOURCE,
-                                    once_key=f"{SOURCE}:{workspace}/{unit}/{artifact}")
+                        item.update(
+                            actor=SOURCE,
+                            session=SOURCE,
+                            source=SOURCE,
+                            once_key=f"{SOURCE}:{workspace}/{unit}/{artifact}",
+                        )
                     else:
                         item.update(provenance or {})
                     items.append(item)
             else:
-                unknowns.append({"unit": unit, "artifact": artifact, "field": "status",
-                                 "reason": _no_status(artifact, raw, self.machine), "raw": raw})
-            conn.execute(f"DELETE FROM unit_questions WHERE {_ONE} AND artifact = ?", (*scope, artifact))
+                unknowns.append(
+                    {
+                        "unit": unit,
+                        "artifact": artifact,
+                        "field": "status",
+                        "reason": _no_status(artifact, raw, self.machine),
+                        "raw": raw,
+                    }
+                )
+            conn.execute(
+                f"DELETE FROM unit_questions WHERE {_ONE} AND artifact = ?", (*scope, artifact)
+            )
             questions = a.get("questions")
             conn.executemany(
                 "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text) VALUES (?, ?, ?, ?, ?, ?)",
@@ -273,8 +305,15 @@ class UnitMeta:
             kind = meta.get("type")
             conn.execute(f"UPDATE unit_meta SET type = ? WHERE {_ONE}", (kind or "unknown", *scope))
             if kind is None:
-                unknowns.append({"unit": unit, "artifact": "intent.md", "field": "type",
-                                 "reason": "intent.md declares no Type", "raw": None})
+                unknowns.append(
+                    {
+                        "unit": unit,
+                        "artifact": "intent.md",
+                        "field": "type",
+                        "reason": "intent.md declares no Type",
+                        "raw": None,
+                    }
+                )
             links = meta.get("links") or {}
             rows = [("idea", links.get("idea")), ("repo", links.get("repo"))]
             rows += [("depends", d) for d in links.get("dependsOn") or []]
@@ -285,27 +324,69 @@ class UnitMeta:
             )
         if imported:
             for i, a in enumerate(meta.get("answers") or []):
-                self._answer(conn, workspace, unit, a["artifact"], a["id"] or str(a["n"]), a["text"],
-                             a["by"], a["date"], a["via"], f"{SOURCE}:{workspace}/{unit}/{a['artifact']}/answer/{i}",
-                             authority=authority_of(a["via"], a["text"]))
+                self._answer(
+                    conn,
+                    workspace,
+                    unit,
+                    a["artifact"],
+                    a["id"] or str(a["n"]),
+                    a["text"],
+                    a["by"],
+                    a["date"],
+                    a["via"],
+                    f"{SOURCE}:{workspace}/{unit}/{a['artifact']}/answer/{i}",
+                    authority=authority_of(a["via"], a["text"]),
+                )
             for i, h in enumerate(meta.get("holds") or []):
                 if h.get("by") is None:
-                    unknowns.append({"unit": unit, "artifact": "intent.md", "field": "hold",
-                                     "reason": f"hold block {i + 1} has no Decided by line", "raw": None})
+                    unknowns.append(
+                        {
+                            "unit": unit,
+                            "artifact": "intent.md",
+                            "field": "hold",
+                            "reason": f"hold block {i + 1} has no Decided by line",
+                            "raw": None,
+                        }
+                    )
                     continue
-                self._hold(conn, workspace, unit, h["state"], h["reason"], h["by"], h["date"], h["via"],
-                           f"{SOURCE}:{workspace}/{unit}/hold/{i}")
+                self._hold(
+                    conn,
+                    workspace,
+                    unit,
+                    h["state"],
+                    h["reason"],
+                    h["by"],
+                    h["date"],
+                    h["via"],
+                    f"{SOURCE}:{workspace}/{unit}/hold/{i}",
+                )
         self.history.record_in(conn, items)
         conn.executemany(
             "INSERT INTO unit_unknowns (root, workspace, unit, artifact, field, reason, raw, at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [(self.root, workspace, u["unit"], u["artifact"], u["field"], u["reason"], u["raw"], at)
-             for u in unknowns],
+            [
+                (
+                    self.root,
+                    workspace,
+                    u["unit"],
+                    u["artifact"],
+                    u["field"],
+                    u["reason"],
+                    u["raw"],
+                    at,
+                )
+                for u in unknowns
+            ],
         )
         return unknowns
 
     def record_result(
-        self, conn: sqlite3.Connection, workspace: str, unit: str, stage: str, artifact: str,
+        self,
+        conn: sqlite3.Connection,
+        workspace: str,
+        unit: str,
+        stage: str,
+        artifact: str,
         submitted: Mapping[str, Any],
     ) -> None:
         """What a stage result carries beside its transition, in the caller's transaction: its
@@ -315,10 +396,19 @@ class UnitMeta:
         conn.execute(
             "INSERT INTO stage_results (at, root, workspace, unit, stage, run, revision, judgement, object) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (now(), *scope, stage, str(submitted.get("run") or ""), str(submitted.get("revision") or ""),
-             str(obj.get("judgement") or ""), json.dumps(obj, ensure_ascii=False)),
+            (
+                now(),
+                *scope,
+                stage,
+                str(submitted.get("run") or ""),
+                str(submitted.get("revision") or ""),
+                str(obj.get("judgement") or ""),
+                json.dumps(obj, ensure_ascii=False),
+            ),
         )
-        conn.execute(f"DELETE FROM unit_questions WHERE {_ONE} AND artifact = ?", (*scope, artifact))
+        conn.execute(
+            f"DELETE FROM unit_questions WHERE {_ONE} AND artifact = ?", (*scope, artifact)
+        )
         conn.executemany(
             "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text) VALUES (?, ?, ?, ?, ?, ?)",
             [(*scope, artifact, int(q["n"]), str(q["text"])) for q in obj.get("questions") or []],
@@ -331,11 +421,21 @@ class UnitMeta:
         # impl's claims, each against the round whose open findings guard `impl-claim` read.
         conn.executemany(
             "INSERT INTO impl_claims (at, root, workspace, unit, run, round, finding) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [(now(), *scope, str(submitted.get("run") or ""), int(submitted.get("claims_round") or 0), str(f))
-             for f in obj.get("needs_person") or ()],
+            [
+                (
+                    now(),
+                    *scope,
+                    str(submitted.get("run") or ""),
+                    int(submitted.get("claims_round") or 0),
+                    str(f),
+                )
+                for f in obj.get("needs_person") or ()
+            ],
         )
 
-    def record_round(self, conn: sqlite3.Connection, workspace: str, unit: str, submitted: Mapping[str, Any]) -> None:
+    def record_round(
+        self, conn: sqlite3.Connection, workspace: str, unit: str, submitted: Mapping[str, Any]
+    ) -> None:
         """A review round and its findings, in the caller's transaction. `n` and `head` are the
         app's: the round number and the head read when the run opened; `screens` is the object's
         list with where the app read they were taken."""
@@ -344,35 +444,91 @@ class UnitMeta:
         cur = conn.execute(
             "INSERT INTO review_rounds (at, root, workspace, unit, n, run, head, verdict, screens) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (now(), self.root, workspace, unit, int(submitted["n"]), str(submitted.get("run") or ""),
-             str(submitted.get("head") or ""), str(obj["verdict"]), json.dumps(screens, ensure_ascii=False)),
+            (
+                now(),
+                self.root,
+                workspace,
+                unit,
+                int(submitted["n"]),
+                str(submitted.get("run") or ""),
+                str(submitted.get("head") or ""),
+                str(obj["verdict"]),
+                json.dumps(screens, ensure_ascii=False),
+            ),
         )
         conn.executemany(
             "INSERT INTO review_findings (round, finding, open, label, fixed_in, severity, rule, path, lines, text) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [(cur.lastrowid, f["id"], 1 if f["state"] == "open" else 0, f["state"], f["fixed_in"],
-              f["severity"], f["rule"], f["path"], f["lines"], f["text"]) for f in obj.get("findings") or ()],
+            [
+                (
+                    cur.lastrowid,
+                    f["id"],
+                    1 if f["state"] == "open" else 0,
+                    f["state"],
+                    f["fixed_in"],
+                    f["severity"],
+                    f["rule"],
+                    f["path"],
+                    f["lines"],
+                    f["text"],
+                )
+                for f in obj.get("findings") or ()
+            ],
         )
 
-    def _write_ideas(self, conn: sqlite3.Connection, workspace: str, ideas: Iterable[Mapping[str, Any]] | None) -> None:
-        conn.execute("DELETE FROM idea_meta WHERE root = ? AND workspace = ?", (self.root, workspace))
+    def _write_ideas(
+        self, conn: sqlite3.Connection, workspace: str, ideas: Iterable[Mapping[str, Any]] | None
+    ) -> None:
+        conn.execute(
+            "DELETE FROM idea_meta WHERE root = ? AND workspace = ?", (self.root, workspace)
+        )
         conn.executemany(
             "INSERT INTO idea_meta (root, workspace, idea, read) VALUES (?, ?, ?, ?)",
             [
-                (self.root, workspace, str(i["id"]), json.dumps(
-                    {k: i.get(k) for k in ("title", "status", "units", "problems")}, ensure_ascii=False))
+                (
+                    self.root,
+                    workspace,
+                    str(i["id"]),
+                    json.dumps(
+                        {k: i.get(k) for k in ("title", "status", "units", "problems")},
+                        ensure_ascii=False,
+                    ),
+                )
                 for i in ideas or []
             ],
         )
 
-
-    def _answer(self, conn, workspace, unit, artifact, ref, text, by, date, via, once_key="",
-                authority="unknown") -> None:
+    def _answer(
+        self,
+        conn,
+        workspace,
+        unit,
+        artifact,
+        ref,
+        text,
+        by,
+        date,
+        via,
+        once_key="",
+        authority="unknown",
+    ) -> None:
         conn.execute(
             "INSERT OR IGNORE INTO unit_answers "
             "(root, workspace, unit, artifact, ref, text, answered_by, date, via, once_key, authority) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (self.root, workspace, unit, artifact, str(ref), text, by, date, via, once_key, authority),
+            (
+                self.root,
+                workspace,
+                unit,
+                artifact,
+                str(ref),
+                text,
+                by,
+                date,
+                via,
+                once_key,
+                authority,
+            ),
         )
 
     def _hold(self, conn, workspace, unit, state, reason, by, date, via, once_key="") -> None:
@@ -383,27 +539,45 @@ class UnitMeta:
         )
 
     def add_answer(
-        self, workspace: str, unit: str, artifact: str, ref: str | int, text: str,
-        by: str, date: str, via: str, conn: sqlite3.Connection | None = None,
+        self,
+        workspace: str,
+        unit: str,
+        artifact: str,
+        ref: str | int,
+        text: str,
+        by: str,
+        date: str,
+        via: str,
+        conn: sqlite3.Connection | None = None,
         authority: str = "unknown",
     ) -> None:
         """`ref` is a question's number or a finding's `F<k>`; the last row for it wins.
         `authority` is `person`, `delegated` or `agent`: whose answer it is, which no name in `by` settles."""
         if conn is not None:
-            return self._answer(conn, workspace, unit, artifact, ref, text, by, date, via, authority=authority)
+            return self._answer(
+                conn, workspace, unit, artifact, ref, text, by, date, via, authority=authority
+            )
         with self.data.write() as c:
-            self._answer(c, workspace, unit, artifact, ref, text, by, date, via, authority=authority)
+            self._answer(
+                c, workspace, unit, artifact, ref, text, by, date, via, authority=authority
+            )
 
     def add_hold(
-        self, workspace: str, unit: str, state: str, reason: str,
-        by: str, date: str, via: str, conn: sqlite3.Connection | None = None,
+        self,
+        workspace: str,
+        unit: str,
+        state: str,
+        reason: str,
+        by: str,
+        date: str,
+        via: str,
+        conn: sqlite3.Connection | None = None,
     ) -> None:
         """`state` is `paused`, `dropped` or `active`; `cos.mjs` folds the rows."""
         if conn is not None:
             return self._hold(conn, workspace, unit, state, reason, by, date, via)
         with self.data.write() as c:
             self._hold(c, workspace, unit, state, reason, by, date, via)
-
 
     def unknowns(self, workspaces: Iterable[str] | None = None) -> list[dict[str, Any]]:
         """Every field an import could not read, for `/settings`. Not failed ingests."""
@@ -414,9 +588,14 @@ class UnitMeta:
             sql += f" AND workspace IN ({', '.join('?' for _ in wanted)})"
             args += wanted
         with self.data.connect() as conn:
-            return [dict(r) for r in conn.execute(sql + " ORDER BY workspace, unit, artifact, field", args)]
+            return [
+                dict(r)
+                for r in conn.execute(sql + " ORDER BY workspace, unit, artifact, field", args)
+            ]
 
-    def snapshot(self, own: str, names: Mapping[str, str], units_: Iterable[str] | None = None) -> dict[str, Any]:
+    def snapshot(
+        self, own: str, names: Mapping[str, str], units_: Iterable[str] | None = None
+    ) -> dict[str, Any]:
         """What `cos.mjs --state` reads, for the store `own` and every workspace `names` maps a name to.
 
         One query per table. Units are keyed `<name>/<unit>`; `own`'s name is the one `names`
@@ -439,7 +618,8 @@ class UnitMeta:
                 pairs = {(own, u) for u in wanted}
                 links = conn.execute(
                     f"SELECT ref FROM unit_links WHERE root = ? AND workspace = ? AND kind = 'depends' "
-                    f"AND unit IN ({', '.join('?' for _ in wanted)})", (self.root, own, *wanted),
+                    f"AND unit IN ({', '.join('?' for _ in wanted)})",
+                    (self.root, own, *wanted),
                 ).fetchall()
                 for (ref,) in links:
                     ws, _, name = ref.rpartition("/")
@@ -457,9 +637,14 @@ class UnitMeta:
                 if pairs is not None and (r["workspace"], r["unit"]) not in pairs:
                     continue
                 units[f"{name_of[r['workspace']]}/{r['unit']}"] = {
-                    "artifacts": {}, "type": None if r["type"] == "unknown" else r["type"], "lane": r["lane"],
+                    "artifacts": {},
+                    "type": None if r["type"] == "unknown" else r["type"],
+                    "lane": r["lane"],
                     "links": {"idea": None, "repo": None, "dependsOn": None},
-                    "holds": [], "answers": [], "unknowns": [], "merged": False,
+                    "holds": [],
+                    "answers": [],
+                    "unknowns": [],
+                    "merged": False,
                 }
 
             def entry(r) -> dict[str, Any] | None:
@@ -467,7 +652,13 @@ class UnitMeta:
 
             def artifact(r) -> dict[str, Any] | None:
                 e = entry(r)
-                return None if e is None else e["artifacts"].setdefault(r["artifact"], {"status": None, "raw": None, "questions": None})
+                return (
+                    None
+                    if e is None
+                    else e["artifacts"].setdefault(
+                        r["artifact"], {"status": None, "raw": None, "questions": None}
+                    )
+                )
 
             for r in rows(
                 "SELECT workspace, unit, artifact, to_state, authority FROM transitions WHERE id IN "
@@ -496,49 +687,79 @@ class UnitMeta:
             ):
                 e = entry(r)
                 if e is not None and (r["workspace"], r["unit"]) not in moved:
-                    e["merged"] = r["to_state"] == "accepted" and r["source"] in SHIPPED_BEFORE_THE_MACHINE
+                    e["merged"] = (
+                        r["to_state"] == "accepted" and r["source"] in SHIPPED_BEFORE_THE_MACHINE
+                    )
             # The last stage result of each stage, which `cos.mjs` reads a spec's `U<n>` and a spike's verdicts from.
             for r in rows(
                 "SELECT workspace, unit, stage, object FROM stage_results WHERE id IN "
                 "(SELECT MAX(id) FROM stage_results WHERE {where} GROUP BY workspace, unit, stage)"
             ):
-                a = artifact({"workspace": r["workspace"], "unit": r["unit"], "artifact": f"{r['stage']}.md"})
+                a = artifact(
+                    {"workspace": r["workspace"], "unit": r["unit"], "artifact": f"{r['stage']}.md"}
+                )
                 if a is not None:
                     a["result"] = json.loads(r["object"])
             # Every round a review handed back, read in place of the round of the same number in `review.md`.
             by_id: dict[int, dict[str, Any]] = {}
-            for r in rows("SELECT id, workspace, unit, n, head, verdict, screens FROM review_rounds WHERE {where} ORDER BY n"):
-                a = artifact({"workspace": r["workspace"], "unit": r["unit"], "artifact": "review.md"})
+            for r in rows(
+                "SELECT id, workspace, unit, n, head, verdict, screens FROM review_rounds WHERE {where} ORDER BY n"
+            ):
+                a = artifact(
+                    {"workspace": r["workspace"], "unit": r["unit"], "artifact": "review.md"}
+                )
                 if a is not None:
-                    by_id[r["id"]] = {"n": r["n"], "reviewed": r["head"], "verdict": r["verdict"],
-                                      "screens": json.loads(r["screens"]), "findings": []}
+                    by_id[r["id"]] = {
+                        "n": r["n"],
+                        "reviewed": r["head"],
+                        "verdict": r["verdict"],
+                        "screens": json.loads(r["screens"]),
+                        "findings": [],
+                    }
                     a.setdefault("rounds", []).append(by_id[r["id"]])
             for r in rows(
                 "SELECT f.round, f.finding, f.label, f.fixed_in, f.severity, f.rule, f.path, f.lines, f.text "
                 "FROM review_findings f JOIN review_rounds ON f.round = review_rounds.id WHERE {where} ORDER BY f.rowid"
             ):
                 if r["round"] in by_id:
-                    by_id[r["round"]]["findings"].append({
-                        "id": r["finding"], "label": r["label"], "fixedIn": r["fixed_in"] or None,
-                        "severity": r["severity"], "rule": r["rule"], "path": r["path"], "lines": r["lines"],
-                        "text": r["text"],
-                    })
-            for r in rows("SELECT workspace, unit, artifact, questions FROM unit_seen WHERE {where}"):
+                    by_id[r["round"]]["findings"].append(
+                        {
+                            "id": r["finding"],
+                            "label": r["label"],
+                            "fixedIn": r["fixed_in"] or None,
+                            "severity": r["severity"],
+                            "rule": r["rule"],
+                            "path": r["path"],
+                            "lines": r["lines"],
+                            "text": r["text"],
+                        }
+                    )
+            for r in rows(
+                "SELECT workspace, unit, artifact, questions FROM unit_seen WHERE {where}"
+            ):
                 a = artifact(r)
                 if a is not None and r["questions"]:
                     a["questions"] = []
-            for r in rows("SELECT workspace, unit, artifact, n, text FROM unit_questions WHERE {where} ORDER BY rowid"):
+            for r in rows(
+                "SELECT workspace, unit, artifact, n, text FROM unit_questions WHERE {where} ORDER BY rowid"
+            ):
                 a = artifact(r)
                 if a is not None:
                     a["questions"] = [*(a["questions"] or []), {"n": r["n"], "text": r["text"]}]
-            for r in rows("SELECT workspace, unit, artifact, field, reason, raw FROM unit_unknowns WHERE {where}"):
+            for r in rows(
+                "SELECT workspace, unit, artifact, field, reason, raw FROM unit_unknowns WHERE {where}"
+            ):
                 e = entry(r)
                 if e is None:
                     continue
-                e["unknowns"].append({"artifact": r["artifact"], "field": r["field"], "reason": r["reason"]})
+                e["unknowns"].append(
+                    {"artifact": r["artifact"], "field": r["field"], "reason": r["reason"]}
+                )
                 if r["field"] == "status" and r["raw"] is not None:
                     artifact(r)["raw"] = r["raw"]
-            for r in rows("SELECT workspace, unit, kind, ref FROM unit_links WHERE {where} ORDER BY pos"):
+            for r in rows(
+                "SELECT workspace, unit, kind, ref FROM unit_links WHERE {where} ORDER BY pos"
+            ):
                 e = entry(r)
                 if e is None:
                     continue
@@ -546,25 +767,51 @@ class UnitMeta:
                     e["links"]["dependsOn"] = [*(e["links"]["dependsOn"] or []), r["ref"]]
                 else:
                     e["links"][r["kind"]] = r["ref"]
-            for r in rows("SELECT workspace, unit, artifact, ref, text, answered_by, date, via, authority "
-                          "FROM unit_answers WHERE {where} ORDER BY id"):
+            for r in rows(
+                "SELECT workspace, unit, artifact, ref, text, answered_by, date, via, authority "
+                "FROM unit_answers WHERE {where} ORDER BY id"
+            ):
                 e = entry(r)
                 if e is not None:
                     number = r["ref"].isdigit()
-                    e["answers"].append({
-                        "artifact": r["artifact"], "n": int(r["ref"]) if number else None,
-                        "id": None if number else r["ref"], "by": r["answered_by"], "date": r["date"],
-                        "via": r["via"], "text": r["text"], "authority": r["authority"],
-                    })
-            for r in rows("SELECT workspace, unit, move, reason, decided_by, date, via FROM unit_holds WHERE {where} ORDER BY id"):
+                    e["answers"].append(
+                        {
+                            "artifact": r["artifact"],
+                            "n": int(r["ref"]) if number else None,
+                            "id": None if number else r["ref"],
+                            "by": r["answered_by"],
+                            "date": r["date"],
+                            "via": r["via"],
+                            "text": r["text"],
+                            "authority": r["authority"],
+                        }
+                    )
+            for r in rows(
+                "SELECT workspace, unit, move, reason, decided_by, date, via FROM unit_holds WHERE {where} ORDER BY id"
+            ):
                 e = entry(r)
                 if e is not None:
-                    e["holds"].append({"state": r["move"], "reason": r["reason"], "by": r["decided_by"],
-                                       "date": r["date"], "via": r["via"]})
+                    e["holds"].append(
+                        {
+                            "state": r["move"],
+                            "reason": r["reason"],
+                            "by": r["decided_by"],
+                            "date": r["date"],
+                            "via": r["via"],
+                        }
+                    )
             ideas: dict[str, list[dict[str, Any]]] = {}
             for r in conn.execute(
                 f"SELECT workspace, idea, read FROM idea_meta WHERE root = ? AND workspace IN "
-                f"({', '.join('?' for _ in keys)}) ORDER BY idea", (self.root, *keys),
+                f"({', '.join('?' for _ in keys)}) ORDER BY idea",
+                (self.root, *keys),
             ):
-                ideas.setdefault(name_of[r["workspace"]], []).append({"id": r["idea"], **json.loads(r["read"])})
-        return {"workspace": own_name, "workspaces": sorted(n for n in named if n), "units": units, "ideas": ideas}
+                ideas.setdefault(name_of[r["workspace"]], []).append(
+                    {"id": r["idea"], **json.loads(r["read"])}
+                )
+        return {
+            "workspace": own_name,
+            "workspaces": sorted(n for n in named if n),
+            "units": units,
+            "ideas": ideas,
+        }

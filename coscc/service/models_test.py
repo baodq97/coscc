@@ -1,10 +1,8 @@
-"""Tests for `ModelsMixin` in `coscc/service/models.py`, split from `coscc/service/service_test.py` (`0095`).
-"""
+"""Tests for `ModelsMixin` in `coscc/service/models.py`, split from `coscc/service/service_test.py`."""
 
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,8 +16,7 @@ from coscc.agent.submit_test import submits as _submits
 
 
 class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
-    """`0004_no-setting-says-which-model-runs-a-stage`. The setting chooses the model a
-    step's session is created with, and nothing else."""
+    """The setting chooses the model a step's session is created with, and nothing else."""
 
     class Probe:
         def __init__(self):
@@ -53,7 +50,9 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
 
     def _run(self, stage: str):
         async def go():
-            return [i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)]
+            return [
+                i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)
+            ]
 
         return asyncio.run(go())
 
@@ -79,17 +78,30 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertEqual(self._start()["model_source"], "default")
 
     def test_the_start_record_names_the_build_that_ran_it(self):
-        # `0094` R13, R16: three fields more, and none of the ones already there is lost.
+        # Three fields more, and none of the ones already there is lost.
         from unittest import mock
 
-        with mock.patch.object(self.service.updater, "me",
-                               lambda: {"version": "9.8.7", "commit": "d" * 40, "shape": "x"}):
+        with mock.patch.object(
+            self.service.updater,
+            "me",
+            lambda: {"version": "9.8.7", "commit": "d" * 40, "shape": "x"},
+        ):
             self._run("spec")
         start = self._start()
         self.assertEqual((start["app_version"], start["app_commit"]), ("9.8.7", "d" * 40))
         self.assertEqual(start["pointed"], [])
-        for kept in ("included", "prompt_chars", "granted", "max_turns", "head", "model",
-                     "model_source", "base", "system_prompt", "instructions"):
+        for kept in (
+            "included",
+            "prompt_chars",
+            "granted",
+            "max_turns",
+            "head",
+            "model",
+            "model_source",
+            "base",
+            "system_prompt",
+            "instructions",
+        ):
             self.assertIn(kept, start)
 
     def test_a_build_that_cannot_be_read_is_two_empty_strings_and_the_step_runs(self):
@@ -134,21 +146,21 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
             asyncio.run(self.service.set_stage_model("spec", "x"))
             self._run("spec")
         self.assertEqual(len(seen), 2)
-        # `0135`: the snapshot is the unit as it stands, and the first step wrote `spec.md`
-        # between the two asks; the question is the rest.
+        # The snapshot is the unit as it stands, and the first step wrote `spec.md` between the two
+        # asks; the question is the rest.
         without_state = [(a, {k: v for k, v in kw.items() if k != "state"}) for a, kw in seen]
         self.assertEqual(without_state[0], without_state[1])
 
     def test_a_spec_step_has_no_label_and_the_default_effort(self):
-        # `0033` R10: a stage before `plan` has no label; effort comes from R8's table.
         self._run("spec")
         start = self._start()
-        self.assertEqual((start["label_declared"], start["label"], start["label_source"]), (None, None, None))
+        self.assertEqual(
+            (start["label_declared"], start["label"], start["label_source"]), (None, None, None)
+        )
         self.assertEqual((start["effort"], start["effort_source"]), ("medium", "default"))
         self.assertNotIn("impl_run", start)
 
     def test_an_effort_override_of_max_is_taken_and_logged(self):
-        # R7: `max` only through an override; R9: every change is a `setting` record.
         asyncio.run(self.service.set_stage_effort("impl:novel", "max"))
         asyncio.run(self.service.set_stage_effort("impl:novel", None))
         records = self.service._journal().records("", kind="setting")
@@ -156,14 +168,21 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
             [(r["name"], r["old"], r["new"]) for r in records],
             [("effort:impl:novel", None, "max"), ("effort:impl:novel", "max", None)],
         )
-        for name, effort in (("chat", "low"), ("plan:novel", "low"), ("impl", "turbo"), ("bogus", "low")):
+        for name, effort in (
+            ("chat", "low"),
+            ("plan:novel", "low"),
+            ("impl", "turbo"),
+            ("bogus", "low"),
+        ):
             with self.assertRaises(Invalid, msg=(name, effort)):
                 asyncio.run(self.service.set_stage_effort(name, effort))
 
     def test_a_novel_row_takes_a_model_override(self):
         asyncio.run(self.service.set_stage_model("review:novel", "m"))
         rows = {r["name"]: r for r in asyncio.run(self.service.stage_models())["rows"]}
-        self.assertEqual((rows["review:novel"]["model"], rows["review:novel"]["source"]), ("m", "override"))
+        self.assertEqual(
+            (rows["review:novel"]["model"], rows["review:novel"]["source"]), ("m", "override")
+        )
         self.assertEqual(rows["review"]["source"], "default")
 
     def test_model_prefs_are_not_preferences(self):
@@ -196,7 +215,6 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertNotIn("model", self.service.settings())
 
     def test_settings_shows_the_novel_impl_ceilings_after_impl(self):
-        """`0062` R9."""
         rows = self.service.settings()["grants"]
         stages = [r["stage"] for r in rows]
         impl, novel = rows[stages.index("impl")], rows[stages.index("impl:novel")]
@@ -214,12 +232,14 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertEqual(rows["impl"]["budget"], "$8.00")
 
     def test_settings_never_show_the_trial(self):
-        """`0139` R16: Settings shows `models.json` and the overrides, never an arm's model."""
+        """Settings shows `models.json` and the overrides, never an arm's model."""
         rows = asyncio.run(self.service.stage_models())["rows"]
         self.assertFalse([r for r in rows if r["source"] == "trial"])
 
     def test_a_grants_tools_and_commands_are_also_lists(self):
-        """`0082` F2: the page lists them; the joined strings stay in the API as they were."""
+        """The page lists them; the joined strings stay in the API as they were."""
         for row in self.service.settings()["grants"]:
             self.assertEqual(", ".join(row["tool_list"]) or "none", row["tools"], row["stage"])
-            self.assertEqual(", ".join(row["command_list"]) or "none", row["commands"], row["stage"])
+            self.assertEqual(
+                ", ".join(row["command_list"]) or "none", row["commands"], row["stage"]
+            )

@@ -1,4 +1,4 @@
-"""`0055` R3, R5, R6: the title and body of `pr.md` put onto its pull request."""
+"""The title and body of `pr.md` put onto its pull request."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class FakeGh:
         if argv[:2] == ["pr", "edit"]:
             for a in argv:
                 if a.startswith("--title="):
-                    self.title = a[len("--title="):]
+                    self.title = a[len("--title=") :]
             self.body = stdin
             return 0, URL + "\n", ""
         return 2, "", "unexpected"
@@ -118,7 +118,7 @@ class ItNeverRaisesAndSaysWhy(unittest.TestCase):
 
 
 class OnlyTwoCommandsAndTheirWords(unittest.TestCase):
-    """R6: `pr view` and `pr edit`, and no word outside this set but one `--title=`."""
+    """`pr view` and `pr edit`, and no word outside this set but one `--title=`."""
 
     WORDS = {"pr", "view", "edit", "--json", "title,body", "--body-file", "-", URL}
 

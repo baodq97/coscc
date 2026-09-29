@@ -1,5 +1,4 @@
-"""Tests for `StepsMixin` in `coscc/service/steps.py`, split from `coscc/service/service_test.py` (`0095`).
-"""
+"""Tests for `StepsMixin` in `coscc/service/steps.py`, split from `coscc/service/service_test.py`."""
 
 from __future__ import annotations
 
@@ -26,18 +25,11 @@ from coscc.agent.submit_test import submits as _submits
 
 
 class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
-    """`0030_a-unit-branch-starts-from-a-stale-main` plan step 5.
-
-    `run_step` refreshes a still-detached tree from `origin/main` before the step runs, and
+    """`run_step` refreshes a still-detached tree from `origin/main` before the step runs, and
     carries what it found into the `done` record — the reading `describe_base` turns into
     one sentence for the board and the prompt. Same fixture as `StartingAUnitAndItsBranch`
     (a bare remote on disk, no network), driven with a session that replies without talking
-    to anything, the way `AStepRecordsTheTransitionItCaused` does below.
-
-    R7 is `intent.md ## Proposed outcome`'s own measurement: `git merge-base --is-ancestor`
-    and `git rev-list --count`, run by subprocess against the branch the app or a session
-    cut, never against anything this test computed itself.
-    """
+    to anything, the way `AStepRecordsTheTransitionItCaused` does below."""
 
     class Replies:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
@@ -50,9 +42,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.remote = self.root / "remote.git"
-        subprocess.run(
-            ["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True
-        )
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         self.repo = self.root / "work" / "proj"
         self.repo.mkdir(parents=True)
         self._git("init", "-q", "-b", "main")
@@ -70,9 +60,21 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
 
     def _git(self, *args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(self.repo), "-c", "user.name=T",
-             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
 
     def _advance_remote(self, name: str = "g.txt", text: str = "from elsewhere\n") -> str:
@@ -81,9 +83,21 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         if not other.exists():
             subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True)
         run = lambda *a: subprocess.run(  # noqa: E731
-            ["git", "-C", str(other), "-c", "user.name=T", "-c", "user.email=t@example.invalid",
-             "-c", "commit.gpgsign=false", *a],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(other),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *a,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         run("pull", "-q", "--ff-only")
         (other / name).write_text(text, encoding="utf-8")
@@ -105,7 +119,9 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
     def _tree_head(self, tree: Path) -> str:
         return subprocess.run(
             ["git", "-C", str(tree), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
     def _run_step(self, unit: str, stage: str = "spec") -> dict:
@@ -119,7 +135,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.assertEqual(kind, "done")
         return payload
 
-    def test_r1_the_tree_is_moved_to_the_fetched_tip_and_local_main_stays(self):
+    def test_the_tree_is_moved_to_the_fetched_tip_and_local_main_stays(self):
         unit = self._typed_unit()
         local_before = self._git("rev-parse", "main").strip()
         ahead = self._advance_remote()
@@ -129,12 +145,12 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.assertEqual(
             done["base"], {"ref": "origin/main", "sha": ahead[:7], "fresh": True, "reason": ""}
         )
-        # `0048` R8: a step alone fetches once, exactly as before.
+        # A step alone fetches once, exactly as before.
         self.assertEqual((fetched["outcome"], fetched["attempts"]), ("fetched", 1))
         self.assertEqual(self._git("rev-parse", "main").strip(), local_before)
         self.assertEqual(self._tree_head(self._tree(unit)), ahead)
 
-    def test_r2_a_broken_origin_does_not_stop_the_step(self):
+    def test_a_broken_origin_does_not_stop_the_step(self):
         unit = self._typed_unit()
         tree = self._tree(unit)
         before = self._tree_head(tree)
@@ -145,14 +161,28 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.assertTrue(done["base"]["reason"])
         self.assertEqual(self._tree_head(tree), before)
 
-    def test_r5_a_commit_made_directly_on_the_tree_is_never_left_behind(self):
+    def test_a_commit_made_directly_on_the_tree_is_never_left_behind(self):
         unit = self._typed_unit()
         tree = self._tree(unit)
         (tree / "local.txt").write_text("mine\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(tree), "add", "-A"], check=True)
         subprocess.run(
-            ["git", "-C", str(tree), "-c", "user.name=T", "-c", "user.email=t@example.invalid",
-             "-c", "commit.gpgsign=false", "commit", "-q", "-m", "local"], check=True,
+            [
+                "git",
+                "-C",
+                str(tree),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "-m",
+                "local",
+            ],
+            check=True,
         )
         local_head = self._tree_head(tree)
         done = self._run_step(unit)
@@ -160,14 +190,13 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.assertIn("ancestor", done["base"]["reason"])
         self.assertEqual(self._tree_head(tree), local_head)
 
-    def test_r7_the_branch_start_branch_cuts_carries_the_remote_tip(self):
+    def test_the_branch_start_branch_cuts_carries_the_remote_tip(self):
         """`intent.md ## Proposed outcome`, measured through `start_branch`.
 
-        `0030` review round 1, F1: `tip` is the SHA `_advance_remote()` itself pushed and
-        returned, never a ref read back from the workspace — `origin/main` there is the very
-        ref `start_branch` updates when it fetches, so comparing against it would still pass
-        with the fetch removed, which is exactly what this test exists to catch.
-        """
+        `tip` is the SHA `_advance_remote()` itself pushed and returned, never a ref read back from
+        the workspace — `origin/main` there is the very ref `start_branch` updates when it fetches,
+        so comparing against it would still pass with the fetch removed, which is exactly what this
+        test exists to catch."""
         tip = self._advance_remote()
         unit = self._typed_unit()
         got = asyncio.run(self.service.start_branch(str(self.repo), unit))
@@ -182,12 +211,14 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.assertEqual(
             subprocess.run(
                 ["git", "-C", tree, "rev-list", "--count", f"{branch}..{tip}"],
-                capture_output=True, text=True, check=True,
+                capture_output=True,
+                text=True,
+                check=True,
             ).stdout.strip(),
             "0",
         )
 
-    def test_r7_a_branch_a_session_cuts_itself_also_carries_the_remote_tip(self):
+    def test_a_branch_a_session_cuts_itself_also_carries_the_remote_tip(self):
         """Plan Risk 2's gap, closed at the one place a step runs: `run_step` refreshes the
         still-detached tree, and a session's own `git switch -c` right after starts from
         that refreshed HEAD — the same command a person runs at a terminal
@@ -197,10 +228,16 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         ahead = self._advance_remote()
         self._run_step(unit)
         tree = self._tree(unit)
-        branch = units.branch_name(str(self.repo), unit, str(self.root / "data"), self.service._snapshot(str(self.repo), [unit]))
+        branch = units.branch_name(
+            str(self.repo),
+            unit,
+            str(self.root / "data"),
+            self.service._snapshot(str(self.repo), [unit]),
+        )
         subprocess.run(
             ["git", "-C", str(tree), "switch", "--no-track", "-c", branch],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
         self.assertEqual(
             subprocess.run(
@@ -211,7 +248,9 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.assertEqual(
             subprocess.run(
                 ["git", "-C", str(tree), "rev-list", "--count", f"{branch}..{ahead}"],
-                capture_output=True, text=True, check=True,
+                capture_output=True,
+                text=True,
+                check=True,
             ).stdout.strip(),
             "0",
         )
@@ -227,11 +266,9 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
 
 
 class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
-    """`0042` plan step 5, end to end on real git: `plan` runs, another unit merges, `impl`
-    starts. The fixture is `AUnitsBaseIsTheRemoteTrunk`'s, borrowed rather than inherited
-    so its tests do not run twice. The expected list is `git diff --name-only` run by
-    subprocess — the intent's own check — never something this test worked out.
-    """
+    """The fixture is `AUnitsBaseIsTheRemoteTrunk`'s, borrowed rather than inherited so its tests do
+    not run twice. The expected list is `git diff --name-only` run by subprocess — the intent's own
+    check — never something this test worked out."""
 
     HEADING = "# The files main changed since the plan"
 
@@ -248,8 +285,8 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
 
     def setUp(self):
         AUnitsBaseIsTheRemoteTrunk.setUp(self)
-        # `0048`: a step under 30s after the last fetch reuses it, so a merge between
-        # `plan` and `impl` is only seen when `impl` starts later — `_impl` moves this clock.
+        # A step under 30s after the last fetch reuses it, so a merge between `plan` and `impl` is
+        # only seen when `impl` starts later — `_impl` moves this clock.
         self.now = [1000.0]
         patcher = mock.patch.object(fetches, "shared", fetches.Fetches(clock=lambda: self.now[0]))
         patcher.start()
@@ -287,7 +324,9 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         return self.service.sessions.prompts[-1], self._start(unit, "impl")
 
     def _start(self, unit: str, stage: str) -> dict:
-        records = self.service._journal().records(self.service._journal_key(str(self.repo)), unit, kind="start")
+        records = self.service._journal().records(
+            self.service._journal_key(str(self.repo)), unit, kind="start"
+        )
         return [r for r in records if r["stage"] == stage][-1]
 
     def _tree_git(self, unit: str, *args: str) -> str:
@@ -295,14 +334,16 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
             ["git", "-C", str(self._tree(unit)), *args], capture_output=True, text=True, check=True
         ).stdout.strip()
 
-    def test_r4a_the_prompt_names_the_changed_files_the_plan_names(self):
+    def test_the_prompt_names_the_changed_files_the_plan_names(self):
         unit = self._planned()
         self._advance_remote("a.py", "changed\n")
         self._advance_remote("lib_a.py", "outside, and a suffix trap\n")
         prompt, start = self._impl(unit)
         drift = start["plan_drift"]
         main = self._tree_git(unit, "rev-parse", "refs/remotes/origin/main")
-        diff = self._tree_git(unit, "diff", f"{drift['plan_sha']}..{main}", "--name-only").splitlines()
+        diff = self._tree_git(
+            unit, "diff", f"{drift['plan_sha']}..{main}", "--name-only"
+        ).splitlines()
         self.assertEqual(drift["files"], [d for d in diff if d in ("a.py", "b.py")])
         self.assertEqual(drift["files"], ["a.py"])
         self.assertEqual(drift["main_sha"], main)
@@ -314,7 +355,7 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         self.assertNotIn("-- b.py", prompt)
         self.assertEqual(start["agents"], 1)
 
-    def test_r4b_nothing_the_plan_names_changed_adds_nothing(self):
+    def test_nothing_the_plan_names_changed_adds_nothing(self):
         unit = self._planned()
         self._advance_remote("other.txt", "outside\n")
         prompt, start = self._impl(unit)
@@ -323,8 +364,7 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         self.assertNotIn(self.HEADING, prompt)
 
     def test_a_merge_under_thirty_seconds_after_the_plans_fetch_is_not_seen(self):
-        # `0048` C1 reaching `0042`: the fetch is reused, so `origin/main` has not moved and
-        # the merge is missing from the diff. `main_sha` says which tip was measured.
+        # `main_sha` says which tip was measured.
         unit = self._planned()
         self._advance_remote("a.py", "changed\n")
         self.now[0] -= fetches.REUSE_SECONDS  # `_impl` adds it back: the same instant
@@ -334,7 +374,7 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         self.assertTrue(start["plan_drift"]["checked"])
         self.assertEqual(start["plan_drift"]["main_sha"], start["plan_drift"]["plan_sha"])
 
-    def test_r4c_a_plan_no_run_wrote_cannot_be_checked(self):
+    def test_a_plan_no_run_wrote_cannot_be_checked(self):
         unit, directory = self._unit_with_spec()
         (directory / "plan.md").write_text(self.PLAN, encoding="utf-8")
         prompt, start = self._impl(unit)
@@ -343,7 +383,7 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         self.assertIn(self.HEADING, prompt)
         self.assertIn("could not check", prompt)
 
-    def test_r8_a_computation_that_raises_does_not_stop_the_step(self):
+    def test_a_computation_that_raises_does_not_stop_the_step(self):
         unit = self._planned()
         with mock.patch("coscc.git.drift.compute", side_effect=RuntimeError("boom")):
             prompt, start = self._impl(unit)
@@ -360,16 +400,13 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
 
 
 class AStepRecordsTheTransitionItCaused(unittest.TestCase):
-    """`0014` R6. The first writer into `0013`'s log that is not the git import.
-
-    `.cos/0013_.../ship.md` said the loop would come back here: history imported from git
+    """`.cos/0013_.../ship.md` said the loop would come back here: history imported from git
     carries no actor and no session because git knows neither, so the provenance that unit
     built is only true of work done after it. These rows are that work — and the check
     that matters is that `actor` and `session` are **not** `unknown`.
 
     Driven with a session that replies without talking to anything, because what is under
-    test is the bookkeeping around a step, not the step.
-    """
+    test is the bookkeeping around a step, not the step."""
 
     class Replies:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
@@ -390,7 +427,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         )
         self.config = config
         self.service = Service(config, self.Replies())
-        self.made = create_sync(self.service,str(self.repo), "a-problem", "some words")
+        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
@@ -417,7 +454,6 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertEqual(found["state"]["spec.md"], "accepted")
 
     def test_running_the_same_stage_twice_is_two_events_not_one(self):
-        # The event `0013` exists to count: an artifact rewritten after it was settled.
         self._run("spec")
         self._run("spec")
         found = self.service.unit_history(str(self.repo), self.made["unit"])
@@ -426,33 +462,38 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertEqual(found["settled_edits"], 1)
 
     def test_a_failed_ingest_is_on_the_step_and_in_the_database(self):
-        """`0135` R7, C3: the step still ends `done`, and the failure is kept, not dropped.
-        Review F10, S3: what is kept is one fixed sentence; the error, which may carry a path,
-        goes to the log."""
+        """The step still ends `done`, and the failure is kept, not dropped. What is kept is one
+        fixed sentence; the error, which may carry a path, goes to the log."""
         import io
         from unittest import mock
 
         from coscc.units import meta
 
         async def go():
-            return [item async for item in self.service.run_step(str(self.repo), self.made["unit"], "spec")]
+            return [
+                item
+                async for item in self.service.run_step(str(self.repo), self.made["unit"], "spec")
+            ]
 
         # The store is imported on its first read, before `meta` is broken: only the ingest fails.
         asyncio.run(self.service.board(str(self.repo)))
         error = meta.MetaError("cos.mjs meta did not run: /home/x/cos.mjs --root /home/x/units")
-        with mock.patch.object(meta, "read", side_effect=error), \
-                mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+        with (
+            mock.patch.object(meta, "read", side_effect=error),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as log,
+        ):
             _, payload = asyncio.run(go())[-1]
         self.assertEqual(payload["outcome"], "done")
         self.assertEqual(payload["ingest_error"], "its files could not be read")
         with self.service._unit_meta().data.connect() as conn:
-            [row] = conn.execute("SELECT unit, field, reason FROM unit_unknowns WHERE field = 'ingest'").fetchall()
+            [row] = conn.execute(
+                "SELECT unit, field, reason FROM unit_unknowns WHERE field = 'ingest'"
+            ).fetchall()
         self.assertEqual(tuple(row), (self.made["unit"], "ingest", "its files could not be read"))
         self.assertIn("/home/x/units", log.getvalue())
         self.assertIn(self.made["unit"], log.getvalue())
 
     def test_a_failed_ingest_on_the_database_names_no_path(self):
-        # Review F10, S3: `Busy` carries the path of `cos.db`.
         import io
         from unittest import mock
 
@@ -460,9 +501,15 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
         asyncio.run(self.service.board(str(self.repo)))
         busy = Busy(self.service.config.data_dir + "/cos.db")
-        with mock.patch("coscc.units.meta.UnitMeta.ingest", side_effect=busy), \
-                mock.patch("sys.stderr", new_callable=io.StringIO) as log:
-            said = asyncio.run(self.service._ingest(str(self.repo), self.made["unit"], {"outcome": "done", "stage": "spec"}))
+        with (
+            mock.patch("coscc.units.meta.UnitMeta.ingest", side_effect=busy),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as log,
+        ):
+            said = asyncio.run(
+                self.service._ingest(
+                    str(self.repo), self.made["unit"], {"outcome": "done", "stage": "spec"}
+                )
+            )
         self.assertEqual(said, {"ingest_error": "the database could not be written"})
         self.assertIn("cos.db", log.getvalue())
 
@@ -490,11 +537,11 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
 
 class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
-    """`0113` R4, R5. After a `done` step's `end`: the questions it left open, and after `ship`
-    whether the unit merged. Driven like `AStepRecordsTheTransitionItCaused`."""
+    """After a `done` step's `end`: the questions it left open, and after `ship` whether the unit
+    merged. Driven like `AStepRecordsTheTransitionItCaused`."""
 
     ASKS = "# Spec: a problem\nAuthor: t. Status: draft.\n\n## Body\n\n## Open questions\n\n1. Which one?\n"
-    # `0136` R4: what the session hands back beside `ASKS`; the questions are the object's.
+    # What the session hands back beside `ASKS`; the questions are the object's.
     ASKED = {"judgement": "not-ready", "questions": [{"n": 1, "text": "Which one?"}]}
 
     def replies(self, text: str, outcome: dict | None = None, **fields):
@@ -513,7 +560,9 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.repo = self.root / "work" / "proj"
         self.repo.mkdir(parents=True)
         self.config = Config(
-            workspaces=(str(self.repo),), working_dir=str(self.root / "work"), data_dir=str(self.root / "data"),
+            workspaces=(str(self.repo),),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.root / "data"),
         )
         self.service = Service(self.config, self.replies(self.ASKS, **self.ASKED))
         self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
@@ -545,19 +594,23 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         _, payload = self._run()[-1]
         self.assertEqual(payload["outcome"], "done")
         kinds = [r["kind"] for r in self.records()]
-        # `0136` R16: the status the object set, and its event, between the two.
+        # The status the object set, and its event, between the two.
         self.assertEqual(kinds[-3:], ["end", "transition", "questions"])
         [asked] = [r for r in self.records() if r["kind"] == "questions"]
         self.assertEqual((asked["workspace"], asked["stage"]), (self.key, "spec"))
         self.assertEqual(asked["questions"], [{"artifact": "spec.md", "n": 1}])
 
     def test_a_done_step_with_every_question_answered_records_none(self):
-        self.service.sessions = self.replies("# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+        self.service.sessions = self.replies(
+            "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n"
+        )
         self._run()
         self.assertNotIn("questions", [r["kind"] for r in self.records()])
 
     def test_a_failed_or_stopped_step_records_no_questions(self):
-        self.service.sessions = self.replies(self.ASKS, {"session_id": "s", "terminal_reason": "error_max_turns"})
+        self.service.sessions = self.replies(
+            self.ASKS, {"session_id": "s", "terminal_reason": "error_max_turns"}
+        )
         _, payload = self._run()[-1]
         self.assertNotEqual(payload["outcome"], "done")
         self.assertNotIn("questions", [r["kind"] for r in self.records()])
@@ -574,7 +627,9 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
     def test_a_done_ship_records_shipped_when_the_unit_is_finished(self):
         [row] = self._after_end_with("finished")
-        self.assertEqual((row["result"], row["stage"], row["workspace"]), ("shipped", "ship", self.key))
+        self.assertEqual(
+            (row["result"], row["stage"], row["workspace"]), ("shipped", "ship", self.key)
+        )
 
     def test_a_done_ship_records_refused_on_ship_refused(self):
         [row] = self._after_end_with("ship-refused")
@@ -617,8 +672,8 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         return task
 
     def test_an_apply_waits_for_the_after_end_of_a_step_that_just_ended(self):
-        # `0138` review round 3, F6. `_drive` gives back the unit and its `_running` entry
-        # before `_after_end`; the settle still waits, and the `questions` row is written.
+        # `_drive` gives back the unit and its `_running` entry before `_after_end`; the settle
+        # still waits, and the `questions` row is written.
         real = self.service._after_end
 
         async def go():
@@ -638,7 +693,9 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
             return left
 
         self.assertEqual(asyncio.run(go()), [])
-        self.assertEqual([r["kind"] for r in self.records()][-3:], ["end", "transition", "questions"])
+        self.assertEqual(
+            [r["kind"] for r in self.records()][-3:], ["end", "transition", "questions"]
+        )
         self.assertEqual(self.service._finishing, {})
 
     def test_an_after_end_that_outlives_the_settle_is_named_and_cancelled(self):
@@ -652,16 +709,17 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
             return left, task
 
         left, task = asyncio.run(go())
-        self.assertEqual([(j["kind"], j["unit"], j["stage"]) for j in left], [("after-end", self.unit, "spec")])
+        self.assertEqual(
+            [(j["kind"], j["unit"], j["stage"]) for j in left], [("after-end", self.unit, "spec")]
+        )
         self.assertTrue(task.cancelled())
         self.assertEqual(self.service._finishing, {})
 
 
 class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
-    """`0034`. A step is its own task: a reader leaving does not end it (R3), a second
-    step on one unit is refused before it spends anything (R11), two units run at once
-    (R12), the page can list them (R13), and a Stop ends one `stopped` with nothing
-    recorded after it (R5, R9)."""
+    """A step is its own task: a reader leaving does not end it, a second step on one unit is
+    refused before it spends anything, two units run at once, the page can list them, and a Stop
+    ends one `stopped` with nothing recorded after it."""
 
     class Waits:
         def __init__(self):
@@ -681,8 +739,14 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
                 await asyncio.wait_for(self.gate(unit).wait(), 10)
                 yield ("chunk", "Author: t. Status: accepted.\n")
                 await _submits(kw)
-                yield ("done", {"session_id": "sess-7", "terminal_reason": "success",
-                                "cost": {"output_tokens": 3, "cost_usd": 0.01}})
+                yield (
+                    "done",
+                    {
+                        "session_id": "sess-7",
+                        "terminal_reason": "success",
+                        "cost": {"output_tokens": 3, "cost_usd": 0.01},
+                    },
+                )
             finally:
                 if step is not None:
                     await step.close()
@@ -784,7 +848,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         self.assertEqual(self.service.running_steps(self.ws), [])
 
     def test_stopping_nothing_is_refused_and_no_name_stops_as_owner(self):
-        """`0082` R3: a Stop with no name used to be refused; it now records `owner`."""
+        """A Stop with no name used to be refused; it now records `owner`."""
         a = self.units[0]
 
         async def go():
@@ -796,7 +860,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
             self._release(a)
             try:
                 [i async for i in agen]
-            except (Invalid, asyncio.CancelledError):
+            except Invalid, asyncio.CancelledError:
                 pass
 
         asyncio.run(go())
@@ -816,8 +880,6 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
 
 
 class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
-    """`0019_a-failed-step-destroys-the-work-that-succeeded` plan step 6, `spec.md` R5-R7."""
-
     class Empty:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("session", "sess-fail")
@@ -903,8 +965,8 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
         self.assertIsNone(rows["plan"]["last_run"])
 
     def test_the_excerpt_never_reaches_a_route(self):
-        # R7. The transcript is faked via the runner's own read function, so this does
-        # not depend on a real session store.
+        # The transcript is faked via the runner's own read function, so this does not depend on a
+        # real session store.
         with mock.patch(
             "coscc.runner.sessions_mod.transcript_excerpt",
             return_value=("CANARY-0019-EXCERPT", 999),
@@ -946,8 +1008,8 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
             self.calls = 0
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            # `0127`: a prose stage reads `# Ship:` as no title and reopens this session
-            # once to repair it. That is the same step, so only a new session is counted.
+            # A prose stage reads `# Ship:` as no title and reopens this session once to repair it.
+            # That is the same step, so only a new session is counted.
             self.calls += session_id is None
             yield ("chunk", "# Ship: no\nAuthor: t. Status: accepted.\n\n## Body\n")
             await _submits(kw)
@@ -968,7 +1030,7 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
             ),
             self.sessions,
         )
-        self.made = create_sync(self.service,str(self.repo), "a-problem", "some words")
+        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
@@ -1008,7 +1070,7 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
         self.assertEqual(self.sessions.calls, 1)
 
     def test_the_gate_is_told_which_repository_the_unit_lives_beside(self):
-        """`0015`: the store has no git, so `review` and `ship` read the workspace's."""
+        """The store has no git, so `review` and `ship` read the workspace's."""
         from coscc.units import board as board_reader
 
         seen = {}
@@ -1025,8 +1087,8 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
 
 
 class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
-    """`0033` R3, R4, R10. The label is read after the gate and picks the configuration;
-    the gate is stubbed open, as the review tests below stub it."""
+    """The label is read after the gate and picks the configuration; the gate is stubbed open, as
+    the review tests below stub it."""
 
     PLAN = (
         "# Plan: a problem\nIntent: intent.md. Author: t. Status: accepted. Impl: routine.\n\n"
@@ -1058,9 +1120,14 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.test.seen.append({**kw, "max_turns": max_turns})
-            (self.test.dir / "impl.md").write_text("# Impl: x\nStatus: accepted.\n", encoding="utf-8")
+            (self.test.dir / "impl.md").write_text(
+                "# Impl: x\nStatus: accepted.\n", encoding="utf-8"
+            )
             await _submits(kw)
-            yield ("done", {"session_id": "sess-i", "cost": {}, "terminal_reason": self.test.terminal})
+            yield (
+                "done",
+                {"session_id": "sess-i", "cost": {}, "terminal_reason": self.test.terminal},
+            )
 
     def _run(self):
         from coscc.units import board as board_reader
@@ -1069,11 +1136,15 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
             return True, "open: impl may proceed"
 
         async def go():
-            return [i async for i in self.service.run_step(str(self.repo), self.made["unit"], "impl")]
+            return [
+                i async for i in self.service.run_step(str(self.repo), self.made["unit"], "impl")
+            ]
 
-        # `0139` R16: a routine run asks for its arm's model; the Sonnet arm is `models.json`'s.
-        with mock.patch.object(board_reader, "gate", open_gate), \
-                mock.patch.object(modeltrial, "arm", lambda unit: modeltrial.SONNET_ARM):
+        # A routine run asks for its arm's model; the Sonnet arm is `models.json`'s.
+        with (
+            mock.patch.object(board_reader, "gate", open_gate),
+            mock.patch.object(modeltrial, "arm", lambda unit: modeltrial.SONNET_ARM),
+        ):
             return asyncio.run(go())
 
     def _starts(self):
@@ -1081,47 +1152,59 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         return journal.records(self.service._journal_key(str(self.repo)), kind="start")
 
     def test_a_plan_naming_the_security_surface_runs_as_novel(self):
-        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/agent/policy.py`"), encoding="utf-8")
+        (self.dir / "plan.md").write_text(
+            self.PLAN.format(path="`coscc/agent/policy.py`"), encoding="utf-8"
+        )
         self._run()
         start = self._starts()[-1]
-        self.assertEqual((start["label_declared"], start["label"], start["label_source"]),
-                         ("routine", "novel", "forced"))
+        self.assertEqual(
+            (start["label_declared"], start["label"], start["label_source"]),
+            ("routine", "novel", "forced"),
+        )
         self.assertEqual((start["model"], start["effort"]), ("claude-opus-5-5[1m]", "high"))
         self.assertEqual(self.seen[-1].get("effort"), "high")
         self.assertEqual(start["impl_run"], 1)
 
     def test_a_novel_impl_gets_the_novel_ceilings(self):
-        """`0062` R1 and R7, down the board's whole road."""
-        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/agent/policy.py`"), encoding="utf-8")
+        (self.dir / "plan.md").write_text(
+            self.PLAN.format(path="`coscc/agent/policy.py`"), encoding="utf-8"
+        )
         self._run()
         start = self._starts()[-1]
         self.assertEqual((start["label"], start["label_source"]), ("novel", "forced"))
-        self.assertEqual((self.seen[-1]["max_turns"], self.seen[-1].get("max_budget_usd")),
-                         (250, 16.0))
+        self.assertEqual(
+            (self.seen[-1]["max_turns"], self.seen[-1].get("max_budget_usd")), (250, 16.0)
+        )
         self.assertEqual(start["max_turns"], 250)
 
     def test_a_routine_run_escalates_after_a_max_turns_stop_and_counts_its_runs(self):
-        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/units/board.py`"), encoding="utf-8")
+        (self.dir / "plan.md").write_text(
+            self.PLAN.format(path="`coscc/units/board.py`"), encoding="utf-8"
+        )
         self.terminal = "max_turns"
         self._run()
         self.terminal = None
         self._run()
         first, second = self._starts()[-2:]
-        self.assertEqual((first["label"], first["label_source"], first["model"], first["effort"]),
-                         ("routine", "declared", "claude-sonnet-5-5[1m]", "medium"))
-        self.assertEqual((second["label"], second["label_source"], second["model"]),
-                         ("novel", "escalated", "claude-opus-5-5[1m]"))
+        self.assertEqual(
+            (first["label"], first["label_source"], first["model"], first["effort"]),
+            ("routine", "declared", "claude-sonnet-5-5[1m]", "medium"),
+        )
+        self.assertEqual(
+            (second["label"], second["label_source"], second["model"]),
+            ("novel", "escalated", "claude-opus-5-5[1m]"),
+        )
         self.assertEqual((first["impl_run"], second["impl_run"]), (1, 2))
-        # `0062`: the rerun also gets the ceilings it was escalated for.
+        # The rerun also gets the ceilings it was escalated for.
         ceilings = [(kw["max_turns"], kw.get("max_budget_usd")) for kw in self.seen[-2:]]
         self.assertEqual(ceilings, [(120, 8.0), (250, 16.0)])
 
 
 class AnImplStepUnderTheModelTrial(unittest.TestCase):
-    """`0139` R16-R18. The fixture of `AnImplStepRunsUnderThePlansLabel`, with the arm forced
-    by patching `modeltrial.arm`; the session stand-in names in `init` the model it was asked
-    for, unless `self.init` says otherwise. `cos.mjs next` is a stub that counts its calls and
-    answers `self.action`, or raises `self.next_fails`."""
+    """The fixture of `AnImplStepRunsUnderThePlansLabel`, with the arm forced by patching
+    `modeltrial.arm`; the session stand-in names in `init` the model it was asked for, unless
+    `self.init` says otherwise. `cos.mjs next` is a stub that counts its calls and answers
+    `self.action`, or raises `self.next_fails`."""
 
     PLAN = AnImplStepRunsUnderThePlansLabel.PLAN
     ROUTINE = "`coscc/units/board.py`"
@@ -1181,15 +1264,25 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
             self.asked.append({"unit": unit, "repo": repo})
             if self.next_fails is not None:
                 raise self.next_fails
-            return {"unit": unit, "stage": "impl", "action": self.action, "blocked": False, "waiting": [],
-                    "reasons": self.reasons}
+            return {
+                "unit": unit,
+                "stage": "impl",
+                "action": self.action,
+                "blocked": False,
+                "waiting": [],
+                "reasons": self.reasons,
+            }
 
         async def go():
-            return [i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)]
+            return [
+                i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)
+            ]
 
-        with mock.patch.object(board_reader, "gate", open_gate), \
-                mock.patch.object(board_reader, "next_step", next_step), \
-                mock.patch.object(modeltrial, "arm", lambda unit: arm):
+        with (
+            mock.patch.object(board_reader, "gate", open_gate),
+            mock.patch.object(board_reader, "next_step", next_step),
+            mock.patch.object(modeltrial, "arm", lambda unit: arm),
+        ):
             return asyncio.run(go())
 
     def _starts(self):
@@ -1209,10 +1302,12 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
                 self._unit()
                 self._run(arm=arm)
                 start = self._starts()[0]
-                self.assertEqual(start["model_trial"], {"arm": arm, "requested": model, "model": model})
+                self.assertEqual(
+                    start["model_trial"], {"arm": arm, "requested": model, "model": model}
+                )
                 self.assertEqual((start["model"], start["model_source"]), (model, "trial"))
                 self.assertEqual(self.seen[-1].get("model"), model)
-                # R16: both arms run the default's effort.
+                # Both arms run the default's effort.
                 self.assertEqual((start["effort"], start["effort_source"]), ("medium", "default"))
                 self.assertNotIn("effort_trial", start)
 
@@ -1223,8 +1318,10 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         self._run(arm="opus-5-5")
         start = self._starts()[0]
         self.assertEqual((start["model"], start["model_source"]), ("claude-other", "override"))
-        self.assertEqual(start["model_trial"],
-                         {"arm": "opus-5-5", "requested": "claude-other", "model": "claude-other"})
+        self.assertEqual(
+            start["model_trial"],
+            {"arm": "opus-5-5", "requested": "claude-other", "model": "claude-other"},
+        )
         self.assertEqual(self._prefs(), before)
         self._unit(model="from-env")
         self._run(arm="opus-5-5")
@@ -1233,19 +1330,20 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         self.assertEqual(start["model_trial"]["arm"], "opus-5-5")
 
     def test_the_model_init_names_is_the_model_recorded(self):
-        # `0139 spike.md ## U2`: `init` names what the CLI resolved, which is what is kept.
+        # `init` names what the CLI resolved, which is what is kept.
         self._unit()
         self.init = "claude-opus-5-5"
         self._run(arm="opus-5-5")
         self.assertEqual(self._starts()[0]["model_trial"]["model"], "claude-opus-5-5")
 
     def test_a_session_dead_before_init_is_recorded_never_started(self):
-        # C10.
         self._unit()
         self.init = None
         self._run(arm="sonnet-5-5")
-        self.assertEqual(self._starts()[0]["model_trial"],
-                         {"arm": "sonnet-5-5", "requested": self.SONNET, "model": "never-started"})
+        self.assertEqual(
+            self._starts()[0]["model_trial"],
+            {"arm": "sonnet-5-5", "requested": self.SONNET, "model": "never-started"},
+        )
 
     def test_a_novel_impl_is_not_in_the_trial(self):
         self._unit(plan=self.SECURITY)
@@ -1284,7 +1382,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         self.assertNotIn("model_trial", on)
         self.assertEqual(self.asked, [])
 
-    # -- `0123` R7: the CI question, now asked of every routine impl ---------------------
+    # -- the CI question, now asked of every routine impl ---------------------
 
     def test_a_second_impl_asks_next_once_and_records_ci_red(self):
         self._unit()
@@ -1325,7 +1423,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
 
 class TheNextStageComesFromTheScript(unittest.TestCase):
-    """`0024`. `Service.next_step` asks `cos.mjs next` and chooses nothing itself."""
+    """`Service.next_step` asks `cos.mjs next` and chooses nothing itself."""
 
     # The fixture of the class above, borrowed rather than inherited so its tests run once.
     NeverCalled = AStepTheGateClosesNeverStarts.NeverCalled
@@ -1369,8 +1467,10 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
             seen["gate"] = (str(units_root), repo)
             return False, "blocked: stop here"
 
-        with mock.patch.object(board_reader, "next_step", fake_next), \
-                mock.patch.object(board_reader, "gate", fake_gate):
+        with (
+            mock.patch.object(board_reader, "next_step", fake_next),
+            mock.patch.object(board_reader, "gate", fake_gate),
+        ):
             stage = self._next()["stage"]
             with self.assertRaises(Invalid):
                 self._run(stage)
@@ -1378,16 +1478,22 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         self.assertEqual(seen["next"][1], str(self.repo))
 
     def test_waiting_is_copied_and_absent_reads_as_none(self):
-        """`0028`. The findings a person is awaited on reach the page as `cos.mjs` named them."""
+        """The findings a person is awaited on reach the page as `cos.mjs` named them."""
         from coscc.units import board as board_reader
 
         answers = [
-            {"unit": "u", "stage": "", "action": "needs a person — F3: x", "blocked": True, "waiting": ["F3"]},
+            {
+                "unit": "u",
+                "stage": "",
+                "action": "needs a person — F3: x",
+                "blocked": True,
+                "waiting": ["F3"],
+            },
             {"unit": "u", "stage": "review", "action": "a", "blocked": True},
         ]
 
         async def fake_next(units_root, unit, repo=None, **kw):
-            # `0045`: `next_step` first asks with no `--repo` whether the unit is held.
+            # `next_step` first asks with no `--repo` whether the unit is held.
             if repo is None:
                 return {"unit": "u", "stage": "", "action": "", "blocked": True, "hold": None}
             return answers.pop(0)
@@ -1398,12 +1504,18 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         self.assertEqual(second["waiting"], [])
 
     def test_dropped_is_copied_and_absent_reads_as_none(self):
-        """`0027` review F1. The ids the last round left out reach the page as `cos.mjs`
-        listed them, not inside `action`."""
+        """The ids the last round left out reach the page as `cos.mjs` listed them, not inside
+        `action`."""
         from coscc.units import board as board_reader
 
         answers = [
-            {"unit": "u", "stage": "review", "action": "a", "blocked": True, "dropped": ["F2", "F3"]},
+            {
+                "unit": "u",
+                "stage": "review",
+                "action": "a",
+                "blocked": True,
+                "dropped": ["F2", "F3"],
+            },
             {"unit": "u", "stage": "review", "action": "a", "blocked": True},
         ]
 
@@ -1419,8 +1531,8 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
 
 
 class ShipRunsOutsideTheWorktree(unittest.TestCase):
-    """`0017` review F3: inside a worktree, `gh pr merge --delete-branch` merged and then
-    exited 1 on `'main' is already used by worktree`. Only `ship`'s session moves."""
+    """Inside a worktree, `gh pr merge --delete-branch` merged and then exited 1 on `'main' is
+    already used by worktree`. Only `ship`'s session moves."""
 
     def test_ship_runs_in_the_units_directory(self):
         self.assertEqual(step_cwd("ship", "/w/tree", Path("/store/0017_x")), "/store/0017_x")
@@ -1430,11 +1542,13 @@ class ShipRunsOutsideTheWorktree(unittest.TestCase):
             self.assertEqual(step_cwd(stage, "/w/tree", Path("/store/0017_x")), "/w/tree")
 
     def test_spike_runs_in_its_scratch(self):
-        self.assertEqual(step_cwd("spike", "/w/tree", Path("/store/x"), "/data/spikes/s/x"), "/data/spikes/s/x")
+        self.assertEqual(
+            step_cwd("spike", "/w/tree", Path("/store/x"), "/data/spikes/s/x"), "/data/spikes/s/x"
+        )
 
 
 class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
-    """`0039` R11, R12: the scratch is emptied before the step and gone after it."""
+    """The scratch is emptied before the step and gone after it."""
 
     class Probe:
         def __init__(self, fail: bool = False):
@@ -1442,20 +1556,27 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
             self.seen: list[tuple[str, list[str], str | None]] = []
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            self.seen.append((cwd, sorted(p.name for p in Path(cwd).iterdir()), kw.get("workspace")))
+            self.seen.append(
+                (cwd, sorted(p.name for p in Path(cwd).iterdir()), kw.get("workspace"))
+            )
             (Path(cwd) / "probe.py").write_text("print(1)\n", encoding="utf-8")
             if self.fail:
                 raise RuntimeError("the session broke")
-            yield ("chunk", "# Spike: x\nSpec: spec.md. Round: 1. Status: accepted.\n\n"
-                            "## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n")
+            yield (
+                "chunk",
+                "# Spike: x\nSpec: spec.md. Round: 1. Status: accepted.\n\n"
+                "## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n",
+            )
             await _submits(kw)
             yield ("done", {"session_id": "sess-spike", "cost": {}})
 
     class RunsOut:
-        """`0080` R3: keeps its progress file in `cwd`, then stops at the turn ceiling."""
+        """Keeps its progress file in `cwd`, then stops at the turn ceiling."""
 
-        PROGRESS = ("# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Round: 1. Status: accepted.\n\n"
-                    "## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n")
+        PROGRESS = (
+            "# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Round: 1. Status: accepted.\n\n"
+            "## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n"
+        )
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             (Path(cwd) / "spike.md").write_text(self.PROGRESS, encoding="utf-8")
@@ -1482,23 +1603,42 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
         for where in (self.repo, self.tree):
             subprocess.run(["git", "init", "-q", "-b", "main"], cwd=where, check=True)
             subprocess.run(
-                ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid",
-                 "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "first"],
-                cwd=where, check=True,
+                [
+                    "git",
+                    "-c",
+                    "user.name=T",
+                    "-c",
+                    "user.email=t@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "first",
+                ],
+                cwd=where,
+                check=True,
             )
 
     def _service(self, probe) -> Service:
         service = Service(
-            Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
-                   data_dir=str(self.root / "data")),
+            Config(
+                workspaces=(str(self.repo),),
+                working_dir=str(self.root / "work"),
+                data_dir=str(self.root / "data"),
+            ),
             probe,
         )
         made = create_sync(service, str(self.repo), "a-problem", "some words")
         d = Path(made["path"])
-        (d / "intent.md").write_text("# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
+        (d / "intent.md").write_text(
+            "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
         (d / "spec.md").write_text(
             "# Spec: x\nIntent: intent.md. Author: t. Status: accepted.\n\n## Concerns\n\n"
-            "- [unmeasured] U1. does it exit?\n", encoding="utf-8",
+            "- [unmeasured] U1. does it exit?\n",
+            encoding="utf-8",
         )
         self.unit = made["unit"]
         self.scratch = units.spike_dir(str(self.repo), self.unit, str(self.root / "data"))
@@ -1553,11 +1693,9 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
 
 
 class APrStepIsMechanical(unittest.TestCase):
-    """`0136` R12, through `run_step`, in place of `0041` R2's *a `pr` step is handed its pull
-    request*: no session runs, so there is no prompt to hand the lookup to. The same three
-    answers of `gh pr list` now decide what the step does -- take the pull request the branch
-    has, open one, or fail with what `gh` said. The fixture is `AUnitsBaseIsTheRemoteTrunk`'s,
-    whose bare remote takes the push."""
+    """The same three answers of `gh pr list` now decide what the step does -- take the pull request
+    the branch has, open one, or fail with what `gh` said. The fixture is
+    `AUnitsBaseIsTheRemoteTrunk`'s, whose bare remote takes the push."""
 
     setUp = AUnitsBaseIsTheRemoteTrunk.setUp
     _git = AUnitsBaseIsTheRemoteTrunk._git
@@ -1580,7 +1718,11 @@ class APrStepIsMechanical(unittest.TestCase):
         async def __call__(self, argv, cwd, stdin=None):
             self.calls.append(list(argv))
             if argv[:2] == ["pr", "list"]:
-                return (1, "", "error connecting to api.github.com") if self.rows is None else (0, json.dumps(self.rows), "")
+                return (
+                    (1, "", "error connecting to api.github.com")
+                    if self.rows is None
+                    else (0, json.dumps(self.rows), "")
+                )
             if argv[:2] == ["pr", "create"]:
                 return 0, "https://github.com/o/r/pull/8\n", ""
             if argv[:2] == ["pr", "view"]:
@@ -1605,22 +1747,48 @@ class APrStepIsMechanical(unittest.TestCase):
         async def go():
             return [item async for item in self.service.run_step(str(self.repo), unit, "pr")]
 
-        with mock.patch.object(board_reader, "gate", open_gate), \
-                mock.patch.object(integrate, "_gh", gh), mock.patch.object(prcomment, "_gh", gh):
+        with (
+            mock.patch.object(board_reader, "gate", open_gate),
+            mock.patch.object(integrate, "_gh", gh),
+            mock.patch.object(prcomment, "_gh", gh),
+        ):
             items = asyncio.run(go())
         self.assertEqual([k for k, _ in items], ["done"])
         j = Journal(self.config.working_dir, self.config.data_dir)
-        self.assertEqual([r for r in j.records(str(self.repo.resolve()), kind="start") if r.get("stage") == "pr"], [])
+        self.assertEqual(
+            [
+                r
+                for r in j.records(str(self.repo.resolve()), kind="start")
+                if r.get("stage") == "pr"
+            ],
+            [],
+        )
         return items[-1][1], unit
 
     def _pushed(self) -> str:
-        return subprocess.run(["git", "-C", str(self.remote), "rev-parse", "--verify", "--quiet", "refs/heads/fix/a-problem"],
-                              capture_output=True, text=True).stdout.strip()
+        return subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.remote),
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "refs/heads/fix/a-problem",
+            ],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
 
     def test_found(self):
-        gh = self.Gh([{"url": "https://github.com/o/r/pull/7", "number": 7, "headRefOid": "a" * 40}])
+        gh = self.Gh(
+            [{"url": "https://github.com/o/r/pull/7", "number": 7, "headRefOid": "a" * 40}]
+        )
         done, unit = self._run_pr(gh)
-        self.assertEqual((done["outcome"], done["mechanical"]["result"], done["mechanical"]["number"]), ("done", "found", 7))
+        self.assertEqual(
+            (done["outcome"], done["mechanical"]["result"], done["mechanical"]["number"]),
+            ("done", "found", 7),
+        )
         self.assertEqual(gh.of("create"), [])
         self.assertTrue(self._pushed())
         text = (self.service._unit_dir(str(self.repo), unit) / "pr.md").read_text(encoding="utf-8")
@@ -1630,7 +1798,9 @@ class APrStepIsMechanical(unittest.TestCase):
     def test_none(self):
         gh = self.Gh([])
         done, _ = self._run_pr(gh)
-        self.assertEqual((done["mechanical"]["result"], done["mechanical"]["number"]), ("opened", 8))
+        self.assertEqual(
+            (done["mechanical"]["result"], done["mechanical"]["number"]), ("opened", 8)
+        )
         [create] = gh.of("create")
         self.assertEqual(create[create.index("--title") + 1], "fix(0001): a problem")
         self.assertEqual(done["pr_sync"]["existed"], False)
@@ -1642,13 +1812,15 @@ class APrStepIsMechanical(unittest.TestCase):
         self.assertIn("error connecting", done["error"])
         self.assertEqual(gh.of("create"), [])
         history = self.service._unit_meta().history
-        self.assertEqual(history.transitions(self.service._journal_key(str(self.repo)), unit, "pr.md"), [])
+        self.assertEqual(
+            history.transitions(self.service._journal_key(str(self.repo)), unit, "pr.md"), []
+        )
 
 
 class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
-    """`0055` R3–R5, through `run_step`: after a `pr` step that was not stopped, the title
-    and body `cos.mjs pr-text` cut from `pr.md` are on the pull request, and one `pr-sync`
-    row says how. `APrStepIsHandedItsPullRequest`'s fixture, with `gh` in memory."""
+    """Through `run_step`: after a `pr` step that was not stopped, the title and body
+    `cos.mjs pr-text` cut from `pr.md` are on the pull request, and one `pr-sync` row says how.
+    `APrStepIsHandedItsPullRequest`'s fixture, with `gh` in memory."""
 
     setUp = AUnitsBaseIsTheRemoteTrunk.setUp
     _git = AUnitsBaseIsTheRemoteTrunk._git
@@ -1683,8 +1855,15 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
     class Gh:
         """Both `integrate._gh` and `prcomment._gh`: one pull request, in memory."""
 
-        def __init__(self, listed: bool, title: str = "temporary", body: str = "temporary", fail=None, raise_=None,
-                     scope=None):
+        def __init__(
+            self,
+            listed: bool,
+            title: str = "temporary",
+            body: str = "temporary",
+            fail=None,
+            raise_=None,
+            scope=None,
+        ):
             self.listed, self.title, self.body = listed, title, body
             self.fail, self.raise_, self.scope = fail, raise_, scope
             self.calls: list[tuple[list[str], str | None]] = []
@@ -1694,8 +1873,18 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             if argv[:2] == ["pr", "list"] and self.fail == "list":
                 return 1, "", "error connecting to api.github.com"
             if argv[:2] == ["pr", "list"]:
-                rows = [{"url": "https://github.com/o/r/pull/7", "number": 7,
-                         "mergeable": "MERGEABLE", "headRefOid": "a" * 40}] if self.listed else []
+                rows = (
+                    [
+                        {
+                            "url": "https://github.com/o/r/pull/7",
+                            "number": 7,
+                            "mergeable": "MERGEABLE",
+                            "headRefOid": "a" * 40,
+                        }
+                    ]
+                    if self.listed
+                    else []
+                )
                 return 0, json.dumps(rows), ""
             if self.raise_ is not None:
                 raise self.raise_
@@ -1708,18 +1897,24 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             if argv[:2] == ["pr", "view"]:
                 return 0, json.dumps({"title": self.title, "body": self.body}), ""
             if argv[:2] == ["pr", "edit"]:
-                self.title = next((a[len("--title="):] for a in argv if a.startswith("--title=")), self.title)
+                self.title = next(
+                    (a[len("--title=") :] for a in argv if a.startswith("--title=")), self.title
+                )
                 self.body = stdin
                 return 0, "https://github.com/o/r/pull/7\n", ""
             return 0, "", ""
 
         def of(self, sub: str, json_: str | None = None):
-            return [c for c in self.calls if c[0][:2] == ["pr", sub] and (json_ is None or c[0][-1] == json_)]
+            return [
+                c
+                for c in self.calls
+                if c[0][:2] == ["pr", sub] and (json_ is None or c[0][-1] == json_)
+            ]
 
     def _run(self, text, gh, stage="pr", hold=False, prepare=None, gate=None, via_step=False):
-        """`0136` R12: a `pr` step writes `pr.md` itself and runs no session, so a `pr.md` of
-        any other words -- `text` -- reaches `_sync_pr` only by calling it as the step does,
-        with the lookup the step made before `0136`. `via_step` runs the step itself."""
+        """A `pr` step writes `pr.md` itself and runs no session, so a `pr.md` of any other words --
+        `text` -- reaches `_sync_pr` only by calling it as the step does, with the lookup the
+        step makes. `via_step` runs the step itself."""
         from coscc.units import board as board_reader
         from coscc.github import integrate, prcomment
 
@@ -1741,27 +1936,55 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             if stage == "pr" and not via_step:
                 if text is not None:
                     (directory / "pr.md").write_text(text, encoding="utf-8")
-                await self.service._ingest(str(self.repo), unit, {"outcome": "done", "stage": "pr"}, "pr.md")
+                await self.service._ingest(
+                    str(self.repo), unit, {"outcome": "done", "stage": "pr"}, "pr.md"
+                )
                 lookup = await integrate.pr_for_branch(str(self.repo), "fix/a-problem")
                 before = None if lookup.get("state") == "unknown" else lookup.get("url", "")
-                return [("done", {"outcome": "done", "pr_sync": await self.service._sync_pr(str(self.repo), unit, before)})]
+                return [
+                    (
+                        "done",
+                        {
+                            "outcome": "done",
+                            "pr_sync": await self.service._sync_pr(str(self.repo), unit, before),
+                        },
+                    )
+                ]
             agen = self.service.run_step(str(self.repo), unit, stage)
             return [i async for i in agen]
 
-        with mock.patch.object(board_reader, "gate", open_gate), \
-                mock.patch.object(integrate, "_gh", gh), mock.patch.object(prcomment, "_gh", gh):
+        with (
+            mock.patch.object(board_reader, "gate", open_gate),
+            mock.patch.object(integrate, "_gh", gh),
+            mock.patch.object(prcomment, "_gh", gh),
+        ):
             out = asyncio.run(go())
-        rows = self.service._journal().records(self.service._journal_key(str(self.repo)), unit, kind="pr-sync")
+        rows = self.service._journal().records(
+            self.service._journal_key(str(self.repo)), unit, kind="pr-sync"
+        )
         return out[-1][1], rows, directory
 
     def test_a_pull_request_that_existed_gets_the_title_and_body(self):
         gh = self.Gh(listed=True)
         done, [row], _ = self._run(self.ACCEPTED, gh)
         [(argv, stdin)] = gh.of("edit")
-        self.assertEqual(argv, ["pr", "edit", "https://github.com/o/r/pull/7", f"--title={self.TITLE}", "--body-file", "-"])
+        self.assertEqual(
+            argv,
+            [
+                "pr",
+                "edit",
+                "https://github.com/o/r/pull/7",
+                f"--title={self.TITLE}",
+                "--body-file",
+                "-",
+            ],
+        )
         self.assertEqual(stdin, self.BODY)
         self.assertEqual((gh.title, gh.body), (self.TITLE, self.BODY))
-        self.assertEqual((row["outcome"], row["existed"], row["pr"]), ("updated", True, "https://github.com/o/r/pull/7"))
+        self.assertEqual(
+            (row["outcome"], row["existed"], row["pr"]),
+            ("updated", True, "https://github.com/o/r/pull/7"),
+        )
         self.assertNotIn("detail", row)
         self.assertEqual(done["pr_sync"]["outcome"], "updated")
 
@@ -1775,7 +1998,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         self.assertEqual((row["outcome"], row["existed"]), ("updated", False))
 
     def test_a_lookup_that_could_not_answer_is_existed_none_not_false(self):
-        # Review F2: a lookup that failed is not "no pull request".
+        # A lookup that failed is not "no pull request".
         gh = self.Gh(listed=True, fail="list")
         done, [row], _ = self._run(self.ACCEPTED, gh)
         self.assertEqual((row["outcome"], row["existed"]), ("updated", None))
@@ -1788,8 +2011,6 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         self.assertEqual(row["outcome"], "already")
 
     def test_a_pr_step_that_fails_calls_nothing_and_writes_no_row(self):
-        # Was *a stopped step*: `0136` R12's step has no session to stop, and one that
-        # fails -- here `gh pr list` -- is what leaves no `pr.md` to put up.
         gh = self.Gh(listed=True, fail="list")
         done, rows, _ = self._run(None, gh, via_step=True)
         self.assertEqual(done["outcome"], "failed")
@@ -1797,8 +2018,10 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         self.assertNotIn("pr_sync", done)
 
     def test_a_draft_or_a_missing_url_is_skipped_without_gh(self):
-        for text in (self.ACCEPTED.replace("Status: accepted", "Status: draft"),
-                     self.ACCEPTED.replace("PR: https://github.com/o/r/pull/7. ", "")):
+        for text in (
+            self.ACCEPTED.replace("Status: accepted", "Status: draft"),
+            self.ACCEPTED.replace("PR: https://github.com/o/r/pull/7. ", ""),
+        ):
             with self.subTest(text=text.splitlines()[1]):
                 self.setUp()
                 gh = self.Gh(listed=True)
@@ -1807,25 +2030,27 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                 self.assertEqual(row["outcome"], "skipped")
                 self.assertTrue(row["detail"])
 
-    def test_r4_impl_and_review_do_not_sync(self):
+    def test_impl_and_review_do_not_sync(self):
         for stage in ("impl", "review"):
             with self.subTest(stage=stage):
                 self.setUp()
                 gh = self.Gh(listed=True)
                 _, rows, _ = self._run(
-                    None, gh, stage=stage,
+                    None,
+                    gh,
+                    stage=stage,
                     prepare=lambda d: (d / "pr.md").write_text(self.ACCEPTED, encoding="utf-8"),
                 )
                 self.assertEqual((rows, gh.of("edit"), gh.of("view", "title,body")), ([], [], []))
 
-    def test_r5_a_refusal_leaves_the_step_done_and_pr_md_as_it_was(self):
+    def test_a_refusal_leaves_the_step_done_and_pr_md_as_it_was(self):
         gh = self.Gh(listed=True, fail="edit")
         done, [row], directory = self._run(self.ACCEPTED, gh)
         self.assertEqual(done["outcome"], "done")
         self.assertEqual((row["outcome"], row["detail"]), ("failed", "HTTP 422: Validation Failed"))
         self.assertEqual((directory / "pr.md").read_text(encoding="utf-8"), self.ACCEPTED)
 
-    def test_r5_a_timeout_is_failed_and_says_so(self):
+    def test_a_timeout_is_failed_and_says_so(self):
         gh = self.Gh(listed=True, raise_=asyncio.TimeoutError())
         done, [row], _ = self._run(self.ACCEPTED, gh)
         self.assertEqual(done["outcome"], "done")
@@ -1833,32 +2058,55 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         self.assertIn("timed out", row["detail"])
 
     SCOPED = f"{ACCEPTED}\n## Scope of the diff\n\n2 files, +10/-3\n- `a.py`\n- `b.py`\n"
-    GH_SCOPE = {"changedFiles": 2, "additions": 10, "deletions": 3, "files": [{"path": "a.py"}, {"path": "b.py"}]}
+    GH_SCOPE = {
+        "changedFiles": 2,
+        "additions": 10,
+        "deletions": 3,
+        "files": [{"path": "a.py"}, {"path": "b.py"}],
+    }
 
-    def test_0122_the_pr_sync_row_carries_githubs_counts_and_a_verdict(self):
+    def test_the_pr_sync_row_carries_githubs_counts_and_a_verdict(self):
         gh = self.Gh(listed=True, scope=self.GH_SCOPE)
         done, [row], _ = self._run(self.SCOPED, gh)
         self.assertEqual(row["outcome"], "updated")
-        self.assertEqual(row["scope"], {"github": {"files": 2, "additions": 10, "deletions": 3}, "verdict": "match"})
+        self.assertEqual(
+            row["scope"],
+            {"github": {"files": 2, "additions": 10, "deletions": 3}, "verdict": "match"},
+        )
         self.assertEqual(done["pr_sync"]["scope"]["verdict"], "match")
         [(argv, stdin)] = gh.of("view", prscope.FIELDS)
-        self.assertEqual((argv, stdin), (["pr", "view", "https://github.com/o/r/pull/7", "--json", prscope.FIELDS], None))
+        self.assertEqual(
+            (argv, stdin),
+            (["pr", "view", "https://github.com/o/r/pull/7", "--json", prscope.FIELDS], None),
+        )
 
-    def test_0122_a_mismatch_leaves_the_step_done_and_pr_md_as_it_was(self):
-        gh = self.Gh(listed=True, scope={**self.GH_SCOPE, "changedFiles": 3, "files": [{"path": "a.py"}, {"path": "c.py"}]})
+    def test_a_mismatch_leaves_the_step_done_and_pr_md_as_it_was(self):
+        gh = self.Gh(
+            listed=True,
+            scope={
+                **self.GH_SCOPE,
+                "changedFiles": 3,
+                "files": [{"path": "a.py"}, {"path": "c.py"}],
+            },
+        )
         done, [row], directory = self._run(self.SCOPED, gh)
         self.assertEqual(done["outcome"], "done")
         self.assertEqual(row["outcome"], "updated")
         self.assertEqual(
             {k: row["scope"][k] for k in ("verdict", "differ", "only_in_pr_md", "only_on_github")},
-            {"verdict": "mismatch", "differ": ["files"], "only_in_pr_md": ["b.py"], "only_on_github": ["c.py"]},
+            {
+                "verdict": "mismatch",
+                "differ": ["files"],
+                "only_in_pr_md": ["b.py"],
+                "only_on_github": ["c.py"],
+            },
         )
         self.assertEqual((directory / "pr.md").read_text(encoding="utf-8"), self.SCOPED)
 
     def _pr_md(self, text):
         return lambda d: (d / "pr.md").write_text(text, encoding="utf-8")
 
-    def test_0049_r7_a_ship_step_puts_pr_md_up_before_the_gate_is_asked(self):
+    def test_a_ship_step_puts_pr_md_up_before_the_gate_is_asked(self):
         gh = self.Gh(listed=True, title="changed on GitHub")
         seen: list[str] = []
 
@@ -1866,37 +2114,47 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             seen.append(gh.title)
             return True, f"open: {stage} may proceed"
 
-        _, rows, _ = self._run(None, gh, stage="ship", prepare=self._pr_md(self.ACCEPTED), gate=gate)
+        _, rows, _ = self._run(
+            None, gh, stage="ship", prepare=self._pr_md(self.ACCEPTED), gate=gate
+        )
         self.assertEqual(seen, [self.TITLE])
         self.assertEqual((gh.title, gh.body), (self.TITLE, self.BODY))
         [row] = rows
-        self.assertEqual((row["stage"], row["outcome"], row["pr"]), ("ship", "updated", "https://github.com/o/r/pull/7"))
+        self.assertEqual(
+            (row["stage"], row["outcome"], row["pr"]),
+            ("ship", "updated", "https://github.com/o/r/pull/7"),
+        )
         self.assertNotIn("existed", row)
 
-    def test_0049_r7_ship_reads_no_scope(self):
+    def test_ship_reads_no_scope(self):
         gh = self.Gh(listed=True, title=self.TITLE, body=self.BODY, scope=self.GH_SCOPE)
         _, [row], _ = self._run(None, gh, stage="ship", prepare=self._pr_md(self.SCOPED))
         self.assertEqual(gh.of("view", prscope.FIELDS), [])
         self.assertNotIn("scope", row)
         self.assertEqual(row["stage"], "ship")
 
-    def test_0049_r7_a_failed_sync_still_asks_the_gate_and_a_closed_gate_refuses(self):
+    def test_a_failed_sync_still_asks_the_gate_and_a_closed_gate_refuses(self):
         gh = self.Gh(listed=True, fail="edit")
         asked: list[str] = []
 
         async def closed(units_root, unit, stage, repo=None, **kw):
             asked.append(stage)
-            return False, "blocked: ship cannot proceed\n  - #7 carries the title \"temporary\""
+            return False, 'blocked: ship cannot proceed\n  - #7 carries the title "temporary"'
 
         with self.assertRaises(Invalid) as refused:
             self._run(None, gh, stage="ship", prepare=self._pr_md(self.ACCEPTED), gate=closed)
         self.assertIn("carries the title", str(refused.exception))
         self.assertEqual(asked, ["ship"])
-        [row] = self.service._journal().records(self.service._journal_key(str(self.repo)), kind="pr-sync")
-        self.assertEqual((row["stage"], row["outcome"], row["detail"]), ("ship", "failed", "HTTP 422: Validation Failed"))
+        [row] = self.service._journal().records(
+            self.service._journal_key(str(self.repo)), kind="pr-sync"
+        )
+        self.assertEqual(
+            (row["stage"], row["outcome"], row["detail"]),
+            ("ship", "failed", "HTTP 422: Validation Failed"),
+        )
         self.assertEqual(len(gh.of("edit")), 1, "the scope read writes nothing of its own")
 
-    def test_0122_a_skipped_sync_has_no_scope_and_no_read(self):
+    def test_a_skipped_sync_has_no_scope_and_no_read(self):
         gh = self.Gh(listed=True, scope=self.GH_SCOPE)
         done, [row], _ = self._run(self.SCOPED.replace("Status: accepted", "Status: draft"), gh)
         self.assertEqual(row["outcome"], "skipped")
@@ -1905,11 +2163,13 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
 
 class RunStepHandsOnThePlanMap(unittest.TestCase):
-    """`0096` plan step 4. `run_step` hands an `impl` step the files its plan names as they
-    stand in the step's tree, and every other stage no key. The gate, the worktree and the
-    runner are stand-ins: what is checked is the kwargs `Runner.run` gets."""
+    """`run_step` hands an `impl` step the files its plan names as they stand in the step's tree,
+    and every other stage no key. The gate, the worktree and the runner are stand-ins: what is
+    checked is the kwargs `Runner.run` gets."""
 
-    PLAN = "# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `pkg/m.py`.\n- `pkg/later.py`.\n"
+    PLAN = (
+        "# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `pkg/m.py`.\n- `pkg/later.py`.\n"
+    )
 
     def plan(self, text: str | bytes) -> None:
         path = units.unit_dir(str(self.repo), self.unit, str(self.data)) / "plan.md"
@@ -1936,12 +2196,20 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
             return [i async for i in service.run_step(str(self.repo), self.unit, stage)]
 
         for stage in ("pr", "ship"):
-            with self.subTest(stage=stage), mock.patch.object(board_reader, "gate", open_gate), \
-                    mock.patch("coscc.service.steps.Runner", side_effect=AssertionError("a runner was made")), \
-                    mock.patch.object(service, "_worktree", tree), \
-                    mock.patch.object(service, "_sync_pr", mock.AsyncMock()), \
-                    mock.patch.object(service, "_mechanical", mechanical):
-                self.assertEqual(asyncio.run(go(stage)), [("done", {"unit": self.unit, "stage": stage, "outcome": "done"})])
+            with (
+                self.subTest(stage=stage),
+                mock.patch.object(board_reader, "gate", open_gate),
+                mock.patch(
+                    "coscc.service.steps.Runner", side_effect=AssertionError("a runner was made")
+                ),
+                mock.patch.object(service, "_worktree", tree),
+                mock.patch.object(service, "_sync_pr", mock.AsyncMock()),
+                mock.patch.object(service, "_mechanical", mechanical),
+            ):
+                self.assertEqual(
+                    asyncio.run(go(stage)),
+                    [("done", {"unit": self.unit, "stage": stage, "outcome": "done"})],
+                )
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1952,11 +2220,16 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
         self.data = self.root / "data"
         self.seen: list[dict] = []
         (self.repo / "pkg").mkdir()
-        (self.repo / "pkg" / "m.py").write_text("import os\n\n\ndef top():\n    pass\n", encoding="utf-8")
+        (self.repo / "pkg" / "m.py").write_text(
+            "import os\n\n\ndef top():\n    pass\n", encoding="utf-8"
+        )
 
     def service(self) -> Service:
-        config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
-                        data_dir=str(self.data))
+        config = Config(
+            workspaces=(str(self.repo),),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.data),
+        )
         service = Service(config, Sessions(config))
         self.unit = create_sync(service, str(self.repo), "a-problem", "words")["unit"]
         return service
@@ -1964,7 +2237,6 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
     def kwargs_of(self, service: Service, stage: str) -> dict:
         from coscc.units import board as board_reader
         from coscc.github import integrate
-        from coscc import service as service_mod
         from coscc.runner import RunError
 
         seen = self.seen
@@ -1992,11 +2264,13 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
                 pass
 
         before = len(self.seen)
-        with mock.patch.object(board_reader, "gate", open_gate), \
-                mock.patch("coscc.service.steps.Runner", StandIn), \
-                mock.patch.object(service, "_worktree", tree), \
-                mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
-                mock.patch.object(integrate, "pr_for_branch", no_pr):
+        with (
+            mock.patch.object(board_reader, "gate", open_gate),
+            mock.patch("coscc.service.steps.Runner", StandIn),
+            mock.patch.object(service, "_worktree", tree),
+            mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
+            mock.patch.object(integrate, "pr_for_branch", no_pr),
+        ):
             with self.assertRaises(Invalid) as refused:
                 asyncio.run(go())
         # The step reached `Runner.run`, rather than being refused before it.
@@ -2007,7 +2281,9 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
         service = self.service()
         self.plan(self.PLAN)
         kw = self.kwargs_of(service, "impl")
-        self.assertEqual(kw["plan_map"], "- `pkg/m.py` — 5 lines\n  - 4 def top\n- `pkg/later.py` — new")
+        self.assertEqual(
+            kw["plan_map"], "- `pkg/m.py` — 5 lines\n  - 4 def top\n- `pkg/later.py` — new"
+        )
         self.assertEqual((kw["plan_map_record"]["files"], kw["plan_map_record"]["new"]), (2, 1))
         self.assertNotIn("error", kw["plan_map_record"])
 
@@ -2036,8 +2312,8 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
 
 
 class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
-    """`0138` plan step 6: `_drive` takes `Suspended` as the app going down. No session
-    opens: the runner is a stand-in that raises it."""
+    """`_drive` takes `Suspended` as the app going down. No session opens: the runner is a stand-in
+    that raises it."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -2045,8 +2321,11 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.repo = self.root / "work" / "proj"
         (self.repo / ".git").mkdir(parents=True)
-        config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
-                        data_dir=str(self.root / "data"))
+        config = Config(
+            workspaces=(str(self.repo),),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.root / "data"),
+        )
         self.service = Service(config, Sessions(config))
         self.unit = create_sync(self.service, str(self.repo), "a-problem", "words")["unit"]
 
@@ -2098,20 +2377,24 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
             others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
             await asyncio.gather(*others, return_exceptions=True)
 
-        with mock.patch.object(board_reader, "gate", open_gate), \
-                mock.patch("coscc.service.steps.Runner", StandIn), \
-                mock.patch.object(service, "_worktree", tree), \
-                mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
-                mock.patch.object(integrate, "pr_for_branch", no_pr), \
-                mock.patch.object(service, "_after_end", after_end), \
-                mock.patch.object(service, "_autopilot_nudge", nudged.append), \
-                mock.patch.object(events.Recorder, "abandon", abandon):
+        with (
+            mock.patch.object(board_reader, "gate", open_gate),
+            mock.patch("coscc.service.steps.Runner", StandIn),
+            mock.patch.object(service, "_worktree", tree),
+            mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
+            mock.patch.object(integrate, "pr_for_branch", no_pr),
+            mock.patch.object(service, "_after_end", after_end),
+            mock.patch.object(service, "_autopilot_nudge", nudged.append),
+            mock.patch.object(events.Recorder, "abandon", abandon),
+        ):
             asyncio.run(go())
         self.assertEqual(len(abandoned), 1)
         self.assertEqual((nudged, after), ([], []))
         self.assertEqual(service.steps.all(), [])
         # The spike's directory stays for the step taken up again.
-        self.assertTrue(units.spike_dir(str(self.repo), self.unit, service.config.data_dir).is_dir())
+        self.assertTrue(
+            units.spike_dir(str(self.repo), self.unit, service.config.data_dir).is_dir()
+        )
 
 
 class APrOrShipEndsThroughTheMachine(unittest.TestCase):
@@ -2126,13 +2409,18 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         (self.repo / ".git").mkdir(parents=True)
 
     def service(self) -> Service:
-        config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
-                        data_dir=str(self.root / "data"))
+        config = Config(
+            workspaces=(str(self.repo),),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.root / "data"),
+        )
         service = Service(config, Sessions(config))
         self.unit = create_sync(service, str(self.repo), "a-problem", "words")["unit"]
         return service
 
-    def drive(self, service: Service, stage: str, outcome: str, rebased: dict | None = None) -> None:
+    def drive(
+        self, service: Service, stage: str, outcome: str, rebased: dict | None = None
+    ) -> None:
         """One step whose runner ends `outcome`. What the stand-in machine's `ship` was handed
         is kept in `self.shipped_with`."""
         from coscc.units import board as board_reader
@@ -2164,16 +2452,22 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         from coscc.github import prmachine
 
         class Machine:
-            """`0136` R12, R13: `pr` and `ship` end through the PR machine, not a runner."""
+            """`pr` and `ship` end through the PR machine, not a runner."""
 
             history = service._unit_meta().history
 
             async def open_pr(self, u, again=False):
-                return prmachine.Outcome("opened" if outcome == "done" else "failed", detail="" if outcome == "done" else "gh down")
+                return prmachine.Outcome(
+                    "opened" if outcome == "done" else "failed",
+                    detail="" if outcome == "done" else "gh down",
+                )
 
             async def ship(self, u, authority="person", rebased=None):
                 shipped_with.append(rebased)
-                return prmachine.Outcome("merged" if outcome == "done" else "failed", detail="" if outcome == "done" else "gh down")
+                return prmachine.Outcome(
+                    "merged" if outcome == "done" else "failed",
+                    detail="" if outcome == "done" else "gh down",
+                )
 
         async def on_branch(*a, **kw):
             return "feat/a-problem"
@@ -2185,22 +2479,23 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
             others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
             await asyncio.gather(*others, return_exceptions=True)
 
-        with mock.patch.object(service, "_pr_machine", Machine), \
-                mock.patch.object(units, "branch_name", lambda *a, **kw: "feat/a-problem"), \
-                mock.patch.object(gitops, "current_branch", on_branch), \
-                mock.patch.object(board_reader, "gate", open_gate), \
-                mock.patch("coscc.service.steps.Runner", StandIn), \
-                mock.patch.object(service, "_worktree", tree), \
-                mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
-                mock.patch.object(integrate, "pr_for_branch", no_pr), \
-                mock.patch.object(service, "_ingest", nothing), \
-                mock.patch.object(service, "_cleanup", nothing), \
-                mock.patch.object(service, "_after_end", nothing), \
-                mock.patch.object(service, "_sync_pr", nothing):
+        with (
+            mock.patch.object(service, "_pr_machine", Machine),
+            mock.patch.object(units, "branch_name", lambda *a, **kw: "feat/a-problem"),
+            mock.patch.object(gitops, "current_branch", on_branch),
+            mock.patch.object(board_reader, "gate", open_gate),
+            mock.patch("coscc.service.steps.Runner", StandIn),
+            mock.patch.object(service, "_worktree", tree),
+            mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
+            mock.patch.object(integrate, "pr_for_branch", no_pr),
+            mock.patch.object(service, "_ingest", nothing),
+            mock.patch.object(service, "_cleanup", nothing),
+            mock.patch.object(service, "_after_end", nothing),
+            mock.patch.object(service, "_sync_pr", nothing),
+        ):
             asyncio.run(go())
 
     def test_the_gates_clean_rebase_reaches_the_machines_guard(self):
-        """`0136` review round 1, F1."""
         service = self.service()
         rebased = {"reviewed": "a" * 40, "head": "b" * 40}
         self.drive(service, "ship", "done", rebased=rebased)
@@ -2209,29 +2504,38 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         self.assertEqual(self.shipped_with, [None])
 
     def test_every_pr_and_ship_leaves_the_record_the_autopilots_stop_reads(self):
-        """`0136` review round 1, F2: there is no `end`, so this is the unit's last word."""
-        for stage, outcome in (("ship", "failed"), ("ship", "done"), ("pr", "failed"), ("pr", "done")):
+        """There is no `end`, so this is the unit's last word."""
+        for stage, outcome in (
+            ("ship", "failed"),
+            ("ship", "done"),
+            ("pr", "failed"),
+            ("pr", "done"),
+        ):
             with self.subTest(stage=stage, outcome=outcome):
                 service = self.service()
                 # Each subtest makes a new unit over the same data root, so only its own rows count.
                 before = len(service._journal().records(kind=autopilot.PR_MACHINE))
                 self.drive(service, stage, outcome)
                 [rec] = service._journal().records(kind=autopilot.PR_MACHINE)[before:]
-                self.assertEqual((rec["unit"], rec["stage"], rec["outcome"], rec["started_by"]),
-                                 (self.unit, stage, outcome, "person"))
+                self.assertEqual(
+                    (rec["unit"], rec["stage"], rec["outcome"], rec["started_by"]),
+                    (self.unit, stage, outcome, "person"),
+                )
                 self.assertEqual(rec["detail"], "" if outcome == "done" else "gh down")
                 self.assertFalse(rec["merge_refused"])
                 self.assertEqual(service._journal().records(kind="end"), [])
 
     def test_a_merge_github_refused_after_the_machine_requested_it_says_so(self):
-        """`0136` review round 2, F6: the autopilot stops `f` on it, not `e`."""
+        """The autopilot stops `f` on it, not `e`."""
         from coscc.github import prmachine
 
         service = self.service()
         with mock.patch.object(prmachine, "state", lambda *a: {"state": "merge-requested"}):
             self.drive(service, "ship", "failed")
         [rec] = service._journal().records(kind=autopilot.PR_MACHINE)
-        self.assertEqual((rec["outcome"], rec["merge_refused"], rec["detail"]), ("failed", True, "gh down"))
+        self.assertEqual(
+            (rec["outcome"], rec["merge_refused"], rec["detail"]), ("failed", True, "gh down")
+        )
         [ship] = service._journal().records(kind="ship")
         self.assertEqual(ship["result"], "refused")
 
@@ -2247,8 +2551,11 @@ class _AReviewStep:
         self.root = Path(self._tmp.name)
         self.repo = self.root / "work" / "proj"
         (self.repo / ".git").mkdir(parents=True)
-        config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
-                        data_dir=str(self.root / "data"))
+        config = Config(
+            workspaces=(str(self.repo),),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.root / "data"),
+        )
         self.service = Service(config, Sessions(config))
         made = create_sync(self.service, str(self.repo), "a-problem", "words")
         self.unit, self.dir = made["unit"], Path(made["path"])
@@ -2257,12 +2564,15 @@ class _AReviewStep:
 
     def screens_records(self) -> list[dict]:
         journal = self.service._journal()
-        return [r for r in journal.records(self.service._journal_key(str(self.repo))) if r.get("kind") == "screens"]
+        return [
+            r
+            for r in journal.records(self.service._journal_key(str(self.repo)))
+            if r.get("kind") == "screens"
+        ]
 
     def step(self, answer: dict, result: dict | None):
         from coscc.units import board as board_reader
         from coscc.units import retake
-        from coscc import service as service_mod
         from coscc.runner import RunError
 
         seen, taken = self.seen, self.taken
@@ -2293,66 +2603,105 @@ class _AReviewStep:
             async for _ in self.service.run_step(str(self.repo), self.unit, "review"):
                 pass
 
-        with mock.patch.object(board_reader, "gate", open_gate), \
-                mock.patch.object(board_reader, "screens", asked), \
-                mock.patch.object(retake, "take", take), \
-                mock.patch("coscc.service.steps.Runner", StandIn), \
-                mock.patch.object(self.service, "_worktree", tree):
+        with (
+            mock.patch.object(board_reader, "gate", open_gate),
+            mock.patch.object(board_reader, "screens", asked),
+            mock.patch.object(retake, "take", take),
+            mock.patch("coscc.service.steps.Runner", StandIn),
+            mock.patch.object(self.service, "_worktree", tree),
+        ):
             with self.assertRaises(Invalid) as refused:
                 asyncio.run(go())
         return str(refused.exception)
 
 
 class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCase):
-    """`0111` plan step 6. `cos.mjs screens` and the capture are stand-ins, and so is the
-    runner: what is checked is whether `Runner.run` is reached, with which section, and what
-    the run log holds."""
+    """`cos.mjs screens` and the capture are stand-ins, and so is the runner: what is checked is
+    whether `Runner.run` is reached, with which section, and what the run log holds."""
 
     OLD = {"head": "a" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
     NEW = {"head": "b" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
 
     def test_the_step_is_handed_a_snapshot_file_cos_mjs_decides_on(self):
-        """`0135`: a step that runs `cos.mjs gate` or `pr-text` itself needs `--state`."""
+        """A step that runs `cos.mjs gate` or `pr-text` itself needs `--state`."""
         import json
         import subprocess
 
         from coscc.agent import harness
 
-        self.step({"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None)
+        self.step(
+            {"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None
+        )
         path = Path(self.seen[0]["state_file"])
         snap = json.loads(path.read_text(encoding="utf-8"))
         self.assertIn(f"{snap['workspace']}/{self.unit}", snap["units"])
         self.assertFalse(path.is_relative_to(self.dir.parent))
         done = subprocess.run(
-            ["node", str(harness.script()), "--root", str(self.dir.parent.parent), "gate", self.unit, "spec",
-             "--state", str(path)], capture_output=True, text=True, env=harness.child_env(),
+            [
+                "node",
+                str(harness.script()),
+                "--root",
+                str(self.dir.parent.parent),
+                "gate",
+                self.unit,
+                "spec",
+                "--state",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            env=harness.child_env(),
         )
         self.assertIn(done.returncode, (0, 1), done.stderr)
 
     def test_no_retake_records_nothing_and_the_step_runs(self):
-        self.step({"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None)
+        self.step(
+            {"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None
+        )
         self.assertEqual(len(self.seen), 1)
         self.assertEqual(self.seen[0]["screens_note"], "")
         self.assertEqual((self.taken, self.screens_records()), ([], []))
 
     def test_a_retake_taken_is_recorded_and_the_prompt_carries_it(self):
-        result = {"code": 0, "seconds": 21.0, "tail": "", "head_before_run": "b" * 40,
-                  "manifest_after": self.NEW, "status_before": "", "status_after": ""}
+        result = {
+            "code": 0,
+            "seconds": 21.0,
+            "tail": "",
+            "head_before_run": "b" * 40,
+            "manifest_after": self.NEW,
+            "status_before": "",
+            "status_after": "",
+        }
         self.step({"retake": True, "manifest": self.OLD}, result)
         self.assertEqual(self.taken, [["/board"]])
         [rec] = self.screens_records()
-        self.assertEqual((rec["outcome"], rec["head_before"], rec["head_after"], rec["started_by"], rec["stage"]),
-                         ("taken", "a" * 40, "b" * 40, "person", "review"))
+        self.assertEqual(
+            (
+                rec["outcome"],
+                rec["head_before"],
+                rec["head_after"],
+                rec["started_by"],
+                rec["stage"],
+            ),
+            ("taken", "a" * 40, "b" * 40, "person", "review"),
+        )
         self.assertEqual(len(self.seen), 1)
         self.assertIn("# The screenshots, taken again", self.seen[0]["screens_note"])
         self.assertIn("b" * 40, self.seen[0]["screens_note"])
 
     def test_a_retake_that_fails_refuses_review_before_the_session(self):
-        from coscc.service import RETAKE_REFUSED
+        from coscc.service.steps import RETAKE_REFUSED
 
         files = {p.name: p.read_bytes() for p in self.dir.iterdir()}
-        result = {"code": 2, "seconds": 0.3, "tail": "127.0.0.1:18783 is already in use", "head_before_run": "b" * 40,
-                  "manifest_after": self.OLD, "status_before": "", "status_after": ""}
+        result = {
+            "code": 2,
+            "seconds": 0.3,
+            "tail": "127.0.0.1:18783 is already in use",
+            "head_before_run": "b" * 40,
+            "manifest_after": self.OLD,
+            "status_before": "",
+            "status_after": "",
+        }
         said = self.step({"retake": True, "manifest": self.OLD}, result)
         self.assertEqual(said, RETAKE_REFUSED)
         self.assertEqual(self.seen, [])
@@ -2375,13 +2724,22 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
 
         with mock.patch.object(board_reader, "screens", unavailable):
             with self.assertRaises(Invalid):
-                asyncio.run(self.service._retake_screens(
-                    str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
+                asyncio.run(
+                    self.service._retake_screens(
+                        str(self.repo),
+                        "k",
+                        self.service._journal(),
+                        self.unit,
+                        str(self.repo),
+                        "person",
+                    )
+                )
 
     def _unrecorded(self, result: dict) -> str:
         from coscc.units import board as board_reader
         from coscc.units import retake
-        from coscc.runlog.journal import Busy, Journal
+        from coscc.runlog.journal import Journal
+        from coscc.data import Busy
 
         async def asked(*a, **kw):
             return {"retake": True, "manifest": self.OLD}
@@ -2389,28 +2747,57 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         async def take(tree, addresses, **kw):
             return result
 
-        with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take), \
-                mock.patch.object(Journal, "append", side_effect=Busy("locked")):
+        with (
+            mock.patch.object(board_reader, "screens", asked),
+            mock.patch.object(retake, "take", take),
+            mock.patch.object(Journal, "append", side_effect=Busy("locked")),
+        ):
             with self.assertRaises(Invalid) as refused:
-                asyncio.run(self.service._retake_screens(
-                    str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
+                asyncio.run(
+                    self.service._retake_screens(
+                        str(self.repo),
+                        "k",
+                        self.service._journal(),
+                        self.unit,
+                        str(self.repo),
+                        "person",
+                    )
+                )
         return str(refused.exception)
 
     def test_a_failed_retake_the_run_log_could_not_record_says_it_failed(self):
-        # Review round 1, F2: it must not say the screenshots were taken again.
-        from coscc.service import RETAKE_REFUSED
+        # It must not say the screenshots were taken again.
+        from coscc.service.steps import RETAKE_REFUSED
 
-        said = self._unrecorded({"code": 2, "seconds": 0.3, "tail": "", "head_before_run": "b" * 40,
-                                 "manifest_after": self.OLD, "status_before": "", "status_after": ""})
+        said = self._unrecorded(
+            {
+                "code": 2,
+                "seconds": 0.3,
+                "tail": "",
+                "head_before_run": "b" * 40,
+                "manifest_after": self.OLD,
+                "status_before": "",
+                "status_after": "",
+            }
+        )
         self.assertEqual(said, RETAKE_REFUSED)
 
     def test_a_taken_retake_the_run_log_could_not_record_says_so(self):
-        said = self._unrecorded({"code": 0, "seconds": 21.0, "tail": "", "head_before_run": "b" * 40,
-                                 "manifest_after": self.NEW, "status_before": "", "status_after": ""})
+        said = self._unrecorded(
+            {
+                "code": 0,
+                "seconds": 21.0,
+                "tail": "",
+                "head_before_run": "b" * 40,
+                "manifest_after": self.NEW,
+                "status_before": "",
+                "status_after": "",
+            }
+        )
         self.assertIn("taken again, but the run log could not record it", said)
 
     def test_a_pending_update_waits_for_a_retake(self):
-        # Review round 1, F3: listed as a job while it runs, never cut, gone once it ends.
+        # Listed as a job while it runs, never cut, gone once it ends.
         from coscc.units import board as board_reader
         from coscc.units import retake
 
@@ -2421,15 +2808,35 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
 
         async def take(tree, addresses, **kw):
             during.append(self.service._update_waited())
-            return {"code": 0, "seconds": 0.1, "tail": "", "head_before_run": "b" * 40,
-                    "manifest_after": self.NEW, "status_before": "", "status_after": ""}
+            return {
+                "code": 0,
+                "seconds": 0.1,
+                "tail": "",
+                "head_before_run": "b" * 40,
+                "manifest_after": self.NEW,
+                "status_before": "",
+                "status_after": "",
+            }
 
-        with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take), \
-                mock.patch.object(self.service.updater, "job_ended") as ended:
-            asyncio.run(self.service._retake_screens(
-                str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
+        with (
+            mock.patch.object(board_reader, "screens", asked),
+            mock.patch.object(retake, "take", take),
+            mock.patch.object(self.service.updater, "job_ended") as ended,
+        ):
+            asyncio.run(
+                self.service._retake_screens(
+                    str(self.repo),
+                    "k",
+                    self.service._journal(),
+                    self.unit,
+                    str(self.repo),
+                    "person",
+                )
+            )
         [[job]] = during
-        self.assertEqual((job["kind"], job["unit"], job["stage"]), ("integration", self.unit, "screens"))
+        self.assertEqual(
+            (job["kind"], job["unit"], job["stage"]), ("integration", self.unit, "screens")
+        )
         self.assertEqual(self.service._update_waited(), [])
         ended.assert_called_once()
 
@@ -2446,13 +2853,24 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             taken.append(tree)
             return {}
 
-        # `0138` R3: nor while one waits, so the wait cannot grow.
+        # Nor while one waits, so the wait cannot grow.
         for window, state in ((True, "idle"), (False, "pending")):
             self.service.updater.window, self.service.updater.state = window, state
-            with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take):
+            with (
+                mock.patch.object(board_reader, "screens", asked),
+                mock.patch.object(retake, "take", take),
+            ):
                 with self.assertRaises(Invalid):
-                    asyncio.run(self.service._retake_screens(
-                        str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
+                    asyncio.run(
+                        self.service._retake_screens(
+                            str(self.repo),
+                            "k",
+                            self.service._journal(),
+                            self.unit,
+                            str(self.repo),
+                            "person",
+                        )
+                    )
         self.assertEqual((taken, self.service._update_waited()), ([], []))
 
     def test_two_retakes_never_run_at_once(self):
@@ -2469,25 +2887,55 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             most[0] = max(most[0], running[0])
             await asyncio.sleep(0.05)
             running[0] -= 1
-            return {"code": 0, "seconds": 0.05, "tail": "", "head_before_run": "b" * 40,
-                    "manifest_after": self.NEW, "status_before": "", "status_after": ""}
+            return {
+                "code": 0,
+                "seconds": 0.05,
+                "tail": "",
+                "head_before_run": "b" * 40,
+                "manifest_after": self.NEW,
+                "status_before": "",
+                "status_after": "",
+            }
 
         async def go():
             journal = self.service._journal()
-            await asyncio.gather(*(
-                self.service._retake_screens(str(self.repo), "k", journal, u, str(self.repo), "person")
-                for u in ("0001_a", "0002_b", "0003_c")
-            ))
+            await asyncio.gather(
+                *(
+                    self.service._retake_screens(
+                        str(self.repo), "k", journal, u, str(self.repo), "person"
+                    )
+                    for u in ("0001_a", "0002_b", "0003_c")
+                )
+            )
 
-        with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take):
+        with (
+            mock.patch.object(board_reader, "screens", asked),
+            mock.patch.object(retake, "take", take),
+        ):
             asyncio.run(go())
         self.assertEqual(most[0], 1)
 
     def test_activity_shows_no_screens_record(self):
         journal = self.service._journal()
         key = self.service._journal_key(str(self.repo))
-        journal.append({"kind": "screens", "workspace": key, "unit": self.unit, "stage": "review", "outcome": "failed"})
-        journal.append({"kind": "start", "workspace": key, "unit": self.unit, "stage": "plan", "mode": "manual"})
+        journal.append(
+            {
+                "kind": "screens",
+                "workspace": key,
+                "unit": self.unit,
+                "stage": "review",
+                "outcome": "failed",
+            }
+        )
+        journal.append(
+            {
+                "kind": "start",
+                "workspace": key,
+                "unit": self.unit,
+                "stage": "plan",
+                "mode": "manual",
+            }
+        )
         kinds = [e["kind"] for e in self.service.activity(str(self.repo))["events"]]
         self.assertEqual(kinds, ["start"])
         both = self.service.activity_and_usage(str(self.repo))
@@ -2495,20 +2943,25 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
 
 
 class AReviewAfterAnUnfinishedRoundIsToldWhy(_AReviewStep, unittest.TestCase):
-    """`0027` R6. Which round `cos.mjs` read as unfinished reaches `Runner.run` as it was
-    read; `service_steps` compares no ids itself."""
+    """Which round `cos.mjs` read as unfinished reaches `Runner.run` as it was read; `service_steps`
+    compares no ids itself."""
 
     NO_RETAKE = {"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}
-    ROUND1 = ("## Round 1\n\nReviewed: abcdef1. Verdict: changes-requested.\n\n"
-              "### Findings\n\n- F1 [open] a.py:1 — high — x\n- F2 [open] b.py:2 — high — y\n")
+    ROUND1 = (
+        "## Round 1\n\nReviewed: abcdef1. Verdict: changes-requested.\n\n"
+        "### Findings\n\n- F1 [open] a.py:1 — high — x\n- F2 [open] b.py:2 — high — y\n"
+    )
 
     def review(self, round2_findings: str) -> None:
         (self.dir / "review.md").write_text(
-            "# Review: x\nStatus: changes-requested.\n\n" + self.ROUND1 +
-            "\n## Round 2\n\nReviewed: abcdef2. Verdict: changes-requested.\n\n"
-            f"### Findings\n\n{round2_findings}", encoding="utf-8")
+            "# Review: x\nStatus: changes-requested.\n\n"
+            + self.ROUND1
+            + "\n## Round 2\n\nReviewed: abcdef2. Verdict: changes-requested.\n\n"
+            f"### Findings\n\n{round2_findings}",
+            encoding="utf-8",
+        )
 
-    def test_0027_r6_review_step_is_handed_the_unfinished_round(self):
+    def test_review_step_is_handed_the_unfinished_round(self):
         self.review("- F1 [open] a.py:1 — high — x\n")
         self.step(self.NO_RETAKE, None)
         [kw] = self.seen

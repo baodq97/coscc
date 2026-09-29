@@ -41,8 +41,13 @@ def finding_of(f: Mapping[str, Any]) -> dict[str, Any] | None:
         path, lines = (at.group(1), at.group(2)) if at else (location, "")
     rule = _RULE.fullmatch(rest)
     return {
-        "id": str(f["id"]), "state": label, "fixed_in": str(f.get("fixed_by") or "") if label == "fixed" else "",
-        "severity": severity.lower(), "rule": rule.group(1) if rule else "", "path": path, "lines": lines,
+        "id": str(f["id"]),
+        "state": label,
+        "fixed_in": str(f.get("fixed_by") or "") if label == "fixed" else "",
+        "severity": severity.lower(),
+        "rule": rule.group(1) if rule else "",
+        "path": path,
+        "lines": lines,
         "text": rule.group(2) if rule else rest,
     }
 
@@ -57,19 +62,27 @@ def round_of(r: Mapping[str, Any], heads: Mapping[str, str]) -> dict[str, Any] |
     screens = r.get("screens")
     shots: list[dict[str, Any]] = []
     if screens:
-        shots = [{k: s.get(k) for k in ("path", "size", "address", "result")} for s in screens.get("shots") or []]
+        shots = [
+            {k: s.get(k) for k in ("path", "size", "address", "result")}
+            for s in screens.get("shots") or []
+        ]
         if not shots or not screens.get("taken"):
             return None
     reviewed = str(r.get("reviewed") or "")
     return {
-        "n": r["n"], "run": SOURCE, "head": heads.get(reviewed, reviewed),
+        "n": r["n"],
+        "run": SOURCE,
+        "head": heads.get(reviewed, reviewed),
         "screens": {k: screens.get(k) for k in ("taken", "standard", "by")} if screens else {},
         "object": {"verdict": r["verdict"], "findings": findings, "screens": shots},
     }
 
 
 def import_rounds(
-    meta: UnitMeta, workspace: str, units_: Iterable[Mapping[str, Any]], heads: Mapping[str, str],
+    meta: UnitMeta,
+    workspace: str,
+    units_: Iterable[Mapping[str, Any]],
+    heads: Mapping[str, str],
 ) -> list[tuple[str, int]] | None:
     """Once per store, in one transaction with its `migrations` mark. Returns `(unit, n)` per round imported, or `None` if already done."""
     k = key(meta.root, workspace)
@@ -80,8 +93,11 @@ def import_rounds(
         if meta.data.has_run(k, conn):
             return None
         have = {
-            (r["unit"], r["n"]) for r in conn.execute(
-                "SELECT unit, n FROM review_rounds WHERE root = ? AND workspace = ?", (meta.root, workspace))
+            (r["unit"], r["n"])
+            for r in conn.execute(
+                "SELECT unit, n FROM review_rounds WHERE root = ? AND workspace = ?",
+                (meta.root, workspace),
+            )
         }
         for u in units_:
             for r in u.get("rounds") or []:

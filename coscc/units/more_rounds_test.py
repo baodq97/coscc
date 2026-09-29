@@ -1,4 +1,4 @@
-"""`0081`. The pure half of allowing one more review round: the block and the refusals."""
+"""The pure half of allowing one more review round: the block and the refusals."""
 
 from __future__ import annotations
 
@@ -25,7 +25,9 @@ class TheRefusals(unittest.TestCase):
 
     def test_the_first_reason_wins_in_spec_order(self):
         busy = describe("0001_q", Mark(kind="step", stage="review", phase="running"))
-        self.assertEqual(more_rounds.refusal(None, "#x\ny", busy), "no such work unit in this workspace")
+        self.assertEqual(
+            more_rounds.refusal(None, "#x\ny", busy), "no such work unit in this workspace"
+        )
         said = more_rounds.refusal({"name": "0001_q"}, "#x\ny", busy)
         self.assertIn("0001_q has not used all its review rounds", said)
         self.assertEqual(more_rounds.refusal(STUCK, "a\nb", busy), "the name must be one line")

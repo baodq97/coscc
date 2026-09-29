@@ -161,16 +161,19 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
         with zipfile.ZipFile(path) as archive:
             try:
                 commit = json.loads(archive.read(stamp)).get("commit")
-            except (ValueError, AttributeError):
+            except ValueError, AttributeError:
                 commit = None
         if not isinstance(commit, str) or not _FULL_SHA.fullmatch(commit):
-            out.append(f"{stamp} carries no 40-hex commit — the board could not say which commit it runs")
+            out.append(
+                f"{stamp} carries no 40-hex commit — the board could not say which commit it runs"
+            )
 
     # The copy step takes two named directories, never `.claude/` whole: `.claude/settings.local.json`
     # is personal and a wheel is published. Matched on basename and extension, not substring, so a
     # skill named `write-settings` is not refused.
     leaked = sorted(
-        n for n in names
+        n
+        for n in names
         if n.startswith(_posix(_HARNESS) + "/")
         and Path(n).name.startswith("settings")
         and n.endswith(".json")

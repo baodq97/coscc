@@ -16,10 +16,12 @@ from coscc.agent.submit import RUN_SUBMITTED, submitted
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import History, settled_edits
-from coscc.runlog.journal import BadRecord, Busy, Journal, timelines_of, totals_of
+from coscc.runlog.journal import BadRecord, Journal, timelines_of, totals_of
+from coscc.data import Busy
 from coscc.agent.policy import grant_for
 from coscc.agent import models
-from coscc.runner import CEILING_MARKERS, Denials, permission_gate
+from coscc.runner import Denials, permission_gate
+from coscc.runner.reply import CEILING_MARKERS
 from coscc.agent.sessions import StepHandle, Suspended
 from coscc.agent import steps as steps_mod
 from coscc.service.resume import nothing, resume_kwargs
@@ -34,19 +36,20 @@ def _labelled(row: dict[str, Any]) -> dict[str, Any]:
     (`""` for a guard `guards` does not know), and `head`, the SHA its guard read, if any."""
     try:
         inputs = json.loads(row.get("inputs") or "{}")
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         inputs = {}
     inputs = inputs if isinstance(inputs, dict) else {}
     known = guards.GUARDS.get(str(row.get("guard") or ""))
     return {
-        **row, "inputs": inputs, "guard_label": known.label if known else "",
+        **row,
+        "inputs": inputs,
+        "guard_label": known.label if known else "",
         "head": str(inputs.get("merge_commit") or inputs.get("head") or ""),
     }
 
 
 class BacklogMixin:
-
-# -- backlog --------------------------------------------------------------
+    # -- backlog --------------------------------------------------------------
 
     async def _backlog_context(self, cwd: str) -> tuple[Journal, str, dict[str, Any]]:
         """The run log, its key and one board read. The read is `node`, so it happens before any
@@ -54,7 +57,9 @@ class BacklogMixin:
         self._workspace_or_refuse(cwd)
         journal = self._journal()
         if journal is None:
-            raise Invalid("no working folder is set, so nothing can be recorded — set COS_WORKING_DIR")
+            raise Invalid(
+                "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR"
+            )
         try:
             data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
         except Unavailable as e:
@@ -64,6 +69,7 @@ class BacklogMixin:
     @staticmethod
     def _append_checked(journal: Journal, record: dict[str, Any], check: Any) -> dict[str, Any]:
         """`check(rows)` returns a refusal or `""`, on the rows read inside the transaction."""
+
         def refuse(rows: list[dict[str, Any]]) -> None:
             said = check(rows)
             if said:
@@ -75,7 +81,13 @@ class BacklogMixin:
             raise Invalid(str(e)) from e
 
     async def record_estimate(
-        self, cwd: str, unit: str, value: Any, effort: Any, basis: Any, by: Any,
+        self,
+        cwd: str,
+        unit: str,
+        value: Any,
+        effort: Any,
+        basis: Any,
+        by: Any,
     ) -> dict[str, Any]:
         """A person's estimate: always a new record, never an edit of an old one."""
         by = str(by or "").strip() or OWNER
@@ -88,23 +100,59 @@ class BacklogMixin:
         if said:
             raise Invalid(said)
         record = {
-            "kind": "estimate-value", "workspace": key, "unit": unit, "value": value, "effort": effort,
-            "effort_source": "person", "similar": [], "basis": basis, "effort_basis": "", "by": by,
+            "kind": "estimate-value",
+            "workspace": key,
+            "unit": unit,
+            "value": value,
+            "effort": effort,
+            "effort_source": "person",
+            "similar": [],
+            "basis": basis,
+            "effort_basis": "",
+            "by": by,
         }
         return {"recorded": self._append_checked(journal, record, lambda rows: "")}
 
     async def record_relation(
-        self, cwd: str, unit: str, other: str, rtype: str, op: str, reason: str, by: str,
+        self,
+        cwd: str,
+        unit: str,
+        other: str,
+        rtype: str,
+        op: str,
+        reason: str,
+        by: str,
     ) -> dict[str, Any]:
         """Add or remove one relation; checked against the ones in effect inside the write."""
         by = str(by or "").strip() or OWNER
         journal, key, data = await self._backlog_context(cwd)
         names = [u["name"] for u in data["units"]]
-        record = {"kind": "relation", "workspace": key, "unit": unit, "other": other, "type": rtype,
-                  "op": op, "reason": reason, "by": by}
-        return {"recorded": self._append_checked(journal, record, lambda rows: backlog.check_relation(
-            unit, other, rtype, op, reason, by, names, backlog.relations_of(rows),
-        ))}
+        record = {
+            "kind": "relation",
+            "workspace": key,
+            "unit": unit,
+            "other": other,
+            "type": rtype,
+            "op": op,
+            "reason": reason,
+            "by": by,
+        }
+        return {
+            "recorded": self._append_checked(
+                journal,
+                record,
+                lambda rows: backlog.check_relation(
+                    unit,
+                    other,
+                    rtype,
+                    op,
+                    reason,
+                    by,
+                    names,
+                    backlog.relations_of(rows),
+                ),
+            )
+        }
 
     async def record_shortlist(self, cwd: str, names: Any, reason: str, by: str) -> dict[str, Any]:
         """The whole list, by a person, as one new record."""
@@ -117,13 +165,30 @@ class BacklogMixin:
         if backlog.is_agent(by):
             raise Invalid(f"a person's name may not start with {backlog.AGENT_PREFIX!r}")
         waiting = [u["name"] for u in data["units"] if backlog.in_backlog(u)]
-        record = {"kind": "shortlist", "workspace": key, "unit": "", "units": names, "reason": reason, "by": by}
-        return {"recorded": self._append_checked(journal, record, lambda rows: backlog.check_shortlist(
-            names, waiting, backlog.estimates_of(rows),
-        ))}
+        record = {
+            "kind": "shortlist",
+            "workspace": key,
+            "unit": "",
+            "units": names,
+            "reason": reason,
+            "by": by,
+        }
+        return {
+            "recorded": self._append_checked(
+                journal,
+                record,
+                lambda rows: backlog.check_shortlist(
+                    names,
+                    waiting,
+                    backlog.estimates_of(rows),
+                ),
+            )
+        }
 
     async def propose_estimates(
-        self, cwd: str, resume: dict[str, Any] | None = None,
+        self,
+        cwd: str,
+        resume: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """One paid session proposes estimates and relations for the whole backlog.
 
@@ -138,11 +203,15 @@ class BacklogMixin:
         self._refuse_while_updating()
         journal = self._journal()
         if journal is None:
-            raise Invalid("no working folder is set, so a proposal cannot be recorded — set COS_WORKING_DIR")
+            raise Invalid(
+                "no working folder is set, so a proposal cannot be recorded — set COS_WORKING_DIR"
+            )
         key = self._journal_key(cwd)
         held = self._active.get((key, ""))
         if held is not None:
-            raise Invalid(f"a proposal for this workspace is already running since {held.started_at}; wait for it to end")
+            raise Invalid(
+                f"a proposal for this workspace is already running since {held.started_at}; wait for it to end"
+            )
         mark = steps_mod.Mark("estimate", "estimate", "")
         self._active[(key, "")] = mark
         rid = self._mark_running(key, "", "estimate", "estimate")
@@ -157,7 +226,7 @@ class BacklogMixin:
                 raise Invalid(str(e)) from e
             unit_timelines = timelines_of(rows)
             found = backlog.measured(unit_timelines, data["units"])
-# How many finished units are left out for a cost nobody knows.
+            # How many finished units are left out for a cost nobody knows.
             left_out = len(backlog.undetermined(unit_timelines, data["units"]))
             waiting = [u["name"] for u in data["units"] if backlog.in_backlog(u)]
             if not waiting:
@@ -171,51 +240,83 @@ class BacklogMixin:
                     return ""
 
             texts = [
-                {"unit": n, "idea": backlog.section(read(n, "idea.md"), "In their own words"),
-                 "problem": backlog.section(read(n, "intent.md"), "Problem"),
-                 "outcome": backlog.section(read(n, "intent.md"), "Proposed outcome")}
+                {
+                    "unit": n,
+                    "idea": backlog.section(read(n, "idea.md"), "In their own words"),
+                    "problem": backlog.section(read(n, "intent.md"), "Problem"),
+                    "outcome": backlog.section(read(n, "intent.md"), "Proposed outcome"),
+                }
                 for n in waiting
             ]
             finished = [
-                {"unit": n, "title": backlog.title_of(read(n, "intent.md")), **f} for n, f in found.items()
+                {"unit": n, "title": backlog.title_of(read(n, "intent.md")), **f}
+                for n, f in found.items()
             ]
             prompt = backlog.build_prompt(texts, finished, left_out)
             grant = grant_for("estimate")
             defaults, _ = models.load_defaults()
             model, model_source, effort, effort_source = models.resolve(
-                models.ESTIMATE, None, self._model_overrides()[0], self._effort_overrides()[0], defaults,
+                models.ESTIMATE,
+                None,
+                self._model_overrides()[0],
+                self._effort_overrides()[0],
+                defaults,
                 self.config.model,
             )
             start_at = ((resume or {}).get("owner") or {}).get("start_at")
             if resume is None:
                 try:
-                    start_at = journal.started(key, "", "estimate", "manual", started_by="person",
-                                               prompt_chars=len(prompt), granted=[],
-                                               max_turns=grant.max_turns, model=model, model_source=model_source,
-                                               effort=effort, effort_source=effort_source).get("at")
+                    start_at = journal.started(
+                        key,
+                        "",
+                        "estimate",
+                        "manual",
+                        started_by="person",
+                        prompt_chars=len(prompt),
+                        granted=[],
+                        max_turns=grant.max_turns,
+                        model=model,
+                        model_source=model_source,
+                        effort=effort,
+                        effort_source=effort_source,
+                    ).get("at")
                     started = True
-                except (BadRecord, Busy):
+                except BadRecord, Busy:
                     pass
             else:
-# The `start` was written before the update; this ends it.
+                # The `start` was written before the update; this ends it.
                 started = True
             ask = resume_kwargs(resume, grant, prompt)
             used_up = ask.pop("used_up", "")
             reply, end, failure = "", {}, ""
-# The estimate is the object handed back, never the reply's words.
+            # The estimate is the object handed back, never the reply's words.
             collector = submit_mod.Collector("estimate")
             try:
-                async for kind, payload in nothing() if used_up else self.sessions.stream(
-                    cwd, ask.pop("text"), ask.pop("session_id"), tools=[],
-                    # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses
-                    # every one but `submit`.
-                    can_use_tool=permission_gate(grant, cwd, Denials()), step=StepHandle(),
-                    mcp_servers={submit_mod.SERVER: collector.server()},
-                    owner={"kind": "estimate", "workspace": key, "workspace_dir": cwd, "unit": "",
-                           "stage": "estimate", "start_at": start_at},
-                    **ask,
-                    **({"model": model} if model is not None else {}),
-                    **({"effort": effort} if effort is not None else {}),
+                async for kind, payload in (
+                    nothing()
+                    if used_up
+                    else self.sessions.stream(
+                        cwd,
+                        ask.pop("text"),
+                        ask.pop("session_id"),
+                        tools=[],
+                        # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses
+                        # every one but `submit`.
+                        can_use_tool=permission_gate(grant, cwd, Denials()),
+                        step=StepHandle(),
+                        mcp_servers={submit_mod.SERVER: collector.server()},
+                        owner={
+                            "kind": "estimate",
+                            "workspace": key,
+                            "workspace_dir": cwd,
+                            "unit": "",
+                            "stage": "estimate",
+                            "start_at": start_at,
+                        },
+                        **ask,
+                        **({"model": model} if model is not None else {}),
+                        **({"effort": effort} if effort is not None else {}),
+                    )
                 ):
                     if kind == "chunk":
                         reply += payload
@@ -223,11 +324,13 @@ class BacklogMixin:
                     elif kind == "session":
                         end["session_id"] = str(payload)
                     elif kind == "done":
-                        end.update(session_id=payload.get("session_id", end.get("session_id", "")),
-                                   cost=payload.get("cost") or {},
-                                   terminal_reason=str(payload.get("terminal_reason") or ""))
+                        end.update(
+                            session_id=payload.get("session_id", end.get("session_id", "")),
+                            cost=payload.get("cost") or {},
+                            terminal_reason=str(payload.get("terminal_reason") or ""),
+                        )
             except Suspended:
-# An update paused it and wrote its `suspend` row; no `end` here.
+                # An update paused it and wrote its `suspend` row; no `end` here.
                 ended = True
                 raise
             except Exception as e:  # noqa: BLE001 — recorded as the reason
@@ -238,24 +341,41 @@ class BacklogMixin:
             terminal = end.get("terminal_reason", "")
             if not failure and any(m in terminal for m in CEILING_MARKERS):
                 failure = f"the session stopped at a ceiling ({terminal}); nothing was recorded"
-# No object, no estimate, whatever the reply says.
+            # No object, no estimate, whatever the reply says.
             if not failure and not submitted(collector):
                 failure = backlog.NO_OBJECT
             session = end.get("session_id", "")
             names = [u["name"] for u in data["units"]]
-            parsed = {"records": [], "rejected": [], "failed": failure or None}
+            parsed: dict[str, Any] = {"records": [], "rejected": [], "failed": failure or None}
             if not failure:
                 parsed = backlog.parse_proposal(
-                    collector.object(), waiting, names, found, session, backlog.relations_of(rows), workspace=key,
+                    collector.object(),
+                    waiting,
+                    names,
+                    found,
+                    session,
+                    backlog.relations_of(rows),
+                    workspace=key,
                     undetermined=left_out,
                 )
             written, rejected = 0, list(parsed["rejected"])
             for rec in parsed["records"]:
                 if rec["kind"] == "relation":
-                    check = (lambda rec: lambda live: backlog.check_relation(
-                        rec["unit"], rec["other"], rec["type"], "add", rec["reason"], rec["by"], names,
-                        backlog.relations_of(live), agent=True,
-                    ))(rec)
+                    check = (
+                        lambda rec: (
+                            lambda live: backlog.check_relation(
+                                rec["unit"],
+                                rec["other"],
+                                rec["type"],
+                                "add",
+                                rec["reason"],
+                                rec["by"],
+                                names,
+                                backlog.relations_of(live),
+                                agent=True,
+                            )
+                        )
+                    )(rec)
                 else:
                     check = lambda live: ""  # noqa: E731
                 try:
@@ -265,26 +385,48 @@ class BacklogMixin:
                     rejected.append({"unit": rec["unit"], "reason": str(e)})
             outcome = "failed" if parsed["failed"] else "done"
             try:
-                journal.finished(key, "", "estimate", outcome, session_id=session,
-                                 detail=parsed["failed"], guard=RUN_SUBMITTED, **cost)
+                journal.finished(
+                    key,
+                    "",
+                    "estimate",
+                    outcome,
+                    session_id=session,
+                    detail=parsed["failed"],
+                    guard=RUN_SUBMITTED,
+                    **cost,
+                )
                 ended = True
-            except (BadRecord, Busy):
+            except BadRecord, Busy:
                 pass
             summary = {
-                "kind": "estimate", "workspace": key, "unit": "", "stage": "estimate", "session_id": session,
-                "cost_usd": cost.get("cost_usd"), "turns": cost.get("turns"), "written": written,
-                "rejected": rejected, "outcome": outcome, "detail": parsed["failed"],
+                "kind": "estimate",
+                "workspace": key,
+                "unit": "",
+                "stage": "estimate",
+                "session_id": session,
+                "cost_usd": cost.get("cost_usd"),
+                "turns": cost.get("turns"),
+                "written": written,
+                "rejected": rejected,
+                "outcome": outcome,
+                "detail": parsed["failed"],
             }
             try:
                 summary = journal.append(summary)
-            except (BadRecord, Busy):
+            except BadRecord, Busy:
                 pass
             yield ("done", {"estimate": summary})
         finally:
             if started and not ended:
                 try:
-                    journal.finished(key, "", "estimate", "cancelled", detail="the proposal ended before its reply was read")
-                except (BadRecord, Busy):
+                    journal.finished(
+                        key,
+                        "",
+                        "estimate",
+                        "cancelled",
+                        detail="the proposal ended before its reply was read",
+                    )
+                except BadRecord, Busy:
                     pass
             if self._active.get((key, "")) is mark:
                 del self._active[(key, "")]
@@ -308,15 +450,15 @@ class BacklogMixin:
             name = units.branch_name(cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
         except (CannotCreate, BadUnit) as e:
             raise Invalid(str(e)) from e
-# Cut in the unit's own worktree, never in the workspace: cutting there took one unit's
-# branch away from another. The workspace stays on `main`.
+        # Cut in the unit's own worktree, never in the workspace: cutting there took one unit's
+        # branch away from another. The workspace stays on `main`.
         try:
             tree = await worktrees.ensure(cwd, unit, None, self.config.data_dir)
         except (GitError, BadUnit) as e:
             raise Invalid(f"Could not open {unit}'s worktree, so no branch was cut. {e}") from e
         repo = Path(tree["path"])
-# Through the coordinator, so a step starting beside this does not race it for
-# `refs/remotes/origin/main`; a fetch under 30s old is reused here too.
+        # Through the coordinator, so a step starting beside this does not race it for
+        # `refs/remotes/origin/main`; a fetch under 30s old is reused here too.
         try:
             await fetches.fetch(repo, BRANCH_REMOTE, BRANCH_TRUNK)
         except GitError as e:
@@ -329,9 +471,9 @@ class BacklogMixin:
             output = await gitops.create_branch(repo, name, sha)
         except GitError as e:
             raise Invalid(str(e)) from e
-# Prepared here rather than when the tree was made: the lockfiles an `impl` works with are
-# the ones at the commit just cut from. A failure is returned, not raised (the branch is cut
-# either way), and `run_step` refuses `impl` until preparing succeeds.
+        # Prepared here rather than when the tree was made: the lockfiles an `impl` works with are
+        # the ones at the commit just cut from. A failure is returned, not raised (the branch is cut
+        # either way), and `run_step` refuses `impl` until preparing succeeds.
         prepared = await worktrees.prepare(repo, cwd, data_dir=self.config.data_dir)
         return {
             "cwd": cwd,
@@ -373,8 +515,13 @@ class BacklogMixin:
             rows = history.transitions(key, unit)
         except Busy as e:
             raise Invalid(str(e)) from e
-        return {"cwd": cwd, "unit": unit, "runs": runs, "cost": totals_of(runs),
-                "transitions": [_labelled(r) for r in rows]}
+        return {
+            "cwd": cwd,
+            "unit": unit,
+            "runs": runs,
+            "cost": totals_of(runs),
+            "transitions": [_labelled(r) for r in rows],
+        }
 
     def _history(self) -> History | None:
         """The transition log, or `None` when there is no working folder to keep it in.
@@ -427,11 +574,11 @@ class BacklogMixin:
             written_under = history.machines_in(key, unit)
         except Busy as e:
             raise Invalid(str(e)) from e
-# Rows written under one state set and read under another compare words that never meant
-# the same thing, and nothing about that failure looks like a failure: every query still
-# returns rows. Said out loud in the payload rather than refused, because refusing a *read*
-# would hide the only evidence there is. A caller that compares these against another source
-# must stop here.
+        # Rows written under one state set and read under another compare words that never meant
+        # the same thing, and nothing about that failure looks like a failure: every query still
+        # returns rows. Said out loud in the payload rather than refused, because refusing a *read*
+        # would hide the only evidence there is. A caller that compares these against another source
+        # must stop here.
         foreign = [name for name in written_under if name != history.machine.name]
         return {
             "cwd": cwd,
@@ -440,10 +587,11 @@ class BacklogMixin:
             "machine": history.machine.name,
             "written_under": written_under,
             "mixed_state_sets": (
-                None if not foreign
+                None
+                if not foreign
                 else f"this unit holds transitions written under {', '.join(foreign)}, "
-                     f"but is being read under {history.machine.name} — the states in "
-                     "those rows do not mean what they appear to mean here"
+                f"but is being read under {history.machine.name} — the states in "
+                "those rows do not mean what they appear to mean here"
             ),
             "transitions": rows,
             "state": state,

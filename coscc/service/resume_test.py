@@ -1,8 +1,7 @@
-"""Tests for `coscc/service/resume.py`: taking up at start-up what an update paused (`0138`).
+"""Tests for `coscc/service/resume.py`: taking up at start-up what an update paused.
 
 `transcript.projects_root` is a temporary directory throughout, so nothing here reads or
-writes `~/.claude`. No session opens: an owner is a stand-in, or `Sessions.stream` is.
-"""
+writes `~/.claude`. No session opens: an owner is a stand-in, or `Sessions.stream` is."""
 
 from __future__ import annotations
 
@@ -34,19 +33,55 @@ def _transcript() -> str:
     """One Bash call answered, then one cut: the safe point is `u2`."""
     return (
         _line(type="user", uuid="u1", message={"role": "user", "content": "do it"})
-        + _line(type="assistant", uuid="a1", message={"id": "m1", "content": [
-            {"type": "text", "text": "Running."},
-            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "echo one"}}]})
-        + _line(type="user", uuid="u2", message={"content": [
-            {"type": "tool_result", "tool_use_id": "t1", "content": "one"}]})
-        + _line(type="assistant", uuid="a2", message={"id": "m2", "content": [
-            {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "sleep 60"}}]})
+        + _line(
+            type="assistant",
+            uuid="a1",
+            message={
+                "id": "m1",
+                "content": [
+                    {"type": "text", "text": "Running."},
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "Bash",
+                        "input": {"command": "echo one"},
+                    },
+                ],
+            },
+        )
+        + _line(
+            type="user",
+            uuid="u2",
+            message={"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "one"}]},
+        )
+        + _line(
+            type="assistant",
+            uuid="a2",
+            message={
+                "id": "m2",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t2",
+                        "name": "Bash",
+                        "input": {"command": "sleep 60"},
+                    }
+                ],
+            },
+        )
     )
 
 
 class _Base(unittest.TestCase):
-    STAGE = {"step": "plan", "opening": "plan", "closing": "review", "integrate": "integrate",
-             "estimate": "estimate", "precedent": "precedent", "chat": ""}
+    STAGE = {
+        "step": "plan",
+        "opening": "plan",
+        "closing": "review",
+        "integrate": "integrate",
+        "estimate": "estimate",
+        "precedent": "precedent",
+        "chat": "",
+    }
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -59,7 +94,11 @@ class _Base(unittest.TestCase):
         patcher = mock.patch.object(transcript, "projects_root", lambda: self.projects)
         patcher.start()
         self.addCleanup(patcher.stop)
-        config = Config(workspaces=(self.cwd,), working_dir=str(self.root / "work"), data_dir=str(self.root / "data"))
+        config = Config(
+            workspaces=(self.cwd,),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.root / "data"),
+        )
         self.service = Service(config, Sessions(config))
         self.journal = self.service._journal()
         self.key = self.service._journal_key(self.cwd)
@@ -67,8 +106,14 @@ class _Base(unittest.TestCase):
         self.tree = self.root / "tree"
         self.tree.mkdir()
 
-    def paused(self, kind: str = "step", cwd: Path | None = None, write: bool = True, api_calls: int | None = None,
-               **extra) -> dict:
+    def paused(
+        self,
+        kind: str = "step",
+        cwd: Path | None = None,
+        write: bool = True,
+        api_calls: int | None = None,
+        **extra,
+    ) -> dict:
         """One `suspend` row, as `suspend_sessions` writes it, and its transcript unless not. A
         chat turn's has used none of its one turn unless the test says so."""
         if api_calls is None:
@@ -79,11 +124,32 @@ class _Base(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(_transcript(), encoding="utf-8")
         unit = "" if kind in ("estimate", "chat") else self.unit
-        owner = {"kind": kind, "workspace": self.key, "workspace_dir": self.cwd, "unit": unit,
-                 "stage": self.STAGE[kind], "start_at": "t0", "artifact": "plan.md", "head": ""}
+        owner = {
+            "kind": kind,
+            "workspace": self.key,
+            "workspace_dir": self.cwd,
+            "unit": unit,
+            "stage": self.STAGE[kind],
+            "start_at": "t0",
+            "artifact": "plan.md",
+            "head": "",
+        }
         return self.journal.suspended(
-            self.key, unit, owner["stage"], by="an", owner=owner, cwd=cwd, session_id=SID, model="m",
-            start_at="t0", boundary=4, safe_uuid="u2", dropped=DROPPED, api_calls=api_calls, spent_usd=0.3, **extra,
+            self.key,
+            unit,
+            owner["stage"],
+            by="an",
+            owner=owner,
+            cwd=cwd,
+            session_id=SID,
+            model="m",
+            start_at="t0",
+            boundary=4,
+            safe_uuid="u2",
+            dropped=DROPPED,
+            api_calls=api_calls,
+            spent_usd=0.3,
+            **extra,
         )
 
     def up(self) -> list[dict]:
@@ -108,9 +174,15 @@ class _Base(unittest.TestCase):
 
 
 class WhatASessionIsTold(unittest.TestCase):
-    def test_the_resume_message_names_the_dropped_commands_and_says_the_user_did_not_refuse_them(self):
-        said = resume_mod.resume_message([{"name": "Bash", "input": "npm test"},
-                                          {"name": "Edit", "input": '{"file_path": "a.py"}'}])
+    def test_the_resume_message_names_the_dropped_commands_and_says_the_user_did_not_refuse_them(
+        self,
+    ):
+        said = resume_mod.resume_message(
+            [
+                {"name": "Bash", "input": "npm test"},
+                {"name": "Edit", "input": '{"file_path": "a.py"}'},
+            ]
+        )
         self.assertIn("- Bash: npm test", said)
         self.assertIn('- Edit: {"file_path": "a.py"}', said)
         self.assertIn("The user did not refuse them", said)
@@ -141,9 +213,11 @@ class TakingUpAfterAnUpdate(_Base):
         async def chat(cwd, record):
             got["chat"].append(record)
 
-        with mock.patch.object(self.service, "resume_integration", lambda r: integration(r)), \
-                mock.patch.object(self.service, "propose_estimates", estimates), \
-                mock.patch.object(self.service, "_resume_chat", chat):
+        with (
+            mock.patch.object(self.service, "resume_integration", lambda r: integration(r)),
+            mock.patch.object(self.service, "propose_estimates", estimates),
+            mock.patch.object(self.service, "_resume_chat", chat),
+        ):
             for kind in resume_mod.KINDS:
                 self.paused(kind)
             said = self.up()
@@ -153,7 +227,6 @@ class TakingUpAfterAnUpdate(_Base):
         for kind in ("integrate", "estimate", "chat"):
             [record] = got[kind]
             self.assertEqual(record["owner"]["kind"], kind)
-        # What each owner is handed: the pieces before the safe point and the R7 message.
         record = steps_seen[0]
         self.assertEqual(record["pieces"], ["Running.", ""])
         self.assertIn("- Bash: sleep 60", record["message"])
@@ -170,7 +243,6 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual(self.journal.unresumed(), [])
 
     def test_a_resumed_row_records_snapshot(self):
-        # `0139` R15.
         self.taken()
         self.paused()
         self.up()
@@ -193,8 +265,7 @@ class TakingUpAfterAnUpdate(_Base):
         self.assert_failed("transcript")
 
     def test_a_transcript_only_in_another_project_is_not_resumed(self):
-        # `spike.md ## U5`, "Sự cố": left to itself, the CLI takes a file of the same id from
-        # another project and writes into it. The row's own directory decides.
+        # The row's own directory decides.
         steps_seen = self.taken()
         other = transcript.path_for(str(self.root / "other_place.x"), SID)
         other.parent.mkdir(parents=True)
@@ -220,17 +291,19 @@ class TakingUpAfterAnUpdate(_Base):
         self.assert_failed("no session id yet")
 
     def test_a_unit_that_moved_on_after_the_pause_is_not_taken_up(self):
-        # Review round 1, F3: a rerun while the row waited for a start. Taking the old session
-        # up would write over newer work.
+        # A rerun while the row waited for a start. Taking the old session up would write over newer
+        # work.
         steps_seen = self.taken()
         self.paused()
-        self.journal.append({"kind": "start", "workspace": self.key, "unit": self.unit, "stage": "plan"})
+        self.journal.append(
+            {"kind": "start", "workspace": self.key, "unit": self.unit, "stage": "plan"}
+        )
         self.up()
         self.assertEqual(steps_seen, [])
         self.assert_failed("moved on after the update paused it")
 
     def test_a_unit_already_held_writes_a_failed_resume_row(self):
-        # Review round 1, F4: the `resume` row says what happened, not what was about to.
+        # The `resume` row says what happened, not what was about to.
         steps_seen = self.taken()
         self.paused()
         self.service._take(self.key, self.unit, "integrate")
@@ -257,18 +330,26 @@ class TakingUpAfterAnUpdate(_Base):
             reached.append("chat")
 
         cases = {
-            "the workspace was taken off the list": lambda: mock.patch.object(self.service, "_is_member", lambda cwd: False),
-            "an update is being applied": lambda: mock.patch.object(self.service.updater, "window", True),
+            "the workspace was taken off the list": lambda: mock.patch.object(
+                self.service, "_is_member", lambda cwd: False
+            ),
+            "an update is being applied": lambda: mock.patch.object(
+                self.service.updater, "window", True
+            ),
         }
-        with mock.patch.object(self.service, "propose_estimates", estimates), \
-                mock.patch.object(self.service, "_resume_chat", chat):
+        with (
+            mock.patch.object(self.service, "propose_estimates", estimates),
+            mock.patch.object(self.service, "_resume_chat", chat),
+        ):
             for why, refusal in cases.items():
                 with self.subTest(why), refusal():
                     for kind in ("estimate", "chat"):
                         self.paused(kind)
                     said = self.up()
-                    self.assertEqual([(s["kind"], s["result"]) for s in said],
-                                     [("estimate", "failed"), ("chat", "failed")])
+                    self.assertEqual(
+                        [(s["kind"], s["result"]) for s in said],
+                        [("estimate", "failed"), ("chat", "failed")],
+                    )
             self.assertEqual(reached, [])
             rows = self.journal.records(self.key, kind="resume")
             self.assertEqual({r["result"] for r in rows}, {"failed"})
@@ -285,8 +366,8 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual((end["stage"], end["outcome"]), ("precedent", "failed"))
 
     def test_taking_up_again_lets_sessions_open_once_more(self):
-        # Review round 2, F6: `suspend_all` closed `Sessions` to new streams; after a failed
-        # hand-off this same process takes its rows up, and must open them again.
+        # `suspend_all` closed `Sessions` to new streams; after a failed hand-off this same process
+        # takes its rows up, and must open them again.
         self.taken()
         self.service.sessions.paused = True
         self.paused()
@@ -304,7 +385,9 @@ class TakingUpAfterAnUpdate(_Base):
         self.paused("integrate")
         with mock.patch.object(self.service, "resume_integration", lambda r: integration(r)):
             said = self.up()
-        self.assertEqual([(s["kind"], s["result"]) for s in said], [("step", "failed"), ("integrate", "resumed")])
+        self.assertEqual(
+            [(s["kind"], s["result"]) for s in said], [("step", "failed"), ("integrate", "resumed")]
+        )
         self.assertEqual((steps_seen, len(got)), ([], 1))
 
     def test_the_chat_ceiling_is_what_sessions_gives_a_turn_that_names_none(self):
@@ -312,11 +395,12 @@ class TakingUpAfterAnUpdate(_Base):
 
         from coscc.service.sessions import CHAT_TURNS
 
-        self.assertEqual(CHAT_TURNS, inspect.signature(Sessions.stream).parameters["max_turns"].default)
+        self.assertEqual(
+            CHAT_TURNS, inspect.signature(Sessions.stream).parameters["max_turns"].default
+        )
         self.assertIsNone(inspect.signature(Sessions.stream).parameters["max_budget_usd"].default)
 
     def test_a_chat_turn_goes_on_with_what_is_left_of_its_ceiling(self):
-        # Review round 1, F5: R10 for chat too, never its whole ceiling again.
         streamed: list[dict] = []
 
         async def stream(cwd, text, session_id=None, **kw):
@@ -350,7 +434,7 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual(self.ends(), [])
 
     def test_a_refused_resume_ends_failed_without_a_new_session(self):
-        # R8: the CLI refusing the id, or `Sessions` finding another in `init`, is the end.
+        # The CLI refusing the id, or `Sessions` finding another in `init`, is the end.
         from coscc.runner import Runner
 
         class Refuses:
@@ -366,9 +450,16 @@ class TakingUpAfterAnUpdate(_Base):
 
         async def go():
             async for _ in Runner(sessions, self.journal).run(
-                workspace=self.cwd, directory=self.service._unit_dir(self.cwd, self.unit), journal_key=self.key,
-                unit=self.unit, stage="plan", artifact="plan.md", stages=[], mode="manual",
-                cwd=str(self.tree), resume=record,
+                workspace=self.cwd,
+                directory=self.service._unit_dir(self.cwd, self.unit),
+                journal_key=self.key,
+                unit=self.unit,
+                stage="plan",
+                artifact="plan.md",
+                stages=[],
+                mode="manual",
+                cwd=str(self.tree),
+                resume=record,
             ):
                 pass
 
@@ -397,14 +488,16 @@ class TakingUpAfterAnUpdate(_Base):
             return []
 
         self.paused()
-        with mock.patch("coscc.runner.Runner", Waits), \
-                mock.patch.object(self.service, "autopilot_resume", autopilot_resume):
+        with (
+            mock.patch("coscc.runner.Runner", Waits),
+            mock.patch.object(self.service, "autopilot_resume", autopilot_resume),
+        ):
             self.up()
         self.assertEqual(held, [[self.unit]])
         self.assertEqual(self.service.steps.all(), [])
 
     def test_resume_runs_no_git_command_on_the_worktree(self):
-        # R9: nothing reads or cleans the worktree before the session goes on.
+        # Nothing reads or cleans the worktree before the session goes on.
         ran: list[tuple] = []
         real_exec, real_run = asyncio.create_subprocess_exec, subprocess.run
 
@@ -413,7 +506,9 @@ class TakingUpAfterAnUpdate(_Base):
             return await real_exec(*args, cwd=cwd, **kw)
 
         def run(args, *a, cwd=None, **kw):
-            ran.append((tuple(args) if isinstance(args, (list, tuple)) else (args,), str(cwd or "")))
+            ran.append(
+                (tuple(args) if isinstance(args, (list, tuple)) else (args,), str(cwd or ""))
+            )
             return real_run(args, *a, cwd=cwd, **kw)
 
         streamed: list[dict] = []
@@ -425,17 +520,21 @@ class TakingUpAfterAnUpdate(_Base):
 
         self.paused()
         self.service.sessions.stream = stream  # type: ignore[method-assign]
-        with mock.patch.object(asyncio, "create_subprocess_exec", exec_), mock.patch.object(subprocess, "run", run):
+        with (
+            mock.patch.object(asyncio, "create_subprocess_exec", exec_),
+            mock.patch.object(subprocess, "run", run),
+        ):
             self.up()
         [call] = streamed
-        self.assertEqual((call["cwd"], call["session_id"], call["resume_at"]), (str(self.tree), SID, "u2"))
+        self.assertEqual(
+            (call["cwd"], call["session_id"], call["resume_at"]), (str(self.tree), SID, "u2")
+        )
         on_tree = [a for a, where in ran if "git" in str(a[0]) and where.startswith(str(self.tree))]
         self.assertEqual(on_tree, [])
 
 
 class APausedOwnerEndsNothing(_Base):
-    """`0138` plan step 6: Gebo and an estimate re-raise `Suspended` before any branch
-    that writes their `end`."""
+    """Gebo and an estimate re-raise `Suspended` before any branch that writes their `end`."""
 
     ASKED = "# Spec: a\nIntent: intent.md. Author: t. Status: draft.\n\n## Open questions\n\n1. Nhánh mới?\n"
 
@@ -447,14 +546,30 @@ class APausedOwnerEndsNothing(_Base):
         self.service.sessions.stream = stream  # type: ignore[method-assign]
         unit_dir = self.service._unit_dir(self.cwd, self.unit)
         (unit_dir / "intent.md").write_text(
-            "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n", encoding="utf-8")
+            "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n",
+            encoding="utf-8",
+        )
         (unit_dir / "spec.md").write_text(self.ASKED, encoding="utf-8")
         row = {**self.paused("integrate"), "message": "MSG"}
 
         async def gebo():
             async for _ in self.service._integrate_gebo(
-                self.cwd, self.key, self.unit, None, None, None, None, 7, self.tree, "feat/a-problem",
-                "a" * 40, "b" * 40, self.journal, self.journal.append, {"started_by": "person"}, resume=row,
+                self.cwd,
+                self.key,
+                self.unit,
+                None,
+                None,
+                None,
+                None,
+                7,
+                self.tree,
+                "feat/a-problem",
+                "a" * 40,
+                "b" * 40,
+                self.journal,
+                self.journal.append,
+                {"started_by": "person"},
+                resume=row,
             ):
                 pass
 

@@ -14,7 +14,6 @@ from coscc.service.common import Invalid
 
 
 class AgentsMixin:
-
     def _agent_overrides(self) -> tuple[dict[str, dict[str, str]], list[str]]:
         """The stored overrides, or none and why when `cos.db` cannot be read: a name is
         never a reason to refuse a step or a board read."""
@@ -69,7 +68,9 @@ class AgentsMixin:
         try:
             overrides, _ = agents.overrides_from(data.pref_rows(agents.PREFIX))
         except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
-            raise Invalid(f"the agent overrides could not be read, so nothing was saved: {e}") from e
+            raise Invalid(
+                f"the agent overrides could not be read, so nothing was saved: {e}"
+            ) from e
         old = overrides.get(key)
         if fields:
             new = {**(old or {}), **fields}

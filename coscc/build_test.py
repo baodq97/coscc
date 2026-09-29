@@ -1,9 +1,7 @@
 """Tests for the fingerprint. None of these run a real build.
 
-`spec.md` C3 is the thing being defended: a stale bundle must not read as current. The
-states are kept apart on purpose — "no build" and "a build nobody fingerprinted" are
-different problems with different fixes, and collapsing them would hide one.
-"""
+The states are kept apart on purpose — "no build" and "a build nobody fingerprinted" are different
+problems with different fixes, and collapsing them would hide one."""
 
 from __future__ import annotations
 
@@ -53,9 +51,7 @@ class WhatCountsAsCurrent(unittest.TestCase):
     def test_editing_rxconfig_makes_it_stale(self):
         build.write_marker(self.built, self.config, root=self.root)
         _fake_source_tree(self.root, rx="cfg v2")
-        self.assertEqual(
-            build.check(self.config, self.built, root=self.root)[0], build.STALE
-        )
+        self.assertEqual(build.check(self.config, self.built, root=self.root)[0], build.STALE)
 
     def test_editing_any_presentation_module_makes_it_stale(self):
         for source in build._SOURCES:
@@ -76,9 +72,7 @@ class WhatCountsAsCurrent(unittest.TestCase):
         install never gets here -- `coscc/web/frontend.py` rewrites the address instead.
         """
         build.write_marker(self.built, self.config, root=self.root)
-        state, msg = build.check(
-            Config(host="127.0.0.1", port=8792), self.built, root=self.root
-        )
+        state, msg = build.check(Config(host="127.0.0.1", port=8792), self.built, root=self.root)
         self.assertEqual(state, build.STALE)
         self.assertIn("8790", msg)
         self.assertIn("8792", msg)
@@ -120,9 +114,7 @@ class StatesKeptApart(unittest.TestCase):
     def test_a_corrupt_fingerprint_reads_as_missing_rather_than_crashing(self):
         (self.built / "index.html").write_text("<html></html>")
         build.marker_path(self.built).write_text("{not json")
-        self.assertEqual(
-            build.check(self.config, self.built, root=self.root)[0], build.MISSING
-        )
+        self.assertEqual(build.check(self.config, self.built, root=self.root)[0], build.MISSING)
 
 
 class WhatTheFingerprintCovers(unittest.TestCase):
@@ -130,15 +122,21 @@ class WhatTheFingerprintCovers(unittest.TestCase):
         # If this list grows, the docstring in build.py has to say so — a fingerprint
         # that silently covers less than it claims is worse than none.
         self.assertEqual(
-            set(build._SOURCES), {
-                "coscc/coscc.py", "coscc/web/ui.py", "coscc/web/studio.py",
-                "coscc/screens/__init__.py", "coscc/state/__init__.py", "rxconfig.py",
-            } | set(self.split_modules())
+            set(build._SOURCES),
+            {
+                "coscc/coscc.py",
+                "coscc/web/ui.py",
+                "coscc/web/studio.py",
+                "coscc/screens/__init__.py",
+                "coscc/state/__init__.py",
+                "rxconfig.py",
+            }
+            | set(self.split_modules()),
         )
 
     @staticmethod
     def split_modules() -> list[str]:
-        """`0095`: the modules `screens.py` and `state.py` were split into, tests left out."""
+        """The modules `screens.py` and `state.py` were split into, tests left out."""
         repo = Path(__file__).resolve().parent.parent
         return [
             p.relative_to(repo).as_posix()

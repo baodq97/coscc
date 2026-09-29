@@ -1,12 +1,10 @@
 """Tests for the one module that runs an external process and touches the network.
 
-Most of these assert that something does **not** happen. `spec.md` C2 is explicit that a
-safety failure here has no symptom — nothing crashes, nothing logs, the token is simply in
-a place it should not be. So the tests have to state the absence directly.
+Most of these assert that something does **not** happen. So the tests have to state the absence
+directly.
 
 Nothing here reaches the network. The one clone that runs points at a host that does not
-resolve, which exercises the failure path without depending on anyone's uptime.
-"""
+resolve, which exercises the failure path without depending on anyone's uptime."""
 
 from __future__ import annotations
 
@@ -44,9 +42,7 @@ class UrlsRefusedBeforeGitExists(unittest.TestCase):
                 check_url(bad)
 
     def test_an_https_url_passes_and_is_trimmed(self):
-        self.assertEqual(
-            check_url("  https://example.com/r.git  "), "https://example.com/r.git"
-        )
+        self.assertEqual(check_url("  https://example.com/r.git  "), "https://example.com/r.git")
 
 
 class TheChildEnvironmentCarriesNoSecret(unittest.TestCase):
@@ -76,8 +72,13 @@ class TheChildEnvironmentCarriesNoSecret(unittest.TestCase):
         self.assertEqual(
             set(env),
             {
-                "PATH", "HOME", "GIT_TERMINAL_PROMPT", "GIT_ASKPASS",
-                "SSH_ASKPASS", "GIT_CONFIG_NOSYSTEM", "LC_ALL",
+                "PATH",
+                "HOME",
+                "GIT_TERMINAL_PROMPT",
+                "GIT_ASKPASS",
+                "SSH_ASKPASS",
+                "GIT_CONFIG_NOSYSTEM",
+                "LC_ALL",
             },
         )
 
@@ -89,15 +90,11 @@ class TheChildEnvironmentCarriesNoSecret(unittest.TestCase):
 
 class FailureIsReportedNotSwallowed(unittest.TestCase):
     def test_cloning_a_host_that_does_not_resolve_fails_within_the_deadline(self):
-        # The point is that it returns at all: `spec.md` R15 wants a private or
-        # unreachable repo to fail rather than hang on a password nobody can type.
         with tempfile.TemporaryDirectory() as d:
             dest = Path(d) / "repo"
             with self.assertRaises(GitError) as e:
                 asyncio.run(
-                    gitops.clone(
-                        "https://coscc-nonexistent.invalid/x.git", dest, timeout=30
-                    )
+                    gitops.clone("https://coscc-nonexistent.invalid/x.git", dest, timeout=30)
                 )
             self.assertTrue(str(e.exception).strip())
             self.assertFalse(dest.exists())
@@ -116,7 +113,9 @@ class FailureIsReportedNotSwallowed(unittest.TestCase):
 
     def test_a_timeout_is_reported_as_a_timeout(self):
         with tempfile.TemporaryDirectory() as d:
-            with mock.patch.object(gitops, "_run", side_effect=GitError("git timed out after 1s: git clone")):
+            with mock.patch.object(
+                gitops, "_run", side_effect=GitError("git timed out after 1s: git clone")
+            ):
                 with self.assertRaises(GitError) as e:
                     asyncio.run(gitops.clone("https://example.com/r.git", Path(d) / "x"))
             self.assertIn("timed out", str(e.exception))
@@ -127,17 +126,14 @@ if __name__ == "__main__":
 
 
 class TheAppMayCreateABranchAndNothingElse(unittest.TestCase):
-    """`0014` R5, one test per forbidden thing.
-
-    Written as refusals rather than as an absence, because "the app cannot push" is not
+    """Written as refusals rather than as an absence, because "the app cannot push" is not
     checkable by looking at code that does not exist. What is checkable is that the one
     entry point which touches somebody else's git takes a branch name and nothing else,
     and refuses everything that is not one.
 
     Real repositories, not mocks: what is under test is an agreement with `git` about what
     `switch -c <name> main` does when the branch exists, when the trunk does not, and when
-    the name starts with a dash.
-    """
+    the name starts with a dash."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -151,9 +147,21 @@ class TheAppMayCreateABranchAndNothingElse(unittest.TestCase):
 
     def _git(self, *args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(self.repo), "-c", "user.name=T",
-             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
 
     @property
@@ -221,11 +229,8 @@ class TheAppMayCreateABranchAndNothingElse(unittest.TestCase):
 
 
 class FetchingTheTrunkFromARemote(unittest.TestCase):
-    """`0001_product-describes-a-state-it-is-not-in` R1 and R2, against a local bare remote.
-
-    No network: the remote is a directory. What is under test is which ref moves, which
-    does not, and that a failure carries git's own words.
-    """
+    """No network: the remote is a directory. What is under test is which ref moves, which
+    does not, and that a failure carries git's own words."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -234,7 +239,9 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
         self.remote = root / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         seed = root / "seed"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True
+        )
         self.seed = seed
         self._commit(seed, "one")
         self.repo = root / "repo"
@@ -242,9 +249,21 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
 
     def _git(self, where: Path, *args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(where), "-c", "user.name=T",
-             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(where),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
     def _commit(self, where: Path, text: str) -> str:
@@ -268,7 +287,12 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
         self.assertIn("gone.git", str(caught.exception))
 
     def test_a_remote_or_branch_shaped_like_a_flag_never_reaches_git(self):
-        for remote, branch in (("--upload-pack=x", "main"), ("origin", "-x"), ("origin", "a:b"), ("", "main")):
+        for remote, branch in (
+            ("--upload-pack=x", "main"),
+            ("origin", "-x"),
+            ("origin", "a:b"),
+            ("", "main"),
+        ):
             with self.assertRaises(GitError, msg=(remote, branch)):
                 asyncio.run(gitops.fetch(self.repo, remote, branch))
 
@@ -285,12 +309,13 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
         self.assertEqual(self._git(self.repo, "rev-parse", "fix/a-problem"), new)
         got = subprocess.run(
             ["git", "-C", str(self.repo), "config", "branch.fix/a-problem.merge"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         self.assertEqual(got.stdout.strip(), "")
 
     def test_a_clone_and_its_worktree_share_one_common_dir_and_another_clone_does_not(self):
-        # `0048` R1: the key fetches are coordinated on.
+        # The key fetches are coordinated on.
         tree = Path(self._tmp.name) / "tree"
         self._git(self.repo, "worktree", "add", "-q", "--detach", str(tree))
         here = asyncio.run(gitops.common_dir(self.repo))
@@ -301,7 +326,7 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
 
 
 class Worktrees(FetchingTheTrunkFromARemote):
-    """`0017` plan step 2. The worktree commands, each with the refusal that bounds it."""
+    """The worktree commands, each with the refusal that bounds it."""
 
     def setUp(self):
         super().setUp()
@@ -364,7 +389,9 @@ class Worktrees(FetchingTheTrunkFromARemote):
         self._git(self.repo, "add", "-A")
         self._git(self.repo, "commit", "-q", "-m", "unpushed")
         self._git(self.repo, "switch", "-q", "main")
-        self.assertFalse(asyncio.run(gitops.delete_merged_branch(self.repo, "fix/a-problem", merged)))
+        self.assertFalse(
+            asyncio.run(gitops.delete_merged_branch(self.repo, "fix/a-problem", merged))
+        )
         self.assertNotEqual(self._git(self.repo, "branch", "--list", "fix/a-problem"), "")
         at = self._git(self.repo, "rev-parse", "fix/a-problem")
         self.assertTrue(asyncio.run(gitops.delete_merged_branch(self.repo, "fix/a-problem", at)))
@@ -378,13 +405,12 @@ class Worktrees(FetchingTheTrunkFromARemote):
 
 
 class MeasuringAncestryAndDistance(unittest.TestCase):
-    """`0030_a-unit-branch-starts-from-a-stale-main` plan step 1: `is_ancestor`, `count_missing`.
+    """`is_ancestor`, `count_missing`.
 
     A fixture of its own rather than a subclass of `FetchingTheTrunkFromARemote`: that
     class's own tests each push a second commit whose message is the literal `"two"`, and
     unittest runs every inherited test method against a subclass's `setUp` too — inheriting
-    it here, with a `"two"` already pushed, would leave those tests nothing left to commit.
-    """
+    it here, with a `"two"` already pushed, would leave those tests nothing left to commit."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -393,7 +419,9 @@ class MeasuringAncestryAndDistance(unittest.TestCase):
         self.remote = root / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         seed = root / "seed"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True
+        )
         self.seed = seed
         self._commit(seed, "one")
         self.repo = root / "repo"
@@ -403,9 +431,21 @@ class MeasuringAncestryAndDistance(unittest.TestCase):
 
     def _git(self, where: Path, *args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(where), "-c", "user.name=T",
-             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(where),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
     def _commit(self, where: Path, text: str) -> str:
@@ -456,7 +496,7 @@ class MeasuringAncestryAndDistance(unittest.TestCase):
 
 
 class AdvancingADetachedWorktree(unittest.TestCase):
-    """`0030_a-unit-branch-starts-from-a-stale-main` plan step 1: `advance_detached`.
+    """`advance_detached`.
 
     A fixture of its own rather than a subclass of `Worktrees`: this one's `setUp` already
     puts the tree where `worktree_add` left it, and unittest would run `Worktrees`'s own
@@ -464,8 +504,7 @@ class AdvancingADetachedWorktree(unittest.TestCase):
 
     One test moves a clean detached tree forward; three refuse it, each leaving HEAD
     exactly where it was — a refusal that moved the tree partway would be worse than one
-    that did nothing.
-    """
+    that did nothing."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -474,7 +513,9 @@ class AdvancingADetachedWorktree(unittest.TestCase):
         self.remote = root / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         seed = root / "seed"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True
+        )
         self.seed = seed
         self._commit(seed, "one")
         self.repo = root / "repo"
@@ -485,9 +526,21 @@ class AdvancingADetachedWorktree(unittest.TestCase):
 
     def _git(self, where: Path, *args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(where), "-c", "user.name=T",
-             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(where),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
     def _commit(self, where: Path, text: str) -> str:
@@ -544,12 +597,11 @@ class AdvancingADetachedWorktree(unittest.TestCase):
 
 
 class ReadingAFailedAttemptsTree(unittest.TestCase):
-    """`0019` plan step 1: the four read-only functions `snapshot` builds on.
+    """The four read-only functions `snapshot` builds on.
 
     Everything here reads a temporary repository, never writes to one — these are the
     functions a stopped step's record is built from, so what they report has to match
-    `git log`/`git status` run by hand, byte for byte.
-    """
+    `git log`/`git status` run by hand, byte for byte."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -564,9 +616,21 @@ class ReadingAFailedAttemptsTree(unittest.TestCase):
 
     def _git(self, *args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(self.repo), "-c", "user.name=T",
-             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
 
     def test_head_and_branch_names_the_branch(self):
@@ -671,8 +735,8 @@ class ReadingAFailedAttemptsTree(unittest.TestCase):
 
 
 class IntegratingABranchThatFellBehind(unittest.TestCase):
-    """`0035` plan step 3. A unit branch on a bare remote, rebased "on GitHub's side" by a
-    second clone, and the local tree following it — or refusing, changing nothing.
+    """A unit branch on a bare remote, rebased "on GitHub's side" by a second clone, and the local
+    tree following it — or refusing, changing nothing.
 
     Borrows `AdvancingADetachedWorktree`'s fixture without subclassing it, so its tests do
     not run a second time against this tree."""
@@ -691,7 +755,13 @@ class IntegratingABranchThatFellBehind(unittest.TestCase):
         self._git(self.seed, "commit", "-q", "-m", "branch work")
         self._git(self.seed, "push", "-q", "origin", self.BRANCH)
         self.old = self._git(self.seed, "rev-parse", "HEAD")
-        self._git(self.repo, "fetch", "-q", "origin", f"+refs/heads/{self.BRANCH}:refs/remotes/origin/{self.BRANCH}")
+        self._git(
+            self.repo,
+            "fetch",
+            "-q",
+            "origin",
+            f"+refs/heads/{self.BRANCH}:refs/remotes/origin/{self.BRANCH}",
+        )
         self._git(self.repo, "branch", self.BRANCH, f"origin/{self.BRANCH}")
         asyncio.run(gitops.worktree_add(self.repo, self.tree, self.BRANCH))
         # Main moves; the branch is rebased onto it on the remote, as update-branch would.
@@ -721,7 +791,11 @@ class IntegratingABranchThatFellBehind(unittest.TestCase):
 
     def _refused(self, expected_old=None, new=None, want="nothing was moved"):
         with self.assertRaises(GitError) as caught:
-            asyncio.run(gitops.reset_branch_to(self.tree, self.BRANCH, expected_old or self.old, new or self.new))
+            asyncio.run(
+                gitops.reset_branch_to(
+                    self.tree, self.BRANCH, expected_old or self.old, new or self.new
+                )
+            )
         self.assertIn(want, str(caught.exception))
         self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), self.old)
 
@@ -749,8 +823,20 @@ class IntegratingABranchThatFellBehind(unittest.TestCase):
         self._git(self.seed, "commit", "-q", "-m", "main touches g")
         self._git(self.seed, "push", "-q", "origin", "main")
         self._git(self.tree, "fetch", "-q", "origin")
-        subprocess.run(["git", "-C", str(self.tree), "-c", "user.name=T", "-c", "user.email=t@e.invalid",
-                        "rebase", "origin/main"], capture_output=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.tree),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e.invalid",
+                "rebase",
+                "origin/main",
+            ],
+            capture_output=True,
+        )
         self.assertTrue(asyncio.run(gitops.rebase_in_progress(self.tree)))
         asyncio.run(gitops.abort_rebase(self.tree))
         self.assertFalse(asyncio.run(gitops.rebase_in_progress(self.tree)))
@@ -758,7 +844,7 @@ class IntegratingABranchThatFellBehind(unittest.TestCase):
 
 
 class TreeStateSeesAWriteAndACommit(unittest.TestCase):
-    """`0039` R13: what the spike step compares before and after it runs."""
+    """What the spike step compares before and after it runs."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -772,9 +858,21 @@ class TreeStateSeesAWriteAndACommit(unittest.TestCase):
 
     def _git(self, *args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(self.repo), "-c", "user.name=T",
-             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
 
     def state(self) -> tuple[str, str]:
@@ -803,13 +901,25 @@ class TreeStateSeesAWriteAndACommit(unittest.TestCase):
 
 
 class Releasing(unittest.TestCase):
-    """`0046`: the release branch and tag, in the release tree only, against a bare remote."""
+    """The release branch and tag, in the release tree only, against a bare remote."""
 
     def git(self, where: Path, *args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(where), "-c", "user.name=T", "-c", "user.email=t@example.invalid",
-             "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(where),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
     def setUp(self):
@@ -819,7 +929,11 @@ class Releasing(unittest.TestCase):
         self.remote = base / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         self.repo = base / "repo"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.repo)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(self.repo)],
+            check=True,
+            capture_output=True,
+        )
         self.git(self.repo, "config", "user.name", "T")
         self.git(self.repo, "config", "user.email", "t@example.invalid")
         for name in gitops.RELEASE_FILES:
@@ -880,7 +994,7 @@ class Releasing(unittest.TestCase):
         self.assertFalse(self.tree.exists())
 
     def test_the_same_wrong_path_twice_is_still_refused(self):
-        # `0046` review F3: every caller used to pass one variable as both arguments.
+        # Every caller used to pass one variable as both arguments.
         run = asyncio.run
         other = self.tree.parent / "0001_a-unit"
         run(gitops.worktree_add(self.repo, other, self.main))
@@ -888,16 +1002,22 @@ class Releasing(unittest.TestCase):
         (other / "uv.lock").write_text("unit's change\n", encoding="utf-8")
         for where in (self.repo, other):
             with self.subTest(tree=where.name):
-                for call in (gitops.diff_u0(where, where), gitops.commit_files(where, where, "x"),
-                             gitops.push_branch(where, where, "chore/release-0-2-0"),
-                             gitops.push_tag(where, where, "v0.2.0", self.main), gitops.detach_here(where, where),
-                             gitops.release_tree_remove(self.repo, where, where)):
+                for call in (
+                    gitops.diff_u0(where, where),
+                    gitops.commit_files(where, where, "x"),
+                    gitops.push_branch(where, where, "chore/release-0-2-0"),
+                    gitops.push_tag(where, where, "v0.2.0", self.main),
+                    gitops.detach_here(where, where),
+                    gitops.release_tree_remove(self.repo, where, where),
+                ):
                     with self.assertRaises(GitError):
                         run(call)
         self.assertEqual(self.git(self.repo, "status", "--porcelain"), "M uv.lock")
         self.assertEqual(self.git(other, "status", "--porcelain"), "M uv.lock")
         # A directory named `release` that is a checkout of its own, not a linked tree.
         clone = self.tree.parent.parent / "elsewhere" / "release"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(clone)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(clone)], check=True, capture_output=True
+        )
         with self.assertRaises(GitError):
             run(gitops.diff_u0(clone, clone))

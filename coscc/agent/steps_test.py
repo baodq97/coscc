@@ -1,4 +1,4 @@
-"""Tests for the registry of steps running now (`0034`)."""
+"""Tests for the registry of steps running now."""
 
 import unittest
 
@@ -56,14 +56,14 @@ class OneStepPerUnit(unittest.TestCase):
         [row] = r.listing("w")
         self.assertEqual(set(row), {"unit", "stage", "started_at", "stopping", "run"})
         self.assertFalse(row["stopping"])
-        # `0073` R1: `Service.run_step` sets it as it hands the step over.
+        # `Service.run_step` sets it as it hands the step over.
         self.assertEqual(row["run"], "")
         running.run = "r-1"
         self.assertEqual(r.listing("w")[0]["run"], "r-1")
 
 
 class Describe(unittest.TestCase):
-    """`0050` R3: every refusal of a busy unit names what holds it and since when."""
+    """Every refusal of a busy unit names what holds it and since when."""
 
     def test_describe_names_the_kind_the_stage_the_phase_and_the_time(self):
         t = "2026-09-24T01:02:03+00:00"

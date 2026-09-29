@@ -41,7 +41,6 @@ class Machine:
     settled: frozenset[str]
     stages: tuple[Stage, ...]
 
-
     @property
     def stage_names(self) -> tuple[str, ...]:
         return tuple(s.name for s in self.stages)
@@ -65,7 +64,6 @@ class Machine:
 
     def knows(self, artifact: str) -> bool:
         return self.for_artifact(artifact) is not None
-
 
     def is_settled(self, state: str) -> bool:
         """Whether a state means "this stage is behind us"."""
@@ -265,7 +263,9 @@ def build_lanes(raw: Any, source: str | Path = "<memory>", machine: Machine | No
             if machine.stage(stage) is None:
                 raise BadLanes(f"{where}: {stage!r} is no stage of the {machine.name!r} state set")
             if when not in WHEN:
-                raise BadLanes(f"{where}: stage {stage!r} has 'when' {when!r}, not one of {', '.join(WHEN)}")
+                raise BadLanes(
+                    f"{where}: stage {stage!r} has 'when' {when!r}, not one of {', '.join(WHEN)}"
+                )
             path.append((stage, when))
         end = str(item.get("end") or "").strip()
         if not end:
@@ -289,7 +289,9 @@ def build_lanes(raw: Any, source: str | Path = "<memory>", machine: Machine | No
             for transition, allowed in transitions.items():
                 g = str(given.get(transition) or "")
                 if not g:
-                    raise BadLanes(f"{where}: the {m!r} transition {transition!r} has no guard, and it needs one")
+                    raise BadLanes(
+                        f"{where}: the {m!r} transition {transition!r} has no guard, and it needs one"
+                    )
                 if g not in allowed:
                     raise BadLanes(
                         f"{where}: {g!r} cannot decide the {m!r} transition {transition!r} "

@@ -1,12 +1,10 @@
-"""Tests for a step's recorder (`0073` step 3), with SDK messages built by hand.
+"""Tests for a step's recorder, with SDK messages built by hand.
 
 The messages are the SDK's own classes, as `uv.lock` pins them, so a renamed field shows up
-here as a kind that fell into `system` (`plan.md` Risk 7).
-"""
+here as a kind that fell into `system` (`plan.md` Risk 7)."""
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 import unittest
 from unittest import mock
@@ -34,10 +32,21 @@ def assistant(mid, *blocks):
 
 def result(turns=3, cost=0.25):
     return ResultMessage(
-        subtype="success", duration_ms=1200, duration_api_ms=1000, is_error=False,
-        num_turns=turns, session_id="s", total_cost_usd=cost,
-        model_usage={"m": {"inputTokens": 10, "outputTokens": 20,
-                           "cacheReadInputTokens": 30, "cacheCreationInputTokens": 40}},
+        subtype="success",
+        duration_ms=1200,
+        duration_api_ms=1000,
+        is_error=False,
+        num_turns=turns,
+        session_id="s",
+        total_cost_usd=cost,
+        model_usage={
+            "m": {
+                "inputTokens": 10,
+                "outputTokens": 20,
+                "cacheReadInputTokens": 30,
+                "cacheCreationInputTokens": 40,
+            }
+        },
     )
 
 
@@ -57,20 +66,34 @@ class WhatIsRecorded(unittest.TestCase):
         rec = recorder()
         rec.message(assistant("m1", TextBlock("hello"), ThinkingBlock("hmm", "sig")))
         rec.message(assistant("m1", ToolUseBlock("t1", "Bash", {"command": "ls"})))
-        rec.message(UserMessage(
-            content=[ToolResultBlock("t1", "a.txt", False)],
-            tool_use_result={"persistedOutputPath": "/p/out.txt", "persistedOutputSize": 90000},
-        ))
+        rec.message(
+            UserMessage(
+                content=[ToolResultBlock("t1", "a.txt", False)],
+                tool_use_result={"persistedOutputPath": "/p/out.txt", "persistedOutputSize": 90000},
+            )
+        )
         rec.message(assistant("m2", TextBlock("again")))
         rec.message(SystemMessage(subtype="init", data={"x": 1}))
         rec.message(RateLimitEvent(rate_limit_info=mock.Mock(), uuid="u", session_id="s"))
         rec.message(Odd())
         rec.message(result())
         kinds = [e["kind"] for e in rec.events]
-        self.assertEqual(kinds, [
-            "turn", "text", "thinking", "tool_use", "tool_result", "turn", "text",
-            "system", "system", "system", "result",
-        ])
+        self.assertEqual(
+            kinds,
+            [
+                "turn",
+                "text",
+                "thinking",
+                "tool_use",
+                "tool_result",
+                "turn",
+                "text",
+                "system",
+                "system",
+                "system",
+                "result",
+            ],
+        )
         self.assertEqual([e["seq"] for e in rec.events], list(range(1, 12)))
         # Two messages with one id are one turn.
         self.assertEqual([e["n"] for e in rec.events if e["kind"] == "turn"], [1, 2])
@@ -84,7 +107,15 @@ class WhatIsRecorded(unittest.TestCase):
         done = rec.events[-1]
         self.assertEqual((done["num_turns"], done["cost_usd"]), (3, 0.25))
         self.assertEqual(
-            [done[k] for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")],
+            [
+                done[k]
+                for k in (
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_read_tokens",
+                    "cache_creation_tokens",
+                )
+            ],
             [10, 20, 30, 40],
         )
         self.assertEqual(rec.lost, 0)
@@ -199,7 +230,7 @@ class TheDisk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["events"], 2)
 
     async def test_stored_turns_count_what_reached_disk(self):
-        """`0092` R1: three message ids, three turns, read from `step_events`."""
+        """Three message ids, three turns, read from `step_events`."""
         rec = recorder(self.data)
         rec.start()
         for mid in ("m1", "m2", "m2", "m3"):
@@ -230,34 +261,57 @@ class Collapsing(unittest.TestCase):
         short = events.collapse({"seq": 1, "at": 0, "kind": "text", "text": "hi"})
         self.assertFalse(short["collapsed"])
 
-    def test_the_labels_carry_what_r10_names(self):
+    def test_the_labels_carry_what_names(self):
         self.assertEqual(events.collapse({"kind": "turn", "n": 4})["label"], "turn 4")
-        denied = events.collapse({"kind": "denied", "tool": "Bash", "reason": "not granted", "input": {}})
+        denied = events.collapse(
+            {"kind": "denied", "tool": "Bash", "reason": "not granted", "input": {}}
+        )
         self.assertIn("not granted", denied["label"])
-        paid = events.collapse({"kind": "result", "num_turns": 3, "cost_usd": 0.5, "input_tokens": 7,
-                                "terminal_reason": "completed"})
+        paid = events.collapse(
+            {
+                "kind": "result",
+                "num_turns": 3,
+                "cost_usd": 0.5,
+                "input_tokens": 7,
+                "terminal_reason": "completed",
+            }
+        )
         self.assertIn("3 turns", paid["label"])
         self.assertIn("$0.5000", paid["label"])
         self.assertIn("7 tokens", paid["label"])
 
     def test_a_persisted_output_is_named_and_not_read(self):
-        view = events.collapse({"kind": "tool_result", "content": "preview", "persisted_path": "/p/x",
-                                "persisted_size": 12})
+        view = events.collapse(
+            {
+                "kind": "tool_result",
+                "content": "preview",
+                "persisted_path": "/p/x",
+                "persisted_size": 12,
+            }
+        )
         self.assertEqual(
             view["persisted"],
             "full output (12 characters) is at /p/x on the machine running the app; "
             "the board does not read it",
         )
 
-    def test_0089_r14_every_label_is_english(self):
-        """`0089` R14 (D62): the labels the pane shows are the app's own text (S6)."""
+    def test_every_label_is_english(self):
+        """The labels the pane shows are the app's own text (S6)."""
         from coscc.screens.screens_test import VIETNAMESE
 
         kinds = [
-            {"kind": "text", "text": "x"}, {"kind": "text", "role": "user", "text": "x"},
-            {"kind": "turn", "n": 2}, {"kind": "tool_use", "name": "Read"},
-            {"kind": "tool_result", "tool_use_id": "toolu_12345678", "is_error": True, "content": "x",
-             "persisted_path": "/p/x", "persisted_size": 3},
+            {"kind": "text", "text": "x"},
+            {"kind": "text", "role": "user", "text": "x"},
+            {"kind": "turn", "n": 2},
+            {"kind": "tool_use", "name": "Read"},
+            {
+                "kind": "tool_result",
+                "tool_use_id": "toolu_12345678",
+                "is_error": True,
+                "content": "x",
+                "persisted_path": "/p/x",
+                "persisted_size": 3,
+            },
             {"kind": "denied", "tool": "Bash", "reason": "not granted"},
             {"kind": "result", "num_turns": 1, "input_tokens": 2},
             {"kind": "system", "class": "SystemMessage", "subtype": "init"},
@@ -278,7 +332,9 @@ class Purging(unittest.IsolatedAsyncioTestCase):
             journal = Journal(d, data)
             day = 24 * 3600 * 1000
             data.step_run_open("old", "/w", "/w/ws", "0001_a", "impl", 1000)
-            data.step_events_add("old", [{"run": "old", "seq": 1, "at": 1, "kind": "text", "text": "x"}])
+            data.step_events_add(
+                "old", [{"run": "old", "seq": 1, "at": 1, "kind": "text", "text": "x"}]
+            )
             runs, freed = await events.purge(data, journal, now=40 * day)
             self.assertEqual(runs, 1)
             self.assertGreater(freed, 0)

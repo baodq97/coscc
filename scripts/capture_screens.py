@@ -133,7 +133,12 @@ SETTLE_MS = 1_500  # for the socket to fill the page after `#studio-shell` shows
 # `spec.md` R5: what `S3` and `S4` forbid that a pattern can find in visible text.
 PATTERNS = (
     ("sha", re.compile(r"\b[0-9a-f]{40}\b")),
-    ("uuid", re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")),
+    (
+        "uuid",
+        re.compile(
+            r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+        ),
+    ),
     ("epoch", re.compile(r"\b(?:\d{13}|\d{10})\b")),
     ("env", re.compile(r"\b(?:COS|COSCC)_[A-Z0-9_]+")),
     ("path", re.compile(r"(?:/home/|/tmp/|~/)\S+")),
@@ -144,7 +149,9 @@ INTENT = "# Intent: {title}\nAuthor: capture_screens. Type: feat. Status: accept
 ROUND = "\n## Round 1\n\nReviewed: {sha}. Verdict: pass.\n\n### Findings\n\n### What was not reviewed\n\nNothing.\n"
 ASKED = "\n## Round {n}\n\nReviewed: {sha}. Verdict: changes-requested.\n\n### Findings\n\n{findings}\n\n### What was not reviewed\n\nNothing.\n"
 FIXTURE = {
-    "fresh-intent": {"intent.md": INTENT.format(title="fresh intent", problem="Một intent vừa được chấp nhận.")},
+    "fresh-intent": {
+        "intent.md": INTENT.format(title="fresh intent", problem="Một intent vừa được chấp nhận.")
+    },
     # Two open questions, so the Questions tab's dialog shows both above its fold at 1440×900.
     "open-question": {
         "intent.md": INTENT.format(title="open question", problem="Một intent còn một câu hỏi.")
@@ -152,12 +159,15 @@ FIXTURE = {
         + "2. Có nên trả thêm tiền cho việc này không?\n",
     },
     "awaiting-ship": {
-        "intent.md": INTENT.format(title="awaiting ship", problem="Một unit đã qua review, chờ ship."),
+        "intent.md": INTENT.format(
+            title="awaiting ship", problem="Một unit đã qua review, chờ ship."
+        ),
         "spec.md": "# Spec: awaiting ship\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
         "plan.md": "# Plan: awaiting ship\nAuthor: capture_screens. Status: accepted.\n",
         "impl.md": "# Impl: awaiting ship\nAuthor: capture_screens. Status: accepted.\n",
         "pr.md": "# PR: awaiting ship\nPR: https://github.com/o/r/pull/1. Author: capture_screens. Status: accepted.\n",
-        "review.md": "# Review: awaiting ship\nAuthor: capture_screens. Status: accepted.\n" + ROUND.format(sha="a" * 40),
+        "review.md": "# Review: awaiting ship\nAuthor: capture_screens. Status: accepted.\n"
+        + ROUND.format(sha="a" * 40),
     },
     # `0082` R19: a deadline already past, so the card carries an outcome badge, and two
     # questions nobody answered, so the Questions tab has something to show read-only.
@@ -171,18 +181,24 @@ FIXTURE = {
     # `0027` review F1: a last round that does not count, so the unit's dialog lists the id
     # it left out.
     "unfinished-review": {
-        "intent.md": INTENT.format(title="unfinished review", problem="Một vòng review bỏ sót một finding."),
+        "intent.md": INTENT.format(
+            title="unfinished review", problem="Một vòng review bỏ sót một finding."
+        ),
         "spec.md": "# Spec: unfinished review\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
         "plan.md": "# Plan: unfinished review\nAuthor: capture_screens. Status: accepted.\n",
         "impl.md": "# Impl: unfinished review\nAuthor: capture_screens. Status: accepted.\n",
         "pr.md": "# PR: unfinished review\nPR: https://github.com/o/r/pull/2. Author: capture_screens. Status: accepted.\n",
         "review.md": "# Review: unfinished review\nAuthor: capture_screens. Status: changes-requested.\n"
-        + ASKED.format(n=1, sha="b" * 40, findings="- F1 [open] a.py:1 — medium — Thiếu test.\n- F2 [open] b.py:2 — low — Tên chưa rõ.")
+        + ASKED.format(
+            n=1,
+            sha="b" * 40,
+            findings="- F1 [open] a.py:1 — medium — Thiếu test.\n- F2 [open] b.py:2 — low — Tên chưa rõ.",
+        )
         + ASKED.format(n=2, sha="c" * 40, findings="- F2 [open] b.py:2 — low — Tên chưa rõ."),
     },
 }
 
-FAKE_GH = "#!/bin/sh\nif [ \"$1\" = pr ] && [ \"$2\" = list ]; then echo '[]'; exit 0; fi\nexit 1\n"
+FAKE_GH = '#!/bin/sh\nif [ "$1" = pr ] && [ "$2" = list ]; then echo \'[]\'; exit 0; fi\nexit 1\n'
 
 
 # `0082` R19: one conversation with a title and a markdown reply, written where the SDK
@@ -190,7 +206,15 @@ FAKE_GH = "#!/bin/sh\nif [ \"$1\" = pr ] && [ \"$2\" = list ]; then echo '[]'; e
 CHAT_TITLE = "Backlog screen plan"
 CHAT = (
     ("user", "Can the backlog be a table?"),
-    ("assistant", [{"type": "text", "text": "Yes. The **plan** is:\n\n- one row per unit\n- *Edit* opens in the row"}]),
+    (
+        "assistant",
+        [
+            {
+                "type": "text",
+                "text": "Yes. The **plan** is:\n\n- one row per unit\n- *Edit* opens in the row",
+            }
+        ],
+    ),
 )
 
 
@@ -201,11 +225,16 @@ def seed_release(proj: Path) -> None:
 
     (proj / ".claude" / "scripts").mkdir(parents=True, exist_ok=True)
     shutil.copy(REPO / ".claude" / "scripts" / "cos.mjs", proj / ".claude" / "scripts" / "cos.mjs")
-    (proj / "pyproject.toml").write_text('[project]\nname = "proj"\nversion = "0.1.0"\n', encoding="utf-8")
+    (proj / "pyproject.toml").write_text(
+        '[project]\nname = "proj"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
     git(proj, "add", "-A")
     git(proj, "commit", "-q", "-m", "chore: release 0.1.0")
     git(proj, "tag", "v0.1.0")
-    for subject, name in (("feat: search the board (#21)", "search.txt"), ("build(deps): bump reflex (#22)", "deps.txt")):
+    for subject, name in (
+        ("feat: search the board (#21)", "search.txt"),
+        ("build(deps): bump reflex (#22)", "deps.txt"),
+    ):
         (proj / name).write_text(subject + "\n", encoding="utf-8")
         git(proj, "add", "-A")
         git(proj, "commit", "-q", "-m", subject)
@@ -224,12 +253,21 @@ def seed_conversation(workspace: Path) -> str:
     sid, parent, lines = str(uuid.uuid4()), None, []
     for i, (kind, content) in enumerate(CHAT):
         me = str(uuid.uuid4())
-        lines.append(json.dumps({
-            "type": kind, "uuid": me, "parentUuid": parent, "sessionId": sid,
-            "cwd": str(workspace), "timestamp": f"2026-09-24T01:00:0{i}.000Z",
-            "isSidechain": False, "userType": "external",
-            "message": {"role": kind, "content": content},
-        }))
+        lines.append(
+            json.dumps(
+                {
+                    "type": kind,
+                    "uuid": me,
+                    "parentUuid": parent,
+                    "sessionId": sid,
+                    "cwd": str(workspace),
+                    "timestamp": f"2026-09-24T01:00:0{i}.000Z",
+                    "isSidechain": False,
+                    "userType": "external",
+                    "message": {"role": kind, "content": content},
+                }
+            )
+        )
         parent = me
     lines.append(json.dumps({"type": "custom-title", "customTitle": CHAT_TITLE, "sessionId": sid}))
     (where / f"{sid}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -242,7 +280,7 @@ def scan(text: str) -> list[tuple[str, str]]:
     hits = []
     for kind, pattern in PATTERNS:
         for m in pattern.finditer(text):
-            around = text[max(0, m.start() - 20):m.end() + 20]
+            around = text[max(0, m.start() - 20) : m.end() + 20]
             hits.append((kind, " ".join(around.split())))
     return hits
 
@@ -252,7 +290,9 @@ def slug(address: str) -> str:
 
 
 def git_out(*args: str) -> str:
-    return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True).stdout
+    return subprocess.run(
+        ["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True
+    ).stdout
 
 
 def with_env(**values: str) -> dict[str, str]:
@@ -271,7 +311,14 @@ def run_build(env: dict[str, str]) -> bool:
 def make_fixture(api: httpx.Client, proj: Path) -> None:
     """The five units, numbered 0001–0005 in this order, through the app's own route."""
     for name, files in FIXTURE.items():
-        made = api.post("/api/units", json={"cwd": str(proj), "slug": name, "brief": f"The {name.replace('-', ' ')} fixture."})
+        made = api.post(
+            "/api/units",
+            json={
+                "cwd": str(proj),
+                "slug": name,
+                "brief": f"The {name.replace('-', ' ')} fixture.",
+            },
+        )
         if made.status_code != 200:
             raise RuntimeError(f"could not make the unit {name}: {made.text}")
         for file, text in files.items():
@@ -281,7 +328,14 @@ def make_fixture(api: httpx.Client, proj: Path) -> None:
 def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
     """`0040`. `proj/ideas/0001_one-feature.md`, `api/0001_backend-adds-api` opened from it, and
     `proj/0006_frontend-calls-api`, whose `impl` waits on the api unit: it has no `ship.md`."""
-    idea = api.post("/api/ideas", json={"cwd": str(proj), "slug": "one-feature", "brief": "The backend adds an API; the frontend calls it."})
+    idea = api.post(
+        "/api/ideas",
+        json={
+            "cwd": str(proj),
+            "slug": "one-feature",
+            "brief": "The backend adds an API; the frontend calls it.",
+        },
+    )
     if idea.status_code != 200:
         raise RuntimeError(f"could not make the idea: {idea.text}")
     ref = idea.json()["ref"]
@@ -290,8 +344,13 @@ def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
         raise RuntimeError(f"could not open the api unit: {back.text}")
     back_ref = f"api/{back.json()['unit']}"
     Path(back.json()["path"], "intent.md").write_text(
-        f"# Intent: backend adds api\nAuthor: the originator. Type: feat. Status: accepted.\nIdea: {ref}. Repo: api.\n", encoding="utf-8")
-    front = api.post("/api/units", json={"cwd": str(proj), "slug": "frontend-calls-api", "idea": ref, "depends_on": back_ref})
+        f"# Intent: backend adds api\nAuthor: the originator. Type: feat. Status: accepted.\nIdea: {ref}. Repo: api.\n",
+        encoding="utf-8",
+    )
+    front = api.post(
+        "/api/units",
+        json={"cwd": str(proj), "slug": "frontend-calls-api", "idea": ref, "depends_on": back_ref},
+    )
     if front.status_code != 200:
         raise RuntimeError(f"could not open the frontend unit: {front.text}")
     for file, text in {
@@ -306,11 +365,16 @@ def make_unread_fixture(api: httpx.Client, proj: Path) -> None:
     """`0135` R4. `proj/0007_unread-status`, whose `spec.md` carries a status no stage writes,
     so the import report on `/settings` has a row. Made after `make_idea_fixture`, so the
     numbers a spec names stay where they were."""
-    made = api.post("/api/units", json={"cwd": str(proj), "slug": "unread-status", "brief": "The unread status fixture."})
+    made = api.post(
+        "/api/units",
+        json={"cwd": str(proj), "slug": "unread-status", "brief": "The unread status fixture."},
+    )
     if made.status_code != 200:
         raise RuntimeError(f"could not make the unit unread-status: {made.text}")
     for file, text in {
-        "intent.md": INTENT.format(title="unread status", problem="Một spec mang status không stage nào viết."),
+        "intent.md": INTENT.format(
+            title="unread status", problem="Một spec mang status không stage nào viết."
+        ),
         "spec.md": "# Spec: unread status\nIntent: intent.md. Author: capture_screens. Status: approved.\n",
     }.items():
         (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
@@ -336,15 +400,42 @@ def seed_transitions(work: Path, data_dir: Path, proj: Path) -> None:
 
     history, key = History(work, data_dir), str(proj.resolve())
     head = "a" * 40
-    history.record(key, "0003_awaiting-ship", "pr.md", "accepted", guard="ci-at-head", authority="code",
-                   run="capture-pr-reader", inputs={"number": 1, "head": head, "read_head": head, "ci": "green"},
-                   actor="app", source="capture_screens")
-    history.record(key, "0003_awaiting-ship", "review.md", "accepted", guard="review-round", authority="agent",
-                   run="capture-review-1", inputs={"head": head, "verdict": "pass"},
-                   actor="capture_screens", source="capture_screens")
-    history.record(key, "0004_finished", "plan.md", "done", guard="stage-result", authority="agent",
-                   run="capture-plan-1", inputs={"judgement": "ready"},
-                   actor="capture_screens", source="capture_screens")
+    history.record(
+        key,
+        "0003_awaiting-ship",
+        "pr.md",
+        "accepted",
+        guard="ci-at-head",
+        authority="code",
+        run="capture-pr-reader",
+        inputs={"number": 1, "head": head, "read_head": head, "ci": "green"},
+        actor="app",
+        source="capture_screens",
+    )
+    history.record(
+        key,
+        "0003_awaiting-ship",
+        "review.md",
+        "accepted",
+        guard="review-round",
+        authority="agent",
+        run="capture-review-1",
+        inputs={"head": head, "verdict": "pass"},
+        actor="capture_screens",
+        source="capture_screens",
+    )
+    history.record(
+        key,
+        "0004_finished",
+        "plan.md",
+        "done",
+        guard="stage-result",
+        authority="agent",
+        run="capture-plan-1",
+        inputs={"judgement": "ready"},
+        actor="capture_screens",
+        source="capture_screens",
+    )
 
 
 def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
@@ -357,8 +448,16 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     journal.started(key, "0002_open-question", "spec", "manual")
     journal.finished(key, "0002_open-question", "spec", "done", turns=4, cost_usd=0.52)
     journal.started(key, "0002_open-question", "impl", "autonomous", run="capture-run-1")
-    journal.finished(key, "0002_open-question", "impl", "failed", run="capture-run-1", turns=109,
-                     cost_unknown=True, detail="ProcessError: Command failed with exit code -9")
+    journal.finished(
+        key,
+        "0002_open-question",
+        "impl",
+        "failed",
+        run="capture-run-1",
+        turns=109,
+        cost_unknown=True,
+        detail="ProcessError: Command failed with exit code -9",
+    )
     journal.started(key, "0004_finished", "impl", "autonomous")
     journal.finished(key, "0004_finished", "impl", "failed", cost_unknown=True)
     # `0093` plan step 9 (spec C8): enough that each of R10's four anomalies has a row on
@@ -366,23 +465,31 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     # times the median tokens per turn — and an `integrate` opened by a conflict (R8).
     for turns, usd, tokens in ((20, 6.00, 800_000), (30, 9.00, 300_000)):
         journal.started(key, "0002_open-question", "impl", "autonomous")
-        journal.finished(key, "0002_open-question", "impl", "done", turns=turns, cost_usd=usd,
-                         **_tokens(tokens))
+        journal.finished(
+            key, "0002_open-question", "impl", "done", turns=turns, cost_usd=usd, **_tokens(tokens)
+        )
     journal.started(key, "0002_open-question", "integrate", "manual", integrate_state="conflicting")
     journal.finished(key, "0002_open-question", "integrate", "done", turns=6, cost_usd=0.80)
     for _ in range(3):
         journal.started(key, "0004_finished", "impl", "autonomous")
-        journal.finished(key, "0004_finished", "impl", "done", turns=10, cost_usd=0.40,
-                         **_tokens(100_000))
+        journal.finished(
+            key, "0004_finished", "impl", "done", turns=10, cost_usd=0.40, **_tokens(100_000)
+        )
 
 
 def _tokens(total: int) -> dict[str, int]:
     """`total` split across the four billed kinds, cache reads the most as in real runs."""
-    return {"input_tokens": total // 20, "output_tokens": total // 20,
-            "cache_read_tokens": total * 8 // 10, "cache_creation_tokens": total // 10}
+    return {
+        "input_tokens": total // 20,
+        "output_tokens": total // 20,
+        "cache_read_tokens": total * 8 // 10,
+        "cache_creation_tokens": total // 10,
+    }
 
 
-def shoot(browser, base: str, token: str, address: str, size: tuple[int, int], out: Path) -> tuple[Path, str, str, bool]:
+def shoot(
+    browser, base: str, token: str, address: str, size: tuple[int, int], out: Path
+) -> tuple[Path, str, str, bool]:
     """One address at one size: the PNG, the URL it ended on, the visible text, and whether
     the image is the full page. Raises `RuntimeError` when the page is not the app's."""
     context = browser.new_context(viewport={"width": size[0], "height": size[1]})
@@ -393,9 +500,13 @@ def shoot(browser, base: str, token: str, address: str, size: tuple[int, int], o
         try:
             page.wait_for_selector("#studio-shell", timeout=PAGE_TIMEOUT_MS)
         except Exception:
-            raise RuntimeError(f"{address} at {size[0]}x{size[1]}: no #studio-shell within {PAGE_TIMEOUT_MS // 1000}s, on {page.url}")
+            raise RuntimeError(
+                f"{address} at {size[0]}x{size[1]}: no #studio-shell within {PAGE_TIMEOUT_MS // 1000}s, on {page.url}"
+            )
         if "/login" in page.url:
-            raise RuntimeError(f"{address} at {size[0]}x{size[1]}: landed on the login page, {page.url}")
+            raise RuntimeError(
+                f"{address} at {size[0]}x{size[1]}: landed on the login page, {page.url}"
+            )
         page.wait_for_timeout(SETTLE_MS)
         path = out / f"{slug(address)}-{size[0]}x{size[1]}.png"
         full = page.locator("[role=dialog]").count() == 0
@@ -418,11 +529,16 @@ def parse(argv: list[str]) -> argparse.Namespace:
 def run(argv: list[str]) -> int:
     args = parse(argv)
     if len(args.addresses) > MAX_ADDRESSES:
-        print(f"{len(args.addresses)} addresses, at most {MAX_ADDRESSES} — {MAX_ADDRESSES * len(SIZES)} images is the ceiling", file=sys.stderr)
+        print(
+            f"{len(args.addresses)} addresses, at most {MAX_ADDRESSES} — {MAX_ADDRESSES * len(SIZES)} images is the ceiling",
+            file=sys.stderr,
+        )
         return EXIT_ENV
     bad = [a for a in args.addresses if not a.startswith("/")]
     if bad:
-        print(f"an address is a path of the app and starts with /: {', '.join(bad)}", file=sys.stderr)
+        print(
+            f"an address is a path of the app and starts with /: {', '.join(bad)}", file=sys.stderr
+        )
         return EXIT_ENV
     refused = out_refused(args.out.resolve())
     if refused:
@@ -432,7 +548,10 @@ def run(argv: list[str]) -> int:
     # request carries, and `head` would still name the last commit.
     dirty = git_out("status", "--porcelain").rstrip("\n")
     if dirty:
-        print(f"the tree has uncommitted changes; commit them first, so `head` is what was taken:\n{dirty}", file=sys.stderr)
+        print(
+            f"the tree has uncommitted changes; commit them first, so `head` is what was taken:\n{dirty}",
+            file=sys.stderr,
+        )
         return EXIT_ENV
 
     for name in [k for k, v in os.environ.items() if k.startswith("__REFLEX") and not v]:
@@ -446,7 +565,10 @@ def run(argv: list[str]) -> int:
     os.environ["COS_HOST"], os.environ["COS_PORT"] = HOST, str(PORT)
     config = from_env()
     if not port_free(HOST, PORT):
-        print(f"{HOST}:{PORT} is already in use — another capture, or something else, holds it", file=sys.stderr)
+        print(
+            f"{HOST}:{PORT} is already in use — another capture, or something else, holds it",
+            file=sys.stderr,
+        )
         return EXIT_ENV
 
     roots: list[Path] = []
@@ -463,10 +585,15 @@ def run(argv: list[str]) -> int:
         if restore:
             rebuild = with_env(**before_env)
             if run_build(rebuild):
-                print(f"restored the bundle for {before.host}:{before.port} in {frontend.web_dir(REPO)}")
+                print(
+                    f"restored the bundle for {before.host}:{before.port} in {frontend.web_dir(REPO)}"
+                )
             else:
-                print(f"could not restore the bundle for {before.host}:{before.port} — run:\n"
-                      f"    COS_HOST={before_env['COS_HOST']} COS_PORT={before_env['COS_PORT']} uv run coscc-build", file=sys.stderr)
+                print(
+                    f"could not restore the bundle for {before.host}:{before.port} — run:\n"
+                    f"    COS_HOST={before_env['COS_HOST']} COS_PORT={before_env['COS_PORT']} uv run coscc-build",
+                    file=sys.stderr,
+                )
         else:
             print("no bundle to restore: the checkout had none current for this environment")
 
@@ -535,7 +662,10 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                     print(str(e), file=sys.stderr)
                     return EXIT_BROKEN
                 # `0104`: the autopilot on, and no shortlist, so it starts nothing and says so.
-                on = api.post("/api/settings/autopilot", json={"cwd": str(proj), "name": "autopilot", "value": True})
+                on = api.post(
+                    "/api/settings/autopilot",
+                    json={"cwd": str(proj), "name": "autopilot", "value": True},
+                )
                 if on.status_code != 200:
                     print(f"could not turn the autopilot on: {on.text}", file=sys.stderr)
                     return EXIT_BROKEN
@@ -548,11 +678,25 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                         print(str(e), file=sys.stderr)
                         return EXIT_BROKEN
                     where = f"{size[0]}x{size[1]}"
-                    shots.append({"address": address, "size": where, "path": str(path.relative_to(REPO) if path.is_relative_to(REPO) else path),
-                                  "url": url, "full_page": full})
+                    shots.append(
+                        {
+                            "address": address,
+                            "size": where,
+                            "path": str(
+                                path.relative_to(REPO) if path.is_relative_to(REPO) else path
+                            ),
+                            "url": url,
+                            "full_page": full,
+                        }
+                    )
                     found = scan(text)
-                    hits += [{"address": address, "size": where, "kind": k, "snippet": s} for k, s in found]
-                    print(f"{where} {address} -> {shots[-1]['path']} ({path.stat().st_size} bytes, {len(found)} hits)")
+                    hits += [
+                        {"address": address, "size": where, "kind": k, "snippet": s}
+                        for k, s in found
+                    ]
+                    print(
+                        f"{where} {address} -> {shots[-1]['path']} ({path.stat().st_size} bytes, {len(found)} hits)"
+                    )
     finally:
         browser.close()
         playwright.stop()
@@ -566,9 +710,13 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
         "shots": shots,
         "hits": hits,
     }
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"{len(shots)} screenshots and manifest.json in {out}, head {manifest['head'][:7]}"
-          f"{' (dirty tree)' if manifest['dirty'] else ''}, {len(hits)} hits, {time.monotonic() - started:.1f}s")
+    (out / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    print(
+        f"{len(shots)} screenshots and manifest.json in {out}, head {manifest['head'][:7]}"
+        f"{' (dirty tree)' if manifest['dirty'] else ''}, {len(hits)} hits, {time.monotonic() - started:.1f}s"
+    )
     return EXIT_PASS
 
 

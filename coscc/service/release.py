@@ -13,7 +13,8 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 from coscc.github import integrate, release
 from coscc.git import gitops, worktrees
 from coscc.git.gitops import GitError
-from coscc.runlog.journal import BadRecord, Busy, Journal
+from coscc.runlog.journal import BadRecord, Journal
+from coscc.data import Busy
 from coscc.units import BadUnit
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable
@@ -24,16 +25,29 @@ PrsOnce = Callable[[], Awaitable["list[dict[str, Any]] | str"]]
 
 def _empty_block(state: str, reason: str) -> dict[str, Any]:
     return {
-        "state": state, "reason": reason, "last_tag": "", "units": [], "unmatched": [], "count": 0,
-        "proposed": "", "version": "", "pr": None, "checks": [], "head": "", "button": "",
-        "enabled": False, "disabled_reason": "", "warning": release.WARNING,
-        "consequence": CONSEQUENCE["release"], "release_url": "", "workflow": "", "workflow_url": "",
+        "state": state,
+        "reason": reason,
+        "last_tag": "",
+        "units": [],
+        "unmatched": [],
+        "count": 0,
+        "proposed": "",
+        "version": "",
+        "pr": None,
+        "checks": [],
+        "head": "",
+        "button": "",
+        "enabled": False,
+        "disabled_reason": "",
+        "warning": release.WARNING,
+        "consequence": CONSEQUENCE["release"],
+        "release_url": "",
+        "workflow": "",
+        "workflow_url": "",
     }
 
 
 class ReleaseMixin:
-
-
     def _release_records(self, journal: Journal | None, key: str) -> list[dict[str, Any]]:
         if journal is None:
             return []
@@ -43,7 +57,11 @@ class ReleaseMixin:
             return []
 
     async def _release_facts(
-        self, root: Path, units_: list[dict[str, Any]], prs: PrsOnce, records: list[dict[str, Any]],
+        self,
+        root: Path,
+        units_: list[dict[str, Any]],
+        prs: PrsOnce,
+        records: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """What git and `gh` say now, and the state `release.classify` makes of it.
 
@@ -52,7 +70,9 @@ class ReleaseMixin:
         is found, so a workspace never released asks `gh` nothing here.
         """
         if not (root / release.SCRIPT).is_file():
-            return _empty_block("unknown", "this workspace has no cos.mjs, so it is not released from here")
+            return _empty_block(
+                "unknown", "this workspace has no cos.mjs, so it is not released from here"
+            )
         try:
             origin = await gitops.rev_parse(root, "refs/remotes/origin/main")
             tags = await gitops.release_tags(root, origin)
@@ -73,26 +93,42 @@ class ReleaseMixin:
         try:
             tag_sha = await gitops.rev_parse(root, f"refs/tags/{last_tag}")
             commits = await gitops.commits_between(root, tag_sha, origin)
-            main_version = str(tomllib.loads(await gitops.show_file(root, origin, "pyproject.toml"))
-                               .get("project", {}).get("version") or "")
+            main_version = str(
+                tomllib.loads(await gitops.show_file(root, origin, "pyproject.toml"))
+                .get("project", {})
+                .get("version")
+                or ""
+            )
         except (GitError, tomllib.TOMLDecodeError) as e:
             return {**_empty_block("unknown", str(e)), "last_tag": last_tag}
         matched = release.match_commits(commits, units_)
         verdict = release.classify(
-            last_tag=last_tag, units=matched["units"], unmatched=matched["unmatched"],
-            open_pr=open_prs[0] if open_prs else None, main_version=main_version, tags=tags,
+            last_tag=last_tag,
+            units=matched["units"],
+            unmatched=matched["unmatched"],
+            open_pr=open_prs[0] if open_prs else None,
+            main_version=main_version,
+            tags=tags,
             last_record=records[-1] if records else None,
         )
         block = {
             **_empty_block(verdict["state"], verdict["reason"]),
-            "last_tag": last_tag, "units": matched["units"], "unmatched": matched["unmatched"],
-            "count": len(matched["units"]), "version": verdict["version"],
+            "last_tag": last_tag,
+            "units": matched["units"],
+            "unmatched": matched["unmatched"],
+            "count": len(matched["units"]),
+            "version": verdict["version"],
             "proposed": verdict["version"] if verdict["state"] == "ready" else "",
-            "main_version": main_version, "origin_sha": origin, "tags": tags, "_prs": got,
+            "main_version": main_version,
+            "origin_sha": origin,
+            "tags": tags,
+            "_prs": got,
         }
         return block
 
-    async def _release_detail(self, root: Path, block: dict[str, Any], records: list[dict[str, Any]]) -> None:
+    async def _release_detail(
+        self, root: Path, block: dict[str, Any], records: list[dict[str, Any]]
+    ) -> None:
         """The button, whether it may be pressed, and the workflow. Only the state that needs one asks
         `gh` again.
         """
@@ -105,13 +141,20 @@ class ReleaseMixin:
             block["pr"] = row.get("number")
             block["head"] = str(row.get("headRefOid") or "")
             try:
-                checks: list[dict[str, Any]] | str = await integrate.required_checks(str(root), int(block["pr"]))
+                checks: list[dict[str, Any]] | str = await integrate.required_checks(
+                    str(root), int(block["pr"])
+                )
             except (integrate.IntegrateError, TypeError, ValueError) as e:
                 checks = str(e)
             block["checks"] = checks if isinstance(checks, list) else []
             opened, _ = release.opened_head(records, block["version"])
             why = release.publish_problem(
-                checks, block["head"], opened, f"v{block['version']}" in block.get("tags", []), block["version"])
+                checks,
+                block["head"],
+                opened,
+                f"v{block['version']}" in block.get("tags", []),
+                block["version"],
+            )
             block["enabled"], block["disabled_reason"] = not why, why
         elif state == "tagged":
             status = await release.release_status(str(root), block["last_tag"])
@@ -120,7 +163,12 @@ class ReleaseMixin:
                 block["state"], block["reason"] = "published", f"{block['last_tag']} is published"
 
     async def _attach_release(
-        self, cwd: str, units_: list[dict[str, Any]], journal: Journal | None, key: str, prs: PrsOnce,
+        self,
+        cwd: str,
+        units_: list[dict[str, Any]],
+        journal: Journal | None,
+        key: str,
+        prs: PrsOnce,
     ) -> dict[str, Any] | None:
         """The board's `release` block, or None for a workspace that is not a git checkout.
 
@@ -138,13 +186,14 @@ class ReleaseMixin:
             block.pop(k, None)
         return block
 
-
     def _release_start(self, cwd: str) -> tuple[Journal, str, Path]:
         self._workspace_or_refuse(cwd)
         self._refuse_while_updating()
         journal = self._journal()
         if journal is None:
-            raise Invalid("no working folder is set, so a release cannot be recorded — set COS_WORKING_DIR")
+            raise Invalid(
+                "no working folder is set, so a release cannot be recorded — set COS_WORKING_DIR"
+            )
         return journal, self._journal_key(cwd), Path(cwd).expanduser().resolve()
 
     def _release_tree_path(self, cwd: str) -> Path:
@@ -170,7 +219,10 @@ class ReleaseMixin:
             await gitops.release_tree_remove(root, tree, self._release_tree_path(cwd))
 
     async def _release_press(
-        self, cwd: str, phase: str, version: str,
+        self,
+        cwd: str,
+        phase: str,
+        version: str,
     ) -> tuple[Journal, str, Path, dict[str, Any], Path, str, Callable[..., dict[str, Any]]]:
         """Everything asked before a press changes anything: the fetch, the facts, the release tree at
         `origin/main` and `cos.mjs` there. Refuses with one `refused` record.
@@ -180,16 +232,25 @@ class ReleaseMixin:
         ctx: dict[str, Any] = {}
 
         def write(outcome: str, **fields: Any) -> dict[str, Any]:
-            rec = release.record(workspace=key, phase=phase, version=version, outcome=outcome, **{**ctx, **fields})
+            rec = release.record(
+                workspace=key, phase=phase, version=version, outcome=outcome, **{**ctx, **fields}
+            )
             try:
                 return journal.append(rec)
-            except (BadRecord, Busy):
+            except BadRecord, Busy:
                 return rec
 
         # Check-and-mark with no `await` between, as `_take` does.
         if key in self._releasing:
-            reason = release.refusal(active=True, phase=phase, open_release_pr=None, has_script=True,
-                                     check_version=(0, ""), version_problem_="", state="")
+            reason = release.refusal(
+                active=True,
+                phase=phase,
+                open_release_pr=None,
+                has_script=True,
+                check_version=(0, ""),
+                version_problem_="",
+                state="",
+            )
             write("refused", detail=reason)
             raise Invalid(reason)
         self._releasing.add(key)
@@ -206,8 +267,12 @@ class ReleaseMixin:
             prs = await prs_once()
             records = self._release_records(journal, key)
             facts = await self._release_facts(root, data["units"], prs_once, records)
-            ctx.update(proposed=facts["proposed"], last_tag=facts["last_tag"],
-                       units=facts["units"], commits=facts["unmatched"])
+            ctx.update(
+                proposed=facts["proposed"],
+                last_tag=facts["last_tag"],
+                units=facts["units"],
+                commits=facts["unmatched"],
+            )
             open_rel = release.release_prs(prs) if isinstance(prs, list) else []
             has_script = (root / release.SCRIPT).is_file()
             tree: Path | None = None
@@ -232,20 +297,32 @@ class ReleaseMixin:
                 if not problem and phase == "publish" and version != facts["version"]:
                     problem = f"the release waiting to be tagged is {facts['version'] or 'none'}, not {version}"
             reason = release.refusal(
-                active=False, phase=phase, open_release_pr=open_rel[0] if open_rel else None,
-                has_script=has_script, check_version=check_version, version_problem_=problem,
-                state=facts["state"], unreadable=facts["reason"] if facts["state"] == "unknown" else "",
+                active=False,
+                phase=phase,
+                open_release_pr=open_rel[0] if open_rel else None,
+                has_script=has_script,
+                check_version=check_version,
+                version_problem_=problem,
+                state=facts["state"],
+                unreadable=facts["reason"] if facts["state"] == "unknown" else "",
             )
             checked: dict[str, Any] = {}
             if not reason and facts["state"] == "pr-open":
                 row = open_rel[0]
                 try:
-                    checks: list[dict[str, Any]] | str = await integrate.required_checks(str(root), int(row["number"]))
+                    checks: list[dict[str, Any]] | str = await integrate.required_checks(
+                        str(root), int(row["number"])
+                    )
                 except integrate.IntegrateError as e:
                     checks = str(e)
                 opened, _ = release.opened_head(records, version)
                 reason = release.publish_problem(
-                    checks, str(row.get("headRefOid") or ""), opened, f"v{version}" in facts.get("tags", []), version)
+                    checks,
+                    str(row.get("headRefOid") or ""),
+                    opened,
+                    f"v{version}" in facts.get("tags", []),
+                    version,
+                )
                 ctx.update(pr=row.get("number"), head=str(row.get("headRefOid") or ""))
                 # The merge is pinned to the head just checked, which is the one the app pushed; the pull
                 # request is not read a second time.
@@ -269,7 +346,9 @@ class ReleaseMixin:
         """The first press: a `chore/release-X-Y-Z` pull request that changes the four version files
         and nothing else. One `release` record whatever happens.
         """
-        journal, key, root, facts, tree, version, write = await self._release_press(cwd, "prepare", version)
+        journal, key, root, facts, tree, version, write = await self._release_press(
+            cwd, "prepare", version
+        )
         branch = release.branch_name(version)
         cut = False
         head = ""
@@ -290,14 +369,22 @@ class ReleaseMixin:
             if code != 0 or (said.split() or [""])[0] != version:
                 raise release.ReleaseError(f"check-version printed {said!r}, not {version}")
             extra = release.extra_diff(
-                await gitops.diff_u0(tree, self._release_tree_path(cwd)), facts["old"], version)
+                await gitops.diff_u0(tree, self._release_tree_path(cwd)), facts["old"], version
+            )
             if extra:
-                raise release.ReleaseError("the change is more than the version lines: " + "; ".join(extra))
-            head = await gitops.commit_files(tree, self._release_tree_path(cwd), f"chore(release): {version}")
+                raise release.ReleaseError(
+                    "the change is more than the version lines: " + "; ".join(extra)
+                )
+            head = await gitops.commit_files(
+                tree, self._release_tree_path(cwd), f"chore(release): {version}"
+            )
             await gitops.push_branch(tree, self._release_tree_path(cwd), branch)
             number = await release.create_pr(
-                str(tree), branch, f"chore(release): {version}",
-                release.pr_body(version, facts["units"], facts["unmatched"]))
+                str(tree),
+                branch,
+                f"chore(release): {version}",
+                release.pr_body(version, facts["units"], facts["unmatched"]),
+            )
             await gitops.detach_here(tree, self._release_tree_path(cwd))
             rec = write("opened", pr=number, head=head)
             yield ("done", {"release": rec})
@@ -322,17 +409,27 @@ class ReleaseMixin:
         """The second press: merge the release pull request, then tag its merge commit. From
         `merged-untagged` it starts at the tag. Never started by anything but a request.
         """
-        journal, key, root, facts, tree, version, write = await self._release_press(cwd, "publish", version)
+        journal, key, root, facts, tree, version, write = await self._release_press(
+            cwd, "publish", version
+        )
         tag = f"v{version}"
         merged: dict[str, Any] = {}
         try:
             if facts["state"] == "pr-open":
                 number, head = facts["checked_pr"], facts["checked_head"]
                 await release.merge_pr(str(tree), number, head)
-                merged = {"pr": number, "head": head, "merge_sha": await release.merge_commit(str(tree), number)}
+                merged = {
+                    "pr": number,
+                    "head": head,
+                    "merge_sha": await release.merge_commit(str(tree), number),
+                }
             else:
                 found = await release.merged_release_pr(str(root), release.branch_name(version))
-                merged = {"pr": found["number"], "head": found["head"], "merge_sha": found["merge_sha"]}
+                merged = {
+                    "pr": found["number"],
+                    "head": found["head"],
+                    "merge_sha": found["merge_sha"],
+                }
             sha = merged["merge_sha"]
             await gitops.fetch_with_tags(root)
             origin = await gitops.rev_parse(root, "refs/remotes/origin/main")
@@ -341,7 +438,9 @@ class ReleaseMixin:
             tree = await self._release_tree_fresh(cwd, root, sha)
             code, said = await release.cos(tree, "check-version")
             if code != 0 or (said.split() or [""])[0] != version:
-                raise release.ReleaseError(f"check-version at {sha[:7]} printed {said!r}, not {version}")
+                raise release.ReleaseError(
+                    f"check-version at {sha[:7]} printed {said!r}, not {version}"
+                )
             await gitops.push_tag(tree, self._release_tree_path(cwd), tag, sha)
             rec = write("tagged", **merged)
             try:
@@ -351,7 +450,13 @@ class ReleaseMixin:
             except GitError:
                 pass
             yield ("done", {"release": rec})
-        except (GitError, release.ReleaseError, integrate.IntegrateError, IndexError, KeyError) as e:
+        except (
+            GitError,
+            release.ReleaseError,
+            integrate.IntegrateError,
+            IndexError,
+            KeyError,
+        ) as e:
             rec = write("merged" if merged else "failed", detail=str(e), **merged)
             try:
                 await self._release_tree_gone(cwd, root, tree)

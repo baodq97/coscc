@@ -64,7 +64,7 @@ def scoped_patterns(text: str) -> list[str] | None:
     for i, line in enumerate(front):
         if not line.startswith("paths:"):
             continue
-        value = line[len("paths:"):].strip()
+        value = line[len("paths:") :].strip()
         if value.startswith("["):
             if not value.endswith("]"):
                 return None
@@ -73,7 +73,7 @@ def scoped_patterns(text: str) -> list[str] | None:
             found = [_strip_quotes(value)]
         else:
             found = []
-            for item in front[i + 1:]:
+            for item in front[i + 1 :]:
                 stripped = item.strip()
                 if not item[:1].isspace() or not stripped.startswith("-"):
                     break
@@ -103,7 +103,7 @@ def read(cwd: str | Path) -> Instructions:
         name = path.relative_to(root).as_posix()
         try:
             body = path.read_bytes().decode("utf-8")
-        except (OSError, UnicodeDecodeError):
+        except OSError, UnicodeDecodeError:
             verbatim.append(name + UNREADABLE)
             continue
         # Only a rule can be scoped; a `CLAUDE.md` is always read whole.

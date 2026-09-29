@@ -46,7 +46,7 @@ def _younger_than(at: str, oldest: datetime) -> bool:
     """Whether a run-log `at` is after `oldest`. One that will not parse is not shown."""
     try:
         when = datetime.fromisoformat(at)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
@@ -88,7 +88,9 @@ OUTCOME_RESULTS = {"đạt": "met", "trượt": "missed", "không đo được":
 MISSED_HINT = "cân nhắc bỏ hoặc làm lại"
 
 
-def outcome_label(outcome: dict[str, Any] | None, today: date, finished: bool = False) -> dict[str, Any] | None:
+def outcome_label(
+    outcome: dict[str, Any] | None, today: date, finished: bool = False
+) -> dict[str, Any] | None:
     """What the board shows for one unit's outcome, or None for no label.
 
     `outcome` is what `board._outcome_of` copied from `cos.mjs`. `today` is a parameter so the
@@ -167,7 +169,9 @@ def attention_reason(unit: dict[str, Any]) -> str:
     rows = unit.get("stages") or []
     if unit.get("phase") == "pre-intent" or why in ("finished", "rejected"):
         return ""
-    if not (unit.get("problems") or any(r.get("status") in ("draft", "changes-requested") for r in rows)):
+    if not (
+        unit.get("problems") or any(r.get("status") in ("draft", "changes-requested") for r in rows)
+    ):
         return ""
     waiting = any(not p.get("answered") for p in unit.get("person_findings") or [])
     if unit.get("problems") or waiting or why == "dependency":
@@ -213,7 +217,12 @@ FOLDED_STATES = ("done", "dropped")
 
 
 def _state(state: str, label: str = "", ci: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {"state": state, "label": label or STATE_LABEL[state], "color": STATE_COLOR[state], "ci": ci}
+    return {
+        "state": state,
+        "label": label or STATE_LABEL[state],
+        "color": STATE_COLOR[state],
+        "ci": ci,
+    }
 
 
 def unit_state(
@@ -232,7 +241,10 @@ def unit_state(
         return _state("done")
     if hold == "dropped" or why == "rejected":
         if why == "rejected":
-            stage = next((r.get("stage") for r in unit.get("stages") or [] if r.get("status") == "rejected"), "")
+            stage = next(
+                (r.get("stage") for r in unit.get("stages") or [] if r.get("status") == "rejected"),
+                "",
+            )
             return _state("dropped", f"Dropped — {stage} rejected")
         return _state("dropped")
     if hold == "paused":
@@ -241,7 +253,11 @@ def unit_state(
         return _state("needs-you")
     # The buckets `integrate.classify` reads as red. A held answer that is `gh`'s error has no
     # `checks`, and reads as not read.
-    red = [str(c.get("name") or "") for c in (ci or {}).get("checks") or [] if c.get("bucket") in ("fail", "cancel")]
+    red = [
+        str(c.get("name") or "")
+        for c in (ci or {}).get("checks") or []
+        if c.get("bucket") in ("fail", "cancel")
+    ]
     line = None
     if ci is not None:
         line = {"read": "checks" in ci, "red": red, "at": str(ci.get("at") or "")}
@@ -251,7 +267,10 @@ def unit_state(
         and last_end.get("stage") == unit.get("at")
     )
     if (
-        unit.get("problems") or why == "unreadable" or failed or red
+        unit.get("problems")
+        or why == "unreadable"
+        or failed
+        or red
         or (unit.get("integration") or {}).get("state") == "red-after-integration"
     ):
         return _state("error", ci=line if red else None)
@@ -266,7 +285,9 @@ def unit_state(
     return _state("ready")
 
 
-def shown_state(decided: dict[str, Any], running_rows: list[dict[str, Any]] | None) -> dict[str, Any]:
+def shown_state(
+    decided: dict[str, Any], running_rows: list[dict[str, Any]] | None
+) -> dict[str, Any]:
     """`Running` while `Service.running` lists a session of the unit, below rules 1-3 and above
     the rest. `running_rows` is that answer's `running` entry for the unit."""
     if running_rows and decided.get("state") not in COLLAPSED_STATES:

@@ -27,10 +27,14 @@ def _table(headers: list[str], rows, render, empty: str, **props) -> rx.Componen
         rx.table.root(
             rx.table.header(rx.table.row(*[rx.table.column_header_cell(h) for h in headers])),
             rx.table.body(rx.foreach(rows, render)),
-            size="1", variant="ghost", width="100%",
+            size="1",
+            variant="ghost",
+            width="100%",
         ),
         rx.cond(rows.length() == 0, s.text(empty, size="1", margin_top="8px")),
-        overflow_x="auto", width="100%", **props,
+        overflow_x="auto",
+        width="100%",
+        **props,
     )
 
 

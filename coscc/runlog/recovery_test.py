@@ -1,8 +1,7 @@
-"""Tests for ending, at start, the steps the app went down under (`0092` plan step 5).
+"""Tests for ending, at start, the steps the app went down under.
 
 The step is built the way the app leaves one: a real `Recorder` that took three turns and
-then `abandon()`ed, and a `start` naming its `run` and the `pid` of a process that is gone.
-"""
+then `abandon()`ed, and a `start` naming its `run` and the `pid` of a process that is gone."""
 
 from __future__ import annotations
 
@@ -45,13 +44,20 @@ class AStepTheAppWentDownUnder(unittest.TestCase):
 
         async def go():
             for n in range(turns):
-                rec.message(AssistantMessage(content=[TextBlock(str(n))], model="m", message_id=f"m{n}"))
+                rec.message(
+                    AssistantMessage(content=[TextBlock(str(n))], model="m", message_id=f"m{n}")
+                )
             await rec.abandon()
 
         asyncio.run(go())
         if start:
             self.journal.started(
-                "ws", UNIT, "impl", "autonomous", run=run, **({"pid": pid} if pid is not None else {}),
+                "ws",
+                UNIT,
+                "impl",
+                "autonomous",
+                run=run,
+                **({"pid": pid} if pid is not None else {}),
             )
         return rec
 

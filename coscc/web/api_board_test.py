@@ -1,9 +1,7 @@
 """Tests for the board over HTTP, driven in-process the way the proof commands are.
 
-The workspace under test is this repository itself, because it is the only one with real
-work units in it. `spec.md` R10 is the rule these hold: a route may translate and nothing
-more, so every refusal here has to come back word for word from `Service`.
-"""
+The workspace under test is this repository itself, because it is the only one with real work units
+in it."""
 
 from __future__ import annotations
 
@@ -23,14 +21,11 @@ STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "sh
 def seed_store(data_dir, workspace=REPO) -> Path:
     """Copy this repository's real `.cos/` into the product's store for `workspace`.
 
-    `0014` moved a unit's artifacts out of the repository and under the data root, so a
-    test that wants units to look at has to put them where the product now keeps them.
     Copied rather than pointed at, because these tests drive routes that could write.
 
     The fixture stays this repository's own `.cos/` for the reason `coscc/units/board_test.py:1-7`
     gives: what breaks here is the *agreement* with `cos.mjs`, and a hand-built fixture
-    keeps passing after the two drift apart.
-    """
+    keeps passing after the two drift apart."""
     import shutil
 
     from coscc import units
@@ -90,8 +85,7 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_mode_set_over_http_comes_back_on_the_next_read(self):
         first = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
-        payload = {"cwd": str(REPO), "unit": _a_unit(first),
-                   "stage": "impl", "mode": "autonomous"}
+        payload = {"cwd": str(REPO), "unit": _a_unit(first), "stage": "impl", "mode": "autonomous"}
         r = await self.client.post("/api/board/mode", json=payload)
         self.assertEqual(r.status_code, 200, r.text)
 
@@ -103,12 +97,9 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_stage["spec"], "manual")
 
     async def test_the_mode_does_not_change_what_a_step_may_do(self):
-        """`0020` `spec.md` `## Answers`, answer 1: tools follow the stage, not the mode.
+        """Md` `## Answers`, answer 1: tools follow the stage, not the mode.
 
-        Before `0020` a `pr` step in `manual` carried nothing, and choosing `autonomous`
-        was what granted `git` and `gh`. Now the same grant and the same warning show
-        before the button whichever mode is set.
-        """
+        Now the same grant and the same warning show before the button whichever mode is set."""
         from coscc.agent.policy import grant_for
 
         def pr_row(body: dict, name: str) -> dict:
@@ -119,9 +110,15 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         first = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
         name = _a_unit(first)
         before = pr_row(first, name)
-        r = await self.client.post("/api/board/mode", json={
-            "cwd": str(REPO), "unit": name, "stage": "pr", "mode": "autonomous",
-        })
+        r = await self.client.post(
+            "/api/board/mode",
+            json={
+                "cwd": str(REPO),
+                "unit": name,
+                "stage": "pr",
+                "mode": "autonomous",
+            },
+        )
         self.assertEqual(r.status_code, 200, r.text)
         after = pr_row(
             (await self.client.get("/api/board", params={"cwd": str(REPO)})).json(), name
@@ -131,7 +128,7 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after["mode"], "autonomous")
         self.assertEqual(before["grants"], after["grants"])
         self.assertEqual(before["warning"], after["warning"])
-        # `0139` R12: `pr` is the PR machine's and holds no grant, so there is nothing to show.
+        # `pr` is the PR machine's and holds no grant, so there is nothing to show.
         self.assertEqual(after["grants"], list(grant_for("pr").tools))
         self.assertEqual((after["grants"], after["warning"]), ([], ""))
 
@@ -204,8 +201,7 @@ class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
         body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
         r = await self.client.post(
             "/api/board/mode",
-            json={"cwd": str(REPO), "unit": _a_unit(body),
-                  "stage": "impl", "mode": "autonomous"},
+            json={"cwd": str(REPO), "unit": _a_unit(body), "stage": "impl", "mode": "autonomous"},
         )
         self.assertEqual(r.status_code, 400)
         self.assertIn("COS_WORKING_DIR", r.json()["error"])

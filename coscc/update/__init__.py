@@ -65,7 +65,7 @@ def public(version: str) -> tuple[int, int, int] | None:
     A tag has passed `cos.mjs check-tag`, so every release is `X.Y.Z`; three integers are all the PEP 440 this needs.
     """
     m = _PUBLIC.fullmatch(version.split("+", 1)[0])
-    return tuple(int(p) for p in m.groups()) if m else None  # type: ignore[return-value]
+    return (int(m[1]), int(m[2]), int(m[3])) if m else None
 
 
 def local_commit(version: str) -> str:
@@ -80,7 +80,7 @@ def local_commit(version: str) -> str:
 def build_commit(stamp: Path = BUILD_STAMP) -> str | None:
     try:
         commit = json.loads(stamp.read_text(encoding="utf-8")).get("commit")
-    except (OSError, ValueError, AttributeError):
+    except OSError, ValueError, AttributeError:
         return None
     return commit if isinstance(commit, str) and _FULL_SHA.fullmatch(commit) else None
 
@@ -89,9 +89,11 @@ def checkout_commit(repo: Path = REPO) -> str | None:
     try:
         out = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     commit = out.stdout.strip()
     return commit if out.returncode == 0 and _FULL_SHA.fullmatch(commit) else None
@@ -106,11 +108,19 @@ def find_uv(candidates: tuple[str, ...]) -> str | None:
 
 
 def unit_file(config: Any) -> Path | None:
-    return Path(config.config_home) / "systemd" / "user" / "coscc.service" if config.config_home else None
+    return (
+        Path(config.config_home) / "systemd" / "user" / "coscc.service"
+        if config.config_home
+        else None
+    )
 
 
 def _unit_lines(text: str, key: str) -> list[str]:
-    return [line.split("=", 1)[1].strip() for line in text.splitlines() if line.strip().startswith(key + "=")]
+    return [
+        line.split("=", 1)[1].strip()
+        for line in text.splitlines()
+        if line.strip().startswith(key + "=")
+    ]
 
 
 def service_shape(
@@ -137,18 +147,30 @@ def service_shape(
     if not starts or os.path.realpath(starts[-1].split()[0]) != os.path.realpath(executable):
         return "unavailable", f"ExecStart= of {unit} does not point at {executable}", {}
     if "on-failure" not in _unit_lines(text, "Restart"):
-        return "unavailable", f"{unit} has no Restart=on-failure, so exiting to update would not come back", {}
+        return (
+            "unavailable",
+            f"{unit} has no Restart=on-failure, so exiting to update would not come back",
+            {},
+        )
     if not (Path(prefix) / "uv-receipt.toml").is_file():
         return "unavailable", f"venv {prefix} is not a uv tool (no uv-receipt.toml)", {}
     uv = find_uv(config.uv_candidates)
     if uv is None:
-        return "unavailable", "no uv found (PATH, UV_INSTALL_DIR, XDG_BIN_HOME, ~/.local/bin, ~/.cargo/bin)", {}
-    return "service", "", {
-        "uv": uv,
-        "tool_dir": str(Path(prefix).parent),
-        "bin_dir": str(Path(starts[-1].split()[0]).parent),
-        "executable": starts[-1].split()[0],
-    }
+        return (
+            "unavailable",
+            "no uv found (PATH, UV_INSTALL_DIR, XDG_BIN_HOME, ~/.local/bin, ~/.cargo/bin)",
+            {},
+        )
+    return (
+        "service",
+        "",
+        {
+            "uv": uv,
+            "tool_dir": str(Path(prefix).parent),
+            "bin_dir": str(Path(starts[-1].split()[0]).parent),
+            "executable": starts[-1].split()[0],
+        },
+    )
 
 
 def identity(
@@ -191,9 +213,7 @@ def release_urls(tag: str) -> tuple[str, str]:
     return base + wheel_name(version), base + SUMS
 
 
-def candidate(
-    release: Any, running: str, check_tag: Callable[[str], str]
-) -> dict[str, str] | None:
+def candidate(release: Any, running: str, check_tag: Callable[[str], str]) -> dict[str, str] | None:
     """A release worth downloading, or `None`, never an error.
 
     `release` is the JSON `releases/latest` returned. All four must hold: `check-tag` says `release`; its version is higher than the one running; it carries the wheel of that version and `SHA256SUMS`, each exactly once; both download URLs are under `SOURCE/releases/download/<tag>/`. Other assets (`install.sh`) are no reason to refuse it.
@@ -228,8 +248,11 @@ def candidate(
     if not all(wanted.values()):
         return None
     return {
-        "tag": tag, "version": version, "wheel_name": wheel_name(version),
-        "wheel_url": wanted[wheel_name(version)], "sums_url": wanted[SUMS],
+        "tag": tag,
+        "version": version,
+        "wheel_name": wheel_name(version),
+        "wheel_url": wanted[wheel_name(version)],
+        "sums_url": wanted[SUMS],
     }
 
 
@@ -245,7 +268,11 @@ def sums_entry(text: str, name: str) -> str | None:
     """The sha256 `sha256sum` wrote for `name`, or `None`."""
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) == 2 and parts[1].lstrip("*") == name and re.fullmatch(r"[0-9a-f]{64}", parts[0]):
+        if (
+            len(parts) == 2
+            and parts[1].lstrip("*") == name
+            and re.fullmatch(r"[0-9a-f]{64}", parts[0])
+        ):
             return parts[0]
     return None
 
@@ -291,7 +318,11 @@ def fetch_into(
         return {"state": "error", "reason": f"{type(e).__name__}: {e}"}
     if want is None or want != got:
         _unlink(part_wheel, part_sums)
-        return {"state": "checksum", "reason": f"the sha256 of {name} does not match SHA256SUMS", "sha256": got}
+        return {
+            "state": "checksum",
+            "reason": f"the sha256 of {name} does not match SHA256SUMS",
+            "sha256": got,
+        }
     os.replace(part_sums, channel_dir / SUMS)
     os.replace(part_wheel, channel_dir / name)
     for old in channel_dir.glob("*.whl"):
@@ -300,7 +331,12 @@ def fetch_into(
     # A local build promoted into `current/` left its manifest, which now describes a wheel
     # that is gone, and `verified_wheel` reads a manifest before `SHA256SUMS`.
     _unlink(channel_dir / MANIFEST)
-    return {"state": "ready", "wheel": str(channel_dir / name), "version": cand["version"], "sha256": got}
+    return {
+        "state": "ready",
+        "wheel": str(channel_dir / name),
+        "version": cand["version"],
+        "sha256": got,
+    }
 
 
 def _unlink(*paths: Path) -> None:
@@ -347,7 +383,7 @@ def verified_wheel(directory: Path) -> dict[str, Any] | None:
 def read_json(path: Path) -> dict[str, Any] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     return value if isinstance(value, dict) else None
 
@@ -372,13 +408,15 @@ def rollback_command(
     uv: str, tool_dir: str, bin_dir: str, old_wheel: str, db: str, backup: str
 ) -> str:
     """How a person goes back by hand when nothing on the board can."""
-    return "\n".join([
-        "systemctl --user stop coscc",
-        f"cp {backup} {db}",
-        f"rm -f {db}-wal {db}-shm",
-        f"UV_OFFLINE=1 UV_TOOL_DIR={tool_dir} UV_TOOL_BIN_DIR={bin_dir} {uv} tool install --force {old_wheel}",
-        "systemctl --user start coscc",
-    ])
+    return "\n".join(
+        [
+            "systemctl --user stop coscc",
+            f"cp {backup} {db}",
+            f"rm -f {db}-wal {db}-shm",
+            f"UV_OFFLINE=1 UV_TOOL_DIR={tool_dir} UV_TOOL_BIN_DIR={bin_dir} {uv} tool install --force {old_wheel}",
+            "systemctl --user start coscc",
+        ]
+    )
 
 
 # --- the hand-off to `main` -------------------------------------------------------------
@@ -458,7 +496,9 @@ def finish(h: Handoff) -> int:
         def reports() -> str:
             code, out = run([coscc, "--version"])
             first = out.strip().splitlines()[0] if out.strip() else ""
-            return first.split(" ", 1)[1].strip() if code == 0 and first.startswith("coscc ") else ""
+            return (
+                first.split(" ", 1)[1].strip() if code == 0 and first.startswith("coscc ") else ""
+            )
 
         code, _ = run([h.uv, "tool", "install", "--force", h.target_wheel])
         seen = reports()
@@ -470,10 +510,16 @@ def finish(h: Handoff) -> int:
             back, _ = run([h.uv, "tool", "install", "--force", h.current_wheel])
             result = "rolled-back" if back == 0 and reports() == h.current_version else "broken"
         log.write(f"\nresult: {result}\n")
-    write_json(Path(h.last), {
-        "from": h.from_version, "to": h.target_version, "result": result,
-        "log": h.log, "finished_at": now(),
-    })
+    write_json(
+        Path(h.last),
+        {
+            "from": h.from_version,
+            "to": h.target_version,
+            "result": result,
+            "log": h.log,
+            "finished_at": now(),
+        },
+    )
     return EXIT_CODE
 
 

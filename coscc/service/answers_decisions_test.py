@@ -32,12 +32,13 @@ class Fixture(unittest.TestCase):
         self.work, self.data = self.root / "work", self.root / "data"
         self.cwd = str(self.work / "proj")
         Path(self.cwd).mkdir(parents=True)
-        self.config = Config(workspaces=(self.cwd,), working_dir=str(self.work), data_dir=str(self.data))
+        self.config = Config(
+            workspaces=(self.cwd,), working_dir=str(self.work), data_dir=str(self.data)
+        )
         self.service = Service(self.config, Sessions(self.config))
 
 
 class TheDecisionsPanel(Fixture):
-
     GOOD = {"kind": "decision", "text": "Luôn rẻ.", "source": "chat 2026-09-28"}
 
     def test_the_form_refuses_each_case_with_one_sentence(self):
@@ -64,19 +65,34 @@ class TheDecisionsPanel(Fixture):
             said = str(refused.exception)
             self.assertTrue(said.endswith(".") and ". " not in said, said)
         self.assertEqual(Data(self.data).decisions(), [])
-        for fields in (self.GOOD, {**delegation, "workspace": "proj", "until": date.today().isoformat()}):
+        for fields in (
+            self.GOOD,
+            {**delegation, "workspace": "proj", "until": date.today().isoformat()},
+        ):
             self.service.add_decision(fields)
         rows = self.service.decisions_table()["rows"]
-        self.assertEqual([(r["id"], r["state"], r["workspace_name"]) for r in rows],
-                         [("D1", "in force", "All workspaces"), ("D2", "in force", "proj")])
-        self.assertEqual(rows[1]["from_day"], date.today().isoformat(), "from is the day it was entered")
+        self.assertEqual(
+            [(r["id"], r["state"], r["workspace_name"]) for r in rows],
+            [("D1", "in force", "All workspaces"), ("D2", "in force", "proj")],
+        )
+        self.assertEqual(
+            rows[1]["from_day"], date.today().isoformat(), "from is the day it was entered"
+        )
 
     def test_a_decision_is_withdrawn_not_deleted(self):
         added = self.service.add_decision(self.GOOD)["added"]
-        Data(self.data).decision_add(kind="decision", text="cũ", source="s", from_day="2026-01-01",
-                                     until_day="2026-01-02", workspace="gone-000000000000")
+        Data(self.data).decision_add(
+            kind="decision",
+            text="cũ",
+            source="s",
+            from_day="2026-01-01",
+            until_day="2026-01-02",
+            workspace="gone-000000000000",
+        )
         table = self.service.withdraw_decision(added)
-        self.assertEqual([(r["id"], r["state"]) for r in table["rows"]], [("D1", "withdrawn"), ("D2", "expired")])
+        self.assertEqual(
+            [(r["id"], r["state"]) for r in table["rows"]], [("D1", "withdrawn"), ("D2", "expired")]
+        )
         self.assertEqual(table["rows"][1]["workspace_name"], "a removed workspace")
         for d in ("D1", "D2", "D9", ""):
             with self.assertRaises(Invalid):
@@ -99,7 +115,11 @@ class NoRouteReachesThem(unittest.TestCase):
         # empty body starts nothing; the two writers count their calls.
         stubs = {}
         for name in dir(Service):
-            if name.startswith("_") or not callable(getattr(Service, name)) or isinstance(getattr(Service, name), type):
+            if (
+                name.startswith("_")
+                or not callable(getattr(Service, name))
+                or isinstance(getattr(Service, name), type)
+            ):
                 continue
             stubs[name] = (lambda n: lambda *a, **k: called.append(n) or {})(name)
         with tempfile.TemporaryDirectory() as d, mock.patch.multiple(Service, **stubs):

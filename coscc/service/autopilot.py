@@ -17,12 +17,12 @@ from coscc.units import autopilot, backlog, guide, states
 from coscc.git import fetches
 from coscc.github import integrate, prmachine
 from coscc.git.gitops import GitError
-from coscc.runlog.journal import BadRecord, Busy
+from coscc.runlog.journal import BadRecord
+from coscc.data import Busy
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid
 
 
 class AutopilotMixin:
-
     # The autopilot holds no rule of the loop. Each pass reads the board, the run log, the settings
     # and the workspace's last shortlist, and asks `next` for every unit on it and no other; with no
     # shortlist it asks nothing. `coscc/units/autopilot.py` decides where to stop and what to start;
@@ -38,7 +38,9 @@ class AutopilotMixin:
         task = self._autopilot_tasks.get(key)
         if task is not None and not task.done():
             return
-        self._autopilot_tasks[key] = asyncio.get_running_loop().create_task(self._autopilot_loop(key))
+        self._autopilot_tasks[key] = asyncio.get_running_loop().create_task(
+            self._autopilot_loop(key)
+        )
         # The reader of the workspace's pull requests lives and dies with it.
         self._pr_readers[key] = asyncio.get_running_loop().create_task(self._pr_reader_loop(key))
 
@@ -131,21 +133,28 @@ class AutopilotMixin:
                     self._autopilot_nudge(other, merged)
         return got
 
-    async def _autopilot_guarded(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
+    async def _autopilot_guarded(
+        self, key: str, woken_by: list[dict[str, Any]] | None = None
+    ) -> None:
         """A pass that raises leaves a stop line saying so, not a dead loop."""
         try:
             await (self._autopilot_pass(key, woken_by) if woken_by else self._autopilot_pass(key))
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — shown on the board, never swallowed
-            self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": f"the autopilot's pass failed: {e}"}})
+            self._autopilot_set_stops(
+                key, {"": {"unit": "", "kind": "f", "reason": f"the autopilot's pass failed: {e}"}}
+            )
 
     def _autopilot_running(self, key: str) -> list[dict[str, Any]]:
         """What runs in this workspace now, by unit, a person's steps included."""
         out: dict[str, dict[str, Any]] = {}
         for (k, unit), mark in self._active.items():
             if k == key:
-                out[unit] = {"unit": unit, "stage": "integrate" if mark.kind == "integrate" else mark.stage}
+                out[unit] = {
+                    "unit": unit,
+                    "stage": "integrate" if mark.kind == "integrate" else mark.stage,
+                }
         for unit, (stage, task) in (self._autopilot_runs.get(key) or {}).items():
             if not task.done() and unit not in out:
                 out[unit] = {"unit": unit, "stage": stage}
@@ -153,8 +162,10 @@ class AutopilotMixin:
 
     def _autopilot_files(self, cwd: str, unit: str) -> set[str] | None:
         try:
-            return autopilot.files_of((self._unit_dir(cwd, unit) / "plan.md").read_text(encoding="utf-8"))
-        except (Invalid, OSError):
+            return autopilot.files_of(
+                (self._unit_dir(cwd, unit) / "plan.md").read_text(encoding="utf-8")
+            )
+        except Invalid, OSError:
             return None
 
     def _autopilot_cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:
@@ -171,16 +182,24 @@ class AutopilotMixin:
             for unit, (stage, task) in runs.items():
                 if not task.done():
                     active.setdefault((k, unit), stage)
-        running = autopilot.reserved(records, now, [(k, unit, stage) for (k, unit), stage in active.items()])
+        running = autopilot.reserved(
+            records, now, [(k, unit, stage) for (k, unit), stage in active.items()]
+        )
         return {
-            "limit": limit, "spent": round(spent["known"] + spent["estimated"], 2),
-            "known": round(spent["known"], 2), "estimated": round(spent["estimated"], 2),
-            "estimated_count": spent["estimated_count"], "running": round(running, 2),
+            "limit": limit,
+            "spent": round(spent["known"] + spent["estimated"], 2),
+            "known": round(spent["known"], 2),
+            "estimated": round(spent["estimated"], 2),
+            "estimated_count": spent["estimated_count"],
+            "running": round(running, 2),
             "day": autopilot.today(now),
         }
 
     def _autopilot_set_stops(
-        self, key: str, found: dict[str, dict[str, str]], asked: set[str] | None = None,
+        self,
+        key: str,
+        found: dict[str, dict[str, str]],
+        asked: set[str] | None = None,
     ) -> None:
         """Keep the stops a pass found, and log each unit's that changed.
 
@@ -203,11 +222,17 @@ class AutopilotMixin:
             if (old or {}).get("kind") == (new or {}).get("kind"):
                 continue
             try:
-                journal.append({
-                    "kind": "autopilot-stop", "workspace": key, "unit": unit, "stage": "",
-                    "stop": (new or {}).get("kind", ""), "reason": (new or {}).get("reason", ""),
-                })
-            except (BadRecord, Busy):
+                journal.append(
+                    {
+                        "kind": "autopilot-stop",
+                        "workspace": key,
+                        "unit": unit,
+                        "stage": "",
+                        "stop": (new or {}).get("kind", ""),
+                        "reason": (new or {}).get("reason", ""),
+                    }
+                )
+            except BadRecord, Busy:
                 pass
 
     async def _autopilot_pass(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
@@ -233,8 +258,15 @@ class AutopilotMixin:
             data = await self.board(cwd)
             try:
                 records = journal.records(
-                    kinds=("start", "end", "integration", "shortlist", "answer", "screens",
-                           autopilot.PR_MACHINE),
+                    kinds=(
+                        "start",
+                        "end",
+                        "integration",
+                        "shortlist",
+                        "answer",
+                        "screens",
+                        autopilot.PR_MACHINE,
+                    ),
                 )
             except Busy as e:
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
@@ -245,7 +277,9 @@ class AutopilotMixin:
                 # Nothing is asked and nothing starts.
                 if not self._autopilot_on(key) or not self._autopilot_values(key)["autopilot"]:
                     return
-                self._autopilot_set_stops(key, {"": {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}})
+                self._autopilot_set_stops(
+                    key, {"": {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}}
+                )
                 return
             names = list(listed["units"])
             # A listed unit at `ship` is decided on the `origin/main` the remote has now: `behind` below
@@ -253,13 +287,16 @@ class AutopilotMixin:
             # coordinator, which reuses a fetch under `REUSE_SECONDS`. A fetch that fails leaves the ref as
             # it was, and each such unit's stop says so.
             at_ship = {
-                u["name"] for u in data["units"]
+                u["name"]
+                for u in data["units"]
                 if u["name"] in names and u.get("between_pr_and_ship") and u.get("at") == "ship"
             }
             unfetched: dict[str, Any] | None = None
             if at_ship:
                 try:
-                    await fetches.fetch(Path(cwd).expanduser().resolve(), BRANCH_REMOTE, BRANCH_TRUNK)
+                    await fetches.fetch(
+                        Path(cwd).expanduser().resolve(), BRANCH_REMOTE, BRANCH_TRUNK
+                    )
                 except GitError as e:
                     unfetched = {"outcome": "failed", "detail": str(e)}
                 else:
@@ -275,13 +312,18 @@ class AutopilotMixin:
                     starts[(str(r.get("unit") or ""), str(r.get("stage") or ""))] = r
                 # A retake of the screenshots that failed is the unit's last word too, and so is a `pr` or
                 # `ship` the PR machine ran.
-                if r.get("workspace") == key and r.get("kind") in ("end", "integration", "screens", autopilot.PR_MACHINE) \
-                        and autopilot.is_step(r):
+                if (
+                    r.get("workspace") == key
+                    and r.get("kind") in ("end", "integration", "screens", autopilot.PR_MACHINE)
+                    and autopilot.is_step(r)
+                ):
                     last[str(r.get("unit") or "")] = r
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r
                     if r.get("kind") == "end":
-                        began[str(r.get("unit") or "")] = starts.get((str(r.get("unit") or ""), str(r.get("stage") or "")))
+                        began[str(r.get("unit") or "")] = starts.get(
+                            (str(r.get("unit") or ""), str(r.get("stage") or ""))
+                        )
 
             running = self._autopilot_running(key)
             here = {r["unit"]: r["stage"] for r in running}
@@ -300,7 +342,11 @@ class AutopilotMixin:
                     nxt = await self.next_step(cwd, name)
                 except Invalid as e:
                     found[name] = {"unit": name, "kind": "f", "reason": str(e)}
-                    reasons[name] = ("running", here[name]) if name in here else autopilot.reason_for({}, "", found[name])
+                    reasons[name] = (
+                        ("running", here[name])
+                        if name in here
+                        else autopilot.reason_for({}, "", found[name])
+                    )
                     continue
                 # A first `exhausted` step of a stage other than `ship` runs again once; so does a first prose
                 # step whose reply lacked its opening.
@@ -310,14 +356,27 @@ class AutopilotMixin:
                 # No `start` found reads as no recording `ship`.
                 recorded = (began.get(name) or {}).get("ship_mode") == "record"
                 stop = autopilot.stop_for(
-                    u, nxt, last.get(name), settings["autopilot_may_ship"], ran_out, unopened, recorded,
+                    u,
+                    nxt,
+                    last.get(name),
+                    settings["autopilot_may_ship"],
+                    ran_out,
+                    unopened,
+                    recorded,
                 )
                 stage = nxt.get("stage") or ""
                 info = u.get("integration") or {}
                 # Not while its step runs, whose `start` is already in the window.
-                own = None if name in here else autopilot.after_own_integration(
-                    info, integrations.get(name), autopilot.since_integration(records, key, name), nxt,
-                    autopilot.exhausted_of(records, key, name, "impl"),
+                own = (
+                    None
+                    if name in here
+                    else autopilot.after_own_integration(
+                        info,
+                        integrations.get(name),
+                        autopilot.since_integration(records, key, name),
+                        nxt,
+                        autopilot.exhausted_of(records, key, name, "impl"),
+                    )
                 )
                 # A unit behind `main`, conflicting or red after integration is integrated first, also after a
                 # `pass`, but only where the autopilot may ship (otherwise a person merges and the round is
@@ -333,7 +392,9 @@ class AutopilotMixin:
                     and (not passed or settings["autopilot_may_ship"])
                     and (stop is None or stop["kind"] == "f")
                 ):
-                    if own is not None and (info.get("state") == "red-after-integration" or own[1] is not None):
+                    if own is not None and (
+                        info.get("state") == "red-after-integration" or own[1] is not None
+                    ):
                         stage, stop = own
                     else:
                         stop, stage = None, "integrate"
@@ -346,20 +407,39 @@ class AutopilotMixin:
                 # no stage and no stop.
                 rerun = False
                 if stop is None and not stage and nxt.get("rerun"):
-                    if autopilot.reruns_of(records, key, name, nxt["rerun"]) >= autopilot.MAX_RERUNS:
-                        artifact = next((s["file"] for s in u.get("stages") or [] if s["stage"] == nxt["rerun"]), nxt["rerun"])
+                    if (
+                        autopilot.reruns_of(records, key, name, nxt["rerun"])
+                        >= autopilot.MAX_RERUNS
+                    ):
+                        artifact = next(
+                            (
+                                s["file"]
+                                for s in u.get("stages") or []
+                                if s["stage"] == nxt["rerun"]
+                            ),
+                            nxt["rerun"],
+                        )
                         stop = autopilot.rerun_stop(artifact)
                     elif not autopilot.answered_since_start(records, key, name, nxt["rerun"]):
                         stop = autopilot.stop_for(
-                            u, {**nxt, "rerun": ""}, last.get(name), settings["autopilot_may_ship"], ran_out,
-                            unopened, recorded,
+                            u,
+                            {**nxt, "rerun": ""},
+                            last.get(name),
+                            settings["autopilot_may_ship"],
+                            ran_out,
+                            unopened,
+                            recorded,
                         )
                     else:
                         stage, rerun = nxt["rerun"], True
                 if stop is not None and unfetched is not None and name in at_ship:
                     note = integrate.origin_note(str(info.get("origin_sha") or ""), unfetched)
                     stop = {**stop, "reason": f"{stop['reason']}; {note}"}
-                reason = ("running", here[name]) if name in here else autopilot.reason_for(nxt, stage, stop)
+                reason = (
+                    ("running", here[name])
+                    if name in here
+                    else autopilot.reason_for(nxt, stage, stop)
+                )
                 if reason is not None:
                     reasons[name] = reason
                 if stop is not None:
@@ -370,42 +450,62 @@ class AutopilotMixin:
                 files = self._autopilot_files(cwd, name) if stage in autopilot.CODE_STAGES else None
                 # The exhausted `ship` this pick went past. Not once the stage became `integrate`, which
                 # skipped nothing.
-                skipped = stage == "ship" and autopilot.skips_exhausted(nxt, last.get(name), recorded)
-                candidates.append({
-                    "unit": name, "stage": stage, "files": files, "rank": rank,
-                    "need": autopilot.reservation(stage),
-                    "rerun": rerun,
-                    "past_exhausted": {"at": last[name].get("at")} if skipped else None,
-                })
+                skipped = stage == "ship" and autopilot.skips_exhausted(
+                    nxt, last.get(name), recorded
+                )
+                candidates.append(
+                    {
+                        "unit": name,
+                        "stage": stage,
+                        "files": files,
+                        "rank": rank,
+                        "need": autopilot.reservation(stage),
+                        "rerun": rerun,
+                        "past_exhausted": {"at": last[name].get("at")} if skipped else None,
+                    }
+                )
 
             for r in running:
                 if r["stage"] in autopilot.CODE_STAGES:
                     r["files"] = self._autopilot_files(cwd, r["unit"])
             now = datetime.now().astimezone()
             # A `start` with no `end`, from a process before this one, counts against N for 24 hours.
-            elsewhere = sum(1 for (k, unit) in autopilot.open_starts(records, now) if k == key and unit not in here)
+            elsewhere = sum(
+                1
+                for (k, unit) in autopilot.open_starts(records, now)
+                if k == key and unit not in here
+            )
             cap = self._autopilot_cap(records, settings["daily_cap_usd"])
             room = cap["limit"] - cap["spent"] - cap["running"]
             # The pull requests the PR machine holds open, with the files it read.
             try:
                 prs = prmachine.open_prs(self._pr_machine().history, key)
-            except (sqlite3.Error, OSError, Busy):
+            except sqlite3.Error, OSError, Busy:
                 prs = []
-            picked = autopilot.pick(candidates, running, settings["max_parallel"] - elsewhere, room, prs)
+            picked = autopilot.pick(
+                candidates, running, settings["max_parallel"] - elsewhere, room, prs
+            )
             reasons.update(picked["held"])
             est = f" ({cap['estimated']:.2f} estimated)" if cap["estimated_count"] else ""
             for c in picked["capped"]:
-                found[c["unit"]] = {"unit": c["unit"], "kind": "cap", "reason": (
-                    f"spent {cap['spent']:.2f}{est} + running {cap['running']:.2f} + {c['stage']} "
-                    f"{c['need']:.2f} is over the cap of {cap['limit']:.2f} USD ({cap['day']})"
-                )}
+                found[c["unit"]] = {
+                    "unit": c["unit"],
+                    "kind": "cap",
+                    "reason": (
+                        f"spent {cap['spent']:.2f}{est} + running {cap['running']:.2f} + {c['stage']} "
+                        f"{c['need']:.2f} is over the cap of {cap['limit']:.2f} USD ({cap['day']})"
+                    ),
+                }
                 reasons[c["unit"]] = autopilot.reason_for({}, c["stage"], found[c["unit"]])
             # A run again that `max_parallel` alone held back says so. Any other candidate held back that
             # way still says nothing.
             left = {c["unit"] for c in picked["chosen"] + picked["capped"]} | set(picked["held"])
             for c in candidates:
                 if c["rerun"] and c["unit"] not in left:
-                    found[c["unit"]] = {"unit": c["unit"], **autopilot.full_stop(c["stage"], settings["max_parallel"])}
+                    found[c["unit"]] = {
+                        "unit": c["unit"],
+                        **autopilot.full_stop(c["stage"], settings["max_parallel"]),
+                    }
                     reasons[c["unit"]] = autopilot.reason_for({}, c["stage"], found[c["unit"]])
             # Raises before anything is recorded or started when a unit above one chosen has no
             # reason; `_autopilot_guarded` shows it as a stop line.
@@ -422,20 +522,41 @@ class AutopilotMixin:
                 # No record, no start, and nothing ranked below it either, since starting one would pass over
                 # a unit chosen with no record of it.
                 try:
-                    journal.append({
-                        "kind": "autopilot-pick", "workspace": key, "unit": c["unit"], "stage": c["stage"],
-                        "pass": run_id, "rank": c["rank"], "shortlist": shortlist, "passed": over,
-                        **({"past_exhausted": c["past_exhausted"]} if c.get("past_exhausted") else {}),
-                        # The transitions whose read scheduled this pass.
-                        **({"woken_by": woken_by} if woken_by else {}),
-                    })
+                    journal.append(
+                        {
+                            "kind": "autopilot-pick",
+                            "workspace": key,
+                            "unit": c["unit"],
+                            "stage": c["stage"],
+                            "pass": run_id,
+                            "rank": c["rank"],
+                            "shortlist": shortlist,
+                            "passed": over,
+                            **(
+                                {"past_exhausted": c["past_exhausted"]}
+                                if c.get("past_exhausted")
+                                else {}
+                            ),
+                            # The transitions whose read scheduled this pass.
+                            **({"woken_by": woken_by} if woken_by else {}),
+                        }
+                    )
                 except (BadRecord, Busy) as e:
-                    self._autopilot_set_stops(key, {**found, "": {
-                        "unit": "", "kind": "f",
-                        "reason": f"could not record the autopilot's choice, so nothing more was started: {e}",
-                    }})
+                    self._autopilot_set_stops(
+                        key,
+                        {
+                            **found,
+                            "": {
+                                "unit": "",
+                                "kind": "f",
+                                "reason": f"could not record the autopilot's choice, so nothing more was started: {e}",
+                            },
+                        },
+                    )
                     return
-                task = asyncio.get_running_loop().create_task(self._autopilot_launch(key, cwd, c["unit"], c["stage"]))
+                task = asyncio.get_running_loop().create_task(
+                    self._autopilot_launch(key, cwd, c["unit"], c["stage"])
+                )
                 self._autopilot_runs.setdefault(key, {})[c["unit"]] = (c["stage"], task)
 
     async def _autopilot_launch(self, key: str, cwd: str, unit: str, stage: str) -> None:
@@ -449,7 +570,8 @@ class AutopilotMixin:
             if not self._autopilot_on(key):
                 return
             stream = (
-                self.integrate(cwd, unit, started_by="autopilot") if stage == "integrate"
+                self.integrate(cwd, unit, started_by="autopilot")
+                if stage == "integrate"
                 else self.run_step(cwd, unit, stage, started_by="autopilot")
             )
             async for _ in stream:
@@ -460,7 +582,9 @@ class AutopilotMixin:
             said = str(e)
             # A gate's refusal carries its codes (`Refused`); anything else has none.
             if not autopilot.is_ci_pending(e) and not self._busy(key, unit):
-                self._autopilot_set_stops(key, {unit: {"unit": unit, "kind": "f", "reason": said}}, {unit})
+                self._autopilot_set_stops(
+                    key, {unit: {"unit": unit, "kind": "f", "reason": said}}, {unit}
+                )
         finally:
             runs = self._autopilot_runs.get(key) or {}
             if runs.get(unit, ("", None))[1] is asyncio.current_task():
@@ -471,15 +595,21 @@ class AutopilotMixin:
         values = self._autopilot_values(key)
         on = values["autopilot"]
         block: dict[str, Any] = {
-            "on": on, "may_ship": values["autopilot_may_ship"], "max_parallel": values["max_parallel"],
-            "cap": None, "stops": [], "refused_because": self._off_loopback() if on else "",
+            "on": on,
+            "may_ship": values["autopilot_may_ship"],
+            "max_parallel": values["max_parallel"],
+            "cap": None,
+            "stops": [],
+            "refused_because": self._off_loopback() if on else "",
         }
         if not on:
             return block
         journal = self._journal()
         if journal is not None:
             try:
-                block["cap"] = self._autopilot_cap(journal.records(kinds=("start", "end")), values["daily_cap_usd"])
+                block["cap"] = self._autopilot_cap(
+                    journal.records(kinds=("start", "end")), values["daily_cap_usd"]
+                )
             except Busy:
                 block["cap"] = None
         block["stops"] = sorted(

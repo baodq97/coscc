@@ -1,7 +1,6 @@
-"""Tests for an idea several units share (`0040` R1, R3).
+"""Tests for an idea several units share.
 
-`cos.mjs new-idea` is run for real, for the reason `coscc/units/units_test.py:1-7` gives.
-"""
+`cos.mjs new-idea` is run for real, for the reason `coscc/units/units_test.py:1-7` gives."""
 
 from __future__ import annotations
 
@@ -22,7 +21,7 @@ class Fixture(unittest.TestCase):
 
 
 class CreatingAnIdea(Fixture):
-    def test_create_idea_writes_0001_with_an_empty_units_section(self):
+    def test_create_idea_writes_with_an_empty_units_section(self):
         made = ideas.create_idea(WS, "one-feature", "  backend adds, frontend calls  ", self.data)
         self.assertEqual(made["id"], "0001_one-feature")
         text = ideas.read_text(made["path"])
@@ -45,8 +44,10 @@ class CreatingAnIdea(Fixture):
         self.assertIn("Invalid slug", str(caught.exception))
 
     def test_a_brief_with_headings_of_its_own_is_kept_whole(self):
-        """Review round 1, F2: a brief pasted from a markdown file ran only to its first `## `."""
-        brief = "Backend adds an endpoint.\n\n## Why\n\nThe frontend needs it.\n\n## Not this\n\nAuth."
+        """A brief pasted from a markdown file ran only to its first `## `."""
+        brief = (
+            "Backend adds an endpoint.\n\n## Why\n\nThe frontend needs it.\n\n## Not this\n\nAuth."
+        )
         path = ideas.create_idea(WS, "one", brief, self.data)["path"]
         ideas.append_unit(path, "api", "0001_backend")
         text = ideas.read_text(path)
@@ -73,7 +74,10 @@ class AppendingAUnit(Fixture):
         ideas.append_unit(path, "proj", "0006_frontend", "api/0001_backend")
         after = ideas.read_text(path)
         self.assertTrue(after.startswith(before), after)
-        self.assertEqual(after[len(before):], "- api/0001_backend.\n- proj/0006_frontend. Depends on: api/0001_backend.\n")
+        self.assertEqual(
+            after[len(before) :],
+            "- api/0001_backend.\n- proj/0006_frontend. Depends on: api/0001_backend.\n",
+        )
         self.assertEqual(
             ideas.read_units(after),
             [

@@ -54,10 +54,15 @@ class Repo:
     def git(self, *args: str) -> str:
         return subprocess.run(
             [
-                "git", "-C", str(self.path),
-                "-c", "user.name=Fixture",
-                "-c", "user.email=fixture@example.invalid",
-                "-c", "commit.gpgsign=false",
+                "git",
+                "-C",
+                str(self.path),
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
                 *args,
             ],
             capture_output=True,
@@ -99,8 +104,7 @@ class HistoryInGitBecomesTransitions(Fixture):
         self.repo.commit("intent, draft")
         self.repo.write(".cos/0001_a-problem/intent.md", artifact("A problem", "accepted"))
         self.repo.commit("intent, accepted")
-        # Settled, then rewritten in place. This is the event `0013` exists to count, and
-        # the one the old arrangement destroyed: the status does not change.
+        # Settled, then rewritten in place.
         self.repo.write(
             ".cos/0001_a-problem/intent.md", artifact("A problem", "accepted") + "more\n"
         )
@@ -131,9 +135,9 @@ class HistoryInGitBecomesTransitions(Fixture):
         )
 
     def test_the_actor_and_the_session_say_they_are_not_known(self):
-        # `spec.md` C1. Git knows the commit author and this throws it away on purpose:
-        # a transition's actor is whoever moved it, and filling it from the commit would
-        # assert a person did work a session did.
+        # Git knows the commit author and this throws it away on purpose: a transition's actor is
+        # whoever moved it, and filling it from the commit would assert a person did work a session
+        # did.
         self.run_import()
         for row in self.history.transitions(WS):
             self.assertEqual(row["actor"], UNKNOWN)
@@ -192,9 +196,7 @@ class WhatLeavesAndWhatIsSkipped(Fixture):
         self.repo.write(".cos/0001_a-problem/intent.md", artifact("A problem", "draft"))
         self.repo.commit("one")
         self.run_import()
-        self.assertEqual(
-            [r["artifact"] for r in self.history.transitions(WS)], ["intent.md"]
-        )
+        self.assertEqual([r["artifact"] for r in self.history.transitions(WS)], ["intent.md"])
 
     def test_an_artifact_with_no_readable_status_is_skipped_rather_than_guessed(self):
         self.repo.write(".cos/0001_a-problem/intent.md", "# A problem\nno status here\n")
@@ -223,7 +225,7 @@ class WhatLeavesAndWhatIsSkipped(Fixture):
 
 
 class NothingIsWrittenIntoTheRepository(Fixture):
-    """`spec.md` R7. This is the one component that touches somebody else's checkout."""
+    """This is the one component that touches somebody else's checkout."""
 
     def test_the_working_tree_is_untouched_and_no_commit_is_added(self):
         self.repo.write(".cos/0001_a-problem/intent.md", artifact("A problem", "accepted"))
@@ -255,7 +257,7 @@ class NothingIsWrittenIntoTheRepository(Fixture):
 
 
 class ADifferentStateSetImportsADifferentRepository(Fixture):
-    """`spec.md` R6 reaching the import: no artifact name below is one the default knows."""
+    """A state set reaches the import: no artifact name below is one the default knows."""
 
     def test_it_reads_the_artifacts_that_set_names_and_no_others(self):
         path = self.root / "other.json"

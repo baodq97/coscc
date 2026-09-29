@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run test:node && npm run test:python",
+    "test": "npm run lint && npm run test:node && npm run test:python",
+    "lint": "uv run ruff check && uv run ruff format --check && uv run ty check",
     "test:node": "node --test '.claude/scripts/*.test.mjs'",
     "test:python": "uv run pytest -n auto",
     "e2e": "uv run python scripts/e2e.py"

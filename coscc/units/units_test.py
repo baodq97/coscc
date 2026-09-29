@@ -29,11 +29,9 @@ class Fixture(unittest.TestCase):
 
 
 class OneFunctionAnswersWhereUnitsLive(Fixture):
-    """R3. Three modules used to work this out for themselves."""
+    """Three modules used to work this out for themselves."""
 
     def test_the_store_is_under_the_data_root_and_not_in_the_workspace(self):
-        # R2, structurally: there is no arrangement of arguments that puts a unit inside
-        # the workspace, because the workspace is only ever hashed into a name.
         store = units.root(WS, self.data)
         self.assertTrue(str(store).startswith(self.data), store)
         self.assertNotIn("a-workspace/", str(store).replace(self.data, ""))
@@ -51,7 +49,9 @@ class OneFunctionAnswersWhereUnitsLive(Fixture):
     def test_the_identity_is_the_resolved_path_the_journal_already_uses(self):
         # `spec.md` open question 4: the same convention, not a second one.
         self.assertEqual(units.key("/tmp/../tmp/a-workspace"), str(Path(WS).resolve()))
-        self.assertEqual(units.root("/tmp/../tmp/a-workspace", self.data), units.root(WS, self.data))
+        self.assertEqual(
+            units.root("/tmp/../tmp/a-workspace", self.data), units.root(WS, self.data)
+        )
 
     def test_the_slot_name_carries_the_basename_so_a_person_can_read_it(self):
         self.assertTrue(units.slot(WS).startswith("a-workspace-"), units.slot(WS))
@@ -72,9 +72,7 @@ class StartingAUnit(Fixture):
     def test_the_directory_it_names_is_the_directory_it_makes(self):
         made = units.create(WS, "a-problem", "", self.data)
         self.assertTrue(Path(made["path"]).is_dir())
-        self.assertEqual(
-            Path(made["path"]).parent, units.cos_dir(WS, self.data)
-        )
+        self.assertEqual(Path(made["path"]).parent, units.cos_dir(WS, self.data))
 
     def test_a_bad_slug_is_refused_in_the_scripts_own_words(self):
         # `intent.md` constraint 4: no second validator. The wording has to be its own or
@@ -85,7 +83,7 @@ class StartingAUnit(Fixture):
         self.assertIn("slug", str(caught.exception).lower())
 
     def test_a_slug_longer_than_a_branch_allows_is_refused_with_both_lengths(self):
-        # `0102` R3: the limit is `check-branch`'s, said by the script and carried here as is.
+        # The limit is `check-branch`'s, said by the script and carried here as is.
         with self.assertRaises(CannotCreate) as caught:
             units.create(WS, "a" * 61, "", self.data)
         self.assertIn("61", str(caught.exception))
@@ -105,8 +103,6 @@ class StartingAUnit(Fixture):
 
 
 class NumbersTakenInTheHostRepositoryCount(Fixture):
-    """`0001_product-describes-a-state-it-is-not-in` R10 and R11."""
-
     def _host(self, *names: str) -> Path:
         host = Path(self.data) / "host"
         for n in names:
@@ -129,7 +125,8 @@ class NumbersTakenInTheHostRepositoryCount(Fixture):
         self.assertEqual(units.create(host, "fresh", "", self.data)["unit"], "0001_fresh")
 
     def test_the_number_is_whatever_cos_mjs_prints(self):
-        """R11. If Python worked the number out itself, this would not be `0042`."""
+        """The number is whatever `cos.mjs` prints: if Python worked it out itself, it would not be
+        the fake script's."""
         from unittest import mock
 
         fake = Path(self.data) / "fake-cos.mjs"
@@ -216,7 +213,10 @@ class TheBranchNameComesFromTheIntent(Fixture):
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
-        self.assertEqual(units.branch_name(WS, made["unit"], self.data, snapshot_of(units.root(WS, self.data))), "fix/a-problem")
+        self.assertEqual(
+            units.branch_name(WS, made["unit"], self.data, snapshot_of(units.root(WS, self.data))),
+            "fix/a-problem",
+        )
 
     def test_a_unit_that_is_not_there_is_refused_before_any_command_runs(self):
         with self.assertRaises(CannotCreate) as caught:

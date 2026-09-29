@@ -12,7 +12,6 @@ from coscc.agent import models
 from coscc.github import prmachine
 
 REPO = Path(__file__).resolve().parents[2]
-# The stages that run a session: `pr` and `ship` are the PR machine's since `0139` R12.
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "review"]
 
 
@@ -23,11 +22,14 @@ def row(model=None, effort=None):
 class TheOrderIsOverrideThenDefaultThenCosModel(unittest.TestCase):
     def test_override_wins(self):
         self.assertEqual(
-            models.resolve("impl", None, {"impl": "o"}, {}, {"impl": row("d")}, "e")[:2], ("o", "override")
+            models.resolve("impl", None, {"impl": "o"}, {}, {"impl": row("d")}, "e")[:2],
+            ("o", "override"),
         )
 
     def test_default_wins_over_cos_model(self):
-        self.assertEqual(models.resolve("impl", None, {}, {}, {"impl": row("d")}, "e")[:2], ("d", "default"))
+        self.assertEqual(
+            models.resolve("impl", None, {}, {}, {"impl": row("d")}, "e")[:2], ("d", "default")
+        )
 
     def test_cos_model_only_where_neither_answers(self):
         defaults, _ = models.load_defaults()
@@ -38,12 +40,14 @@ class TheOrderIsOverrideThenDefaultThenCosModel(unittest.TestCase):
             self.assertEqual(by[stage][1], "default", stage)
 
     def test_nothing_at_all_is_none(self):
-        self.assertEqual(models.resolve("chat", None, {}, {}, {}, None), (None, "none", None, "none"))
+        self.assertEqual(
+            models.resolve("chat", None, {}, {}, {}, None), (None, "none", None, "none")
+        )
 
 
-class TheFiveStepsOfR6(unittest.TestCase):
-    """`0033` spec R6: novel override, novel default, base override, base default, then
-    `COS_MODEL` for the model and nothing for the effort. Each component on its own."""
+class TheFiveStepsOfTheModelChoice(unittest.TestCase):
+    """Novel override, novel default, base override, base default, then `COS_MODEL` for the model
+    and nothing for the effort. Each component on its own."""
 
     DEFAULTS = {"impl": row("base-d", "medium"), "impl:novel": row("novel-d", "high")}
 
@@ -52,30 +56,42 @@ class TheFiveStepsOfR6(unittest.TestCase):
         full_m = {"impl:novel": "novel-o", "impl": "base-o"}
         full_e = {"impl:novel": "max", "impl": "low"}
         r = models.resolve
-        self.assertEqual(r("impl", "novel", full_m, full_e, d, "env"), ("novel-o", "override", "max", "override"))
-        self.assertEqual(r("impl", "novel", {"impl": "base-o"}, {"impl": "low"}, d, "env"),
-                         ("novel-d", "default", "high", "default"))
-        self.assertEqual(r("impl", "novel", {"impl": "base-o"}, {"impl": "low"}, {"impl": d["impl"]}, "env"),
-                         ("base-o", "override", "low", "override"))
-        self.assertEqual(r("impl", "novel", {}, {}, {"impl": d["impl"]}, "env"),
-                         ("base-d", "default", "medium", "default"))
+        self.assertEqual(
+            r("impl", "novel", full_m, full_e, d, "env"), ("novel-o", "override", "max", "override")
+        )
+        self.assertEqual(
+            r("impl", "novel", {"impl": "base-o"}, {"impl": "low"}, d, "env"),
+            ("novel-d", "default", "high", "default"),
+        )
+        self.assertEqual(
+            r("impl", "novel", {"impl": "base-o"}, {"impl": "low"}, {"impl": d["impl"]}, "env"),
+            ("base-o", "override", "low", "override"),
+        )
+        self.assertEqual(
+            r("impl", "novel", {}, {}, {"impl": d["impl"]}, "env"),
+            ("base-d", "default", "medium", "default"),
+        )
         self.assertEqual(r("impl", "novel", {}, {}, {}, "env"), ("env", "COS_MODEL", None, "none"))
 
     def test_the_components_are_looked_up_separately(self):
         # The novel row names a model and no effort: the effort falls through to the base.
         d = {"impl": row("base-d", "medium"), "impl:novel": row("novel-d")}
-        self.assertEqual(models.resolve("impl", "novel", {}, {}, d, None),
-                         ("novel-d", "default", "medium", "default"))
+        self.assertEqual(
+            models.resolve("impl", "novel", {}, {}, d, None),
+            ("novel-d", "default", "medium", "default"),
+        )
 
     def test_the_variant_is_read_only_for_novel(self):
         for label in (None, "routine"):
-            self.assertEqual(models.resolve("impl", label, {"impl:novel": "x"}, {}, self.DEFAULTS, None)[:3],
-                             ("base-d", "default", "medium"), label)
+            self.assertEqual(
+                models.resolve("impl", label, {"impl:novel": "x"}, {}, self.DEFAULTS, None)[:3],
+                ("base-d", "default", "medium"),
+                label,
+            )
 
 
 class TheTrialTier(unittest.TestCase):
-    """`0139` R16, R17: override, `COS_MODEL`, then the trial, then `models.json`; the effort
-    as it was."""
+    """Override, `COS_MODEL`, then the trial, then `models.json`; the effort as it was."""
 
     DEFAULTS = {"impl": row("base-d", "medium"), "impl:novel": row("novel-d", "high")}
 
@@ -85,15 +101,19 @@ class TheTrialTier(unittest.TestCase):
                 for defaults in ({}, self.DEFAULTS):
                     with self.subTest(label=label, overrides=overrides, defaults=defaults):
                         args = ("impl", label, overrides, {"impl": "low"}, defaults, "env")
-                        self.assertEqual(models.resolve(*args), models.resolve(*args, trial_model=None))
+                        self.assertEqual(
+                            models.resolve(*args), models.resolve(*args, trial_model=None)
+                        )
 
     def test_the_trial_model_sits_between_cos_model_and_default(self):
         plain = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, None)
         tried = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, None, trial_model="t")
         self.assertEqual(tried[:2], ("t", "trial"))
-        # R16: both arms run the default's effort, so the model is the only variable.
+        # Both arms run the default's effort, so the model is the only variable.
         self.assertEqual(tried[2:], plain[2:])
-        overridden = models.resolve("impl", "routine", {"impl": "o"}, {}, self.DEFAULTS, None, trial_model="t")
+        overridden = models.resolve(
+            "impl", "routine", {"impl": "o"}, {}, self.DEFAULTS, None, trial_model="t"
+        )
         self.assertEqual(overridden[:2], ("o", "override"))
         env = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, "env", trial_model="t")
         self.assertEqual(env[:2], ("env", "COS_MODEL"))
@@ -107,8 +127,19 @@ class TheTrialTier(unittest.TestCase):
 class TheTable(unittest.TestCase):
     def test_chat_comes_after_the_stages_in_their_order(self):
         t = models.table(STAGES, {}, {}, {}, None, 1)
-        expected = ["idea", "intent", "spec", "spike", "plan", "impl", "impl:novel",
-                    "review", "review:novel", "estimate", "chat"]
+        expected = [
+            "idea",
+            "intent",
+            "spec",
+            "spike",
+            "plan",
+            "impl",
+            "impl:novel",
+            "review",
+            "review:novel",
+            "estimate",
+            "chat",
+        ]
         self.assertEqual([r["name"] for r in t["rows"]], expected)
         self.assertTrue(all(r["agents"] == 1 for r in t["rows"]))
 
@@ -120,7 +151,7 @@ class TheTable(unittest.TestCase):
         self.assertIn("old-stage", t["problems"][1])
 
     def test_a_novel_key_before_plan_is_reported(self):
-        # R9: a stage order that puts `impl` before `plan` has no `impl:novel` row.
+        # A stage order that puts `impl` before `plan` has no `impl:novel` row.
         order = ["idea", "impl", "plan", "review"]
         t = models.table(order, {}, {"impl:novel": "high"}, {"impl:novel": row("x")}, None, 1)
         self.assertNotIn("impl:novel", [r["name"] for r in t["rows"]])
@@ -158,8 +189,12 @@ class BrokenRowsAreSkippedWithAReason(unittest.TestCase):
             self.assertEqual(len(models.load_defaults(Path(d) / "gone.json")[1]), 1)
 
     def test_effort_overrides_take_only_the_five_words_and_max_is_one(self):
-        # R7: `max` is allowed from an override — a person chose it.
-        rows = {"effort:impl": json.dumps("max"), "effort:pr": json.dumps("turbo"), "model:impl": json.dumps("m")}
+        # `max` is allowed from an override — a person chose it.
+        rows = {
+            "effort:impl": json.dumps("max"),
+            "effort:pr": json.dumps("turbo"),
+            "model:impl": json.dumps("m"),
+        }
         found, problems = models.overrides_from(rows, models.EFFORT_PREFIX)
         self.assertEqual(found, {"impl": "max"})
         self.assertEqual(len(problems), 1)
@@ -177,7 +212,7 @@ class TheShapeOfModelsJson(unittest.TestCase):
         self.assertEqual(self._load({"impl": "m"}), ({"impl": row("m")}, []))
 
     def test_max_in_the_defaults_is_dropped_and_named(self):
-        # R7: only an override may be `max`.
+        # Only an override may be `max`.
         found, problems = self._load({"impl": {"model": "m", "effort": "max"}})
         self.assertEqual(found, {"impl": row("m")})
         self.assertEqual(len(problems), 1)
@@ -195,10 +230,20 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
 
     def test_the_keys_are_exactly_the_stages_cos_mjs_names(self):
         out = subprocess.run(
-            ["node", str(REPO / ".claude" / "scripts" / "cos.mjs"), "--state", "-", "status", "--json"],
-            # `0135`: the stage table needs no unit, so an empty snapshot.
+            [
+                "node",
+                str(REPO / ".claude" / "scripts" / "cos.mjs"),
+                "--state",
+                "-",
+                "status",
+                "--json",
+            ],
+            # The stage table needs no unit, so an empty snapshot.
             input='{"workspace": "", "units": {}}',
-            cwd=REPO, capture_output=True, text=True, check=True,
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         names = [s["name"] for s in json.loads(out.stdout)["stages"]]
         defaults, problems = models.load_defaults()
@@ -207,29 +252,32 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
         # `estimate` is a row of its own, not a stage `cos.mjs` names. `pr` and `ship` run no
         # session and have none.
         self.assertEqual(base, (set(names) - set(prmachine.STAGES)) | {models.ESTIMATE})
-        # `0033` spec R8: the only variants shipped are these two.
+        # The only variants shipped are these two.
         self.assertEqual(set(defaults) - base, {"impl:novel", "review:novel"})
         self.assertEqual(models.table(names, {}, {}, defaults, None, 1)["problems"], [])
 
     def test_the_answered_split(self):
-        # `0033` spec R8, from `idea.md:23`: a starting point, not a conclusion. The ids are
-        # the `[1m]` ones `0031` shipped.
         defaults, _ = models.load_defaults()
         opus, sonnet = "claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]"
         expected = {
-            "idea": row(opus, "medium"), "intent": row(opus, "medium"),
-            "spec": row(opus, "medium"), "spike": row(opus, "medium"), "plan": row(opus, "medium"),
-            "impl": row(sonnet, "medium"), "impl:novel": row(opus, "high"),
-            "review": row(opus, "medium"), "review:novel": row(opus, "high"),
-            # `0074`: chosen, not measured — the same row as `idea` and `intent`.
+            "idea": row(opus, "medium"),
+            "intent": row(opus, "medium"),
+            "spec": row(opus, "medium"),
+            "spike": row(opus, "medium"),
+            "plan": row(opus, "medium"),
+            "impl": row(sonnet, "medium"),
+            "impl:novel": row(opus, "high"),
+            "review": row(opus, "medium"),
+            "review:novel": row(opus, "high"),
+            # Chosen, not measured — the same row as `idea` and `intent`.
             "estimate": row(opus, "medium"),
         }
         self.assertEqual(defaults, expected)
         self.assertNotIn("chat", defaults)
 
     def test_every_default_is_the_1m_variant(self):
-        # `0031 intent.md`: mọi stage phải báo `contextWindow` 1000000, không riêng gì
-        # bản nào — mọi id mặc định kết thúc bằng `[1m]`.
+        # Mọi stage phải báo `contextWindow` 1000000, không riêng gì bản nào — mọi id mặc định kết
+        # thúc bằng `[1m]`.
         defaults, problems = models.load_defaults()
         self.assertEqual(problems, [])
         self.assertTrue(defaults, "load_defaults() trả về rỗng")
@@ -238,7 +286,7 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
 
 
 class TheEstimateRow(unittest.TestCase):
-    """`0074`. A Settings row just before `chat`, resolved like any other."""
+    """A Settings row just before `chat`, resolved like any other."""
 
     def test_it_sits_before_chat_and_resolves(self):
         self.assertEqual(models.rows_for(["idea", "plan"])[-2:], [models.ESTIMATE, models.CHAT])

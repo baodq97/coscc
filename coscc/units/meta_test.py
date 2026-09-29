@@ -1,10 +1,6 @@
-"""`0135` plan steps 4-6: the import, the ingest and the snapshot `cos.mjs --state` reads.
-
-The fixture store (`testdata/meta_store`) holds one unit of each kind the plan's step 1
-names, and `testdata/meta_store_before.json` is `status --json` of it, taken by `cos.mjs`
-before this unit changed it. The R5 test reads the same store through the database and asks
-for the same answer on every field R5 lists.
-"""
+"""The fixture store (`testdata/meta_store`) holds one unit of each kind the plan's step 1 names,
+and `testdata/meta_store_before.json` is `status --json` of it, taken by `cos.mjs` before this unit
+changed it."""
 
 from __future__ import annotations
 
@@ -33,25 +29,32 @@ NAMES = {"proj": WS}
 def status(store: Path, snapshot: dict) -> dict:
     done = subprocess.run(
         ["node", str(harness.script()), "--root", str(store), "--state", "-", "status", "--json"],
-        input=json.dumps(snapshot), capture_output=True, text=True, env=harness.child_env(), check=True,
+        input=json.dumps(snapshot),
+        capture_output=True,
+        text=True,
+        env=harness.child_env(),
+        check=True,
     )
     return json.loads(done.stdout)
 
 
-def r5(unit: dict) -> dict:
-    """The fields spec R5 compares, and nothing else: never `problems` (C6)."""
+def kept_fields(unit: dict) -> dict:
     return {
         "artifacts": {f: a.get("status") for f, a in unit["artifacts"].items()},
-        "phase": unit.get("phase"), "type": unit.get("type"), "hold": unit.get("hold"),
-        "holdMoves": unit.get("holdMoves"), "questions": unit.get("questions"), "open": unit.get("open"),
+        "phase": unit.get("phase"),
+        "type": unit.get("type"),
+        "hold": unit.get("hold"),
+        "holdMoves": unit.get("holdMoves"),
+        "questions": unit.get("questions"),
+        "open": unit.get("open"),
         "dependsOn": [(d["ref"], d["merged"]) for d in unit.get("dependsOn") or []],
         "next": (unit["next"]["stage"], unit["next"]["why"]),
     }
 
 
 def ingest(service, cwd: str, unit: str) -> None:
-    """Test glue (plan Risk 4): a file a test wrote by hand reaches `cos.db` the way a
-    finished step's does, through `Service._ingest`. Since `0135` nothing else reads it."""
+    """Test glue (plan Risk 4): a file a test wrote by hand reaches `cos.db` the way a finished
+    step's does, through `Service._ingest`."""
     done = asyncio.run(service._ingest(cwd, unit, {"outcome": "done", "stage": "test"}))
     assert not done, done
 
@@ -123,7 +126,9 @@ class TheImport(Base):
         self.meta.import_store(WS, self.store)
         with self.data.connect() as conn:
             rows = {r["unit"] for r in conn.execute("SELECT unit FROM unit_meta")}
-        wanted = {d.name for d in (self.store / ".cos").iterdir() if d.is_dir() and d.name != "ideas"}
+        wanted = {
+            d.name for d in (self.store / ".cos").iterdir() if d.is_dir() and d.name != "ideas"
+        }
         self.assertEqual(rows, wanted)
         self.assertIn("not_a-unit", rows)
         self.assertIn("0003_old-unit", rows)
@@ -143,16 +148,27 @@ class TheImport(Base):
 
     def test_a_second_import_adds_no_row(self):
         self.assertIsNotNone(self.meta.import_store(WS, self.store))
-        tables = ("unit_meta", "unit_links", "unit_answers", "unit_holds", "unit_unknowns",
-                  "unit_questions", "unit_seen", "idea_meta", "transitions")
+        tables = (
+            "unit_meta",
+            "unit_links",
+            "unit_answers",
+            "unit_holds",
+            "unit_unknowns",
+            "unit_questions",
+            "unit_seen",
+            "idea_meta",
+            "transitions",
+        )
         before = {t: self.count(t) for t in tables}
         self.assertIsNone(self.meta.import_store(WS, self.store))
         # Past the `migrations` key too: the rows' own keys hold.
         with self.data.write() as conn:
             conn.execute("DELETE FROM migrations")
         self.meta.import_store(WS, self.store)
-        self.assertEqual({t: self.count(t) for t in ("unit_answers", "unit_holds", "transitions")},
-                         {t: before[t] for t in ("unit_answers", "unit_holds", "transitions")})
+        self.assertEqual(
+            {t: self.count(t) for t in ("unit_answers", "unit_holds", "transitions")},
+            {t: before[t] for t in ("unit_answers", "unit_holds", "transitions")},
+        )
         self.assertEqual(before["unit_meta"], self.count("unit_meta"))
 
     def test_the_snapshot_of_an_imported_store_carries_each_artifacts_status(self):
@@ -161,26 +177,37 @@ class TheImport(Base):
         self.assertEqual(snap["workspace"], "proj")
         full = snap["units"]["proj/0010_full-loop"]["artifacts"]
         self.assertEqual(full["plan.md"]["status"], "done")
-        self.assertEqual(snap["units"]["proj/0014_changes-requested"]["artifacts"]["review.md"]["status"], "changes-requested")
-        self.assertEqual(snap["units"]["proj/0016_bad-status"]["artifacts"]["spec.md"], {"status": None, "raw": "approved", "questions": None})
-        self.assertEqual(snap["units"]["proj/0017_linked"]["links"],
-                         {"idea": "ideas/0001_x.md", "repo": "proj", "dependsOn": ["0010_full-loop"]})
-        self.assertEqual([h["state"] for h in snap["units"]["proj/0011_paused-then-resumed"]["holds"]], ["paused", "active"])
+        self.assertEqual(
+            snap["units"]["proj/0014_changes-requested"]["artifacts"]["review.md"]["status"],
+            "changes-requested",
+        )
+        self.assertEqual(
+            snap["units"]["proj/0016_bad-status"]["artifacts"]["spec.md"],
+            {"status": None, "raw": "approved", "questions": None},
+        )
+        self.assertEqual(
+            snap["units"]["proj/0017_linked"]["links"],
+            {"idea": "ideas/0001_x.md", "repo": "proj", "dependsOn": ["0010_full-loop"]},
+        )
+        self.assertEqual(
+            [h["state"] for h in snap["units"]["proj/0011_paused-then-resumed"]["holds"]],
+            ["paused", "active"],
+        )
         rows = History(self.tmp / "work", self.data).transitions(WS, "0010_full-loop")
         self.assertEqual({r["source"] for r in rows}, {SOURCE})
 
 
 class TheSnapshotDecides(Base):
-    def test_status_json_of_the_imported_fixture_equals_the_before_file_on_r5s_fields(self):
+    def test_status_json_of_the_imported_fixture_equals_the_before_file_on_fields(self):
         self.meta.import_store(WS, self.store)
         after = status(self.store, self.meta.snapshot(WS, NAMES))
         before = json.loads(BEFORE.read_text(encoding="utf-8"))
         self.assertEqual([u["name"] for u in after["units"]], [u["name"] for u in before["units"]])
-        # `0136` R14, the one field that moved: a skip read from a file is a skip no person is
-        # known to have decided, and the unit stops on it for one.
         moved = {"0003_old-unit": {"next": ("", "agent-cannot-skip")}}
         for old, new in zip(before["units"], after["units"]):
-            self.assertEqual(r5(new), {**r5(old), **moved.get(old["name"], {})}, old["name"])
+            self.assertEqual(
+                kept_fields(new), {**kept_fields(old), **moved.get(old["name"], {})}, old["name"]
+            )
 
     def test_a_snapshot_for_one_unit_carries_it_and_what_it_depends_on(self):
         self.meta.import_store(WS, self.store)
@@ -188,13 +215,38 @@ class TheSnapshotDecides(Base):
         self.assertEqual(sorted(snap["units"]), ["proj/0010_full-loop", "proj/0017_linked"])
         self.assertEqual(snap["ideas"]["proj"][0]["id"], "0001_x")
         done = subprocess.run(
-            ["node", str(harness.script()), "--root", str(self.store), "--state", "-", "next", "0017_linked"],
-            input=json.dumps(snap), capture_output=True, text=True, env=harness.child_env(), check=True,
+            [
+                "node",
+                str(harness.script()),
+                "--root",
+                str(self.store),
+                "--state",
+                "-",
+                "next",
+                "0017_linked",
+            ],
+            input=json.dumps(snap),
+            capture_output=True,
+            text=True,
+            env=harness.child_env(),
+            check=True,
         )
         full = subprocess.run(
-            ["node", str(harness.script()), "--root", str(self.store), "--state", "-", "next", "0017_linked"],
-            input=json.dumps(self.meta.snapshot(WS, NAMES)), capture_output=True, text=True,
-            env=harness.child_env(), check=True,
+            [
+                "node",
+                str(harness.script()),
+                "--root",
+                str(self.store),
+                "--state",
+                "-",
+                "next",
+                "0017_linked",
+            ],
+            input=json.dumps(self.meta.snapshot(WS, NAMES)),
+            capture_output=True,
+            text=True,
+            env=harness.child_env(),
+            check=True,
         )
         self.assertEqual(json.loads(done.stdout), json.loads(full.stdout))
 
@@ -202,33 +254,49 @@ class TheSnapshotDecides(Base):
         self.meta.import_store(WS, self.store)
         snap = self.meta.snapshot(WS, NAMES)
         snap["units"]["proj/0013_open-question"]["artifacts"]["spec.md"]["status"] = "accepted"
-        unit = next(u for u in status(self.store, snap)["units"] if u["name"] == "0013_open-question")
+        unit = next(
+            u for u in status(self.store, snap)["units"] if u["name"] == "0013_open-question"
+        )
         self.assertEqual(unit["artifacts"]["spec.md"]["status"], "accepted")
         self.assertEqual(unit["next"]["stage"], "plan")
 
 
 class TheIngest(Base):
     def ingest(self, unit: str) -> list:
-        return self.meta.ingest(WS, self.store, unit, actor="stage:review", session="s1", source="run:review")
+        return self.meta.ingest(
+            WS, self.store, unit, actor="stage:review", session="s1", source="run:review"
+        )
 
     def test_a_review_replying_changes_requested_folds_to_changes_requested(self):
         self.meta.import_store(WS, self.store)
         review = self.store / ".cos" / "0014_changes-requested" / "review.md"
-        review.write_text(review.read_text().replace("Status: changes-requested", "Status: accepted"))
+        review.write_text(
+            review.read_text().replace("Status: changes-requested", "Status: accepted")
+        )
         self.ingest("0014_changes-requested")
-        review.write_text(review.read_text().replace("Status: accepted", "Status: changes-requested"))
+        review.write_text(
+            review.read_text().replace("Status: accepted", "Status: changes-requested")
+        )
         self.ingest("0014_changes-requested")
         state = History(self.tmp / "work", self.data).state(WS, "0014_changes-requested")
         self.assertEqual(state["review.md"], "changes-requested")
-        rows = History(self.tmp / "work", self.data).transitions(WS, "0014_changes-requested", "review.md")
-        self.assertEqual((rows[-1]["actor"], rows[-1]["session"], rows[-1]["source"]), ("stage:review", "s1", "run:review"))
+        rows = History(self.tmp / "work", self.data).transitions(
+            WS, "0014_changes-requested", "review.md"
+        )
+        self.assertEqual(
+            (rows[-1]["actor"], rows[-1]["session"], rows[-1]["source"]),
+            ("stage:review", "s1", "run:review"),
+        )
 
     def test_impl_writing_plan_md_done_folds_plan_md_to_done(self):
         self.meta.import_store(WS, self.store)
         plan = self.store / ".cos" / "0014_changes-requested" / "plan.md"
         plan.write_text(plan.read_text().replace("Status: accepted", "Status: done"))
         self.ingest("0014_changes-requested")
-        self.assertEqual(History(self.tmp / "work", self.data).state(WS, "0014_changes-requested")["plan.md"], "done")
+        self.assertEqual(
+            History(self.tmp / "work", self.data).state(WS, "0014_changes-requested")["plan.md"],
+            "done",
+        )
 
     def test_an_artifact_unchanged_since_the_last_ingest_is_not_read_again(self):
         self.meta.import_store(WS, self.store)
@@ -247,21 +315,37 @@ class TheIngest(Base):
     def test_a_failed_ingest_is_a_problem_on_the_card(self):
         self.meta.import_store(WS, self.store)
         self.meta.ingest_failed(WS, "0013_open-question", "cos.mjs meta exited 2")
-        unit = next(u for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"] if u["name"] == "0013_open-question")
-        self.assertTrue(any("cos.mjs meta exited 2" in p for p in unit["problems"]), unit["problems"])
-        self.assertEqual(self.meta.unknowns([WS]), [u for u in self.meta.unknowns([WS]) if u["field"] != "ingest"])
+        unit = next(
+            u
+            for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"]
+            if u["name"] == "0013_open-question"
+        )
+        self.assertTrue(
+            any("cos.mjs meta exited 2" in p for p in unit["problems"]), unit["problems"]
+        )
+        self.assertEqual(
+            self.meta.unknowns([WS]),
+            [u for u in self.meta.unknowns([WS]) if u["field"] != "ingest"],
+        )
 
 
 class AMergeIsARow(Base):
-    """`0139` R5: `merged`, which a `Depends on:` is judged on, is the PR machine's row, or a
-    ship recorded before the machine; never the status of `ship.md` alone."""
+    """`merged`, which a `Depends on:` is judged on, is the PR machine's row, or a ship recorded
+    before the machine; never the status of `ship.md` alone."""
 
     def merged(self, unit: str) -> bool:
         return self.meta.snapshot(WS, NAMES)["units"][f"proj/{unit}"]["merged"]
 
     def machine(self, unit: str, artifact: str, to_state: str, transition: str, guard: str) -> None:
         History(self.tmp / "work", self.data).record(
-            WS, unit, artifact, to_state, source=f"prmachine:{transition}", guard=guard, authority="code")
+            WS,
+            unit,
+            artifact,
+            to_state,
+            source=f"prmachine:{transition}",
+            guard=guard,
+            authority="code",
+        )
 
     def test_a_ship_imported_before_the_machine_is_merged_and_nothing_else_is(self):
         self.meta.import_store(WS, self.store)
@@ -270,12 +354,27 @@ class AMergeIsARow(Base):
 
     def test_an_accepted_ship_md_read_at_the_end_of_another_step_is_not_merged(self):
         self.meta.import_store(WS, self.store)
-        (self.store / ".cos" / "0013_open-question" / "ship.md").write_text("# Ship\nStatus: accepted.\n")
-        self.meta.ingest(WS, self.store, "0013_open-question", actor="stage:impl", session="s1", source="run:impl")
+        (self.store / ".cos" / "0013_open-question" / "ship.md").write_text(
+            "# Ship\nStatus: accepted.\n"
+        )
+        self.meta.ingest(
+            WS,
+            self.store,
+            "0013_open-question",
+            actor="stage:impl",
+            session="s1",
+            source="run:impl",
+        )
         self.assertFalse(self.merged("0013_open-question"))
-        # A `ship` session's, before `0139` R12 took the session away, is one.
-        self.meta.ingest(WS, self.store, "0013_open-question", actor="stage:ship", session="s2", source="run:ship",
-                         wrote="ship.md")
+        self.meta.ingest(
+            WS,
+            self.store,
+            "0013_open-question",
+            actor="stage:ship",
+            session="s2",
+            source="run:ship",
+            wrote="ship.md",
+        )
         self.assertTrue(self.merged("0013_open-question"))
 
     def test_the_machines_merged_row_is_merged_and_its_other_rows_are_not(self):
@@ -295,29 +394,54 @@ class AMergeIsARow(Base):
         self.meta.import_store(WS, self.store)
         # The machine's fold wins over a ship read before it: here it closed the pull request.
         self.machine("0010_full-loop", "pr.md", "accepted", "closed", "close-read")
-        unit = next(u for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"] if u["name"] == "0017_linked")
-        self.assertEqual(unit["dependsOn"], [{"ref": "0010_full-loop", "merged": False,
-                                              "why": "not merged: the app holds no merge of it"}])
+        unit = next(
+            u
+            for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"]
+            if u["name"] == "0017_linked"
+        )
+        self.assertEqual(
+            unit["dependsOn"],
+            [
+                {
+                    "ref": "0010_full-loop",
+                    "merged": False,
+                    "why": "not merged: the app holds no merge of it",
+                }
+            ],
+        )
         self.machine("0010_full-loop", "ship.md", "accepted", "merged", "merge-read")
-        unit = next(u for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"] if u["name"] == "0017_linked")
-        self.assertEqual(unit["dependsOn"], [{"ref": "0010_full-loop", "merged": True, "why": "merged"}])
+        unit = next(
+            u
+            for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"]
+            if u["name"] == "0017_linked"
+        )
+        self.assertEqual(
+            unit["dependsOn"], [{"ref": "0010_full-loop", "merged": True, "why": "merged"}]
+        )
 
 
 class AnswersAndHolds(Base):
     def test_an_answer_and_a_hold_reach_the_snapshot_in_order(self):
         self.meta.import_store(WS, self.store)
-        self.meta.add_answer(WS, "0013_open-question", "spec.md", 2, "Bao duyệt.", "Bao", "2026-09-28", "product")
-        self.meta.add_hold(WS, "0013_open-question", "paused", "chờ", "Bao", "2026-09-28", "product")
-        unit = next(u for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"] if u["name"] == "0013_open-question")
+        self.meta.add_answer(
+            WS, "0013_open-question", "spec.md", 2, "Bao duyệt.", "Bao", "2026-09-28", "product"
+        )
+        self.meta.add_hold(
+            WS, "0013_open-question", "paused", "chờ", "Bao", "2026-09-28", "product"
+        )
+        unit = next(
+            u
+            for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"]
+            if u["name"] == "0013_open-question"
+        )
         self.assertEqual(unit["open"], 0)
         self.assertEqual(unit["hold"]["state"], "paused")
         self.assertEqual(unit["next"]["why"], "paused")
 
 
 class AnImportedAnswerSaysWhoseItIs(Base):
-    """`0136` R15, and plan step 14: an answer read from a file says whose it was by what the
-    file carries — Jera's `Via: precedent.`, a delegation's line — and every other is a
-    person's. Answers `0135` imported as `unknown` are classified once."""
+    """An answer read from a file says whose it was by what the file carries — Jera's `Via:
+    precedent.`, a delegation's line — and every other is a person's."""
 
     UNIT = "0013_open-question"
     BLOCKS = (
@@ -338,7 +462,7 @@ class AnImportedAnswerSaysWhoseItIs(Base):
         self.meta.import_store(WS, self.store)
         self.assertEqual(self.authorities(), {"1": "person", "2": "agent", "3": "delegated"})
 
-    def test_answers_imported_before_0136_are_classified_once(self):
+    def test_answers_imported_before_are_classified_once(self):
         self.meta.import_store(WS, self.store)
         with self.data.write() as conn:
             conn.execute("UPDATE unit_answers SET authority = 'unknown'")
@@ -354,7 +478,7 @@ class AnImportedAnswerSaysWhoseItIs(Base):
 
 
 class TheImportReport(unittest.TestCase):
-    """R4, through `Service.settings`: what the import could not read, by workspace name."""
+    """Through `Service.settings`: what the import could not read, by workspace name."""
 
     def setUp(self):
         from coscc import units
@@ -366,14 +490,18 @@ class TheImportReport(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp)
         self.cwd = str(tmp / "work" / "proj")
         Path(self.cwd).mkdir(parents=True)
-        config = Config(workspaces=(self.cwd,), working_dir=str(tmp / "work"), data_dir=str(tmp / "data"))
+        config = Config(
+            workspaces=(self.cwd,), working_dir=str(tmp / "work"), data_dir=str(tmp / "data")
+        )
         self.service = Service(config, Sessions(config))
         self.store = units.root(self.cwd, config.data_dir)
 
     def test_settings_lists_each_unreadable_field_by_workspace_name_and_not_a_failed_ingest(self):
         shutil.copytree(FIXTURE, self.store)
         asyncio.run(self.service.board(self.cwd))
-        self.service._unit_meta().ingest_failed(self.service._journal_key(self.cwd), "0013_open-question", "boom")
+        self.service._unit_meta().ingest_failed(
+            self.service._journal_key(self.cwd), "0013_open-question", "boom"
+        )
         report = self.service.settings()["import_report"]
         self.assertEqual(report["problem"], "")
         found = {(r["workspace"], r["unit"], r["artifact"], r["field"]) for r in report["rows"]}
@@ -392,21 +520,24 @@ class TheImportReport(unittest.TestCase):
         from coscc.data import Busy
 
         busy = Busy(self.service.config.data_dir + "/cos.db")
-        with mock.patch("coscc.units.meta.UnitMeta.unknowns", side_effect=busy), \
-                mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+        with (
+            mock.patch("coscc.units.meta.UnitMeta.unknowns", side_effect=busy),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as log,
+        ):
             report = self.service.settings()["import_report"]
         self.assertEqual(report, {"rows": [], "problem": "The import report could not be read."})
         self.assertIn("cos.db", log.getvalue())
 
     def test_an_import_that_fails_names_the_workspace_and_logs_the_error(self):
-        # Review F9, S3: the note on the board names no path; the log keeps what went wrong.
         from coscc.data import Busy
         from coscc.service.common import Invalid
 
         shutil.copytree(FIXTURE, self.store)
         busy = Busy(self.service.config.data_dir + "/cos.db")
-        with mock.patch("coscc.units.meta.UnitMeta.import_store", side_effect=busy), \
-                mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+        with (
+            mock.patch("coscc.units.meta.UnitMeta.import_store", side_effect=busy),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as log,
+        ):
             with self.assertRaises(Invalid) as said:
                 self.service._snapshot(self.cwd)
         self.assertEqual(str(said.exception), "the units of proj could not be imported")

@@ -98,7 +98,6 @@ class Store:
         with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
             yield conn
 
-
     def entries(self) -> list[Entry]:
         """Entries from the database, with anything unusable dropped rather than repaired.
 
@@ -143,14 +142,11 @@ class Store:
             return False
         return any(self.path_of(e.name) == target for e in self.entries())
 
-
     def add(self, name: str, label: str = "") -> Entry:
         require_name(name)
         with self.transaction() as conn:
             # Delete then insert, so the row takes a new rowid and moves to the end (`entries` orders by rowid).
-            conn.execute(
-                "DELETE FROM workspaces WHERE root = ? AND name = ?", (self._root, name)
-            )
+            conn.execute("DELETE FROM workspaces WHERE root = ? AND name = ?", (self._root, name))
             conn.execute(
                 "INSERT INTO workspaces (root, name, label, added_at) VALUES (?, ?, ?, ?)",
                 (self._root, name, clean_label(label), now()),

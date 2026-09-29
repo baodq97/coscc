@@ -40,7 +40,11 @@ ROUND = "review"
 
 # What a round's `verdict` puts on `review.md`. `needs-person` keeps it `changes-requested`:
 # the unit is not finished, and `cos.mjs` reads the round's verdict for the wait.
-ROUND_STATES = {"pass": "accepted", "changes-requested": "changes-requested", "needs-person": "changes-requested"}
+ROUND_STATES = {
+    "pass": "accepted",
+    "changes-requested": "changes-requested",
+    "needs-person": "changes-requested",
+}
 
 _U = {"type": "string", "pattern": "^U[0-9]+$"}
 _F = {"type": "string", "pattern": "^F[0-9]+$"}
@@ -48,7 +52,10 @@ _QUESTIONS = {
     "type": "array",
     "items": {
         "type": "object",
-        "properties": {"n": {"type": "integer", "minimum": 1}, "text": {"type": "string", "minLength": 1}},
+        "properties": {
+            "n": {"type": "integer", "minimum": 1},
+            "text": {"type": "string", "minLength": 1},
+        },
         "required": ["n", "text"],
         "additionalProperties": False,
     },
@@ -81,7 +88,12 @@ def stage_result_schema(stage: str) -> dict[str, Any]:
             },
         }
         required.append("verdicts")
-    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
 
 
 # The labels a finding may carry, `cos.mjs`'s own: `open`, `fixed` in a commit, or what the
@@ -110,7 +122,16 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "lines": {"type": "string"},
                         "text": {"type": "string", "minLength": 1},
                     },
-                    "required": ["id", "state", "fixed_in", "severity", "rule", "path", "lines", "text"],
+                    "required": [
+                        "id",
+                        "state",
+                        "fixed_in",
+                        "severity",
+                        "rule",
+                        "path",
+                        "lines",
+                        "text",
+                    ],
                     "additionalProperties": False,
                 },
             },
@@ -147,7 +168,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "properties": {"commit": {"type": "string"}, "why": {"type": "string", "minLength": 1}},
+                    "properties": {
+                        "commit": {"type": "string"},
+                        "why": {"type": "string", "minLength": 1},
+                    },
                     "required": ["commit", "why"],
                     "additionalProperties": False,
                 },
@@ -196,7 +220,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
 # The sessions that are no stage and hand back an object, each by its grant's name, with the
 # schema it submits against and what its tool says it is for.
 SESSIONS: dict[str, tuple[str, str]] = {
-    "estimate": ("estimate", "Hand the app your estimate of every backlog unit, with the relations you propose."),
+    "estimate": (
+        "estimate",
+        "Hand the app your estimate of every backlog unit, with the relations you propose.",
+    ),
     "integrate": (
         "integrate-result",
         "Hand the app the commits only a person can settle, each with why; `[]` when there is none.",
@@ -218,7 +245,9 @@ def round_problem(obj: Mapping[str, Any]) -> str:
     twice = sorted({i for i in ids if ids.count(i) > 1})
     if twice:
         return f"{', '.join(twice)} is listed more than once."
-    unfixed = [f["id"] for f in obj.get("findings") or () if (f["state"] == "fixed") != bool(f["fixed_in"])]
+    unfixed = [
+        f["id"] for f in obj.get("findings") or () if (f["state"] == "fixed") != bool(f["fixed_in"])
+    ]
     if unfixed:
         return f"{', '.join(unfixed)}: `fixed_in` names the commit of a `fixed` finding, and is empty for any other state."
     return ""
@@ -310,7 +339,8 @@ class Channel:
             out["head"] = self.head
         if self.stage == "impl":
             out.update(
-                claims=list(obj.get("needs_person") or ()), open_findings=list(self.open_findings),
+                claims=list(obj.get("needs_person") or ()),
+                open_findings=list(self.open_findings),
                 claims_round=self.claims_round,
             )
         return {**out, **self.extra}
@@ -337,7 +367,9 @@ class Channel:
         taken = revision(self.directory, self.artifact, own=self.own)
         if self.own and not (self.directory / self.artifact).exists():
             self.refused += 1
-            return refusal(f"{self.artifact} is not written yet; write it first, then submit what it says.")
+            return refusal(
+                f"{self.artifact} is not written yet; write it first, then submit what it says."
+            )
         verdict = self.verdict(obj, taken)
         if not verdict.open:
             self.refused += 1
@@ -364,7 +396,8 @@ class Channel:
             )
         return (
             f"Hand the app your judgement of {self.artifact}: whether it is ready, its open "
-            "questions" + (", the U<n> ids under ## Concerns" if self.stage == "spec" else "")
+            "questions"
+            + (", the U<n> ids under ## Concerns" if self.stage == "spec" else "")
             + (", and a verdict per U<n>" if self.stage == "spike" else "")
             + (", and the open findings only a person can close" if self.stage == "impl" else "")
             + ". Call it once the artifact is final. If it returns an error, the app has checked "
@@ -425,6 +458,8 @@ def submitted(collector: Collector) -> bool:
 def _serve(channel: Channel | Collector) -> Any:
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
-    config = create_sdk_mcp_server(SERVER, "1.0.0", [tool(TOOL, channel.description(), channel.schema)(channel.handle)])
+    config = create_sdk_mcp_server(
+        SERVER, "1.0.0", [tool(TOOL, channel.description(), channel.schema)(channel.handle)]
+    )
     _CHANNELS[config["instance"]] = channel
     return config

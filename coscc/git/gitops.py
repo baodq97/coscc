@@ -46,9 +46,7 @@ def check_url(repo_url: str) -> str:
     if url.startswith("-"):
         raise GitError(f"refusing a URL that could be read as a flag: {url!r}")
     if not url.startswith(ALLOWED_PREFIX):
-        raise GitError(
-            f"only {ALLOWED_PREFIX} URLs are supported in this version, got: {url!r}"
-        )
+        raise GitError(f"only {ALLOWED_PREFIX} URLs are supported in this version, got: {url!r}")
     return url
 
 
@@ -71,9 +69,7 @@ def child_env() -> dict[str, str]:
     return env
 
 
-async def _run(
-    argv: list[str], timeout: float, cwd: str | None = None, strip: bool = True
-) -> str:
+async def _run(argv: list[str], timeout: float, cwd: str | None = None, strip: bool = True) -> str:
     proc = await asyncio.create_subprocess_exec(
         *argv,
         cwd=cwd,
@@ -115,7 +111,7 @@ async def _run_code(argv: list[str], timeout: float, cwd: str | None = None) -> 
         await proc.wait()
         raise GitError(f"git timed out after {timeout:.0f}s: {' '.join(argv[:2])}")
     text = (out or b"").decode(errors="replace").strip()
-    return proc.returncode, text
+    return proc.returncode or 0, text
 
 
 async def clone(repo_url: str, dest: Path, timeout: float = CLONE_TIMEOUT) -> str:
@@ -282,9 +278,7 @@ async def count_missing(path: Path, have: str, want: str, timeout: float = BRANC
         raise GitError(f"rev-list did not print a count: {out!r}") from None
 
 
-async def create_branch(
-    path: Path, name: str, base: str, timeout: float = BRANCH_TIMEOUT
-) -> str:
+async def create_branch(path: Path, name: str, base: str, timeout: float = BRANCH_TIMEOUT) -> str:
     """Cut `name` from the commit `base` and switch to it. Creates nothing else, pushes nothing.
 
     `base` is a full SHA so what is reported as cut is exactly what was cut, even if another
@@ -313,9 +307,7 @@ async def create_branch(
     # `switch -c <name> <start>` cannot fall back to the current HEAD. It fails when a modified
     # working-tree file also differs between HEAD and `base`, creating no branch; that output
     # reaches the page as it is.
-    return await _run(
-        ["git", "-C", str(path), "switch", "--no-track", "-c", name, base], timeout
-    )
+    return await _run(["git", "-C", str(path), "switch", "--no-track", "-c", name, base], timeout)
 
 
 # # --- worktrees ---------------------------------------------------------------
@@ -504,9 +496,7 @@ async def log_range(
     for sha in (base, head):
         if not _SHA_RE.fullmatch(sha or ""):
             raise GitError(f"a full commit SHA is required, not {sha!r}")
-    out = await _run(
-        ["git", "-C", str(path), "log", "--format=%H %s", f"{base}..{head}"], timeout
-    )
+    out = await _run(["git", "-C", str(path), "log", "--format=%H %s", f"{base}..{head}"], timeout)
     commits: list[dict[str, str]] = []
     for line in out.splitlines():
         sha_part, _, subject = line.partition(" ")
@@ -533,9 +523,7 @@ async def status_porcelain(path: Path, timeout: float = BRANCH_TIMEOUT) -> list[
     `_run` is asked not to strip.
     """
     _require_repo(path)
-    out = await _run(
-        ["git", "-C", str(path), "status", "--porcelain"], timeout, strip=False
-    )
+    out = await _run(["git", "-C", str(path), "status", "--porcelain"], timeout, strip=False)
     return out.splitlines()
 
 
@@ -546,9 +534,7 @@ async def tree_state(path: Path, timeout: float = BRANCH_TIMEOUT) -> tuple[str, 
     """
     _require_repo(path)
     head = await _run(["git", "-C", str(path), "rev-parse", "HEAD"], timeout)
-    porcelain = await _run(
-        ["git", "-C", str(path), "status", "--porcelain"], timeout, strip=False
-    )
+    porcelain = await _run(["git", "-C", str(path), "status", "--porcelain"], timeout, strip=False)
     return head, porcelain
 
 
@@ -590,7 +576,9 @@ async def files_of_commit(path: Path, sha: str, timeout: float = BRANCH_TIMEOUT)
     return [line for line in out.splitlines() if line.strip()]
 
 
-async def files_between(path: Path, base: str, head: str, timeout: float = BRANCH_TIMEOUT) -> list[str]:
+async def files_between(
+    path: Path, base: str, head: str, timeout: float = BRANCH_TIMEOUT
+) -> list[str]:
     """The paths `base..head` touched, as one diff."""
     _require_repo(path)
     _require_shas(base, head)
@@ -603,7 +591,9 @@ async def has_commit(path: Path, sha: str, timeout: float = BRANCH_TIMEOUT) -> b
     _require_repo(path)
     if not _SHA_RE.fullmatch(sha or ""):
         return False
-    code, _ = await _run_code(["git", "-C", str(path), "cat-file", "-e", f"{sha}^{{commit}}"], timeout)
+    code, _ = await _run_code(
+        ["git", "-C", str(path), "cat-file", "-e", f"{sha}^{{commit}}"], timeout
+    )
     return code == 0
 
 
@@ -642,18 +632,30 @@ async def reset_branch_to(
         raise GitError(f"{tree} has uncommitted changes, so its branch was not moved")
     on = await current_branch(tree, timeout)
     if on != branch:
-        raise GitError(f"{tree} is on {on or 'a detached HEAD'}, not {branch}, so nothing was moved")
+        raise GitError(
+            f"{tree} is on {on or 'a detached HEAD'}, not {branch}, so nothing was moved"
+        )
     head = await _run(["git", "-C", str(tree), "rev-parse", "HEAD"], timeout)
     if head != expected_old:
         raise GitError(f"{tree}'s HEAD is {head[:7]}, not {expected_old[:7]}, so nothing was moved")
     # Not `fetch`: its name check takes one path part, and a unit branch has two.
     await _run(
-        ["git", "-C", str(tree), "fetch", "--no-tags", "--", "origin",
-         f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+        [
+            "git",
+            "-C",
+            str(tree),
+            "fetch",
+            "--no-tags",
+            "--",
+            "origin",
+            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        ],
         timeout,
     )
     if not await has_commit(tree, new_sha, timeout):
-        raise GitError(f"{new_sha[:7]} is not here even after fetching {branch}, so nothing was moved")
+        raise GitError(
+            f"{new_sha[:7]} is not here even after fetching {branch}, so nothing was moved"
+        )
     return await _run(["git", "-C", str(tree), "reset", "--keep", new_sha], timeout)
 
 
@@ -705,8 +707,16 @@ async def fetch_with_tags(path: Path, timeout: float = FETCH_TIMEOUT) -> str:
     """
     _require_repo(path)
     return await _run(
-        ["git", "-C", str(path), "fetch", "--tags", "--", "origin",
-         f"+refs/heads/{TRUNK}:refs/remotes/origin/{TRUNK}"],
+        [
+            "git",
+            "-C",
+            str(path),
+            "fetch",
+            "--tags",
+            "--",
+            "origin",
+            f"+refs/heads/{TRUNK}:refs/remotes/origin/{TRUNK}",
+        ],
         timeout,
     )
 
@@ -724,7 +734,8 @@ async def remote_has_tag(path: Path, tag: str, timeout: float = FETCH_TIMEOUT) -
     _require_repo(path)
     _release_tag(tag)
     out = await _run(
-        ["git", "-C", str(path), "ls-remote", "--tags", "origin", f"refs/tags/{tag}"], timeout)
+        ["git", "-C", str(path), "ls-remote", "--tags", "origin", f"refs/tags/{tag}"], timeout
+    )
     return bool(out.strip())
 
 
@@ -743,24 +754,42 @@ async def diff_u0(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -
     """
     _release_tree(tree, expected)
     await _run(["git", "-C", str(tree), "add", "--intent-to-add", "--all"], timeout)
-    return await _run(["git", "-C", str(tree), "diff", "-U0", "--no-color", "HEAD"], timeout, strip=False)
+    return await _run(
+        ["git", "-C", str(tree), "diff", "-U0", "--no-color", "HEAD"], timeout, strip=False
+    )
 
 
-async def commit_files(tree: Path, expected: Path, message: str, timeout: float = BRANCH_TIMEOUT) -> str:
+async def commit_files(
+    tree: Path, expected: Path, message: str, timeout: float = BRANCH_TIMEOUT
+) -> str:
     """Commit the four version files on the release branch the tree stands on; the new SHA."""
     _release_tree(tree, expected)
     _release_branch(await current_branch(tree, timeout))
     await _run(["git", "-C", str(tree), "add", "--", *RELEASE_FILES], timeout)
-    await _run(["git", "-C", str(tree), "commit", "-q", "-m", message, "--", *RELEASE_FILES], timeout)
+    await _run(
+        ["git", "-C", str(tree), "commit", "-q", "-m", message, "--", *RELEASE_FILES], timeout
+    )
     return await _run(["git", "-C", str(tree), "rev-parse", "HEAD"], timeout)
 
 
-async def push_branch(tree: Path, expected: Path, branch: str, timeout: float = FETCH_TIMEOUT) -> str:
+async def push_branch(
+    tree: Path, expected: Path, branch: str, timeout: float = FETCH_TIMEOUT
+) -> str:
     """`push origin refs/heads/<b>:refs/heads/<b>`. No `--force`, no `-u`."""
     _release_tree(tree, expected)
     _release_branch(branch)
     return await _run(
-        ["git", "-C", str(tree), "push", "--", "origin", f"refs/heads/{branch}:refs/heads/{branch}"], timeout)
+        [
+            "git",
+            "-C",
+            str(tree),
+            "push",
+            "--",
+            "origin",
+            f"refs/heads/{branch}:refs/heads/{branch}",
+        ],
+        timeout,
+    )
 
 
 async def push_unit_branch(tree: Path, branch: str, timeout: float = FETCH_TIMEOUT) -> str:
@@ -770,17 +799,31 @@ async def push_unit_branch(tree: Path, branch: str, timeout: float = FETCH_TIMEO
     if not _BRANCH_RE.match(branch or ""):
         raise GitError(f"not a unit branch name: {branch!r}")
     return await _run(
-        ["git", "-C", str(tree), "push", "--", "origin", f"refs/heads/{branch}:refs/heads/{branch}"], timeout)
+        [
+            "git",
+            "-C",
+            str(tree),
+            "push",
+            "--",
+            "origin",
+            f"refs/heads/{branch}:refs/heads/{branch}",
+        ],
+        timeout,
+    )
 
 
-async def push_tag(tree: Path, expected: Path, tag: str, sha: str, timeout: float = FETCH_TIMEOUT) -> str:
+async def push_tag(
+    tree: Path, expected: Path, tag: str, sha: str, timeout: float = FETCH_TIMEOUT
+) -> str:
     """`push origin <sha>:refs/tags/<tag>`: a lightweight tag made on the remote; the push builds
     the release. No local tag first, so a refused push leaves none behind. No force.
     """
     _release_tree(tree, expected)
     _release_tag(tag)
     _require_shas(sha)
-    return await _run(["git", "-C", str(tree), "push", "--", "origin", f"{sha}:refs/tags/{tag}"], timeout)
+    return await _run(
+        ["git", "-C", str(tree), "push", "--", "origin", f"{sha}:refs/tags/{tag}"], timeout
+    )
 
 
 async def detach_here(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -> str:
@@ -791,7 +834,9 @@ async def detach_here(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOU
     return await _run(["git", "-C", str(tree), "switch", "--detach"], timeout)
 
 
-async def release_tree_remove(root: Path, path: Path, expected: Path, timeout: float = WORKTREE_TIMEOUT) -> str:
+async def release_tree_remove(
+    root: Path, path: Path, expected: Path, timeout: float = WORKTREE_TIMEOUT
+) -> str:
     """`worktree remove --force`, the one forced removal: only of the release tree, whose changes
     are the app's own. Not `.git`-checked: a tree whose directory is gone is still listed and
     removed.
@@ -799,4 +844,6 @@ async def release_tree_remove(root: Path, path: Path, expected: Path, timeout: f
     _require_repo(root)
     if not _is_release_path(path, expected) or Path(path).resolve() == Path(root).resolve():
         raise GitError(f"{path} is not the release worktree, so it was not removed")
-    return await _run(["git", "-C", str(root), "worktree", "remove", "--force", "--", str(path)], timeout)
+    return await _run(
+        ["git", "-C", str(root), "worktree", "remove", "--force", "--", str(path)], timeout
+    )

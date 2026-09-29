@@ -49,7 +49,9 @@ def _recover_one(data: Data, row: dict[str, Any]) -> bool:
     starts = [r for r in records if r.get("kind") == "start" and r.get("run") == run]
     if any(r.get("kind") == "end" and r.get("run") == run for r in records):
         return False
-    if any(r.get("kind") == "suspend" and (r.get("owner") or {}).get("run") == run for r in records):
+    if any(
+        r.get("kind") == "suspend" and (r.get("owner") or {}).get("run") == run for r in records
+    ):
         # An update paused it, and its step goes on under a new `run`: that one writes the `end`.
         # Only this run's own row is closed.
         data.step_run_close(run, row["last_at"] or row["started_at"], row["lost"])
@@ -63,8 +65,14 @@ def _recover_one(data: Data, row: dict[str, Any]) -> bool:
     # The `end` first: if closing the row fails, the run log is still right and only the
     # watch pane keeps saying `ended-unknown`.
     journal.finished(
-        row["workspace"], row["unit"], str(start.get("stage") or row["stage"]), "failed",
-        detail=DETAIL, run=run, recovered=True, cost_unknown=True,
+        row["workspace"],
+        row["unit"],
+        str(start.get("stage") or row["stage"]),
+        "failed",
+        detail=DETAIL,
+        run=run,
+        recovered=True,
+        cost_unknown=True,
         **({"turns": n} if n > 0 else {}),
     )
     data.step_run_close(run, row["last_at"] or row["started_at"], row["lost"])

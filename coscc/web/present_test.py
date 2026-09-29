@@ -1,20 +1,18 @@
-"""`0082` plan step 3: the one time format, the short sha, and the label tables."""
+"""The one time format, the short sha, and the label tables."""
 
 from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from coscc import service
 from coscc.web import present
 from coscc.units import backlog
+from coscc.service.common import OUTCOME_RESULTS
 
 NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
 
 
 class Day(unittest.TestCase):
-    """`0137`, S4."""
-
     def test_day_is_a_short_date_without_a_time(self):
         self.assertEqual(present.day("2026-10-19"), "Oct 19, 2026")
         self.assertEqual(present.day("2026-10-01T23:00:00+00:00"), "Oct 1, 2026")
@@ -64,12 +62,17 @@ def _read_money(text: str) -> float:
 
 
 class Money(unittest.TestCase):
-    """`0093` R4: `—` for none, two decimals from a dollar, three significant digits under."""
+    """`—` for none, two decimals from a dollar, three significant digits under."""
 
     def test_the_named_values(self):
         for value, text in [
-            (None, "—"), (0.0, "$0.00"), (0.123456, "$0.123"), (0.0045612, "$0.00456"),
-            (1.0, "$1.00"), (694.649, "$694.65"), (1234.5, "$1,234.50"),
+            (None, "—"),
+            (0.0, "$0.00"),
+            (0.123456, "$0.123"),
+            (0.0045612, "$0.00456"),
+            (1.0, "$1.00"),
+            (694.649, "$694.65"),
+            (1234.5, "$1,234.50"),
         ]:
             self.assertEqual(present.money(value), text, value)
 
@@ -90,20 +93,26 @@ class Labels(unittest.TestCase):
         self.assertLessEqual(set(present.RELATION_LABEL_IN), set(backlog.RELATIONS))
 
     def test_every_stored_result_has_an_english_label(self):
-        self.assertEqual(set(present.RESULT_LABEL), set(service.OUTCOME_RESULTS))
+        self.assertEqual(set(present.RESULT_LABEL), set(OUTCOME_RESULTS))
 
-    def test_0089_the_board_offers_two_measurers(self):
-        """`0089` R4: `agent`, or `owner` for whoever is signed in (S7)."""
+    def test_the_board_offers_two_measurers(self):
+        """`agent`, or `owner` for whoever is signed in (S7)."""
         self.assertEqual(set(present.MEASURER_LABEL), {"agent", "owner"})
         for label in present.MEASURER_LABEL.values():
             self.assertTrue(label.isascii(), label)
 
     def test_every_outcome_kind_has_an_english_label(self):
-        self.assertEqual(set(present.OUTCOME_LABEL), {"met", "missed", "unmeasurable", "due", "pending"})
+        self.assertEqual(
+            set(present.OUTCOME_LABEL), {"met", "missed", "unmeasurable", "due", "pending"}
+        )
 
     def test_no_label_carries_a_vietnamese_letter(self):
-        for table in (present.RELATION_LABEL, present.RELATION_LABEL_IN, present.RESULT_LABEL,
-                      present.OUTCOME_LABEL):
+        for table in (
+            present.RELATION_LABEL,
+            present.RELATION_LABEL_IN,
+            present.RESULT_LABEL,
+            present.OUTCOME_LABEL,
+        ):
             for label in table.values():
                 self.assertTrue(label.isascii(), label)
 

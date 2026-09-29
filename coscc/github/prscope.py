@@ -35,19 +35,34 @@ def compare(scope: Any, got: Any) -> dict[str, Any]:
     `github` is kept whenever `gh` gave the three counts, even when `pr.md` cannot be read:
     the outcome is measured on those numbers.
     """
-    if not isinstance(got, dict) or not all(_count(got.get(k)) for k in ("changedFiles", "additions", "deletions")):
-        return {"verdict": "unread", "detail": "gh pr view did not return changedFiles, additions and deletions as numbers"}
+    if not isinstance(got, dict) or not all(
+        _count(got.get(k)) for k in ("changedFiles", "additions", "deletions")
+    ):
+        return {
+            "verdict": "unread",
+            "detail": "gh pr view did not return changedFiles, additions and deletions as numbers",
+        }
     files = got.get("files")
-    if not isinstance(files, list) or not all(isinstance(f, dict) and isinstance(f.get("path"), str) for f in files):
+    if not isinstance(files, list) or not all(
+        isinstance(f, dict) and isinstance(f.get("path"), str) for f in files
+    ):
         return {"verdict": "unread", "detail": "gh pr view did not return files as a list of paths"}
-    github = {"files": got["changedFiles"], "additions": got["additions"], "deletions": got["deletions"]}
+    github = {
+        "files": got["changedFiles"],
+        "additions": got["additions"],
+        "deletions": got["deletions"],
+    }
     if (
         not isinstance(scope, dict)
         or not all(_count(scope.get(k)) for k in COUNTS)
         or not isinstance(scope.get("paths"), list)
         or not all(isinstance(p, str) for p in scope["paths"])
     ):
-        return {"github": github, "verdict": "unread", "detail": "pr.md ## Scope of the diff does not follow write-pr's grammar"}
+        return {
+            "github": github,
+            "verdict": "unread",
+            "detail": "pr.md ## Scope of the diff does not follow write-pr's grammar",
+        }
     differ = [k for k in COUNTS if scope[k] != github[k]]
     mine, theirs = set(scope["paths"]), {f["path"] for f in files}
     only_in, only_on = sorted(mine - theirs), sorted(theirs - mine)

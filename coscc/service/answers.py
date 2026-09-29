@@ -23,14 +23,14 @@ from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
 from coscc.data import Data
 from coscc.units.meta import DELEGATION, MetaError, UnitMeta
-from coscc.runlog.journal import BadRecord, Busy, Journal
+from coscc.runlog.journal import BadRecord, Journal
+from coscc.data import Busy
 from coscc.agent import submit
 from coscc.units import transitions
 from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
-from coscc.data import Data
 from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
 
 # The kinds of a decision, the longest text one may carry (chosen, not measured), and the
@@ -50,8 +50,14 @@ def in_force(d: Any, day: str, workspace: str) -> bool:
     day = str(day or "")
     start, until = str(d.get("from_day") or ""), str(d.get("until_day") or "")
     gone, where = str(d.get("withdrawn") or ""), str(d.get("workspace") or "")
-    return (bool(day) and bool(start) and start <= day and (not until or day <= until)
-            and (not gone or day < gone) and (not where or where == workspace))
+    return (
+        bool(day)
+        and bool(start)
+        and start <= day
+        and (not until or day <= until)
+        and (not gone or day < gone)
+        and (not where or where == workspace)
+    )
 
 
 def opens_with(by: Any, names: Any) -> bool:
@@ -66,10 +72,7 @@ def opens_with(by: Any, names: Any) -> bool:
 
 
 class AnswersMixin:
-
-    async def _post_new_rounds(
-        self, cwd: str, unit: str, before: set[Any]
-    ) -> list[dict[str, Any]]:
+    async def _post_new_rounds(self, cwd: str, unit: str, before: set[Any]) -> list[dict[str, Any]]:
         """Post every round the step just added. Never raises.
 
         What happened to each is in the run log; the board shows a failed one as *not on the PR*.
@@ -98,7 +101,7 @@ class AnswersMixin:
         self._workspace_or_refuse(cwd)
         try:
             n = int(round_n)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             raise Invalid(f"a round is named by its number, got {round_n!r}") from None
         async with self._comment_lock:
             try:
@@ -128,7 +131,11 @@ class AnswersMixin:
         # The `review` agent as the table names it now, overrides included.
         reviewer = self._agent("review")
         result = await prcomment.post(
-            unit, n, rnd.get("verdict"), rnd.get("text") or "", pr_url,
+            unit,
+            n,
+            rnd.get("verdict"),
+            rnd.get("text") or "",
+            pr_url,
             str(Path(cwd).expanduser().resolve()),
             author=agents.label(reviewer) if reviewer is not None else "",
         )
@@ -149,7 +156,7 @@ class AnswersMixin:
         if journal is not None:
             try:
                 journal.append(record)
-            except (Busy, BadRecord, OSError):
+            except Busy, BadRecord, OSError:
                 pass
         return {"unit": unit, "round": n, "pr": pr_url, **result.as_dict()}
 
@@ -169,17 +176,24 @@ class AnswersMixin:
         url, outcome, detail = "", "failed", ""
         scope: dict[str, Any] | None = None
         try:
-            text = await board_reader.pr_text(self._units_root(cwd), unit, state=self._snapshot(cwd, [unit]))
+            text = await board_reader.pr_text(
+                self._units_root(cwd), unit, state=self._snapshot(cwd, [unit])
+            )
             url = str(text.get("url") or "")
             if "error" in text:
                 outcome, detail = "skipped", str(text["error"])
             elif text.get("status") != "accepted":
-                outcome, detail = "skipped", f"pr.md is {text.get('status') or 'without a status'}, not accepted"
+                outcome, detail = (
+                    "skipped",
+                    f"pr.md is {text.get('status') or 'without a status'}, not accepted",
+                )
             elif not url or not prcomment.PR_URL_RE.match(url):
                 outcome, detail = "skipped", f"pr.md names no pull request URL: {url!r}"
             else:
                 where = str(Path(cwd).expanduser().resolve())
-                result = await prsync.sync(url, text.get("title"), str(text.get("body") or ""), where)
+                result = await prsync.sync(
+                    url, text.get("title"), str(text.get("body") or ""), where
+                )
                 outcome, detail = result.state, result.reason
                 if stage == "pr":
                     scope = await prscope.read(url, text.get("scope"), where)
@@ -199,7 +213,7 @@ class AnswersMixin:
         if journal is not None:
             try:
                 journal.append({"kind": "pr-sync", "workspace": self._journal_key(cwd), **record})
-            except (Busy, BadRecord, OSError):
+            except Busy, BadRecord, OSError:
                 pass
         return record
 
@@ -209,7 +223,9 @@ class AnswersMixin:
         data = Data(self.config.data_dir)
         return UnitMeta(self.config.working_dir or data.root, data)
 
-    async def _ingest(self, cwd: str, unit: str, done: dict[str, Any], wrote: str | None = None) -> dict[str, Any]:
+    async def _ingest(
+        self, cwd: str, unit: str, done: dict[str, Any], wrote: str | None = None
+    ) -> dict[str, Any]:
         """The one read of a unit's files after a step that finished, prose or not: what
         changed goes into `cos.db` through `cos.mjs meta`.
 
@@ -228,7 +244,10 @@ class AnswersMixin:
         submitted = done.get("submitted") if wrote else None
         try:
             await asyncio.to_thread(
-                meta.ingest, workspace, self._units_root(cwd), unit,
+                meta.ingest,
+                workspace,
+                self._units_root(cwd),
+                unit,
                 actor=f"stage:{stage}",
                 session=str(done.get("session_id") or "") or UNKNOWN,
                 source=f"run:{stage}",
@@ -243,7 +262,10 @@ class AnswersMixin:
             # One fixed sentence on the card and the step, the error in the log: `MetaError`
             # carries `cos.mjs`'s stderr or its argv, `Busy` the database's path.
             # A `BadTransition` names a status and nothing else.
-            print(f"coscc: {unit} in {workspace} could not be read after its step: {e}", file=sys.stderr)
+            print(
+                f"coscc: {unit} in {workspace} could not be read after its step: {e}",
+                file=sys.stderr,
+            )
             if isinstance(e, BadTransition):
                 reason = str(e) or "a status it read is not one the app records"
             elif isinstance(e, (Busy, sqlite3.Error)):
@@ -252,13 +274,19 @@ class AnswersMixin:
                 reason = "its files could not be read"
             try:
                 meta.ingest_failed(workspace, unit, reason)
-            except (Busy, sqlite3.Error, OSError):
+            except Busy, sqlite3.Error, OSError:
                 pass
             return {"ingest_error": reason}
 
     def _apply_result(
-        self, meta: UnitMeta, workspace: str, unit: str, stage: str, artifact: str,
-        submitted: dict[str, Any], done: dict[str, Any],
+        self,
+        meta: UnitMeta,
+        workspace: str,
+        unit: str,
+        stage: str,
+        artifact: str,
+        submitted: dict[str, Any],
+        done: dict[str, Any],
     ) -> None:
         """The stage result a run submitted, as the status of `artifact`: one transition
         through guard `stage-result`, and the rows `UnitMeta.record_result` writes, in one
@@ -266,22 +294,36 @@ class AnswersMixin:
         journal = self._journal() or Journal(meta.root, self.config.data_dir)
         obj = dict(submitted.get("object") or {})
         applied = transitions.apply(
-            meta.history, journal,
-            machine="unit", transition="result",
-            workspace=workspace, unit=unit, artifact=artifact,
+            meta.history,
+            journal,
+            machine="unit",
+            transition="result",
+            workspace=workspace,
+            unit=unit,
+            artifact=artifact,
             to_state=submit.JUDGEMENTS[str(obj.get("judgement"))],
-            inputs=submitted, authority="agent",
+            inputs=submitted,
+            authority="agent",
             run=str(submitted.get("run") or UNKNOWN),
             session=str(done.get("session_id") or "") or UNKNOWN,
-            actor=f"stage:{stage}", source=f"run:{stage}",
+            actor=f"stage:{stage}",
+            source=f"run:{stage}",
             also=lambda conn: meta.record_result(conn, workspace, unit, stage, artifact, submitted),
         )
         if not applied.open:
-            raise BadTransition(f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}")
+            raise BadTransition(
+                f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}"
+            )
 
     def _apply_round(
-        self, meta: UnitMeta, workspace: str, unit: str, stage: str, artifact: str,
-        submitted: dict[str, Any], done: dict[str, Any],
+        self,
+        meta: UnitMeta,
+        workspace: str,
+        unit: str,
+        stage: str,
+        artifact: str,
+        submitted: dict[str, Any],
+        done: dict[str, Any],
     ) -> None:
         """The round a review run submitted, as the status of `review.md`: one transition
         through guard `review-round`, reading the head the app recorded when the run opened,
@@ -290,25 +332,33 @@ class AnswersMixin:
         journal = self._journal() or Journal(meta.root, self.config.data_dir)
         obj = dict(submitted.get("object") or {})
         applied = transitions.apply(
-            meta.history, journal,
-            machine="unit", transition="round",
-            workspace=workspace, unit=unit, artifact=artifact,
+            meta.history,
+            journal,
+            machine="unit",
+            transition="round",
+            workspace=workspace,
+            unit=unit,
+            artifact=artifact,
             to_state=submit.ROUND_STATES[str(obj.get("verdict"))],
-            inputs=submitted, authority="agent",
+            inputs=submitted,
+            authority="agent",
             run=str(submitted.get("run") or UNKNOWN),
             session=str(done.get("session_id") or "") or UNKNOWN,
-            actor=f"stage:{stage}", source=f"run:{stage}",
+            actor=f"stage:{stage}",
+            source=f"run:{stage}",
             also=lambda conn: meta.record_round(conn, workspace, unit, submitted),
         )
         if not applied.open:
-            raise BadTransition(f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}")
+            raise BadTransition(
+                f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}"
+            )
 
     def _refresh_ideas(self, cwd: str) -> None:
         """`cwd`'s ideas into `cos.db` again, after the app wrote one. A failure is left to
         the board: `cos.mjs` then reports the idea link it cannot find."""
         try:
             self._unit_meta().refresh_ideas(self._journal_key(cwd), self._units_root(cwd))
-        except (MetaError, Busy, sqlite3.Error, OSError):
+        except MetaError, Busy, sqlite3.Error, OSError:
             pass
 
     def _create_lock(self, cwd: str) -> asyncio.Lock:
@@ -331,14 +381,17 @@ class AnswersMixin:
         """
         self._workspace_or_refuse(cwd)
         if depends_on and not idea:
-            raise Invalid("depends_on needs an idea: it names a unit already under the idea's Units.")
+            raise Invalid(
+                "depends_on needs an idea: it names a unit already under the idea's Units."
+            )
         linked = self._idea_link(cwd, idea, brief, depends_on) if idea else None
         root = Path(cwd).expanduser().resolve()
         async with self._create_lock(cwd):
             reserve = [root]
             try:
                 reserve += [
-                    Path(t["path"]) for t in (await gitops.worktree_list(root))[1:]
+                    Path(t["path"])
+                    for t in (await gitops.worktree_list(root))[1:]
                     if (Path(t["path"]) / units.COS_DIR).is_dir()
                 ]
             except GitError:
@@ -356,11 +409,15 @@ class AnswersMixin:
                 try:
                     ideas.append_unit(linked["path"], linked["ws"], made["unit"], depends_on)
                 except OSError as e:
-                    raise Invalid(f"{made['unit']} was made, but {idea} could not list it: {e}") from e
+                    raise Invalid(
+                        f"{made['unit']} was made, but {idea} could not list it: {e}"
+                    ) from e
                 made["idea"] = idea
                 self._refresh_ideas(linked["home"])
             # The new unit's row, and its `idea.md`'s status.
-            made.update(await self._ingest(cwd, made["unit"], {"outcome": "done", "stage": "create"}))
+            made.update(
+                await self._ingest(cwd, made["unit"], {"outcome": "done", "stage": "create"})
+            )
             try:
                 made["worktree"] = await worktrees.ensure(
                     cwd, made["unit"], None, self.config.data_dir
@@ -381,9 +438,11 @@ class AnswersMixin:
             if found is not None and found["branch"]:
                 return {"path": found["path"], "branch": found["branch"]}
             try:
-                branch = units.branch_name(cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
+                branch = units.branch_name(
+                    cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit])
+                )
                 await gitops.rev_parse(Path(cwd).expanduser().resolve(), f"refs/heads/{branch}")
-            except (CannotCreate, BadUnit, GitError):
+            except CannotCreate, BadUnit, GitError:
                 branch = None
             if branch is None:
                 return {"path": found["path"], "branch": ""} if found else None
@@ -424,7 +483,13 @@ class AnswersMixin:
         self._workspace_or_refuse(cwd)
         name = str(answered_by or "").strip() or OWNER
         done = await self._append_answers(
-            cwd, unit, [(artifact, question, answer)], name, "product", f"human:{name}", "answer",
+            cwd,
+            unit,
+            [(artifact, question, answer)],
+            name,
+            "product",
+            f"human:{name}",
+            "answer",
             delegation=str(delegation or "").strip(),
         )
         written = done["written"][0]
@@ -472,8 +537,16 @@ class AnswersMixin:
             texts: list[str] = []
             for artifact, question, answer in items:
                 number, finding, text = self._append_one(
-                    cwd, unit, found, artifact, question, str(answer or "").strip("\n"), name, via,
-                    today, delegation,
+                    cwd,
+                    unit,
+                    found,
+                    artifact,
+                    question,
+                    str(answer or "").strip("\n"),
+                    name,
+                    via,
+                    today,
+                    delegation,
                 )
                 written.append({"artifact": artifact, "question": finding or number})
                 texts.append(text)
@@ -494,14 +567,22 @@ class AnswersMixin:
                         actor=actor,
                         source=source,
                     )
-                except (OSError, BadTransition, Busy):
+                except OSError, BadTransition, Busy:
                     pass
 
         return {"written": written, "date": today}
 
     def _record_answers(
-        self, cwd: str, unit: str, found: dict[str, Any], written: list[dict[str, Any]], texts: list[str],
-        name: str, today: str, via: str, authority: str = "person",
+        self,
+        cwd: str,
+        unit: str,
+        found: dict[str, Any],
+        written: list[dict[str, Any]],
+        texts: list[str],
+        name: str,
+        today: str,
+        via: str,
+        authority: str = "person",
     ) -> None:
         """Each answer's row in `unit_answers` and its `answer` record in the run log in one
         transaction: all are written or none is. Raises `Invalid` when none was.
@@ -516,8 +597,18 @@ class AnswersMixin:
 
         def rows(conn) -> None:
             for w, text in zip(written, texts):
-                meta.add_answer(key, unit, w["artifact"], w["question"], text, name, today, via, conn=conn,
-                                authority=authority)
+                meta.add_answer(
+                    key,
+                    unit,
+                    w["artifact"],
+                    w["question"],
+                    text,
+                    name,
+                    today,
+                    via,
+                    conn=conn,
+                    authority=authority,
+                )
 
         journal = self._journal()
         try:
@@ -534,14 +625,23 @@ class AnswersMixin:
                 artifact = w["artifact"]
                 given.setdefault(artifact, set()).add(w["question"])
                 row = stages.get(artifact) or {}
-                records.append({
-                    "kind": "answer", "workspace": key, "unit": unit, "stage": row.get("stage", ""),
-                    "artifact": artifact, "question": w["question"], "via": via, "authority": authority,
-                    "status": row.get("status", ""),
-                    "completes": autopilot.answer_completes(found, artifact, given[artifact]),
-                    "autopilot": on, "shortlisted": unit in ((listed or {}).get("units") or []),
-                    "held": bool(found.get("hold")),
-                })
+                records.append(
+                    {
+                        "kind": "answer",
+                        "workspace": key,
+                        "unit": unit,
+                        "stage": row.get("stage", ""),
+                        "artifact": artifact,
+                        "question": w["question"],
+                        "via": via,
+                        "authority": authority,
+                        "status": row.get("status", ""),
+                        "completes": autopilot.answer_completes(found, artifact, given[artifact]),
+                        "autopilot": on,
+                        "shortlisted": unit in ((listed or {}).get("units") or []),
+                        "held": bool(found.get("hold")),
+                    }
+                )
             journal.append_with(records, rows)
         except (BadRecord, Busy, sqlite3.Error, OSError) as e:
             # The error goes to the log, not the dialog: `Busy` names the database's path.
@@ -550,8 +650,17 @@ class AnswersMixin:
             raise Invalid(f"the answer was not recorded ({said})") from e
 
     def _append_one(
-        self, cwd: str, unit: str, found: dict[str, Any], artifact: str, question: Any, text: str,
-        name: str, via: str, today: str, delegation: str = "",
+        self,
+        cwd: str,
+        unit: str,
+        found: dict[str, Any],
+        artifact: str,
+        question: Any,
+        text: str,
+        name: str,
+        via: str,
+        today: str,
+        delegation: str = "",
     ) -> tuple[int | str, str, str]:
         """Check one answer against the board read `found`. Raises `Invalid`; returns
         `(number, finding, text)`, the text as its row keeps it. `_record_answers` writes it."""
@@ -576,7 +685,7 @@ class AnswersMixin:
                 raise Invalid(f"{artifact} in {unit} has no numbered item under ## Open questions")
             try:
                 number = int(question)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 raise Invalid(f"a question is named by its number, got {question!r}") from None
             if number not in {q["n"] for q in asked}:
                 raise Invalid(
@@ -608,7 +717,9 @@ class AnswersMixin:
                 )
         if delegation:
             # Last of the refusals, before the row is written.
-            text = f"{text}\n\n{DELEGATION} {self._delegation_or_refuse(cwd, name, delegation, today)}"
+            text = (
+                f"{text}\n\n{DELEGATION} {self._delegation_or_refuse(cwd, name, delegation, today)}"
+            )
         return number, finding, text.strip()
 
     def _delegation_or_refuse(self, cwd: str, name: str, delegation: str, today: str) -> str:
@@ -659,16 +770,29 @@ class AnswersMixin:
                 state = "not yet"
             else:
                 state = "in force"
-            out.append({**d, "id": decision_id(d), "state": state,
-                        "workspace_name": names.get(d["workspace"], "a removed workspace")
-                        if d["workspace"] else "All workspaces"})
+            out.append(
+                {
+                    **d,
+                    "id": decision_id(d),
+                    "state": state,
+                    "workspace_name": names.get(d["workspace"], "a removed workspace")
+                    if d["workspace"]
+                    else "All workspaces",
+                }
+            )
         return {"rows": out, "workspaces": sorted(dict.fromkeys(names.values()))}
 
     def add_decision(self, fields: dict[str, Any]) -> dict[str, Any]:
         """One new decision from the Settings form, or `Invalid` with one sentence. `from` is
         today, set here: a form that took it could date a decision before the blocks it relabels."""
         get = lambda k: str(fields.get(k) or "").strip()  # noqa: E731
-        kind, text, source, until, where = get("kind"), get("text"), get("source"), get("until"), get("workspace")
+        kind, text, source, until, where = (
+            get("kind"),
+            get("text"),
+            get("source"),
+            get("until"),
+            get("workspace"),
+        )
         agent, covers = get("agent"), get("covers")
         today = date.today().isoformat()
         if kind not in DECISION_KINDS:
@@ -692,7 +816,14 @@ class AnswersMixin:
                 raise Invalid("The end date is before today.")
         slot = ""
         if where and where.casefold() not in ("all", "all workspaces"):
-            slot = next((units.slot(r["path"]) for r in self.workspaces()["workspaces"] if r["name"] == where), "")
+            slot = next(
+                (
+                    units.slot(r["path"])
+                    for r in self.workspaces()["workspaces"]
+                    if r["name"] == where
+                ),
+                "",
+            )
             if not slot:
                 raise Invalid("Choose all workspaces or one of the app's workspaces.")
         if kind == "delegation":
@@ -706,8 +837,14 @@ class AnswersMixin:
             agent = covers = ""
         try:
             n = Data(self.config.data_dir).decision_add(
-                kind=kind, text=text, source=source, workspace=slot, agent=agent, covers=covers,
-                from_day=today, until_day=until,
+                kind=kind,
+                text=text,
+                source=source,
+                workspace=slot,
+                agent=agent,
+                covers=covers,
+                from_day=today,
+                until_day=until,
             )
         except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
             raise Invalid(f"The decision could not be saved: {e}") from e
@@ -767,7 +904,9 @@ class AnswersMixin:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
             nxt = str(found.get("next") or "")
             if found.get("why") != "finished":
-                raise Invalid(f"{unit} is {nxt or 'not finished'}; an outcome is recorded only on a finished unit")
+                raise Invalid(
+                    f"{unit} is {nxt or 'not finished'}; an outcome is recorded only on a finished unit"
+                )
             if word not in OUTCOME_RESULTS:
                 raise Invalid(f"the result is one of {', '.join(OUTCOME_RESULTS)}, got {word!r}")
             kind = OUTCOME_RESULTS[word]
@@ -794,7 +933,7 @@ class AnswersMixin:
                 raise Invalid(f"could not read intent.md: {e}") from e
             lines = existing.splitlines()
             heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
-            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1:]):
+            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1 :]):
                 raise Invalid(
                     "intent.md has a section after its ## Answers, so a block appended at "
                     "the end would not be read as an outcome"
@@ -838,7 +977,7 @@ class AnswersMixin:
                     actor=f"human:{name}",
                     source="outcome",
                 )
-            except (OSError, BadTransition, Busy):
+            except OSError, BadTransition, Busy:
                 pass
 
         return {
@@ -862,7 +1001,7 @@ class AnswersMixin:
                 raise Invalid(f"could not read {name}: {e}") from e
             lines = existing.splitlines()
             heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
-            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1:]):
+            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1 :]):
                 raise Invalid(
                     f"{name} has a section after its ## Answers, so a block appended at "
                     f"the end would not be read as {what}"
@@ -894,7 +1033,9 @@ class AnswersMixin:
         self._workspace_or_refuse(cwd)
         journal = self._journal()
         if journal is None:
-            raise Invalid("no working folder is set, so a hold cannot be recorded — set COS_WORKING_DIR")
+            raise Invalid(
+                "no working folder is set, so a hold cannot be recorded — set COS_WORKING_DIR"
+            )
         if not unit:
             raise Invalid("name a work unit")
         to = str(to or "").strip()
@@ -913,7 +1054,9 @@ class AnswersMixin:
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
-            said = hold_rules.refusal(found, to, reason, by, steps_mod.describe(unit, held) if held else "")
+            said = hold_rules.refusal(
+                found, to, reason, by, steps_mod.describe(unit, held) if held else ""
+            )
             if said:
                 raise Invalid(said)
             assert found is not None
@@ -923,8 +1066,10 @@ class AnswersMixin:
             effects: list[dict[str, str]] = []
             if to == "dropped":
                 try:
-                    branch = units.branch_name(cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
-                except (CannotCreate, BadUnit):
+                    branch = units.branch_name(
+                        cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit])
+                    )
+                except CannotCreate, BadUnit:
                     branch = ""
                 root = str(Path(cwd).expanduser().resolve())
                 effects.append(await hold_rules.close_pr(root, branch))
@@ -934,10 +1079,20 @@ class AnswersMixin:
             meta = self._unit_meta()
             try:
                 journal.append_with(
-                    [hold_rules.record(
-                        workspace=key, unit=unit, from_=from_, to=to, reason=reason, by=by, effects=effects,
-                    )],
-                    lambda conn: meta.add_hold(key, unit, to, reason, by, today, "product", conn=conn),
+                    [
+                        hold_rules.record(
+                            workspace=key,
+                            unit=unit,
+                            from_=from_,
+                            to=to,
+                            reason=reason,
+                            by=by,
+                            effects=effects,
+                        )
+                    ],
+                    lambda conn: meta.add_hold(
+                        key, unit, to, reason, by, today, "product", conn=conn
+                    ),
                 )
             except (BadRecord, Busy, sqlite3.Error, OSError) as e:
                 done = "; ".join(f"{x['effect']}: {x['result']}" for x in effects)
@@ -946,7 +1101,15 @@ class AnswersMixin:
         finally:
             if mark is not None:
                 self._release(key, unit, mark)
-        return {"unit": unit, "from": from_, "to": to, "reason": reason, "by": by, "date": today, "effects": effects}
+        return {
+            "unit": unit,
+            "from": from_,
+            "to": to,
+            "reason": reason,
+            "by": by,
+            "date": today,
+            "effects": effects,
+        }
 
     async def more_rounds(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """A person allows one more review round to a unit that used all of its.
@@ -972,7 +1135,9 @@ class AnswersMixin:
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
-            said = more_rounds_rules.refusal(found, by, steps_mod.describe(unit, held) if held else "")
+            said = more_rounds_rules.refusal(
+                found, by, steps_mod.describe(unit, held) if held else ""
+            )
             if said:
                 raise Invalid(said)
             today = date.today().isoformat()

@@ -23,7 +23,8 @@ from coscc.github import integrate
 from coscc.units.board import Unavailable
 from coscc.data import Data, now as _now
 from coscc.git.gitops import GitError
-from coscc.runlog.journal import BadRecord, Busy, Journal, last_runs, timelines_of, totals_of
+from coscc.runlog.journal import BadRecord, Journal, last_runs, timelines_of, totals_of
+from coscc.data import Busy
 from coscc.units.history import BadTransition
 from coscc.units.meta import MetaError, UnitMeta
 from coscc.agent.policy import grant_for
@@ -90,7 +91,6 @@ def answerable(unit: dict[str, Any]) -> bool:
 
 
 class BoardMixin:
-
     # -- board --------------------------------------------------------------
 
     def _journal(self) -> Journal | None:
@@ -167,7 +167,9 @@ class BoardMixin:
         problems: list[str] = []
         for name, n in count.items():
             if n > 1:
-                problems.append(f"Two workspaces are named {name}, so neither is linked by that name.")
+                problems.append(
+                    f"Two workspaces are named {name}, so neither is linked by that name."
+                )
         for r in rows:
             name = str(r["name"])
             if count[name] == 1 and valid_name(name):
@@ -179,7 +181,10 @@ class BoardMixin:
         return [(name, self._units_root(path)) for name, path in self._peer_table()[0]]
 
     def _snapshot(
-        self, cwd: str, units_: Iterable[str] | None = None, peers: list[tuple[str, str]] | None = None,
+        self,
+        cwd: str,
+        units_: Iterable[str] | None = None,
+        peers: list[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
         """What `cos.mjs --state` decides on: `cwd`'s units and those of every workspace a link
         may name, from `cos.db`; `units_` narrows it as `UnitMeta.snapshot` says. A store not
@@ -192,7 +197,10 @@ class BoardMixin:
         """
         meta = self._unit_meta()
         own = self._journal_key(cwd)
-        names = {name: self._journal_key(path) for name, path in (self._peer_table()[0] if peers is None else peers)}
+        names = {
+            name: self._journal_key(path)
+            for name, path in (self._peer_table()[0] if peers is None else peers)
+        }
         try:
             for key in {own, *names.values()} - self._imported:
                 # A workspace with no units yet has nothing to import: one `stat`, not a query.
@@ -207,7 +215,9 @@ class BoardMixin:
             return meta.snapshot(own, names, units_)
         except (Busy, sqlite3.Error, OSError) as e:
             print(f"coscc: the units of {own} could not be read: {e}", file=sys.stderr)
-            raise Invalid(f"the units of {self._workspace_name(own) or 'a workspace'} could not be read") from e
+            raise Invalid(
+                f"the units of {self._workspace_name(own) or 'a workspace'} could not be read"
+            ) from e
 
     def _meta_of(self, cwd: str, unit: str) -> dict[str, Any]:
         """`unit`'s entry in the snapshot, `{}` when the app has none."""
@@ -223,8 +233,10 @@ class BoardMixin:
         path = Data(self.config.data_dir).root / "state" / units.slot(cwd) / f"{unit}.json"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(self._snapshot(cwd, [unit]), ensure_ascii=False), encoding="utf-8")
-        except (OSError, Invalid):
+            path.write_text(
+                json.dumps(self._snapshot(cwd, [unit]), ensure_ascii=False), encoding="utf-8"
+            )
+        except OSError, Invalid:
             return ""
         return str(path)
 
@@ -247,12 +259,15 @@ class BoardMixin:
         if not unknowns:
             return
         for u in unknowns:
-            print(f"coscc: import {key}: {u['unit']} {u['artifact']} {u['field']}: {u['reason']}", file=sys.stderr)
+            print(
+                f"coscc: import {key}: {u['unit']} {u['artifact']} {u['field']}: {u['reason']}",
+                file=sys.stderr,
+            )
         journal = self._journal()
         if journal is not None:
             try:
                 journal.append({"kind": "import", "workspace": key, "unknowns": unknowns})
-            except (BadRecord, Busy):
+            except BadRecord, Busy:
                 pass
 
     async def _import_rounds(self, cwd: str, units_: list[dict[str, Any]]) -> None:
@@ -267,7 +282,12 @@ class BoardMixin:
                 return
             root = Path(cwd).expanduser().resolve()
             heads: dict[str, str] = {}
-            for sha in {str(r.get("reviewed")) for u in units_ for r in u.get("rounds") or [] if r.get("reviewed")}:
+            for sha in {
+                str(r.get("reviewed"))
+                for u in units_
+                for r in u.get("rounds") or []
+                if r.get("reviewed")
+            }:
                 try:
                     heads[sha] = await gitops.rev_parse(root, sha)
                 except GitError:
@@ -300,7 +320,9 @@ class BoardMixin:
         self._workspace_or_refuse(cwd)
         peers, peer_problems = self._peer_table()
         try:
-            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd, peers=peers))
+            data = await board_reader.read(
+                self._units_root(cwd), state=self._snapshot(cwd, peers=peers)
+            )
         except Unavailable as e:
             raise Invalid(str(e)) from e
         await self._import_rounds(cwd, data["units"])
@@ -315,13 +337,18 @@ class BoardMixin:
             row = agents.agent_for(stage, overrides)
             if row is not None:
                 data["stage_agents"][stage] = {
-                    "glyph": row["glyph"], "label": agents.label({**row, "key": stage}),
-                    "meaning": row["meaning"], "role": row["role"],
+                    "glyph": row["glyph"],
+                    "label": agents.label({**row, "key": stage}),
+                    "meaning": row["meaning"],
+                    "role": row["role"],
                 }
         name = self._workspace_name(cwd)
         for unit in data["units"]:
             if unit.get("repo") and name and unit["repo"] != name:
-                unit["problems"] = [*unit["problems"], f"Repo: {unit['repo']} is not this workspace, {name}."]
+                unit["problems"] = [
+                    *unit["problems"],
+                    f"Repo: {unit['repo']} is not this workspace, {name}.",
+                ]
             unit["waits_for"] = waits_for(unit)
 
         journal = self._journal()
@@ -346,7 +373,9 @@ class BoardMixin:
         # Display only: nothing below reads it, and `next`/`blocked` are untouched.
         data["backlog"] = {
             **backlog.fold(
-                data["units"], ranking, backlog.measured(timelines, data["units"]),
+                data["units"],
+                ranking,
+                backlog.measured(timelines, data["units"]),
                 backlog.undetermined(timelines, data["units"]),
             ),
             "propose_warning": grant_for("estimate").warning,
@@ -355,7 +384,11 @@ class BoardMixin:
         per_unit = data["backlog"].pop("per_unit")
         for unit in data["units"]:
             unit["backlog"] = per_unit.get(unit["name"]) or {
-                "rank": None, "value": None, "effort": None, "effort_source": None, "relations": [],
+                "rank": None,
+                "value": None,
+                "effort": None,
+                "effort_source": None,
+                "relations": [],
             }
 
         for unit in data["units"]:
@@ -374,9 +407,7 @@ class BoardMixin:
                 # From the same `timelines` read above, no second scan of the run log.
                 # `status` stays read from the artifact alone; this is a separate field.
                 row["last_run"] = unit_last_runs.get(row["stage"])
-            unit["cost"] = (
-                totals_of(timelines.get(unit["name"], [])) if journal is not None else {}
-            )
+            unit["cost"] = totals_of(timelines.get(unit["name"], [])) if journal is not None else {}
             # A label and nothing else: a deadline passing writes no row and
             # starts no step.
             unit["outcome_label"] = outcome_label(
@@ -398,7 +429,9 @@ class BoardMixin:
         for unit in data["units"]:
             # From the timelines read above: no second scan of the run log.
             ended = [r for r in timelines.get(unit["name"], []) if r.get("ended") is not None]
-            unit["state"] = unit_state(unit, ended[-1] if ended else None, unit.pop("ci_held", None))
+            unit["state"] = unit_state(
+                unit, ended[-1] if ended else None, unit.pop("ci_held", None)
+            )
 
         data["recording"] = journal is not None
         # Display only: the page shows it and decides nothing from it.
@@ -406,7 +439,8 @@ class BoardMixin:
         # Display only.
         data["guide"] = self._guide_block(key)
         data["read_only_because"] = (
-            None if journal is not None
+            None
+            if journal is not None
             else "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR"
         )
         if not data["units"]:
@@ -446,8 +480,13 @@ class BoardMixin:
         """
         rid = uuid.uuid4().hex
         self._running[rid] = {
-            "workspace": key, "unit": unit, "stage": stage, "started": _now(),
-            "kind": kind, "turns": None, "cost_usd": None,
+            "workspace": key,
+            "unit": unit,
+            "stage": stage,
+            "started": _now(),
+            "kind": kind,
+            "turns": None,
+            "cost_usd": None,
         }
         return rid
 
@@ -460,12 +499,18 @@ class BoardMixin:
             kind = entry["kind"]
             row = None if kind == "rebase" else agents.agent_for(entry["stage"], overrides)
             agent = {"glyph": row["glyph"], "name": row["name"]} if row else None
-            running.setdefault(entry["unit"], []).append({
-                "kind": kind, "stage": entry["stage"], "agent": agent,
-                "started": entry["started"], "turns": entry["turns"], "cost_usd": entry["cost_usd"],
-                # A board step's events; `""` for an integration or an estimate.
-                "run": entry.get("run", ""),
-            })
+            running.setdefault(entry["unit"], []).append(
+                {
+                    "kind": kind,
+                    "stage": entry["stage"],
+                    "agent": agent,
+                    "started": entry["started"],
+                    "turns": entry["turns"],
+                    "cost_usd": entry["cost_usd"],
+                    # A board step's events; `""` for an integration or an estimate.
+                    "run": entry.get("run", ""),
+                }
+            )
         return running
 
     def running(self, cwd: str) -> dict[str, Any]:
@@ -503,9 +548,14 @@ class BoardMixin:
                 continue
             rows = [
                 # The name the `start` carries, or its stage's for an older one.
-                {"stage": r["stage"], "started": r["started"], "agent": agents.of_record(r, overrides)}
+                {
+                    "stage": r["stage"],
+                    "started": r["started"],
+                    "agent": agents.of_record(r, overrides),
+                }
                 for r in found["open"]
-                if r.get("started") and r["started"] == found["last_start"]
+                if r.get("started")
+                and r["started"] == found["last_start"]
                 and _younger_than(r["started"], oldest)
             ]
             if rows:
@@ -525,10 +575,11 @@ class BoardMixin:
         """
         root = Path(cwd).expanduser().resolve()
         try:
-            listed = {
-                str(Path(t["path"]).resolve()): t
-                for t in await gitops.worktree_list(root)
-            } if (root / ".git").exists() else {}
+            listed = (
+                {str(Path(t["path"]).resolve()): t for t in await gitops.worktree_list(root)}
+                if (root / ".git").exists()
+                else {}
+            )
         except GitError:
             listed = {}
         for u in units_:
