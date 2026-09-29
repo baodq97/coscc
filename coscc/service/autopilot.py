@@ -117,8 +117,12 @@ class AutopilotMixin:
         got = await self._pr_machine().read(str(root), key, directory_of)
         if not got.moved:
             return got
-        self._autopilot_nudge(key, got.causes)
         merged = [c for c in got.causes if c["transition"] == "merged"]
+        # `0136` review round 1, F3: a merge made on GitHub is followed by no `ship` step, so
+        # its `ship` row, cleanup and gather are the reader's, before the pass it schedules.
+        for c in merged:
+            await self._shipped(cwd, key, c["unit"], "shipped")
+        self._autopilot_nudge(key, got.causes)
         if merged:
             for other in list(self._autopilot_tasks):
                 if other != key:

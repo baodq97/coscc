@@ -1499,10 +1499,47 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [])
         gh.open_prs, gh.state = [], "MERGED"
+        cleaned, gathered = [], []
+
+        async def cleanup(cwd, unit):
+            cleaned.append(unit)
+            return {"removed": True}
+
+        self.service._cleanup = cleanup
+        self.service._gather_soon = lambda cwd, unit, key: gathered.append(unit)
+        self.service.config = dataclasses.replace(self.service.config, knowledge=True)
         self.assertEqual((await self.service._pr_read(self.key)).moved, [("0001_a", "merged")])
         await self.until(lambda: self.launched, "the pass the merge scheduled")
         self.assertEqual(self.launched, [("0002_b", "impl", "autopilot")])
         self.assertEqual(gh.count("pr", "merge"), 0, "a merge made elsewhere is only recorded")
+        # Review round 1, F3: no `ship` step follows it, so the reader writes what one did.
+        ships = [(r["unit"], r["result"]) for r in self.service._journal().records(kind="ship")]
+        self.assertEqual((ships, cleaned, gathered), ([("0001_a", "shipped")], ["0001_a"], ["0001_a"]))
+
+    async def test_a_merge_the_start_up_reconcile_records_leaves_the_ship_row(self):
+        """Review round 1, F3, at a restart: a `ship` that merged and died before its row."""
+        gh = prmachine_test.FakeGh(buckets=("pass",), crash_after_merge=True)
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        with machine.history.data.write() as conn:
+            conn.execute(
+                "INSERT INTO review_rounds (at, root, workspace, unit, n, run, head, verdict, screens) "
+                "VALUES ('2026-09-29', ?, ?, '0001_a', 1, 'r', ?, 'pass', '[]')",
+                (str(machine.history.working_dir), self.key, prmachine_test.HEAD))
+        d = self.service._unit_dir(self.ws, "0001_a")
+        with self.assertRaises(prmachine_test.Crash):
+            await machine.ship(prmachine.Unit(self.key, "0001_a", d, self.ws, "fix/x", "fix/x", "fix"))
+        cleaned = []
+
+        async def cleanup(cwd, unit):
+            cleaned.append(unit)
+            return {"removed": True}
+
+        self.service._cleanup = cleanup
+        got = await self.service.reconcile_prs()
+        self.assertEqual([o["result"] for o in got], ["recorded"])
+        ships = [(r["unit"], r["result"]) for r in self.service._journal().records(kind="ship")]
+        self.assertEqual((ships, cleaned, gh.count("pr", "merge")), ([("0001_a", "shipped")], ["0001_a"], 1))
 
     async def test_an_impl_waits_on_an_open_pull_request_the_machine_holds_until_it_merges(self):
         """R22 over the machine's own rows: the files are the ones the reader read."""

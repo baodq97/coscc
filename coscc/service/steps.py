@@ -1434,16 +1434,9 @@ class StepsMixin:
             merged = out.result in ("merged", "recorded", "already")
             refused = not merged and prmachine.state(machine.history, key, unit)["state"] == "merge-requested"
             if merged or refused:
-                try:
-                    self._journal().append({"kind": "ship", "workspace": key, "unit": unit, "stage": "ship",
-                                            "result": "shipped" if merged else "refused"})
-                except (BadRecord, Busy, AttributeError):
-                    pass
-            if merged:
-                done["cleanup"] = await self._cleanup(cwd, unit)
-                if self.config.knowledge:
-                    # `0131` R1. Once, in the background: nothing here waits for it.
-                    self._gather_soon(cwd, unit, key)
+                cleanup = await self._shipped(cwd, key, unit, "shipped" if merged else "refused")
+                if merged:
+                    done["cleanup"] = cleanup
         # `0136` review round 1, F2: with no `end`, this is what the autopilot's stop `e` reads
         # as the unit's last word, so a `pr` or `ship` that failed or was refused stops it for a
         # person as a failed session did, and one that did its work lifts that stop.
@@ -1456,6 +1449,22 @@ class StepsMixin:
         except (BadRecord, Busy, AttributeError):
             pass
         return done
+
+    async def _shipped(self, cwd: str, key: str, unit: str, result: str) -> dict[str, Any] | None:
+        """The `ship` row notices read (`0113`), and after a merge the cleanup and the gather
+        (`0131` R1, once, in the background). From `_mechanical`, and from the PR reader and the
+        start-up reconcile when they record a merge no `ship` step follows any more (`0136`
+        review round 1, F3). Never raises; the cleanup's answer after a merge, else `None`."""
+        try:
+            self._journal().append({"kind": "ship", "workspace": key, "unit": unit, "stage": "ship", "result": result})
+        except (BadRecord, Busy, AttributeError):
+            pass
+        if result != "shipped":
+            return None
+        cleanup = await self._cleanup(cwd, unit)
+        if self.config.knowledge:
+            self._gather_soon(cwd, unit, key)
+        return cleanup
 
     async def reconcile_prs(self) -> list[dict[str, Any]]:
         """`0136` spec Design "Đối soát sau khởi động lại": every unit left at
@@ -1476,7 +1485,14 @@ class StepsMixin:
                 tree = worktrees.path(ws, unit, self.config.data_dir)
                 pending.append(prmachine.Unit(ws, unit, self._unit_dir(ws, unit),
                                               str(tree if tree.is_dir() else ws), "", "", None))
-            return [o.as_dict() for o in await machine.reconcile(pending)]
+            done = []
+            for u in pending:
+                for o in await machine.reconcile([u]):
+                    # F3, as the reader: the journal key is the resolved path, so it is the cwd.
+                    if o.result == "recorded":
+                        await self._shipped(u.workspace, u.workspace, u.name, "shipped")
+                    done.append(o.as_dict())
+            return done
         except Exception as e:  # noqa: BLE001 — a start-up is never stopped by this
             return [{"result": "failed", "detail": str(e) or type(e).__name__}]
 
