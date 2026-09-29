@@ -188,14 +188,16 @@ def attention_reason(unit: dict[str, Any]) -> str:
     stay those `0082` wrote (`0100` R12). The board's state is `unit_state`'s, not this;
     since `0100` this shows in the unit's dialog beside it (spec C3), through
     `reason_beside`."""
-    action = str(unit.get("next") or "")
+    # `0139` R11: `next`'s code, never its words. `dependency` is the one `why` whose words
+    # began `waiting`.
+    why = str(unit.get("why") or "")
     rows = unit.get("stages") or []
-    if unit.get("phase") == "pre-intent" or action == "finished" or action.startswith("closed"):
+    if unit.get("phase") == "pre-intent" or why in ("finished", "rejected"):
         return ""
     if not (unit.get("problems") or any(r.get("status") in ("draft", "changes-requested") for r in rows)):
         return ""
     waiting = any(not p.get("answered") for p in unit.get("person_findings") or [])
-    if unit.get("problems") or waiting or action.startswith("waiting"):
+    if unit.get("problems") or waiting or why == "dependency":
         return "Needs a person"
     draft = next((r for r in rows if r.get("status") == "draft"), None)
     if draft is not None:

@@ -629,7 +629,8 @@ class AnswersMixin:
         if not name or "\n" in name or "\r" in name:
             raise Invalid("say who is answering, on one line")
         nxt = str(found.get("next") or "")
-        if nxt == "finished" or nxt.startswith("closed"):
+        # `0139` R11: the code decides; the words are only what the refusal says.
+        if found.get("why") in ("finished", "rejected"):
             raise Invalid(f"{unit} is {nxt}; its questions can no longer be answered")
         # A line that reads as a heading would end this block early or open another in the
         # prompt that renders it (`0135`), and the stage would read the answer wrongly.
@@ -881,7 +882,7 @@ class AnswersMixin:
             if found is None:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
             nxt = str(found.get("next") or "")
-            if nxt != "finished":
+            if found.get("why") != "finished":
                 raise Invalid(f"{unit} is {nxt or 'not finished'}; an outcome is recorded only on a finished unit")
             if word not in OUTCOME_RESULTS:
                 raise Invalid(f"the result is one of {', '.join(OUTCOME_RESULTS)}, got {word!r}")

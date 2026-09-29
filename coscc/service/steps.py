@@ -1038,7 +1038,7 @@ class StepsMixin:
             if stage in ("impl", "implement"):
                 prior_kw = priorfindings.for_step(
                     units.cos_dir(cwd, self.config.data_dir),
-                    [u["name"] for u in data["units"] if u.get("next") == "finished"],
+                    [u["name"] for u in data["units"] if u.get("why") == "finished"],
                     directory / "plan.md",
                     unit,
                 )

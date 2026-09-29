@@ -53,20 +53,21 @@ def in_backlog(unit: dict[str, Any]) -> bool:
         r.get("stage") in ("idea", "intent") and (r.get("status") or "not started") != "not started"
         for r in unit.get("stages") or []
     )
-    nxt = str(unit.get("next") or "")
-    if not has_start or nxt == "finished" or nxt.startswith("closed"):
+    # `0139` R11: the code `next` answered with, never its words.
+    why = str(unit.get("why") or "")
+    if not has_start or why in ("finished", "rejected"):
         return False
     return (unit.get("hold") or {}).get("state") != "dropped"
 
 
 def _status_of(unit: dict[str, Any]) -> str:
     """`finished`, `dropped`, `rejected`, `backlog` or `other` — for dependency warnings."""
-    nxt = str(unit.get("next") or "")
-    if nxt == "finished":
+    why = str(unit.get("why") or "")
+    if why == "finished":
         return "finished"
     if (unit.get("hold") or {}).get("state") == "dropped":
         return "dropped"
-    if nxt.startswith("closed"):
+    if why == "rejected":
         return "rejected"
     return "backlog" if in_backlog(unit) else "other"
 
@@ -87,7 +88,7 @@ def measured(timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[st
     """
     out: dict[str, dict[str, Any]] = {}
     for u in units:
-        if u.get("next") != "finished":
+        if u.get("why") != "finished":
             continue
         rows = timelines.get(u.get("name") or "", [])
         if not any(r.get("reported") for r in rows) or _unknown_cost(rows):
@@ -101,7 +102,7 @@ def undetermined(timelines: dict[str, list[dict[str, Any]]], units: Iterable[dic
     """`0092` R11. The finished units `measured` leaves out for a cost nobody knows, by name."""
     return sorted(
         u["name"] for u in units
-        if u.get("next") == "finished" and _unknown_cost(timelines.get(u.get("name") or "", []))
+        if u.get("why") == "finished" and _unknown_cost(timelines.get(u.get("name") or "", []))
     )
 
 

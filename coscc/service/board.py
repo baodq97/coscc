@@ -108,9 +108,10 @@ def _attach_precedent(units_: list[dict[str, Any]], rows: list[dict[str, Any]]) 
 def answerable(unit: dict[str, Any]) -> bool:
     """`0082` R11. Whether the board invites an answer on this unit: not once it is finished,
     closed or dropped. The answer route itself is unchanged."""
-    action = str(unit.get("next") or "")
+    # `0139` R11: `next`'s code, never its words.
+    why = str(unit.get("why") or "")
     dropped = (unit.get("hold") or {}).get("state") == "dropped"
-    return not (action == "finished" or action.startswith("closed") or dropped)
+    return not (why in ("finished", "rejected") or dropped)
 
 
 class BoardMixin:
@@ -412,7 +413,7 @@ class BoardMixin:
             # `0047` R8, R9. A label and nothing else: a deadline passing writes no row and
             # starts no step.
             unit["outcome_label"] = outcome_label(
-                unit.get("outcome"), date.today(), finished=unit.get("next") == "finished"
+                unit.get("outcome"), date.today(), finished=unit.get("why") == "finished"
             )
             # `0082` R11, R12. Decided here so the page only shows them.
             unit["answerable"] = answerable(unit)
@@ -574,7 +575,7 @@ class BoardMixin:
             found = listed.get(str(where))
             if found is None:
                 continue
-            if u.get("next") == "finished":
+            if u.get("why") == "finished":
                 done = await worktrees.remove_if_finished(cwd, u["name"], u, self.config.data_dir)
                 if done.get("removed"):
                     continue

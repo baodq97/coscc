@@ -65,6 +65,13 @@ def unit_row(**over) -> dict:
 
 
 class TheRefusals(unittest.TestCase):
+    def test_the_code_picks_the_sentence_and_the_words_do_not(self):
+        # `0139` R11.
+        said = hold.refusal(unit_row(next="finished", why="", hold_moves=[]), "paused", "r", "b", "")
+        self.assertIn("has no intent.md", said)
+        said = hold.refusal(unit_row(next="write-spec", why="finished", hold_moves=[]), "paused", "r", "b", "")
+        self.assertIn("write-spec", said)
+
     def test_in_the_spec_order(self):
         self.assertEqual(hold.refusal(None, "paused", "r", "b", ""), "no such work unit in this workspace")
         paused = unit_row(hold={"state": "paused"}, hold_moves=["dropped", "active"])
@@ -74,8 +81,8 @@ class TheRefusals(unittest.TestCase):
         )
         dropped = unit_row(hold={"state": "dropped"}, hold_moves=["paused"])
         self.assertIn("not active", hold.refusal(dropped, "active", "r", "b", ""))
-        self.assertIn("finished", hold.refusal(unit_row(next="finished", hold_moves=[]), "paused", "r", "b", ""))
-        self.assertIn("closed", hold.refusal(unit_row(next="closed — spec rejected", hold_moves=[]), "paused", "r", "b", ""))
+        self.assertIn("finished", hold.refusal(unit_row(next="finished", why="finished", hold_moves=[]), "paused", "r", "b", ""))
+        self.assertIn("closed", hold.refusal(unit_row(next="closed — spec rejected", why="rejected", hold_moves=[]), "paused", "r", "b", ""))
         self.assertIn("no intent.md", hold.refusal(unit_row(next="write-intent", hold_moves=[]), "paused", "r", "b", ""))
         # The move is checked before the words, the words before the running step.
         self.assertIn("from there", hold.refusal(paused, "paused", "", "", BUSY))
