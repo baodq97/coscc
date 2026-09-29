@@ -32,6 +32,15 @@ from coscc.units.states import Machine
 TIMEOUT = 30.0
 
 SOURCE = "import:0135"
+# `0139` R5: the source every row of the PR machine carries (`prmachine.Machine._apply`), the
+# guards that move where its pull request stands (`prmachine.state`), and the one that is `merged`.
+PR_SOURCE = "prmachine:%"
+PR_MOVES = ("branch-named", "ship-ready", "merge-read", "close-read")
+MERGED = "merge-read"
+# The roads a merge was recorded by before the machine: this import, and a `ship` session,
+# which `0139` R12 took away. A unit the machine never touched is merged when its last
+# `ship.md` transition is `accepted` from one of them, and on no other.
+SHIPPED_BEFORE_THE_MACHINE = (SOURCE, "run:ship")
 
 _UNIT_RE = re.compile(r"(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)")
 _ONE = "root = ? AND workspace = ? AND unit = ?"
@@ -468,7 +477,7 @@ class UnitMeta:
                 units[f"{name_of[r['workspace']]}/{r['unit']}"] = {
                     "artifacts": {}, "type": None if r["type"] == "unknown" else r["type"], "lane": r["lane"],
                     "links": {"idea": None, "repo": None, "dependsOn": None},
-                    "holds": [], "answers": [], "unknowns": [],
+                    "holds": [], "answers": [], "unknowns": [], "merged": False,
                 }
 
             def entry(r) -> dict[str, Any] | None:
@@ -489,6 +498,25 @@ class UnitMeta:
                     # was a person's or their delegate's. Only on a skip, which is all it reads.
                     if r["to_state"] == "skipped":
                         a["authority"] = r["authority"]
+            # `0139` R5: whether the unit is merged, which a `Depends on:` naming it reads. The
+            # machine's own fold where it moved the unit at all; else a ship recorded before it.
+            moved: set[tuple[str, str]] = set()
+            for r in rows(
+                f"SELECT workspace, unit, guard FROM transitions WHERE id IN (SELECT MAX(id) FROM transitions "
+                f"WHERE {{where}} AND source LIKE '{PR_SOURCE}' AND guard IN ({', '.join(repr(g) for g in PR_MOVES)}) "
+                f"GROUP BY workspace, unit)"
+            ):
+                moved.add((r["workspace"], r["unit"]))
+                e = entry(r)
+                if e is not None:
+                    e["merged"] = r["guard"] == MERGED
+            for r in rows(
+                "SELECT workspace, unit, to_state, source FROM transitions WHERE id IN "
+                "(SELECT MAX(id) FROM transitions WHERE {where} AND artifact = 'ship.md' GROUP BY workspace, unit)"
+            ):
+                e = entry(r)
+                if e is not None and (r["workspace"], r["unit"]) not in moved:
+                    e["merged"] = r["to_state"] == "accepted" and r["source"] in SHIPPED_BEFORE_THE_MACHINE
             # `0136` R4: the last stage result of each stage, which `cos.mjs` reads a spec's
             # `U<n>` and a spike's verdicts from rather than from the file.
             for r in rows(

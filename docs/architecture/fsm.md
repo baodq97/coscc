@@ -78,7 +78,7 @@ Derived states (CODE, recomputed each read):
 - **rejected** anywhere closes the unit (`:1239`).
 - **open questions** = numbered items with `?` under `## Open questions` without a `### Câu N` answer (`:112-126,348`). They gate nothing in `cos.mjs`; a *draft* does (`:451,1255`).
 - **review rounds used** / **out of rounds** (`COS_REVIEW_ROUNDS`, default 3, plus `### More rounds`) (`:1345-1364`).
-- **dependency merged** = the dependency's `ship.md` is accepted (files only, `:1017-1031`).
+- **dependency merged** = the snapshot's `merged` for that unit: the PR machine's `merge-read` row, or, for a unit it never moved, a `ship.md: accepted` from the `0135` import or a `ship` session (`0139` R5, `units/meta.py` `snapshot`).
 
 ### 1.2 `next` — first match wins (`cos.mjs:1190-1322`)
 

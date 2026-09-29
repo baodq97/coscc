@@ -252,6 +252,57 @@ class TheIngest(Base):
         self.assertEqual(self.meta.unknowns([WS]), [u for u in self.meta.unknowns([WS]) if u["field"] != "ingest"])
 
 
+class AMergeIsARow(Base):
+    """`0139` R5: `merged`, which a `Depends on:` is judged on, is the PR machine's row, or a
+    ship recorded before the machine; never the status of `ship.md` alone."""
+
+    def merged(self, unit: str) -> bool:
+        return self.meta.snapshot(WS, NAMES)["units"][f"proj/{unit}"]["merged"]
+
+    def machine(self, unit: str, artifact: str, to_state: str, transition: str, guard: str) -> None:
+        History(self.tmp / "work", self.data).record(
+            WS, unit, artifact, to_state, source=f"prmachine:{transition}", guard=guard, authority="code")
+
+    def test_a_ship_imported_before_the_machine_is_merged_and_nothing_else_is(self):
+        self.meta.import_store(WS, self.store)
+        self.assertTrue(self.merged("0010_full-loop"))
+        self.assertFalse(self.merged("0013_open-question"))
+
+    def test_an_accepted_ship_md_read_at_the_end_of_another_step_is_not_merged(self):
+        self.meta.import_store(WS, self.store)
+        (self.store / ".cos" / "0013_open-question" / "ship.md").write_text("# Ship\nStatus: accepted.\n")
+        self.meta.ingest(WS, self.store, "0013_open-question", actor="stage:impl", session="s1", source="run:impl")
+        self.assertFalse(self.merged("0013_open-question"))
+        # A `ship` session's, before `0139` R12 took the session away, is one.
+        self.meta.ingest(WS, self.store, "0013_open-question", actor="stage:ship", session="s2", source="run:ship",
+                         wrote="ship.md")
+        self.assertTrue(self.merged("0013_open-question"))
+
+    def test_the_machines_merged_row_is_merged_and_its_other_rows_are_not(self):
+        self.meta.import_store(WS, self.store)
+        unit = "0013_open-question"
+        self.machine(unit, "pr.md", "accepted", "open", "branch-named")
+        self.assertFalse(self.merged(unit))
+        self.machine(unit, "ship.md", "draft", "merge-requested", "ship-ready")
+        self.assertFalse(self.merged(unit))
+        self.machine(unit, "ship.md", "accepted", "merged", "merge-read")
+        self.assertTrue(self.merged(unit))
+        # A CI read after it moves nothing.
+        self.machine(unit, "pr.md", "accepted", "ci", "ci-at-head")
+        self.assertTrue(self.merged(unit))
+
+    def test_a_dependency_waits_until_the_row_says_merged(self):
+        self.meta.import_store(WS, self.store)
+        # The machine's fold wins over a ship read before it: here it closed the pull request.
+        self.machine("0010_full-loop", "pr.md", "accepted", "closed", "close-read")
+        unit = next(u for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"] if u["name"] == "0017_linked")
+        self.assertEqual(unit["dependsOn"], [{"ref": "0010_full-loop", "merged": False,
+                                              "why": "not merged: the app holds no merge of it"}])
+        self.machine("0010_full-loop", "ship.md", "accepted", "merged", "merge-read")
+        unit = next(u for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"] if u["name"] == "0017_linked")
+        self.assertEqual(unit["dependsOn"], [{"ref": "0010_full-loop", "merged": True, "why": "merged"}])
+
+
 class AnswersAndHolds(Base):
     def test_an_answer_and_a_hold_reach_the_snapshot_in_order(self):
         self.meta.import_store(WS, self.store)

@@ -54,10 +54,12 @@ A broken link — no idea file, no such workspace, a unit the idea does not list
 `status` and closes nothing but `impl`.
 
 `impl` stays shut while any `Depends on:` unit is not merged, and `next` answers
-`stage: ""`, `why: "dependency"`, `action: "waiting on <ref> to merge"`. Merged means that
-unit's `ship.md` is `Status: accepted`. Neither `gh` nor `git` is asked: `0040`
-`spike.md ## U1` could not measure `gh pr view` run from another repository's checkout, and
-`write-ship` accepts only once `## What went out` names the merge commit.
+`stage: ""`, `why: "dependency"`, `action: "waiting on <ref> to merge"`. Merged means the
+PR machine recorded that unit's `merged` (guard `merge-read`), or, for a unit the machine never
+moved, that its `ship.md` was accepted by the `0135` import or a `ship` session before `0139`
+(`coscc/units/meta.py` `UnitMeta.snapshot`). An `accepted` `ship.md` read any other way is not
+a merge. Neither `gh` nor `git` is asked: `0040` `spike.md ## U1` could not measure
+`gh pr view` run from another repository's checkout.
 
 `impl` also stays shut when `Idea:` cannot be read, or when the idea's line for the unit and
 the header disagree on `Depends on:`. The rule cannot rest on one copy an agent wrote; the

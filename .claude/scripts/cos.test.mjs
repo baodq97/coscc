@@ -36,6 +36,9 @@ const entryFrom = (m) => ({
   holds: (m.holds ?? []).filter((h) => h.by !== null),
   answers: m.answers,
   unknowns: [],
+  // `0139` R5: an accepted `ship.md` in these files stands for a ship recorded before the PR
+  // machine, which the app's import reads as merged. A test of the machine's row says so.
+  merged: m.artifacts['ship.md']?.status === 'accepted',
 })
 function stateFor(stores, own = '') {
   const units = {}
@@ -4359,7 +4362,7 @@ test('0040 R4: a child unit carries idea, repo and dependsOn in status --json', 
   const [u] = json40(cli('--root', b, 'status', '--json', '--peer', `a=${a}`)).units
   assert.equal(u.idea, 'ideas/0001_f.md')
   assert.equal(u.repo, 'b')
-  assert.deepEqual(u.dependsOn, [{ ref: 'a/0001_x', merged: false, why: 'not merged: its ship.md is not accepted' }])
+  assert.deepEqual(u.dependsOn, [{ ref: 'a/0001_x', merged: false, why: 'not merged: the app holds no merge of it' }])
   assert.deepEqual(u.problems, [])
 })
 
@@ -4420,10 +4423,31 @@ test('0040 R7: impl gate stays shut while the dependency\'s ship.md is not accep
     const { a, b } = pair40({ ship })
     const out = cli('--root', b, 'gate', '0001_y', 'impl', '--peer', `a=${a}`)
     assert.equal(out.status, 1, String(ship))
-    assert.match(out.stderr, /waits on a\/0001_x: not merged: its ship\.md is not accepted/)
+    assert.match(out.stderr, /waits on a\/0001_x: not merged: the app holds no merge of it/)
     // `plan` is not `impl`: the wait closes nothing else.
     assert.equal(cli('--root', b, 'gate', '0001_y', 'plan', '--peer', `a=${a}`).status, 0)
   }
+})
+
+// `0139` R5: what a dependency is judged merged on is the entry's `merged`, the app's row,
+// and never the status of its `ship.md`.
+test('0139 R5: a dependency opens on the merged row, not on ship.md', () => {
+  const ask = (ship, merged) => {
+    const { a, b } = pair40({ ship })
+    const state = stateOfRoots(b, [['a', a]])
+    state.units['a/0001_x'].merged = merged
+    return spawnSync(process.execPath, [SCRIPT, '--root', b, 'gate', '0001_y', 'impl', '--state', '-'], { encoding: 'utf8', input: JSON.stringify(state) })
+  }
+  const shut = ask('accepted', false)
+  assert.equal(shut.status, 1, 'an accepted ship.md with no merge row opens nothing')
+  assert.match(shut.stderr, /waits on a\/0001_x: not merged: the app holds no merge of it/)
+  for (const ship of ['draft', null]) assert.equal(ask(ship, true).status, 0, `merged with ship.md ${ship}`)
+  // An entry that carries no `merged` at all, as a snapshot before `0139` did, is not merged.
+  const { a, b } = pair40({ ship: 'accepted' })
+  const state = stateOfRoots(b, [['a', a]])
+  delete state.units['a/0001_x'].merged
+  const out = spawnSync(process.execPath, [SCRIPT, '--root', b, 'gate', '0001_y', 'impl', '--state', '-'], { encoding: 'utf8', input: JSON.stringify(state) })
+  assert.equal(out.status, 1)
 })
 
 test('0040 R7: next says why dependency and names the ref', () => {
@@ -4722,6 +4746,7 @@ const snapshotOf = ({ units, ideas }) => ({
     holds: (m.holds ?? []).filter((h) => h.by !== null),
     answers: m.answers,
     unknowns: [],
+    merged: m.artifacts['ship.md']?.status === 'accepted',
   }])),
   ideas: { proj: ideas ?? [] },
 })

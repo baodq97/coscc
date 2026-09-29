@@ -1027,9 +1027,10 @@ export const NEEDS_STATE = 'needs the coscc app: pass --state <file|-> (uv run c
 
 // `0135`. The snapshot `--state` carries, as the app builds it (`coscc/units/meta.py`):
 // `{workspace, workspaces, units: {<ws>/<unit>: entry}, ideas: {<ws>: [idea]}}`, an entry
-// `{artifacts: {<file>: {status, raw, questions}}, type, links, holds, answers, unknowns}`.
-// `raw` is a status word outside the artifact's set, kept so it is reported as it was.
-const NO_ENTRY = { artifacts: {}, type: null, links: { idea: null, repo: null, dependsOn: null }, holds: [], answers: [], unknowns: [] }
+// `{artifacts: {<file>: {status, raw, questions}}, type, links, holds, answers, unknowns, merged}`.
+// `raw` is a status word outside the artifact's set, kept so it is reported as it was;
+// `merged` is whether the app holds the unit's merge (`0139` R5).
+const NO_ENTRY = { artifacts: {}, type: null, links: { idea: null, repo: null, dependsOn: null }, holds: [], answers: [], unknowns: [], merged: false }
 const entryOf = (state, ws, name) => state.units?.[`${ws}/${name}`] ?? null
 const statusIn = (e, file) => e.artifacts?.[file]?.status ?? e.artifacts?.[file]?.raw ?? null
 const answersIn = (e, file) => (e.answers ?? []).filter((a) => a.artifact === file).map(({ artifact, ...a }) => a)
@@ -1188,8 +1189,10 @@ function storeOf(ws, repo, { state }) {
 const LINKS = new WeakMap()
 const linksOf = (unit) => LINKS.get(unit) ?? { needs: [], waiting: [] }
 
-// R8: merged is `ship.md: accepted`, read off the file. No `gh` and no `git`: `spike.md ## U1`
-// of `0040` could not measure `gh pr view` run from another repository's checkout.
+// R8: merged is the entry's `merged`, never `ship.md`'s status (`0139` R5): the app sets it from
+// the PR machine's `merged` row, or from a ship recorded before the machine existed
+// (`coscc/units/meta.py` `UnitMeta.snapshot`). No `gh` and no `git`: `spike.md ## U1` of
+// `0040` could not measure `gh pr view` run from another repository's checkout.
 function dependency(raw, unit, repo, ctx) {
   const ref = parseUnitRef(raw)
   if (!ref) return { ref: raw, merged: null, why: 'not NNNN_<slug> or <ws>/NNNN_<slug>' }
@@ -1202,8 +1205,8 @@ function dependency(raw, unit, repo, ctx) {
   if (other.hold?.state === 'dropped') return { ref: raw, merged: false, why: 'dropped' }
   const rejected = STAGES.find((s) => statusOf(other, s.file) === 'rejected')
   if (rejected) return { ref: raw, merged: false, why: `rejected: its ${rejected.file} is rejected` }
-  if (statusOf(other, 'ship.md') === 'accepted') return { ref: raw, merged: true, why: 'merged' }
-  return { ref: raw, merged: false, why: 'not merged: its ship.md is not accepted' }
+  if (e.merged === true) return { ref: raw, merged: true, why: 'merged' }
+  return { ref: raw, merged: false, why: 'not merged: the app holds no merge of it' }
 }
 
 // The unit's line under the idea's `## Units`, or why it cannot be had (R6).
