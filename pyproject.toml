@@ -29,11 +29,16 @@ build-backend = "uv_build"
 # what reconciles the two.
 module-root = ""
 module-name = "coscc"
+# Tests sit beside the code they test; they stay in the repository and out of the wheel.
+wheel-exclude = ["**/*_test.py"]
+source-exclude = ["**/*_test.py"]
 
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
     "playwright>=1.63.0",
+    "pytest>=9.1.1",
+    "pytest-xdist>=3.8.0",
 ]
 
 [project.scripts]
@@ -44,3 +49,8 @@ coscc = "coscc.run:main"
 # Building through here rather than calling `reflex export` directly is what leaves the
 # fingerprint that `run.py` and `scripts/verify_0003.py` check. See coscc/build.py.
 coscc-build = "coscc.build:main"
+
+[tool.pytest.ini_options]
+testpaths = ["coscc"]
+python_files = ["*_test.py"]
+addopts = "-q -p no:cacheprovider"
