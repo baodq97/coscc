@@ -9,7 +9,7 @@ paths:
 
 - **`POST /api/update/*` pauses work, restarts the app and builds upstream code, for whoever
   holds the password.**
-  - *Apply* (one way since `0138`) waits only for a mechanical integration, a screenshot
+  - *Apply* (the one way, `0138`) waits only for a mechanical integration, a screenshot
     retake and a knowledge gather, and none of them may begin once it is pressed; from the
     trial on, no session may. After the trial, `Sessions.suspend_all` pauses every agent
     session of this process at once: its CLI's descendants listed, the transcript's line

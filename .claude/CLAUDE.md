@@ -46,8 +46,8 @@ One directory, `.cos/NNNN_<slug>/`, holding its artifacts (eight, or nine with `
 and nothing else. The slug names the problem rather than the solution and is fixed at
 creation.
 
-Since `0135` a unit's status, `Type:`, links, questions, answers and holds live in the app's
-`cos.db`, read from the files once when a step ends; an answer or a hold is a row and no byte
+A unit's status, `Type:`, links, questions, answers and holds live in the app's
+`cos.db` (`0135`), read from the files once when a step ends; an answer or a hold is a row and no byte
 of an artifact, and a held unit is offered no stage and every gate is closed on it. The app
 still appends `### Rerun`, `### More rounds` and `### Outcome` blocks under `## Answers`,
 and never rewrites a byte above that section.

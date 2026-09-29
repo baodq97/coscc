@@ -11,6 +11,10 @@ the argument for the change is in `intent.md` and `spec.md`, and what was built 
 without anyone searching for it, and so that the `review` gate can find it: that gate
 reads the `PR:` field in the header and nothing else.
 
+From the board no session runs this stage: the app pushes the branch, opens the pull
+request and writes `pr.md` itself (`coscc/github/prmachine.py`). This skill is for a
+terminal.
+
 ## Before writing
 
 ```
@@ -31,9 +35,8 @@ Recording `draft` because no pull request exists never clears the gate after thi
 before anything waits, because a step that runs out of turns while waiting must still
 leave the file behind:
 
-1. **Does the pull request already exist?** In the app, the prompt carries *The pull
-   request, already looked up*. At a terminal, or when that block says the lookup failed,
-   ask once: `gh pr view --json url,number,mergeable`. If one is open for this branch, use
+1. **Does the pull request already exist?** Ask once:
+   `gh pr view --json url,number,mergeable`. If one is open for this branch, use
    its URL and skip step 2 — never open a second pull request for one branch.
 2. **Open it.** Write `pr.md` with its `# PR:` line in the title grammar under `## Output`,
    its three body sections, `Status: draft` and no `PR:` yet, and `## Scope of the diff`
@@ -61,9 +64,7 @@ leave the file behind:
 5. **Put pr.md onto the pull request.** Its title is the `# PR:` line; its body is the
    rest of `pr.md` less that line and the header line holding `Status:` — whether this
    step opened the pull request or found it open, and whatever a person wrote there since
-   (`pr.md` is the source). In the app, the app does this itself after the step ends: do
-   not run `gh pr edit`. At a terminal it is the last thing the step does, and it is
-   exactly this:
+   (`pr.md` is the source). It is the last thing the step does, and it is exactly this:
 
    ```
    node .claude/scripts/cos.mjs pr-text <NNNN_slug> | node -e '
@@ -76,11 +77,11 @@ leave the file behind:
 
 **This stage stops at an open pull request.** It does not merge. The merge belongs to
 `ship`, and `ship`'s gate opens only after a review round passed with no finding open and
-no code landed after it. In the app, the `pr` step is refused the merge command outright;
-at a terminal nothing refuses it, so this sentence is the rule.
+no code landed after it. At a terminal nothing refuses the merge command, so this sentence
+is the rule.
 
 **It does not integrate either.** Never `git rebase`, `git merge`, `git pull`,
-`gh pr update-branch` or a forced push; in the app the grant refuses each by its words.
+`gh pr update-branch` or a forced push.
 
 - **The branch conflicts with `main`:** `pr.md` is still `accepted`, with its URL, and
   `## Where` says the pull request conflicts and that resolving it is *Integrate*'s, on

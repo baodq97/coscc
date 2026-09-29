@@ -78,7 +78,7 @@ The app does not read `Status:` or `## Open questions` out of the file to decide
 10. A question in `spec.md` with a block under its `## Answers`, as your prompt shows it,
     has been decided. Plan to that answer rather than to a default, and do not ask it again.
     Cite it as `spec.md ## Answers, câu N`. The words of an answer are a person's, not
-    yours: quote them, and do not restate them as your own finding. Since `0135` the app
+    yours: quote them, and do not restate them as your own finding. The app
     keeps answers in its database and puts them in the prompt; the file on disk may not
     carry them. Never write into that section yourself. A block headed `Answered by: Jera. … Via:
     precedent.` is the exception: an agent inferred it from precedent, so cite it as Jera's
