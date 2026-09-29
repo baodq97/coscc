@@ -1,9 +1,6 @@
 """Tests for the config seam.
 
-The first test is the important one. `spec.md` C2 puts the burden on anyone loosening the
-default: it has to be a deliberate edit to a test that says what it is protecting, not a
-value that drifts because nobody was watching.
-"""
+The first test is the important one."""
 
 import dataclasses
 import os
@@ -18,8 +15,8 @@ from coscc.data import Data
 
 class DefaultsAreTheSafePosture(unittest.TestCase):
     def test_default_is_no_tools_at_all(self):
-        # spec.md C2: the first agent profile is chat only — not even a read tool.
-        # Loosening this means editing this test by name. That is the point of it.
+        # The first agent profile is chat only — not even a read tool. Loosening this means editing
+        # this test by name. That is the point of it.
         self.assertEqual(from_env({}).effective_tools(), [])
 
     def test_write_and_exec_off_by_default(self):
@@ -97,20 +94,15 @@ class Parsing(unittest.TestCase):
     def test_workspaces_default_to_the_working_directory(self):
         self.assertEqual(len(from_env({}).workspaces), 1)
 
-    def test_every_interface_by_default_since_0011(self):
-        # `0001` R5 said the opposite and meant it: a non-loopback bind had to be typed
-        # out by a human rather than inherited. `0011` reversed it by decision, not by
-        # drift -- see the module docstring in `coscc/config.py` for who and when, and
-        # `coscc/run_test.py` for the warning that now carries the weight this default
-        # used to carry.
+    def test_every_interface_by_default_since(self):
         self.assertEqual(from_env({}).host, "0.0.0.0")
 
     def test_the_old_default_is_still_reachable_by_hand(self):
         self.assertEqual(from_env({"COS_HOST": "127.0.0.1"}).host, "127.0.0.1")
 
     def test_an_empty_setting_reads_as_unset(self):
-        # `0017` review F1: `child_env` overrides every `COS_*` with "", so this is what
-        # a session started by an app launched with `COS_HOST`/`COS_PORT` set reads.
+        # `child_env` overrides every `COS_*` with "", so this is what a session started by an app
+        # launched with `COS_HOST`/`COS_PORT` set reads.
         c = from_env({"COS_HOST": "", "COS_PORT": "", "COS_BYPASS_PERMISSIONS": ""})
         self.assertEqual((c.host, c.port, c.bypass_permissions), ("0.0.0.0", 8790, False))
 
@@ -144,7 +136,7 @@ class TheCwdFallback(unittest.TestCase):
 
 
 class TheDataDirectory(unittest.TestCase):
-    """R1. The setting that says where the app keeps its own state."""
+    """The setting that says where the app keeps its own state."""
 
     def test_unset_means_the_module_default_rather_than_a_path_here(self):
         """`Config` carries `None`, and `data.Data` turns that into `~/.cos`.
@@ -162,7 +154,7 @@ class TheDataDirectory(unittest.TestCase):
         self.assertIsNone(from_env({"COS_DATA_DIR": "   "}).data_dir)
 
     def test_it_is_independent_of_the_working_folder(self):
-        """`spec.md` R4: the data root holds no workspace, and moving one does not move the other."""
+        """The data root holds no workspace, and moving one does not move the other."""
         c = from_env({"COS_WORKING_DIR": "/tmp/ws", "COS_DATA_DIR": "/tmp/cosdata"})
         self.assertEqual(c.working_dir, "/tmp/ws")
         self.assertEqual(c.data_dir, "/tmp/cosdata")
@@ -175,8 +167,6 @@ class TheDataDirectory(unittest.TestCase):
 
 
 class TheUpdaterSettings(unittest.TestCase):
-    """`.cos/0068_updating-the-app-is-a-manual-reinstall` R2, R3 and R6."""
-
     def test_checking_for_updates_is_on_unless_turned_off(self):
         self.assertTrue(from_env({}).update_check)
         self.assertTrue(from_env({"COS_UPDATE_CHECK": ""}).update_check)
@@ -188,9 +178,14 @@ class TheUpdaterSettings(unittest.TestCase):
         self.assertEqual(from_env({"COS_UPDATE_LOCAL_FROM": " coscc "}).update_local_from, "coscc")
 
     def test_uv_is_looked_for_where_install_sh_looks_and_in_that_order(self):
-        c = from_env({
-            "PATH": "/usr/bin:/bin", "HOME": "/h", "UV_INSTALL_DIR": "/uvi", "XDG_BIN_HOME": "/xb",
-        })
+        c = from_env(
+            {
+                "PATH": "/usr/bin:/bin",
+                "HOME": "/h",
+                "UV_INSTALL_DIR": "/uvi",
+                "XDG_BIN_HOME": "/xb",
+            }
+        )
         self.assertEqual(
             c.uv_candidates,
             ("/usr/bin", "/bin", "/uvi", "/xb", "/h/.local/bin", "/h/.cargo/bin"),
@@ -213,7 +208,7 @@ class TheUpdaterSettings(unittest.TestCase):
 
 
 class TheEffortTrialIsGone(unittest.TestCase):
-    """`0139` R18: `COS_EFFORT_TRIAL` is no longer read; the model trial needs no flag."""
+    """`COS_EFFORT_TRIAL` is no longer read; the model trial needs no flag."""
 
     def test_cos_effort_trial_is_not_a_setting(self):
         self.assertFalse(hasattr(Config(), "effort_trial"))
@@ -221,7 +216,7 @@ class TheEffortTrialIsGone(unittest.TestCase):
 
 
 class TheProtectedDatabases(unittest.TestCase):
-    """`0076` R4. Every test passes `env`; none reads the environment around it."""
+    """Every test passes `env`; none reads the environment around it."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp()).resolve()

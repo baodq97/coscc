@@ -1,5 +1,5 @@
-"""Tests for `BacklogMixin` in `coscc/service/backlog.py`, split from `coscc/service/service_test.py` (`0095`).
-"""
+"""Tests for `BacklogMixin` in `coscc/service/backlog.py`, split from
+`coscc/service/service_test.py`."""
 
 from __future__ import annotations
 
@@ -23,12 +23,11 @@ from coscc.agent.submit_test import submits as _submits
 
 
 class TheUnitHistoryReadPath(unittest.TestCase):
-    """`0013` R8. The log read through the one place logic lives.
+    """The log read through the one place logic lives.
 
     Written against a temporary working folder and data root rather than this repository's
     real `~/.cos` — `coscc/runlog/journal.py:108-109` names that hazard and the two new tables
-    inherit it unchanged.
-    """
+    inherit it unchanged."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -58,20 +57,39 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         self.assertEqual(found["state"]["intent.md"], found["transitions"][-1]["to_state"])
         self.assertEqual(found["state"]["intent.md"], "accepted")
 
-    def test_0136_r20_the_timeline_carries_each_transition_with_its_guards_label(self):
+    def test_the_timeline_carries_each_transition_with_its_guards_label(self):
         log = self._log()
         log.record(REPO, "0001_a-problem", "intent.md", "draft")
-        log.record(REPO, "0001_a-problem", "ship.md", "accepted", guard="merge-read", authority="code",
-                   run="r-1", inputs={"merge_commit": "f" * 40, "number": 7})
+        log.record(
+            REPO,
+            "0001_a-problem",
+            "ship.md",
+            "accepted",
+            guard="merge-read",
+            authority="code",
+            run="r-1",
+            inputs={"merge_commit": "f" * 40, "number": 7},
+        )
         old, merged = self.service.timeline(REPO, "0001_a-problem")["transitions"]
-        # A row from before `0136` names no guard, and the page says so rather than guessing.
         self.assertEqual((old["guard"], old["guard_label"], old["head"]), ("unknown", "", ""))
         self.assertEqual(
-            (merged["guard_label"], merged["authority"], merged["run"], merged["head"], merged["inputs"]["number"]),
-            ("A merge is recorded only from a read that names its merge commit.", "code", "r-1", "f" * 40, 7),
+            (
+                merged["guard_label"],
+                merged["authority"],
+                merged["run"],
+                merged["head"],
+                merged["inputs"]["number"],
+            ),
+            (
+                "A merge is recorded only from a read that names its merge commit.",
+                "code",
+                "r-1",
+                "f" * 40,
+                7,
+            ),
         )
 
-    def test_it_counts_the_edits_after_settling_that_0013_exists_to_count(self):
+    def test_it_counts_the_edits_after_settling_that_exists_to_count(self):
         log = self._log()
         log.record(REPO, "0001_a-problem", "intent.md", "draft")
         log.record(REPO, "0001_a-problem", "intent.md", "accepted")
@@ -83,7 +101,7 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         log.record(REPO, "0099_retired", "intent.md", "accepted")
         self.assertEqual(self.service.units_with_history(REPO)["units"], ["0099_retired"])
 
-    def test_0093_cost_and_unit_cost_read_the_run_log(self):
+    def test_cost_and_unit_cost_read_the_run_log(self):
         j = self.service._journal()
         key = self.service._journal_key(REPO)
         j.finished(key, "0001_a-problem", "spec", "done", cost_usd=2.0)
@@ -91,18 +109,24 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         j.finished(key, "0002_other", "plan", "done", cost_usd=20.0)
         found = self.service.cost(REPO, {"0001_a-problem": ["changes-requested"]})
         self.assertTrue(found["recording"])
-        self.assertEqual([(r["key"], r["usd"], r["over"]) for r in found["by_unit"]],
-                         [("0002_other", 20.0, True), ("0001_a-problem", 2.0, False)])
+        self.assertEqual(
+            [(r["key"], r["usd"], r["over"]) for r in found["by_unit"]],
+            [("0002_other", 20.0, True), ("0001_a-problem", 2.0, False)],
+        )
         self.assertEqual(found["waste"][-1]["count"], 1)
         mine = self.service.unit_cost(REPO, "0001_a-problem")
-        self.assertEqual([(r["key"], r["steps"], r["unknown"]) for r in mine["by_stage"]], [("spec", 2, 1)])
+        self.assertEqual(
+            [(r["key"], r["steps"], r["unknown"]) for r in mine["by_stage"]], [("spec", 2, 1)]
+        )
         self.assertEqual([a["kind"] for a in mine["anomalies"]], ["failed"])
 
-    def test_0093_cost_with_no_working_folder_says_it_is_not_recording(self):
+    def test_cost_with_no_working_folder_says_it_is_not_recording(self):
         service = _service()
         self.assertFalse(service.cost(REPO)["recording"])
-        self.assertEqual(service.unit_cost(REPO, "0001_a-problem"),
-                         {"by_stage": [], "anomalies": [], "recording": False})
+        self.assertEqual(
+            service.unit_cost(REPO, "0001_a-problem"),
+            {"by_stage": [], "anomalies": [], "recording": False},
+        )
 
     def test_the_gate_applies_to_both_reads(self):
         for call in (
@@ -120,8 +144,8 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         self.assertFalse(service.units_with_history(REPO)["recording"])
 
     def test_a_unit_holding_rows_from_two_state_sets_says_so(self):
-        """`spec.md` C5: said out loud rather than refused, because refusing a read
-        would hide the only evidence that the two sets were ever mixed."""
+        """Said out loud rather than refused, because refusing a read would hide the only evidence
+        that the two sets were ever mixed."""
         import json
 
         from coscc.units import states
@@ -158,18 +182,13 @@ class TheUnitHistoryReadPath(unittest.TestCase):
 
 
 class StartingAUnitAndItsBranch(unittest.TestCase):
-    """`0014` R1 and R4, through the one place logic lives."""
-
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
-        # Since `0001_product-describes-a-state-it-is-not-in` a branch is cut from what
-        # `origin` has, so the repository needs one. A bare directory: no network.
+        # A bare directory: no network.
         self.remote = self.root / "remote.git"
-        subprocess.run(
-            ["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True
-        )
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         self.repo = self.root / "work" / "proj"
         self.repo.mkdir(parents=True)
         self._git("init", "-q", "-b", "main")
@@ -189,70 +208,83 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
 
     def _git(self, *args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(self.repo), "-c", "user.name=T",
-             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
 
     def test_a_new_unit_appears_on_the_board_it_was_created_for(self):
-        made = create_sync(self.service,str(self.repo), "a-first-problem", "some words")
+        made = create_sync(self.service, str(self.repo), "a-first-problem", "some words")
         board = asyncio.run(self.service.board(str(self.repo)))
         self.assertEqual([u["name"] for u in board["units"]], [made["unit"]])
 
     def test_nothing_of_it_lands_in_the_repository(self):
-        # `0013`'s decision, enforced. R2, and the whole reason the store exists.
-        create_sync(self.service,str(self.repo), "a-problem", "some words")
+        create_sync(self.service, str(self.repo), "a-problem", "some words")
         self.assertEqual(self._git("status", "--porcelain"), "")
         self.assertFalse((self.repo / ".cos").exists())
 
     def test_a_unit_takes_no_number_the_host_repository_already_used(self):
-        """`0001_product-describes-a-state-it-is-not-in` R10: `0015`, not `0001`."""
         for i in range(1, 15):
             (self.repo / ".cos" / f"{i:04d}_u{i}").mkdir(parents=True)
         before = sorted(p.name for p in (self.repo / ".cos").iterdir())
-        made = create_sync(self.service,str(self.repo), "fresh", "some words")
+        made = create_sync(self.service, str(self.repo), "fresh", "some words")
         self.assertEqual(made["unit"], "0015_fresh")
         self.assertEqual(sorted(p.name for p in (self.repo / ".cos").iterdir()), before)
 
     def test_a_bad_slug_comes_back_as_a_refusal_not_an_exception(self):
         with self.assertRaises(Invalid) as caught:
-            create_sync(self.service,str(self.repo), "Bad_Slug")
+            create_sync(self.service, str(self.repo), "Bad_Slug")
         self.assertIn("Bad_Slug", str(caught.exception))
 
     def test_the_gate_applies_to_creating_and_to_branching(self):
         with self.assertRaises(Invalid):
-            create_sync(self.service,"/etc", "a-problem")
+            create_sync(self.service, "/etc", "a-problem")
         with self.assertRaises(Invalid):
             asyncio.run(self.service.start_branch("/etc", "0001_a-problem"))
 
     def test_the_branch_is_refused_until_the_intent_says_what_type_this_is(self):
-        made = create_sync(self.service,str(self.repo), "a-problem", "some words")
+        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
         with self.assertRaises(Invalid) as caught:
             asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
         self.assertIn("intent.md", str(caught.exception))
 
     def test_the_branch_name_is_the_one_the_intents_type_implies(self):
-        made = create_sync(self.service,str(self.repo), "a-problem", "some words")
+        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
         directory = Path(made["path"])
         (directory / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
         got = asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
         self.assertEqual(got["branch"], "fix/a-problem")
-        # `0017`: cut in the unit's worktree; the workspace stays on `main` (R2).
+        # Cut in the unit's worktree; the workspace stays on `main`.
         self.assertEqual(asyncio.run(self.service.branch_here(str(self.repo)))["branch"], "main")
         tree = Path(got["worktree"])
         self.assertEqual(asyncio.run(gitops.current_branch(tree)), "fix/a-problem")
         self.assertTrue(got["prepare"]["ok"])
 
     def test_two_units_each_get_their_own_tree_and_the_workspace_never_moves(self):
-        """`0017` R1, R2."""
         a, b = self._typed_unit("a-problem"), self._typed_unit("b-problem")
         got_a = asyncio.run(self.service.start_branch(str(self.repo), a))
         got_b = asyncio.run(self.service.start_branch(str(self.repo), b))
         self.assertNotEqual(got_a["worktree"], got_b["worktree"])
-        self.assertEqual(asyncio.run(gitops.current_branch(Path(got_a["worktree"]))), "fix/a-problem")
-        self.assertEqual(asyncio.run(gitops.current_branch(Path(got_b["worktree"]))), "fix/b-problem")
+        self.assertEqual(
+            asyncio.run(gitops.current_branch(Path(got_a["worktree"]))), "fix/a-problem"
+        )
+        self.assertEqual(
+            asyncio.run(gitops.current_branch(Path(got_b["worktree"]))), "fix/b-problem"
+        )
         self.assertEqual(self._git("branch", "--show-current").strip(), "main")
         board = asyncio.run(self.service.board(str(self.repo)))
         trees = {u["name"]: u["worktree"] for u in board["units"]}
@@ -260,17 +292,18 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self.assertEqual(trees[b]["branch"], "fix/b-problem")
 
     def test_units_created_together_take_different_numbers(self):
-        """`0017` R8."""
+
         async def both():
             return await asyncio.gather(
                 self.service.create_unit(str(self.repo), "one-problem", "w"),
                 self.service.create_unit(str(self.repo), "two-problem", "w"),
             )
+
         made = asyncio.run(both())
         self.assertEqual(len({m["unit"][:4] for m in made}), 2)
 
     def test_cutting_the_same_branch_twice_is_refused_rather_than_rejoined(self):
-        made = create_sync(self.service,str(self.repo), "a-problem", "some words")
+        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
@@ -280,10 +313,8 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
             asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
         self.assertIn("already exists", str(caught.exception))
 
-    # --- `0001_product-describes-a-state-it-is-not-in` R6, R7, R8 ----------------
-
     def test_an_empty_board_counts_the_units_the_host_repository_holds(self):
-        """R6: the board is empty, the host's `.cos/` is not, and both are named."""
+        """The board is empty, the host's `.cos/` is not, and both are named."""
         for i in range(1, 15):
             (self.repo / ".cos" / f"{i:04d}_u{i}").mkdir(parents=True)
         board = asyncio.run(self.service.board(str(self.repo)))
@@ -295,12 +326,12 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         )
 
     def test_a_host_with_no_cos_directory_counts_zero(self):
-        """R7: nothing to explain, so the old sentence stays."""
+        """Nothing to explain, so the old sentence stays."""
         board = asyncio.run(self.service.board(str(self.repo)))
         self.assertEqual(board["empty"]["host_units"], 0)
 
     def test_the_count_is_taken_again_on_every_read(self):
-        """R8: no cache. One more directory, one more unit counted."""
+        """No cache. One more directory, one more unit counted."""
         for i in range(1, 15):
             (self.repo / ".cos" / f"{i:04d}_u{i}").mkdir(parents=True)
         asyncio.run(self.service.board(str(self.repo)))
@@ -309,14 +340,12 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self.assertEqual(board["empty"]["host_units"], 15)
 
     def test_a_board_with_units_carries_no_empty_explanation(self):
-        create_sync(self.service,str(self.repo), "a-problem", "some words")
+        create_sync(self.service, str(self.repo), "a-problem", "some words")
         board = asyncio.run(self.service.board(str(self.repo)))
         self.assertNotIn("empty", board)
 
-    # --- `0001_product-describes-a-state-it-is-not-in` R1, R2, R3 ----------------
-
     def _typed_unit(self, slug: str = "a-problem") -> str:
-        made = create_sync(self.service,str(self.repo), slug, "some words")
+        made = create_sync(self.service, str(self.repo), slug, "some words")
         (Path(made["path"]) / "intent.md").write_text(
             f"# Intent: {slug}\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
@@ -328,9 +357,21 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         if not other.exists():
             subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True)
         run = lambda *a: subprocess.run(  # noqa: E731
-            ["git", "-C", str(other), "-c", "user.name=T", "-c", "user.email=t@example.invalid",
-             "-c", "commit.gpgsign=false", *a],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(other),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *a,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         run("pull", "-q", "--ff-only")
         (other / name).write_text(text, encoding="utf-8")
@@ -340,7 +381,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         return run("rev-parse", "HEAD")
 
     def test_the_branch_is_cut_from_the_remote_trunk_not_the_stale_local_one(self):
-        """R1: local `main` one commit behind; the branch lands on the remote's commit."""
+        """Local `main` one commit behind; the branch lands on the remote's commit."""
         ahead = self._advance_remote()
         local = self._git("rev-parse", "main").strip()
         self.assertNotEqual(local, ahead)
@@ -351,14 +392,13 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self.assertEqual(self._git("rev-parse", "main").strip(), local)
 
     def test_the_result_names_the_ref_and_the_commit_it_was_cut_from(self):
-        """R3."""
         self._advance_remote()
         got = asyncio.run(self.service.start_branch(str(self.repo), self._typed_unit()))
         self.assertEqual(got["base"], "origin/main")
         self.assertEqual(got["sha"], self._git("rev-parse", "--short=7", "origin/main").strip())
 
     def test_a_fetch_that_fails_cuts_nothing_and_says_so(self):
-        """R2. And, because there is no remote to reach, spec OQ4 too."""
+        """And, because there is no remote to reach, spec OQ4 too."""
         unit = self._typed_unit()
         self._git("remote", "set-url", "origin", str(self.root / "gone.git"))
         before = self._git("rev-parse", "HEAD").strip()
@@ -388,11 +428,10 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self.assertIn("README.md", self._git("status", "--porcelain"))
 
     def test_a_dirty_tree_that_touches_a_file_the_remote_changed_cuts_nothing(self):
-        """Plan Risk 5, second half: `switch -c` refuses, and creates no branch.
+        """`switch -c` refuses, and creates no branch.
 
-        Since `0017` the tree that matters is the unit's own worktree; the workspace's
-        dirt is no longer in the way of anything.
-        """
+        The tree that matters is the unit's own worktree; the workspace's dirt is in the way of
+        nothing."""
         self._advance_remote("README.md", "changed elsewhere\n")
         unit = self._typed_unit()
         tree = worktrees.path(str(self.repo), unit, str(self.root / "data"))
@@ -404,16 +443,32 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
 
 
 class TheBacklogIsDisplayOnly(unittest.TestCase):
-    """`0074`. Three write paths, one paid proposal, one field on `start` — and the board's
-    `next` and `blocked` exactly as they were (R15), with no file of the store touched (R16)."""
+    """Three write paths, one paid proposal, one field on `start` — and the board's `next` and
+    `blocked` exactly as they were, with no file of the store touched."""
 
-    # `0136` R9: the object the session hands back through `submit`.
-    GOOD = {"units": [
-        {"unit": "0001_idea-only", "value": 4, "effort": "S", "similar": [], "basis": "bớt can thiệp tay: x",
-         "relations": [{"type": "liên quan", "other": "0002_has-intent", "reason": "cùng màn"}]},
-        {"unit": "0002_has-intent", "value": 2, "effort": "M", "similar": [], "basis": "cảm thấy vậy",
-         "relations": []},
-    ]}
+    # The object the session hands back through `submit`.
+    GOOD = {
+        "units": [
+            {
+                "unit": "0001_idea-only",
+                "value": 4,
+                "effort": "S",
+                "similar": [],
+                "basis": "bớt can thiệp tay: x",
+                "relations": [
+                    {"type": "liên quan", "other": "0002_has-intent", "reason": "cùng màn"}
+                ],
+            },
+            {
+                "unit": "0002_has-intent",
+                "value": 2,
+                "effort": "M",
+                "similar": [],
+                "basis": "cảm thấy vậy",
+                "relations": [],
+            },
+        ]
+    }
 
     class Replies:
         def __init__(self, obj, gate=None):
@@ -440,8 +495,11 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.repo.mkdir(parents=True)
         self.sessions = self.Replies(self.GOOD)
         self.service = Service(
-            Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
-                   data_dir=str(self.root / "data")),
+            Config(
+                workspaces=(str(self.repo),),
+                working_dir=str(self.root / "work"),
+                data_dir=str(self.root / "data"),
+            ),
             self.sessions,
         )
         self.cwd = str(self.repo)
@@ -449,11 +507,15 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         made = create_sync(self.service, self.cwd, "has-intent", "words")
         self.b = made["unit"]
         (Path(made["path"]) / "intent.md").write_text(
-            "# Intent: b\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n", encoding="utf-8")
+            "# Intent: b\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n",
+            encoding="utf-8",
+        )
         done = Path(create_sync(self.service, self.cwd, "finished", "words")["path"])
         for name in ("intent", "spec", "plan"):
             status = "done" if name == "plan" else "accepted"
-            (done / f"{name}.md").write_text(f"# {name}\nAuthor: t. Status: {status}.\n", encoding="utf-8")
+            (done / f"{name}.md").write_text(
+                f"# {name}\nAuthor: t. Status: {status}.\n", encoding="utf-8"
+            )
         self.journal = self.service._journal()
         self.key = self.service._journal_key(self.cwd)
 
@@ -462,15 +524,19 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
 
     def store_hash(self):
         units_root = self.service._units_root(self.cwd)
-        return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(units_root.rglob("*")) if p.is_file()}
+        return {
+            str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(units_root.rglob("*"))
+            if p.is_file()
+        }
 
-    def test_r1_the_board_carries_the_backlog(self):
+    def test_the_board_carries_the_backlog(self):
         data = self.board()
         self.assertEqual(data["backlog"]["backlog"], [self.a, self.b])
         self.assertEqual(data["backlog"]["shortlist"], [])
         self.assertTrue(data["backlog"]["propose_warning"])
 
-    def test_r15_only_the_new_keys_differ_after_every_kind_of_record(self):
+    def test_only_the_new_keys_differ_after_every_kind_of_record(self):
         def strip(data):
             data = json.loads(json.dumps(data))
             data.pop("backlog")
@@ -480,30 +546,44 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
 
         before = self.board()
         asyncio.run(self.service.record_estimate(self.cwd, self.a, 4, "S", "vì", "Leif"))
-        asyncio.run(self.service.record_relation(self.cwd, self.a, self.b, "phụ thuộc", "add", "r", "Leif"))
+        asyncio.run(
+            self.service.record_relation(self.cwd, self.a, self.b, "phụ thuộc", "add", "r", "Leif")
+        )
         asyncio.run(self.service.record_shortlist(self.cwd, [self.a], "r", "Leif"))
         after = self.board()
         self.assertEqual(strip(before), strip(after))
-        self.assertEqual([(u["next"], u["blocked"]) for u in before["units"]],
-                         [(u["next"], u["blocked"]) for u in after["units"]])
+        self.assertEqual(
+            [(u["next"], u["blocked"]) for u in before["units"]],
+            [(u["next"], u["blocked"]) for u in after["units"]],
+        )
         self.assertEqual(after["backlog"]["shortlist"][0]["unit"], self.a)
-        self.assertEqual(next(u for u in after["units"] if u["name"] == self.a)["backlog"]["rank"], 1)
+        self.assertEqual(
+            next(u for u in after["units"] if u["name"] == self.a)["backlog"]["rank"], 1
+        )
 
-    def test_r16_three_writes_touch_no_file_and_refusals_insert_nothing(self):
+    def test_three_writes_touch_no_file_and_refusals_insert_nothing(self):
         before = self.store_hash()
         refusals = [
             lambda: self.service.record_estimate(self.cwd, self.a, 9, "S", "x", "Leif"),
             lambda: self.service.record_estimate(self.cwd, self.a, 3, "S", "x", "agent:me"),
             lambda: self.service.record_estimate(self.cwd, "0003_finished", 3, "S", "x", "Leif"),
-            lambda: self.service.record_relation(self.cwd, self.a, self.a, "trùng", "add", "r", "Leif"),
-            lambda: self.service.record_shortlist(self.cwd, [self.a], "r", "Leif"),  # no estimate yet
+            lambda: self.service.record_relation(
+                self.cwd, self.a, self.a, "trùng", "add", "r", "Leif"
+            ),
+            lambda: self.service.record_shortlist(
+                self.cwd, [self.a], "r", "Leif"
+            ),  # no estimate yet
         ]
         for call in refusals:
             with self.assertRaises(Invalid):
                 asyncio.run(call())
-        self.assertEqual(self.journal.records(self.key, kinds=("estimate-value", "relation", "shortlist")), [])
+        self.assertEqual(
+            self.journal.records(self.key, kinds=("estimate-value", "relation", "shortlist")), []
+        )
         asyncio.run(self.service.record_estimate(self.cwd, self.a, "4", "S", "vì", "Leif"))
-        asyncio.run(self.service.record_relation(self.cwd, self.a, self.b, "trùng", "add", "r", "Leif"))
+        asyncio.run(
+            self.service.record_relation(self.cwd, self.a, self.b, "trùng", "add", "r", "Leif")
+        )
         asyncio.run(self.service.record_shortlist(self.cwd, [self.a], "r", "Leif"))
         self.assertEqual(self.store_hash(), before)
         self.assertEqual(self.board()["backlog"]["shortlist"][0]["estimate"]["value"], 4)
@@ -519,7 +599,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
             pass
         return self.journal.records(self.key, self.b, kind="start")[-1]
 
-    def test_r14_the_start_record_says_where_the_unit_stood(self):
+    def test_the_start_record_says_where_the_unit_stood(self):
         first = self._start_of_spec()
         self.assertEqual(first["shortlist"], {"rank": None, "of": None, "record": None})
         asyncio.run(self.service.record_estimate(self.cwd, self.b, 3, "M", "vì", "Leif"))
@@ -528,8 +608,9 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.assertEqual((second["shortlist"]["rank"], second["shortlist"]["of"]), (1, 1))
         self.assertEqual(second["shortlist"]["record"]["n"], 1)
 
-    def test_r14_a_busy_run_log_still_starts_the_step(self):
-        from coscc.runlog.journal import Busy, Journal
+    def test_a_busy_run_log_still_starts_the_step(self):
+        from coscc.runlog.journal import Journal
+        from coscc.data import Busy
 
         real = Journal.records
 
@@ -552,18 +633,23 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
 
         return asyncio.run(go())
 
-    def test_r18_a_basis_with_no_goal_drops_only_that_unit(self):
+    def test_a_basis_with_no_goal_drops_only_that_unit(self):
         done = self._propose()[-1][1]["estimate"]
         self.assertEqual(done["outcome"], "done")
         self.assertEqual(done["written"], 2)  # one estimate, one relation
         self.assertEqual([r["unit"] for r in done["rejected"]], [self.b])
         values = self.journal.records(self.key, kind="estimate-value")
-        self.assertEqual([(v["unit"], v["by"], v["authority"]) for v in values], [(self.a, "agent:sess-1", "agent")])
-        ends = [r for r in self.journal.records(self.key, kind="end") if r.get("stage") == "estimate"]
+        self.assertEqual(
+            [(v["unit"], v["by"], v["authority"]) for v in values],
+            [(self.a, "agent:sess-1", "agent")],
+        )
+        ends = [
+            r for r in self.journal.records(self.key, kind="end") if r.get("stage") == "estimate"
+        ]
         self.assertEqual((ends[-1]["outcome"], ends[-1]["cost_usd"]), ("done", 0.12))
 
-    def test_r18_a_session_that_hands_back_no_object_writes_no_estimate(self):
-        """`0136` R9: even when its reply holds the estimate as a JSON block."""
+    def test_a_session_that_hands_back_no_object_writes_no_estimate(self):
+        """Even when its reply holds the estimate as a JSON block."""
         import json
 
         self.sessions.text = "```json\n" + json.dumps(self.GOOD) + "\n```"
@@ -573,7 +659,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.assertIn("no-submission", done["detail"])
         self.assertEqual(self.journal.records(self.key, kind="estimate-value"), [])
 
-    def test_r18_a_second_press_while_one_runs_is_refused_and_spends_nothing(self):
+    def test_a_second_press_while_one_runs_is_refused_and_spends_nothing(self):
         async def go():
             gate = asyncio.Event()
             self.sessions.gate = gate
@@ -594,6 +680,6 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
 
         jobs = asyncio.run(go())
         self.assertEqual(self.sessions.calls, 1)
-        # `0138` C10: an update pauses a running estimate instead of waiting for it.
+        # An update pauses a running estimate instead of waiting for it.
         self.assertEqual(jobs, [])
         self.assertEqual(self.service._active, {})

@@ -1,5 +1,5 @@
-"""Tests for `the rows, cards and pure functions` in `coscc/state/views.py`, split from `coscc/state/state_test.py` (`0095`).
-"""
+"""Tests for `the rows, cards and pure functions` in `coscc/state/views.py`, split from
+`coscc/state/state_test.py`."""
 
 from __future__ import annotations
 
@@ -11,10 +11,11 @@ from pathlib import Path
 
 from coscc.units.meta_test import snapshot_of
 from coscc.state.state_test import SOURCE, _self_names, _source_text, _state_class
+from coscc.state import views
 
 
 class TheAutopilotBlockIsCopied(unittest.TestCase):
-    """`0043` R9. The board's `autopilot` block, shown as it came: a row per stop, one cap line."""
+    """The board's `autopilot` block, shown as it came: a row per stop, one cap line."""
 
     def test_stops_and_cap(self):
         from types import SimpleNamespace
@@ -22,48 +23,79 @@ class TheAutopilotBlockIsCopied(unittest.TestCase):
         from coscc.state import AutopilotStop, StudioState
 
         page = SimpleNamespace()
-        StudioState._show_autopilot_block(page, {
-            "on": True, "refused_because": "",
-            "stops": [{"unit": "0010_a", "kind": "a", "reason": "open questions: spec.md question 2"},
-                      {"unit": "", "kind": "cap", "reason": "over"}],
-            "cap": {"limit": 50.0, "spent": 3.5, "running": 4.0, "day": "2026-10-01"},
-        })
+        StudioState._show_autopilot_block(
+            page,
+            {
+                "on": True,
+                "refused_because": "",
+                "stops": [
+                    {"unit": "0010_a", "kind": "a", "reason": "open questions: spec.md question 2"},
+                    {"unit": "", "kind": "cap", "reason": "over"},
+                ],
+                "cap": {"limit": 50.0, "spent": 3.5, "running": 4.0, "day": "2026-10-01"},
+            },
+        )
         self.assertTrue(page.autopilot_on)
-        self.assertEqual(page.autopilot_stops, [
-            AutopilotStop("0010_a", "Open question", "open questions: spec.md question 2"),
-            AutopilotStop("the workspace", "Daily cap", "over"),
-        ])
+        self.assertEqual(
+            page.autopilot_stops,
+            [
+                AutopilotStop("0010_a", "Open question", "open questions: spec.md question 2"),
+                AutopilotStop("the workspace", "Daily cap", "over"),
+            ],
+        )
         self.assertEqual(page.autopilot_cap, "Today: 3.50 spent, 4.00 running, cap 50.00 USD")
-        StudioState._show_autopilot_block(page, {"on": True, "cap": {
-            "limit": 80.0, "spent": 68.0, "known": 20.0, "estimated": 48.0, "estimated_count": 5, "running": 0.0,
-        }})
-        self.assertEqual(page.autopilot_cap, "Today: 68.00 spent, 48.00 of it estimated, 0.00 running, cap 80.00 USD")
+        StudioState._show_autopilot_block(
+            page,
+            {
+                "on": True,
+                "cap": {
+                    "limit": 80.0,
+                    "spent": 68.0,
+                    "known": 20.0,
+                    "estimated": 48.0,
+                    "estimated_count": 5,
+                    "running": 0.0,
+                },
+            },
+        )
+        self.assertEqual(
+            page.autopilot_cap,
+            "Today: 68.00 spent, 48.00 of it estimated, 0.00 running, cap 80.00 USD",
+        )
         StudioState._show_autopilot_block(page, {"on": False})
-        self.assertEqual((page.autopilot_on, page.autopilot_stops, page.autopilot_cap), (False, [], ""))
+        self.assertEqual(
+            (page.autopilot_on, page.autopilot_stops, page.autopilot_cap), (False, [], "")
+        )
 
     def test_no_shortlist_has_its_own_label(self):
-        """`0104` R9."""
         from types import SimpleNamespace
 
         from coscc.units import autopilot
         from coscc.state import AutopilotStop, StudioState
 
         page = SimpleNamespace()
-        StudioState._show_autopilot_block(page, {"on": True, "stops": [
-            {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST},
-        ]})
-        self.assertEqual(page.autopilot_stops, [
-            AutopilotStop(unit="the workspace", kind="No shortlist", reason=autopilot.NO_SHORTLIST),
-        ])
+        StudioState._show_autopilot_block(
+            page,
+            {
+                "on": True,
+                "stops": [
+                    {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST},
+                ],
+            },
+        )
+        self.assertEqual(
+            page.autopilot_stops,
+            [
+                AutopilotStop(
+                    unit="the workspace", kind="No shortlist", reason=autopilot.NO_SHORTLIST
+                ),
+            ],
+        )
 
 
 class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
-    """`0001_product-describes-a-state-it-is-not-in` R4/R5, from this store, asked of the
-    stage columns and states of `0100` rather than the lanes they replaced.
-
-    The dict is the shape `coscc/units/board.py` hands over for a unit started from the page:
-    one accepted `idea.md`, nothing else, `next` pointing at the intent.
-    """
+    """The dict is the shape `coscc/units/board.py` hands over for a unit started from the page:
+    one accepted `idea.md`, nothing else, `next` pointing at the intent."""
 
     def _fresh(self, phase: str) -> dict:
         stages = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
@@ -88,7 +120,7 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         from coscc.units.meta_test import WithSnapshot
 
         board = WithSnapshot(_board)
-        from coscc.service import unit_state
+        from coscc.service.common import unit_state
 
         with tempfile.TemporaryDirectory() as d:
             unit = Path(d) / ".cos" / "0015_fresh"
@@ -99,22 +131,28 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         self.assertEqual(unit_state(u | {"integration": None}, None, None)["state"], "ready")
 
     def test_a_unit_with_problems_is_an_error(self):
-        """`0100` C3: an artifact that cannot be read is something a re-run fixes."""
-        from coscc.service import unit_state
+        """An artifact that cannot be read is something a re-run fixes."""
+        from coscc.service.common import unit_state
 
         unit = self._fresh("started") | {"problems": ["no intent.md — every unit opens with one"]}
         self.assertEqual(unit_state(unit, None, None)["state"], "error")
 
     def test_the_dialog_of_a_unit_with_problems_does_not_say_it_needs_a_person(self):
-        """`0100` review F1. The dialog's header draws `state_reason`, never the raw
-        `attention_reason`, which calls this unit "Needs a person" beside `Error`."""
-        from coscc.service import attention_reason, unit_state
+        """The dialog's header draws `state_reason`, never the raw `attention_reason`, which calls
+        this unit "Needs a person" beside `Error`."""
+        from coscc.service.common import attention_reason
+        from coscc.service.common import unit_state
         from coscc.state import Unit, _shown
 
         unit = self._fresh("started") | {"problems": ["no intent.md — every unit opens with one"]}
         decided = unit_state(unit, None, None)
-        page = Unit(id=unit["name"], attention_reason=attention_reason(unit), decided_state=decided["state"],
-                    decided_label=decided["label"], decided_color=decided["color"])
+        page = Unit(
+            id=unit["name"],
+            attention_reason=attention_reason(unit),
+            decided_state=decided["state"],
+            decided_label=decided["label"],
+            decided_color=decided["color"],
+        )
         self.assertEqual(page.attention_reason, "Needs a person")
         self.assertEqual(_shown(page, {})["state"], "error")
         self.assertEqual(_shown(page, {})["state_reason"], "")
@@ -123,11 +161,15 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         self.assertIn("current_unit.state_reason", screens)
 
     def test_a_review_that_asked_for_changes_is_ready(self):
-        """`0015`, `0100` C6: the unit waits on a fix a step makes, not on a person."""
-        from coscc.service import unit_state
-        from coscc.state import STATUS_COLOR
+        """The unit waits on a fix a step makes, not on a person."""
+        from coscc.service.common import unit_state
+        from coscc.state.views import STATUS_COLOR
 
-        unit = self._fresh("started") | {"why": "changes-requested", "at": "review", "between_pr_and_ship": True}
+        unit = self._fresh("started") | {
+            "why": "changes-requested",
+            "at": "review",
+            "between_pr_and_ship": True,
+        }
         for row in unit["stages"]:
             row["status"] = "accepted" if row["stage"] not in ("review", "ship") else "not started"
             if row["stage"] == "review":
@@ -137,7 +179,8 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
 
 
 class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
-    """`0016` R7 and R8, on one temporary `.cos/` read the way the page reads it."""
+    """Open questions are copied from `status --json`, not recounted, on one temporary `.cos/` read
+    the way the page reads it."""
 
     TEXT = (
         "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n"
@@ -148,7 +191,6 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
     def _both(self) -> tuple[dict, dict]:
         """The unit as `status --json` printed it, and as `coscc/units/board.py` handed it on."""
         import asyncio
-        import json
         import subprocess
         import tempfile
 
@@ -163,8 +205,11 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
             unit.mkdir(parents=True)
             (unit / "intent.md").write_text(self.TEXT, encoding="utf-8")
             raw = subprocess.run(
-                ["node", str(harness.script()), "--root", d, "--state", "-", "status", "--json"], input=json.dumps(snapshot_of(d)),
-                capture_output=True, text=True, check=True,
+                ["node", str(harness.script()), "--root", d, "--state", "-", "status", "--json"],
+                input=json.dumps(snapshot_of(d)),
+                capture_output=True,
+                text=True,
+                check=True,
             ).stdout
             [from_script] = json.loads(raw)["units"]
             [through_board] = asyncio.run(board.read(d))["units"]
@@ -183,18 +228,19 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
         )
 
     def test_an_open_question_alone_puts_a_unit_in_needs_you(self):
-        """Reversed by `0100` on purpose (`intent.md ## Answers, câu 3`): until then an open
-        question was a number on the card and moved the unit into no lane (`0016` R8)."""
-        from coscc.service import unit_state
+        """An open question alone puts the unit in `needs-you`; it is not just a number on the card
+        with the unit in no lane."""
+        from coscc.service.common import unit_state
 
         _, through_board = self._both()
         self.assertGreater(through_board["open"], 0)
-        self.assertEqual(unit_state(through_board | {"integration": None}, None, None)["state"], "needs-you")
+        self.assertEqual(
+            unit_state(through_board | {"integration": None}, None, None)["state"], "needs-you"
+        )
 
 
 class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
-    """`0045` R14, R16. The card's hold is `cos.mjs`'s; the handler calls `SERVICE.hold` and
-    never a step."""
+    """The card's hold is `cos.mjs`'s; the handler calls `SERVICE.hold` and never a step."""
 
     TEXT = (
         "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n## Answers\n\n"
@@ -218,7 +264,13 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
             [u] = asyncio.run(board.read(d))["units"]
         got = _hold_fields(u)
         self.assertEqual(
-            (got["hold_state"], got["hold_reason"], got["hold_by"], got["hold_date"], got["hold_moves"]),
+            (
+                got["hold_state"],
+                got["hold_reason"],
+                got["hold_by"],
+                got["hold_date"],
+                got["hold_moves"],
+            ),
             ("dropped", "không đáng", "Leif", "2026-09-24", ["paused"]),
         )
         self.assertEqual(_hold_fields({})["hold_state"], "")
@@ -226,33 +278,46 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
     def test_the_activity_row_says_which_pull_requests_were_already_closed(self):
         from coscc.state import _hold_detail
 
-        row = {"reason": "không đáng", "by": "Leif", "effects": [
-            {"effect": "close-pr", "result": "failed", "detail": "closed #7; #9: HTTP 502: Bad Gateway"},
-            {"effect": "remove-worktree", "result": "done", "detail": "removed /t"},
-        ]}
+        row = {
+            "reason": "không đáng",
+            "by": "Leif",
+            "effects": [
+                {
+                    "effect": "close-pr",
+                    "result": "failed",
+                    "detail": "closed #7; #9: HTTP 502: Bad Gateway",
+                },
+                {"effect": "remove-worktree", "result": "done", "detail": "removed /t"},
+            ],
+        }
         self.assertEqual(
             _hold_detail(row),
             " / không đáng / by Leif / close-pr: failed (closed #7; #9: HTTP 502: Bad Gateway)",
         )
 
     def test_a_paused_unit_stays_in_its_stage_lane_and_a_dropped_one_leaves_for_its_group(self):
-        """`0133` spec C2. `0100` R8 had folded a paused unit into a group too."""
+        """A paused unit is not folded into a group: it keeps its stage lane, and only a dropped one
+        leaves for its group."""
         from types import SimpleNamespace
 
         from coscc.state import Card, StudioState
 
-        # `0053`: the lanes draw the cards `board_ids` names; each folded group draws the
-        # cards of its state and counts them with `group_counts`.
+        # The lanes draw the cards `board_ids` names; each folded group draws the cards of its state
+        # and counts them with `group_counts`.
         page = SimpleNamespace(
-            cards=[Card(id="a", hold_state="dropped", state="dropped"),
-                   Card(id="b", hold_state="paused", state="paused"), Card(id="c", state="ready")],
-            query="", focus="All work",
+            cards=[
+                Card(id="a", hold_state="dropped", state="dropped"),
+                Card(id="b", hold_state="paused", state="paused"),
+                Card(id="c", state="ready"),
+            ],
+            query="",
+            focus="All work",
         )
         cv = StudioState.computed_vars
         page.shown_ids = cv["shown_ids"].fget(page)
         self.assertEqual(cv["board_ids"].fget(page), ["b", "c"])
         self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "dropped": 1})
-        # Review F2: a group holds only what the search and the filter leave.
+        # A group holds only what the search and the filter leave.
         page.query = "b"
         page.shown_ids = cv["shown_ids"].fget(page)
         self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "dropped": 0})
@@ -263,7 +328,8 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
     def test_the_handler_calls_hold_and_no_step(self):
         tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
         [handler] = [
-            n for n in _state_class(tree).body
+            n
+            for n in _state_class(tree).body
             if isinstance(n, ast.AsyncFunctionDef) and n.name == "set_hold"
         ]
         text = "\n".join(ast.unparse(s) for s in handler.body[1:])  # past the docstring
@@ -271,21 +337,24 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
         for forbidden in ("run_step", "run_next", "SERVICE.integrate"):
             self.assertNotIn(forbidden, text)
         raised = next(
-            i for i, stmt in enumerate(handler.body)
-            if isinstance(stmt, ast.Assign) and "holding" in [x for t in stmt.targets for x in _self_names(t)]
+            i
+            for i, stmt in enumerate(handler.body)
+            if isinstance(stmt, ast.Assign)
+            and "holding" in [x for t in stmt.targets for x in _self_names(t)]
         )
         after = handler.body[raised + 1]
         self.assertTrue(isinstance(after, ast.Expr) and isinstance(after.value, ast.Yield))
 
 
 class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
-    """`0081` R8. The unit's `more_rounds` is `cos.mjs`'s; the handler calls
-    `SERVICE.more_rounds` and never a step."""
+    """The unit's `more_rounds` is `cos.mjs`'s; the handler calls `SERVICE.more_rounds` and never a
+    step."""
 
     def test_the_more_rounds_handler_calls_the_service_and_no_step(self):
         tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
         [handler] = [
-            n for n in _state_class(tree).body
+            n
+            for n in _state_class(tree).body
             if isinstance(n, ast.AsyncFunctionDef) and n.name == "allow_more_rounds"
         ]
         text = "\n".join(ast.unparse(s) for s in handler.body[1:])  # past the docstring
@@ -293,8 +362,10 @@ class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
         for forbidden in ("run_step", "run_next", "SERVICE.integrate"):
             self.assertNotIn(forbidden, text)
         raised = next(
-            i for i, stmt in enumerate(handler.body)
-            if isinstance(stmt, ast.Assign) and "granting_round" in [x for t in stmt.targets for x in _self_names(t)]
+            i
+            for i, stmt in enumerate(handler.body)
+            if isinstance(stmt, ast.Assign)
+            and "granting_round" in [x for t in stmt.targets for x in _self_names(t)]
         )
         after = handler.body[raised + 1]
         self.assertTrue(isinstance(after, ast.Expr) and isinstance(after.value, ast.Yield))
@@ -313,9 +384,11 @@ class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
         board = WithSnapshot(_board)
 
         [kw] = [
-            k for node in ast.walk(ast.parse(SOURCE.read_text(encoding="utf-8")))
+            k
+            for node in ast.walk(ast.parse(SOURCE.read_text(encoding="utf-8")))
             if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Unit"
-            for k in node.keywords if k.arg == "more_rounds"
+            for k in node.keywords
+            if k.arg == "more_rounds"
         ]
         code = compile(ast.Expression(kw.value), "state.py", "eval")
 
@@ -328,26 +401,34 @@ class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ):
             os.environ.pop("COS_REVIEW_ROUNDS", None)
-            for name, text in (("0001_stuck", review), ("0002_fine", review.split("\n## Round 2")[0])):
+            for name, text in (
+                ("0001_stuck", review),
+                ("0002_fine", review.split("\n## Round 2")[0]),
+            ):
                 unit = Path(d) / ".cos" / name
                 unit.mkdir(parents=True)
-                (unit / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
+                (unit / "intent.md").write_text(
+                    "# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+                )
                 for f in ("spec.md", "plan.md", "impl.md"):
                     (unit / f).write_text("Status: accepted.\n", encoding="utf-8")
-                (unit / "pr.md").write_text("PR: https://github.com/o/r/pull/3. Status: accepted.\n", encoding="utf-8")
+                (unit / "pr.md").write_text(
+                    "PR: https://github.com/o/r/pull/3. Status: accepted.\n", encoding="utf-8"
+                )
                 (unit / "review.md").write_text(text, encoding="utf-8")
             got = {u["name"]: u for u in asyncio.run(board.read(d))["units"]}
         self.assertIs(copy(got["0001_stuck"]), True)
         self.assertIs(copy(got["0002_fine"]), False)
         self.assertIs(copy({}), False)
         from coscc.state.views import Unit
+
         self.assertIs(Unit().more_rounds, False)
 
 
 class AnAskOutlivesItsWaiter(unittest.TestCase):
-    """`0056` review round 1, F2. A navigation cancels the `load_next` an arrival chained; the
-    `cos.mjs next` it was waiting on must not be cancelled with it — its `node` and `gh` would
-    run on unread — and the next waiter at that unit takes its answer."""
+    """A navigation cancels the `load_next` an arrival chained; the `cos.mjs next` it was waiting on
+    must not be cancelled with it — its `node` and `gh` would run on unread — and the next waiter at
+    that unit takes its answer."""
 
     def test_a_cancelled_waiter_leaves_the_ask_to_finish_and_be_joined(self):
         import asyncio
@@ -377,7 +458,7 @@ class AnAskOutlivesItsWaiter(unittest.TestCase):
             gate.set()
             answer = await second
             await asyncio.sleep(0)
-            return first.cancelled(), answer, dict(page._ASKING)
+            return first.cancelled(), answer, dict(views._ASKING)
 
         cancelled, answer, left = asyncio.run(go())
         self.assertTrue(cancelled)
@@ -412,20 +493,26 @@ class RunTargetCopies(unittest.TestCase):
     def test_it_copies_stage_and_action_and_nothing_else(self):
         from coscc.state import _run_target
 
-        self.assertEqual(_run_target({"stage": "impl", "action": "fix it", "blocked": True}), ("impl", "fix it"))
-        self.assertEqual(_run_target({"stage": "", "action": "needs a person"}), ("", "needs a person"))
+        self.assertEqual(
+            _run_target({"stage": "impl", "action": "fix it", "blocked": True}), ("impl", "fix it")
+        )
+        self.assertEqual(
+            _run_target({"stage": "", "action": "needs a person"}), ("", "needs a person")
+        )
         self.assertEqual(_run_target({}), ("", ""))
         # An action naming a stage is still not a stage.
         self.assertEqual(_run_target({"action": "then write-review again"})[0], "")
 
 
 class FindingsAwaitingAPersonAreCopied(unittest.TestCase):
-    """`0028` plan step 9. The Questions tab lists `cos.mjs`'s `personFindings`, and the run
-    frame shows `cos.mjs next`'s `waiting`; the page derives neither."""
+    """The Questions tab lists `cos.mjs`'s `personFindings`, and the run frame shows `cos.mjs
+    next`'s `waiting`; the page derives neither."""
 
     UNIT = {
         "open": 1,
-        "questions": [{"artifact": "intent.md", "n": 2, "text": "Two?", "answered": False, "counted": True}],
+        "questions": [
+            {"artifact": "intent.md", "n": 2, "text": "Two?", "answered": False, "counted": True}
+        ],
         "person_findings": [
             {"id": "F2", "reason": "no budget", "answered": True},
             {"id": "F3", "reason": "no gh", "answered": False},
@@ -459,12 +546,13 @@ class FindingsAwaitingAPersonAreCopied(unittest.TestCase):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for node in ast.walk(fn):
-                if isinstance(node, ast.Assign) and any("run_waiting" in _self_names(t) for t in node.targets):
+                if isinstance(node, ast.Assign) and any(
+                    "run_waiting" in _self_names(t) for t in node.targets
+                ):
                     setters.add(fn.name)
         self.assertEqual(setters, {"load_next"})
 
     def test_run_dropped_copies_and_absent_reads_as_none(self):
-        """`0027` review F1."""
         from coscc.state import _run_dropped
 
         self.assertEqual(_run_dropped({"stage": "review", "dropped": ["F2", "F3"]}), ["F2", "F3"])
@@ -477,7 +565,9 @@ class FindingsAwaitingAPersonAreCopied(unittest.TestCase):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for node in ast.walk(fn):
-                if isinstance(node, ast.Assign) and any("run_dropped" in _self_names(t) for t in node.targets):
+                if isinstance(node, ast.Assign) and any(
+                    "run_dropped" in _self_names(t) for t in node.targets
+                ):
                     setters.add(fn.name)
         self.assertEqual(setters, {"load_next"})
 
@@ -501,31 +591,60 @@ class TheQuestionsTabListsWhatWaits(unittest.TestCase):
         from coscc.state import StudioState, _questions
 
         _, asked = _questions(self.UNIT)
-        shown = StudioState.computed_vars["open_questions_here"].fget(SimpleNamespace(current_unit=SimpleNamespace(questions=asked)))
+        shown = StudioState.computed_vars["open_questions_here"].fget(
+            SimpleNamespace(current_unit=SimpleNamespace(questions=asked))
+        )
         self.assertEqual([q.key for q in shown], ["spec.md#2", "intent.md#1"])
 
 
 class TheBoardShowsTheGuardAndWhoseDecision(unittest.TestCase):
-    """`0136` R20, R15, R22. Copied from what the service sent; nothing decided here."""
+    """Copied from what the service sent; nothing decided here."""
 
     def test_a_transition_shows_its_guards_label_and_authority_and_keeps_the_rest_in_details(self):
         from coscc.state import _moves
 
-        old, new = _moves([
-            {"id": 9, "artifact": "ship.md", "from_state": "draft", "to_state": "accepted",
-             "at": "2026-09-29T10:00:00", "guard": "merge-read", "authority": "code", "run": "r-1",
-             "guard_label": "A merge is recorded only from a read that names its merge commit.",
-             "head": "f" * 40},
-            {"artifact": "intent.md", "from_state": "absent", "to_state": "draft",
-             "guard": "unknown", "authority": "unknown", "run": "unknown", "guard_label": "", "head": ""},
-        ])
+        old, new = _moves(
+            [
+                {
+                    "id": 9,
+                    "artifact": "ship.md",
+                    "from_state": "draft",
+                    "to_state": "accepted",
+                    "at": "2026-09-29T10:00:00",
+                    "guard": "merge-read",
+                    "authority": "code",
+                    "run": "r-1",
+                    "guard_label": "A merge is recorded only from a read that names its merge commit.",
+                    "head": "f" * 40,
+                },
+                {
+                    "artifact": "intent.md",
+                    "from_state": "absent",
+                    "to_state": "draft",
+                    "guard": "unknown",
+                    "authority": "unknown",
+                    "run": "unknown",
+                    "guard_label": "",
+                    "head": "",
+                },
+            ]
+        )
         self.assertEqual(
             (new.change, new.guard_label, new.authority, new.guard, new.head, new.run, new.key),
-            ("draft → accepted", "A merge is recorded only from a read that names its merge commit.",
-             "By the app", "merge-read", "f" * 40, "r-1", "move-9"),
+            (
+                "draft → accepted",
+                "A merge is recorded only from a read that names its merge commit.",
+                "By the app",
+                "merge-read",
+                "f" * 40,
+                "r-1",
+                "move-9",
+            ),
         )
-        self.assertEqual((old.guard_label, old.authority, old.key),
-                         ("No guard was recorded for this change.", "Author not recorded", "move-1"))
+        self.assertEqual(
+            (old.guard_label, old.authority, old.key),
+            ("No guard was recorded for this change.", "Author not recorded", "move-1"),
+        )
 
     def test_the_card_carries_the_code_the_autopilot_held_it_back_with(self):
         from coscc.state import Unit, _card
@@ -535,8 +654,6 @@ class TheBoardShowsTheGuardAndWhoseDecision(unittest.TestCase):
 
 
 class CellLabelNamesAFailureTheArtifactCannot(unittest.TestCase):
-    """`0019_a-failed-step-destroys-the-work-that-succeeded` plan step 7, `spec.md` R5."""
-
     def test_a_failed_run_with_cost_is_named_and_coloured_amber(self):
         from coscc.state import _cell_label
 
@@ -551,7 +668,10 @@ class CellLabelNamesAFailureTheArtifactCannot(unittest.TestCase):
     def test_a_failed_run_with_no_cost_says_unknown_rather_than_zero(self):
         from coscc.state import _cell_label
 
-        row = {"status": "not started", "last_run": {"outcome": "failed", "turns": None, "cost_usd": None}}
+        row = {
+            "status": "not started",
+            "last_run": {"outcome": "failed", "turns": None, "cost_usd": None},
+        }
         label, color = _cell_label(row)
         self.assertEqual(label, "not started · failed · turns and cost unknown")
         self.assertEqual(color, "amber")
@@ -574,21 +694,31 @@ class CellLabelNamesAFailureTheArtifactCannot(unittest.TestCase):
         self.assertEqual(label, "accepted")
         self.assertEqual(color, "grass")
 
-    def test_0092_turns_known_and_cost_not_says_each(self):
+    def test_turns_known_and_cost_not_says_each(self):
         from coscc.state import _cell_label
 
-        row = {"status": "not started", "last_run": {"outcome": "failed", "turns": 109, "cost_usd": None}}
-        self.assertEqual(_cell_label(row), ("not started · failed · 109 turns · cost unknown", "amber"))
+        row = {
+            "status": "not started",
+            "last_run": {"outcome": "failed", "turns": 109, "cost_usd": None},
+        }
+        self.assertEqual(
+            _cell_label(row), ("not started · failed · 109 turns · cost unknown", "amber")
+        )
 
-    def test_0092_cost_known_and_turns_not_says_each(self):
+    def test_cost_known_and_turns_not_says_each(self):
         from coscc.state import _cell_label
 
-        row = {"status": "not started", "last_run": {"outcome": "failed", "turns": None, "cost_usd": 0.4}}
-        self.assertEqual(_cell_label(row), ("not started · failed · turns unknown · $0.40", "amber"))
+        row = {
+            "status": "not started",
+            "last_run": {"outcome": "failed", "turns": None, "cost_usd": 0.4},
+        }
+        self.assertEqual(
+            _cell_label(row), ("not started · failed · turns unknown · $0.40", "amber")
+        )
 
 
 class ACostNobodyKnowsIsNeverShownAsNothing(unittest.TestCase):
-    """`0092` R8 b, c: `_usd` and the Cost caption say `unknown`, never `—` or `$0.00`."""
+    """`_usd` and the Cost caption say `unknown`, never `—` or `$0.00`."""
 
     def test_usd(self):
         from coscc.state import _usd
@@ -605,11 +735,13 @@ class ACostNobodyKnowsIsNeverShownAsNothing(unittest.TestCase):
 
         self.assertEqual(cost_note({"unknown": 0}), COST_NOTE)
         self.assertEqual(cost_note({}), COST_NOTE)
-        self.assertEqual(cost_note({"unknown": 3}), "Added up from each finished run; 3 run(s) with unknown cost")
+        self.assertEqual(
+            cost_note({"unknown": 3}), "Added up from each finished run; 3 run(s) with unknown cost"
+        )
 
 
 class TheLinksOfAUnitOpenedFromAnIdea(unittest.TestCase):
-    """`0040` R15 (3, 4). Copied from `Service.board`, with the addresses they link to."""
+    """Copied from `Service.board`, with the addresses they link to."""
 
     def test_a_card_whose_next_why_is_dependency_shows_waits_for_ref(self):
         from coscc.state.views import Unit, _card, link_fields
@@ -623,10 +755,32 @@ class TheLinksOfAUnitOpenedFromAnIdea(unittest.TestCase):
     def test_a_childs_overview_links_to_its_idea_and_to_the_unit_it_waits_for(self):
         from coscc.state.views import child_rows, link_fields
 
-        self.assertEqual(link_fields({"idea": "ideas/0001_f.md"}, "api")["idea_href"], "/idea?ws=api&id=0001_f")
-        self.assertEqual(link_fields({}, "api"), {"idea_ref": "", "idea_href": "", "repo": "", "waits_for": "", "waits_for_href": ""})
-        [row, gone] = child_rows({"units": [
-            {"ref": "api/0001_b", "unit": "0001_b", "repo": "api", "stage": "impl", "state": "Ready", "waits_for": []},
-            {"ref": "old/0002_c", "unit": "0002_c", "repo": "old", "missing": True, "state": "missing"},
-        ]})
+        self.assertEqual(
+            link_fields({"idea": "ideas/0001_f.md"}, "api")["idea_href"], "/idea?ws=api&id=0001_f"
+        )
+        self.assertEqual(
+            link_fields({}, "api"),
+            {"idea_ref": "", "idea_href": "", "repo": "", "waits_for": "", "waits_for_href": ""},
+        )
+        [row, gone] = child_rows(
+            {
+                "units": [
+                    {
+                        "ref": "api/0001_b",
+                        "unit": "0001_b",
+                        "repo": "api",
+                        "stage": "impl",
+                        "state": "Ready",
+                        "waits_for": [],
+                    },
+                    {
+                        "ref": "old/0002_c",
+                        "unit": "0002_c",
+                        "repo": "old",
+                        "missing": True,
+                        "state": "missing",
+                    },
+                ]
+            }
+        )
         self.assertEqual((row.href, gone.href, gone.missing), ("/unit?ws=api&id=0001_b", "", True))

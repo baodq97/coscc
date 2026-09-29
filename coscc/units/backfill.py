@@ -81,11 +81,7 @@ def _utc(stamp: str) -> str:
     `%aI` carries the commit's own offset, which sorts wrongly as text.
     """
     try:
-        return (
-            datetime.fromisoformat(stamp)
-            .astimezone(timezone.utc)
-            .isoformat(timespec="seconds")
-        )
+        return datetime.fromisoformat(stamp).astimezone(timezone.utc).isoformat(timespec="seconds")
     except ValueError:
         return stamp
 
@@ -154,7 +150,7 @@ def _blobs(repo: Path, wanted: list[str]) -> dict[str, str]:
             continue
         try:
             size = int(header.rsplit(" ", 1)[1])
-        except (IndexError, ValueError):
+        except IndexError, ValueError:
             break
         out[request] = raw[at : at + size].decode("utf-8", "replace")
         at += size + 1

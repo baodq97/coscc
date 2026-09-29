@@ -219,9 +219,7 @@ def _tool_result_text(content: Any) -> str:
     return "".join(parts)
 
 
-def transcript_excerpt(
-    session_id: str, directory: str | None, limit: int
-) -> tuple[str, int]:
+def transcript_excerpt(session_id: str, directory: str | None, limit: int) -> tuple[str, int]:
     """The last `limit` characters of what a session *did*, and the full length.
 
     Assembled from the assistant's own text and the results tool calls came back with, never
@@ -427,7 +425,7 @@ def _descendants(pid: int, proc: Path = Path("/proc")) -> list[tuple[int, str]]:
         except OSError:
             continue
         # The command name may hold spaces and parentheses; the fields start after the last.
-        fields = text[text.rfind(")") + 2:].split()
+        fields = text[text.rfind(")") + 2 :].split()
         if len(fields) < 20:
             continue
         children.setdefault(int(fields[1]), []).append((int(stat.parent.name), fields[19]))
@@ -448,7 +446,7 @@ def _kill_left(taken: list[tuple[int, str]], proc: Path = Path("/proc")) -> int:
             text = (proc / str(pid) / "stat").read_text()
         except OSError:
             continue
-        fields = text[text.rfind(")") + 2:].split()
+        fields = text[text.rfind(")") + 2 :].split()
         if len(fields) < 20 or fields[19] != started or fields[0] == "Z":
             continue
         with suppress(ProcessLookupError, PermissionError):
@@ -558,7 +556,10 @@ def _options(
         cwd=cwd,
         # Laid over what the child would inherit. See `child_env`.
         env=child_env(
-            cwd, workspace, data_dir=data_dir, app_db=Data(config.data_dir).db_path,
+            cwd,
+            workspace,
+            data_dir=data_dir,
+            app_db=Data(config.data_dir).db_path,
             bash="Bash" in resolved,
         ),
         tools=resolved,
@@ -623,7 +624,7 @@ def _options(
         # in argv (`E2BIG`).
         sp = options.system_prompt
         if isinstance(sp, dict) and sp.get("type") == "file":
-            options.extra_args["append-system-prompt-file"] = sp["path"]
+            options.extra_args["append-system-prompt-file"] = sp.get("path")
             options.system_prompt = {"type": "custom", "prompt": "", "snapshot": True}
         elif isinstance(sp, dict):
             options.system_prompt = {**sp, "snapshot": True}
@@ -640,7 +641,7 @@ def _resolve(directory: str) -> Path | None:
     """
     try:
         return Path(directory).expanduser().resolve()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
@@ -691,8 +692,13 @@ class Sessions:
         found += ["(running step)" for h in self._steps if _resolve(h.cwd) == target]
         return found
 
-    def _begin_turn(self, cwd: str, session_id: str | None, owner: dict[str, Any] | None = None,
-                    model: str | None = None) -> dict[str, Any]:
+    def _begin_turn(
+        self,
+        cwd: str,
+        session_id: str | None,
+        owner: dict[str, Any] | None = None,
+        model: str | None = None,
+    ) -> dict[str, Any]:
         turn = {
             "id": uuid.uuid4().hex,
             "session_id": session_id or "",
@@ -700,7 +706,11 @@ class Sessions:
             "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "task": asyncio.current_task(),
             # What `suspend_all` needs of a stream with no step: chat, Gebo.
-            "owner": owner, "client": None, "cwd": cwd, "model": model, "suspended": False,
+            "owner": owner,
+            "client": None,
+            "cwd": cwd,
+            "model": model,
+            "suspended": False,
         }
         self._turns[turn["id"]] = turn
         return turn
@@ -788,9 +798,23 @@ class Sessions:
             step.cwd, step.owner, step.model = cwd, owner, resolved_model
             step.session_id = session_id or ""
         inner = self._stream(
-            cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
-            workspace, model, system_prompt, effort, step, settings,
-            flow=flow, resume_at=resume_at, spent_before=spent_before, mcp_servers=mcp_servers,
+            cwd,
+            text,
+            session_id,
+            max_turns,
+            can_use_tool,
+            tools,
+            max_budget_usd,
+            workspace,
+            model,
+            system_prompt,
+            effort,
+            step,
+            settings,
+            flow=flow,
+            resume_at=resume_at,
+            spent_before=spent_before,
+            mcp_servers=mcp_servers,
             agents=agents,
         )
         if step is None:
@@ -830,13 +854,28 @@ class Sessions:
                 step.drop_scratch()
 
     async def _stream(
-        self, cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
-        workspace, model, system_prompt, effort, step, settings=None,
-        *, flow: Any = None, resume_at: str | None = None, spent_before: dict[str, float] | None = None,
+        self,
+        cwd,
+        text,
+        session_id,
+        max_turns,
+        can_use_tool,
+        tools,
+        max_budget_usd,
+        workspace,
+        model,
+        system_prompt,
+        effort,
+        step,
+        settings=None,
+        *,
+        flow: Any = None,
+        resume_at: str | None = None,
+        spent_before: dict[str, float] | None = None,
         mcp_servers: dict[str, Any] | None = None,
         agents: dict[str, dict[str, Any]] | None = None,
     ):
-        member =workspace if workspace is not None else cwd
+        member = workspace if workspace is not None else cwd
         if not self.membership(member):
             raise Refused(f"not a configured workspace: {member}")
         if session_id is not None and not self.config.may_resume(self.created_here(session_id)):
@@ -863,7 +902,10 @@ class Sessions:
                         step.scratch = scratch
                     client = ClaudeSDKClient(
                         options=_options(
-                            self.config, cwd, session_id, max_turns,
+                            self.config,
+                            cwd,
+                            session_id,
+                            max_turns,
                             can_use_tool=can_use_tool,
                             tools=tools,
                             max_budget_usd=max_budget_usd,
@@ -884,7 +926,9 @@ class Sessions:
                         if _paused(flow):
                             # Paused while it was starting: nothing is sent.
                             await _begin(_shut(client, getattr(client, "_transport", None), True))
-                            raise Suspended("the session was paused for an update before its prompt was sent")
+                            raise Suspended(
+                                "the session was paused for an update before its prompt was sent"
+                            )
                     else:
                         try:
                             await client.connect()
@@ -898,7 +942,10 @@ class Sessions:
                         # transport, so a Stop before this point only marks the handle closed.
                         step.client = client
                     live = Live(
-                        client=client, session_id=session_id or "", cwd=cwd, scratch=made,
+                        client=client,
+                        session_id=session_id or "",
+                        cwd=cwd,
+                        scratch=made,
                         spent=dict(spent_before or {}),
                     )
                 else:
@@ -943,7 +990,9 @@ class Sessions:
                         step.init_model = str(message.data["model"])
                     if said and session_id and said != session_id:
                         # A resume that came back as another session is refused.
-                        await _begin(_shut(live.client, getattr(live.client, "_transport", None), True))
+                        await _begin(
+                            _shut(live.client, getattr(live.client, "_transport", None), True)
+                        )
                         self._live.pop(session_id, None)
                         raise Refused(
                             f"resume returned {said} instead of {session_id} — "
@@ -959,8 +1008,12 @@ class Sessions:
                     if first_call is None and isinstance(message.usage, dict):
                         first_call = {
                             "input_tokens": int(message.usage.get("input_tokens") or 0),
-                            "cache_creation_tokens": int(message.usage.get("cache_creation_input_tokens") or 0),
-                            "cache_read_tokens": int(message.usage.get("cache_read_input_tokens") or 0),
+                            "cache_creation_tokens": int(
+                                message.usage.get("cache_creation_input_tokens") or 0
+                            ),
+                            "cache_read_tokens": int(
+                                message.usage.get("cache_read_input_tokens") or 0
+                            ),
                         }
                     for block in message.content:
                         if isinstance(block, TextBlock):
@@ -1092,7 +1145,10 @@ class Sessions:
         client, sid, cwd = get("client"), str(get("session_id") or ""), str(get("cwd") or "")
         owner = dict(get("owner") or {})
         record: dict[str, Any] = {
-            "owner": owner, "cwd": cwd, "session_id": sid, "model": get("model"),
+            "owner": owner,
+            "cwd": cwd,
+            "session_id": sid,
+            "model": get("model"),
             "start_at": owner.get("start_at"),
         }
 
@@ -1122,7 +1178,9 @@ class Sessions:
             return {**record, "unresumable": f"the transcript could not be read: {e}"}
         spent = transcript.spent_after(path, edge)
         record.update(
-            safe_uuid=found["safe_uuid"], dropped=found["dropped"], api_calls=found["api_calls"],
+            safe_uuid=found["safe_uuid"],
+            dropped=found["dropped"],
+            api_calls=found["api_calls"],
             **({"spent_usd": spent} if spent is not None else {"cost_unknown": True}),
         )
         return record

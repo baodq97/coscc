@@ -62,7 +62,7 @@ def _rows(groups: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     """Groups as rows, the most money first; a group with no known cost last."""
     rows = [{"key": key, **_rounded(acc)} for key, acc in groups.items()]
     rows.sort(key=lambda r: r["key"])
-    rows.sort(key=lambda r: (r["usd"] is None, -(r["usd"] or 0.0)))
+    rows.sort(key=lambda r: (r["usd"] is None, -float(r["usd"] or 0.0)))
     return rows
 
 
@@ -119,7 +119,7 @@ def _per_turn(record: dict[str, Any]) -> float | None:
     """Tokens per turn of one `end`, or None when it is not a valid step."""
     try:
         turns = int(record.get("turns") or 0)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     if turns <= 0 or not any(f in record for f in TOKEN_FIELDS):
         return None
@@ -161,7 +161,8 @@ def model(
         row["over"] = bool(row["key"]) and (row["usd"] or 0.0) > BUDGET_USD
     day_rows = sorted(
         ({"key": key, **_rounded(acc)} for key, acc in by_day.items()),
-        key=lambda r: r["key"], reverse=True,
+        key=lambda r: r["key"],
+        reverse=True,
     )
 
     # One kind at a time. A step may sit in several, so nothing adds them up.
@@ -185,7 +186,9 @@ def model(
     # null is dropped first so it is unknown here too.
     integrate = {"conflicting": _zero(), "other": _zero(), "none": _zero()}
     paired = [
-        {k: v for k, v in r.items() if k != "cost_usd"} if r.get("kind") == "end" and _usd(r) is None else r
+        {k: v for k, v in r.items() if k != "cost_usd"}
+        if r.get("kind") == "end" and _usd(r) is None
+        else r
         for r in records
     ]
     for rows in journal.timelines_of(paired).values():
@@ -193,12 +196,16 @@ def model(
             if row.get("stage") != "integrate" or row.get("ended") is None:
                 continue
             state = row.get("integrate_state")
-            acc = integrate["none" if state is None else "conflicting" if state == "conflicting" else "other"]
+            acc = integrate[
+                "none" if state is None else "conflicting" if state == "conflicting" else "other"
+            ]
             acc["steps"] += 1
             if journal._cost_unknown(row):
                 acc["unknown"] += 1
             else:
-                acc["usd"] = (acc["usd"] or 0.0) + float((row.get("cost") or {}).get("cost_usd") or 0.0)
+                acc["usd"] = (acc["usd"] or 0.0) + float(
+                    (row.get("cost") or {}).get("cost_usd") or 0.0
+                )
 
     # Rounds counted from `review.md`; money only from the `review` steps that said which
     # verdicts they wrote. A round no step claims is counted, and its money is not recorded.
@@ -242,7 +249,9 @@ def model(
         "unit_stages": {unit: _rows(stages) for unit, stages in unit_stages.items()},
         "tokens": {
             "workspace": _tokens(total),
-            "by_stage": [{"stage": stage, **_tokens(acc)} for stage, acc in sorted(by_stage.items())],
+            "by_stage": [
+                {"stage": stage, **_tokens(acc)} for stage, acc in sorted(by_stage.items())
+            ],
         },
         "waste": waste,
         "anomalies": anomalies,
@@ -255,21 +264,35 @@ def _anomalies(
     per_pair: dict[tuple[str, str], list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     """The four kinds, each the latest first."""
+
     def row(kind, unit, stage, ended, value, limit, usd) -> dict[str, Any]:
         return {
-            "kind": kind, "unit": unit, "stage": stage, "ended": ended,
-            "value": value, "limit": limit,
+            "kind": kind,
+            "unit": unit,
+            "stage": stage,
+            "ended": ended,
+            "value": value,
+            "limit": limit,
             "usd": None if usd is None else round(usd, journal.USD_PLACES),
         }
 
     over = [
         row("over-budget", r["key"], "", None, r["usd"], BUDGET_USD, r["usd"])
-        for r in unit_rows if r["over"]
+        for r in unit_rows
+        if r["over"]
     ]
     failed = [
-        row("failed", str(r.get("unit") or ""), str(r.get("stage") or ""), r.get("at"),
-            r.get("outcome"), None, _usd(r))
-        for r in ends if r.get("outcome") in FAILED
+        row(
+            "failed",
+            str(r.get("unit") or ""),
+            str(r.get("stage") or ""),
+            r.get("at"),
+            r.get("outcome"),
+            None,
+            _usd(r),
+        )
+        for r in ends
+        if r.get("outcome") in FAILED
     ]
     reruns = []
     for (unit, stage), steps in per_pair.items():
@@ -279,7 +302,9 @@ def _anomalies(
         acc = _zero()
         for r in steps:
             _add(acc, r)
-        reruns.append(row("reruns", unit, stage, steps[-1].get("at"), len(steps), limit, acc["usd"]))
+        reruns.append(
+            row("reruns", unit, stage, steps[-1].get("at"), len(steps), limit, acc["usd"])
+        )
 
     valid: dict[str, list[tuple[dict[str, Any], float]]] = {}
     for r in ends:
@@ -293,8 +318,17 @@ def _anomalies(
         limit = TOKENS_PER_TURN_TIMES * statistics.median(v for _, v in steps)
         for r, value in steps:
             if value > limit:
-                heavy.append(row("tokens-per-turn", str(r.get("unit") or ""), stage, r.get("at"),
-                                 value, limit, _usd(r)))
+                heavy.append(
+                    row(
+                        "tokens-per-turn",
+                        str(r.get("unit") or ""),
+                        stage,
+                        r.get("at"),
+                        value,
+                        limit,
+                        _usd(r),
+                    )
+                )
 
     out: list[dict[str, Any]] = []
     for group in (over, failed, reruns, heavy):

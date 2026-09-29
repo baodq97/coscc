@@ -12,7 +12,8 @@ from coscc.runlog import events as events_mod
 from coscc.web import present
 from coscc.runlog import spend
 from coscc.runlog.journal import COST_USD, TOKEN_FIELDS
-from coscc.service import reason_beside, shown_state
+from coscc.service.common import reason_beside
+from coscc.service.common import shown_state
 
 
 NAVIGATION = (
@@ -40,6 +41,7 @@ STATUS_COLOR = {
     "changes-requested": "orange",
     "not started": "gray",
 }
+
 
 def _cell_label(row: dict) -> tuple[str, str]:
     """The chip text and colour for one stage row, an entry of `Service.board`'s `stages`.
@@ -82,8 +84,9 @@ def tree_line(tree: dict | None) -> str:
     elif prepared.get("ok"):
         line += " · prepared"
     else:
-        line += (f" · preparing failed: `{prepared.get('command')}` exited "
-                 f"{prepared.get('exit_code')}")
+        line += (
+            f" · preparing failed: `{prepared.get('command')}` exited {prepared.get('exit_code')}"
+        )
     return line
 
 
@@ -304,9 +307,12 @@ def idea_rows(data: dict, home: str) -> list[IdeaRow]:
     from coscc.web import place
 
     return [
-        IdeaRow(id=str(i.get("id") or ""), title=str(i.get("title") or i.get("id") or ""),
-                units=len(i.get("units") or []),
-                href=place.href(place.Place("idea", home, idea=str(i.get("id") or ""))))
+        IdeaRow(
+            id=str(i.get("id") or ""),
+            title=str(i.get("title") or i.get("id") or ""),
+            units=len(i.get("units") or []),
+            href=place.href(place.Place("idea", home, idea=str(i.get("id") or ""))),
+        )
         for i in data.get("ideas") or []
     ]
 
@@ -315,9 +321,14 @@ def child_rows(page: dict) -> list[ChildRow]:
     """`Service.idea`'s rows, as the page draws them. Copies; decides nothing."""
     return [
         ChildRow(
-            ref=str(r["ref"]), unit=str(r["unit"]), repo=str(r["repo"]), stage=str(r.get("stage") or ""),
-            state=str(r.get("state") or ""), waits_for=", ".join(r.get("waits_for") or []),
-            href="" if r.get("missing") else _unit_href(str(r["ref"]), ""), missing=bool(r.get("missing")),
+            ref=str(r["ref"]),
+            unit=str(r["unit"]),
+            repo=str(r["repo"]),
+            stage=str(r.get("stage") or ""),
+            state=str(r.get("state") or ""),
+            waits_for=", ".join(r.get("waits_for") or []),
+            href="" if r.get("missing") else _unit_href(str(r["ref"]), ""),
+            missing=bool(r.get("missing")),
         )
         for r in page.get("units") or []
     ]
@@ -363,14 +374,33 @@ class Card:
 def _card(u: Unit) -> Card:
     """A `Unit` as its card. Copies; decides nothing."""
     return Card(
-        id=u.id, title=u.title, summary=u.summary, mode=u.mode, owner=u.owner, progress=u.progress, tokens=u.tokens, usd=u.usd,
-        token_count=u.token_count, has_problem=u.problems != "", open_questions=u.open_questions,
-        integration_state=u.integration_state, integrate_button=u.integrate_button,
-        outcome_text=u.outcome_text, outcome_color=u.outcome_color, hold_state=u.hold_state,
-        shortlist_rank=u.shortlist_rank, relations_text=u.relations_text, live=list(u.live),
-        answerable=u.answerable, attention_reason=u.attention_reason,
-        at=u.at, state=u.state, state_label=u.state_label, state_color=u.state_color,
-        waits_for=u.waits_for, held=u.held,
+        id=u.id,
+        title=u.title,
+        summary=u.summary,
+        mode=u.mode,
+        owner=u.owner,
+        progress=u.progress,
+        tokens=u.tokens,
+        usd=u.usd,
+        token_count=u.token_count,
+        has_problem=u.problems != "",
+        open_questions=u.open_questions,
+        integration_state=u.integration_state,
+        integrate_button=u.integrate_button,
+        outcome_text=u.outcome_text,
+        outcome_color=u.outcome_color,
+        hold_state=u.hold_state,
+        shortlist_rank=u.shortlist_rank,
+        relations_text=u.relations_text,
+        live=list(u.live),
+        answerable=u.answerable,
+        attention_reason=u.attention_reason,
+        at=u.at,
+        state=u.state,
+        state_label=u.state_label,
+        state_color=u.state_color,
+        waits_for=u.waits_for,
+        held=u.held,
     )
 
 
@@ -394,8 +424,12 @@ def _shown(u: Unit, read: dict) -> dict:
         {"state": u.decided_state, "label": u.decided_label, "color": u.decided_color},
         (read.get("running") or {}).get(u.id),
     )
-    return {"state": shown["state"], "state_label": shown["label"], "state_color": shown["color"],
-            "state_reason": reason_beside(u.attention_reason, shown["state"])}
+    return {
+        "state": shown["state"],
+        "state_label": shown["label"],
+        "state_color": shown["color"],
+        "state_reason": reason_beside(u.attention_reason, shown["state"]),
+    }
 
 
 @dataclasses.dataclass
@@ -502,8 +536,11 @@ def _token_row(scope: str, t: dict) -> TokenRow:
         return f"{n:,} ({round(100 * n / total)}%)" if total else "0"
 
     return TokenRow(
-        scope=scope, input=cell("input_tokens"), output=cell("output_tokens"),
-        cache_read=cell("cache_read_tokens"), cache_creation=cell("cache_creation_tokens"),
+        scope=scope,
+        input=cell("input_tokens"),
+        output=cell("output_tokens"),
+        cache_read=cell("cache_read_tokens"),
+        cache_creation=cell("cache_creation_tokens"),
         total=f"{total:,}",
     )
 
@@ -512,12 +549,25 @@ def _waste_rows(rows: list[dict]) -> list[WasteRow]:
     out: list[WasteRow] = []
     for r in rows:
         label, sub = WASTE_LABEL.get(r["kind"], (r["kind"], False))
-        out.append(WasteRow(label=label, count=f"{int(r.get('count') or 0):,}", usd=present.money(r.get("usd")),
-                            unknown=_unknown(r.get("unknown")), sub=sub))
+        out.append(
+            WasteRow(
+                label=label,
+                count=f"{int(r.get('count') or 0):,}",
+                usd=present.money(r.get("usd")),
+                unknown=_unknown(r.get("unknown")),
+                sub=sub,
+            )
+        )
         if r["kind"] == "changes-requested":
             # The rounds no `review` step claimed are counted; their money is not known.
-            out.append(WasteRow(label="not recorded", count=f"{int(r.get('note') or 0):,}",
-                                usd="not recorded", sub=True))
+            out.append(
+                WasteRow(
+                    label="not recorded",
+                    count=f"{int(r.get('note') or 0):,}",
+                    usd="not recorded",
+                    sub=True,
+                )
+            )
     return out
 
 
@@ -537,9 +587,12 @@ def _measured(a: dict) -> str:
 def _anomaly_rows(rows: list[dict]) -> list[AnomalyRow]:
     return [
         AnomalyRow(
-            key=f"{a['kind']}-{i}", kind=ANOMALY_LABEL.get(a["kind"], a["kind"]),
-            unit=a.get("unit") or NO_UNIT, stage=a.get("stage") or "—",
-            ended=present.when(a.get("ended")) or "—", measured=_measured(a),
+            key=f"{a['kind']}-{i}",
+            kind=ANOMALY_LABEL.get(a["kind"], a["kind"]),
+            unit=a.get("unit") or NO_UNIT,
+            stage=a.get("stage") or "—",
+            ended=present.when(a.get("ended")) or "—",
+            measured=_measured(a),
             usd=present.money(a.get("usd")),
         )
         for i, a in enumerate(rows)
@@ -576,16 +629,27 @@ def _backlog_row(entry: dict, rank: int) -> BacklogRow:
     effort = str(est.get("effort") or "")
     if est.get("effort_source") == "guess":
         effort = f"{effort} (guess)"
-    basis = " · ".join(x for x in (str(est.get("basis") or ""), str(est.get("effort_basis") or "")) if x)
+    basis = " · ".join(
+        x for x in (str(est.get("basis") or ""), str(est.get("effort_basis") or "")) if x
+    )
     other = entry.get("agent_differs") or {}
     return BacklogRow(
-        rank=rank, unit=str(entry.get("unit") or ""),
-        value=str(est.get("value") or "—"), effort=effort or "—", basis=basis, by=_estimated_by(est.get("by")),
-        drift=(f"off by rank — computed {entry.get('computed') or 'none'}" if entry.get("drift") else ""),
+        rank=rank,
+        unit=str(entry.get("unit") or ""),
+        value=str(est.get("value") or "—"),
+        effort=effort or "—",
+        basis=basis,
+        by=_estimated_by(est.get("by")),
+        drift=(
+            f"off by rank — computed {entry.get('computed') or 'none'}"
+            if entry.get("drift")
+            else ""
+        ),
         warnings="; ".join(entry.get("warnings") or []),
         agent_differs=(
             f"agent proposed: value {other.get('value')}, effort {other.get('effort')} — {other.get('basis')}"
-            if other else ""
+            if other
+            else ""
         ),
     )
 
@@ -593,26 +657,29 @@ def _backlog_row(entry: dict, rank: int) -> BacklogRow:
 def _relations_text(relations: list | None) -> str:
     """`thay thế` and `phụ thuộc` read from the side they are on; the other two either way.
     In English, from `present`'s tables; the stored words are unchanged."""
+
     def word(r: dict) -> str:
         if r.get("direction") == "in" and r.get("type") in present.RELATION_LABEL_IN:
             return present.RELATION_LABEL_IN[r["type"]]
         return present.RELATION_LABEL.get(r.get("type"), str(r.get("type")))
-    return "; ".join(
-        f"{word(r)} {r.get('other')}"
-        for r in relations or []
-    )
+
+    return "; ".join(f"{word(r)} {r.get('other')}" for r in relations or [])
 
 
 def backlog_view(data: dict) -> dict:
     """The panel's fields from the board's `backlog`; copies, decides nothing."""
     b = data.get("backlog") or {}
-    cuts = b.get("terciles")
     # One English sentence; the cost thresholds stay in the API and in `backlog`.
-    note = (f"Only {len(b.get('backlog') or [])} units wait, so a shortlist of 7 picks nothing out."
-            if b.get("undiscriminating") else "")
+    note = (
+        f"Only {len(b.get('backlog') or [])} units wait, so a shortlist of 7 picks nothing out."
+        if b.get("undiscriminating")
+        else ""
+    )
     record = b.get("shortlist_record") or {}
     return {
-        "backlog_rows": [_backlog_row(e, int(e.get("rank") or 0)) for e in b.get("shortlist") or []],
+        "backlog_rows": [
+            _backlog_row(e, int(e.get("rank") or 0)) for e in b.get("shortlist") or []
+        ],
         # A unit with no estimate is a row too, with value and effort empty.
         "backlog_rest": [_backlog_row(e, int(e.get("computed") or 0)) for e in b.get("order") or []]
         + [BacklogRow(unit=str(n), value="—", effort="—") for n in b.get("unestimated") or []],
@@ -623,11 +690,13 @@ def backlog_view(data: dict) -> dict:
         "backlog_measured": (
             f"{int(b.get('measured_count') or 0)} finished units measured; "
             f"{int(b.get('undetermined_count') or 0)} left out, cost unknown."
-            if int(b.get("undetermined_count") or 0) > 0 else ""
+            if int(b.get("undetermined_count") or 0) > 0
+            else ""
         ),
         "backlog_recorded": (
             f"Saved {present.when(record.get('at'))} by {record.get('by')}: {record.get('reason')}"
-            if record else ""
+            if record
+            else ""
         ),
         "backlog_warnings": [f"{w.get('unit')}: {w.get('text')}" for w in b.get("warnings") or []]
         + list(b.get("problems") or []),
@@ -690,23 +759,27 @@ def _activities(unit: str, read: dict) -> list[Activity]:
     for row in (read.get("running") or {}).get(unit) or []:
         agent = row.get("agent") or {}
         turns, cost = row.get("turns"), row.get("cost_usd")
-        out.append(Activity(
-            label="rebasing" if row.get("kind") == "rebase" else "running",
-            agent=f"{agent['glyph']} {agent['name']}" if agent else "",
-            stage=str(row.get("stage") or ""),
-            started=present.when(row.get("started")),
-            turns="" if turns is None else str(turns),
-            cost="" if cost is None else f"${float(cost):.2f}",
-            kind=str(row.get("kind") or ""),
-            run=str(row.get("run") or ""),
-        ))
+        out.append(
+            Activity(
+                label="rebasing" if row.get("kind") == "rebase" else "running",
+                agent=f"{agent['glyph']} {agent['name']}" if agent else "",
+                stage=str(row.get("stage") or ""),
+                started=present.when(row.get("started")),
+                turns="" if turns is None else str(turns),
+                cost="" if cost is None else f"${float(cost):.2f}",
+                kind=str(row.get("kind") or ""),
+                run=str(row.get("run") or ""),
+            )
+        )
     for row in (read.get("unknown_end") or {}).get(unit) or []:
-        out.append(Activity(
-            label="ended, unknown",
-            stage=str(row.get("stage") or ""),
-            started=present.when(row.get("started")),
-            kind="unknown",
-        ))
+        out.append(
+            Activity(
+                label="ended, unknown",
+                stage=str(row.get("stage") or ""),
+                started=present.when(row.get("started")),
+                kind="unknown",
+            )
+        )
     return out
 
 
@@ -733,8 +806,12 @@ def _asking(ask, cwd: str, unit: str, join: bool) -> asyncio.Future:
     """`ask(cwd, unit)` in a task no cancellation reaches: the one in flight when `join`."""
     key = (cwd, unit)
     task = _ASKING.get(key)
-    if not (join and task is not None and not task.done()
-            and task.get_loop() is asyncio.get_running_loop()):
+    if not (
+        join
+        and task is not None
+        and not task.done()
+        and task.get_loop() is asyncio.get_running_loop()
+    ):
         task = asyncio.ensure_future(ask(cwd, unit))
         _ASKING[key] = task
 
@@ -882,7 +959,10 @@ class Move:
 # Each authority in words, for a reader rather than a column name; an answer imported
 # unclassified says nobody recorded one.
 AUTHORITY_LABEL = {
-    "person": "By a person", "delegated": "By their delegate", "agent": "By an agent", "code": "By the app",
+    "person": "By a person",
+    "delegated": "By their delegate",
+    "agent": "By an agent",
+    "code": "By the app",
 }
 NO_AUTHORITY = "Author not recorded"
 
@@ -892,17 +972,20 @@ def _moves(rows: list[dict]) -> list[Move]:
     out = []
     for i, r in reversed(list(enumerate(rows))):
         authority = str(r.get("authority") or "")
-        out.append(Move(
-            artifact=str(r.get("artifact") or ""),
-            change=f"{r.get('from_state') or '—'} → {r.get('to_state') or '—'}",
-            at=present.when(r.get("at")),
-            guard_label=str(r.get("guard_label") or "") or "No guard was recorded for this change.",
-            authority=AUTHORITY_LABEL.get(authority, NO_AUTHORITY),
-            guard=str(r.get("guard") or ""),
-            head=str(r.get("head") or ""),
-            run=str(r.get("run") or ""),
-            key=f"move-{r.get('id', i)}",
-        ))
+        out.append(
+            Move(
+                artifact=str(r.get("artifact") or ""),
+                change=f"{r.get('from_state') or '—'} → {r.get('to_state') or '—'}",
+                at=present.when(r.get("at")),
+                guard_label=str(r.get("guard_label") or "")
+                or "No guard was recorded for this change.",
+                authority=AUTHORITY_LABEL.get(authority, NO_AUTHORITY),
+                guard=str(r.get("guard") or ""),
+                head=str(r.get("head") or ""),
+                run=str(r.get("run") or ""),
+                key=f"move-{r.get('id', i)}",
+            )
+        )
     return out
 
 
@@ -939,8 +1022,14 @@ READ_ONLY_NOTE = "No working folder is set, so nothing can be recorded."
 
 # A label for each autopilot stop (a–f) and the cap; the page words, not a decision.
 AUTOPILOT_STOP_LABEL = {
-    "a": "Open question", "b": "Needs a person", "c": "Ship waits", "d": "Integration needs a person",
-    "e": "Last step did not finish", "f": "Blocked", "cap": "Daily cap", "shortlist": "No shortlist",
+    "a": "Open question",
+    "b": "Needs a person",
+    "c": "Ship waits",
+    "d": "Integration needs a person",
+    "e": "Last step did not finish",
+    "f": "Blocked",
+    "cap": "Daily cap",
+    "shortlist": "No shortlist",
 }
 
 

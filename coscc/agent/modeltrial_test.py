@@ -14,7 +14,9 @@ class TheArm(unittest.TestCase):
             name = f"{n:04d}_unit-{n}"
             with self.subTest(name=name):
                 even = hashlib.sha256(name.encode("utf-8")).digest()[0] % 2 == 0
-                self.assertEqual(modeltrial.arm(name), modeltrial.OPUS_ARM if even else modeltrial.SONNET_ARM)
+                self.assertEqual(
+                    modeltrial.arm(name), modeltrial.OPUS_ARM if even else modeltrial.SONNET_ARM
+                )
 
     def test_about_half_of_a_thousand_names_are_in_each_arm(self):
         names = [f"{n:04d}_unit-{n}" for n in range(1000)]
@@ -29,16 +31,22 @@ class TheModel(unittest.TestCase):
             for label in ("routine", "novel", None):
                 for arm in (modeltrial.OPUS_ARM, modeltrial.SONNET_ARM):
                     with self.subTest(stage=stage, label=label, arm=arm):
-                        wanted = modeltrial.MODELS[arm] if (stage, label) == ("impl", "routine") else None
+                        wanted = (
+                            modeltrial.MODELS[arm]
+                            if (stage, label) == ("impl", "routine")
+                            else None
+                        )
                         self.assertEqual(modeltrial.model_for(stage, label, arm), wanted)
 
     def test_the_arms_name_the_models_models_json_names(self):
-        # R16: the two models the defaults already run, `[1m]` and all.
+        # The two models the defaults already run, `[1m]` and all.
         defaults, _ = models.load_defaults()
         shipped = {row["model"] for row in defaults.values()}
         self.assertEqual(set(modeltrial.MODELS.values()) - shipped, set())
-        self.assertEqual(modeltrial.MODELS,
-                         {"opus-5-5": "claude-opus-5-5[1m]", "sonnet-5-5": "claude-sonnet-5-5[1m]"})
+        self.assertEqual(
+            modeltrial.MODELS,
+            {"opus-5-5": "claude-opus-5-5[1m]", "sonnet-5-5": "claude-sonnet-5-5[1m]"},
+        )
 
 
 if __name__ == "__main__":

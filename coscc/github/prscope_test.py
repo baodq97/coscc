@@ -1,4 +1,4 @@
-"""`0122` R4, R5, R6: `pr.md ## Scope of the diff` against the pull request's own counts."""
+"""`pr.md ## Scope of the diff` against the pull request's own counts."""
 
 from __future__ import annotations
 
@@ -10,7 +10,12 @@ from coscc.github import prscope
 
 URL = "https://github.com/o/r/pull/7"
 SCOPE = {"files": 2, "additions": 10, "deletions": 3, "paths": ["a.py", "b/c.md"]}
-GOT = {"changedFiles": 2, "additions": 10, "deletions": 3, "files": [{"path": "b/c.md"}, {"path": "a.py"}]}
+GOT = {
+    "changedFiles": 2,
+    "additions": 10,
+    "deletions": 3,
+    "files": [{"path": "b/c.md"}, {"path": "a.py"}],
+}
 GITHUB = {"files": 2, "additions": 10, "deletions": 3}
 
 
@@ -38,7 +43,11 @@ class Compare(unittest.TestCase):
         self.assertEqual(prscope.compare(SCOPE, GOT), {"github": GITHUB, "verdict": "match"})
 
     def test_each_count_that_differs_is_named(self):
-        for field, key in (("files", "changedFiles"), ("additions", "additions"), ("deletions", "deletions")):
+        for field, key in (
+            ("files", "changedFiles"),
+            ("additions", "additions"),
+            ("deletions", "deletions"),
+        ):
             with self.subTest(field=field):
                 got = {**GOT, key: GOT[key] + 5}
                 out = prscope.compare(SCOPE, got)
@@ -59,8 +68,14 @@ class Compare(unittest.TestCase):
         self.assertEqual(out["only_on_github"], ["b/c.md", "z.py"])
 
     def test_a_null_scope_is_unread_and_keeps_githubs_counts(self):
-        # R6: every pr.md written before 0122 reads as a null scope.
-        for scope in (None, {}, {**SCOPE, "files": "2"}, {**SCOPE, "paths": None}, {**SCOPE, "additions": True}):
+        # Every pr.md written before 0122 reads as a null scope.
+        for scope in (
+            None,
+            {},
+            {**SCOPE, "files": "2"},
+            {**SCOPE, "paths": None},
+            {**SCOPE, "additions": True},
+        ):
             with self.subTest(scope=scope):
                 out = prscope.compare(scope, GOT)
                 self.assertEqual(out["verdict"], "unread")
@@ -68,8 +83,16 @@ class Compare(unittest.TestCase):
                 self.assertIn("grammar", out["detail"])
 
     def test_json_without_the_fields_is_unread(self):
-        for got in ({}, [], None, {**GOT, "additions": None}, {**GOT, "changedFiles": True},
-                    {**GOT, "files": None}, {**GOT, "files": [{"name": "a.py"}]}, {**GOT, "files": ["a.py"]}):
+        for got in (
+            {},
+            [],
+            None,
+            {**GOT, "additions": None},
+            {**GOT, "changedFiles": True},
+            {**GOT, "files": None},
+            {**GOT, "files": [{"name": "a.py"}]},
+            {**GOT, "files": ["a.py"]},
+        ):
             with self.subTest(got=got):
                 out = prscope.compare(SCOPE, got)
                 self.assertEqual(out["verdict"], "unread")
@@ -77,7 +100,7 @@ class Compare(unittest.TestCase):
                 self.assertNotIn("differ", out)
 
     def test_a_files_list_shorter_than_changed_files_compares_what_gh_returned(self):
-        # R5: gh returned two of 150 files; pr.md listed those two and wrote 150.
+        # Gh returned two of 150 files; pr.md listed those two and wrote 150.
         got = {**GOT, "changedFiles": 150}
         self.assertEqual(prscope.compare({**SCOPE, "files": 150}, got)["verdict"], "match")
         out = prscope.compare(SCOPE, got)
@@ -104,8 +127,13 @@ class Read(unittest.TestCase):
 
     def test_the_one_command_is_a_read(self):
         gh = FakeGh()
-        self.assertEqual(run(prscope.read(URL, SCOPE, "/tmp", run=gh)), {"github": GITHUB, "verdict": "match"})
-        self.assertEqual(gh.calls, [(["pr", "view", URL, "--json", "changedFiles,additions,deletions,files"], None)])
+        self.assertEqual(
+            run(prscope.read(URL, SCOPE, "/tmp", run=gh)), {"github": GITHUB, "verdict": "match"}
+        )
+        self.assertEqual(
+            gh.calls,
+            [(["pr", "view", URL, "--json", "changedFiles,additions,deletions,files"], None)],
+        )
         for url in ("", "--repo=x/y", "https://github.com/o/r/issues/7", f"{URL} --web"):
             with self.subTest(url=url):
                 gh = FakeGh()

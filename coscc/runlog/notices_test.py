@@ -1,4 +1,4 @@
-"""Tests for `coscc/runlog/notices.py`: which records are notices, and what their sentence says (`0113` R2)."""
+"""Tests for `coscc/runlog/notices.py`: which records are notices, and what their sentence says."""
 
 from __future__ import annotations
 
@@ -13,32 +13,66 @@ SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _stop(unit: str, stop: str, reason: str = "") -> dict:
-    return {"v": 1, "at": "2026-09-27T10:00:00Z", "kind": "autopilot-stop", "workspace": WS,
-            "unit": unit, "stage": "", "stop": stop, "reason": reason}
+    return {
+        "v": 1,
+        "at": "2026-09-27T10:00:00Z",
+        "kind": "autopilot-stop",
+        "workspace": WS,
+        "unit": unit,
+        "stage": "",
+        "stop": stop,
+        "reason": reason,
+    }
 
 
 def _end(outcome: str, unit: str = "0007_x", stage: str = "impl", **extra) -> dict:
-    return {"v": 1, "at": "2026-09-27T10:00:00Z", "kind": "end", "workspace": WS, "unit": unit,
-            "stage": stage, "outcome": outcome, **extra}
+    return {
+        "v": 1,
+        "at": "2026-09-27T10:00:00Z",
+        "kind": "end",
+        "workspace": WS,
+        "unit": unit,
+        "stage": stage,
+        "outcome": outcome,
+        **extra,
+    }
 
 
 def _ship(result: str) -> dict:
-    return {"v": 1, "at": "2026-09-27T10:00:00Z", "kind": "ship", "workspace": WS, "unit": "0007_x",
-            "stage": "ship", "result": result}
+    return {
+        "v": 1,
+        "at": "2026-09-27T10:00:00Z",
+        "kind": "ship",
+        "workspace": WS,
+        "unit": "0007_x",
+        "stage": "ship",
+        "result": result,
+    }
 
 
-QUESTIONS = {"v": 1, "at": "2026-09-27T10:00:00Z", "kind": "questions", "workspace": WS, "unit": "0007_x",
-             "stage": "spec", "questions": [{"artifact": "spec.md", "n": 1}, {"artifact": "spec.md", "n": 2}]}
+QUESTIONS = {
+    "v": 1,
+    "at": "2026-09-27T10:00:00Z",
+    "kind": "questions",
+    "workspace": WS,
+    "unit": "0007_x",
+    "stage": "spec",
+    "questions": [{"artifact": "spec.md", "n": 1}, {"artifact": "spec.md", "n": 2}],
+}
 
-# One record of every kind R2 names, and every stop the autopilot writes, each with a reason
-# and a detail that carry what S3 keeps off the screen.
 EVERY = [
-    *[_stop(u, s, f"at {SHA} under {WS}/x: gh said no") for s in autopilot.STOP_KINDS if s != "full"
-      for u in ("0007_x", "")],
+    *[
+        _stop(u, s, f"at {SHA} under {WS}/x: gh said no")
+        for s in autopilot.STOP_KINDS
+        if s != "full"
+        for u in ("0007_x", "")
+    ],
     _stop("0007_x", "someday"),
     QUESTIONS,
-    *[_end(o, detail=f"{WS}/.cos/x failed at {SHA}", run="3f1c2a9e-1111-2222-3333-444455556666")
-      for o in ("failed", "exhausted", "stopped", "cancelled", "odd")],
+    *[
+        _end(o, detail=f"{WS}/.cos/x failed at {SHA}", run="3f1c2a9e-1111-2222-3333-444455556666")
+        for o in ("failed", "exhausted", "stopped", "cancelled", "odd")
+    ],
     _ship("shipped"),
     _ship("refused"),
 ]
@@ -70,12 +104,22 @@ class EachKindComesFromItsRecord(unittest.TestCase):
         self.assertIn("nothing is on the shortlist", n["text"])
 
     def test_a_cleared_stop_a_full_stop_a_done_end_and_a_precedent_end_are_no_notice(self):
-        for record in (_stop("0007_x", ""), _stop("", ""), _stop("0007_x", "full"), _end("done"),
-                       _end("failed", stage=autopilot.NOT_STEPS[0])):
+        for record in (
+            _stop("0007_x", ""),
+            _stop("", ""),
+            _stop("0007_x", "full"),
+            _end("done"),
+            _end("failed", stage=autopilot.NOT_STEPS[0]),
+        ):
             self.assertIsNone(notices.notice_of(1, record), record)
 
     def test_an_end_with_no_unit_and_a_ship_with_another_result_are_no_notice(self):
-        for record in (_end("failed", unit=""), _ship(""), _ship("merged"), {"kind": "start", "unit": "u"}):
+        for record in (
+            _end("failed", unit=""),
+            _ship(""),
+            _ship("merged"),
+            {"kind": "start", "unit": "u"},
+        ):
             self.assertIsNone(notices.notice_of(1, record), record)
 
 

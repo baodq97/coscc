@@ -1,4 +1,4 @@
-"""`coscc/units/planmap.py` (`0096` plan step 2)."""
+"""`coscc/units/planmap.py`."""
 
 from __future__ import annotations
 
@@ -57,8 +57,13 @@ class TheDefinitions(unittest.TestCase):
     def test_python_top_level_and_class_level_with_their_lines(self):
         self.assertEqual(
             planmap.definitions("m.py", PY),
-            [(6, "def top"), (12, "class Box"), (15, "def Box.__init__"), (18, "async def Box.fill"),
-             (23, "async def later")],
+            [
+                (6, "def top"),
+                (12, "class Box"),
+                (15, "def Box.__init__"),
+                (18, "async def Box.fill"),
+                (23, "async def later"),
+            ],
         )
 
     def test_a_function_inside_a_function_is_not_one(self):
@@ -67,7 +72,12 @@ class TheDefinitions(unittest.TestCase):
         self.assertFalse(any("nested" in n for n in names))
 
     def test_a_line_inside_a_multi_line_string_is_no_definition(self):
-        names = [d for _, d in planmap.definitions("planmap_test.py", Path(__file__).read_text(encoding="utf-8"))]
+        names = [
+            d
+            for _, d in planmap.definitions(
+                "planmap_test.py", Path(__file__).read_text(encoding="utf-8")
+            )
+        ]
         self.assertIn("class TheDefinitions", names)
         for phantom in ("def top", "class Box", "def Box.__init__", "async def later"):
             self.assertNotIn(phantom, names)
@@ -84,7 +94,12 @@ class TheDefinitions(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(
                     planmap.definitions(name, JS),
-                    [(3, "function run"), (6, "function wait"), (7, "const LIMIT"), (8, "class Board")],
+                    [
+                        (3, "function run"),
+                        (6, "function wait"),
+                        (7, "const LIMIT"),
+                        (8, "class Board"),
+                    ],
                 )
 
     def test_any_other_file_has_none(self):
@@ -108,8 +123,17 @@ class TheSection(unittest.TestCase):
         self.assertIn("- `pkg/m.py` — 24 lines\n  - 6 def top\n", section)
         self.assertLess(section.index("pkg/m.py"), section.index("pkg/b.mjs"))
         self.assertNotIn("not/listed.py", section)
-        self.assertEqual(record, {"bytes": len(section.encode()), "files": 3, "full": 3, "short": 0,
-                                  "new": 0, "outside": 0})
+        self.assertEqual(
+            record,
+            {
+                "bytes": len(section.encode()),
+                "files": 3,
+                "full": 3,
+                "short": 0,
+                "new": 0,
+                "outside": 0,
+            },
+        )
 
     def test_a_file_not_yet_there_is_new_and_a_name_that_is_no_path_is_skipped(self):
         section, record = planmap.select(plan("pkg/later.py", "Runner.run"), self.tree)
@@ -136,7 +160,9 @@ class TheSection(unittest.TestCase):
 
         with mock.patch.object(Path, "read_bytes", spy):
             section, record = planmap.select(
-                plan("../secret.py", str(self.root / "secret.py"), "pkg/link.py", "/etc/passwd"), self.tree)
+                plan("../secret.py", str(self.root / "secret.py"), "pkg/link.py", "/etc/passwd"),
+                self.tree,
+            )
         self.assertEqual(section, "")
         self.assertEqual(record["outside"], 4)
         self.assertEqual(opened, [])
@@ -162,7 +188,9 @@ class TheSection(unittest.TestCase):
         self.assertLess(record["full"] + record["short"], 100)
 
     def test_a_plan_without_the_section_is_nothing(self):
-        self.assertEqual(planmap.select("# Plan: x\nStatus: accepted.\n", self.tree), ("", planmap._empty()))
+        self.assertEqual(
+            planmap.select("# Plan: x\nStatus: accepted.\n", self.tree), ("", planmap._empty())
+        )
 
     def test_a_plan_that_cannot_be_read_is_an_error_not_a_raise(self):
         kw = planmap.for_step(self.root / "missing.md", self.tree)
@@ -174,7 +202,9 @@ class TheSection(unittest.TestCase):
         p = self.root / "plan.md"
         p.write_text(plan("README.md"), encoding="utf-8")
         section, record = planmap.select(plan("README.md"), self.tree)
-        self.assertEqual(planmap.for_step(p, self.tree), {"plan_map": section, "plan_map_record": record})
+        self.assertEqual(
+            planmap.for_step(p, self.tree), {"plan_map": section, "plan_map_record": record}
+        )
 
 
 if __name__ == "__main__":

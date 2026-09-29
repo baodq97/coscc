@@ -63,7 +63,7 @@ def listed_paths(plan_text: str | None) -> set[str]:
     start = _FILES.search(plan_text)
     if start is None:
         return set()
-    rest = plan_text[start.end():]
+    rest = plan_text[start.end() :]
     end = _HEADING.search(rest)
     section = rest[: end.start()] if end else rest
     return {n for n in (_normalise(t) for t in _TOKEN.findall(section)) if n}
@@ -96,7 +96,11 @@ def label_for(
     `impl_history` is the unit's run log records for stage `impl`, oldest first.
     """
     try:
-        if "plan" not in stages or stage not in stages or stages.index(stage) <= stages.index("plan"):
+        if (
+            "plan" not in stages
+            or stage not in stages
+            or stages.index(stage) <= stages.index("plan")
+        ):
             return None, None, None
         said = declared(plan_text)
         if listed_paths(plan_text) & set(SECURITY_SURFACE):

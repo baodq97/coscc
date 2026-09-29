@@ -13,8 +13,8 @@ paths:
   so a stranger can lock the owner out for up to an hour.
 - A state-changing request or websocket handshake whose `Origin` does not match `Host` is `403`;
   a proxy that rewrites `Host` breaks the page.
-- `HASH_CONCURRENCY` (`coscc/web/auth.py:66`) argon2 hashes run at once, about 64 MiB each;
-  another waits `HASH_WAIT` (`coscc/web/auth.py:68`) and gets `429`.
+- `HASH_CONCURRENCY` (`coscc/web/auth.py:68`) argon2 hashes run at once, about 64 MiB each;
+  another waits `HASH_WAIT` (`coscc/web/auth.py:70`) and gets `429`.
 - The failure count and setup token live in memory; a restart clears the one and mints the other.
 - The guard opens a SQLite connection per request; a `Busy` there is a `500`.
 - A page it lets through goes out `Cache-Control: no-cache`, or chromium reuses a cached

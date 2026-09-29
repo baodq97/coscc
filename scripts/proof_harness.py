@@ -40,8 +40,14 @@ BOOT_TIMEOUT_S = 60.0
 # broken in each.
 EXIT_PASS, EXIT_BROKEN, EXIT_ENV = 0, 1, 2
 
-GIT_ID = ("-c", "user.name=verify", "-c", "user.email=verify@example.invalid",
-          "-c", "commit.gpgsign=false")
+GIT_ID = (
+    "-c",
+    "user.name=verify",
+    "-c",
+    "user.email=verify@example.invalid",
+    "-c",
+    "commit.gpgsign=false",
+)
 
 
 # Every line a proof prints, as it prints it. Python buffers stdout whenever it is not a
@@ -54,7 +60,7 @@ GIT_ID = ("-c", "user.name=verify", "-c", "user.email=verify@example.invalid",
 # behaviour. Importing this module is already what a proof does first.
 try:
     sys.stdout.reconfigure(line_buffering=True)
-except (AttributeError, ValueError, OSError):  # not a real stream; nothing to configure
+except AttributeError, ValueError, OSError:  # not a real stream; nothing to configure
     pass
 
 
@@ -113,8 +119,11 @@ def require_browser():
         return p, p.chromium.launch()
     except Exception as e:
         looked = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "~/.cache/ms-playwright")
-        print(f"no usable chromium (looked in {looked}): {type(e).__name__}\n"
-              f"    uv run playwright install chromium", file=sys.stderr)
+        print(
+            f"no usable chromium (looked in {looked}): {type(e).__name__}\n"
+            f"    uv run playwright install chromium",
+            file=sys.stderr,
+        )
         raise SystemExit(EXIT_ENV)
 
 
@@ -134,7 +143,9 @@ class RealApp:
     where the app itself answers.
     """
 
-    def __init__(self, config, working_dir: Path, data_dir: Path | None = None, behind: int | None = None):
+    def __init__(
+        self, config, working_dir: Path, data_dir: Path | None = None, behind: int | None = None
+    ):
         self.config = config
         self.working_dir = working_dir
         self.data_dir = working_dir if data_dir is None else data_dir
@@ -153,14 +164,22 @@ class RealApp:
         command = [sys.executable, "-m", "coscc.run"]
         if self.behind is not None:
             env["__REFLEX_MOUNT_FRONTEND_COMPILED_APP"] = "1"
-            command = [sys.executable, "-c", (
-                "import os, uvicorn; from coscc.web import frontend; from coscc.run import REPO; "
-                "os.environ[frontend.WEB_WORKDIR_VAR] = str(frontend.web_dir(REPO)); "
-                f"uvicorn.run('coscc.coscc:served', factory=True, host={self.config.host!r}, "
-                f"port={self.behind}, log_level='warning', proxy_headers=False)"
-            )]
+            command = [
+                sys.executable,
+                "-c",
+                (
+                    "import os, uvicorn; from coscc.web import frontend; from coscc.run import REPO; "
+                    "os.environ[frontend.WEB_WORKDIR_VAR] = str(frontend.web_dir(REPO)); "
+                    f"uvicorn.run('coscc.coscc:served', factory=True, host={self.config.host!r}, "
+                    f"port={self.behind}, log_level='warning', proxy_headers=False)"
+                ),
+            ]
         self.proc = subprocess.Popen(
-            command, cwd=REPO, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            command,
+            cwd=REPO,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
         deadline = time.monotonic() + BOOT_TIMEOUT_S
         while time.monotonic() < deadline:
@@ -224,7 +243,9 @@ class Cut:
 
     def _serve(self) -> None:
         asyncio.set_event_loop(self.loop)
-        self._server = self.loop.run_until_complete(asyncio.start_server(self._handle, self.host, self.listen))
+        self._server = self.loop.run_until_complete(
+            asyncio.start_server(self._handle, self.host, self.listen)
+        )
         self._ready.set()
         self.loop.run_forever()
 
@@ -274,6 +295,7 @@ class Cut:
                 p["w"].transport.abort()
                 p["uw"].transport.abort()
             self.pairs.clear()
+
         self._do(go)
 
     def stall(self) -> None:
@@ -281,11 +303,13 @@ class Cut:
             self.outage = True
             for p in self.pairs:
                 p["stalled"] = True
+
         self._do(go)
 
     def restore(self) -> None:
         def go():
             self.down = self.outage = False
+
         self._do(go)
 
     def stop(self) -> None:
@@ -316,12 +340,18 @@ class Cut:
 
 
 def git(where: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(where), *GIT_ID, *args],
-                          capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(
+        ["git", "-C", str(where), *GIT_ID, *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
 
 
-def make_repo(root: Path, outside: Path, name: str = "proj", remote: str = "remote.git",
-              readme: str = "verify_0071\n") -> Path:
+def make_repo(
+    root: Path,
+    outside: Path,
+    name: str = "proj",
+    remote: str = "remote.git",
+    readme: str = "verify_0071\n",
+) -> Path:
     """A workspace: a clone of a bare-directory remote, one commit on `main`. The defaults
     are the fixture `capture_screens.py` has taken its screenshots on since `0083`."""
     origin = outside / remote
@@ -336,7 +366,9 @@ def make_repo(root: Path, outside: Path, name: str = "proj", remote: str = "remo
     return proj
 
 
-def ingest_fixture(work: Path, data_dir: Path, *workspaces: Path, by: str = "capture_screens") -> None:
+def ingest_fixture(
+    work: Path, data_dir: Path, *workspaces: Path, by: str = "capture_screens"
+) -> None:
     """`0135`: a fixture's files are written by hand, and since then the board reads a unit
     from `cos.db`, not its files. So they go in as a finished step's do: the store's import,
     if the app has not read it yet — which also reads any answer a file carries — then an

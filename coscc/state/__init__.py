@@ -17,23 +17,23 @@ import dataclasses
 import reflex as rx
 from reflex_base.event.context import EventContext
 
-from coscc.runlog import events as events_mod
 from coscc.web import place, present
 from coscc.web.api import build
-from coscc.service import COLLAPSED_STATES, FOLDED_STATES, Invalid, describe_base
+from coscc.service.common import COLLAPSED_STATES
+from coscc.service.common import FOLDED_STATES
+from coscc.service.common import Invalid
+from coscc.service.common import describe_base
 
 # Re-exported so `coscc.state.<name>` resolves; a patch reaches only the module that looks it up.
 from coscc.state.views import (
-    NAVIGATION,
+    link_fields,
     SCREEN_TITLES,
-    STATUS_COLOR,
     _cell_label,
     MARK_COLORS,
     tree_line,
     Workspace,
     Cell,
     Question,
-    Round,
     Unit,
     Card,
     _card,
@@ -44,28 +44,19 @@ from coscc.state.views import (
     TokenRow,
     WasteRow,
     AnomalyRow,
-    WASTE_LABEL,
-    ANOMALY_LABEL,
-    NO_UNIT,
     _unknown,
     _spend_rows,
     _token_row,
     _waste_rows,
-    _measured,
     _anomaly_rows,
     MESSAGE_CUT,
-    BacklogRow,
-    _estimated_by,
-    _backlog_row,
     _relations_text,
     backlog_view,
     _outcome_fields,
-    Activity,
     _activities,
     RUNNING_POLL,
     _POLLING,
     GONE_AFTER,
-    _ASKING,
     _asking,
     _tab_gone,
     _hold_fields,
@@ -79,29 +70,19 @@ from coscc.state.views import (
     Run,
     Move,
     _moves,
-    WatchEvent,
-    WATCH_WINDOW,
-    WATCH_GATHER,
-    NO_RUN_NOTE,
     READ_ONLY_NOTE,
     AUTOPILOT_STOP_LABEL,
     _number,
-    _watch_note,
-    _watch_events,
     Event,
     Knob,
     ModelRow,
     AgentRow,
-    DecisionRow,  # noqa: F401 — the page imports it from here
     ImportRow,
     GrantRow,
     _run_target,
     _run_waiting,
     _run_dropped,
-    _key_label,
     _tokens,
-    _job_line,
-    _channel_line,
     COST_NOTE,
     cost_note,
     _usd,
@@ -132,13 +113,7 @@ from coscc.state.rerun import (
 from coscc.state.ideas import (
     IdeasMixin,
 )
-from coscc.state.release import (
-    ReleaseMixin,
-    ReleaseUnit,
-    ReleaseCommit,
-    release_fields,
-)
-from coscc.state.views import IdeaRow, ChildRow, link_fields  # noqa: F401 — the page imports them from here
+from coscc.state.release import ReleaseMixin
 
 API = build()
 SERVICE = API.state.service
@@ -362,8 +337,11 @@ class StudioState(
         in it — that is `Running` or `Ready`, `""` if none."""
         board = set(self.board_ids)
         order = {name: i for i, name in enumerate(self.stages)}
-        rows = [(order.get(c.at, len(order)), i, c.id) for i, c in enumerate(self.cards)
-                if c.id in board and c.state in ("running", "ready")]
+        rows = [
+            (order.get(c.at, len(order)), i, c.id)
+            for i, c in enumerate(self.cards)
+            if c.id in board and c.state in ("running", "ready")
+        ]
         return min(rows)[2] if rows else ""
 
     @rx.var
@@ -412,8 +390,11 @@ class StudioState(
     @rx.var
     def unit_missing(self) -> bool:
         """An address named a unit this workspace's board does not list."""
-        return (self.unit_id != "" and not self.loading
-                and not any(c.id == self.unit_id for c in self.cards))
+        return (
+            self.unit_id != ""
+            and not self.loading
+            and not any(c.id == self.unit_id for c in self.cards)
+        )
 
     @rx.var
     def unit_dropped(self) -> bool:
@@ -472,9 +453,11 @@ class StudioState(
         `unknown`, rather than leaving the table as if it cost nothing."""
         if self.screen != "activity":
             return []
-        return [UsageRow(id=c.id, title=c.title, tokens=c.tokens, usd=c.usd,
-                         token_count=c.token_count) for c in self.cards
-                if c.token_count > 0 or c.usd not in ("", "—")]
+        return [
+            UsageRow(id=c.id, title=c.title, tokens=c.tokens, usd=c.usd, token_count=c.token_count)
+            for c in self.cards
+            if c.token_count > 0 or c.usd not in ("", "—")
+        ]
 
     @rx.var
     def usage_scale(self) -> int:
@@ -516,8 +499,13 @@ class StudioState(
         ]
         report = data.get("import_report") or {}
         self.import_rows = [
-            ImportRow(workspace=str(r["workspace"]), unit=str(r["unit"]), artifact=str(r["artifact"]),
-                      field=str(r["field"]), reason=str(r["reason"]))
+            ImportRow(
+                workspace=str(r["workspace"]),
+                unit=str(r["unit"]),
+                artifact=str(r["artifact"]),
+                field=str(r["field"]),
+                reason=str(r["reason"]),
+            )
             for r in report.get("rows") or []
         ]
         self.import_problem = str(report.get("problem") or "")
@@ -534,7 +522,9 @@ class StudioState(
                 overridden=bool(r.get("overridden", r["source"] == "override")),
                 effort=str(r.get("effort") or "SDK default"),
                 effort_source=str(r.get("effort_source") or "none"),
-                effort_overridden=bool(r.get("effort_overridden", r.get("effort_source") == "override")),
+                effort_overridden=bool(
+                    r.get("effort_overridden", r.get("effort_source") == "override")
+                ),
                 has_effort=str(r["name"]) != "chat",
             )
             for r in data.get("rows") or []
@@ -546,8 +536,10 @@ class StudioState(
             AgentRow(
                 key=str(r["key"]),
                 **{f: str(r.get(f) or "") for f in ("glyph", "name", "meaning", "role")},
-                **{f"{f}_source": str((r.get("source") or {}).get(f) or "")
-                   for f in ("glyph", "name", "meaning", "role")},
+                **{
+                    f"{f}_source": str((r.get("source") or {}).get(f) or "")
+                    for f in ("glyph", "name", "meaning", "role")
+                },
                 overridden=bool(r.get("overridden")),
             )
             for r in data.get("rows") or []
@@ -564,15 +556,23 @@ class StudioState(
         self.autopilot_on = bool(block.get("on"))
         self.autopilot_refused = str(block.get("refused_because") or "")
         self.autopilot_stops = [
-            AutopilotStop(unit=str(x.get("unit") or "the workspace"), kind=AUTOPILOT_STOP_LABEL.get(
-                str(x.get("kind") or ""), str(x.get("kind") or "")), reason=str(x.get("reason") or ""))
+            AutopilotStop(
+                unit=str(x.get("unit") or "the workspace"),
+                kind=AUTOPILOT_STOP_LABEL.get(str(x.get("kind") or ""), str(x.get("kind") or "")),
+                reason=str(x.get("reason") or ""),
+            )
             for x in block.get("stops") or []
         ]
         cap = block.get("cap") or {}
         self.autopilot_cap = (
-            "" if not cap else
-            f"Today: {cap.get('spent', 0):.2f} spent, "
-            + (f"{cap.get('estimated', 0):.2f} of it estimated, " if cap.get("estimated_count") else "")
+            ""
+            if not cap
+            else f"Today: {cap.get('spent', 0):.2f} spent, "
+            + (
+                f"{cap.get('estimated', 0):.2f} of it estimated, "
+                if cap.get("estimated_count")
+                else ""
+            )
             + f"{cap.get('running', 0):.2f} running, cap {cap.get('limit', 0):.2f} USD"
         )
 
@@ -586,15 +586,25 @@ class StudioState(
             return place.href(place.Place(screen, ws, unit, tab or "overview"))
 
         self.guide_running = [
-            GuideItem(unit=str(r.get("unit") or ""),
-                      what=" · ".join(x for x in (str(r.get("stage") or ""), str(r.get("agent") or "")) if x),
-                      detail="started " + present.when(r.get("started")),
-                      href=link("unit", str(r.get("unit") or "")))
+            GuideItem(
+                unit=str(r.get("unit") or ""),
+                what=" · ".join(
+                    x for x in (str(r.get("stage") or ""), str(r.get("agent") or "")) if x
+                ),
+                detail="started " + present.when(r.get("started")),
+                href=link("unit", str(r.get("unit") or "")),
+            )
             for r in block.get("running") or []
         ]
         self.guide_needs_you = [
-            GuideItem(unit=str(r.get("unit") or ""), what=str(r.get("do") or ""), detail=str(r.get("reason") or ""),
-                      href=link(str(r.get("screen") or ""), str(r.get("unit") or ""), str(r.get("tab") or "")))
+            GuideItem(
+                unit=str(r.get("unit") or ""),
+                what=str(r.get("do") or ""),
+                detail=str(r.get("reason") or ""),
+                href=link(
+                    str(r.get("screen") or ""), str(r.get("unit") or ""), str(r.get("tab") or "")
+                ),
+            )
             for r in block.get("needs_you") or []
         ]
 
@@ -646,9 +656,16 @@ class StudioState(
         if not self.cwd:
             return
         try:
-            self.running_steps = [RunningStep(**{**r, "started_at": present.when(r.get("started_at")),
-                                                 "run": r.get("run") or ""})
-                                  for r in SERVICE.running_steps(self.cwd)]
+            self.running_steps = [
+                RunningStep(
+                    **{
+                        **r,
+                        "started_at": present.when(r.get("started_at")),
+                        "run": r.get("run") or "",
+                    }
+                )
+                for r in SERVICE.running_steps(self.cwd)
+            ]
         except Invalid:
             self.running_steps = []
 
@@ -683,15 +700,14 @@ class StudioState(
         self.stage_glyphs = {k: str(v.get("glyph") or "") for k, v in found.items()}
         self.stage_labels = {k: str(v.get("label") or "") for k, v in found.items()}
         self.stage_notes = {
-            k: "\n".join(str(v.get(f) or "") for f in ("meaning", "role") if v.get(f)) for k, v in found.items()
+            k: "\n".join(str(v.get(f) or "") for f in ("meaning", "role") if v.get(f))
+            for k, v in found.items()
         }
         self._show_ideas(data)
         for name, value in backlog_view(data).items():
             setattr(self, name, value)
         self._backlog_history = dict((data.get("backlog") or {}).get("history") or {})
-        self._trees = {
-            u["name"]: tree_line(u.get("worktree")) for u in data.get("units") or []
-        }
+        self._trees = {u["name"]: tree_line(u.get("worktree")) for u in data.get("units") or []}
         self.recording = bool(data["recording"])
         self._show_autopilot_block(data.get("autopilot") or {})
         self._show_guide(data.get("guide") or {})
@@ -712,19 +728,21 @@ class StudioState(
             cells = []
             for row in u["stages"]:
                 label, color = _cell_label(row)
-                cells.append(Cell(
-                    stage=row["stage"],
-                    status=row["status"],
-                    label=label,
-                    mode=row["mode"],
-                    color=color,
-                    started=row["status"] != "not started",
-                    optional=bool(row.get("optional")),
-                    grants=", ".join(row.get("grants") or []) or "no tools",
-                    warning=row.get("warning") or "",
-                    opens_tools=bool(row.get("grants")),
-                    consequence=str(row.get("consequence") or ""),
-                ))
+                cells.append(
+                    Cell(
+                        stage=row["stage"],
+                        status=row["status"],
+                        label=label,
+                        mode=row["mode"],
+                        color=color,
+                        started=row["status"] != "not started",
+                        optional=bool(row.get("optional")),
+                        grants=", ".join(row.get("grants") or []) or "no tools",
+                        warning=row.get("warning") or "",
+                        opens_tools=bool(row.get("grants")),
+                        consequence=str(row.get("consequence") or ""),
+                    )
+                )
             started = len([c for c in cells if c.started])
             stage = _current_stage(u, self.stages)
             count, shown = _tokens(u.get("cost") or {})
@@ -890,7 +908,8 @@ class StudioState(
         for row in feed["events"]:
             icon, color = icons.get(row["kind"], ("dot", "gray"))
             if (row["kind"] == "end" and row["outcome"] != "done") or (
-                    row["kind"] == "release" and row["outcome"] in ("refused", "failed")):
+                row["kind"] == "release" and row["outcome"] in ("refused", "failed")
+            ):
                 icon, color = "triangle-alert", "amber"
             title = {
                 "mode": f"{row['stage']} set to {row['mode']}",
@@ -909,7 +928,11 @@ class StudioState(
                 detail += f" / {row['denials']} tool call(s) refused"
             if row["artifact"]:
                 detail += f" / wrote {row['artifact']}"
-            events.append(Event(title=title, detail=detail, icon=icon, color=color, time=present.when(row["at"])))
+            events.append(
+                Event(
+                    title=title, detail=detail, icon=icon, color=color, time=present.when(row["at"])
+                )
+            )
         self.events = events
         total = feed.get("total") or {}
         _, shown = _tokens(total)
@@ -983,9 +1006,12 @@ class StudioState(
                 session_id=(r.get("session_id") or "—")[:12],
                 tokens=_tokens(r.get("cost") or {})[1],
                 # An ended run that reported no cost reads `unknown`, not `—`.
-                usd=_usd({**(r.get("cost") or {}), "unknown": int(
-                    r.get("ended") is not None and not r.get("reported", True)
-                )}),
+                usd=_usd(
+                    {
+                        **(r.get("cost") or {}),
+                        "unknown": int(r.get("ended") is not None and not r.get("reported", True)),
+                    }
+                ),
                 color="grass" if r.get("outcome") == "done" else "amber",
                 detail=r.get("detail") or "",
                 run=r.get("run") or "",
@@ -1314,7 +1340,8 @@ class StudioState(
         if row is None:
             return
         fields = {
-            f: str(form.get(f) or "").strip() for f in ("glyph", "name", "meaning", "role")
+            f: str(form.get(f) or "").strip()
+            for f in ("glyph", "name", "meaning", "role")
             if f in form and str(form.get(f) or "").strip() != getattr(row, f)
         }
         if not fields:
@@ -1501,11 +1528,13 @@ class StudioState(
     @rx.event
     def toggle_details(self, key: str):
         """Open or close one *Details*; nothing else reads which are open."""
-        self.open_details = ([k for k in self.open_details if k != key]
-                             if key in self.open_details else [*self.open_details, key])
+        self.open_details = (
+            [k for k in self.open_details if k != key]
+            if key in self.open_details
+            else [*self.open_details, key]
+        )
 
     @rx.event
-
     @rx.event
     async def stop_step(self, unit: str):
         """Stop one unit's running step; every rule is `Service.stop_step`'s. The streaming
@@ -1569,8 +1598,8 @@ class StudioState(
                             self.error = payload["error"]
                         outcome = payload.get("outcome") or ""
                         written = payload.get("artifact") or ""
-                        self.notice = (
-                            f"{stage} {outcome}" + (f" — wrote {written}" if written else "")
+                        self.notice = f"{stage} {outcome}" + (
+                            f" — wrote {written}" if written else ""
                         )
                         # `describe_base` is the one sentence saying a step's base may be
                         # stale; the page only appends it.
@@ -1638,14 +1667,15 @@ class StudioState(
             self.notice = "Write a message before sending."
             return
         self.sending, self.error = True, ""
-        self.messages = [*self.messages, Message(role="user", text=text),
-                         Message(role="assistant", text="")]
+        self.messages = [
+            *self.messages,
+            Message(role="user", text=text),
+            Message(role="assistant", text=""),
+        ]
         yield
         try:
             SERVICE.check_send(self.cwd, text)
-            async for kind, payload in SERVICE.stream(
-                self.cwd, text, self.session_id or None
-            ):
+            async for kind, payload in SERVICE.stream(self.cwd, text, self.session_id or None):
                 if kind == "chunk":
                     self.messages[-1].text += payload
                     self.messages = list(self.messages)

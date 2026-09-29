@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc.service import Invalid
+from coscc.service.common import Invalid
 from coscc.state.views import ChildRow, IdeaRow, child_rows, idea_rows
 from coscc.web import place
 
@@ -18,7 +18,6 @@ NO_DEPENDENCY = "No dependency"
 
 
 class IdeasMixin(rx.State, mixin=True):
-
     # The Board's list, and its *Start an idea* box.
     ideas: list[IdeaRow] = []
     new_idea_slug: str = ""
@@ -90,7 +89,9 @@ class IdeasMixin(rx.State, mixin=True):
             self.notice = str(e)
             return
         self.new_idea_slug, self.new_idea_brief = "", ""
-        return rx.redirect(place.href(place.Place("idea", self._name_of(self.cwd), idea=made["id"])))
+        return rx.redirect(
+            place.href(place.Place("idea", self._name_of(self.cwd), idea=made["id"]))
+        )
 
     @rx.event
     async def open_child(self):
@@ -104,7 +105,10 @@ class IdeasMixin(rx.State, mixin=True):
             return
         try:
             made = await SERVICE.create_unit(
-                where, self.child_slug.strip(), idea=self.idea_ref, depends_on=self.child_depends,
+                where,
+                self.child_slug.strip(),
+                idea=self.idea_ref,
+                depends_on=self.child_depends,
             )
         except Invalid as e:
             self.notice = str(e)

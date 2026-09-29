@@ -1,10 +1,8 @@
 """`coscc/update/updater.py`: waiting, pausing, the apply sequence, and what a restart reports.
 
-`.cos/0068_updating-the-app-is-a-manual-reinstall` plan step 7, and `0138` step 9. The
-service is a stand-in that lists what an Apply waits for from a Python list and records
-when the sessions were paused; nothing goes to the network, no session is opened, and the
-trial run is replaced where a test says so.
-"""
+The service is a stand-in that lists what an Apply waits for from a Python list and records when the
+sessions were paused; nothing goes to the network, no session is opened, and the trial run is
+replaced where a test says so."""
 
 from __future__ import annotations
 
@@ -111,11 +109,20 @@ def _serving(files):
 def _running_release(body: bytes = b"old wheel") -> dict[str, bytes]:
     """The running `0.12.0`'s own release files, as `_ensure_current` asks for them."""
     wheel_url, sums_url = update.release_urls("v0.12.0")
-    return {wheel_url: body, sums_url: f"{hashlib.sha256(body).hexdigest()}  {update.wheel_name('0.12.0')}\n".encode()}
+    return {
+        wheel_url: body,
+        sums_url: f"{hashlib.sha256(body).hexdigest()}  {update.wheel_name('0.12.0')}\n".encode(),
+    }
 
 
-INTEGRATION = {"kind": "integration", "id": "integration:/w:0002_b", "workspace": "/w", "unit": "0002_b",
-               "stage": "integrate", "started": "t"}
+INTEGRATION = {
+    "kind": "integration",
+    "id": "integration:/w:0002_b",
+    "workspace": "/w",
+    "unit": "0002_b",
+    "stage": "integrate",
+    "started": "t",
+}
 
 
 class _Base(unittest.IsolatedAsyncioTestCase):
@@ -125,9 +132,16 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         self.config = Config(data_dir=str(self.data), update_check=False)
         self.service = StandIn()
         self.me = {
-            "version": "0.12.0", "commit": SHA, "commit_label": SHA, "install": "package",
-            "shape": "service", "reason": "", "build_id": f"0.12.0+{SHA}", "uv": "/nonexistent/uv",
-            "tool_dir": str(Path(self.tmp.name) / "tools"), "bin_dir": str(Path(self.tmp.name) / "bin"),
+            "version": "0.12.0",
+            "commit": SHA,
+            "commit_label": SHA,
+            "install": "package",
+            "shape": "service",
+            "reason": "",
+            "build_id": f"0.12.0+{SHA}",
+            "uv": "/nonexistent/uv",
+            "tool_dir": str(Path(self.tmp.name) / "tools"),
+            "bin_dir": str(Path(self.tmp.name) / "bin"),
         }
         self.root = self.data / "updates"
         self.applied: list[tuple[str, str]] = []
@@ -140,8 +154,10 @@ class _Base(unittest.IsolatedAsyncioTestCase):
     def make(self, record_apply=True):
         u = updater.Updater(self.config, self.service, me=dict(self.me), start=True)
         if record_apply:
+
             async def fake_apply(channel, by):
                 self.applied.append((channel, by))
+
             u._apply = fake_apply  # type: ignore[method-assign]
         u.release = {"state": "ready", "version": "0.13.0"}
         return u
@@ -152,7 +168,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 
 
 class NothingRunningAppliesAtOnce(_Base):
-    async def test_r7(self):
+    async def test_apply_runs_with_the_name_given(self):
         u = self.make()
         await u.apply("release", "an")
         await self.settle()
@@ -169,7 +185,7 @@ class NothingRunningAppliesAtOnce(_Base):
 
 
 class ItWaits(_Base):
-    async def test_r9_pending_then_applies_once_the_last_job_ends(self):
+    async def test_pending_then_applies_once_the_last_job_ends(self):
         self.service.jobs = [INTEGRATION]
         u = self.make()
         status = await u.apply("release", "an")
@@ -208,12 +224,14 @@ class ItWaits(_Base):
 
 
 class OneApply(_Base):
-    """`0138` R1, R3: one Apply, which takes no mode and no token."""
+    """One Apply, which takes no mode and no token."""
 
     async def test_apply_takes_no_mode_and_no_token(self):
         import inspect
 
-        self.assertEqual(list(inspect.signature(updater.Updater.apply).parameters), ["self", "channel", "by"])
+        self.assertEqual(
+            list(inspect.signature(updater.Updater.apply).parameters), ["self", "channel", "by"]
+        )
         self.assertFalse(hasattr(updater, "MODES"))
         self.assertFalse(hasattr(updater, "Stale"))
         self.assertFalse(hasattr(updater.Updater, "cut_list"))
@@ -233,7 +251,7 @@ class OneApply(_Base):
 
 
 class TheWindowRefusesNewWork(_Base):
-    async def test_r11(self):
+    async def test_nothing_starts_while_an_update_runs(self):
         u = self.make()
         u.window = True
         with self.assertRaises(updater.Updating):
@@ -245,7 +263,7 @@ class TheWindowRefusesNewWork(_Base):
 
 
 class TheSequence(_Base):
-    """R12 steps 1 to 7, the trial replaced where the test says so."""
+    """The first seven steps of an apply, the trial replaced where the test says so."""
 
     class Server:
         should_exit = False
@@ -272,7 +290,9 @@ class TheSequence(_Base):
 
     async def test_a_target_that_no_longer_matches_stops_before_anything(self):
         _wheel(self.root / "release", "0.13.0", sums=False)
-        (self.root / "release" / update.SUMS).write_text("0" * 64 + "  coscc-0.13.0-py3-none-any.whl\n")
+        (self.root / "release" / update.SUMS).write_text(
+            "0" * 64 + "  coscc-0.13.0-py3-none-any.whl\n"
+        )
         _wheel(self.root / "current", "0.12.0")
         u = self.make_real()
         await self.run_apply(u)
@@ -291,7 +311,7 @@ class TheSequence(_Base):
         self.assertFalse(u._fetch_lock.locked())
 
     async def test_an_empty_current_is_filled_by_the_apply_when_the_checker_never_ran(self):
-        # Review round 1, F1: `COS_UPDATE_CHECK=0`, so nothing but step 1 fills `current/`.
+        # `COS_UPDATE_CHECK=0`, so nothing but step 1 fills `current/`.
         self.assertFalse(self.config.update_check)
         _wheel(self.root / "release", "0.13.0")
         u = self.make_real()
@@ -304,12 +324,18 @@ class TheSequence(_Base):
         self.assertEqual(update.take_handoff().current_version, "0.12.0")
 
     async def test_a_local_builds_leftovers_in_current_do_not_block_a_release(self):
-        # Review round 2, F4: a local build applied from the board, then `install.sh` at a
-        # terminal brought 0.12.0; `current/` still holds the local wheel and its manifest.
+        # A local build applied from the board, then `install.sh` at a terminal brought 0.12.0;
+        # `current/` still holds the local wheel and its manifest.
         current = self.root / "current"
         _wheel(current, "0.11.0+gabcdef0", body=b"local", sums=False)
-        update.write_json(current / update.MANIFEST, {"version": "0.11.0+gabcdef0", "commit": "c" * 40,
-                                                      "sha256": hashlib.sha256(b"local").hexdigest()})
+        update.write_json(
+            current / update.MANIFEST,
+            {
+                "version": "0.11.0+gabcdef0",
+                "commit": "c" * 40,
+                "sha256": hashlib.sha256(b"local").hexdigest(),
+            },
+        )
         _wheel(self.root / "release", "0.13.0")
         u = self.make_real()
         u._opener = _serving(_running_release())
@@ -319,7 +345,7 @@ class TheSequence(_Base):
         self.assertFalse((current / update.MANIFEST).exists())
 
     async def test_a_local_build_with_no_current_is_not_offered(self):
-        # Review round 1, F1: a local build has no release to fetch itself back from.
+        # A local build has no release to fetch itself back from.
         self.me["version"] = "0.12.0+gabcdef0"
         _wheel(self.root / "release", "0.13.0")
         u = self.make_real()
@@ -333,7 +359,7 @@ class TheSequence(_Base):
         self.assertEqual(u.status()["release"]["state"], "ready")
 
     async def test_the_lock_is_held_after_the_hand_off_and_released_after_a_failure(self):
-        # Review round 1, F3: a check cannot replace the wheel `finish` was handed.
+        # A check cannot replace the wheel `finish` was handed.
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
         u = self.make_real("the trial failed")
@@ -379,7 +405,6 @@ class TheSequence(_Base):
         self.assertEqual(self.service.suspended, [])
 
     async def test_new_sessions_are_refused_from_the_start_of_the_trial(self):
-        # `0138` R3.
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
         seen: list[bool] = []
@@ -398,7 +423,7 @@ class TheSequence(_Base):
         self.assertEqual(seen, [True, True])
 
     async def test_a_failed_trial_suspends_nothing(self):
-        # `0138` R3: the sessions ran through the trial, and go on running after it failed.
+        # The sessions ran through the trial, and go on running after it failed.
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
         u = self.make_real("the trial failed")
@@ -408,7 +433,6 @@ class TheSequence(_Base):
         u.refuse_while_updating()
 
     async def test_apply_suspends_every_session_after_the_trial_and_before_shutdown(self):
-        # `0138` R4-R6.
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
 
@@ -423,12 +447,17 @@ class TheSequence(_Base):
         self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "close_all"])
 
     async def test_work_with_no_session_is_given_time_and_what_outlives_it_is_named(self):
-        # Review round 2, F6: a step posting its round after its `end` had no session to pause;
-        # it is waited for, bounded, and one still running then gets a `cut` row before
-        # `shutdown` cancels it.
+        # A step posting its round after its `end` had no session to pause; it is waited for,
+        # bounded, and one still running then gets a `cut` row before `shutdown` cancels it.
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
-        job = {"kind": "step", "workspace": "/w", "unit": "0001_a", "stage": "review", "started": "t"}
+        job = {
+            "kind": "step",
+            "workspace": "/w",
+            "unit": "0001_a",
+            "stage": "review",
+            "started": "t",
+        }
         self.service.unsettled = [job]
         u = self.make_real()
         await self.run_apply(u)
@@ -436,11 +465,13 @@ class TheSequence(_Base):
         self.assertEqual(self.service.within, updater.SETTLE_WITHIN)
         cut = [r for r in self.service.rows if r["event"] == "cut"]
         self.assertEqual([(c["cut"], c["stopped_by"]) for c in cut], [(job, "an")])
-        self.assertLess(self.service.rows.index(cut[0]),
-                        [r["event"] for r in self.service.rows].index("applying"))
+        self.assertLess(
+            self.service.rows.index(cut[0]),
+            [r["event"] for r in self.service.rows].index("applying"),
+        )
 
     async def test_suspend_rows_are_written_before_hand_off(self):
-        # `0138`: the rows are the next start's only way to the sessions, so they come first.
+        # The rows are the next start's only way to the sessions, so they come first.
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
         order = self.service.order
@@ -460,8 +491,8 @@ class TheSequence(_Base):
         self.assertTrue(self.server.should_exit)
 
     async def test_a_failed_hand_off_takes_every_paused_session_up_again_here(self):
-        # Review round 1, F3: this process goes on serving, so its `suspend` rows are taken up
-        # now, with the window closed -- not by whichever start comes next.
+        # This process goes on serving, so its `suspend` rows are taken up now, with the window
+        # closed -- not by whichever start comes next.
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
         seen: list[bool] = []
@@ -478,7 +509,9 @@ class TheSequence(_Base):
             await self.run_apply(u)
         finally:
             del update.SERVER.hand_off
-        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "close_all", "take_up"])
+        self.assertEqual(
+            self.service.order, ["suspend", "settle", "shutdown", "close_all", "take_up"]
+        )
         self.assertEqual(seen, [False])
         self.assertEqual(u.state, "idle")
         self.assertIn("uvicorn.Server was gone", u.error["message"])
@@ -507,8 +540,7 @@ class TheSequence(_Base):
         self.assertNotIn("take_up", self.service.order)
 
     async def test_a_local_build_is_cancelled_and_not_resumed(self):
-        # `0138` R3: a build is no session; it is cut, with its `cut` row, and nothing takes
-        # it up again.
+        # A build is no session; it is cut, with its `cut` row, and nothing takes it up again.
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
         u = self.make_real()
@@ -554,9 +586,17 @@ class WhatARestartReports(_Base):
         log = self.root / "logs" / "x.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text("line one\nline two\n")
-        (self.root / "last.json").write_text(json.dumps({
-            "from": "0.12.0", "to": "0.13.0", "result": result, "log": str(log), "finished_at": "t",
-        }))
+        (self.root / "last.json").write_text(
+            json.dumps(
+                {
+                    "from": "0.12.0",
+                    "to": "0.13.0",
+                    "result": result,
+                    "log": str(log),
+                    "finished_at": "t",
+                }
+            )
+        )
 
     def test_one_result_row_and_the_file_is_renamed(self):
         self.write_last("failed")
@@ -583,34 +623,48 @@ class WhatARestartReports(_Base):
         self.me["reason"] = "x"
         u = self.make()
         self.assertEqual(self.service.rows, [])
-        self.assertEqual(set(u.status()), {"version", "commit", "commit_label", "install", "shape", "reason", "build_id"})
+        self.assertEqual(
+            set(u.status()),
+            {"version", "commit", "commit_label", "install", "shape", "reason", "build_id"},
+        )
         with self.assertRaises(updater.NotHere):
             u.cancel("an")
 
 
 class TheChecker(_Base):
-    """R3 to R5, one check at a time, with an opener serving bytes from a dict."""
+    """One check at a time, with an opener serving bytes from a dict."""
 
     def opener_for(self, wheel=b"new wheel", sums_for=b"new wheel", latest=None):
         tag = "v0.13.0"
         base = f"{update.DOWNLOAD_PREFIX}{tag}/"
         name = update.wheel_name("0.13.0")
-        latest = latest if latest is not None else json.dumps({
-            "tag_name": tag,
-            "assets": [{"name": name, "browser_download_url": base + name},
-                       {"name": "SHA256SUMS", "browser_download_url": base + "SHA256SUMS"}],
-        }).encode()
+        latest = (
+            latest
+            if latest is not None
+            else json.dumps(
+                {
+                    "tag_name": tag,
+                    "assets": [
+                        {"name": name, "browser_download_url": base + name},
+                        {"name": "SHA256SUMS", "browser_download_url": base + "SHA256SUMS"},
+                    ],
+                }
+            ).encode()
+        )
         cur = update.release_urls("v0.12.0")
         files = {
             update.LATEST_API: latest,
             base + name: wheel,
             base + "SHA256SUMS": f"{hashlib.sha256(sums_for).hexdigest()}  {name}\n".encode(),
             cur[0]: b"old wheel",
-            cur[1]: f"{hashlib.sha256(b'old wheel').hexdigest()}  {update.wheel_name('0.12.0')}\n".encode(),
+            cur[
+                1
+            ]: f"{hashlib.sha256(b'old wheel').hexdigest()}  {update.wheel_name('0.12.0')}\n".encode(),
         }
 
         def opener(url):
             import io
+
             if url not in files:
                 raise OSError("offline")
             return io.BytesIO(files[url])
@@ -618,8 +672,14 @@ class TheChecker(_Base):
         return opener
 
     def checker(self, opener):
-        return updater.Updater(self.config, self.service, me=dict(self.me), opener=opener,
-                               check_tag=lambda t: "release", start=False)
+        return updater.Updater(
+            self.config,
+            self.service,
+            me=dict(self.me),
+            opener=opener,
+            check_tag=lambda t: "release",
+            start=False,
+        )
 
     def test_a_new_release_is_found_downloaded_and_ready(self):
         u = self.checker(self.opener_for())
@@ -628,7 +688,7 @@ class TheChecker(_Base):
         self.assertEqual(u.release["version"], "0.13.0")
         self.assertEqual(self.service.events(), ["found", "downloaded"])
         self.assertTrue(u.checked_at)
-        # R5: the running release's own wheel is kept for going back.
+        # The running release's own wheel is kept for going back.
         self.assertEqual(update.verified_wheel(self.root / "current")["version"], "0.12.0")
 
     def test_a_checksum_that_does_not_match_is_an_error_and_nothing_is_kept(self):
@@ -645,7 +705,9 @@ class TheChecker(_Base):
         u = self.checker(offline)
         u.release = {"state": "up-to-date"}
         u.check_once()
-        self.assertEqual((u.release, u.checked_at, self.service.rows), ({"state": "up-to-date"}, "", []))
+        self.assertEqual(
+            (u.release, u.checked_at, self.service.rows), ({"state": "up-to-date"}, "", [])
+        )
 
     def test_a_body_that_is_not_json_is_offline_too(self):
         u = self.checker(self.opener_for(latest=b"<html>rate limited</html>"))
@@ -653,7 +715,7 @@ class TheChecker(_Base):
         self.assertEqual((u.checked_at, self.service.rows), ("", []))
 
     def test_nothing_is_fetched_while_an_update_waits_or_applies(self):
-        # Review round 1, F3: the wheel an apply read stays where it read it.
+        # The wheel an apply read stays where it read it.
         old = _wheel(self.root / "release", "0.12.5")
         for state in ("pending", "applying"):
             u = self.checker(self.opener_for())
@@ -684,11 +746,10 @@ class TheLocalChannel(_Base):
 
 
 class TheTrialLogsIn(unittest.IsolatedAsyncioTestCase):
-    """`0070` step 6: the trial goes through the login guard the way a person does.
+    """The trial goes through the login guard the way a person does.
 
     A real `auth.Guard` around a tiny app that answers 200, served by a real
-    `uvicorn.Server` on a free loopback port in a thread, on a temporary data root.
-    """
+    `uvicorn.Server` on a free loopback port in a thread, on a temporary data root."""
 
     async def asyncSetUp(self):
         import threading
@@ -701,8 +762,13 @@ class TheTrialLogsIn(unittest.IsolatedAsyncioTestCase):
         async def ok(scope, receive, send):
             if scope["type"] != "http":
                 return
-            await send({"type": "http.response.start", "status": 200,
-                        "headers": [(b"content-type", b"text/plain")]})
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"text/plain")],
+                }
+            )
             await send({"type": "http.response.body", "body": b"ok"})
 
         self.tmp = tempfile.TemporaryDirectory()
@@ -710,9 +776,15 @@ class TheTrialLogsIn(unittest.IsolatedAsyncioTestCase):
         guard = auth.Guard(ok, Data(self.tmp.name), err=self.err)
         self.token = auth.SETUP_LINE.match(self.err.getvalue().splitlines()[0]).group(1)
         self.port = updater._free_port()
-        self.server = uvicorn.Server(uvicorn.Config(
-            guard, host="127.0.0.1", port=self.port, log_level="warning", lifespan="off",
-        ))
+        self.server = uvicorn.Server(
+            uvicorn.Config(
+                guard,
+                host="127.0.0.1",
+                port=self.port,
+                log_level="warning",
+                lifespan="off",
+            )
+        )
         self.thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()
 
@@ -746,9 +818,11 @@ class TheTrialLogsIn(unittest.IsolatedAsyncioTestCase):
 
 
 class ItIsNotAnApproval(unittest.TestCase):
-    def test_r16_no_gate_no_next_no_step(self):
-        source = Path(updater.__file__).read_text(encoding="utf-8") + Path(update.__file__).read_text(encoding="utf-8")
-        for word in ("run_step", "\"gate\"", "'gate'", "\"next\"", "next_step"):
+    def test_no_gate_no_next_no_step(self):
+        source = Path(updater.__file__).read_text(encoding="utf-8") + Path(
+            update.__file__
+        ).read_text(encoding="utf-8")
+        for word in ("run_step", '"gate"', "'gate'", '"next"', "next_step"):
             self.assertNotIn(word, source)
 
 

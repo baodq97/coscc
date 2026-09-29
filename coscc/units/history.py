@@ -35,14 +35,37 @@ LOCK_TIMEOUT = BUSY_TIMEOUT
 AUTHORITIES = ("person", "delegated", "agent", "code")
 
 _TRANSITION_COLUMNS = (
-    "at", "root", "workspace", "unit", "artifact", "stage",
-    "from_state", "to_state", "actor", "session", "source", "machine", "once_key",
-    "guard", "authority", "run", "inputs",
+    "at",
+    "root",
+    "workspace",
+    "unit",
+    "artifact",
+    "stage",
+    "from_state",
+    "to_state",
+    "actor",
+    "session",
+    "source",
+    "machine",
+    "once_key",
+    "guard",
+    "authority",
+    "run",
+    "inputs",
 )
 
 _OUTPUT_COLUMNS = (
-    "at", "root", "workspace", "unit", "stage", "kind", "path",
-    "actor", "session", "source", "once_key",
+    "at",
+    "root",
+    "workspace",
+    "unit",
+    "stage",
+    "kind",
+    "path",
+    "actor",
+    "session",
+    "source",
+    "once_key",
 )
 
 
@@ -73,7 +96,6 @@ class History:
         self.data = data if isinstance(data, Data) else Data(data)
         self.machine = machine or states.default()
         self._root = str(self.working_dir)
-
 
     def record(
         self,
@@ -135,11 +157,15 @@ class History:
         with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
             return self._insert(conn, prepared)
 
-    def record_in(self, conn: sqlite3.Connection, items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    def record_in(
+        self, conn: sqlite3.Connection, items: Sequence[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """`record_many` inside a transaction the caller already holds."""
         return self._insert(conn, [self._validate(item) for item in items])
 
-    def _insert(self, conn: sqlite3.Connection, prepared: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _insert(
+        self, conn: sqlite3.Connection, prepared: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         stored: list[dict[str, Any]] = []
         latest = self._latest(conn)
         for row in prepared:
@@ -176,7 +202,9 @@ class History:
 
         authority = _text(item.get("authority"))
         if authority not in (*AUTHORITIES, UNKNOWN):
-            raise BadTransition(f"authority must be one of {', '.join(AUTHORITIES)}, got {authority!r}")
+            raise BadTransition(
+                f"authority must be one of {', '.join(AUTHORITIES)}, got {authority!r}"
+            )
         inputs = item.get("inputs") or {}
         if not isinstance(inputs, dict):
             raise BadTransition("a transition's inputs are an object: SHA, revision, PR number")
@@ -218,7 +246,6 @@ class History:
         ).fetchall()
         return {(r["workspace"], r["unit"], r["artifact"]): r["to_state"] for r in rows}
 
-
     def transitions(
         self,
         workspace: str | None = None,
@@ -240,9 +267,7 @@ class History:
         with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
             return [dict(row) for row in conn.execute(sql, args).fetchall()]
 
-    def state(
-        self, workspace: str, unit: str, timeout: float | None = None
-    ) -> dict[str, str]:
+    def state(self, workspace: str, unit: str, timeout: float | None = None) -> dict[str, str]:
         """Where each artifact of this unit stands now. **A fold, never a stored value.**
 
         Every artifact the state set knows appears; one with no transition reads as the
@@ -319,7 +344,6 @@ class History:
             "unknown_transitions": unknown,
         }
 
-
     def add_output(
         self,
         workspace: str,
@@ -367,7 +391,9 @@ class History:
     def outputs(
         self, workspace: str, unit: str | None = None, timeout: float | None = None
     ) -> list[dict[str, Any]]:
-        sql = f"SELECT id, {', '.join(_OUTPUT_COLUMNS)} FROM outputs WHERE root = ? AND workspace = ?"
+        sql = (
+            f"SELECT id, {', '.join(_OUTPUT_COLUMNS)} FROM outputs WHERE root = ? AND workspace = ?"
+        )
         args: list[Any] = [self._root, workspace]
         if unit is not None:
             sql += " AND unit = ?"
@@ -388,9 +414,7 @@ class History:
         return counts
 
 
-def settled_edits(
-    transitions: Iterable[dict[str, Any]], machine: Machine
-) -> list[dict[str, Any]]:
+def settled_edits(transitions: Iterable[dict[str, Any]], machine: Machine) -> list[dict[str, Any]]:
     """The transitions where an artifact was touched while already settled.
 
     A filter over the log, not a column. It does not require that the state changed: most are

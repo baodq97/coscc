@@ -60,7 +60,7 @@ def load_defaults(
         return {}, [f"{where.name} is not JSON: {e}"]
     rows = raw.get("models") if isinstance(raw, dict) else None
     if not isinstance(rows, dict):
-        return {}, [f"{where.name} has no \"models\" object"]
+        return {}, [f'{where.name} has no "models" object']
     out: dict[str, dict[str, str | None]] = {}
     problems: list[str] = []
     for name, entry in rows.items():
@@ -75,10 +75,14 @@ def load_defaults(
             model = None
         effort = entry.get("effort")
         if effort is not None and effort not in EFFORTS:
-            problems.append(f"{where.name}: {name!r} effort {effort!r} is not one of {', '.join(EFFORTS)}, ignored")
+            problems.append(
+                f"{where.name}: {name!r} effort {effort!r} is not one of {', '.join(EFFORTS)}, ignored"
+            )
             effort = None
         if effort == OVERRIDE_ONLY:
-            problems.append(f"{where.name}: {name!r} effort 'max' is taken only from an override, ignored")
+            problems.append(
+                f"{where.name}: {name!r} effort 'max' is taken only from an override, ignored"
+            )
             effort = None
         if model is None and effort is None:
             continue
@@ -86,7 +90,9 @@ def load_defaults(
     return out, problems
 
 
-def overrides_from(raw_rows: dict[str, str], prefix: str = PREFIX) -> tuple[dict[str, str], list[str]]:
+def overrides_from(
+    raw_rows: dict[str, str], prefix: str = PREFIX
+) -> tuple[dict[str, str], list[str]]:
     """Parse `<prefix><name>` rows as `Data.pref_rows` returns them. Never raises.
 
     With `EFFORT_PREFIX` a value must also be one of `EFFORTS`; `max` is allowed here.
@@ -96,10 +102,10 @@ def overrides_from(raw_rows: dict[str, str], prefix: str = PREFIX) -> tuple[dict
     for key, raw in sorted(raw_rows.items()):
         if not key.startswith(prefix):
             continue
-        name = key[len(prefix):]
+        name = key[len(prefix) :]
         try:
             value = json.loads(raw)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             problems.append(f"{key}: the stored value is not JSON ({raw!r}), ignored")
             continue
         if not isinstance(value, str):
@@ -180,23 +186,41 @@ def table(
     for name in names:
         label = NOVEL if name.endswith(NOVEL_SUFFIX) else None
         model, model_source, effort, effort_source = resolve(
-            name.removesuffix(NOVEL_SUFFIX), label, model_overrides, effort_overrides, defaults, env_model
+            name.removesuffix(NOVEL_SUFFIX),
+            label,
+            model_overrides,
+            effort_overrides,
+            defaults,
+            env_model,
         )
         if name == CHAT:
             effort, effort_source = None, NONE
-        rows.append({
-            "name": name, "agents": agents, "model": model or "", "source": model_source,
-            "effort": effort or "", "effort_source": effort_source,
-        })
+        rows.append(
+            {
+                "name": name,
+                "agents": agents,
+                "model": model or "",
+                "source": model_source,
+                "effort": effort or "",
+                "effort_source": effort_source,
+            }
+        )
     known = set(names)
-    problems = [
-        f"{PREFIX}{k}: no stage called {k!r}, ignored"
-        for k in sorted(model_overrides) if k not in known
-    ] + [
-        f"{EFFORT_PREFIX}{k}: no stage called {k!r}, ignored"
-        for k in sorted(effort_overrides) if k not in known or k == CHAT
-    ] + [
-        f"{DEFAULT_PATH.name}: no stage called {k!r}, ignored"
-        for k in sorted(defaults) if k not in known
-    ]
+    problems = (
+        [
+            f"{PREFIX}{k}: no stage called {k!r}, ignored"
+            for k in sorted(model_overrides)
+            if k not in known
+        ]
+        + [
+            f"{EFFORT_PREFIX}{k}: no stage called {k!r}, ignored"
+            for k in sorted(effort_overrides)
+            if k not in known or k == CHAT
+        ]
+        + [
+            f"{DEFAULT_PATH.name}: no stage called {k!r}, ignored"
+            for k in sorted(defaults)
+            if k not in known
+        ]
+    )
     return {"rows": rows, "problems": problems}

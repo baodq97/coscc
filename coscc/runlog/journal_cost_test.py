@@ -95,7 +95,6 @@ class CumulativeIsReadAsCumulative(unittest.TestCase):
 
 class TheDeltasSumBackToTheSessionTotal(unittest.TestCase):
     def test_per_turn_deltas_add_up_to_the_last_cumulative_reading(self):
-        """`spec.md` R17 in its smallest form: the parts equal the whole."""
         spent: dict[str, float] = {}
         turns = []
         for result in (TURN_1, TURN_2):

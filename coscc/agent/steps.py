@@ -88,7 +88,9 @@ class Registry:
     def __init__(self) -> None:
         self._rows: dict[tuple[str, str], Running] = {}
 
-    def claim(self, workspace: str, unit: str, stage: str, started_at: str | None = None) -> Running:
+    def claim(
+        self, workspace: str, unit: str, stage: str, started_at: str | None = None
+    ) -> Running:
         held = self._rows.get((workspace, unit))
         if held is not None:
             raise Busy(describe(unit, Mark("step", held.stage, "running", held.started_at)))

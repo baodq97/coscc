@@ -1,4 +1,4 @@
-"""`0021` D1 and D2: the body a round becomes, and posting it exactly once."""
+"""The body a round becomes, and posting it exactly once."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ class TheBodySaysWhereItCameFromAndCarriesTheWholeRound(unittest.TestCase):
         self.assertEqual(m.groups(), ("1", UNIT))
 
     def test_the_first_line_names_the_review_agent_and_says_it_is_not_a_person(self):
-        # `0036` R6: the label is handed in; the marker does not change with it.
+        # The label is handed in; the marker does not change with it.
         b = prcomment.body(UNIT, 2, "pass", ROUND, "Tiwaz (agent, review)")
         self.assertEqual(
             b.splitlines()[0],
@@ -75,10 +75,18 @@ class TheBodySaysWhereItCameFromAndCarriesTheWholeRound(unittest.TestCase):
         self.assertEqual(b.splitlines()[-1], prcomment.marker(UNIT, 2))
         gh = FakeGh()
         run(prcomment.post(UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh))
-        r = run(prcomment.post(UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh, author="Judge (agent, review)"))
+        r = run(
+            prcomment.post(
+                UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh, author="Judge (agent, review)"
+            )
+        )
         self.assertEqual(r.state, "already")
         gh = FakeGh()
-        run(prcomment.post(UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh, author="Judge (agent, review)"))
+        run(
+            prcomment.post(
+                UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh, author="Judge (agent, review)"
+            )
+        )
         self.assertIn("Written by Judge (agent, review), an agent session", gh.comments[0]["body"])
 
     def test_every_finding_is_in_the_body_verbatim(self):
@@ -151,7 +159,13 @@ class PostingHappensOnceAndNeverAsAReview(unittest.TestCase):
         self.assertIn("JSON", r.reason)
 
     def test_no_url_or_a_bad_one_never_reaches_gh(self):
-        for url in (None, "", "--repo=evil/x", "https://github.com/o/r/pull/7 --x", "https://github.com/o/r/issues/7"):
+        for url in (
+            None,
+            "",
+            "--repo=evil/x",
+            "https://github.com/o/r/pull/7 --x",
+            "https://github.com/o/r/issues/7",
+        ):
             with self.subTest(url):
                 gh = FakeGh()
                 r = run(prcomment.post(UNIT, 1, "pass", ROUND, url, "/tmp", run=gh))

@@ -1,4 +1,4 @@
-"""`0136` R1, R11: the guards, as pure functions, and the one table of reason codes."""
+"""The guards, as pure functions, and the one table of reason codes."""
 
 from __future__ import annotations
 
@@ -53,11 +53,22 @@ class TheReasonTableIsClosed(unittest.TestCase):
         self.assertEqual(written - set(guards.REASONS), set())
 
     def test_every_code_cos_mjs_hands_out_is_in_the_table(self):
-        # R11: `gate --json` and `next` carry `reasons`, each written as `code('…')`.
+        # `gate --json` and `next` carry `reasons`, each written as `code('…')`.
         text = COS.read_text(encoding="utf-8")
         handed = set(re.findall(r"code\('([a-z-]+)'\)", text))
-        self.assertGreaterEqual(handed, {"ci-pending", "ci-red", "ci-unfixable", "needs-person",
-                                         "waiting-on", "recording-ship", "closed", "gate-closed"})
+        self.assertGreaterEqual(
+            handed,
+            {
+                "ci-pending",
+                "ci-red",
+                "ci-unfixable",
+                "needs-person",
+                "waiting-on",
+                "recording-ship",
+                "closed",
+                "gate-closed",
+            },
+        )
         self.assertEqual(handed - set(guards.REASONS), set())
         # No code is written any other way: the only `reasons` pushed are `code(…)` or a `why`.
         self.assertNotRegex(text, r"codes\.push\('")
@@ -71,7 +82,9 @@ class TheGuards(unittest.TestCase):
         ok = {"run": "r1", "open_run": "r1", "revision": "a", "computed_revision": "a"}
         self.assertEqual(guards.stage_result(ok), OPEN)
         self.assertEqual(guards.stage_result({**ok, "open_run": "r2"}).reasons, ("wrong-run",))
-        self.assertEqual(guards.stage_result({**ok, "computed_revision": "b"}).reasons, ("stale-revision",))
+        self.assertEqual(
+            guards.stage_result({**ok, "computed_revision": "b"}).reasons, ("stale-revision",)
+        )
         self.assertEqual(guards.stage_result({}).reasons, ("wrong-run", "stale-revision"))
 
     def test_review_round_needs_the_head_the_app_recorded(self):
@@ -82,63 +95,99 @@ class TheGuards(unittest.TestCase):
         self.assertEqual(guards.impl_claim({"claims": ["F1"], "open_findings": ["F1", "F2"]}), OPEN)
         self.assertEqual(guards.impl_claim({"claims": [], "open_findings": []}), OPEN)
         self.assertEqual(
-            guards.impl_claim({"claims": ["F3"], "open_findings": ["F1"]}).reasons, ("not-open-finding",)
+            guards.impl_claim({"claims": ["F3"], "open_findings": ["F1"]}).reasons,
+            ("not-open-finding",),
         )
 
     def test_only_a_person_or_their_delegate_skips(self):
         self.assertEqual(guards.skip_decision({"authority": "person"}), OPEN)
         self.assertEqual(guards.skip_decision({"authority": "delegated"}), OPEN)
         for who in ("agent", "code", None):
-            self.assertEqual(guards.skip_decision({"authority": who}).reasons, ("agent-cannot-skip",))
+            self.assertEqual(
+                guards.skip_decision({"authority": who}).reasons, ("agent-cannot-skip",)
+            )
 
     def test_plan_waits_for_every_unmeasured_item_to_hold(self):
         self.assertEqual(guards.spike_holds({"unmeasured": []}), OPEN)
-        self.assertEqual(guards.spike_holds({"unmeasured": ["U1"], "verdicts": {"U1": "holds"}}), OPEN)
-        self.assertEqual(guards.spike_holds({"unmeasured": ["U1"], "verdicts": {}}).reasons, ("spike-missing",))
         self.assertEqual(
-            guards.spike_holds({"unmeasured": ["U1"], "verdicts": {"U1": "fails"}}).reasons, ("spike-fails",)
+            guards.spike_holds({"unmeasured": ["U1"], "verdicts": {"U1": "holds"}}), OPEN
+        )
+        self.assertEqual(
+            guards.spike_holds({"unmeasured": ["U1"], "verdicts": {}}).reasons, ("spike-missing",)
+        )
+        self.assertEqual(
+            guards.spike_holds({"unmeasured": ["U1"], "verdicts": {"U1": "fails"}}).reasons,
+            ("spike-fails",),
         )
 
     def test_impl_waits_on_a_dependency_that_has_not_merged(self):
-        self.assertEqual(guards.dependency_merged({"depends": [{"ref": "a", "merged": True}]}), OPEN)
         self.assertEqual(
-            guards.dependency_merged({"depends": [{"ref": "a", "merged": False}]}).reasons, ("waiting-on",)
+            guards.dependency_merged({"depends": [{"ref": "a", "merged": True}]}), OPEN
+        )
+        self.assertEqual(
+            guards.dependency_merged({"depends": [{"ref": "a", "merged": False}]}).reasons,
+            ("waiting-on",),
         )
 
     def test_ship_needs_green_ci_and_a_pass_of_the_head_it_merges(self):
         ok = {"ci": "green", "verdict": "pass", "head": "h", "reviewed_head": "h"}
         self.assertEqual(guards.ship_ready(ok), OPEN)
-        for ci, code in (("pending", "ci-pending"), ("red", "ci-red"), ("unfixable", "ci-unfixable")):
+        for ci, code in (
+            ("pending", "ci-pending"),
+            ("red", "ci-red"),
+            ("unfixable", "ci-unfixable"),
+        ):
             self.assertEqual(guards.ship_ready({**ok, "ci": ci}).reasons, (code,))
         self.assertEqual(guards.ship_ready({**ok, "reviewed_head": "g"}).reasons, ("head-moved",))
         self.assertEqual(
-            guards.ship_ready({**ok, "verdict": "changes-requested"}).reasons, ("changes-requested",)
+            guards.ship_ready({**ok, "verdict": "changes-requested"}).reasons,
+            ("changes-requested",),
         )
         self.assertEqual(guards.ship_ready({**ok, "verdict": None}).reasons, ("review-incomplete",))
 
     def test_ship_takes_the_gates_clean_rebase_of_the_reviewed_head(self):
-        """Review round 1, F1: `0067`'s clean rebase stands in for a round of the new head, but
-        only for the two commits the guard itself holds."""
+        """The gate's clean rebase stands in for a round of the new head, but only for the two
+        commits the guard itself holds."""
         reviewed, head = "a" * 40, "b" * 40
         ok = {"ci": "green", "verdict": "pass", "head": head, "reviewed_head": reviewed}
         self.assertEqual(guards.ship_ready(ok).reasons, ("head-moved",))
-        self.assertEqual(guards.ship_ready({**ok, "rebased": {"reviewed": reviewed, "head": head}}), OPEN)
-        self.assertEqual(guards.ship_ready({**ok, "rebased": {"reviewed": reviewed[:7], "head": head}}), OPEN,
-                         "a round read from prose names a short SHA")
-        for other in ({"reviewed": "c" * 40, "head": head}, {"reviewed": reviewed, "head": "c" * 40},
-                      {"reviewed": reviewed[:3], "head": head}, {"head": head}, "yes"):
-            self.assertEqual(guards.ship_ready({**ok, "rebased": other}).reasons, ("head-moved",), other)
-        self.assertEqual(guards.ship_ready({**ok, "ci": "red", "rebased": {"reviewed": reviewed, "head": head}}).reasons,
-                         ("ci-red",))
+        self.assertEqual(
+            guards.ship_ready({**ok, "rebased": {"reviewed": reviewed, "head": head}}), OPEN
+        )
+        self.assertEqual(
+            guards.ship_ready({**ok, "rebased": {"reviewed": reviewed[:7], "head": head}}),
+            OPEN,
+            "a round read from prose names a short SHA",
+        )
+        for other in (
+            {"reviewed": "c" * 40, "head": head},
+            {"reviewed": reviewed, "head": "c" * 40},
+            {"reviewed": reviewed[:3], "head": head},
+            {"head": head},
+            "yes",
+        ):
+            self.assertEqual(
+                guards.ship_ready({**ok, "rebased": other}).reasons, ("head-moved",), other
+            )
+        self.assertEqual(
+            guards.ship_ready(
+                {**ok, "ci": "red", "rebased": {"reviewed": reviewed, "head": head}}
+            ).reasons,
+            ("ci-red",),
+        )
 
     def test_a_round_naming_the_head_by_a_short_sha_passes_it(self):
-        """Review round 2, F7: `cos.mjs` `ROUND_META` takes a `Reviewed:` of 7 to 40 characters."""
+        """`cos.mjs` `ROUND_META` takes a `Reviewed:` of 7 to 40 characters."""
         head = "a" * 40
         ok = {"ci": "green", "verdict": "pass", "head": head}
         for reviewed in (head[:7], head[:39]):
             self.assertEqual(guards.ship_ready({**ok, "reviewed_head": reviewed}), OPEN, reviewed)
         for reviewed in (head[:6], "b" * 7):
-            self.assertEqual(guards.ship_ready({**ok, "reviewed_head": reviewed}).reasons, ("head-moved",), reviewed)
+            self.assertEqual(
+                guards.ship_ready({**ok, "reviewed_head": reviewed}).reasons,
+                ("head-moved",),
+                reviewed,
+            )
 
     def test_a_run_that_submitted_nothing_is_not_done(self):
         self.assertEqual(guards.run_submitted({"submitted": True}), OPEN)
@@ -148,7 +197,9 @@ class TheGuards(unittest.TestCase):
         self.assertEqual(guards.branch_named({"branch_ok": True}), OPEN)
         self.assertEqual(guards.branch_named({}).reasons, ("bad-branch",))
         self.assertEqual(guards.ci_at_head({"head": "h", "read_head": "h"}), OPEN)
-        self.assertEqual(guards.ci_at_head({"head": "h", "read_head": "g"}).reasons, ("head-moved",))
+        self.assertEqual(
+            guards.ci_at_head({"head": "h", "read_head": "g"}).reasons, ("head-moved",)
+        )
         self.assertEqual(guards.merge_read({"merge_commit": "m"}), OPEN)
         self.assertEqual(guards.merge_read({}).reasons, ("not-merged",))
         self.assertEqual(guards.close_read({"state": "CLOSED"}), OPEN)
@@ -163,7 +214,7 @@ class ThePackagedLaneUsesEveryGuardAMachineNeeds(unittest.TestCase):
                 self.assertIn(lane.guard_for(machine, transition), guards.GUARDS)
 
     def test_lane_full_runs_idea_intent_impl_and_review_always(self):
-        # R14: the four the lane may never pass over.
+        # The four the lane may never pass over.
         lane = states.default_lanes().lane("full")
         always = {stage for stage, when in lane.path if when == "always"}
         self.assertEqual(always, {"idea", "intent", "impl", "review"})
@@ -171,7 +222,7 @@ class ThePackagedLaneUsesEveryGuardAMachineNeeds(unittest.TestCase):
         self.assertEqual(lane.end, "shipped")
 
     def test_ci_poll_seconds_is_sixty(self):
-        # R23: the precedent of `CI_REFRESH` (`coscc/service/steps.py`), chosen, not measured.
+        # The precedent of `CI_REFRESH` (`coscc/service/steps.py`), chosen, not measured.
         self.assertEqual(states.default_lanes().ci_poll_seconds, 60.0)
 
 

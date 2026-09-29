@@ -43,12 +43,14 @@ LOGOUT = "/logout"
 # The only place the list is written. `/api/health` stays open because `scripts/install.sh`
 # probes it; `/login` because without it nobody gets in. Compared as (method, path) by
 # equality: `/api/health/`, `POST /api/health` and `/login/x` are not on it.
-EXEMPT = frozenset({
-    ("GET", HEALTH),
-    ("HEAD", HEALTH),
-    ("GET", LOGIN),
-    ("POST", LOGIN),
-})
+EXEMPT = frozenset(
+    {
+        ("GET", HEALTH),
+        ("HEAD", HEALTH),
+        ("GET", LOGIN),
+        ("POST", LOGIN),
+    }
+)
 # Exempt **only while no password is stored**. Once one is, these are refused like any other
 # route: there is no way to set or change the password over the web.
 SETUP_EXEMPT = frozenset({("GET", SETUP), ("POST", SETUP)})
@@ -157,11 +159,13 @@ def _hostname(scope: dict) -> str:
 
 
 async def _respond(send, status: int, headers: list, body: bytes = b"") -> None:
-    await send({
-        "type": "http.response.start",
-        "status": status,
-        "headers": headers + [(b"content-length", str(len(body)).encode())],
-    })
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": headers + [(b"content-length", str(len(body)).encode())],
+        }
+    )
     await send({"type": "http.response.body", "body": body})
 
 
@@ -220,7 +224,8 @@ class Limiter:
 
     def _sweep(self, now: float) -> None:
         for key in [
-            k for k, r in self._rows.items()
+            k
+            for k, r in self._rows.items()
             if r.locked_until <= now and not any(now - t < FAIL_WINDOW for t in r.fails)
         ]:
             del self._rows[key]
@@ -245,7 +250,7 @@ class Guard:
         self.data = data
         self.clock = clock
         self.err = err if err is not None else sys.stderr
-    # Library defaults: argon2id, m=65536, t=3, p=4.
+        # Library defaults: argon2id, m=65536, t=3, p=4.
         self.hasher = hasher or argon2.PasswordHasher()
         self.limiter = Limiter(clock)
         self._slots = asyncio.Semaphore(HASH_CONCURRENCY)
@@ -265,8 +270,7 @@ class Guard:
         self._token = secrets.token_urlsafe(16)
         self.err.write(f"coscc setup token: {self._token}\n")
         self.err.write(
-            f"  open {SETUP} on this address and paste the token there to set the master "
-            "password\n"
+            f"  open {SETUP} on this address and paste the token there to set the master password\n"
         )
         self.err.flush()
 
@@ -292,9 +296,7 @@ class Guard:
         return (b"set-cookie", "; ".join(parts).encode())
 
     async def _touch(self, sha: str, now: float) -> None:
-        await asyncio.to_thread(
-            self.data.auth_session_touch, sha, int(now), int(now) + SESSION_TTL
-        )
+        await asyncio.to_thread(self.data.auth_session_touch, sha, int(now), int(now) + SESSION_TTL)
 
     async def _new_session(self, scope: dict) -> tuple[bytes, bytes]:
         token = secrets.token_urlsafe(32)
@@ -318,7 +320,7 @@ class Guard:
     def _verify(self, stored: str, password: str) -> bool:
         try:
             return bool(self.hasher.verify(stored, password))
-        except (VerificationError, InvalidHashError):
+        except VerificationError, InvalidHashError:
             return False
 
     # -- the entry point --------------------------------------------------------
@@ -337,7 +339,9 @@ class Guard:
             await self.inner(scope, receive, send)
             return
 
-        if (kind == "websocket" or method not in ("GET", "HEAD", "OPTIONS")) and not _origin_ok(scope):
+        if (kind == "websocket" or method not in ("GET", "HEAD", "OPTIONS")) and not _origin_ok(
+            scope
+        ):
             if kind == "websocket":
                 await self._close_socket(receive, send)
             else:
@@ -359,7 +363,7 @@ class Guard:
                     await self._setup(scope, receive, send, method)
                     return
                 if live:
-                # A password exists; with a session this does nothing.
+                    # A password exists; with a session this does nothing.
                     await _redirect(send, "/")
                     return
             if (method, path) == ("POST", LOGOUT) and live:
@@ -577,6 +581,7 @@ def _with_header(send, header: tuple[bytes, bytes]):
         if message["type"] in ("http.response.start", "websocket.accept"):
             message = {**message, "headers": list(message.get("headers") or []) + [header]}
         await send(message)
+
     return wrapped
 
 
@@ -587,6 +592,7 @@ def _revalidate_pages(send):
     browser may reuse it: after logging out, `/` came back from the cache as the board and
     never reached `/login`. Assets keep their caching; their names carry a content hash.
     """
+
     async def wrapped(message: dict) -> None:
         if message["type"] == "http.response.start":
             headers = list(message.get("headers") or [])
@@ -598,10 +604,11 @@ def _revalidate_pages(send):
             if html and b"cache-control" not in names:
                 message = {**message, "headers": headers + [(b"cache-control", b"no-cache")]}
         await send(message)
+
     return wrapped
 
 
-_BUSY_TEXT ="Too many logins are being checked at once. Try again in a few seconds."
+_BUSY_TEXT = "Too many logins are being checked at once. Try again in a few seconds."
 
 
 def _locked(wait: float) -> str:
@@ -620,14 +627,14 @@ _STYLE = (
 
 def _shell(title: str, body: str) -> str:
     return (
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-        f"<meta name=\"viewport\" content=\"width=device-width\"><title>{escape(title)}</title>"
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        f'<meta name="viewport" content="width=device-width"><title>{escape(title)}</title>'
         f"<style>{_STYLE}</style></head><body>{body}</body></html>"
     )
 
 
 def _error(text: str | None) -> str:
-    return f"<p class=\"err\" id=\"error\">{escape(text)}</p>" if text else ""
+    return f'<p class="err" id="error">{escape(text)}</p>' if text else ""
 
 
 def _login_page(scope: dict, error: str | None = None) -> str:
@@ -635,35 +642,41 @@ def _login_page(scope: dict, error: str | None = None) -> str:
     # One line here, none on the board.
     if not is_https(scope) and _hostname(scope) not in LOOPBACK:
         warn = (
-            "<p class=\"warn\" id=\"plain-http\">This page is served over plain HTTP: the "
+            '<p class="warn" id="plain-http">This page is served over plain HTTP: the '
             "password and the session cookie cross the network readable. Put coscc behind a "
             "TLS reverse proxy or on a private network.</p>"
         )
-    return _shell("coscc — log in", (
-        f"<form method=\"post\" action=\"{LOGIN}\"><h1>coscc</h1>{warn}{_error(error)}"
-        "<label for=\"password\">Master password</label>"
-        "<input id=\"password\" name=\"password\" type=\"password\" autocomplete="
-        "\"current-password\" autofocus required>"
-        "<button type=\"submit\">Log in</button>"
-        "<p>Forgot it? Run <code>coscc reset-password</code> on the machine running coscc.</p>"
-        "</form>"
-    ))
+    return _shell(
+        "coscc — log in",
+        (
+            f'<form method="post" action="{LOGIN}"><h1>coscc</h1>{warn}{_error(error)}'
+            '<label for="password">Master password</label>'
+            '<input id="password" name="password" type="password" autocomplete='
+            '"current-password" autofocus required>'
+            '<button type="submit">Log in</button>'
+            "<p>Forgot it? Run <code>coscc reset-password</code> on the machine running coscc.</p>"
+            "</form>"
+        ),
+    )
 
 
 def _setup_page(error: str | None = None) -> str:
-    return _shell("coscc — set the master password", (
-        f"<form method=\"post\" action=\"{SETUP}\"><h1>Set the master password</h1>"
-        f"{_error(error)}"
-        "<p>The setup token is printed in this process's log: "
-        "<code>journalctl --user -u coscc | grep 'setup token'</code>, or the terminal "
-        "running <code>coscc</code>.</p>"
-        "<label for=\"token\">Setup token</label>"
-        "<input id=\"token\" name=\"token\" autocomplete=\"off\" required>"
-        f"<label for=\"password\">Password (at least {MIN_PASSWORD} characters)</label>"
-        "<input id=\"password\" name=\"password\" type=\"password\" autocomplete="
-        "\"new-password\" required>"
-        "<label for=\"password_confirm\">Again</label>"
-        "<input id=\"password_confirm\" name=\"password_confirm\" type=\"password\" "
-        "autocomplete=\"new-password\" required>"
-        "<button type=\"submit\">Set password</button></form>"
-    ))
+    return _shell(
+        "coscc — set the master password",
+        (
+            f'<form method="post" action="{SETUP}"><h1>Set the master password</h1>'
+            f"{_error(error)}"
+            "<p>The setup token is printed in this process's log: "
+            "<code>journalctl --user -u coscc | grep 'setup token'</code>, or the terminal "
+            "running <code>coscc</code>.</p>"
+            '<label for="token">Setup token</label>'
+            '<input id="token" name="token" autocomplete="off" required>'
+            f'<label for="password">Password (at least {MIN_PASSWORD} characters)</label>'
+            '<input id="password" name="password" type="password" autocomplete='
+            '"new-password" required>'
+            '<label for="password_confirm">Again</label>'
+            '<input id="password_confirm" name="password_confirm" type="password" '
+            'autocomplete="new-password" required>'
+            '<button type="submit">Set password</button></form>'
+        ),
+    )

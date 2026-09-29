@@ -8,12 +8,12 @@ paths:
 - `POST /api/units/integrate` force-pushes under this machine's `gh` login. On `behind` it runs
   `gh pr update-branch --rebase` and moves the local branch with `reset --keep`. On
   `conflicting` or `red-after-integration` it opens Gebo, a paid session under the
-  `integrate` grant (`coscc/agent/policy.py:228-237`) that allows one push: `--force-with-lease=<branch>:<head at start>`
+  `integrate` grant (`coscc/agent/policy.py:261-270`) that allows one push: `--force-with-lease=<branch>:<head at start>`
   to the unit's own branch.
   - Denied by words: `gh api`, `gh repo sync`, `gh extension`, `git send-pack`, `git http-push`,
     and an alias, include or `GIT_CONFIG_*` made during the step. Any program it may start
     (`node -e`, `python -c`, a script it wrote) can push past the lease, as can an alias already
-    in a git config (`coscc/agent/policy_test.py`, `test_the_known_limit_c6`). What stops a force
+    in a git config (`coscc/agent/policy_test.py`, `test_the_known_limit`). What stops a force
     on `main` is the GitHub ruleset, not this grant.
   - Gebo may read its unit's folder and the intent, spec and plan of related units
     (`read_paths`); not a sandbox while it has `cat`.

@@ -10,7 +10,8 @@ from coscc.units import autopilot
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable
 from coscc.data import Data
-from coscc.runlog.journal import BadRecord, Busy, Journal
+from coscc.runlog.journal import BadRecord, Journal
+from coscc.data import Busy
 from coscc.agent import labels, models, modeltrial
 from coscc.github import prmachine
 from coscc.config import LOOPBACK
@@ -26,17 +27,18 @@ def _whole_at_least_one(value: Any) -> bool:
 def _positive_number(value: Any) -> bool:
     """`daily_cap_usd`: a finite number above 0, not a bool."""
     return (
-        isinstance(value, (int, float)) and not isinstance(value, bool)
-        and math.isfinite(value) and value > 0
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
     )
 
 
 class ModelsMixin:
-
-# -- which model each stage runs on --------------------------------------
-#
-# The resolving is `coscc/agent/models.py`; this gathers its inputs: the stage list from
-# `cos.mjs`, the overrides from `prefs`, `COS_MODEL` from `Config`.
+    # -- which model each stage runs on --------------------------------------
+    #
+    # The resolving is `coscc/agent/models.py`; this gathers its inputs: the stage list from
+    # `cos.mjs`, the overrides from `prefs`, `COS_MODEL` from `Config`.
 
     def _model_overrides(self) -> tuple[dict[str, str], list[str]]:
         return models.overrides_from(Data(self.config.data_dir).pref_rows(models.PREFIX))
@@ -69,7 +71,9 @@ class ModelsMixin:
         ran is filled in once its `init` names it. Any other step has no `trial_record` key.
         """
         try:
-            plan_text: str | None = (Path(directory) / "plan.md").read_text(encoding="utf-8", errors="replace")
+            plan_text: str | None = (Path(directory) / "plan.md").read_text(
+                encoding="utf-8", errors="replace"
+            )
         except OSError:
             plan_text = None
         history = [r for r in journal.records(key, unit) if r.get("stage") == "impl"]
@@ -77,18 +81,26 @@ class ModelsMixin:
         arm = modeltrial.arm(unit) if modeltrial.applies(stage, label) else None
         trial_kw = {"trial_model": modeltrial.model_for(stage, label, arm)} if arm else {}
         model, model_source, effort, effort_source = models.resolve(
-            stage, label, self._model_overrides()[0], self._effort_overrides()[0],
-            models.load_defaults()[0], self.config.model, **trial_kw,
+            stage,
+            label,
+            self._model_overrides()[0],
+            self._effort_overrides()[0],
+            models.load_defaults()[0],
+            self.config.model,
+            **trial_kw,
         )
         trial_record = (
-            {"trial_record": {modeltrial.FIELD: {"arm": arm, "requested": model}}}
-            if arm else {}
+            {"trial_record": {modeltrial.FIELD: {"arm": arm, "requested": model}}} if arm else {}
         )
         return {
             **trial_record,
-            "model": model, "model_source": model_source,
-            "effort": effort, "effort_source": effort_source,
-            "label_declared": label_declared, "label": label, "label_source": label_source,
+            "model": model,
+            "model_source": model_source,
+            "effort": effort,
+            "effort_source": effort_source,
+            "label_declared": label_declared,
+            "label": label,
+            "label_source": label_source,
             # Every `start` of `impl` counts, the review-driven fixes included.
             "impl_run": (
                 sum(1 for r in history if r.get("kind") == "start") + 1 if stage == "impl" else None
@@ -99,7 +111,9 @@ class ModelsMixin:
         """Whether `cos.mjs next` sends `unit` back to `impl` because CI is red, read with
         `autopilot.is_ci_red`; `None` when it could not be asked. Never raises."""
         try:
-            found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit]))
+            found = await board_reader.next_step(
+                self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit])
+            )
             return autopilot.is_ci_red(found)
         except Exception:  # noqa: BLE001 — recorded as null
             return None
@@ -129,7 +143,9 @@ class ModelsMixin:
         overrides, bad_rows = self._model_overrides()
         efforts, bad_efforts = self._effort_overrides()
         defaults, bad_defaults = models.load_defaults()
-        table = models.table(stages, overrides, efforts, defaults, self.config.model, SESSIONS_PER_STEP)
+        table = models.table(
+            stages, overrides, efforts, defaults, self.config.model, SESSIONS_PER_STEP
+        )
         for r in table["rows"]:
             r["overridden"] = r["name"] in overrides
             r["effort_overridden"] = r["name"] in efforts
@@ -155,10 +171,17 @@ class ModelsMixin:
         journal = self._journal()
         if journal is not None:
             try:
-                journal.append({
-                    "kind": "setting", "workspace": "", "unit": "", "stage": "",
-                    "name": key, "old": old, "new": new,
-                })
+                journal.append(
+                    {
+                        "kind": "setting",
+                        "workspace": "",
+                        "unit": "",
+                        "stage": "",
+                        "name": key,
+                        "old": old,
+                        "new": new,
+                    }
+                )
             except (BadRecord, Busy) as e:
                 raise Invalid(f"the setting was saved but not logged: {e}") from e
 
@@ -206,11 +229,11 @@ class ModelsMixin:
         self._log_setting(key, old, effort)
         return await self.stage_models()
 
-# -- the autopilot's settings ---------------------------------------------
-#
-# In the data root's `prefs`, not the workspace's repository. Three per workspace, keyed by
-# the journal key; the cap is one for the whole app, since the quota is the machine's account.
-# Not in `PREFERENCES`: those are the page's.
+    # -- the autopilot's settings ---------------------------------------------
+    #
+    # In the data root's `prefs`, not the workspace's repository. Three per workspace, keyed by
+    # the journal key; the cap is one for the whole app, since the quota is the machine's account.
+    # Not in `PREFERENCES`: those are the page's.
 
     AUTOPILOT_SETTINGS = ("autopilot", "autopilot_may_ship", "max_parallel", "daily_cap_usd")
     CAP_PREF = "autopilot_daily_cap_usd"
@@ -229,9 +252,15 @@ class ModelsMixin:
 
         return {
             "autopilot": read("autopilot", lambda v: v is True or v is False, False),
-            "autopilot_may_ship": read("autopilot_may_ship", lambda v: v is True or v is False, False),
-            "max_parallel": read("max_parallel", _whole_at_least_one, autopilot.DEFAULT_MAX_PARALLEL),
-            "daily_cap_usd": float(read("daily_cap_usd", _positive_number, autopilot.DEFAULT_DAILY_CAP_USD)),
+            "autopilot_may_ship": read(
+                "autopilot_may_ship", lambda v: v is True or v is False, False
+            ),
+            "max_parallel": read(
+                "max_parallel", _whole_at_least_one, autopilot.DEFAULT_MAX_PARALLEL
+            ),
+            "daily_cap_usd": float(
+                read("daily_cap_usd", _positive_number, autopilot.DEFAULT_DAILY_CAP_USD)
+            ),
         }
 
     def _off_loopback(self) -> str:
@@ -259,7 +288,9 @@ class ModelsMixin:
         """
         self._workspace_or_refuse(cwd)
         if name not in self.AUTOPILOT_SETTINGS:
-            raise Invalid(f"no such setting: {name} (use one of {', '.join(self.AUTOPILOT_SETTINGS)})")
+            raise Invalid(
+                f"no such setting: {name} (use one of {', '.join(self.AUTOPILOT_SETTINGS)})"
+            )
         if name in ("autopilot", "autopilot_may_ship"):
             if value is not True and value is not False:
                 raise Invalid(f"{name} must be true or false")

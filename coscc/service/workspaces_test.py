@@ -1,5 +1,5 @@
-"""Tests for `WorkspacesMixin` in `coscc/service/workspaces.py`, split from `coscc/service/service_test.py` (`0095`).
-"""
+"""Tests for `WorkspacesMixin` in `coscc/service/workspaces.py`, split from
+`coscc/service/service_test.py`."""
 
 from __future__ import annotations
 
@@ -17,15 +17,13 @@ from coscc.agent.sessions import Live, Sessions
 
 
 class PullStopsAtALiveSession(unittest.TestCase):
-    """R6 and R7. The refusal has to happen before `git` runs, not after."""
+    """The refusal has to happen before `git` runs, not after."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name).resolve()
         self.addCleanup(self.tmp.cleanup)
-        config = Config(
-            workspaces=(), working_dir=str(self.root), data_dir=str(self.root)
-        )
+        config = Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root))
         self.s = Service(config, Sessions(config))
         self.s.store.add("repo")
         self._repo(self.root / "repo")
@@ -49,11 +47,13 @@ class PullStopsAtALiveSession(unittest.TestCase):
         return asyncio.run(self.s.pull_workspace(name))
 
     def test_no_git_process_is_spawned_while_a_session_is_live(self):
-        """R6's testable half. A refusal after the fetch would have already moved files."""
+        """A refusal after the fetch would have already moved files."""
         self._open_session_in("repo")
         boom = mock.Mock(side_effect=AssertionError("git ran despite a live session"))
-        with mock.patch.object(subprocess, "Popen", boom), \
-                mock.patch.object(asyncio, "create_subprocess_exec", boom):
+        with (
+            mock.patch.object(subprocess, "Popen", boom),
+            mock.patch.object(asyncio, "create_subprocess_exec", boom),
+        ):
             with self.assertRaises(Invalid) as e:
                 self._pull()
         boom.assert_not_called()
@@ -61,11 +61,10 @@ class PullStopsAtALiveSession(unittest.TestCase):
         self.assertIn("live session", str(e.exception))
 
     def test_it_gets_as_far_as_git_once_the_session_is_gone(self):
-        """R7. A permanent block would be a different bug, not a fix.
+        """A permanent block would be a different bug, not a fix.
 
         The directory is not a git repo, so reaching `gitops` is itself the signal: the
-        message is git's complaint rather than the session refusal.
-        """
+        message is git's complaint rather than the session refusal."""
         self._open_session_in("repo")
         with self.assertRaises(Invalid):
             self._pull()

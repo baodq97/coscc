@@ -38,8 +38,6 @@ def is_agent(by: str) -> bool:
     return str(by or "").startswith(AGENT_PREFIX)
 
 
-
-
 def in_backlog(unit: dict[str, Any]) -> bool:
     """Has an idea or intent, is not finished, closed (rejected) or dropped."""
     has_start = any(
@@ -65,14 +63,14 @@ def _status_of(unit: dict[str, Any]) -> str:
     return "backlog" if in_backlog(unit) else "other"
 
 
-
-
 def _unknown_cost(rows: list[dict[str, Any]]) -> bool:
     """At least one run of the unit ended with no cost reported."""
     return journal.totals_of(rows)["unknown"] > 0
 
 
-def measured(timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def measured(
+    timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
     """`{unit: {cost_usd, turns}}` for every finished unit with a reported cost.
 
     A unit with any run whose cost is unknown is left out of every tercile and median;
@@ -90,10 +88,13 @@ def measured(timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[st
     return out
 
 
-def undetermined(timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[str, Any]]) -> list[str]:
+def undetermined(
+    timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[str, Any]]
+) -> list[str]:
     """The finished units `measured` leaves out for a cost nobody knows, by name."""
     return sorted(
-        u["name"] for u in units
+        u["name"]
+        for u in units
         if u.get("why") == "finished" and _unknown_cost(timelines.get(u.get("name") or "", []))
     )
 
@@ -115,7 +116,9 @@ def _median(values: list[float]) -> float:
     return v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2
 
 
-def effort_from(similar: Iterable[str], found: dict[str, dict[str, Any]], undetermined: int = 0) -> dict[str, Any]:
+def effort_from(
+    similar: Iterable[str], found: dict[str, dict[str, Any]], undetermined: int = 0
+) -> dict[str, Any]:
     """`{effort, effort_source, effort_basis}`; `effort` is `None` for a guess.
 
     How many finished units were left out for an unknown cost is said in `effort_basis`.
@@ -129,28 +132,35 @@ def effort_from(similar: Iterable[str], found: dict[str, dict[str, Any]], undete
 def _effort_from(similar: Iterable[str], found: dict[str, dict[str, Any]]) -> dict[str, Any]:
     named = [s for s in similar if s in found]
     if len(found) < TERCILE_MIN:
-        return {"effort": None, "effort_source": "guess",
-                "effort_basis": f"chỉ có {len(found)} unit finished có báo chi phí, dưới {TERCILE_MIN}"}
+        return {
+            "effort": None,
+            "effort_source": "guess",
+            "effort_basis": f"chỉ có {len(found)} unit finished có báo chi phí, dưới {TERCILE_MIN}",
+        }
     if not named:
-        return {"effort": None, "effort_source": "guess",
-                "effort_basis": "không unit tương tự nào được nêu có chi phí đo được"}
+        return {
+            "effort": None,
+            "effort_source": "guess",
+            "effort_basis": "không unit tương tự nào được nêu có chi phí đo được",
+        }
     cost_cuts = terciles(f["cost_usd"] for f in found.values())
     turn_cuts = terciles(f["turns"] for f in found.values())
     cost = _median([found[s]["cost_usd"] for s in named])
     turns = _median([found[s]["turns"] for s in named])
     by_cost, by_turns = _band(cost, cost_cuts), _band(turns, turn_cuts)
     effort = max(by_cost, by_turns, key=EFFORTS.index)
-    listed = ", ".join(f"{s} (${found[s]['cost_usd']:.2f}, {found[s]['turns']} lượt)" for s in named)
+    listed = ", ".join(
+        f"{s} (${found[s]['cost_usd']:.2f}, {found[s]['turns']} lượt)" for s in named
+    )
     return {
-        "effort": effort, "effort_source": "measured",
+        "effort": effort,
+        "effort_source": "measured",
         "effort_basis": (
             f"tương tự: {listed}; trung vị ${cost:.2f} → {by_cost}, {turns:g} lượt → {by_turns} "
             f"(tercile chi phí ≤${cost_cuts[0]:.2f} S, ≤${cost_cuts[1]:.2f} M; "
             f"lượt ≤{turn_cuts[0]} S, ≤{turn_cuts[1]} M; trên {len(found)} unit)"
         ),
     }
-
-
 
 
 def check_estimate(value: Any, effort: Any, basis: Any, by: Any, agent: bool) -> str:
@@ -167,7 +177,11 @@ def check_estimate(value: Any, effort: Any, basis: Any, by: Any, agent: bool) ->
     if said:
         return said
     if agent != is_agent(by):
-        return f"a person's name may not start with {AGENT_PREFIX!r}" if not agent else "an agent's name must start with agent:"
+        return (
+            f"a person's name may not start with {AGENT_PREFIX!r}"
+            if not agent
+            else "an agent's name must start with agent:"
+        )
     if agent and not any(goal in basis.casefold() for goal in VALUE_GOALS):
         return "the basis names none of: " + "; ".join(VALUE_GOALS)
     return ""
@@ -194,8 +208,15 @@ def _depends_path(edges: dict[str, set[str]], start: str, goal: str) -> bool:
 
 
 def check_relation(
-    unit: str, other: str, rtype: str, op: str, reason: str, by: str,
-    store_names: Iterable[str], active: list[dict[str, Any]], agent: bool = False,
+    unit: str,
+    other: str,
+    rtype: str,
+    op: str,
+    reason: str,
+    by: str,
+    store_names: Iterable[str],
+    active: list[dict[str, Any]],
+    agent: bool = False,
 ) -> str:
     """The first reason this is refused, or `""`."""
     names = set(store_names)
@@ -215,7 +236,11 @@ def check_relation(
         if said:
             return said
     if agent != is_agent(by):
-        return f"a person's name may not start with {AGENT_PREFIX!r}" if not agent else "an agent's name must start with agent:"
+        return (
+            f"a person's name may not start with {AGENT_PREFIX!r}"
+            if not agent
+            else "an agent's name must start with agent:"
+        )
     key = _relation_key(rtype, unit, other)
     keys = {_relation_key(r["type"], r["unit"], r["other"]) for r in active}
     if op == "remove":
@@ -234,7 +259,9 @@ def check_relation(
     return ""
 
 
-def check_shortlist(names: Any, backlog: Iterable[str], estimates: dict[str, dict[str, Any]]) -> str:
+def check_shortlist(
+    names: Any, backlog: Iterable[str], estimates: dict[str, dict[str, Any]]
+) -> str:
     """No ceiling on `lệch` positions."""
     if not isinstance(names, list) or not names:
         return "the shortlist is empty"
@@ -253,15 +280,17 @@ def check_shortlist(names: Any, backlog: Iterable[str], estimates: dict[str, dic
     return ""
 
 
-
-
 def _estimate_problem(r: dict[str, Any]) -> str:
     if not isinstance(r.get("unit"), str) or not r.get("unit"):
         return "names no unit"
-    return check_estimate(r.get("value"), r.get("effort"), r.get("basis"), r.get("by"), is_agent(r.get("by")))
+    return check_estimate(
+        r.get("value"), r.get("effort"), r.get("basis"), r.get("by"), is_agent(r.get("by"))
+    )
 
 
-def estimates_of(records: Iterable[dict[str, Any]], problems: list[str] | None = None) -> dict[str, dict[str, Any]]:
+def estimates_of(
+    records: Iterable[dict[str, Any]], problems: list[str] | None = None
+) -> dict[str, dict[str, Any]]:
     """Per unit: `effective`, `person` (latest), `agent` (latest), `history`."""
     out: dict[str, dict[str, Any]] = {}
     for r in records:
@@ -280,37 +309,55 @@ def estimates_of(records: Iterable[dict[str, Any]], problems: list[str] | None =
     return out
 
 
-def relations_of(records: Iterable[dict[str, Any]], problems: list[str] | None = None) -> list[dict[str, Any]]:
+def relations_of(
+    records: Iterable[dict[str, Any]], problems: list[str] | None = None
+) -> list[dict[str, Any]]:
     """The relations in effect: the last record of each key decides."""
     state: dict[tuple[str, str, str], dict[str, Any] | None] = {}
     for r in records:
         if r.get("kind") != "relation":
             continue
         unit, other, rtype, op = r.get("unit"), r.get("other"), r.get("type"), r.get("op")
-        if not (isinstance(unit, str) and isinstance(other, str) and unit and other and unit != other
-                and rtype in RELATIONS and op in OPS):
+        if not (
+            isinstance(unit, str)
+            and isinstance(other, str)
+            and unit
+            and other
+            and unit != other
+            and rtype in RELATIONS
+            and op in OPS
+        ):
             if problems is not None:
                 problems.append(f"relation at {r.get('at')}: not a relation this app reads")
             continue
         state[_relation_key(rtype, unit, other)] = r if op == "add" else None
     return [
-        {"unit": r["unit"], "other": r["other"], "type": r["type"], "reason": r.get("reason") or "",
-         "by": r.get("by") or "", "at": r.get("at") or ""}
-        for r in state.values() if r is not None
+        {
+            "unit": r["unit"],
+            "other": r["other"],
+            "type": r["type"],
+            "reason": r.get("reason") or "",
+            "by": r.get("by") or "",
+            "at": r.get("at") or "",
+        }
+        for r in state.values()
+        if r is not None
     ]
 
 
 def _sort_key(est: dict[str, Any], number: Any) -> tuple:
     try:
         n = int(number)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         n = 10**9
     return (-int(est["value"]), EFFORTS.index(est["effort"]), n)
 
 
 def computed_order(
-    estimated: dict[str, dict[str, Any]], relations: list[dict[str, Any]],
-    numbers: dict[str, Any], statuses: dict[str, str],
+    estimated: dict[str, dict[str, Any]],
+    relations: list[dict[str, Any]],
+    numbers: dict[str, Any],
+    statuses: dict[str, str],
 ) -> tuple[list[str], list[dict[str, str]]]:
     """Kahn over `phụ thuộc`, best-ready first by value, effort, number.
 
@@ -331,9 +378,18 @@ def computed_order(
         if status == "finished":
             continue
         # The app's own words, in English.
-        why = {"dropped": "is dropped", "rejected": "was rejected", "backlog": "has no estimate",
-               "missing": "is not in the store"}.get(status, "is not in the backlog")
-        warnings.append({"unit": r["unit"], "text": f"depends on {other}, but {other} {why}; ignored in the order"})
+        why = {
+            "dropped": "is dropped",
+            "rejected": "was rejected",
+            "backlog": "has no estimate",
+            "missing": "is not in the store",
+        }.get(status, "is not in the backlog")
+        warnings.append(
+            {
+                "unit": r["unit"],
+                "text": f"depends on {other}, but {other} {why}; ignored in the order",
+            }
+        )
     key = {n: _sort_key(estimated[n], numbers.get(n)) for n in estimated}
     order: list[str] = []
     left = dict(needs)
@@ -378,7 +434,9 @@ def stamp(records: Iterable[dict[str, Any]], unit: str) -> dict[str, Any]:
 
 
 def _warnings_for(
-    shortlist: list[str], relations: list[dict[str, Any]], statuses: dict[str, str],
+    shortlist: list[str],
+    relations: list[dict[str, Any]],
+    statuses: dict[str, str],
 ) -> dict[str, list[str]]:
     """Warn on dependency cases, never remove."""
     out: dict[str, list[str]] = {n: [] for n in shortlist}
@@ -393,7 +451,9 @@ def _warnings_for(
         elif rtype == "phụ thuộc" and unit in pos:
             status = statuses.get(other, "missing")
             if status in ("dropped", "rejected"):
-                out[unit].append(f"depends on {other}, which {'is dropped' if status == 'dropped' else 'was rejected'}")
+                out[unit].append(
+                    f"depends on {other}, which {'is dropped' if status == 'dropped' else 'was rejected'}"
+                )
             elif status == "backlog" and pos.get(other, len(shortlist)) > pos[unit]:
                 out[unit].append(f"depends on {other}, which is not before it in the shortlist")
     return out
@@ -402,16 +462,24 @@ def _warnings_for(
 def _brief(r: dict[str, Any]) -> dict[str, Any]:
     """What the page shows of one estimate record."""
     return {
-        "unit": r.get("unit") or "", "value": r.get("value"), "effort": r.get("effort"),
+        "unit": r.get("unit") or "",
+        "value": r.get("value"),
+        "effort": r.get("effort"),
         "effort_source": r.get("effort_source") or "",
-        "similar": [s for s in r["similar"] if isinstance(s, str)] if isinstance(r.get("similar"), list) else [],
-        "basis": r.get("basis") or "", "effort_basis": r.get("effort_basis") or "",
-        "by": r.get("by") or "", "at": r.get("at") or "",
+        "similar": [s for s in r["similar"] if isinstance(s, str)]
+        if isinstance(r.get("similar"), list)
+        else [],
+        "basis": r.get("basis") or "",
+        "effort_basis": r.get("effort_basis") or "",
+        "by": r.get("by") or "",
+        "at": r.get("at") or "",
     }
 
 
 def fold(
-    units: list[dict[str, Any]], records: list[dict[str, Any]], found: dict[str, dict[str, Any]],
+    units: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+    found: dict[str, dict[str, Any]],
     undetermined: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Everything the page shows, from one read of the board and the run log."""
@@ -436,19 +504,28 @@ def fold(
     for i, n in enumerate(names):
         est = ests.get(n, {})
         computed = rank_of.get(n)
-        entries.append({
-            "rank": i + 1, "unit": n,
-            "estimate": _brief(est["effective"]) if est.get("effective") else None,
-            "agent_differs": _differs(est),
-            "computed": computed,
-            "drift": computed != i + 1,
-            "in_backlog": n in waiting,
-            "warnings": warned.get(n, []) + ([] if n in waiting else ["no longer in the backlog"]),
-        })
+        entries.append(
+            {
+                "rank": i + 1,
+                "unit": n,
+                "estimate": _brief(est["effective"]) if est.get("effective") else None,
+                "agent_differs": _differs(est),
+                "computed": computed,
+                "drift": computed != i + 1,
+                "in_backlog": n in waiting,
+                "warnings": warned.get(n, [])
+                + ([] if n in waiting else ["no longer in the backlog"]),
+            }
+        )
     rest = [
-        {"unit": n, "computed": rank_of[n], "estimate": _brief(estimated[n]),
-         "agent_differs": _differs(ests.get(n, {}))}
-        for n in order if n not in names
+        {
+            "unit": n,
+            "computed": rank_of[n],
+            "estimate": _brief(estimated[n]),
+            "agent_differs": _differs(ests.get(n, {})),
+        }
+        for n in order
+        if n not in names
     ]
     unestimated = [n for n in backlog if n not in estimated]
 
@@ -461,9 +538,13 @@ def fold(
             "effort": eff.get("effort") if eff else None,
             "effort_source": eff.get("effort_source") if eff else None,
             "relations": [
-                {"type": r["type"], "other": r["other"] if r["unit"] == n else r["unit"],
-                 "direction": "out" if r["unit"] == n else "in"}
-                for r in rels if n in (r["unit"], r["other"])
+                {
+                    "type": r["type"],
+                    "other": r["other"] if r["unit"] == n else r["unit"],
+                    "direction": "out" if r["unit"] == n else "in",
+                }
+                for r in rels
+                if n in (r["unit"], r["other"])
             ],
         }
     history: dict[str, list[dict[str, Any]]] = {}
@@ -471,22 +552,40 @@ def fold(
         if r.get("kind") == "estimate-value" and isinstance(r.get("unit"), str):
             history.setdefault(r["unit"], []).append({"kind": "estimate", **_brief(r)})
         elif r.get("kind") == "relation" and isinstance(r.get("unit"), str):
-            item = {"kind": "relation", "unit": r.get("unit"), "other": r.get("other"), "type": r.get("type"),
-                    "op": r.get("op"), "reason": r.get("reason") or "", "by": r.get("by") or "",
-                    "at": r.get("at") or ""}
+            item = {
+                "kind": "relation",
+                "unit": r.get("unit"),
+                "other": r.get("other"),
+                "type": r.get("type"),
+                "op": r.get("op"),
+                "reason": r.get("reason") or "",
+                "by": r.get("by") or "",
+                "at": r.get("at") or "",
+            }
             other = r.get("other")
             for n in {r["unit"], other} if isinstance(other, str) else {r["unit"]}:
                 history.setdefault(n, []).append(item)
 
     cuts = None
     if len(found) >= TERCILE_MIN:
-        c, t = terciles(f["cost_usd"] for f in found.values()), terciles(f["turns"] for f in found.values())
+        c, t = (
+            terciles(f["cost_usd"] for f in found.values()),
+            terciles(f["turns"] for f in found.values()),
+        )
         cuts = {"cost_usd": list(c), "turns": list(t)}
     return {
         "backlog": backlog,
         "shortlist": entries,
-        "shortlist_record": ({"at": last.get("at"), "n": seq, "by": last.get("by") or "",
-                              "reason": last.get("reason") or ""} if last else None),
+        "shortlist_record": (
+            {
+                "at": last.get("at"),
+                "n": seq,
+                "by": last.get("by") or "",
+                "reason": last.get("reason") or "",
+            }
+            if last
+            else None
+        ),
         "order": rest,
         "unestimated": unestimated,
         "relations": rels,
@@ -513,27 +612,29 @@ def _differs(est: dict[str, Any]) -> dict[str, Any] | None:
     return _brief(agent)
 
 
-
-
 def build_prompt(
-    backlog_texts: list[dict[str, str]], finished_rows: list[dict[str, Any]], undetermined: int = 0,
+    backlog_texts: list[dict[str, str]],
+    finished_rows: list[dict[str, Any]],
+    undetermined: int = 0,
 ) -> str:
     """Instructions in English; the three value goals stay in the words `check_estimate` matches."""
     lines = [
         "You estimate the backlog of a software project. You have no tools but `submit`.",
         "",
         "For every unit listed under *Backlog*, give:",
-        "- `value`: a whole number 1-5, judged against the goal \"CoS thay người\" — "
-        + "; ".join(f"\"{g}\"" for g in VALUE_GOALS) + ". 5 serves it most.",
+        '- `value`: a whole number 1-5, judged against the goal "CoS thay người" — '
+        + "; ".join(f'"{g}"' for g in VALUE_GOALS)
+        + ". 5 serves it most.",
         "- `effort`: S, M or L, your own judgement. The app replaces it with a measured one when "
         "the units you name as similar have a recorded cost.",
         f"- `similar`: 0 to {SIMILAR_MAX} names taken only from *Finished units*, the ones closest in size. "
         "Name none when nothing is close, and say why in `basis`.",
         f"- `basis`: at most {BASIS_MAX} characters, in Vietnamese. It must copy verbatim at least one of: "
-        + "; ".join(f"\"{g}\"" for g in VALUE_GOALS) + ". An estimate whose basis names none is dropped.",
-        f"- `relations`: zero or more, each `{{\"type\", \"other\", \"reason\"}}`, `type` one of "
-        + ", ".join(f"\"{r}\"" for r in RELATIONS)
-        + ". \"thay thế\" means this unit replaces `other`; \"phụ thuộc\" means this unit needs `other` done first. "
+        + "; ".join(f'"{g}"' for g in VALUE_GOALS)
+        + ". An estimate whose basis names none is dropped.",
+        '- `relations`: zero or more, each `{"type", "other", "reason"}`, `type` one of '
+        + ", ".join(f'"{r}"' for r in RELATIONS)
+        + '. "thay thế" means this unit replaces `other`; "phụ thuộc" means this unit needs `other` done first. '
         "`reason` is one line.",
         "",
         "Hand your estimate back through the `submit` tool; the app does not read your reply. "
@@ -548,7 +649,11 @@ def build_prompt(
     ]
     for b in backlog_texts:
         lines += ["", f"### {b['unit']}"]
-        for head, key in (("In their own words", "idea"), ("Problem", "problem"), ("Proposed outcome", "outcome")):
+        for head, key in (
+            ("In their own words", "idea"),
+            ("Problem", "problem"),
+            ("Proposed outcome", "outcome"),
+        ):
             if b.get(key):
                 lines += [f"**{head}**", b[key].strip()]
     lines += ["", "## Finished units", ""]
@@ -558,13 +663,17 @@ def build_prompt(
     if not finished_rows:
         lines.append("(none with a recorded cost)")
     for f in finished_rows:
-        lines.append(f"- {f['unit']} — {f.get('title') or ''} — ${float(f['cost_usd']):.2f}, {f['turns']} turns")
+        lines.append(
+            f"- {f['unit']} — {f.get('title') or ''} — ${float(f['cost_usd']):.2f}, {f['turns']} turns"
+        )
     return "\n".join(lines) + "\n"
 
 
 def section(text: str, heading: str) -> str:
     """The body under `## <heading>`, up to the next `## `; `""` when there is none."""
-    m = re.search(rf"^## {re.escape(heading)}[ \t]*\n(.*?)(?=^## |\Z)", text or "", re.MULTILINE | re.DOTALL)
+    m = re.search(
+        rf"^## {re.escape(heading)}[ \t]*\n(.*?)(?=^## |\Z)", text or "", re.MULTILINE | re.DOTALL
+    )
     return m.group(1).strip() if m else ""
 
 
@@ -578,9 +687,14 @@ NO_OBJECT = "no-submission: the session handed back no estimate through submit"
 
 
 def parse_proposal(
-    submitted: dict[str, Any] | None, backlog: Iterable[str], store_names: Iterable[str],
-    found: dict[str, dict[str, Any]], session: str, active: list[dict[str, Any]],
-    workspace: str = "", undetermined: int = 0,
+    submitted: dict[str, Any] | None,
+    backlog: Iterable[str],
+    store_names: Iterable[str],
+    found: dict[str, dict[str, Any]],
+    session: str,
+    active: list[dict[str, Any]],
+    workspace: str = "",
+    undetermined: int = 0,
 ) -> dict[str, Any]:
     """`{records, rejected, failed}`. Relations are checked one after another, so two in
     one object cannot close a cycle between them.
@@ -610,25 +724,52 @@ def parse_proposal(
             rejected.append({"unit": unit, "reason": said})
         else:
             got = effort_from(similar, found, undetermined)
-            records.append({
-                "kind": "estimate-value", "workspace": workspace, "unit": unit, "value": e["value"],
-                "effort": got["effort"] or e["effort"], "effort_source": got["effort_source"],
-                "effort_basis": got["effort_basis"], "similar": similar, "basis": e["basis"], "by": by,
-                "authority": "agent",
-            })
+            records.append(
+                {
+                    "kind": "estimate-value",
+                    "workspace": workspace,
+                    "unit": unit,
+                    "value": e["value"],
+                    "effort": got["effort"] or e["effort"],
+                    "effort_source": got["effort_source"],
+                    "effort_basis": got["effort_basis"],
+                    "similar": similar,
+                    "basis": e["basis"],
+                    "by": by,
+                    "authority": "agent",
+                }
+            )
         proposed = e.get("relations") if isinstance(e.get("relations"), list) else []
         for rel in proposed:
             if not isinstance(rel, dict):
                 rejected.append({"unit": unit, "reason": "a relation is not an object"})
                 continue
             rtype, other, reason = rel.get("type"), rel.get("other"), rel.get("reason")
-            said = check_relation(unit, str(other or ""), str(rtype or ""), "add", str(reason or ""), by,
-                                  names, live, agent=True)
+            said = check_relation(
+                unit,
+                str(other or ""),
+                str(rtype or ""),
+                "add",
+                str(reason or ""),
+                by,
+                names,
+                live,
+                agent=True,
+            )
             if said:
                 rejected.append({"unit": unit, "reason": f"relation {rtype} {other}: {said}"})
                 continue
-            rec = {"kind": "relation", "workspace": workspace, "unit": unit, "other": other, "type": rtype,
-                   "op": "add", "reason": reason, "by": by, "authority": "agent"}
+            rec = {
+                "kind": "relation",
+                "workspace": workspace,
+                "unit": unit,
+                "other": other,
+                "type": rtype,
+                "op": "add",
+                "reason": reason,
+                "by": by,
+                "authority": "agent",
+            }
             records.append(rec)
             live.append({"unit": unit, "other": other, "type": rtype})
     return {"records": records, "rejected": rejected, "failed": None}

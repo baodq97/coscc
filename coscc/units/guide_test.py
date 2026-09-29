@@ -1,4 +1,4 @@
-"""`0101` R10. The guide's two lists, with no service and no run log on disk."""
+"""The guide's two lists, with no service and no run log on disk."""
 
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -15,14 +15,25 @@ def at(days: float = 0.0, minutes: float = 0.0) -> str:
 
 class TheLists(unittest.TestCase):
     def test_running_names_each_agent_oldest_first(self):
-        got = guide.running({
-            "0002_b": [{"stage": "spec", "agent": {"glyph": "ᚲ", "name": "Kenaz"}, "started": at(minutes=1)}],
-            "0001_a": [{"stage": "integrate", "agent": None, "started": at(minutes=5)}],
-        })
-        self.assertEqual(got, [
-            {"unit": "0001_a", "stage": "integrate", "agent": "", "started": at(minutes=5)},
-            {"unit": "0002_b", "stage": "spec", "agent": "Kenaz", "started": at(minutes=1)},
-        ])
+        got = guide.running(
+            {
+                "0002_b": [
+                    {
+                        "stage": "spec",
+                        "agent": {"glyph": "ᚲ", "name": "Kenaz"},
+                        "started": at(minutes=1),
+                    }
+                ],
+                "0001_a": [{"stage": "integrate", "agent": None, "started": at(minutes=5)}],
+            }
+        )
+        self.assertEqual(
+            got,
+            [
+                {"unit": "0001_a", "stage": "integrate", "agent": "", "started": at(minutes=5)},
+                {"unit": "0002_b", "stage": "spec", "agent": "Kenaz", "started": at(minutes=1)},
+            ],
+        )
 
     def test_every_stop_kind_but_full_has_one_thing_to_do(self):
         self.assertEqual(set(guide.TODO), set(autopilot.STOP_KINDS) - {"full"})

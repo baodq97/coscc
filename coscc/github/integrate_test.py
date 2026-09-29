@@ -1,4 +1,4 @@
-"""`0035` plan step 4: the pure half of `coscc/github/integrate.py`, one table per function."""
+"""The pure half of `coscc/github/integrate.py`, one table per function."""
 
 from __future__ import annotations
 
@@ -55,14 +55,23 @@ class ClassifyGivesAllFiveStates(unittest.TestCase):
 
 
 class RefusalNamesTheFirstConditionMissing(unittest.TestCase):
-    OK = dict(in_window=True, busy="", clean=True, branch_ok=True,
-              local_head=HEAD, pr_head=HEAD, state="behind")
+    OK = dict(
+        in_window=True,
+        busy="",
+        clean=True,
+        branch_ok=True,
+        local_head=HEAD,
+        pr_head=HEAD,
+        state="behind",
+    )
 
     def test_each_condition(self):
         cases = [
             ({"in_window": False}, "not between pr and ship"),
-            ({"busy": "0001_a is busy: a spec step is running since 2026-09-24T01:02:03+00:00"},
-             "a spec step is running"),
+            (
+                {"busy": "0001_a is busy: a spec step is running since 2026-09-24T01:02:03+00:00"},
+                "a spec step is running",
+            ),
             ({"clean": False}, "uncommitted"),
             ({"branch_ok": False}, "not on the unit's branch"),
             ({"local_head": NEW}, "not the pull request's head"),
@@ -78,38 +87,57 @@ class RefusalNamesTheFirstConditionMissing(unittest.TestCase):
             self.assertEqual(ig.refusal(**{**self.OK, "state": state}), "")
 
     def test_the_order_is_the_specs(self):
-        self.assertIn("not between", ig.refusal(**{**self.OK, "in_window": False, "busy": "0001_a is busy"}))
+        self.assertIn(
+            "not between", ig.refusal(**{**self.OK, "in_window": False, "busy": "0001_a is busy"})
+        )
 
     def test_current_says_what_it_was_compared_with(self):
-        """`0052` R4: the sentence names the ref and how it got there, and keeps its start."""
+        """The sentence names the ref and how it got there, and keeps its start."""
         origin = ig.origin_note(MAIN, {"outcome": "fetched", "attempts": 1, "age": 0.4})
         said = ig.refusal(**{**self.OK, "state": "current", "origin": origin})
         self.assertEqual(
-            said, "the unit is current against origin/main ccccccc (fetched), which has nothing to integrate")
+            said,
+            "the unit is current against origin/main ccccccc (fetched), which has nothing to integrate",
+        )
         self.assertTrue(said.startswith("the unit is current"))
 
     def test_without_an_origin_the_old_sentence_stands(self):
-        self.assertEqual(ig.refusal(**{**self.OK, "state": "current"}),
-                         "the unit is current, which has nothing to integrate")
+        self.assertEqual(
+            ig.refusal(**{**self.OK, "state": "current"}),
+            "the unit is current, which has nothing to integrate",
+        )
         # Only `current` carries the ref: `unknown` keeps its sentence.
-        self.assertEqual(ig.refusal(**{**self.OK, "state": "unknown", "origin": "origin/main x"}),
-                         "the unit is unknown, which has nothing to integrate")
+        self.assertEqual(
+            ig.refusal(**{**self.OK, "state": "unknown", "origin": "origin/main x"}),
+            "the unit is unknown, which has nothing to integrate",
+        )
 
-    def test_0114_ahead_or_diverged_is_the_completion_road_in_every_state(self):
+    def test_ahead_or_diverged_is_the_completion_road_in_every_state(self):
         for how in ig.COMPLETION:
             for state in ig.STATES:
                 with self.subTest(relation=how, state=state):
-                    self.assertEqual(ig.refusal(**{**self.OK, "local_head": NEW, "relation": how, "state": state}), "")
+                    self.assertEqual(
+                        ig.refusal(
+                            **{**self.OK, "local_head": NEW, "relation": how, "state": state}
+                        ),
+                        "",
+                    )
 
-    def test_0114_an_unread_relation_is_refused_with_gits_words(self):
+    def test_an_unread_relation_is_refused_with_gits_words(self):
         said = ig.refusal(**{**self.OK, "local_head": NEW, "relation_said": "bad object bbbbbbb"})
-        self.assertEqual(said, "the local head (bbbbbbb) is not the pull request's head (aaaaaaa): bad object bbbbbbb")
+        self.assertEqual(
+            said,
+            "the local head (bbbbbbb) is not the pull request's head (aaaaaaa): bad object bbbbbbb",
+        )
         # `behind` that could not follow is refused too.
-        self.assertIn("not the pull request's head", ig.refusal(**{**self.OK, "local_head": NEW, "relation": "behind"}))
+        self.assertIn(
+            "not the pull request's head",
+            ig.refusal(**{**self.OK, "local_head": NEW, "relation": "behind"}),
+        )
 
 
 class Relation(unittest.TestCase):
-    """`0114` R5: the four answers two `is_ancestor` calls give, and none when git gave none."""
+    """The four answers two `is_ancestor` calls give, and none when git gave none."""
 
     def test_each(self):
         cases = [
@@ -125,7 +153,7 @@ class Relation(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertEqual(ig.relation(*args), want)
 
-    def test_review_f1_diverged_is_only_a_local_head_on_a_newer_base(self):
+    def test_diverged_is_only_a_local_head_on_a_newer_base(self):
         self.assertEqual(ig.relation(NEW, HEAD, False, False, newer=True), "diverged")
         self.assertEqual(ig.relation(NEW, HEAD, False, False, newer=False), "stale")
         self.assertEqual(ig.relation(NEW, HEAD, False, False, newer=None), "")
@@ -133,7 +161,7 @@ class Relation(unittest.TestCase):
         self.assertEqual(ig.relation(NEW, HEAD, False, True, newer=False), "ahead")
         self.assertEqual(ig.relation(HEAD, NEW, True, False, newer=False), "behind")
 
-    def test_review_f1_newer_base(self):
+    def test_newer_base(self):
         cases = [
             ((NEW, MAIN, True), True),
             ((MAIN, MAIN, True), False),
@@ -145,16 +173,19 @@ class Relation(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertIs(ig.newer_base(*args), want)
 
-    def test_review_f1_stale_is_refused_and_says_why(self):
+    def test_stale_is_refused_and_says_why(self):
         ok = RefusalNamesTheFirstConditionMissing.OK
         for state in ig.STATES:
             with self.subTest(state=state):
                 said = ig.refusal(**{**ok, "local_head": NEW, "relation": "stale", "state": state})
-                self.assertEqual(said, f"the local head (bbbbbbb) is not the pull request's head (aaaaaaa): {ig.STALE}")
+                self.assertEqual(
+                    said,
+                    f"the local head (bbbbbbb) is not the pull request's head (aaaaaaa): {ig.STALE}",
+                )
 
 
 class CutIntegration(unittest.TestCase):
-    """`0114` R3: a `start` of `integrate` that nothing closed, in this unit's run log."""
+    """A `start` of `integrate` that nothing closed, in this unit's run log."""
 
     U = "0096_x"
 
@@ -170,8 +201,11 @@ class CutIntegration(unittest.TestCase):
             ([self.start(), integration], False, None),
             ([self.start()], True, None),
             ([self.start(stage="impl")], False, None),
-            ([self.start(), end, self.start(at="2026-09-26T14:00:00+00:00", head=NEW)], False,
-             {"at": "2026-09-26T14:00:00+00:00", "head": NEW}),
+            (
+                [self.start(), end, self.start(at="2026-09-26T14:00:00+00:00", head=NEW)],
+                False,
+                {"at": "2026-09-26T14:00:00+00:00", "head": NEW},
+            ),
             ([], False, None),
         ]
         for records, running, want in cases:
@@ -184,15 +218,23 @@ class CutIntegration(unittest.TestCase):
 
 
 class OriginNote(unittest.TestCase):
-    """`0052` R4: the four ways a press got its `origin/main`."""
+    """The four ways a press got its `origin/main`."""
 
     def test_each_outcome(self):
         cases = [
             ({"outcome": "fetched", "attempts": 1, "age": 0.2}, "origin/main ccccccc (fetched)"),
-            ({"outcome": "joined", "attempts": 1, "age": 1.5}, "origin/main ccccccc (joined a running fetch)"),
-            ({"outcome": "reused", "attempts": 0, "age": 12.3}, "origin/main ccccccc (reused 12.3s ago)"),
-            ({"outcome": "failed", "detail": "fatal: could not read"},
-             "origin/main ccccccc (fetch failed: fatal: could not read)"),
+            (
+                {"outcome": "joined", "attempts": 1, "age": 1.5},
+                "origin/main ccccccc (joined a running fetch)",
+            ),
+            (
+                {"outcome": "reused", "attempts": 0, "age": 12.3},
+                "origin/main ccccccc (reused 12.3s ago)",
+            ),
+            (
+                {"outcome": "failed", "detail": "fatal: could not read"},
+                "origin/main ccccccc (fetch failed: fatal: could not read)",
+            ),
             (None, "origin/main ccccccc"),
         ]
         for fetch, want in cases:
@@ -204,52 +246,83 @@ class OriginNote(unittest.TestCase):
 class Warnings(unittest.TestCase):
     def test_each_line_only_when_true(self):
         self.assertEqual(ig.warnings([], "accepted", False, "W"), [])
-        self.assertIn("ship gate closes", ig.warnings([{"verdict": "pass"}], "accepted", False, "W")[0])
-        self.assertIn("asks for changes", ig.warnings([{"verdict": "changes-requested"}], "changes-requested", False, "W")[0])
+        self.assertIn(
+            "ship gate closes", ig.warnings([{"verdict": "pass"}], "accepted", False, "W")[0]
+        )
+        self.assertIn(
+            "asks for changes",
+            ig.warnings([{"verdict": "changes-requested"}], "changes-requested", False, "W")[0],
+        )
         self.assertEqual(ig.warnings([], "", True, "W"), ["W"])
 
     def test_a_press_that_may_fall_to_gebo_says_so(self):
-        """`0052`: a `behind` or `current` press may open Gebo; the page says so, with the grant."""
+        """A `behind` or `current` press may open Gebo; the page says so, with the grant."""
         said = ig.warnings([], "", True, "W", fallback=True, name="Gebo")
         self.assertEqual(len(said), 2)
-        self.assertIn("If GitHub refuses the rebase, the app opens Gebo, a paid agent session, to rebase", said[0])
+        self.assertIn(
+            "If GitHub refuses the rebase, the app opens Gebo, a paid agent session, to rebase",
+            said[0],
+        )
         self.assertIn("pressing Integrate agrees to that session", said[0])
         self.assertEqual(said[1], "W")
-        # `0036` R1: the name is the table's, handed in; with none the sentence still reads.
-        self.assertIn("the app opens a paid agent session to rebase",
-                      ig.warnings([], "", True, "W", fallback=True)[0])
+        # The name is the table's, handed in; with none the sentence still reads.
+        self.assertIn(
+            "the app opens a paid agent session to rebase",
+            ig.warnings([], "", True, "W", fallback=True)[0],
+        )
 
     def test_a_passed_unit_is_told_what_integrating_costs(self):
-        # `0061` R11.1: the four things the warning must say.
+        # The four things the warning must say.
         said = ig.warnings([{"verdict": "pass"}], "accepted", False, "W")[0]
         self.assertIn("rewrites the reviewed commit", said)
-        self.assertIn("another review round is needed — it does not count toward COS_REVIEW_ROUNDS, but it is another paid session", said)
+        self.assertIn(
+            "another review round is needed — it does not count toward COS_REVIEW_ROUNDS, but it is another paid session",
+            said,
+        )
         self.assertIn("Run ship first", said)
-        self.assertIn("only when GitHub reports a conflict or refuses the merge because the branch is behind main", said)
+        self.assertIn(
+            "only when GitHub reports a conflict or refuses the merge because the branch is behind main",
+            said,
+        )
 
-    def test_0067_a_passed_unit_is_told_a_clean_rebase_needs_no_round(self):
-        # `0067` R8: the round is the price of a patch that changes, not of every rebase.
+    def test_a_passed_unit_is_told_a_clean_rebase_needs_no_round(self):
+        # The round is the price of a patch that changes, not of every rebase.
         said = ig.warnings([{"verdict": "pass"}], "accepted", False, "W")[0]
         self.assertIn("the ship gate opens again once CI is green, with no review round", said)
-        self.assertIn("If the unit's patch comes out unchanged — the same added, removed and context lines", said)
-        self.assertIn("If it changes, the ship gate closes and another review round is needed", said)
+        self.assertIn(
+            "If the unit's patch comes out unchanged — the same added, removed and context lines",
+            said,
+        )
+        self.assertIn(
+            "If it changes, the ship gate closes and another review round is needed", said
+        )
 
-    def test_0121_changes_asked_and_a_clean_rebase_spends_no_round(self):
-        # `0121` R1, R2: a patch left unchanged goes back to impl; only a changed one costs a round.
+    def test_changes_asked_and_a_clean_rebase_spends_no_round(self):
+        # A patch left unchanged goes back to impl; only a changed one costs a round.
         said = ig.warnings([{"verdict": "changes-requested"}], "changes-requested", False, "W")[0]
         self.assertIn("If integrating leaves the unit's patch unchanged", said)
         self.assertIn("cos.mjs next still offers impl, and no review round is spent", said)
-        self.assertIn("If it changes the patch, next offers review once CI is green, and that round counts toward COS_REVIEW_ROUNDS", said)
+        self.assertIn(
+            "If it changes the patch, next offers review once CI is green, and that round counts toward COS_REVIEW_ROUNDS",
+            said,
+        )
         self.assertNotIn("offers review, not impl", said)
 
 
 class Related(unittest.TestCase):
-    UNITS = [{"name": "0030_a", "pr": {"number": 41}}, {"name": "0035_x", "pr": {"number": 50}},
-             {"name": "0040_z", "pr": None}]
+    UNITS = [
+        {"name": "0030_a", "pr": {"number": 41}},
+        {"name": "0035_x", "pr": {"number": 50}},
+        {"name": "0040_z", "pr": None},
+    ]
 
     def test_both_groups(self):
         commits = [
-            {"sha": "1" * 40, "subject": "feat: a (#41)", "files": ["coscc/runner/__init__.py", "README.md"]},
+            {
+                "sha": "1" * 40,
+                "subject": "feat: a (#41)",
+                "files": ["coscc/runner/__init__.py", "README.md"],
+            },
             {"sha": "2" * 40, "subject": "fix: b (#99)", "files": ["coscc/runner/__init__.py"]},
             {"sha": "3" * 40, "subject": "docs: c (#42)", "files": ["docs/x.md"]},
             {"sha": "4" * 40, "subject": "no number", "files": ["coscc/runner/__init__.py"]},
@@ -261,29 +334,43 @@ class Related(unittest.TestCase):
             {"unit": "0035_x", "files": ["coscc/runner/__init__.py"]},
         ]
         rel = ig.related(commits, ["coscc/runner/__init__.py"], self.UNITS, others, "0035_x")
-        self.assertEqual([(m["subject"], m["unit"]) for m in rel["merged"]],
-                         [("feat: a (#41)", "0030_a"), ("fix: b (#99)", None), ("no number", None)])
-        self.assertEqual(rel["open"], [{"unit": "0036_b", "files": ["coscc/runner/__init__.py"]},
-                                       {"unit": "0038_d", "files": None}])
+        self.assertEqual(
+            [(m["subject"], m["unit"]) for m in rel["merged"]],
+            [("feat: a (#41)", "0030_a"), ("fix: b (#99)", None), ("no number", None)],
+        )
+        self.assertEqual(
+            rel["open"],
+            [
+                {"unit": "0036_b", "files": ["coscc/runner/__init__.py"]},
+                {"unit": "0038_d", "files": None},
+            ],
+        )
         self.assertEqual(ig.related_units(rel), ["0030_a", "0036_b", "0038_d"])
 
     def test_read_paths_are_the_own_folder_and_three_files_each(self):
         rel = {"merged": [{"unit": "0030_a"}], "open": []}
         paths = ig.read_paths(Path("/u"), "0035_x", rel)
-        self.assertEqual(paths, ("/u/0035_x", "/u/0030_a/intent.md", "/u/0030_a/spec.md", "/u/0030_a/plan.md"))
+        self.assertEqual(
+            paths, ("/u/0035_x", "/u/0030_a/intent.md", "/u/0030_a/spec.md", "/u/0030_a/plan.md")
+        )
 
 
 class NeedsPersonAndOutcome(unittest.TestCase):
     def test_what_needs_a_person_is_the_object_gebo_handed_back(self):
-        """`0136` R7: one line per item, the commit first when it names one."""
-        obj = {"needs_person": [{"commit": "", "why": "A keeps x, B drops x"},
-                                {"commit": "abc1234", "why": "second"}, {"commit": "", "why": " "}]}
+        """One line per item, the commit first when it names one."""
+        obj = {
+            "needs_person": [
+                {"commit": "", "why": "A keeps x, B drops x"},
+                {"commit": "abc1234", "why": "second"},
+                {"commit": "", "why": " "},
+            ]
+        }
         self.assertEqual(ig.needs_person_of(obj), ["A keeps x, B drops x", "abc1234: second"])
         self.assertEqual(ig.needs_person_of(None), [])
         self.assertEqual(ig.needs_person_of({"needs_person": []}), [])
 
     def test_the_outcome_is_read_from_git_then_the_object(self):
-        """`0136` R7's order: the head moved, else the object's `needs_person`, else failed."""
+        """The order: the head moved, else the object's `needs_person`, else failed."""
         self.assertEqual(ig.outcome_of_session(HEAD, NEW, ["x"]), "pushed")
         self.assertEqual(ig.outcome_of_session(HEAD, NEW, []), "pushed")
         self.assertEqual(ig.outcome_of_session(HEAD, HEAD, []), "failed")
@@ -292,53 +379,137 @@ class NeedsPersonAndOutcome(unittest.TestCase):
 
 class Record(unittest.TestCase):
     def test_shape(self):
-        rec = ig.record(workspace="w", unit="0035_x", pr=7, mode="mechanical", head_before=HEAD,
-                        head_after=NEW, origin_sha=MAIN, outcome="pushed")
+        rec = ig.record(
+            workspace="w",
+            unit="0035_x",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after=NEW,
+            origin_sha=MAIN,
+            outcome="pushed",
+        )
         self.assertEqual(rec["kind"], "integration")
         self.assertEqual(rec["stage"], "integrate")
         self.assertEqual(rec["head_after"], NEW)
 
     def test_head_after_is_empty_unless_pushed(self):
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD,
-                        head_after=NEW, origin_sha=MAIN, outcome="needs-person")
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="agent",
+            head_before=HEAD,
+            head_after=NEW,
+            origin_sha=MAIN,
+            outcome="needs-person",
+        )
         self.assertEqual(rec["head_after"], "")
 
     def test_an_unknown_outcome_is_refused(self):
         with self.assertRaises(ValueError):
-            ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD,
-                      head_after="", origin_sha=MAIN, outcome="ok")
+            ig.record(
+                workspace="w",
+                unit="u",
+                pr=7,
+                mode="agent",
+                head_before=HEAD,
+                head_after="",
+                origin_sha=MAIN,
+                outcome="ok",
+            )
 
     def test_fetch_merge_state_and_update_branch(self):
-        """`0052` R5: the three keys are always there, and carry only what they name."""
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
-                        head_after="", origin_sha=MAIN, outcome="refused")
+        """The three keys are always there, and carry only what they name."""
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after="",
+            origin_sha=MAIN,
+            outcome="refused",
+        )
         self.assertEqual((rec["fetch"], rec["merge_state"], rec["update_branch"]), (None, "", None))
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD, head_after="",
-                        origin_sha=MAIN, outcome="failed",
-                        fetch={"outcome": "fetched", "attempts": 1, "age": 0.3}, merge_state="BEHIND",
-                        update_branch={"code": 1, "said": "gh: refused"})
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="agent",
+            head_before=HEAD,
+            head_after="",
+            origin_sha=MAIN,
+            outcome="failed",
+            fetch={"outcome": "fetched", "attempts": 1, "age": 0.3},
+            merge_state="BEHIND",
+            update_branch={"code": 1, "said": "gh: refused"},
+        )
         self.assertEqual(rec["fetch"], {"outcome": "fetched", "age": 0.3})
         self.assertEqual(rec["merge_state"], "BEHIND")
         self.assertEqual(rec["update_branch"], {"code": 1, "said": "gh: refused"})
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD, head_after="",
-                        origin_sha=MAIN, outcome="refused", fetch={"outcome": "failed", "detail": "no remote"})
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after="",
+            origin_sha=MAIN,
+            outcome="refused",
+            fetch={"outcome": "failed", "detail": "no remote"},
+        )
         self.assertEqual(rec["fetch"], {"outcome": "failed", "detail": "no remote"})
 
     def test_started_by_is_person_unless_named(self):
-        """`0043` R3: every integration record says who started it, and only two values."""
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
-                        head_after="", origin_sha=MAIN, outcome="refused")
+        """Every integration record says who started it, and only two values."""
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after="",
+            origin_sha=MAIN,
+            outcome="refused",
+        )
         self.assertEqual(rec["started_by"], "person")
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
-                        head_after="", origin_sha=MAIN, outcome="refused", started_by="autopilot")
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after="",
+            origin_sha=MAIN,
+            outcome="refused",
+            started_by="autopilot",
+        )
         self.assertEqual(rec["started_by"], "autopilot")
         with self.assertRaises(ValueError):
-            ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
-                      head_after="", origin_sha=MAIN, outcome="refused", started_by="cron")
+            ig.record(
+                workspace="w",
+                unit="u",
+                pr=7,
+                mode="mechanical",
+                head_before=HEAD,
+                head_after="",
+                origin_sha=MAIN,
+                outcome="refused",
+                started_by="cron",
+            )
 
     def test_an_old_record_without_them_still_describes(self):
-        old = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
-                        head_after=NEW, origin_sha=MAIN, outcome="pushed")
+        old = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after=NEW,
+            origin_sha=MAIN,
+            outcome="pushed",
+        )
         for k in ("fetch", "merge_state", "update_branch"):
             del old[k]
         text = ig.describe_for_review(old)
@@ -351,28 +522,66 @@ class Record(unittest.TestCase):
         self.assertIn("not by a person", text)
         self.assertIn("an agent session", ig.describe_for_review({"mode": "agent"}))
 
-    def test_0114_completion_is_always_written(self):
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD,
-                        head_after="", origin_sha=MAIN, outcome="refused")
+    def test_completion_is_always_written(self):
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="agent",
+            head_before=HEAD,
+            head_after="",
+            origin_sha=MAIN,
+            outcome="refused",
+        )
         self.assertIn("completion", rec)
         self.assertIsNone(rec["completion"])
         cut = {"at": "2026-09-26T13:12:35+00:00", "head": HEAD}
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD, head_after=NEW,
-                        origin_sha=MAIN, outcome="pushed",
-                        completion={"relation": "diverged", "local_head": NEW, "cut": cut})
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="agent",
+            head_before=HEAD,
+            head_after=NEW,
+            origin_sha=MAIN,
+            outcome="pushed",
+            completion={"relation": "diverged", "local_head": NEW, "cut": cut},
+        )
         self.assertEqual(rec["completion"], {"relation": "diverged", "local_head": NEW, "cut": cut})
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD, head_after=NEW,
-                        origin_sha=MAIN, outcome="pushed",
-                        completion={"relation": "behind", "local_head": MAIN, "cut": None})
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after=NEW,
+            origin_sha=MAIN,
+            outcome="pushed",
+            completion={"relation": "behind", "local_head": MAIN, "cut": None},
+        )
         self.assertEqual(rec["completion"], {"relation": "behind", "local_head": MAIN, "cut": None})
 
-    def test_0114_a_completion_says_it_pushed_unpushed_commits_and_whose_word_it_is(self):
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD, head_after=NEW,
-                        origin_sha=MAIN, outcome="pushed",
-                        completion={"relation": "ahead", "local_head": NEW, "cut": None})
+    def test_a_completion_says_it_pushed_unpushed_commits_and_whose_word_it_is(self):
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="agent",
+            head_before=HEAD,
+            head_after=NEW,
+            origin_sha=MAIN,
+            outcome="pushed",
+            completion={"relation": "ahead", "local_head": NEW, "cut": None},
+        )
         text = ig.describe_for_review(rec)
-        for want in ("An integration since the last round", "local commits", "never been pushed",
-                     "not a person", "no one's approval", NEW):
+        for want in (
+            "An integration since the last round",
+            "local commits",
+            "never been pushed",
+            "not a person",
+            "no one's approval",
+            NEW,
+        ):
             self.assertIn(want, text)
         self.assertNotIn("rebased onto", text)
         # `behind` pushed nothing of its own: the old sentence stands.
@@ -380,51 +589,97 @@ class Record(unittest.TestCase):
         self.assertIn("rebased onto", ig.describe_for_review(rec))
 
     def test_describe_for_review_names_the_agent_from_the_record(self):
-        # `0036` R7: the record's own name first; one from before `0036` by its stage, from
-        # today's table with its overrides.
-        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD, head_after=NEW,
-                        origin_sha=MAIN, outcome="pushed", agent="Weaver")
+        rec = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="agent",
+            head_before=HEAD,
+            head_after=NEW,
+            origin_sha=MAIN,
+            outcome="pushed",
+            agent="Weaver",
+        )
         self.assertEqual(rec["agent"], "Weaver")
         self.assertIn("by an agent session (Weaver)", ig.describe_for_review(rec))
         del rec["agent"]
         self.assertIn("by an agent session (Gebo)", ig.describe_for_review(rec))
-        self.assertIn("by an agent session (Knot)",
-                      ig.describe_for_review(rec, {"integrate": {"name": "Knot"}}))
+        self.assertIn(
+            "by an agent session (Knot)",
+            ig.describe_for_review(rec, {"integrate": {"name": "Knot"}}),
+        )
         rec["completion"] = {"relation": "ahead", "local_head": NEW, "cut": None}
         self.assertIn("opened an agent session (Gebo) to push", ig.describe_for_review(rec))
-        mechanical = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
-                               head_after=NEW, origin_sha=MAIN, outcome="pushed")
+        mechanical = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after=NEW,
+            origin_sha=MAIN,
+            outcome="pushed",
+        )
         self.assertNotIn("agent", mechanical)
 
 
 class ThePrompt(unittest.TestCase):
     def test_it_carries_the_lease_the_lists_and_the_artifacts(self):
-        rel = {"merged": [{"sha": "1" * 40, "subject": "s (#41)", "unit": "0030_a", "files": ["f"]}],
-               "open": [{"unit": "0036_b", "files": None}]}
-        text = ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="conflicting",
-                               reason="r", head_before=HEAD, origin_sha=MAIN, rel=rel,
-                               units_root=Path("/u"),
-                               own_paths={"intent.md": Path("/u/0035_x/intent.md")})
-        for want in ("RULES", f"--force-with-lease=feat/x:{HEAD}", MAIN, "0030_a", "no local commit",
-                     "/u/0030_a/plan.md", "- /u/0035_x/intent.md"):
+        rel = {
+            "merged": [{"sha": "1" * 40, "subject": "s (#41)", "unit": "0030_a", "files": ["f"]}],
+            "open": [{"unit": "0036_b", "files": None}],
+        }
+        text = ig.build_prompt(
+            skill="RULES",
+            unit="0035_x",
+            branch="feat/x",
+            pr=7,
+            state="conflicting",
+            reason="r",
+            head_before=HEAD,
+            origin_sha=MAIN,
+            rel=rel,
+            units_root=Path("/u"),
+            own_paths={"intent.md": Path("/u/0035_x/intent.md")},
+        )
+        for want in (
+            "RULES",
+            f"--force-with-lease=feat/x:{HEAD}",
+            MAIN,
+            "0030_a",
+            "no local commit",
+            "/u/0030_a/plan.md",
+            "- /u/0035_x/intent.md",
+        ):
             self.assertIn(want, text)
         self.assertNotIn("The mechanical rebase was refused", text)
         self.assertTrue(text.startswith("RULES"))
 
     def test_gebos_prompt_opens_with_its_identity(self):
-        # `0036` R3: before the rules, from the `integrate` row, with its empty fields left out.
+        # Before the rules, from the `integrate` row, with its empty fields left out.
         from coscc.agent import agents
 
         row = agents.agent_for("integrate")
-        text = ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="conflicting",
-                               reason="r", head_before=HEAD, origin_sha=MAIN, rel={"merged": [], "open": []},
-                               units_root=Path("/u"), own_paths={}, agent=row)
+        text = ig.build_prompt(
+            skill="RULES",
+            unit="0035_x",
+            branch="feat/x",
+            pr=7,
+            state="conflicting",
+            reason="r",
+            head_before=HEAD,
+            origin_sha=MAIN,
+            rel={"merged": [], "open": []},
+            units_root=Path("/u"),
+            own_paths={},
+            agent=row,
+        )
         self.assertTrue(text.startswith(agents.identity_section(row) + "\n\nRULES"))
         self.assertIn("You are ᚷ Gebo, the agent of the integrate stage.", text)
         self.assertIn("`Gebo (agent, integrate)`", text)
 
     def test_every_own_artifact_it_names_can_be_read(self):
-        """`0094` R15: Gebo is handed its unit's artifacts by path, so its grant must read them."""
+        """Gebo is handed its unit's artifacts by path, so its grant must read them."""
         from coscc.agent.policy import decide, grant_for
 
         with tempfile.TemporaryDirectory() as d:
@@ -438,55 +693,108 @@ class ThePrompt(unittest.TestCase):
                 (own / name).write_text("Status: accepted.\nBODY-" + name, encoding="utf-8")
                 paths[name] = own.resolve() / name
             rel = {"merged": [], "open": []}
-            text = ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="conflicting",
-                                   reason="r", head_before=HEAD, origin_sha=MAIN, rel=rel,
-                                   units_root=units_root, own_paths=paths)
+            text = ig.build_prompt(
+                skill="RULES",
+                unit="0035_x",
+                branch="feat/x",
+                pr=7,
+                state="conflicting",
+                reason="r",
+                head_before=HEAD,
+                origin_sha=MAIN,
+                rel=rel,
+                units_root=units_root,
+                own_paths=paths,
+            )
             self.assertNotIn("BODY-", text)
-            named = [line[2:] for line in text.split("# This unit's own artifacts\n")[1].splitlines()
-                     if line.startswith("- ")]
+            named = [
+                line[2:]
+                for line in text.split("# This unit's own artifacts\n")[1].splitlines()
+                if line.startswith("- ")
+            ]
             self.assertEqual(named, [str(p) for p in paths.values()])
             for p in named:
                 self.assertEqual(
-                    decide(grant_for("integrate"), "Read", {"file_path": p}, str(tree), None,
-                           read_also=ig.read_paths(units_root, "0035_x", rel)),
-                    "", p)
+                    decide(
+                        grant_for("integrate"),
+                        "Read",
+                        {"file_path": p},
+                        str(tree),
+                        None,
+                        read_also=ig.read_paths(units_root, "0035_x", rel),
+                    ),
+                    "",
+                    p,
+                )
 
     def test_a_refused_update_carries_its_code_and_words(self):
-        """`0052`: the exit code and gh's words reach Gebo, and so does what they cannot say."""
-        text = ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="behind",
-                               reason="r", head_before=HEAD, origin_sha=MAIN,
-                               rel={"merged": [], "open": []}, units_root=Path("/u"), own_paths={},
-                               refused_update={"code": 1, "said": "gh: merge conflict"})
-        for want in ("# The mechanical rebase was refused", "gh pr update-branch 7 --rebase",
-                     "exited 1", "gh: merge conflict", "a login, the network, a permission"):
+        """The exit code and gh's words reach Gebo, and so does what they cannot say."""
+        text = ig.build_prompt(
+            skill="RULES",
+            unit="0035_x",
+            branch="feat/x",
+            pr=7,
+            state="behind",
+            reason="r",
+            head_before=HEAD,
+            origin_sha=MAIN,
+            rel={"merged": [], "open": []},
+            units_root=Path("/u"),
+            own_paths={},
+            refused_update={"code": 1, "said": "gh: merge conflict"},
+        )
+        for want in (
+            "# The mechanical rebase was refused",
+            "gh pr update-branch 7 --rebase",
+            "exited 1",
+            "gh: merge conflict",
+            "a login, the network, a permission",
+        ):
             self.assertIn(want, text)
 
     def completion_prompt(self, completion):
-        return ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="current",
-                               reason="", head_before=HEAD, origin_sha=MAIN,
-                               rel={"merged": [], "open": []}, units_root=Path("/u"), own_paths={},
-                               completion=completion)
+        return ig.build_prompt(
+            skill="RULES",
+            unit="0035_x",
+            branch="feat/x",
+            pr=7,
+            state="current",
+            reason="",
+            head_before=HEAD,
+            origin_sha=MAIN,
+            rel={"merged": [], "open": []},
+            units_root=Path("/u"),
+            own_paths={},
+            completion=completion,
+        )
 
-    def test_0114_no_completion_no_section(self):
+    def test_no_completion_no_section(self):
         self.assertNotIn("# Commits that were never pushed", self.completion_prompt(None))
 
-    def test_0114_diverged_compares_then_pushes_or_asks_a_person(self):
+    def test_diverged_compares_then_pushes_or_asks_a_person(self):
         cut = {"at": "2026-09-26T13:12:35+00:00", "head": HEAD}
         text = self.completion_prompt({"relation": "diverged", "local_head": NEW, "cut": cut})
-        for want in ("# Commits that were never pushed", NEW, HEAD, "`diverged`", "2026-09-26T13:12:35+00:00",
-                     f"git range-diff origin/main {HEAD} {NEW}", "one `needs_person` item",
-                     "Do not rebase, commit or reset",
-                     # The lease is still the pull request's head.
-                     f"--force-with-lease=feat/x:{HEAD}"):
+        for want in (
+            "# Commits that were never pushed",
+            NEW,
+            HEAD,
+            "`diverged`",
+            "2026-09-26T13:12:35+00:00",
+            f"git range-diff origin/main {HEAD} {NEW}",
+            "one `needs_person` item",
+            "Do not rebase, commit or reset",
+            # The lease is still the pull request's head.
+            f"--force-with-lease=feat/x:{HEAD}",
+        ):
             self.assertIn(want, text)
         self.assertNotIn("has changed since", text)
 
-    def test_0114_a_cut_on_another_head_says_the_pull_request_moved(self):
+    def test_a_cut_on_another_head_says_the_pull_request_moved(self):
         cut = {"at": "2026-09-26T13:12:35+00:00", "head": MAIN}
         text = self.completion_prompt({"relation": "diverged", "local_head": NEW, "cut": cut})
         self.assertIn("The pull request's head has changed since that integration was cut.", text)
 
-    def test_0114_ahead_pushes_with_no_range_diff(self):
+    def test_ahead_pushes_with_no_range_diff(self):
         text = self.completion_prompt({"relation": "ahead", "local_head": NEW, "cut": None})
         self.assertIn("`ahead`", text)
         self.assertIn(f"`{NEW}` holds the pull request's head", text)
@@ -496,7 +804,7 @@ class ThePrompt(unittest.TestCase):
 
 
 class MergeState(unittest.TestCase):
-    """`0052` R5: observed only, so every failure is `""` and nothing raises."""
+    """Observed only, so every failure is `""` and nothing raises."""
 
     def ask(self, gh):
         with mock.patch.object(ig, "_gh", gh):
@@ -534,38 +842,50 @@ class MergeState(unittest.TestCase):
 
 
 class TheReviewPromptCarriesTheIntegration(unittest.TestCase):
-    """R10, plan step 8: `build_prompt` places the note for `review` only."""
+    """`build_prompt` places the note for `review` only."""
 
     def test_review_only(self):
         import tempfile
 
-        from coscc.runner import build_prompt
+        from coscc.runner.prompt import build_prompt
         from coscc.runner.runner_test import STAGES, UNIT, make_unit
 
         note = ig.describe_for_review({"mode": "mechanical", "head_after": NEW})
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="Status: accepted.\nI")
             unit_dir = Path(d) / ".cos" / UNIT
-            prompt, included = build_prompt(d, unit_dir, UNIT, "review", STAGES, "review.md", integration_note=note)
+            prompt, included = build_prompt(
+                d, unit_dir, UNIT, "review", STAGES, "review.md", integration_note=note
+            )
             self.assertIn("An integration since the last round", prompt)
             self.assertIn("integration", included)
-            prompt, included = build_prompt(d, unit_dir, UNIT, "impl", STAGES, "impl.md", integration_note=note)
+            prompt, included = build_prompt(
+                d, unit_dir, UNIT, "impl", STAGES, "impl.md", integration_note=note
+            )
             self.assertNotIn("An integration since the last round", prompt)
 
 
 class TheLatestIntegrationSinceTheLastRound(unittest.TestCase):
-    """R10: a `pushed` integration counts only when written after the last `review` done."""
+    """A `pushed` integration counts only when written after the last `review` done."""
 
     def test_order_decides(self):
         import tempfile
 
         from coscc.runlog.journal import Journal
-        from coscc.service import integration_since_review
+        from coscc.service.steps import integration_since_review
 
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
-            pushed = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD,
-                               head_after=NEW, origin_sha=MAIN, outcome="pushed")
+            pushed = ig.record(
+                workspace="w",
+                unit="u",
+                pr=7,
+                mode="agent",
+                head_before=HEAD,
+                head_after=NEW,
+                origin_sha=MAIN,
+                outcome="pushed",
+            )
             self.assertIsNone(integration_since_review(j, "w", "u"))
             j.append(pushed)
             self.assertEqual(integration_since_review(j, "w", "u")["head_after"], NEW)
@@ -592,8 +912,14 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
             async def stream(self, cwd, prompt, session_id, **kw):
                 seen.update(kw, cwd=cwd)
                 gate = kw["can_use_tool"]
-                seen["push_ok"] = await gate("Bash", {"command": f"git push --force-with-lease=feat/x:{HEAD} origin feat/x"}, None)
-                seen["push_bad"] = await gate("Bash", {"command": "git push --force origin feat/x"}, None)
+                seen["push_ok"] = await gate(
+                    "Bash",
+                    {"command": f"git push --force-with-lease=feat/x:{HEAD} origin feat/x"},
+                    None,
+                )
+                seen["push_bad"] = await gate(
+                    "Bash", {"command": "git push --force origin feat/x"}, None
+                )
                 seen["submit"] = await gate("mcp__cos__submit", {}, None)
                 yield ("chunk", "[needs-person] C vs D")
                 await _submits(kw, needs_person=[{"commit": "", "why": "A vs B"}])
@@ -605,9 +931,17 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
 
         async def go():
             out = []
-            async for item in ig.run_gebo(FakeSessions(), tree="/t", workspace="/w", prompt="p",
-                                          grant=grant_for("integrate"), read_also=(), lease=("feat/x", HEAD),
-                                          model=None, channel=collector):
+            async for item in ig.run_gebo(
+                FakeSessions(),
+                tree="/t",
+                workspace="/w",
+                prompt="p",
+                grant=grant_for("integrate"),
+                read_also=(),
+                lease=("feat/x", HEAD),
+                model=None,
+                channel=collector,
+            ):
                 out.append(item)
             return out
 
@@ -620,37 +954,59 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         end = out[-1][1]
         self.assertEqual(end["reply"], "[needs-person] C vs D")
         self.assertEqual(end["denials"], 1)
-        # `0136` R7: the object's words, never the reply's.
+        # The object's words, never the reply's.
         self.assertEqual(ig.needs_person_of(collector.object()), ["A vs B"])
-        self.assertEqual(ig.outcome_of_session(HEAD, HEAD, ig.needs_person_of(collector.object())), "needs-person")
+        self.assertEqual(
+            ig.outcome_of_session(HEAD, HEAD, ig.needs_person_of(collector.object())),
+            "needs-person",
+        )
 
     def test_gebo_counts_the_background_runs_it_was_refused(self):
-        """`0130` R3."""
         from coscc.agent.policy import grant_for
 
         class FakeSessions:
             async def stream(self, cwd, prompt, session_id, **kw):
                 await kw["can_use_tool"]("Bash", {"command": "npm test &"}, None)
-                await kw["can_use_tool"]("Bash", {"command": "git push --force origin feat/x"}, None)
+                await kw["can_use_tool"](
+                    "Bash", {"command": "git push --force origin feat/x"}, None
+                )
                 await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {}})
 
         async def go():
-            return [item async for item in ig.run_gebo(
-                FakeSessions(), tree="/t", workspace="/w", prompt="p", grant=grant_for("integrate"),
-                read_also=(), lease=("feat/x", HEAD), model=None,
-            )]
+            return [
+                item
+                async for item in ig.run_gebo(
+                    FakeSessions(),
+                    tree="/t",
+                    workspace="/w",
+                    prompt="p",
+                    grant=grant_for("integrate"),
+                    read_also=(),
+                    lease=("feat/x", HEAD),
+                    model=None,
+                )
+            ]
 
         end = asyncio.run(go())[-1][1]
         self.assertEqual((end["denials"], end["background"]), (2, 1))
 
     def test_gebo_is_told_once(self):
-        """`0130` R4: Gebo's session ends with its turn, as a board step's does."""
+        """Gebo's session ends with its turn, as a board step's does."""
         from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
 
         prompt = ig.build_prompt(
-            skill="rules", unit="0130_x", branch="feat/x", pr=7, state="conflicting", reason="r",
-            head_before=HEAD, origin_sha=MAIN, rel={}, units_root=Path("/u"), own_paths={},
+            skill="rules",
+            unit="0130_x",
+            branch="feat/x",
+            pr=7,
+            state="conflicting",
+            reason="r",
+            head_before=HEAD,
+            origin_sha=MAIN,
+            rel={},
+            units_root=Path("/u"),
+            own_paths={},
         )
         self.assertEqual(prompt.count(SESSION_ENDS_HEADING), 1)
         self.assertIn(SESSION_ENDS_ADVICE, prompt)
@@ -674,15 +1030,25 @@ def fake_gh(bindir: Path, stdout: str = "", code: int = 0) -> Path:
 
 
 def on_path(bindir: Path):
-    return mock.patch.dict(os.environ, {"PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}"})
+    return mock.patch.dict(
+        os.environ, {"PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    )
 
 
-FOUND = json.dumps([{"url": "https://github.com/o/r/pull/7", "number": 7,
-                     "mergeable": "MERGEABLE", "headRefOid": HEAD}])
+FOUND = json.dumps(
+    [
+        {
+            "url": "https://github.com/o/r/pull/7",
+            "number": 7,
+            "mergeable": "MERGEABLE",
+            "headRefOid": HEAD,
+        }
+    ]
+)
 
 
 class ThePullRequestIsLookedUpBeforePr(unittest.TestCase):
-    """`0041` R2: three shapes, and a lookup that fails never raises."""
+    """Three shapes, and a lookup that fails never raises."""
 
     def lookup(self, stdout="", code=0, branch="fix/x"):
         with tempfile.TemporaryDirectory() as d:
@@ -694,8 +1060,16 @@ class ThePullRequestIsLookedUpBeforePr(unittest.TestCase):
 
     def test_found(self):
         rec, argv = self.lookup(FOUND)
-        self.assertEqual(rec, {"state": "found", "url": "https://github.com/o/r/pull/7",
-                               "number": 7, "mergeable": "MERGEABLE", "head": HEAD})
+        self.assertEqual(
+            rec,
+            {
+                "state": "found",
+                "url": "https://github.com/o/r/pull/7",
+                "number": 7,
+                "mergeable": "MERGEABLE",
+                "head": HEAD,
+            },
+        )
         self.assertIn("pr list --head fix/x --state open", argv)
 
     def test_none(self):
@@ -720,8 +1094,15 @@ class ThePullRequestIsLookedUpBeforePr(unittest.TestCase):
 
 class ThePullRequestBlock(unittest.TestCase):
     def test_found_says_reuse_and_not_create(self):
-        text = ig.describe_pr_lookup({"state": "found", "url": "https://x/pull/7", "number": 7,
-                                      "mergeable": "MERGEABLE", "head": HEAD})
+        text = ig.describe_pr_lookup(
+            {
+                "state": "found",
+                "url": "https://x/pull/7",
+                "number": 7,
+                "mergeable": "MERGEABLE",
+                "head": HEAD,
+            }
+        )
         self.assertTrue(text.startswith("# The pull request, already looked up"))
         self.assertIn("https://x/pull/7", text)
         self.assertIn("Do not run `gh pr create` again", text)
@@ -729,8 +1110,9 @@ class ThePullRequestBlock(unittest.TestCase):
         self.assertIn(ig.PR_SYNC_NOTE, text)
 
     def test_conflicting_says_stop_and_names_integrate(self):
-        text = ig.describe_pr_lookup({"state": "found", "url": "u", "number": 7,
-                                      "mergeable": "CONFLICTING", "head": HEAD})
+        text = ig.describe_pr_lookup(
+            {"state": "found", "url": "u", "number": 7, "mergeable": "CONFLICTING", "head": HEAD}
+        )
         self.assertIn("Do not rebase", text)
         self.assertIn("*Integrate*", text)
         self.assertIn("`Status: accepted`", text)
@@ -741,11 +1123,12 @@ class ThePullRequestBlock(unittest.TestCase):
         self.assertIn("`fix/x`", text)
         self.assertIn(ig.PR_SYNC_NOTE, text)
 
-    def test_0055_the_sync_note_says_the_app_does_it(self):
+    def test_the_sync_note_says_the_app_does_it(self):
         self.assertIn("the app puts pr.md's title and body onto the pull request", ig.PR_SYNC_NOTE)
         self.assertIn("do not run `gh pr edit`", ig.PR_SYNC_NOTE)
-        # R7 names `found` and `none`; `unknown` is left as it was.
-        self.assertNotIn(ig.PR_SYNC_NOTE, ig.describe_pr_lookup({"state": "unknown", "reason": "x"}))
+        self.assertNotIn(
+            ig.PR_SYNC_NOTE, ig.describe_pr_lookup({"state": "unknown", "reason": "x"})
+        )
 
     def test_unknown_says_why_and_asks_once(self):
         text = ig.describe_pr_lookup({"state": "unknown", "reason": "gh: no auth"})

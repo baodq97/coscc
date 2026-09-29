@@ -1,5 +1,4 @@
-"""`coscc/runlog/turnstats.py` (`0096` plan step 1), on a `cos.db` and a unit store in a temporary
-directory. The marks of `spec.md` R1 and R3 on the real run log are checked at a terminal."""
+"""`coscc/runlog/turnstats.py`, on a `cos.db` and a unit store in a temporary directory."""
 
 from __future__ import annotations
 
@@ -29,14 +28,26 @@ class Fixture(unittest.TestCase):
         with Data(self.data).connect():
             pass
 
-    def run_row(self, at: str, unit: str, stage: str, kind: str, workspace: str | None = None, **record) -> None:
+    def run_row(
+        self, at: str, unit: str, stage: str, kind: str, workspace: str | None = None, **record
+    ) -> None:
         with Data(self.data).connect() as conn:
             conn.execute(
                 "INSERT INTO runs (at, root, workspace, unit, stage, kind, record) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (at, "/r", workspace or self.key, unit, stage, kind, json.dumps({"kind": kind, **record})),
+                (
+                    at,
+                    "/r",
+                    workspace or self.key,
+                    unit,
+                    stage,
+                    kind,
+                    json.dumps({"kind": kind, **record}),
+                ),
             )
 
-    def step(self, start_at: str, unit: str, end_at: str | None = None, start: dict | None = None, **end) -> None:
+    def step(
+        self, start_at: str, unit: str, end_at: str | None = None, start: dict | None = None, **end
+    ) -> None:
         self.run_row(start_at, unit, "impl", "start", **(start or {}))
         self.run_row(end_at or start_at, unit, "impl", "end", outcome="done", **end)
 
@@ -88,7 +99,9 @@ class TheSteps(Fixture):
         self.step("2026-09-24T10:00:00", "0001_a", "2026-09-24T11:00:00", turns=10, cost_usd=1.0)
         # Another workspace's rows are not this one's.
         self.run_row("2026-09-24T12:00:00", "0001_a", "impl", "start", workspace="/elsewhere")
-        self.run_row("2026-09-24T12:30:00", "0001_a", "impl", "end", workspace="/elsewhere", turns=500)
+        self.run_row(
+            "2026-09-24T12:30:00", "0001_a", "impl", "end", workspace="/elsewhere", turns=500
+        )
         f = self.measure()
         self.assertEqual((f["steps"], f["turns_mean"], f["cost_mean"]), (1, 10, 1.0))
 
@@ -109,8 +122,16 @@ class TheSteps(Fixture):
         self.assertEqual(self.measure(until=None)["steps"], 2)
 
     def test_an_end_without_turns_is_zero_turns_and_no_tokens_per_turn(self):
-        self.step("2026-09-24T10:00:00", "0001_a", turns=200, cost_usd=4.0, duration_ms=1000,
-                  input_tokens=100, cache_creation_tokens=300, cache_read_tokens=19600)
+        self.step(
+            "2026-09-24T10:00:00",
+            "0001_a",
+            turns=200,
+            cost_usd=4.0,
+            duration_ms=1000,
+            input_tokens=100,
+            cache_creation_tokens=300,
+            cache_read_tokens=19600,
+        )
         self.run_row("2026-09-24T11:00:00", "0002_b", "impl", "start")
         self.run_row("2026-09-24T11:05:00", "0002_b", "impl", "end", outcome="failed")
         f = self.measure()
@@ -143,9 +164,12 @@ class TheQuality(Fixture):
     def test_changes_requested_rounds_come_from_the_unit_store(self):
         self.shipped("2026-09-25T10:00:00", "0001_a")
         self.shipped("2026-09-25T11:00:00", "0002_b")
-        self.review("0001_a", "# Review\nStatus: accepted.\n\n## Round 1\n\nReviewed: abc. Verdict: changes-requested.\n\n"
-                              "- F1 [open] x — high — Verdict: pass.\n\n## Round 2\n\nReviewed: def. Verdict: "
-                              "changes-requested.\n\n## Round 3\n\nReviewed: 012. Verdict: pass.\n")
+        self.review(
+            "0001_a",
+            "# Review\nStatus: accepted.\n\n## Round 1\n\nReviewed: abc. Verdict: changes-requested.\n\n"
+            "- F1 [open] x — high — Verdict: pass.\n\n## Round 2\n\nReviewed: def. Verdict: "
+            "changes-requested.\n\n## Round 3\n\nReviewed: 012. Verdict: pass.\n",
+        )
         f = self.measure()
         self.assertEqual(f["changes_requested_rounds"], 2)
         self.assertEqual(f["reviews_missing"], 1)
@@ -154,9 +178,16 @@ class TheQuality(Fixture):
 
 class TheEvents(Fixture):
     def test_tool_uses_per_turn_over_the_steps_with_events(self):
-        self.step("2026-09-24T10:00:00", "0001_a", turns=3, run="r1",
-                  start={"included": ["plan.md", "plan-map", "commands"]})
-        self.step("2026-09-24T11:00:00", "0002_b", turns=3, run="r2", start={"included": ["plan.md"]})
+        self.step(
+            "2026-09-24T10:00:00",
+            "0001_a",
+            turns=3,
+            run="r1",
+            start={"included": ["plan.md", "plan-map", "commands"]},
+        )
+        self.step(
+            "2026-09-24T11:00:00", "0002_b", turns=3, run="r2", start={"included": ["plan.md"]}
+        )
         self.step("2026-09-24T12:00:00", "0003_c", turns=3)
         self.events("r1", "turn", "tool_use", "tool_use", "denied", "turn", "tool_use", "text")
         f = self.measure()
@@ -173,17 +204,23 @@ class TheFilesTouched(Fixture):
 
     def test_a_read_and_a_grep_on_the_file_touch_it_from_any_worktree(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=10, run="r1")
-        self.calls("r1",
-                   self.use("a", "Read", file_path="/w/one/coscc/service/__init__.py"),
-                   self.result("a", "x" * 30),
-                   self.use("b", "Grep", pattern="def", path="/w/two/coscc/state/__init__.py"),
-                   self.result("b", "hit"),
-                   self.use("c", "Read", file_path="/w/one/coscc/service/service_test.py"),
-                   self.result("c", "y" * 999))
+        self.calls(
+            "r1",
+            self.use("a", "Read", file_path="/w/one/coscc/service/__init__.py"),
+            self.result("a", "x" * 30),
+            self.use("b", "Grep", pattern="def", path="/w/two/coscc/state/__init__.py"),
+            self.result("b", "hit"),
+            self.use("c", "Read", file_path="/w/one/coscc/service/service_test.py"),
+            self.result("c", "y" * 999),
+        )
         self.step("2026-09-24T11:00:00", "0002_b", turns=30, run="r2")
-        self.calls("r2",
-                   self.use("d", "Read", file_path="/elsewhere/coscc/service/__init__.py"),
-                   self.result("d", [{"type": "text", "text": "z" * 10}, {"type": "text", "text": "z" * 40}]))
+        self.calls(
+            "r2",
+            self.use("d", "Read", file_path="/elsewhere/coscc/service/__init__.py"),
+            self.result(
+                "d", [{"type": "text", "text": "z" * 10}, {"type": "text", "text": "z" * 40}]
+            ),
+        )
         f = self.files()
         self.assertEqual((f["touched_steps"], f["touched_n"]), (2, 2))
         self.assertEqual(f["touched_turns_mean"], 20)
@@ -192,34 +229,49 @@ class TheFilesTouched(Fixture):
 
     def test_a_grep_on_a_directory_or_on_nothing_does_not_touch(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=10, run="r1")
-        self.calls("r1",
-                   self.use("a", "Grep", pattern="def", path="/w/coscc"),
-                   self.use("b", "Grep", pattern="coscc/service/__init__.py"),
-                   self.use("c", "Bash", command="cat coscc/service/__init__.py"))
+        self.calls(
+            "r1",
+            self.use("a", "Grep", pattern="def", path="/w/coscc"),
+            self.use("b", "Grep", pattern="coscc/service/__init__.py"),
+            self.use("c", "Bash", command="cat coscc/service/__init__.py"),
+        )
         f = self.files()
-        self.assertEqual((f["touched_steps"], f["touched_turns_mean"], f["touched_read_chars_mean"]), (0, None, None))
+        self.assertEqual(
+            (f["touched_steps"], f["touched_turns_mean"], f["touched_read_chars_mean"]),
+            (0, None, None),
+        )
 
     def test_the_means_are_over_the_first_touched_steps(self):
         for n, turns in enumerate((10, 20, 90)):
             run = f"r{n}"
             self.step(f"2026-09-24T1{n}:00:00", f"000{n}_x", turns=turns, run=run)
-            self.calls(run, self.use("a", "Read", file_path="/w/coscc/state/__init__.py"), self.result("a", "q"))
+            self.calls(
+                run,
+                self.use("a", "Read", file_path="/w/coscc/state/__init__.py"),
+                self.result("a", "q"),
+            )
         f = self.files(first=2)
         self.assertEqual((f["touched_steps"], f["touched_n"], f["touched_turns_mean"]), (3, 2, 15))
 
     def test_a_cut_or_persisted_result_counts_what_it_was_before(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=1, run="r1")
-        self.calls("r1",
-                   self.use("a", "Read", file_path="/w/coscc/service/__init__.py"),
-                   self.result("a", "x" * 5, truncated=True, length=1000, truncated_fields=["content"]),
-                   self.use("b", "Read", file_path="/w/coscc/service/__init__.py"),
-                   self.result("b", "x" * 5, persisted_size=3000))
+        self.calls(
+            "r1",
+            self.use("a", "Read", file_path="/w/coscc/service/__init__.py"),
+            self.result("a", "x" * 5, truncated=True, length=1000, truncated_fields=["content"]),
+            self.use("b", "Read", file_path="/w/coscc/service/__init__.py"),
+            self.result("b", "x" * 5, persisted_size=3000),
+        )
         self.assertEqual(self.files()["touched_read_chars_mean"], 2000)
 
     def test_a_step_whose_events_were_purged_is_counted_apart(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=10, run="r1")
         self.step("2026-09-24T11:00:00", "0002_b", turns=30, run="r2")
-        self.calls("r2", self.use("a", "Read", file_path="/w/coscc/state/__init__.py"), self.result("a", "q"))
+        self.calls(
+            "r2",
+            self.use("a", "Read", file_path="/w/coscc/state/__init__.py"),
+            self.result("a", "q"),
+        )
         with Data(self.data).connect() as conn:
             for run, purged_at in (("r1", "2026-10-25T00:00:00"), ("r2", None)):
                 conn.execute(
@@ -228,7 +280,9 @@ class TheFilesTouched(Fixture):
                     (run, self.key, purged_at),
                 )
         f = self.files()
-        self.assertEqual((f["touched_steps"], f["touched_purged"], f["touched_turns_mean"]), (1, 1, 30))
+        self.assertEqual(
+            (f["touched_steps"], f["touched_purged"], f["touched_turns_mean"]), (1, 1, 30)
+        )
 
     def test_without_files_there_are_no_touched_fields(self):
         self.assertNotIn("touched_steps", self.measure())
@@ -238,7 +292,9 @@ class TheCommand(Fixture):
     def main(self, *args: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = turnstats.main(["--workspace", str(self.ws), "--data-root", str(self.data), *args])
+            code = turnstats.main(
+                ["--workspace", str(self.ws), "--data-root", str(self.data), *args]
+            )
         return code, out.getvalue(), err.getvalue()
 
     def test_it_prints_the_fields_as_json(self):
@@ -250,9 +306,13 @@ class TheCommand(Fixture):
     def test_files_and_first_reach_the_fields(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=4, run="r1")
         self.calls("r1", self.use("a", "Read", file_path="/w/coscc/runner/__init__.py"))
-        code, out, _ = self.main("--since", "2026-09-24", "--files", "coscc/runner/__init__.py", "--first", "5")
+        code, out, _ = self.main(
+            "--since", "2026-09-24", "--files", "coscc/runner/__init__.py", "--first", "5"
+        )
         self.assertEqual(code, 0)
-        self.assertEqual((json.loads(out)["touched_steps"], json.loads(out)["touched_turns_mean"]), (1, 4))
+        self.assertEqual(
+            (json.loads(out)["touched_steps"], json.loads(out)["touched_turns_mean"]), (1, 4)
+        )
 
     def test_outcome_holds(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=40, cost_usd=1.0, duration_ms=10)
@@ -276,8 +336,10 @@ class TheCommand(Fixture):
     def test_a_protected_database_is_refused_before_it_is_opened(self):
         db = self.data / "cos.db"
         env = {config.PROTECTED_DB_VAR: os.pathsep.join(["/nowhere/cos.db", str(db)])}
-        with mock.patch.dict(os.environ, env), \
-                mock.patch.object(turnstats.sqlite3, "connect", side_effect=AssertionError("opened")):
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch.object(turnstats.sqlite3, "connect", side_effect=AssertionError("opened")),
+        ):
             code, out, err = self.main("--since", "2026-09-24")
         self.assertEqual((code, out), (2, ""))
         self.assertIn(config.PROTECTED_DB_VAR, err)
@@ -288,8 +350,10 @@ class TheCommand(Fixture):
         (linked / "cos.db").symlink_to(protected)
         self.data = linked
         env = {config.PROTECTED_DB_VAR: str(protected)}
-        with mock.patch.dict(os.environ, env), \
-                mock.patch.object(turnstats.sqlite3, "connect", side_effect=AssertionError("opened")):
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch.object(turnstats.sqlite3, "connect", side_effect=AssertionError("opened")),
+        ):
             code, out, err = self.main("--since", "2026-09-24")
         self.assertEqual((code, out), (2, ""))
         self.assertIn(config.PROTECTED_DB_VAR, err)

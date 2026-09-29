@@ -1,4 +1,4 @@
-"""`0136` R15 and R16: the one place a transition is applied."""
+"""The one place a transition is applied."""
 
 from __future__ import annotations
 
@@ -29,9 +29,15 @@ class Fixture(unittest.TestCase):
 
     def apply(self, **kw):
         args = dict(
-            machine="unit", transition="result", workspace=WS, unit=UNIT,
-            artifact="intent.md", to_state="accepted", inputs=OPEN_RESULT,
-            authority="agent", run="r1",
+            machine="unit",
+            transition="result",
+            workspace=WS,
+            unit=UNIT,
+            artifact="intent.md",
+            to_state="accepted",
+            inputs=OPEN_RESULT,
+            authority="agent",
+            run="r1",
         )
         args.update(kw)
         return transitions.apply(self.history, self.journal, **args)
@@ -45,8 +51,6 @@ class Fixture(unittest.TestCase):
 
 
 class TheTransitionAndItsEventAreOneTransaction(Fixture):
-    """R16."""
-
     def test_a_failure_between_the_transition_and_its_event_leaves_neither(self):
         # `append_with` writes the transition in `also`, then the event: failing the event's
         # insert is failing between the two.
@@ -61,8 +65,6 @@ class TheTransitionAndItsEventAreOneTransaction(Fixture):
 
 
 class EveryRowSaysWhichGuardAndWhoseAuthority(Fixture):
-    """R15."""
-
     def test_every_row_says_which_guard_and_whose_authority(self):
         applied = self.apply()
         self.assertTrue(applied.open)
@@ -73,7 +75,9 @@ class EveryRowSaysWhichGuardAndWhoseAuthority(Fixture):
         )
         self.assertEqual(json.loads(row["inputs"]), OPEN_RESULT)
         event = [r for r in self.journal.records() if r.get("kind") == "transition"][-1]
-        self.assertEqual((event["guard"], event["authority"], event["run"]), ("stage-result", "agent", "r1"))
+        self.assertEqual(
+            (event["guard"], event["authority"], event["run"]), ("stage-result", "agent", "r1")
+        )
 
     def test_an_unknown_authority_is_refused_before_anything_is_written(self):
         with self.assertRaises(BadTransition):
@@ -85,7 +89,8 @@ class AClosedGuardWritesNothing(Fixture):
     def test_the_reasons_come_back_and_no_row_is_written(self):
         told = []
         applied = self.apply(
-            inputs={**OPEN_RESULT, "open_run": "r2"}, notify=told.append,
+            inputs={**OPEN_RESULT, "open_run": "r2"},
+            notify=told.append,
         )
         self.assertFalse(applied.open)
         self.assertEqual((applied.guard, applied.reasons), ("stage-result", ("wrong-run",)))
@@ -95,7 +100,9 @@ class AClosedGuardWritesNothing(Fixture):
 
     def test_an_agent_cannot_skip_a_stage(self):
         applied = self.apply(
-            transition="skip", artifact="spec.md", to_state="skipped",
+            transition="skip",
+            artifact="spec.md",
+            to_state="skipped",
             inputs={"authority": "agent"},
         )
         self.assertEqual(applied.reasons, ("agent-cannot-skip",))

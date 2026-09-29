@@ -28,9 +28,14 @@ def running(entries: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
     started}]`, oldest first. `entries` is `Service.running`'s `running`: by unit, each with
     its `agent` (`coscc/agent/agents.py`), `None` for a rebase."""
     out = [
-        {"unit": unit, "stage": str(e.get("stage") or ""),
-         "agent": str((e.get("agent") or {}).get("name") or ""), "started": str(e.get("started") or "")}
-        for unit, rows in entries.items() for e in rows
+        {
+            "unit": unit,
+            "stage": str(e.get("stage") or ""),
+            "agent": str((e.get("agent") or {}).get("name") or ""),
+            "started": str(e.get("started") or ""),
+        }
+        for unit, rows in entries.items()
+        for e in rows
     ]
     return sorted(out, key=lambda r: (r["started"], r["unit"]))
 
@@ -47,6 +52,14 @@ def needs_you(stops: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
         unit = str(stop.get("unit") or "")
         if screen == "unit" and not unit:
             screen, tab = "board", ""
-        out.append({"unit": unit, "kind": kind, "do": do, "reason": str(stop.get("reason") or ""),
-                    "screen": screen, "tab": tab})
+        out.append(
+            {
+                "unit": unit,
+                "kind": kind,
+                "do": do,
+                "reason": str(stop.get("reason") or ""),
+                "screen": screen,
+                "tab": tab,
+            }
+        )
     return out

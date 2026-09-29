@@ -1,12 +1,8 @@
-"""`0035` review round 1, F1 and F2: Gebo's path through `Service`, under a stand-in session.
+"""Gebo's path through `Service`, under a stand-in session.
 
 A bare-directory remote with a real conflict on `f.txt`, a stand-in for `integrate._gh`
 that reads the pull request's head off that remote, and a stand-in `stream` that does what
-a Gebo session would do with its tools. No session is opened and nothing is paid for.
-
-`AStaleOriginMain` is `0052`'s: the case of `0039`, a unit counted `current` against an
-`origin/main` the workspace had not fetched since `main` moved.
-"""
+a Gebo session would do with its tools. No session is opened and nothing is paid for."""
 
 from __future__ import annotations
 
@@ -24,10 +20,11 @@ from unittest import mock
 from coscc.units.meta_test import ingest
 from coscc.github import integrate
 from coscc.git import fetches
-from coscc import service as service_mod
 from coscc.config import Config
-from coscc.service import Invalid, Service
+from coscc.service import Service
+from coscc.service.common import Invalid
 from coscc.agent.submit_test import submits as _submits
+from coscc.service.steps import CI_REFRESH
 
 SLUG = "proof-of-gebo"
 PR = 7
@@ -36,8 +33,20 @@ BRANCH = f"feat/{SLUG}"
 
 def git(cwd: Path, *args: str, check: bool = True) -> str:
     return subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-        cwd=cwd, capture_output=True, text=True, check=check,
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=check,
     ).stdout.strip()
 
 
@@ -50,9 +59,9 @@ def commit(where: Path, text: str, push: str) -> None:
 class StandIn:
     """`Sessions` as `run_gebo` uses it: `stream` runs `act` in the tree, then replies.
 
-    `0136` R7: like a Gebo that follows its rules, it hands back through `submit` one
-    `needs_person` item per `[needs-person] <why>` line its reply carries, unless `said` is
-    set, which it hands back instead. The app reads only the object."""
+    Like a Gebo that follows its rules, it hands back through `submit` one `needs_person` item per
+    `[needs-person] <why>` line its reply carries, unless `said` is set, which it hands back
+    instead. The app reads only the object."""
 
     def __init__(self, act, said: list[dict] | None = None):
         self.act = act
@@ -67,10 +76,15 @@ class StandIn:
         reply = await self.act(Path(cwd), kw["can_use_tool"])
         yield ("chunk", reply)
         marker = "[needs-person] "
-        said = self.said if self.said is not None else [
-            {"commit": "", "why": line.strip()[len(marker):]} for line in reply.splitlines()
-            if line.strip().startswith(marker)
-        ]
+        said = (
+            self.said
+            if self.said is not None
+            else [
+                {"commit": "", "why": line.strip()[len(marker) :]}
+                for line in reply.splitlines()
+                if line.strip().startswith(marker)
+            ]
+        )
         await _submits(kw, needs_person=said)
         yield ("done", {"session_id": "stand-in", "cost": {"cost_usd": 0.25, "turns": 3}})
 
@@ -82,28 +96,40 @@ class GeboThroughTheService(unittest.TestCase):
         self.remote = root / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         seed = root / "seed"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True
+        )
         (seed / "f.txt").write_text("one\n", encoding="utf-8")
         git(seed, "add", "-A")
         git(seed, "commit", "-q", "-m", "seed")
         git(seed, "push", "-q", "origin", "main")
         self.workspace = root / "work" / "proj"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.workspace)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(self.workspace)],
+            check=True,
+            capture_output=True,
+        )
         self.cwd = str(self.workspace)
         env = {"COS_DATA_DIR": str(root / "data"), "COS_WORKING_DIR": str(root / "work")}
         self._env = mock.patch.dict(os.environ, env)
         self._env.start()
         self.addCleanup(self._env.stop)
-        config = Config(workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        config = Config(
+            workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
         self.service = Service(config, StandIn(self._no_act))
         made = asyncio.run(self.service.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
         self.directory = directory
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8")
+            (directory / name).write_text(
+                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
+            )
         (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n", encoding="utf-8")
+            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
+            encoding="utf-8",
+        )
         # Both sides change the same line: a real conflict when the branch is rebased.
         git(seed, "switch", "-q", "-c", BRANCH)
         commit(seed, "branch\n", BRANCH)
@@ -117,8 +143,8 @@ class GeboThroughTheService(unittest.TestCase):
         patch = mock.patch.object(integrate, "_gh", self._gh)
         patch.start()
         self.addCleanup(patch.stop)
-        # `0052`: a press fetches through the shared coordinator; one per test, so no test
-        # reuses another's fetch.
+        # A press fetches through the shared coordinator; one per test, so no test reuses another's
+        # fetch.
         shared = mock.patch.object(fetches, "shared", fetches.Fetches())
         shared.start()
         self.addCleanup(shared.stop)
@@ -133,8 +159,20 @@ class GeboThroughTheService(unittest.TestCase):
     async def _gh(self, argv, cwd):
         head = self.remote_head()
         if argv[:2] == ["pr", "list"]:
-            return 0, json.dumps([{"number": PR, "headRefOid": head, "headRefName": BRANCH,
-                                   "mergeable": "CONFLICTING"}]), ""
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": PR,
+                            "headRefOid": head,
+                            "headRefName": BRANCH,
+                            "mergeable": "CONFLICTING",
+                        }
+                    ]
+                ),
+                "",
+            )
         if argv[:2] == ["pr", "view"]:
             return 0, json.dumps({"headRefOid": head}), ""
         if argv[:2] == ["pr", "checks"]:
@@ -195,7 +233,7 @@ class GeboThroughTheService(unittest.TestCase):
         ends = [r for r in self.records("end") if r.get("stage") == "integrate"]
         self.assertEqual((len(starts), len(ends)), (1, 1))
         self.assertEqual(starts[0]["mode"], "manual")
-        # `0093` R8: a pull request GitHub calls conflicting opened this one.
+        # A pull request GitHub calls conflicting opened this one.
         self.assertEqual(starts[0]["integrate_state"], "conflicting")
         self.assertEqual(ends[0]["outcome"], "done")
         runs = self.service.timeline(self.cwd, self.unit)
@@ -210,7 +248,7 @@ class GeboThroughTheService(unittest.TestCase):
         return "[needs-person] f.txt: one side wants `main`, the other `branch`"
 
     def test_the_integrate_end_row_counts_background_refusals(self):
-        """`0130` R3: Gebo's `end` row carries `background`, as a board step's does."""
+        """Gebo's `end` row carries `background`, as a board step's does."""
         refused = {}
 
         async def act(tree, gate):
@@ -223,7 +261,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual((end["background"], end["denials"]), (1, 1))
 
     def test_the_start_record_names_the_artifacts_it_pointed_at_and_the_build(self):
-        """`0094` R13, R16, review round 1 F7: Gebo's `start` as a board step's."""
+        """Gebo's `start` as a board step's."""
 
         async def act(tree, gate):
             return "[needs-person] f.txt: both"
@@ -234,11 +272,14 @@ class GeboThroughTheService(unittest.TestCase):
         starts = [r for r in self.records("start") if r.get("stage") == "integrate"]
         self.assertEqual(len(starts), 1)
         self.assertEqual(starts[0]["pointed"], ["intent.md", "spec.md", "plan.md", "impl.md"])
-        self.assertEqual((starts[0]["app_version"], starts[0]["app_commit"]), (build["version"], build["commit"]))
+        self.assertEqual(
+            (starts[0]["app_version"], starts[0]["app_commit"]), (build["version"], build["commit"])
+        )
         self.assertIn(f"- {self.directory.resolve() / 'plan.md'}", self.service.sessions.prompts[0])
 
     def test_gebos_start_and_integration_carry_its_name_and_its_session_the_settings(self):
-        """`0036` R3, R7, R8 on Gebo's road, with an override so the name is the table's."""
+        """Gebo's start and integration records carry its name, and its session carries the
+        settings, with an override so the name is the table's."""
 
         async def act(tree, gate):
             return "[needs-person] f.txt: both"
@@ -251,8 +292,10 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertTrue(self.service.sessions.prompts[0].startswith("# Who you are\n"))
         self.assertIn("`Weaver (agent, integrate)`", self.service.sessions.prompts[0])
         [kw] = self.service.sessions.kws
-        self.assertEqual(json.loads(kw["settings"])["attribution"]["commit"],
-                         "Co-authored-by: Weaver (agent, integrate) <weaver@agents.coscc.invalid>")
+        self.assertEqual(
+            json.loads(kw["settings"])["attribution"]["commit"],
+            "Co-authored-by: Weaver (agent, integrate) <weaver@agents.coscc.invalid>",
+        )
         self.assertEqual(kw["system_prompt"], {"type": "preset", "preset": "claude_code"})
 
     def test_a_rebase_left_stopped_is_aborted_by_the_app(self):
@@ -270,10 +313,9 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual([e["outcome"] for e in ends], ["failed"])
 
     def test_a_step_is_refused_while_the_unit_is_being_integrated(self):
-        """F1, one way: `run_step` asks `_active`, and does not clear Gebo's mark.
+        """`run_step` asks `_active`, and does not clear Gebo's mark.
 
-        Since `0050` it asks before its first `await`, and the refusal is `steps.describe`'s.
-        """
+        It asks before its first `await`, and the refusal is `steps.describe`'s."""
         said = {}
 
         async def act(tree, gate):
@@ -291,7 +333,6 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertNotIn((self.key, self.unit), self.service._active)
 
     def test_gebo_is_running_under_its_name_while_it_works_and_not_after(self):
-        """`0051` plan step 3, the Gebo road."""
         seen = {}
 
         async def act(tree, gate):
@@ -304,9 +345,9 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(row["agent"], {"glyph": "ᚷ", "name": "Gebo"})
         self.assertEqual(self.service._running, {})
 
-    def test_0114_r1_r2_gebo_is_on_the_running_list_and_refuses_a_stop(self):
-        """`0114` R1, R2: the list a restart reads names the integration, and Stop says what
-        holds the unit rather than that nothing runs."""
+    def test_gebo_is_on_the_running_list_and_refuses_a_stop(self):
+        """The list a restart reads names the integration, and Stop says what holds the unit rather
+        than that nothing runs."""
         seen = {}
 
         async def act(tree, gate):
@@ -319,19 +360,19 @@ class GeboThroughTheService(unittest.TestCase):
 
         self.integrate_with(act)
         [row] = seen["listed"]
-        self.assertEqual((row["unit"], row["stage"], row["kind"], row["run"], row["stopping"]),
-                         (self.unit, "integrate", "integration", None, False))
+        self.assertEqual(
+            (row["unit"], row["stage"], row["kind"], row["run"], row["stopping"]),
+            (self.unit, "integrate", "integration", None, False),
+        )
         self.assertIn("being integrated", seen["stop"])
         self.assertNotIn("has no step running", seen["stop"])
         self.assertEqual(self.service.running_steps(self.cwd), [])
 
     def test_a_mechanical_rebase_is_rebasing_with_no_agent_and_not_after(self):
-        """`0051` plan step 3, the mechanical road: `behind` with no conflict.
+        """The mechanical road: `behind` with no conflict.
 
-        Since `0052` a refused `update-branch` opens Gebo (spec, answer 1), so the press
-        ends `agent` carrying gh's exit code; while `update-branch` runs it is still a
-        rebase with no agent.
-        """
+        A refused `update-branch` opens Gebo, so the press ends `agent` carrying gh's exit code;
+        while `update-branch` runs it is still a rebase with no agent."""
         seen = {}
         conflicting = self._gh
 
@@ -353,8 +394,8 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(self.service._running, {})
 
     def mergeable_gh(self, update_branch):
-        """`self._gh` with the list saying MERGEABLE — the conflict shows only on rebasing,
-        `spike.md ## U2`'s case — and `update-branch` answered by `update_branch`."""
+        """`self._gh` with the list saying MERGEABLE — the conflict shows only on rebasing — and
+        `update-branch` answered by `update_branch`."""
         conflicting = self._gh
 
         async def gh(argv, cwd):
@@ -368,7 +409,7 @@ class GeboThroughTheService(unittest.TestCase):
         return gh
 
     def test_a_refused_update_branch_opens_gebo_with_its_exit_code(self):
-        """`0052`, spec answer 1: the code and gh's words reach the prompt and the one record."""
+        """The exit code and gh's words reach the prompt and the one record."""
         seen = {}
 
         async def refused():
@@ -396,11 +437,11 @@ class GeboThroughTheService(unittest.TestCase):
         starts = [r for r in self.records("start") if r.get("stage") == "integrate"]
         ends = [r for r in self.records("end") if r.get("stage") == "integrate"]
         self.assertEqual((len(starts), len(ends)), (1, 1))
-        # `0093` R8: behind, with the rebase refused; not counted as a conflict.
+        # Behind, with the rebase refused; not counted as a conflict.
         self.assertEqual(starts[0]["integrate_state"], "behind")
 
     def test_a_timed_out_update_branch_opens_no_session(self):
-        """`0052` plan step 3: no exit code to go on, and GitHub may still be rebasing."""
+        """No exit code to go on, and GitHub may still be rebasing."""
 
         async def timed_out():
             raise integrate.IntegrateError("gh pr update-branch did not answer within 30s")
@@ -414,13 +455,16 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(self.records("start"), [])
 
     def test_a_refused_update_branch_that_moved_the_head_opens_no_session(self):
-        """`0052` review F1: gh exits non-zero after GitHub took the command. The app takes
-        GitHub's head and the tree follows it; Gebo is not opened to race it."""
+        """Gh exits non-zero after GitHub took the command. The app takes GitHub's head and the tree
+        follows it; Gebo is not opened to race it."""
         scratch = Path(self._tmp.name) / "github-side"
 
         async def moved_then_refused():
-            subprocess.run(["git", "clone", "-q", "-b", BRANCH, str(self.remote), str(scratch)],
-                           check=True, capture_output=True)
+            subprocess.run(
+                ["git", "clone", "-q", "-b", BRANCH, str(self.remote), str(scratch)],
+                check=True,
+                capture_output=True,
+            )
             commit(scratch, "rebased by GitHub\n", BRANCH)
             return 1, "", "stand-in gh: the connection dropped"
 
@@ -428,8 +472,12 @@ class GeboThroughTheService(unittest.TestCase):
             rec = self.integrate_with(self._no_act)
         moved = self.remote_head()
         self.assertNotEqual(moved, self.head_before)
-        self.assertEqual((rec["mode"], rec["outcome"], rec["head_after"]), ("mechanical", "pushed", moved))
-        self.assertEqual(rec["update_branch"], {"code": 1, "said": "stand-in gh: the connection dropped"})
+        self.assertEqual(
+            (rec["mode"], rec["outcome"], rec["head_after"]), ("mechanical", "pushed", moved)
+        )
+        self.assertEqual(
+            rec["update_branch"], {"code": 1, "said": "stand-in gh: the connection dropped"}
+        )
         self.assertIn("no session was opened", rec["detail"])
         self.assertEqual(git(self.tree, "rev-parse", "HEAD"), moved)
         self.assertEqual(self.service.sessions.prompts, [])
@@ -437,7 +485,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(len(self.records("integration")), 1)
 
     def test_a_refused_update_branch_with_an_unread_head_opens_no_session(self):
-        """`0052` review F1: whether GitHub took the command cannot be ruled out, so no session."""
+        """Whether GitHub took the command cannot be ruled out, so no session."""
         refusing = self.mergeable_gh(self._refused)
 
         async def gh(argv, cwd):
@@ -458,9 +506,8 @@ class GeboThroughTheService(unittest.TestCase):
         return 1, "", "stand-in gh: refused"
 
     def test_a_head_github_moved_under_the_session_is_not_gebos_push(self):
-        """`0052` review round 2, F1: GitHub's rebase lands after the one read, while Gebo
-        works. The lease refuses Gebo's push; the moved head is not counted as Gebo's, and
-        the tree follows it."""
+        """GitHub's rebase lands after the one read, while Gebo works. The lease refuses Gebo's
+        push; the moved head is not counted as Gebo's, and the tree follows it."""
         scratch = Path(self._tmp.name) / "github-side"
         pushed = {}
 
@@ -469,12 +516,24 @@ class GeboThroughTheService(unittest.TestCase):
             (tree / "f.txt").write_text("main\nbranch\n", encoding="utf-8")
             git(tree, "add", "f.txt")
             git(tree, "-c", "core.editor=true", "rebase", "--continue")
-            subprocess.run(["git", "clone", "-q", "-b", BRANCH, str(self.remote), str(scratch)],
-                           check=True, capture_output=True)
+            subprocess.run(
+                ["git", "clone", "-q", "-b", BRANCH, str(self.remote), str(scratch)],
+                check=True,
+                capture_output=True,
+            )
             commit(scratch, "rebased by GitHub, late\n", BRANCH)
             push = subprocess.run(
-                ["git", "push", f"--force-with-lease={BRANCH}:{self.head_before}", "origin", BRANCH],
-                cwd=tree, capture_output=True, text=True)
+                [
+                    "git",
+                    "push",
+                    f"--force-with-lease={BRANCH}:{self.head_before}",
+                    "origin",
+                    BRANCH,
+                ],
+                cwd=tree,
+                capture_output=True,
+                text=True,
+            )
             pushed["code"] = push.returncode
             return "rebased; kept both lines of f.txt"
 
@@ -498,7 +557,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(self.service._running, {})
 
     def test_an_integration_is_refused_while_a_step_runs(self):
-        """F1, the other way: the mark a step holds refuses Gebo, and opens no session."""
+        """The mark a step holds refuses Gebo, and opens no session."""
         self.service._take(self.key, self.unit, "step", "spec").phase = "running"
         with self.assertRaises(Invalid) as caught:
             self.integrate_with(self._no_act)
@@ -507,11 +566,10 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(self.records("start"), [])
 
 
-
 class AStaleOriginMain(unittest.TestCase):
-    """`0052` R6: the case of `0039`. `main` moved on the remote after the workspace's last
-    fetch; the pull request has no conflict. The board counts `current`, and the press
-    fetches, finds the unit behind, and rebases it the mechanical way."""
+    """`main` moved on the remote after the workspace's last fetch; the pull request has no
+    conflict. The board counts `current`, and the press fetches, finds the unit behind, and rebases
+    it the mechanical way."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -521,28 +579,40 @@ class AStaleOriginMain(unittest.TestCase):
         self.remote = root / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         self.seed = seed = root / "seed"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True
+        )
         (seed / "f.txt").write_text("one\n", encoding="utf-8")
         (seed / "g.txt").write_text("one\n", encoding="utf-8")
         git(seed, "add", "-A")
         git(seed, "commit", "-q", "-m", "seed")
         git(seed, "push", "-q", "origin", "main")
         self.workspace = root / "work" / "proj"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.workspace)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(self.workspace)],
+            check=True,
+            capture_output=True,
+        )
         self.cwd = str(self.workspace)
         env = {"COS_DATA_DIR": str(root / "data"), "COS_WORKING_DIR": str(root / "work")}
         self._env = mock.patch.dict(os.environ, env)
         self._env.start()
         self.addCleanup(self._env.stop)
-        config = Config(workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        config = Config(
+            workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
         self.service = Service(config, StandIn(self._no_act))
         made = asyncio.run(self.service.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8")
+            (directory / name).write_text(
+                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
+            )
         (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n", encoding="utf-8")
+            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
+            encoding="utf-8",
+        )
         # The branch changes `g.txt`; `main` later changes `f.txt`: no line in common.
         git(seed, "switch", "-q", "-c", BRANCH)
         (seed / "g.txt").write_text("branch\n", encoding="utf-8")
@@ -551,9 +621,8 @@ class AStaleOriginMain(unittest.TestCase):
         git(seed, "switch", "-q", "main")
         git(self.workspace, "fetch", "-q", "origin")
         git(self.workspace, "branch", BRANCH, f"origin/{BRANCH}")
-        # The order is the point (plan step 2): the tree first, since `worktrees` fetches
-        # through the same coordinator; then a fresh coordinator; then `main` moves with no
-        # fetch here. The other way round, the press would reuse a fetch and measure `0048`.
+        # The order is the point: the tree first, since `worktrees` fetches through the same
+        # coordinator; then a fresh coordinator; then `main` moves with no fetch here.
         self.tree = Path(asyncio.run(self.service._worktree(self.cwd, self.unit))["path"])
         shared = mock.patch.object(fetches, "shared", fetches.Fetches())
         shared.start()
@@ -578,7 +647,9 @@ class AStaleOriginMain(unittest.TestCase):
     def github_rebases(self) -> None:
         """What GitHub's `update-branch --rebase` does, in a scratch clone of the remote."""
         scratch = Path(tempfile.mkdtemp(dir=self.root))
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(scratch)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(scratch)], check=True, capture_output=True
+        )
         git(scratch, "switch", "-q", BRANCH)
         git(scratch, "rebase", "-q", "origin/main")
         git(scratch, "push", "-q", "--force", "origin", BRANCH)
@@ -586,8 +657,20 @@ class AStaleOriginMain(unittest.TestCase):
     async def _gh(self, argv, cwd):
         head = self.remote_head()
         if argv[:2] == ["pr", "list"]:
-            return 0, json.dumps([{"number": PR, "headRefOid": head, "headRefName": BRANCH,
-                                   "mergeable": "MERGEABLE"}]), ""
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": PR,
+                            "headRefOid": head,
+                            "headRefName": BRANCH,
+                            "mergeable": "MERGEABLE",
+                        }
+                    ]
+                ),
+                "",
+            )
         if argv[:2] == ["pr", "view"]:
             return 0, json.dumps({"headRefOid": head, "mergeStateStatus": "BEHIND"}), ""
         if argv[:2] == ["pr", "update-branch"]:
@@ -615,7 +698,9 @@ class AStaleOriginMain(unittest.TestCase):
 
     def test_the_board_says_current_with_a_button(self):
         info = self.integration()
-        self.assertEqual(info["state"], "current", "a board read fetched: find who, do not bend the fixture")
+        self.assertEqual(
+            info["state"], "current", "a board read fetched: find who, do not bend the fixture"
+        )
         self.assertIs(info["button"], True)
         self.assertEqual(info["mode"], "mechanical")
         self.assertTrue(any("opens Gebo" in w for w in info["warnings"]))
@@ -647,28 +732,33 @@ class AStaleOriginMain(unittest.TestCase):
         self.assertEqual(self.updates, 0)
 
     def test_a_current_unit_after_a_fresh_fetch_is_still_refused(self):
-        """R3, last bullet: the button is there, and a truly current unit is still refused."""
+        """The button is there, and a truly current unit is still refused."""
         self.github_rebases()
         git(self.workspace, "fetch", "-q", "origin")
         git(self.tree, "reset", "-q", "--keep", f"origin/{BRANCH}")
         with self.assertRaises(Invalid) as caught:
             self.press()
         said = str(caught.exception)
-        self.assertRegex(said, r"^the unit is current against origin/main [0-9a-f]{7} \(fetched\), "
-                               r"which has nothing to integrate$")
+        self.assertRegex(
+            said,
+            r"^the unit is current against origin/main [0-9a-f]{7} \(fetched\), "
+            r"which has nothing to integrate$",
+        )
         [only] = self.records("integration")
         self.assertEqual(only["outcome"], "refused")
         self.assertEqual(self.updates, 0)
 
     def autopilot_pass_at_ship(self) -> tuple[dict, dict, list[tuple[str, str]], dict]:
-        """`0112` R4: one autopilot pass over this unit, passed and waiting at `ship`. `next` is
-        a stand-in — the real one asks `gh` for the head — saying what the gate says of a head
-        behind `origin/main`; the integration is one too, recording its call. Returns the
-        board's row before and after, the calls, and the stops the pass left."""
+        """One autopilot pass over this unit, passed and waiting at `ship`. `next` is a stand-in —
+        the real one asks `gh` for the head — saying what the gate says of a head behind
+        `origin/main`; the integration is one too, recording its call. Returns the board's row
+        before and after, the calls, and the stops the pass left."""
         head = self.remote_head()
         (self.service._unit_dir(self.cwd, self.unit) / "review.md").write_text(
             f"# Review: fixture\nAuthor: t. Status: accepted.\n\n## Round 1\n\nReviewed: {head}. Verdict: pass.\n\n"
-            "### Findings\n\n### What was not reviewed\n\nnothing\n", encoding="utf-8")
+            "### Findings\n\n### What was not reviewed\n\nnothing\n",
+            encoding="utf-8",
+        )
         ingest(self.service, self.cwd, self.unit)
         self.service.config = dataclasses.replace(self.service.config, host="127.0.0.1")
         calls: list[tuple[str, str]] = []
@@ -678,11 +768,17 @@ class AStaleOriginMain(unittest.TestCase):
 
             async def go():
                 yield ("done", {"integration": {}})
+
             return go()
 
         async def next_step(cwd, unit):
-            return {"stage": "", "blocked": True, "waiting": [], "hold": None,
-                    "action": f"#{PR} is 1 commit(s) behind origin/main — integrate, then review again"}
+            return {
+                "stage": "",
+                "blocked": True,
+                "waiting": [],
+                "hold": None,
+                "action": f"#{PR} is 1 commit(s) behind origin/main — integrate, then review again",
+            }
 
         async def go():
             self.service.set_autopilot(self.cwd, "autopilot_may_ship", True)
@@ -691,16 +787,24 @@ class AStaleOriginMain(unittest.TestCase):
             self.service.autopilot_stop(self.key)
             self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
             self.service._autopilot_cwd[self.key] = self.cwd
-            self.service._journal().append({
-                "kind": "shortlist", "workspace": self.key, "unit": "", "units": [self.unit],
-                "reason": "for the proof", "by": "proof",
-            })
+            self.service._journal().append(
+                {
+                    "kind": "shortlist",
+                    "workspace": self.key,
+                    "unit": "",
+                    "units": [self.unit],
+                    "reason": "for the proof",
+                    "by": "proof",
+                }
+            )
             self.service.integrate = integrate_
             self.service.next_step = next_step
             before = (await self.service.board(self.cwd))["units"][0]
             await self.service._autopilot_pass(self.key)
             await asyncio.sleep(0.05)
-            after = next(u for u in (await self.service.board(self.cwd))["units"] if u["name"] == self.unit)
+            after = next(
+                u for u in (await self.service.board(self.cwd))["units"] if u["name"] == self.unit
+            )
             stops = dict(self.service._autopilot_stops.get(self.key) or {})
             self.service.autopilot_stop(self.key)
             return before, after, stops
@@ -708,21 +812,26 @@ class AStaleOriginMain(unittest.TestCase):
         before, after, stops = asyncio.run(go())
         return before, after, calls, stops
 
-    def test_0112_r4_an_autopilot_pass_at_ship_fetches_before_it_decides(self):
-        """`0112` R4, R1: the workspace has not fetched since `main` moved. The pass fetches,
-        reads the unit `behind`, and integrates it."""
+    def test_an_autopilot_pass_at_ship_fetches_before_it_decides(self):
+        """The workspace has not fetched since `main` moved. The pass fetches, reads the unit
+        `behind`, and integrates it."""
         before, after, calls, stops = self.autopilot_pass_at_ship()
-        self.assertEqual((before["at"], before["integration"]["state"]), ("ship", "current"),
-                         "the fixture must start stale: a board read fetched")
-        self.assertEqual(git(self.workspace, "rev-parse", "refs/remotes/origin/main"),
-                         git(self.remote, "rev-parse", "refs/heads/main"))
+        self.assertEqual(
+            (before["at"], before["integration"]["state"]),
+            ("ship", "current"),
+            "the fixture must start stale: a board read fetched",
+        )
+        self.assertEqual(
+            git(self.workspace, "rev-parse", "refs/remotes/origin/main"),
+            git(self.remote, "rev-parse", "refs/heads/main"),
+        )
         self.assertEqual(after["integration"]["state"], "behind")
         self.assertEqual(calls, [(self.unit, "autopilot")])
         self.assertEqual(stops, {})
 
-    def test_0112_r4_a_failed_fetch_decides_on_the_ref_as_it_is_and_says_so(self):
-        """R4: the fetch fails, so the unit still reads `current`; nothing is integrated, and
-        the stop names the `origin/main` it counted against and git's words."""
+    def test_a_failed_fetch_decides_on_the_ref_as_it_is_and_says_so(self):
+        """The fetch fails, so the unit still reads `current`; nothing is integrated, and the stop
+        names the `origin/main` it counted against and git's words."""
         git(self.workspace, "remote", "set-url", "origin", str(self.root / "gone.git"))
         _, after, calls, stops = self.autopilot_pass_at_ship()
         self.assertEqual((after["integration"]["state"], calls), ("current", []))
@@ -732,8 +841,8 @@ class AStaleOriginMain(unittest.TestCase):
 
 
 class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
-    """`0100` R6. The board holds the last `gh pr checks` answer per unit and asks again in
-    the background; a read never waits on it, whatever `gh` does."""
+    """The board holds the last `gh pr checks` answer per unit and asks again in the background; a
+    read never waits on it, whatever `gh` does."""
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -748,15 +857,21 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self._env = mock.patch.dict(os.environ, env)
         self._env.start()
         self.addCleanup(self._env.stop)
-        config = Config(workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        config = Config(
+            workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
         self.service = Service(config, StandIn(None))
         made = await self.service.create_unit(self.cwd, SLUG, "fixture")
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8")
+            (directory / name).write_text(
+                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
+            )
         (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n", encoding="utf-8")
+            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
+            encoding="utf-8",
+        )
         self.head = "a" * 40
         self.checks: list[dict] | None = None  # None: `pr checks` never answers
         self.never = asyncio.Event()
@@ -771,8 +886,20 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
     async def _gh(self, argv, cwd):
         self.calls.append(argv[:2])
         if argv[:2] == ["pr", "list"]:
-            return 0, json.dumps([{"number": PR, "headRefOid": self.head, "headRefName": BRANCH,
-                                   "mergeable": "MERGEABLE"}]), ""
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": PR,
+                            "headRefOid": self.head,
+                            "headRefName": BRANCH,
+                            "mergeable": "MERGEABLE",
+                        }
+                    ]
+                ),
+                "",
+            )
         if argv[:2] == ["pr", "checks"]:
             if self.checks is None:
                 await self.never.wait()
@@ -793,7 +920,6 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_gh_that_never_answers_does_not_hold_the_board(self):
         u = await self.read()
-        # (c) While `board` ran, `gh` was asked what it was asked before `0100`: one list.
         self.assertEqual(self.calls, [["pr", "list"]])
         await self.settle()
         # (a)
@@ -821,14 +947,15 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.asked(), 1, "a fresh answer for this head is not asked again")
 
     async def test_the_board_reads_ci_from_the_row_not_memory(self):
-        # `0139` R8.
         from coscc.github import prmachine
 
         self.checks = [{"name": "tests", "bucket": "fail"}]
         await self.read()
         await self.settle()
         self.assertEqual(self.service._ci, {}, "an answer is not held in memory")
-        held = prmachine.ci_held(self.service._unit_meta().history, self.service._journal_key(self.cwd), PR, self.head)
+        held = prmachine.ci_held(
+            self.service._unit_meta().history, self.service._journal_key(self.cwd), PR, self.head
+        )
         self.assertEqual(held["ci"], "red")
         u = await self.read()
         self.assertEqual((u["state"]["state"], u["state"]["ci"]["red"]), ("error", ["tests"]))
@@ -849,7 +976,9 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.asked(), 2)
         # CI_REFRESH later by the service's clock: asked again, the answer still shown.
-        later = (datetime.now(timezone.utc) + timedelta(seconds=service_mod.CI_REFRESH + 1)).isoformat(timespec="seconds")
+        later = (datetime.now(timezone.utc) + timedelta(seconds=CI_REFRESH + 1)).isoformat(
+            timespec="seconds"
+        )
         with mock.patch("coscc.service.steps._now", return_value=later):
             u = await self.read()
         self.assertTrue(u["state"]["ci"]["read"])

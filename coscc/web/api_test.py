@@ -1,9 +1,8 @@
 """Tests for the HTTP surface.
 
 None of these create a session — the guards are exactly the paths that must refuse
-*before* anything is spawned, so testing them costs nothing (`spec.md` C4). What needs a
-real session is `scripts/verify_0001.py`, which is run on purpose.
-"""
+*before* anything is spawned, so testing them costs nothing. What needs a
+real session is `scripts/verify_0001.py`, which is run on purpose."""
 
 import hashlib
 import json
@@ -25,10 +24,9 @@ from coscc.config import Config
 def _tmp_config(test: unittest.TestCase) -> Config:
     """`/tmp` as the one workspace, and a data root of the test's own.
 
-    `0076`: these fixtures used to leave `data_dir` unset, which is `~/.cos`, and
-    `/api/send` opened the real database on every `npm test`. Nothing caught it until a
-    step's environment named that database as one not to open.
-    """
+    These fixtures used to leave `data_dir` unset, which is `~/.cos`, and `/api/send` opened the
+    real database on every `npm test`. Nothing caught it until a step's environment named that
+    database as one not to open."""
     tmp = tempfile.TemporaryDirectory()
     test.addCleanup(tmp.cleanup)
     return Config(workspaces=("/tmp",), data_dir=tmp.name)
@@ -36,9 +34,16 @@ def _tmp_config(test: unittest.TestCase) -> Config:
 
 def _info(session_id="s1", cwd="/tmp"):
     return sdk.SDKSessionInfo(
-        session_id=session_id, summary="s", last_modified=1, file_size=1,
-        custom_title=None, first_prompt=None, git_branch=None, cwd=cwd,
-        tag=None, created_at=1,
+        session_id=session_id,
+        summary="s",
+        last_modified=1,
+        file_size=1,
+        custom_title=None,
+        first_prompt=None,
+        git_branch=None,
+        cwd=cwd,
+        tag=None,
+        created_at=1,
     )
 
 
@@ -60,9 +65,7 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def test_workspaces_lists_what_was_configured(self):
-        # R13 widened this from a list of paths to a list of entries carrying
-        # name, label, source and missing, plus the count the app could not answer
-        # before. `paths` is kept so the older shape still reads.
+        # `paths` is kept so the older shape still reads.
         body = (await self.client.get("/api/workspaces")).json()
         self.assertEqual(body["paths"], ["/tmp"])
         self.assertEqual(body["count"], 1)
@@ -78,8 +81,8 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(e["source"] == "env" for e in body["workspaces"]))
 
     async def test_no_route_leaks_configuration(self):
-        # spec.md C3: a long-lived credential is in this process. The knobs and the
-        # environment must not be readable over the port.
+        # A long-lived credential is in this process. The knobs and the environment must not be
+        # readable over the port.
         body = (await self.client.get("/api/workspaces")).text
         for leak in ("TOKEN", "bypass", "permission_mode", "tools"):
             self.assertNotIn(leak, body)
@@ -90,9 +93,7 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         self.assertIn("workspace", r.json()["error"])
 
     async def test_history_refuses_a_directory_outside_the_workspaces(self):
-        r = await self.client.get(
-            "/api/history", params={"cwd": "/etc", "session_id": "s1"}
-        )
+        r = await self.client.get("/api/history", params={"cwd": "/etc", "session_id": "s1"})
         self.assertEqual(r.status_code, 400)
 
     async def test_history_requires_a_session_id(self):
@@ -114,8 +115,8 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
     async def test_a_foreign_session_is_marked_read_only_not_hidden(self):
-        # spec.md C1: terminal sessions are visible because the read layer sees them, but
-        # the page has to be able to tell which ones it may write to.
+        # Terminal sessions are visible because the read layer sees them, but the page has to be
+        # able to tell which ones it may write to.
         with mock.patch.object(sdk, "list_sessions", return_value=[_info()]):
             body = (await self.client.get("/api/sessions", params={"cwd": "/tmp"})).json()
         self.assertEqual(len(body["sessions"]), 1)
@@ -133,12 +134,9 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         self.assertIn("not created by this app", lines[-1]["error"])
 
     async def test_the_api_app_does_not_own_the_page(self):
-        """`spec.md` R8, from the API side.
-
-        `/` must stay unclaimed here. Reflex mounts this app as the outer one, so a route
+        """`/` must stay unclaimed here. Reflex mounts this app as the outer one, so a route
         for `/` defined in FastAPI would win over the compiled-frontend mount and the
-        Python-built page would never render. 404 from the bare API app is correct.
-        """
+        Python-built page would never render. 404 from the bare API app is correct."""
         self.assertEqual((await self.client.get("/")).status_code, 404)
 
 
@@ -149,9 +147,7 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
-        self.app = build(
-            Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root))
-        )
+        self.app = build(Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root)))
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
@@ -174,11 +170,9 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(r.status_code, 400, bad)
 
     async def test_the_working_folder_cannot_be_set_over_http(self):
-        """`spec.md` R11. The body naming one is ignored, not honoured."""
+        """The body naming one is ignored, not honoured."""
         (self.root / "repo").mkdir()
-        await self.client.post(
-            "/api/workspaces", json={"name": "repo", "working_dir": "/etc"}
-        )
+        await self.client.post("/api/workspaces", json={"name": "repo", "working_dir": "/etc"})
         body = (await self.client.get("/api/workspaces")).json()
         self.assertEqual(body["working_dir"], str(self.root))
         self.assertTrue(body["workspaces"][0]["path"].startswith(str(self.root)))
@@ -210,7 +204,7 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((self.root / "repo").is_dir())
 
     async def test_a_clone_with_a_bad_url_leaves_no_trace(self):
-        """`spec.md` R16: no listed workspace, and no leftover directory."""
+        """No listed workspace, and no leftover directory."""
         r = await self.client.post(
             "/api/workspaces", json={"name": "repo", "repo_url": "git@github.com:x/y.git"}
         )
@@ -224,15 +218,11 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
 
 
 class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0004_no-setting-says-which-model-runs-a-stage`."""
-
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
-        self.app = build(
-            Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root))
-        )
+        self.app = build(Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root)))
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
@@ -246,18 +236,20 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         return {row["name"]: row for row in r.json()["rows"]}
 
     async def test_eleven_rows_with_nothing_configured(self):
-        # `0033` R9 and `0039`: the seven stages that run a session (`pr` and `ship` do not,
-        # `0139` R12), a `:novel` row for `impl` and `review`, `estimate` (`0074`), chat.
         rows = await self.rows()
         self.assertEqual(len(rows), 11)
         self.assertNotIn("pr", rows)
         self.assertNotIn("ship", rows)
         self.assertEqual(list(rows)[-2:], ["estimate", "chat"])
         self.assertEqual(rows["impl"]["source"], "default")
-        self.assertEqual((rows["impl:novel"]["effort"], rows["impl:novel"]["effort_source"]), ("high", "default"))
+        self.assertEqual(
+            (rows["impl:novel"]["effort"], rows["impl:novel"]["effort_source"]), ("high", "default")
+        )
 
     async def test_effort_set_then_remove(self):
-        r = await self.client.post("/api/settings/efforts", json={"name": "impl:novel", "effort": "max"})
+        r = await self.client.post(
+            "/api/settings/efforts", json={"name": "impl:novel", "effort": "max"}
+        )
         self.assertEqual(r.status_code, 200)
         row = (await self.rows())["impl:novel"]
         self.assertEqual((row["effort"], row["effort_source"]), ("max", "override"))
@@ -266,8 +258,13 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.rows())["impl:novel"]["effort_source"], "default")
 
     async def test_bad_effort_requests_are_400(self):
-        for body in ({"name": "bogus", "effort": "low"}, {"name": "plan", "effort": "turbo"},
-                     {"effort": "low"}, {"name": "chat", "effort": "low"}, {"name": "plan:novel", "effort": "low"}):
+        for body in (
+            {"name": "bogus", "effort": "low"},
+            {"name": "plan", "effort": "turbo"},
+            {"effort": "low"},
+            {"name": "chat", "effort": "low"},
+            {"name": "plan:novel", "effort": "low"},
+        ):
             r = await self.client.post("/api/settings/efforts", json=body)
             self.assertEqual(r.status_code, 400, body)
         r = await self.client.post("/api/settings/efforts", content=b"not json")
@@ -282,15 +279,18 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.rows())["impl"]["source"], "default")
 
     async def test_bad_requests_are_400(self):
-        for body in ({"name": "bogus", "model": "m"}, {"name": "plan", "model": "  "},
-                     {"model": "m"}, {"name": "plan", "model": 3}):
+        for body in (
+            {"name": "bogus", "model": "m"},
+            {"name": "plan", "model": "  "},
+            {"model": "m"},
+            {"name": "plan", "model": 3},
+        ):
             r = await self.client.post("/api/settings/models", json=body)
             self.assertEqual(r.status_code, 400, body)
         r = await self.client.post("/api/settings/models", content=b"not json")
         self.assertEqual(r.status_code, 400)
 
     async def test_settings_agents_routes_answer_400_with_a_reason(self):
-        # `0036` R2.
         r = await self.client.get("/api/settings/agents")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(len(r.json()["rows"]), 8)
@@ -298,9 +298,14 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         row = next(x for x in r.json()["rows"] if x["key"] == "review")
         self.assertEqual((row["name"], row["source"]["name"]), ("Judge", "override"))
-        for body in ({"key": "review", "name": "two words"}, {"key": "spec", "name": "judge"},
-                     {"key": "bogus", "name": "X"}, {"name": "X"}, {"key": "plan", "glyph": "abc"},
-                     [1, 2]):
+        for body in (
+            {"key": "review", "name": "two words"},
+            {"key": "spec", "name": "judge"},
+            {"key": "bogus", "name": "X"},
+            {"name": "X"},
+            {"key": "plan", "glyph": "abc"},
+            [1, 2],
+        ):
             r = await self.client.post("/api/settings/agents", json=body)
             self.assertEqual(r.status_code, 400, body)
             self.assertTrue(r.json()["error"], body)
@@ -333,15 +338,13 @@ class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
 
 
 class NoHandWrittenMarkup(unittest.TestCase):
-    """`spec.md` R8 as a standing check, not just a one-off in the proof.
+    """No hand-written markup, as a standing check, not just a one-off in the proof.
 
-    `coscc/_web/` is excluded, and the exclusion is narrow on purpose. Since `0011` that
-    directory holds the *compiled* bundle — thousands of generated `.html` and `.css`
-    files that the release copies into the package and `.gitignore` keeps out of git. The
-    claim this test defends is about markup somebody typed, so generated output was never
-    in its scope; before `0011` there simply was nowhere in `coscc/` for generated output
-    to sit. Excluding any wider path would start hiding the thing it is here to catch.
-    """
+    `coscc/_web/` is excluded, and the exclusion is narrow on purpose. That directory holds the
+    *compiled* bundle — thousands of generated `.html` and `.css` files that the release copies
+    into the package and `.gitignore` keeps out of git. The claim this test defends is about
+    markup somebody typed, so generated output is not in its scope. Excluding any wider path
+    would start hiding the thing it is here to catch."""
 
     GENERATED = "_web"
 
@@ -361,25 +364,22 @@ class NoHandWrittenMarkup(unittest.TestCase):
 
 
 class Loopback(unittest.TestCase):
-    """Until 2026-09-22 this asserted `127.0.0.1`, and it was right to.
+    """The default bind is every interface, not loopback.
 
-    `0001` R5 made the default loopback deliberately, against Reflex's own `0.0.0.0`, and
-    this test existed so the posture could not drift back by accident. `0011` changed it
-    on purpose: the app now ships to a VM that people reach from elsewhere, and the
-    originator decided that after being shown that this file's own module docstring
-    described an app that asked nobody for a password — true until `0070`.
+    The app ships to a VM that people reach from elsewhere, so it binds `0.0.0.0` (Reflex's own
+    default) and asks for a password; `COS_HOST` puts it back on `127.0.0.1`.
 
-    So the guarantee this class protects is no longer "loopback". It is that a person is
-    *told*, every single start, and `coscc/run_test.py` is where that is checked.
-    """
+    So the guarantee this class protects is not "loopback". It is that a person is *told*, every
+    single start, and `coscc/run_test.py` is where that is checked."""
 
-    def test_the_default_bind_is_every_interface_since_0011(self):
+    def test_the_default_bind_is_every_interface_since(self):
         from coscc.config import from_env
+
         self.assertEqual(from_env({}).host, "0.0.0.0")
 
     def test_loopback_is_still_one_variable_away(self):
-        # The capability `0001` built did not go away, it stopped being the default.
         from coscc.config import from_env
+
         self.assertEqual(from_env({"COS_HOST": "127.0.0.1"}).host, "127.0.0.1")
 
 
@@ -410,8 +410,7 @@ class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
         app.state.sessions.close_all.assert_awaited_once()
 
     async def test_running_steps_are_cancelled_before_the_sessions_close(self):
-        # `0034`. A step's task goes first, so it is not left writing after its client
-        # was closed under it.
+        # A step's task goes first, so it is not left writing after its client was closed under it.
         app = self.app
         order = []
         app.state.service.shutdown = mock.AsyncMock(side_effect=lambda: order.append("steps"))
@@ -423,7 +422,7 @@ class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
 
 
 class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0034`. The route decides nothing; it translates `Service.stop_step`."""
+    """The route decides nothing; it translates `Service.stop_step`."""
 
     async def asyncSetUp(self):
         self.app = build(_tmp_config(self))
@@ -436,38 +435,49 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def test_a_stop_on_nothing_running_is_a_400(self):
-        r = await self.client.post("/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": "Lan"})
+        r = await self.client.post(
+            "/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": "Lan"}
+        )
         self.assertEqual(r.status_code, 400)
         self.assertIn("no step running", r.json()["error"])
 
     async def test_a_stop_without_a_name_is_a_400(self):
-        r = await self.client.post("/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": ""})
+        r = await self.client.post(
+            "/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": ""}
+        )
         self.assertEqual(r.status_code, 400)
 
     async def test_a_stop_of_a_running_step_is_a_200_naming_it(self):
         running = self.service.steps.claim(self.service._journal_key("/tmp"), "0001_a", "spec")
-        r = await self.client.post("/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": "Lan"})
+        r = await self.client.post(
+            "/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": "Lan"}
+        )
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"unit": "0001_a", "stage": "spec", "stopped_by": "Lan"})
         self.assertTrue(running.stop_requested)
 
     async def test_the_running_list_is_what_the_registry_holds(self):
-        self.assertEqual((await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), [])
+        self.assertEqual(
+            (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), []
+        )
         self.service.steps.claim(self.service._journal_key("/tmp"), "0001_a", "plan")
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual((row["unit"], row["stage"], row["stopping"]), ("0001_a", "plan", False))
         self.assertEqual(row["kind"], "step")
 
-    async def test_0114_an_integration_is_on_the_running_list_until_it_ends(self):
+    async def test_an_integration_is_on_the_running_list_until_it_ends(self):
         key = self.service._journal_key("/tmp")
         rid = self.service._mark_running(key, "0001_a", "integrate", "gebo")
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual(
             (row["unit"], row["stage"], row["stopping"], row["run"], row["kind"]),
-            ("0001_a", "integrate", False, None, "integration"))
+            ("0001_a", "integrate", False, None, "integration"),
+        )
         self.assertEqual(row["started_at"], self.service._running[rid]["started"])
         self.service._running.pop(rid)
-        self.assertEqual((await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), [])
+        self.assertEqual(
+            (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), []
+        )
 
     async def test_the_running_list_refuses_a_directory_that_is_not_a_workspace(self):
         r = await self.client.get("/api/board/steps", params={"cwd": "/etc"})
@@ -475,8 +485,8 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
 
 
 class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0073` R9. Two routes that translate `events_page` and `follow_events`, and write
-    nothing. Neither is exempt from the login (`auth_test` walks every route for that)."""
+    """Two routes that translate `events_page` and `follow_events`, and write nothing. Neither is
+    exempt from the login (`auth_test` walks every route for that)."""
 
     async def asyncSetUp(self):
         from coscc.runlog import events
@@ -516,7 +526,11 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_refusals_are_400(self):
         from coscc.web import auth
 
-        for params in ({"run": "r-ended", "limit": "many"}, {"run": "nope"}, {"run": "r-ended", "unit": "0002_b"}):
+        for params in (
+            {"run": "r-ended", "limit": "many"},
+            {"run": "nope"},
+            {"run": "r-ended", "unit": "0002_b"},
+        ):
             r = await self.get("/api/board/events", **params)
             self.assertEqual(r.status_code, 400, params)
         r = await self.get("/api/board/events/follow", run="nope")
@@ -537,8 +551,8 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
 
 
 class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0113` R12. Its refusals, and how long a stream outlives the session it opened on; what
-    it sends is `service/notices_test.py`'s, which reads the generator itself."""
+    """Its refusals, and how long a stream outlives the session it opened on; what it sends is
+    `service/notices_test.py`'s, which reads the generator itself."""
 
     async def asyncSetUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -546,24 +560,34 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
         root = Path(tmp.name)
         self.ws = root / "work" / "proj"
         self.ws.mkdir(parents=True)
-        self.config = Config(workspaces=(str(self.ws),), working_dir=str(root / "work"),
-                             data_dir=str(root / "data"))
+        self.config = Config(
+            workspaces=(str(self.ws),), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
         self.app = build(self.config)
-        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
 
     async def asyncTearDown(self):
         await self.client.aclose()
 
     async def test_notice_refusals_are_400(self):
-        for params in ({"after": "x"}, {"after": "-1"}, {"after": "1.5"}, {"workspace": "/etc"},
-                       {"workspace": str(self.ws.parent / "other")}):
+        for params in (
+            {"after": "x"},
+            {"after": "-1"},
+            {"after": "1.5"},
+            {"workspace": "/etc"},
+            {"workspace": str(self.ws.parent / "other")},
+        ):
             r = await self.client.get("/api/notices/follow", params=params)
             self.assertEqual(r.status_code, 400, params)
             self.assertIn("error", r.json())
 
     async def test_no_working_folder_is_400(self):
         app = build(_tmp_config(self))
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://t"
+        ) as client:
             self.assertEqual((await client.get("/api/notices/follow")).status_code, 400)
 
     async def test_the_notice_route_is_behind_the_login(self):
@@ -574,8 +598,8 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("/api/notices/follow", {path for _, path in auth.EXEMPT})
 
     async def test_a_session_that_ended_hears_nothing_past_the_stream_it_was_on(self):
-        """Review round 1, F1: the login door asks for a live session once per request, so the
-        stream ends after `notices.LIFETIME_SECONDS` and the next connection meets the door."""
+        """The login door asks for a live session once per request, so the stream ends after
+        `notices.LIFETIME_SECONDS` and the next connection meets the door."""
         import asyncio
         import io
         import time
@@ -592,7 +616,9 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
         data.auth_session_add(auth._sha(token), now, now + auth.SESSION_TTL)
         guard = auth.Guard(self.app, data, err=io.StringIO())
         cookie = {"cookie": f"{auth.COOKIE}={token}"}
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=guard), base_url="http://t") as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=guard), base_url="http://t"
+        ) as client:
             with mock.patch.object(notices, "LIFETIME_SECONDS", 0.5):
                 going = asyncio.ensure_future(client.get("/api/notices/follow", headers=cookie))
                 began = time.monotonic()
@@ -602,10 +628,16 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
                 self.assertLess(time.monotonic() - began, 0.5 + 1.5)
                 self.assertEqual(r.status_code, 200)
                 self.assertEqual(json.loads(r.text.splitlines()[0])["type"], "head")
-                Journal(self.config.working_dir, self.config.data_dir).append({
-                    "kind": "autopilot-stop", "workspace": str(self.ws), "unit": "0001_a", "stage": "",
-                    "stop": "a", "reason": "r",
-                })
+                Journal(self.config.working_dir, self.config.data_dir).append(
+                    {
+                        "kind": "autopilot-stop",
+                        "workspace": str(self.ws),
+                        "unit": "0001_a",
+                        "stage": "",
+                        "stop": "a",
+                        "reason": "r",
+                    }
+                )
                 r = await client.get("/api/notices/follow", params={"after": "0"}, headers=cookie)
                 self.assertEqual(r.status_code, 401)
                 self.assertNotIn("notice", r.text)
@@ -616,7 +648,7 @@ if __name__ == "__main__":
 
 
 class UnitHistoryRoutes(unittest.IsolatedAsyncioTestCase):
-    """`0013` R8 over HTTP. The route decides nothing; it only translates."""
+    """The route decides nothing; it only translates."""
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -679,7 +711,7 @@ QUESTIONS = (
 
 
 class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0016` R2, R3, R4. The route appends one block or writes nothing at all."""
+    """The route appends one block or writes nothing at all."""
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -698,9 +730,11 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
-        made = (await self.client.post(
-            "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
-        )).json()
+        made = (
+            await self.client.post(
+                "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
+            )
+        ).json()
         self.unit = made["unit"]
         self.dir = Path(made["path"])
         self.intent = self.dir / "intent.md"
@@ -711,20 +745,32 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
 
     def body(self, **over):
         return {
-            "cwd": self.cwd, "unit": self.unit, "artifact": "intent.md",
-            "question": 2, "answer": "Tách ra. MARK-0016", "answered_by": "Phong", **over,
+            "cwd": self.cwd,
+            "unit": self.unit,
+            "artifact": "intent.md",
+            "question": 2,
+            "answer": "Tách ra. MARK-0016",
+            "answered_by": "Phong",
+            **over,
         }
 
     async def post(self, **over):
         return await self.client.post("/api/units/answer", json=self.body(**over))
 
-    def rows(self, table: str = "unit_answers", columns: str = "artifact, ref, answered_by, via, text") -> list[tuple]:
-        """`0135` R8: what the database holds for this unit, where the file's block once was."""
+    def rows(
+        self, table: str = "unit_answers", columns: str = "artifact, ref, answered_by, via, text"
+    ) -> list[tuple]:
+        """What the database holds for this unit, where the file's block once was."""
         from coscc.data import Data
 
         with Data(self.data_dir).connect() as conn:
-            return [tuple(r) for r in conn.execute(
-                f"SELECT {columns} FROM {table} WHERE unit = ? AND once_key = '' ORDER BY id", (self.unit,))]
+            return [
+                tuple(r)
+                for r in conn.execute(
+                    f"SELECT {columns} FROM {table} WHERE unit = ? AND once_key = '' ORDER BY id",
+                    (self.unit,),
+                )
+            ]
 
     async def test_answering_through_the_api_changes_no_byte_of_the_artifact(self):
         before = self.intent.read_bytes()
@@ -732,7 +778,9 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(got.json()["question"], 2)
         self.assertEqual(self.intent.read_bytes(), before)
-        self.assertEqual(self.rows(), [("intent.md", "2", "Phong", "product", "Tách ra. MARK-0016")])
+        self.assertEqual(
+            self.rows(), [("intent.md", "2", "Phong", "product", "Tách ra. MARK-0016")]
+        )
 
     async def test_an_answer_writes_its_journal_row_in_the_same_transaction(self):
         import sqlite3
@@ -745,18 +793,19 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         got = await self.post()
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual((len(self.rows()), len(answers())), (1, 1))
-        # The run-log row fails after the answer's row was written: neither is kept (C8).
-        with mock.patch.object(Journal, "_insert", side_effect=sqlite3.OperationalError("disk I/O error")):
+        # The run-log row fails after the answer's row was written: neither is kept.
+        with mock.patch.object(
+            Journal, "_insert", side_effect=sqlite3.OperationalError("disk I/O error")
+        ):
             got = await self.post(question=1, answer="Có.")
         self.assertEqual(got.status_code, 400, got.text)
         self.assertIn("the answer was not recorded", got.text)
-        # What went wrong is the log's, not the dialog's (review F8, S3).
         self.assertNotIn("disk I/O error", got.text)
         self.assertEqual((len(self.rows()), len(answers())), (1, 1))
 
     async def test_a_locked_database_before_the_answer_is_one_sentence_without_its_path(self):
-        """Review F11 (S3): the snapshot the answer is checked against reads `cos.db`, and
-        `Busy` names the database's path. The dialog gets one sentence; the log gets the path."""
+        """The snapshot the answer is checked against reads `cos.db`, and `Busy` names the
+        database's path. The dialog gets one sentence; the log gets the path."""
         import contextlib
         import io
 
@@ -766,8 +815,10 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         held = "another process is holding /tmp/somewhere/cos.db"
         before = self.intent.read_bytes()
         err = io.StringIO()
-        with mock.patch.object(UnitMeta, "snapshot", side_effect=Busy(held)), \
-                contextlib.redirect_stderr(err):
+        with (
+            mock.patch.object(UnitMeta, "snapshot", side_effect=Busy(held)),
+            contextlib.redirect_stderr(err),
+        ):
             got = await self.post()
         self.assertEqual(got.status_code, 400, got.text)
         self.assertIn("could not be read", got.text)
@@ -822,18 +873,22 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_an_empty_answer_is_refused(self):  # (d)
         await self.refused(answer="   \n  ")
 
-    async def test_an_answer_with_no_name_is_recorded_as_owner(self):  # (e), `0082` R3
+    async def test_an_answer_with_no_name_is_recorded_as_owner(self):
         await self.refused(answered_by="A\nStatus: rejected")
         got = await self.post(answered_by="  ")
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(got.json()["answered_by"], "owner")
 
     async def test_a_closed_unit_is_refused(self):  # (f)
-        self.intent.write_text(QUESTIONS.replace("Status: accepted", "Status: rejected"), encoding="utf-8")
+        self.intent.write_text(
+            QUESTIONS.replace("Status: accepted", "Status: rejected"), encoding="utf-8"
+        )
         self.assertIn("closed", await self.refused())
 
     async def test_a_finished_unit_is_refused(self):  # (f)
-        (self.dir / "plan.md").write_text("# Plan\nIntent: intent.md. Status: done.\n", encoding="utf-8")
+        (self.dir / "plan.md").write_text(
+            "# Plan\nIntent: intent.md. Status: done.\n", encoding="utf-8"
+        )
         self.assertIn("finished", await self.refused())
 
     async def test_an_answer_that_would_be_read_as_a_heading_is_refused(self):  # (g)
@@ -841,7 +896,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.refused(answer="### Câu 3\nhijack")
 
     async def test_a_file_with_a_section_after_its_answers_is_answered_all_the_same(self):  # (g)
-        # Refused until `0135`: a block appended there would not have been read. It is a row now.
+        # It is a row now.
         self.intent.write_text(QUESTIONS + "\n## Answers\n\n## Later\n", encoding="utf-8")
         before = self.intent.read_bytes()
         self.assertEqual((await self.post()).status_code, 200)
@@ -857,7 +912,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         got = await self.client.post("/api/units/answer", json=self.body(cwd="/etc"))
         self.assertEqual(got.status_code, 400)
 
-    # -- `0137` R10 -------------------------------------------------------------------
+    # -- -------------------------------------------------------------------
 
     def decide(self, **over) -> str:
         from datetime import date
@@ -865,8 +920,17 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         from coscc import units
         from coscc.data import Data
 
-        fields = {"kind": "delegation", "text": "Tên nhánh.", "source": "chat", "workspace": units.slot(self.cwd),
-                  "agent": "Leif", "covers": "naming", "from_day": date.today().isoformat(), "until_day": "", **over}
+        fields = {
+            "kind": "delegation",
+            "text": "Tên nhánh.",
+            "source": "chat",
+            "workspace": units.slot(self.cwd),
+            "agent": "Leif",
+            "covers": "naming",
+            "from_day": date.today().isoformat(),
+            "until_day": "",
+            **over,
+        }
         withdrawn = fields.pop("withdrawn", "")
         data = Data(self.data_dir)
         n = data.decision_add(**fields)
@@ -875,7 +939,6 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         return f"D{n}"
 
     async def test_a_delegated_answer_ends_with_its_delegation_line(self):
-        # A row since `0135`: its text ends with the line, and the file keeps every byte.
         before = self.intent.read_bytes()
         d = self.decide()
         got = await self.post(answered_by="Leif (CoS)", delegation=d)
@@ -883,10 +946,20 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.intent.read_bytes(), before)
         self.assertEqual(
             self.rows(),
-            [("intent.md", "2", "Leif (CoS)", "product", f"Tách ra. MARK-0016\n\nTheo ủy quyền: {d}")],
+            [
+                (
+                    "intent.md",
+                    "2",
+                    "Leif (CoS)",
+                    "product",
+                    f"Tách ra. MARK-0016\n\nTheo ủy quyền: {d}",
+                )
+            ],
         )
 
-    async def test_a_delegation_that_is_missing_expired_withdrawn_wrong_kind_wrong_agent_or_wrong_workspace_is_refused_and_writes_nothing(self):
+    async def test_a_delegation_that_is_missing_expired_withdrawn_wrong_kind_wrong_agent_or_wrong_workspace_is_refused_and_writes_nothing(
+        self,
+    ):
         from datetime import date
 
         today = date.today().isoformat()
@@ -916,13 +989,22 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.intent.read_bytes(), before)
         self.assertEqual(
             self.rows(columns="artifact, ref, answered_by, date, via, text"),
-            [("intent.md", "2", "Phong", date.today().isoformat(), "product", "Tách ra. MARK-0016")],
+            [
+                (
+                    "intent.md",
+                    "2",
+                    "Phong",
+                    date.today().isoformat(),
+                    "product",
+                    "Tách ra. MARK-0016",
+                )
+            ],
         )
 
 
 class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0047` R1, R7. The route appends one `### Outcome` block or writes nothing at all;
-    what it refuses is `Service.record_outcome`'s decision, tested there."""
+    """The route appends one `### Outcome` block or writes nothing at all; what it refuses is
+    `Service.record_outcome`'s decision, tested there."""
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -931,18 +1013,24 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
         (root / "work" / "proj").mkdir(parents=True)
         self.cwd = str(root / "work" / "proj")
         self.app = build(
-            Config(workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+            Config(
+                workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+            )
         )
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
-        made = (await self.client.post(
-            "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
-        )).json()
+        made = (
+            await self.client.post(
+                "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
+            )
+        ).json()
         self.unit = made["unit"]
         unit_dir = Path(made["path"])
         for stage in ("spec", "impl", "pr", "review", "ship"):
-            (unit_dir / f"{stage}.md").write_text(f"# {stage}\nStatus: accepted.\n", encoding="utf-8")
+            (unit_dir / f"{stage}.md").write_text(
+                f"# {stage}\nStatus: accepted.\n", encoding="utf-8"
+            )
         (unit_dir / "plan.md").write_text("# plan\nStatus: done.\n", encoding="utf-8")
         self.intent = unit_dir / "intent.md"
         self.intent.write_text(QUESTIONS, encoding="utf-8")
@@ -952,8 +1040,13 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
 
     def body(self, **over):
         return {
-            "cwd": self.cwd, "unit": self.unit, "result": "trượt", "measured_by": "agent",
-            "source": "board, 2026-10-08", "recorded_by": "Phong", **over,
+            "cwd": self.cwd,
+            "unit": self.unit,
+            "result": "trượt",
+            "measured_by": "agent",
+            "source": "board, 2026-10-08",
+            "recorded_by": "Phong",
+            **over,
         }
 
     async def test_a_valid_outcome_is_appended_and_the_board_shows_it(self):
@@ -963,7 +1056,7 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((got.json()["result"], got.json()["recorded_by"]), ("trượt", "Phong"))
         after = self.intent.read_bytes()
         self.assertTrue(after.startswith(before))
-        self.assertIn("### Outcome", after[len(before):].decode("utf-8"))
+        self.assertIn("### Outcome", after[len(before) :].decode("utf-8"))
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
         self.assertEqual(board["units"][0]["outcome"]["result"], "missed")
         self.assertEqual(board["units"][0]["outcome_label"]["text"], "trượt")
@@ -980,13 +1073,20 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
 
 
 class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0045`. `POST /api/units/hold` appends one block, or answers 400 and writes nothing."""
+    """`POST /api/units/hold` appends one block, or answers 400 and writes nothing."""
 
     asyncSetUp = AnsweringAQuestionOverHttp.asyncSetUp
     asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
 
     async def hold(self, **over):
-        body = {"cwd": self.cwd, "unit": self.unit, "to": "paused", "reason": "chờ 0034", "by": "Leif", **over}
+        body = {
+            "cwd": self.cwd,
+            "unit": self.unit,
+            "to": "paused",
+            "reason": "chờ 0034",
+            "by": "Leif",
+            **over,
+        }
         return await self.client.post("/api/units/hold", json=body)
 
     rows = AnsweringAQuestionOverHttp.rows
@@ -995,10 +1095,16 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         before = self.intent.read_bytes()
         got = await self.hold()
         self.assertEqual(got.status_code, 200, got.text)
-        self.assertEqual((got.json()["from"], got.json()["to"], got.json()["effects"]), ("active", "paused", []))
+        self.assertEqual(
+            (got.json()["from"], got.json()["to"], got.json()["effects"]), ("active", "paused", [])
+        )
         self.assertEqual(self.intent.read_bytes(), before)
-        self.assertEqual(self.rows("unit_holds", "move, decided_by, reason"), [("paused", "Leif", "chờ 0034")])
-        nxt = (await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})).json()
+        self.assertEqual(
+            self.rows("unit_holds", "move, decided_by, reason"), [("paused", "Leif", "chờ 0034")]
+        )
+        nxt = (
+            await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})
+        ).json()
         self.assertEqual(nxt["stage"], "")
 
     async def test_a_refusal_is_400_and_writes_nothing(self):
@@ -1011,7 +1117,7 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.intent.read_bytes(), before)
 
     async def test_no_name_is_recorded_as_owner(self):
-        """`0082` R3: what `{"by": ""}` was refused for until then."""
+        """What `{"by": ""}` was refused for until then."""
         got = await self.hold(by="")
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(self.rows("unit_holds", "decided_by"), [("owner",)])
@@ -1024,8 +1130,8 @@ REVIEW_STUCK = "# Review: q\nAuthor: t. Status: changes-requested.\n" + "".join(
 
 
 class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0081` R6, R7, R11. `POST /api/units/more-rounds` appends one block to the one unit
-    named, or answers 400 and writes nothing; `cos.mjs` reads the block, and only it."""
+    """`POST /api/units/more-rounds` appends one block to the one unit named, or answers 400 and
+    writes nothing; `cos.mjs` reads the block, and only it."""
 
     _answering_setup = AnsweringAQuestionOverHttp.asyncSetUp
     asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
@@ -1037,19 +1143,26 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         self.second = self._stuck("0102_second-stuck", REVIEW_STUCK)
 
     def _stuck(self, name: str, review: str) -> Path:
-        """The state of `0073`: three rounds, each asking for changes, at the limit of 3."""
+        """A unit whose `review.md` is `review`; `REVIEW_STUCK` is three rounds, each asking for
+        changes, at the limit of 3."""
         d = self.dir.parent / name
         d.mkdir()
-        (d / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
+        (d / "intent.md").write_text(
+            "# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
         for f in ("spec.md", "plan.md", "impl.md"):
             (d / f).write_text("Status: accepted.\n", encoding="utf-8")
-        (d / "pr.md").write_text(f"# PR: feat({name[:4]}): x\nPR: https://github.com/o/r/pull/3. Status: accepted.\n", encoding="utf-8")
+        (d / "pr.md").write_text(
+            f"# PR: feat({name[:4]}): x\nPR: https://github.com/o/r/pull/3. Status: accepted.\n",
+            encoding="utf-8",
+        )
         (d / "review.md").write_text(review, encoding="utf-8")
         return d
 
     async def allow(self, **over):
         return await self.client.post(
-            "/api/units/more-rounds", json={"cwd": self.cwd, "unit": self.first.name, "by": "", **over}
+            "/api/units/more-rounds",
+            json={"cwd": self.cwd, "unit": self.first.name, "by": "", **over},
         )
 
     async def test_one_unit_is_given_a_round_and_the_other_still_needs_a_person(self):
@@ -1070,14 +1183,18 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(after.startswith(before))
             added = more_rounds.block("owner", date.today().isoformat())
             # `_append_to_answers` opens the section first when the file has none.
-            self.assertEqual(after[len(before):].decode("utf-8"), "\n## Answers\n" + added)
+            self.assertEqual(after[len(before) :].decode("utf-8"), "\n## Answers\n" + added)
             self.assertEqual(second.read_bytes(), other)
             # The real `cos.mjs`, no `--repo`: past the limit, the gate stops at the repository.
-            allowed, said = await board.gate(str(self.root), self.first.name, "review", state=snapshot_of(self.root))
+            allowed, said = await board.gate(
+                str(self.root), self.first.name, "review", state=snapshot_of(self.root)
+            )
             self.assertFalse(allowed)
             self.assertIn("no repository given", said)
             self.assertNotIn("needs a person", said)
-            allowed, said = await board.gate(str(self.root), self.second.name, "review", state=snapshot_of(self.root))
+            allowed, said = await board.gate(
+                str(self.root), self.second.name, "review", state=snapshot_of(self.root)
+            )
             self.assertFalse(allowed)
             self.assertIn("needs a person — review used 3 of 3", said)
             self.assertIsNone(os.environ.get("COS_REVIEW_ROUNDS"))
@@ -1096,18 +1213,27 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         # it, reaches the new limit, and a press is taken again.
         head, answers = before.decode("utf-8").split("\n## Answers\n", 1)
         round4 = _ROUND_0028.format(n=4, v="changes-requested", f="- F1 [open] a")
-        (self.first / "review.md").write_text(f"{head}{round4}\n## Answers\n{answers}", encoding="utf-8")
+        (self.first / "review.md").write_text(
+            f"{head}{round4}\n## Answers\n{answers}", encoding="utf-8"
+        )
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
         [row] = [u for u in board["units"] if u["name"] == self.first.name]
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (True, 1))
         self.assertEqual((await self.allow()).status_code, 200)
-        self.assertEqual((self.first / "review.md").read_text(encoding="utf-8").count("### More rounds"), 2)
+        self.assertEqual(
+            (self.first / "review.md").read_text(encoding="utf-8").count("### More rounds"), 2
+        )
 
     async def test_a_refusal_is_400_and_writes_nothing(self):
         not_yet = self._stuck("0103_not-yet", REVIEW_STUCK.split("\n## Round 2")[0])
         files = [d / "review.md" for d in (self.first, self.second, not_yet)]
         before = [f.read_bytes() for f in files]
-        for over in ({"unit": "0199_nothing"}, {"cwd": "/etc"}, {"unit": not_yet.name}, {"unit": ""}):
+        for over in (
+            {"unit": "0199_nothing"},
+            {"cwd": "/etc"},
+            {"unit": not_yet.name},
+            {"unit": ""},
+        ):
             got = await self.allow(**over)
             self.assertEqual(got.status_code, 400, over)
         got = await self.client.post("/api/units/more-rounds", content=b"nope")
@@ -1115,9 +1241,8 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([f.read_bytes() for f in files], before)
 
 
-REVIEW_CLAIMED = (
-    "# Review: q\nAuthor: t. Status: changes-requested.\n"
-    + _ROUND_0028.format(n=1, v="changes-requested", f="- F2 [open] b\n- F3 [open] c")
+REVIEW_CLAIMED = "# Review: q\nAuthor: t. Status: changes-requested.\n" + _ROUND_0028.format(
+    n=1, v="changes-requested", f="- F2 [open] b\n- F3 [open] c"
 )
 REVIEW_CONFIRMED = REVIEW_CLAIMED + _ROUND_0028.format(
     n=2, v="needs-person", f="- F2 [needs-person] b\n- F3 [needs-person] c"
@@ -1125,10 +1250,8 @@ REVIEW_CONFIRMED = REVIEW_CLAIMED + _ROUND_0028.format(
 
 
 class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
-    """`0028` R7, plan step 8. A finding the last review round confirmed needs a person is
-    answered by its id into `review.md`; nothing else may be answered that way. Inherits the
-    `0016` class's setup and helpers, so the `0016` tests also run once more on this unit —
-    they answer `intent.md`, which this fixture leaves as it was."""
+    """A finding the last review round confirmed needs a person is answered by its id into
+    `review.md`; nothing else may be answered that way."""
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
@@ -1151,7 +1274,9 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(got.json()["question"], "F2")
         self.assertEqual(self.review.read_bytes(), before)
-        self.assertEqual(self.rows(), [("review.md", "F2", "Phong", "product", "Tách ra. MARK-0016")])
+        self.assertEqual(
+            self.rows(), [("review.md", "F2", "Phong", "product", "Tách ra. MARK-0016")]
+        )
 
     async def test_the_board_then_waits_on_the_other_one_only(self):
         await self.finding()
@@ -1183,7 +1308,7 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
 
 
 class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0021` R8. The route posts a round once; a second press finds it and says so."""
+    """The route posts a round once; a second press finds it and says so."""
 
     PR_URL = "https://github.com/o/r/pull/7"
     REVIEW = (
@@ -1199,14 +1324,18 @@ class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         (root / "work" / "proj").mkdir(parents=True)
         self.cwd = str(root / "work" / "proj")
         self.app = build(
-            Config(workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+            Config(
+                workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+            )
         )
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
-        made = (await self.client.post(
-            "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
-        )).json()
+        made = (
+            await self.client.post(
+                "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
+            )
+        ).json()
         self.unit = made["unit"]
         d = Path(made["path"])
         (d / "pr.md").write_text(f"# PR\nStatus: accepted.\nPR: {self.PR_URL}\n", encoding="utf-8")
@@ -1256,7 +1385,7 @@ class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
 
 
 class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0014` R1 and R4 over HTTP. The routes translate and decide nothing."""
+    """The routes translate and decide nothing."""
 
     async def asyncSetUp(self):
         import subprocess
@@ -1272,17 +1401,27 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         ):
             if args[0] == "add":
                 (self.repo / "README.md").write_text("x\n", encoding="utf-8")
-            subprocess.run(["git", "-C", str(self.repo), *args], check=True,
-                           capture_output=True)
+            subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True)
         subprocess.run(
-            ["git", "-C", str(self.repo), "-c", "user.name=T",
-             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false",
-             "commit", "-q", "-m", "first"],
-            check=True, capture_output=True,
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "-m",
+                "first",
+            ],
+            check=True,
+            capture_output=True,
         )
-        # A branch is cut from what `origin` has since
-        # `0001_product-describes-a-state-it-is-not-in` R1, so there has to be one. A bare
-        # directory, pushed to once: no network.
+        # A bare directory, pushed to once: no network.
         remote = root / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
         for args in (("remote", "add", "origin", str(remote)), ("push", "-q", "origin", "main")):
@@ -1333,16 +1472,16 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertIn("/etc", got.json()["error"])
 
     async def test_a_bad_slug_is_400_in_the_scripts_own_words(self):
-        got = await self.client.post(
-            "/api/units", json={"cwd": self.cwd, "slug": "Bad_Slug"}
-        )
+        got = await self.client.post("/api/units", json={"cwd": self.cwd, "slug": "Bad_Slug"})
         self.assertEqual(got.status_code, 400)
         self.assertIn("Bad_Slug", got.json()["error"])
 
     async def test_the_branch_route_cuts_it_and_the_read_route_sees_it(self):
-        made = (await self.client.post(
-            "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
-        )).json()
+        made = (
+            await self.client.post(
+                "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
+            )
+        ).json()
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
@@ -1353,8 +1492,8 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cut.json()["branch"], "feat/a-problem")
         self.assertEqual(cut.json()["base"], "origin/main")
         self.assertEqual(len(cut.json()["sha"]), 7)
-        # `0017`: the workspace stays on `main`; the branch is on the unit's worktree, and
-        # the board says so.
+        # The workspace stays on `main`; the branch is on the unit's worktree, and the board says
+        # so.
         seen = (await self.client.get("/api/branch", params={"cwd": self.cwd})).json()
         self.assertEqual(seen["branch"], "main")
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
@@ -1370,7 +1509,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
 
 
 class TheNextStageOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0024`. `GET /api/units/next` is `cos.mjs next`'s answer, and it starts nothing."""
+    """`GET /api/units/next` is `cos.mjs next`'s answer, and it starts nothing."""
 
     # The fixture of `AnsweringAQuestionOverHttp`, borrowed so its tests run once.
     asyncSetUp = AnsweringAQuestionOverHttp.asyncSetUp
@@ -1387,15 +1526,19 @@ class TheNextStageOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((self.dir / "spec.md").exists())
 
     async def test_missing_or_unknown_arguments_are_a_400(self):
-        for params in ({"unit": self.unit}, {"cwd": self.cwd}, {"cwd": self.cwd, "unit": "0099_nope"},
-                       {"cwd": "/etc", "unit": self.unit}):
+        for params in (
+            {"unit": self.unit},
+            {"cwd": self.cwd},
+            {"cwd": self.cwd, "unit": "0099_nope"},
+            {"cwd": "/etc", "unit": self.unit},
+        ):
             with self.subTest(params=params):
                 got = await self.client.get("/api/units/next", params=params)
                 self.assertEqual(got.status_code, 400)
 
 
 class WhatIsRunningOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0051` R2. `GET /api/board/running`: two keys, and nothing a stop button would need."""
+    """`GET /api/board/running`: two keys, and nothing a stop button would need."""
 
     asyncSetUp = AnsweringAQuestionOverHttp.asyncSetUp
     asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
@@ -1411,7 +1554,12 @@ class WhatIsRunningOverHttp(unittest.IsolatedAsyncioTestCase):
         key = service._journal_key(self.cwd)
         service._mark_running(key, self.unit, "impl", "step")
         service._journal().started(
-            key, "0099_other", "plan", "manual", session_id="sess-secret", prompt_chars=10,
+            key,
+            "0099_other",
+            "plan",
+            "manual",
+            session_id="sess-secret",
+            prompt_chars=10,
         )
         got = await self.client.get("/api/board/running", params={"cwd": self.cwd})
         self.assertEqual(got.status_code, 200, got.text)
@@ -1432,20 +1580,30 @@ class WhatIsRunningOverHttp(unittest.IsolatedAsyncioTestCase):
                     walk(v)
 
         walk(body)
-        for banned in ("session_id", "prompt", "prompt_chars", "worktree", "path", "workspace", "cwd"):
+        for banned in (
+            "session_id",
+            "prompt",
+            "prompt_chars",
+            "worktree",
+            "path",
+            "workspace",
+            "cwd",
+        ):
             self.assertNotIn(banned, keys)
         self.assertNotIn("sess-secret", got.text)
 
 
 class IntegratingOverHttp(PostingAReviewRoundOverHttp):
-    """`0035` R12 over HTTP: outside the window is a 400 before anything runs, and the
-    route is never a stage `next` offers (R3)."""
+    """Over HTTP: outside the window is a 400 before anything runs, and the route is never a stage
+    `next` offers."""
 
     async def test_a_unit_outside_the_window_is_a_400_and_leaves_a_record(self):
         # A draft pr.md: `cos.mjs` says the unit is not between pr and ship, so no gh is asked.
         pr_md = Path(self.app.state.service._unit_dir(self.cwd, self.unit)) / "pr.md"
         pr_md.write_text(f"# PR\nStatus: draft.\nPR: {self.PR_URL}\n", encoding="utf-8")
-        got = await self.client.post("/api/units/integrate", json={"cwd": self.cwd, "unit": self.unit})
+        got = await self.client.post(
+            "/api/units/integrate", json={"cwd": self.cwd, "unit": self.unit}
+        )
         self.assertEqual(got.status_code, 400)
         self.assertIn("not between pr and ship", got.json()["error"])
         service = self.app.state.service
@@ -1453,7 +1611,11 @@ class IntegratingOverHttp(PostingAReviewRoundOverHttp):
         self.assertEqual([r["outcome"] for r in rows], ["refused"])
 
     async def test_unknown_arguments_are_a_400(self):
-        for body in ({"cwd": self.cwd, "unit": "0099_nope"}, {"cwd": "/etc", "unit": self.unit}, {}):
+        for body in (
+            {"cwd": self.cwd, "unit": "0099_nope"},
+            {"cwd": "/etc", "unit": self.unit},
+            {},
+        ):
             with self.subTest(body=body):
                 got = await self.client.post("/api/units/integrate", json=body)
                 self.assertEqual(got.status_code, 400)
@@ -1469,16 +1631,18 @@ class IntegratingOverHttp(PostingAReviewRoundOverHttp):
 
 
 class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
-    """`0068` R2, R11 and R15 over HTTP."""
-
     SHA = "0" * 40
 
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.app = build(Config(workspaces=(self.tmp.name,), data_dir=str(Path(self.tmp.name) / "d")))
+        self.app = build(
+            Config(workspaces=(self.tmp.name,), data_dir=str(Path(self.tmp.name) / "d"))
+        )
         self.service = self.app.state.service
         self.updater = self.service.updater
-        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
 
     async def asyncTearDown(self):
         await self.client.aclose()
@@ -1486,9 +1650,16 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
 
     def as_a_service(self):
         self.updater._me = {
-            "version": "0.12.0", "commit": self.SHA, "commit_label": self.SHA, "install": "package",
-            "shape": "service", "reason": "", "build_id": f"0.12.0+{self.SHA}", "uv": "/u/uv",
-            "tool_dir": "/t", "bin_dir": "/b",
+            "version": "0.12.0",
+            "commit": self.SHA,
+            "commit_label": self.SHA,
+            "install": "package",
+            "shape": "service",
+            "reason": "",
+            "build_id": f"0.12.0+{self.SHA}",
+            "uv": "/u/uv",
+            "tool_dir": "/t",
+            "bin_dir": "/b",
         }
         self.updater.release = {"state": "ready", "version": "0.13.0"}
 
@@ -1514,15 +1685,23 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
 
         self.updater.apply = apply
         plain = {"channel": "release", "by": "an"}
-        # `0138` R1: a `mode` or a `token` is one more field nobody reads.
-        smuggled = {**plain, "url": "https://evil.example/x.whl", "path": "/tmp/x.whl",
-                    "version": "9.9.9", "ref": "evil", "wheel": "/tmp/x.whl", "mode": "now", "token": "t"}
+        # A `mode` or a `token` is one more field nobody reads.
+        smuggled = {
+            **plain,
+            "url": "https://evil.example/x.whl",
+            "path": "/tmp/x.whl",
+            "version": "9.9.9",
+            "ref": "evil",
+            "wheel": "/tmp/x.whl",
+            "mode": "now",
+            "token": "t",
+        }
         a = await self.client.post("/api/update/apply", json=plain)
         b = await self.client.post("/api/update/apply", json=smuggled)
         self.assertEqual((a.status_code, a.json()), (b.status_code, b.json()))
         self.assertEqual(seen, [("release", "an")] * 2)
 
-    async def test_r11_is_503_on_run_integrate_send_and_build(self):
+    async def test_is_503_on_run_integrate_send_and_build(self):
         self.as_a_service()
         self.updater.window = True
         cwd = self.tmp.name
@@ -1538,20 +1717,22 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("update is being applied", r.json()["error"])
 
     async def test_the_cut_list_route_is_gone(self):
-        # `0138` R1: one Apply, so nothing lists what another way would cut.
+        # One Apply, so nothing lists what another way would cut.
         self.as_a_service()
         self.assertEqual((await self.client.get("/api/update/cut-list")).status_code, 404)
 
     def test_no_update_route_uses_a_path_reflex_reserves(self):
-        paths = [getattr(r, "path", "") for r in self.app.routes if "update" in getattr(r, "path", "")]
+        paths = [
+            getattr(r, "path", "") for r in self.app.routes if "update" in getattr(r, "path", "")
+        ]
         self.assertEqual(len(paths), 4)
         for p in paths:
             self.assertFalse(p.startswith(("/ping/", "/_event", "/_upload")), p)
 
 
 class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0074`. Each route is 200 on a valid body and 400 on a refusal; what is refused is
-    `backlog.py`'s and `Service`'s decision, tested there."""
+    """Each route is 200 on a valid body and 400 on a refusal; what is refused is `backlog.py`'s and
+    `Service`'s decision, tested there."""
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1560,10 +1741,16 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         (root / "work" / "proj").mkdir(parents=True)
         self.cwd = str(root / "work" / "proj")
         self.app = build(
-            Config(workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+            Config(
+                workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+            )
         )
-        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
-        post = lambda slug: self.client.post("/api/units", json={"cwd": self.cwd, "slug": slug, "brief": "x"})  # noqa: E731
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        post = lambda slug: self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": slug, "brief": "x"}
+        )  # noqa: E731
         self.a = (await post("one-problem")).json()["unit"]
         self.b = (await post("two-problem")).json()["unit"]
 
@@ -1571,28 +1758,56 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def test_estimate_relation_and_shortlist(self):
-        est = {"cwd": self.cwd, "unit": self.a, "value": 3, "effort": "M", "basis": "x", "by": "Leif"}
-        self.assertEqual((await self.client.post("/api/backlog/estimate", json=est)).status_code, 200)
+        est = {
+            "cwd": self.cwd,
+            "unit": self.a,
+            "value": 3,
+            "effort": "M",
+            "basis": "x",
+            "by": "Leif",
+        }
+        self.assertEqual(
+            (await self.client.post("/api/backlog/estimate", json=est)).status_code, 200
+        )
         bad = await self.client.post("/api/backlog/estimate", json={**est, "value": 0})
         self.assertEqual(bad.status_code, 400)
         self.assertIn("value", bad.json()["error"])
-        rel = {"cwd": self.cwd, "unit": self.a, "other": self.b, "type": "trùng", "op": "add", "reason": "r", "by": "L"}
-        self.assertEqual((await self.client.post("/api/backlog/relation", json=rel)).status_code, 200)
-        self.assertEqual((await self.client.post("/api/backlog/relation", json=rel)).status_code, 400)
-        short = {"cwd": self.cwd, "units": [self.a], "reason": "r", "by": "L"}
-        self.assertEqual((await self.client.post("/api/backlog/shortlist", json=short)).status_code, 200)
+        rel = {
+            "cwd": self.cwd,
+            "unit": self.a,
+            "other": self.b,
+            "type": "trùng",
+            "op": "add",
+            "reason": "r",
+            "by": "L",
+        }
         self.assertEqual(
-            (await self.client.post("/api/backlog/shortlist", json={**short, "units": [self.b]})).status_code, 400
+            (await self.client.post("/api/backlog/relation", json=rel)).status_code, 200
+        )
+        self.assertEqual(
+            (await self.client.post("/api/backlog/relation", json=rel)).status_code, 400
+        )
+        short = {"cwd": self.cwd, "units": [self.a], "reason": "r", "by": "L"}
+        self.assertEqual(
+            (await self.client.post("/api/backlog/shortlist", json=short)).status_code, 200
+        )
+        self.assertEqual(
+            (
+                await self.client.post("/api/backlog/shortlist", json={**short, "units": [self.b]})
+            ).status_code,
+            400,
         )
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
         self.assertEqual([e["unit"] for e in board["backlog"]["shortlist"]], [self.a])
         self.assertTrue(board["backlog"]["propose_warning"])
-        self.assertEqual((await self.client.post("/api/backlog/shortlist", content=b"nope")).status_code, 400)
+        self.assertEqual(
+            (await self.client.post("/api/backlog/shortlist", content=b"nope")).status_code, 400
+        )
 
     async def test_propose_streams_and_a_refusal_is_a_400(self):
         class Replies:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-                # `0136` R9: it hands back no object, so the proposal fails.
+                # It hands back no object, so the proposal fails.
                 yield ("chunk", "not json")
                 yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01}})
 
@@ -1601,16 +1816,20 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 200)
         last = json.loads(got.text.strip().splitlines()[-1])
         self.assertEqual((last["type"], last["estimate"]["outcome"]), ("done", "failed"))
-        self.assertEqual((await self.client.post("/api/backlog/propose", json={"cwd": "/nope"})).status_code, 400)
+        self.assertEqual(
+            (await self.client.post("/api/backlog/propose", json={"cwd": "/nope"})).status_code, 400
+        )
 
 
 class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0043` R1, R2 and `spec.md ## Answers`, câu 3."""
+    """Md ## Answers`, câu 3."""
 
     async def client_for(self, host: str) -> httpx.AsyncClient:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.config = Config(workspaces=("/tmp",), data_dir=tmp.name, working_dir=tmp.name, host=host)
+        self.config = Config(
+            workspaces=("/tmp",), data_dir=tmp.name, working_dir=tmp.name, host=host
+        )
         app = build(self.config)
         self.service = app.state.service
         self.started: list[str] = []
@@ -1621,13 +1840,19 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
 
     def prefs(self) -> dict:
         from coscc.data import Data
+
         return Data(self.config.data_dir).prefs()
 
     async def test_defaults_are_off_four_and_fifty(self):
         client = await self.client_for("127.0.0.1")
         got = (await client.get("/api/settings/autopilot", params={"cwd": "/tmp"})).json()
         self.assertEqual(
-            (got["autopilot"], got["autopilot_may_ship"], got["max_parallel"], got["daily_cap_usd"]),
+            (
+                got["autopilot"],
+                got["autopilot_may_ship"],
+                got["max_parallel"],
+                got["daily_cap_usd"],
+            ),
             (False, False, 4, 50.0),
         )
         self.assertEqual(got["refused_because"], "")
@@ -1635,15 +1860,26 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_a_wrong_value_is_a_400_and_nothing_is_written(self):
         client = await self.client_for("127.0.0.1")
         for name, value in [
-            ("autopilot", "yes"), ("autopilot", 1), ("autopilot_may_ship", None),
-            ("max_parallel", 0), ("max_parallel", 2.5), ("max_parallel", True), ("max_parallel", "3"),
-            ("daily_cap_usd", 0), ("daily_cap_usd", -1), ("daily_cap_usd", True), ("daily_cap_usd", "50"),
+            ("autopilot", "yes"),
+            ("autopilot", 1),
+            ("autopilot_may_ship", None),
+            ("max_parallel", 0),
+            ("max_parallel", 2.5),
+            ("max_parallel", True),
+            ("max_parallel", "3"),
+            ("daily_cap_usd", 0),
+            ("daily_cap_usd", -1),
+            ("daily_cap_usd", True),
+            ("daily_cap_usd", "50"),
             ("no_such", 1),
         ]:
-            got = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": name, "value": value})
+            got = await client.post(
+                "/api/settings/autopilot", json={"cwd": "/tmp", "name": name, "value": value}
+            )
             self.assertEqual(got.status_code, 400, (name, value))
         # JSON has no infinity; the service refuses one too.
-        from coscc.service import Invalid
+        from coscc.service.common import Invalid
+
         with self.assertRaises(Invalid):
             self.service.set_autopilot("/tmp", "daily_cap_usd", float("inf"))
         self.assertEqual(self.prefs(), {})
@@ -1651,22 +1887,31 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def test_off_loopback_the_switch_will_not_turn_on(self):
         client = await self.client_for("0.0.0.0")
-        got = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "autopilot", "value": True})
+        got = await client.post(
+            "/api/settings/autopilot", json={"cwd": "/tmp", "name": "autopilot", "value": True}
+        )
         self.assertEqual(got.status_code, 400)
         self.assertIn("restart it on 127.0.0.1", got.json()["error"])
         self.assertEqual((self.prefs(), self.started), ({}, []))
         # Everything but the switch itself may still be set.
-        ok = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "max_parallel", "value": 2})
+        ok = await client.post(
+            "/api/settings/autopilot", json={"cwd": "/tmp", "name": "max_parallel", "value": 2}
+        )
         self.assertEqual(ok.status_code, 200)
 
     async def test_a_change_is_stored_started_and_logged_with_old_and_new(self):
         from coscc.runlog.journal import Journal
+
         client = await self.client_for("127.0.0.1")
-        got = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "autopilot", "value": True})
+        got = await client.post(
+            "/api/settings/autopilot", json={"cwd": "/tmp", "name": "autopilot", "value": True}
+        )
         self.assertEqual(got.status_code, 200, got.text)
         self.assertTrue(got.json()["autopilot"])
         self.assertEqual(self.started, ["/tmp"])
-        await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "daily_cap_usd", "value": 20})
+        await client.post(
+            "/api/settings/autopilot", json={"cwd": "/tmp", "name": "daily_cap_usd", "value": 20}
+        )
         rows = Journal(self.config.working_dir, self.config.data_dir).records(kind="setting")
         self.assertEqual(
             [(r["name"], r["old"], r["new"]) for r in rows],
@@ -1675,7 +1920,7 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
 
 
 class NoRequestIsTheAutopilot(unittest.IsolatedAsyncioTestCase):
-    """`0043` R3. `started_by` is not read off a body: a request is always `person`."""
+    """`started_by` is not read off a body: a request is always `person`."""
 
     async def test_a_body_naming_the_autopilot_is_not_believed(self):
         app = build(_tmp_config(self))
@@ -1692,7 +1937,9 @@ class NoRequestIsTheAutopilot(unittest.IsolatedAsyncioTestCase):
         service = app.state.service
         service.run_step = run_step
         service.integrate = integrate
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://t"
+        ) as client:
             body = {"cwd": "/tmp", "unit": "0001_a", "stage": "spec", "started_by": "autopilot"}
             self.assertEqual((await client.post("/api/board/run", json=body)).status_code, 200)
             await client.post("/api/units/integrate", json=body)
@@ -1703,8 +1950,8 @@ class NoRequestIsTheAutopilot(unittest.IsolatedAsyncioTestCase):
 
 
 class ARerunIsReadOffTheBodyOnlyWhenItSaysTrue(unittest.IsolatedAsyncioTestCase):
-    """`0054` R6. `POST /api/board/run` passes `rerun` and `note` on only when the body's
-    `rerun` is `true` itself; any other body calls `run_step` exactly as it did before."""
+    """`POST /api/board/run` passes `rerun` and `note` on only when the body's `rerun` is `true`
+    itself; any other body calls `run_step` exactly as it did before."""
 
     async def test_rerun_and_note_are_passed_on_and_nothing_otherwise(self):
         app = build(_tmp_config(self))
@@ -1716,18 +1963,27 @@ class ARerunIsReadOffTheBodyOnlyWhenItSaysTrue(unittest.IsolatedAsyncioTestCase)
 
         app.state.service.run_step = run_step
         base = {"cwd": "/tmp", "unit": "0001_a", "stage": "pr"}
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
-            for body in (base, {**base, "rerun": "true", "note": "n"}, {**base, "rerun": True, "note": "ghi chú"}):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://t"
+        ) as client:
+            for body in (
+                base,
+                {**base, "rerun": "true", "note": "n"},
+                {**base, "rerun": True, "note": "ghi chú"},
+            ):
                 self.assertEqual((await client.post("/api/board/run", json=body)).status_code, 200)
-        self.assertEqual(called, [
-            (("/tmp", "0001_a", "pr"), {}),
-            (("/tmp", "0001_a", "pr"), {}),
-            (("/tmp", "0001_a", "pr"), {"rerun": True, "note": "ghi chú"}),
-        ])
+        self.assertEqual(
+            called,
+            [
+                (("/tmp", "0001_a", "pr"), {}),
+                (("/tmp", "0001_a", "pr"), {}),
+                (("/tmp", "0001_a", "pr"), {"rerun": True, "note": "ghi chú"}),
+            ],
+        )
 
 
 class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
-    """`0040` R10, R11, R15. Two temporary git repositories, registered as `proj` and `api`."""
+    """Two temporary git repositories, registered as `proj` and `api`."""
 
     async def asyncSetUp(self):
         import subprocess
@@ -1735,14 +1991,33 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        self.app = build(Config(workspaces=(), working_dir=str(self.root / "work"), data_dir=str(self.root / "data")))
-        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
+        self.app = build(
+            Config(
+                workspaces=(), working_dir=str(self.root / "work"), data_dir=str(self.root / "data")
+            )
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
         self.addAsyncCleanup(self.client.aclose)
         self.cwd = {}
         for name in ("proj", "api"):
             repo = self.root / "work" / name
             repo.mkdir(parents=True)
-            for args in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "0"]):
+            for args in (
+                ["init", "-q", "-b", "main"],
+                [
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "0",
+                ],
+            ):
                 subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
             r = await self.client.post("/api/workspaces", json={"name": name})
             self.assertEqual(r.status_code, 200, r.text)
@@ -1756,14 +2031,24 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()
 
-    async def test_post_api_ideas_makes_0001_and_an_empty_brief_is_400(self):
-        r = await self.post("/api/ideas", cwd=self.cwd["proj"], slug="one-feature", brief="both sides")
+    async def test_post_api_ideas_makes_and_an_empty_brief_is_400(self):
+        r = await self.post(
+            "/api/ideas", cwd=self.cwd["proj"], slug="one-feature", brief="both sides"
+        )
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual((r.json()["id"], r.json()["ref"]), ("0001_one-feature", "proj/ideas/0001_one-feature.md"))
-        self.assertEqual((await self.post("/api/ideas", cwd=self.cwd["proj"], slug="x", brief="  ")).status_code, 400)
+        self.assertEqual(
+            (r.json()["id"], r.json()["ref"]),
+            ("0001_one-feature", "proj/ideas/0001_one-feature.md"),
+        )
+        self.assertEqual(
+            (await self.post("/api/ideas", cwd=self.cwd["proj"], slug="x", brief="  ")).status_code,
+            400,
+        )
 
     async def test_what_an_idea_refuses_is_refused_before_a_unit_is_made(self):
-        idea = (await self.post("/api/ideas", cwd=self.cwd["proj"], slug="f", brief="b")).json()["ref"]
+        idea = (await self.post("/api/ideas", cwd=self.cwd["proj"], slug="f", brief="b")).json()[
+            "ref"
+        ]
         for body in (
             {"idea": idea, "brief": "a second copy of the idea"},
             {"idea": idea, "depends_on": "api/0009_nothing"},
@@ -1781,21 +2066,44 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("idea", r.json())
         from coscc import units
 
-        self.assertTrue((units.unit_dir(self.cwd["proj"], r.json()["unit"], self.root / "data") / "idea.md").is_file())
+        self.assertTrue(
+            (
+                units.unit_dir(self.cwd["proj"], r.json()["unit"], self.root / "data") / "idea.md"
+            ).is_file()
+        )
 
-    async def test_a_feature_split_over_two_workspaces_is_navigable_both_ways_through_the_apps_routes(self):
+    async def test_a_feature_split_over_two_workspaces_is_navigable_both_ways_through_the_apps_routes(
+        self,
+    ):
         from coscc import units
         from coscc.web import place
 
-        idea = (await self.post("/api/ideas", cwd=self.cwd["proj"], slug="one-feature", brief="backend adds, frontend calls")).json()
-        back = await self.post("/api/units", cwd=self.cwd["api"], slug="backend-adds-api", idea=idea["ref"])
+        idea = (
+            await self.post(
+                "/api/ideas",
+                cwd=self.cwd["proj"],
+                slug="one-feature",
+                brief="backend adds, frontend calls",
+            )
+        ).json()
+        back = await self.post(
+            "/api/units", cwd=self.cwd["api"], slug="backend-adds-api", idea=idea["ref"]
+        )
         self.assertEqual(back.status_code, 200, back.text)
         back_ref = f"api/{back.json()['unit']}"
-        front = await self.post("/api/units", cwd=self.cwd["proj"], slug="frontend-calls-api", idea=idea["ref"], depends_on=back_ref)
+        front = await self.post(
+            "/api/units",
+            cwd=self.cwd["proj"],
+            slug="frontend-calls-api",
+            idea=idea["ref"],
+            depends_on=back_ref,
+        )
         self.assertEqual(front.status_code, 200, front.text)
         # A unit opened from an idea has no `idea.md`, and the idea lists both.
         data = self.root / "data"
-        self.assertFalse((units.unit_dir(self.cwd["api"], back.json()["unit"], data) / "idea.md").exists())
+        self.assertFalse(
+            (units.unit_dir(self.cwd["api"], back.json()["unit"], data) / "idea.md").exists()
+        )
         # The frontend's intent, as the intent step is told to write it; the plan accepted.
         front_dir = units.unit_dir(self.cwd["proj"], front.json()["unit"], data)
         (front_dir / "intent.md").write_text(
@@ -1805,50 +2113,74 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         (front_dir / "spec.md").write_text("# S\nStatus: accepted.\n", encoding="utf-8")
         (front_dir / "plan.md").write_text("# P\nStatus: accepted.\n", encoding="utf-8")
         (units.unit_dir(self.cwd["api"], back.json()["unit"], data) / "intent.md").write_text(
-            f"# Intent: b\nAuthor: t. Type: feat. Status: accepted.\nIdea: {idea['ref']}. Repo: api.\n", encoding="utf-8",
+            f"# Intent: b\nAuthor: t. Type: feat. Status: accepted.\nIdea: {idea['ref']}. Repo: api.\n",
+            encoding="utf-8",
         )
 
         proj = await self.board("proj")
-        self.assertEqual(proj["ideas"][0]["units"], [
-            {"ref": back_ref, "depends_on": []},
-            {"ref": f"proj/{front.json()['unit']}", "depends_on": [back_ref]},
-        ])
+        self.assertEqual(
+            proj["ideas"][0]["units"],
+            [
+                {"ref": back_ref, "depends_on": []},
+                {"ref": f"proj/{front.json()['unit']}", "depends_on": [back_ref]},
+            ],
+        )
         [f] = proj["units"]
-        self.assertEqual((f["why"], f["waits_for"], f["state"]["state"]), ("dependency", [back_ref], "awaiting"))
+        self.assertEqual(
+            (f["why"], f["waits_for"], f["state"]["state"]), ("dependency", [back_ref], "awaiting")
+        )
         [b] = (await self.board("api"))["units"]
         self.assertEqual((b["idea"], b["repo"]), (idea["ref"], "api"))
         self.assertEqual(b["problems"], [])
 
         # Both ways, as the page writes the addresses.
         ws, idea_id = idea["ref"].split("/ideas/")
-        self.assertEqual(place.href(place.Place("idea", ws, idea=idea_id[:-3])), "/idea?ws=proj&id=0001_one-feature")
-        self.assertEqual(place.href(place.Place("unit", "api", back.json()["unit"])), f"/unit?ws=api&id={back.json()['unit']}")
+        self.assertEqual(
+            place.href(place.Place("idea", ws, idea=idea_id[:-3])),
+            "/idea?ws=proj&id=0001_one-feature",
+        )
+        self.assertEqual(
+            place.href(place.Place("unit", "api", back.json()["unit"])),
+            f"/unit?ws=api&id={back.json()['unit']}",
+        )
         page = await self.app.state.service.idea(self.cwd["proj"], "0001_one-feature")
-        self.assertEqual([(r["ref"], r["repo"], r["waits_for"]) for r in page["units"]], [
-            (back_ref, "api", []),
-            (f"proj/{front.json()['unit']}", "proj", [back_ref]),
-        ])
+        self.assertEqual(
+            [(r["ref"], r["repo"], r["waits_for"]) for r in page["units"]],
+            [
+                (back_ref, "api", []),
+                (f"proj/{front.json()['unit']}", "proj", [back_ref]),
+            ],
+        )
         self.assertEqual(page["brief"], "backend adds, frontend calls")
 
 
 @unittest.skipUnless(shutil.which("uv") and shutil.which("node"), "uv and node are needed")
 class ReleasingOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0046` R13 over HTTP: a refusal is a 400 before any line of output, with one record."""
+    """Over HTTP: a refusal is a 400 before any line of output, with one record."""
 
     async def asyncSetUp(self):
         from coscc.git import fetches
-        from coscc.service.release_service_test import Fixture
+        from coscc.service.release_test import Fixture
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.fx = Fixture(Path(tmp.name))
-        for patch in (mock.patch.dict(os.environ, self.fx.env),
-                      mock.patch.object(fetches, "shared", fetches.Fetches())):
+        for patch in (
+            mock.patch.dict(os.environ, self.fx.env),
+            mock.patch.object(fetches, "shared", fetches.Fetches()),
+        ):
             patch.start()
             self.addCleanup(patch.stop)
-        self.app = build(Config(workspaces=(self.fx.cwd,), working_dir=str(Path(tmp.name) / "work"),
-                                data_dir=str(Path(tmp.name) / "data")))
-        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
+        self.app = build(
+            Config(
+                workspaces=(self.fx.cwd,),
+                working_dir=str(Path(tmp.name) / "work"),
+                data_dir=str(Path(tmp.name) / "data"),
+            )
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
 
     async def asyncTearDown(self):
         await self.client.aclose()
@@ -1856,12 +2188,17 @@ class ReleasingOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_a_refused_press_is_a_400_and_one_record(self):
         for route in ("/api/release/prepare", "/api/release/publish"):
             with self.subTest(route=route):
-                got = await self.client.post(route, json={"cwd": self.fx.cwd, "version": "0.2.0-rc.1"})
+                got = await self.client.post(
+                    route, json={"cwd": self.fx.cwd, "version": "0.2.0-rc.1"}
+                )
                 self.assertEqual(got.status_code, 400)
                 self.assertIn("prerelease", got.json()["error"])
         service = self.app.state.service
         rows = service._journal().records(service._journal_key(self.fx.cwd), kind="release")
-        self.assertEqual([(r["phase"], r["outcome"]) for r in rows], [("prepare", "refused"), ("publish", "refused")])
+        self.assertEqual(
+            [(r["phase"], r["outcome"]) for r in rows],
+            [("prepare", "refused"), ("publish", "refused")],
+        )
 
     async def test_bad_bodies_are_400(self):
         for body in ({"cwd": "/etc", "version": "0.2.0"}, [], {}):

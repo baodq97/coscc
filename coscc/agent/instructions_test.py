@@ -1,8 +1,4 @@
-"""Tests for the reader that hands a session its project's instructions (`0088` R5, R7, R13).
-
-The fixture puts a canary in every kind of file the reader meets, the way `spike.md ## U6`
-did, so each assertion is about a word being present or absent rather than a shape.
-"""
+"""Tests for the reader that hands a session its project's instructions."""
 
 from __future__ import annotations
 
@@ -23,7 +19,7 @@ def plant(root: Path) -> Path:
     rules = root / ".claude" / "rules"
     (rules / "a-plain.md").write_text("CANARY-PLAIN\n", encoding="utf-8")
     (rules / "b-inline.md").write_text(
-        '---\npaths: ["src/**", \'lib/*.py\']\n---\n\nCANARY-INLINE\n', encoding="utf-8"
+        "---\npaths: [\"src/**\", 'lib/*.py']\n---\n\nCANARY-INLINE\n", encoding="utf-8"
     )
     (rules / "deep" / "c-block.md").write_text(
         '---\ndescription: x\npaths:\n  - "coscc/**"\n  - scripts/*.py\nother: y\n---\n\nCANARY-BLOCK\n',
@@ -86,7 +82,9 @@ class TheReaderTakesOnlyWhatTheProjectHolds(unittest.TestCase):
             "- .claude/rules/b-inline.md (paths: src/**, lib/*.py): read this file with Read",
             self.got.text,
         )
-        self.assertIn("- .claude/rules/deep/c-block.md (paths: coscc/**, scripts/*.py):", self.got.text)
+        self.assertIn(
+            "- .claude/rules/deep/c-block.md (paths: coscc/**, scripts/*.py):", self.got.text
+        )
         self.assertTrue(self.got.text.endswith("one of these patterns."))
 
     def test_a_front_matter_it_cannot_read_puts_the_rule_in_whole(self):
@@ -128,15 +126,16 @@ class NothingThereIsNothingSent(unittest.TestCase):
 
 
 class ThisCheckout(unittest.TestCase):
-    """R7 on the repository itself: its rules are scoped and stay out of the block."""
+    """On the repository itself: its rules are scoped and stay out of the block."""
 
     def test_every_rule_is_a_contents_line_only(self):
-        # `0094` split `coscc-app.md` into one rule per area; every one of them is scoped.
         root = Path(__file__).parents[2]
         got = instructions.read(root)
-        rules = tuple(sorted(
-            p.relative_to(root).as_posix() for p in (root / ".claude" / "rules").rglob("*.md")
-        ))
+        rules = tuple(
+            sorted(
+                p.relative_to(root).as_posix() for p in (root / ".claude" / "rules").rglob("*.md")
+            )
+        )
         self.assertEqual(got.scoped, rules)
         self.assertIn(".claude/rules/coscc-app.md", got.scoped)
         self.assertIn(".claude/rules/ui-standard.md", got.scoped)

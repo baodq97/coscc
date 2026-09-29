@@ -94,8 +94,11 @@ def cut(path: Path, until: int) -> dict[str, Any]:
                 if isinstance(b, dict) and b.get("type") == "tool_use":
                     open_calls.add(str(b.get("id")))
         elif e.get("type") == "user":
-            open_calls -= {str(b.get("tool_use_id")) for b in _blocks(e)
-                           if isinstance(b, dict) and b.get("type") == "tool_result"}
+            open_calls -= {
+                str(b.get("tool_use_id"))
+                for b in _blocks(e)
+                if isinstance(b, dict) and b.get("type") == "tool_result"
+            }
             if not open_calls:
                 safe = i
     pieces = [""]
@@ -139,8 +142,10 @@ def ceilings_left(
     if budget is not None and record.get("spent_usd") is not None:
         budget = round(budget - float(record["spent_usd"]), 6)
     used_up = (
-        "error_max_turns" if turns <= 0
-        else "error_max_budget_usd" if budget is not None and budget <= 0
+        "error_max_turns"
+        if turns <= 0
+        else "error_max_budget_usd"
+        if budget is not None and budget <= 0
         else ""
     )
     return turns, budget, used_up
@@ -162,6 +167,6 @@ def spent_after(path: Path, until: int) -> float | None:
         if isinstance(item, dict) and item.get("type") == "cost-state":
             try:
                 found = float(item.get("totalCostUSD"))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
     return found

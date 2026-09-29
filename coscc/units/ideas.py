@@ -75,7 +75,9 @@ def create_idea(
         raise CannotCreate("an idea needs a brief: the originator's own words are the idea")
     if any(line.rstrip() == _UNITS for line in text.splitlines()):
         # `cos.mjs` and `read_units` take the first such line for the app's own section.
-        raise CannotCreate(f"a brief may not hold the line {_UNITS!r}: the idea's units are listed under it")
+        raise CannotCreate(
+            f"a brief may not hold the line {_UNITS!r}: the idea's units are listed under it"
+        )
     store = root(workspace, data_dir)
     (store / COS_DIR).mkdir(parents=True, exist_ok=True)
     printed = _cos(store, "new-idea", str(slug or "").strip())
@@ -84,7 +86,11 @@ def create_idea(
         raise CannotCreate("cos.mjs new-idea printed nothing")
     path = (store / relative).resolve()
     ideas = (store / COS_DIR / IDEAS_DIR).resolve()
-    if path.parent != ideas or not path.name.endswith(".md") or not IDEA_ID_RE.fullmatch(path.name[:-3]):
+    if (
+        path.parent != ideas
+        or not path.name.endswith(".md")
+        or not IDEA_ID_RE.fullmatch(path.name[:-3])
+    ):
         raise CannotCreate(f"cos.mjs named something that is not an idea: {relative}")
     ideas.mkdir(parents=True, exist_ok=True)
     idea_id = path.name[:-3]
@@ -105,7 +111,9 @@ def unit_line(workspace_name: str, unit: str, depends_on: str = "") -> str:
     return f"- {workspace_name}/{unit}{tail}.\n"
 
 
-def append_unit(path: str | os.PathLike[str], workspace_name: str, unit: str, depends_on: str = "") -> None:
+def append_unit(
+    path: str | os.PathLike[str], workspace_name: str, unit: str, depends_on: str = ""
+) -> None:
     """Append one line to the end of the idea; `## Units` is the last section.
 
     A file that does not end in a newline gets one first.

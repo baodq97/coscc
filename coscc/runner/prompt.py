@@ -54,7 +54,7 @@ def answers_section(raw: bytes) -> bytes | None:
     idx = 0
     while True:
         nl = raw.find(b"\n", idx)
-        line = raw[idx: nl if nl != -1 else len(raw)]
+        line = raw[idx : nl if nl != -1 else len(raw)]
         if line.rstrip(b" \t\r") == b"## Answers":
             return raw[idx:]
         if nl == -1:
@@ -113,6 +113,7 @@ def _file_blocks(section: str) -> list[str]:
 
 def _row_blocks(meta: dict[str, Any], artifact: str) -> list[str]:
     """`artifact`'s answers from `cos.db`, and `intent.md`'s holds, each as an appended block."""
+
     def block(head: str, who: str, row: dict[str, Any], text: Any) -> str:
         return (
             f"### {head}\n{who}: {row.get('by')}. Date: {row.get('date')}. Via: {row.get('via')}.\n\n"
@@ -126,7 +127,12 @@ def _row_blocks(meta: dict[str, Any], artifact: str) -> list[str]:
     ]
     if artifact == "intent.md":
         blocks += [
-            block(_HOLD_HEADS.get(str(h.get("state")), str(h.get("state"))), "Decided by", h, h.get("reason"))
+            block(
+                _HOLD_HEADS.get(str(h.get("state")), str(h.get("state"))),
+                "Decided by",
+                h,
+                h.get("reason"),
+            )
             for h in meta.get("holds") or []
         ]
     return blocks
@@ -152,7 +158,9 @@ def with_rows(raw: bytes, artifact: str, meta: dict[str, Any] | None) -> str:
     place of the section the file holds.
     """
     section = answers_section(raw)
-    above = (raw if section is None else raw[: len(raw) - len(section)]).decode("utf-8", errors="replace")
+    above = (raw if section is None else raw[: len(raw) - len(section)]).decode(
+        "utf-8", errors="replace"
+    )
     answers = answers_for(raw, artifact, meta)
     return above if answers is None else f"{above.rstrip()}\n\n{answers}\n"
 
@@ -179,7 +187,9 @@ _ANSWERS_ADVICE = (
 )
 
 
-def _answers_block(directory: Path, artifact: str, repeat_content: bool, meta: dict[str, Any] | None = None) -> str | None:
+def _answers_block(
+    directory: Path, artifact: str, repeat_content: bool, meta: dict[str, Any] | None = None
+) -> str | None:
     """What a re-run is told about the answers its own artifact already carries. `None` when the
     artifact has never been written or has no answer.
 
@@ -553,7 +563,9 @@ def compose_prompt(
     # person's decision, or it may ask the same question again. `review` gets the same block
     # after *The rounds so far* below, so `stage != "review"` keeps it from landing here too.
     if is_prose_stage(stage) and not writes_own and stage != "review":
-        block = _answers_block(directory, artifact, repeat_content=stage != "intent", meta=unit_meta)
+        block = _answers_block(
+            directory, artifact, repeat_content=stage != "intent", meta=unit_meta
+        )
         if block:
             parts.append(block)
     # A draft `impl.md` that asked a person carries the answers; the step that runs next is told
@@ -573,7 +585,11 @@ def compose_prompt(
     review_path = directory.resolve() / "review.md"
     if stage in ("impl", "implement"):
         review = _read(directory / "review.md")
-        if review and _header_status(review) == "changes-requested" and "review-findings" not in included:
+        if (
+            review
+            and _header_status(review) == "changes-requested"
+            and "review-findings" not in included
+        ):
             header, number, findings = open_findings(review)
             included.append("review-findings")
             parts.append(
@@ -637,8 +653,11 @@ def compose_prompt(
             number = _round_number(last)
             start = last.find(INCOMPLETE_SECTIONS[0])
             sections = last[start:] if start != -1 else last
-            earlier = [r for r in _rounds(review[: found[-1].start()])
-                       if (_round_meta(r) or ("", ""))[1] != "incomplete"]
+            earlier = [
+                r
+                for r in _rounds(review[: found[-1].start()])
+                if (_round_meta(r) or ("", ""))[1] != "incomplete"
+            ]
             carried = ""
             if earlier:
                 _, full, left = open_findings(review[: found[-1].start()])
@@ -822,9 +841,13 @@ def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
         "`{n, text}` with the number the file gives it; `[]` when there is none.",
     ]
     if stage == "spec":
-        fields.append("- `unmeasured`: every `U<n>` id a `## Concerns` item opens with `[unmeasured]`; `[]` for none.")
+        fields.append(
+            "- `unmeasured`: every `U<n>` id a `## Concerns` item opens with `[unmeasured]`; `[]` for none."
+        )
     if stage == "spike":
-        fields.append("- `verdicts`: one `{id, verdict}` per `## U<n>` section, `verdict` being `holds` or `fails`.")
+        fields.append(
+            "- `verdicts`: one `{id, verdict}` per `## U<n>` section, `verdict` being `holds` or `fails`."
+        )
     if stage == "impl":
         fields.append(
             "- `needs_person`: the `F<k>` of every open finding of the last review round that this "
@@ -861,8 +884,8 @@ def round_block() -> str:
         "- `findings`: every finding of this round, those an earlier round raised carried forward "
         "with their id, as `{id, state, fixed_in, severity, rule, path, lines, text}`. `state` is "
         "`open`, `fixed`, `needs-person`, `claim-rejected` or `answered`; `fixed_in` is the commit "
-        "of a `fixed` one and `\"\"` otherwise; `rule` is the `S<n>` of the UI standard it names, "
-        "or `\"\"`; `text` is what the finding says, without its id, label, place or severity.\n"
+        'of a `fixed` one and `""` otherwise; `rule` is the `S<n>` of the UI standard it names, '
+        'or `""`; `text` is what the finding says, without its id, label, place or severity.\n'
         "- `screens`: one `{path, size, address, result}` per screenshot you opened, `size` as "
         "`1440x900`; `[]` when you opened none.\n\n"
         "If `submit` returns an error, the app has checked your object against the unit: "
@@ -875,7 +898,11 @@ def submit_prompt(stage: str, artifact: str, why: str) -> str:
     """The repair turn a step gets when its session ended without an accepted object: the tool
     again, and nothing else.
     """
-    what, section = ("round", "Hand back your round") if stage == submit.ROUND else ("judgement", "Hand back your judgement")
+    what, section = (
+        ("round", "Hand back your round")
+        if stage == submit.ROUND
+        else ("judgement", "Hand back your judgement")
+    )
     return (
         f"Your step ended without handing back its object: {why}\n\n"
         f"Call the `submit` tool now with your {what} of `{artifact}` as it stands, as "

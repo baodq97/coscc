@@ -8,12 +8,11 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.web import present
-from coscc.service import Invalid
+from coscc.service.common import Invalid
 from coscc.state.views import _channel_line, _job_line
 
 
 class UpdateMixin(rx.State, mixin=True):
-
     # -- the *Update* panel. Every field is copied from `Service.update_status`, re-read on
     # load, on every screen change and on every `poll_running` ask. `update_pending` is what
     # Run and Send warn on.
@@ -46,6 +45,7 @@ class UpdateMixin(rx.State, mixin=True):
 
     def _load_update(self) -> None:
         from coscc.state import SERVICE
+
         u = SERVICE.update_status()
         self.upd_version = str(u.get("version") or "")
         self.upd_commit = present.short_sha(u.get("commit"))
@@ -73,8 +73,7 @@ class UpdateMixin(rx.State, mixin=True):
         self.upd_error_tail = str(error.get("log_tail") or "")
         last = u.get("last") or {}
         self.upd_last = (
-            f"{last.get('result')}: {last.get('from')} → {last.get('to')}"
-            if last else ""
+            f"{last.get('result')}: {last.get('from')} → {last.get('to')}" if last else ""
         )
         self.upd_last_tail = str(last.get("log_tail") or "")
 
@@ -83,6 +82,7 @@ class UpdateMixin(rx.State, mixin=True):
         """The one Apply: waits only for a mechanical integration or a retake, then pauses
         every session and restarts."""
         from coscc.state import SERVICE
+
         try:
             await SERVICE.update_apply(channel, "")
         except Invalid as e:
@@ -92,6 +92,7 @@ class UpdateMixin(rx.State, mixin=True):
     @rx.event
     def cancel_update(self):
         from coscc.state import SERVICE
+
         try:
             SERVICE.update_cancel("")
         except Invalid as e:
@@ -101,6 +102,7 @@ class UpdateMixin(rx.State, mixin=True):
     @rx.event
     def build_local(self):
         from coscc.state import SERVICE
+
         try:
             SERVICE.update_build_local("")
         except Invalid as e:

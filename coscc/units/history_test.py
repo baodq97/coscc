@@ -25,9 +25,8 @@ from coscc.units.history import CODE, DELIVERABLE, UNKNOWN, BadTransition, Histo
 WS = "repo"
 UNIT = "0001_a-problem"
 
-# The same set `coscc/units/states_test.py` uses: no stage name, artifact or status is shared
-# with the default. `spec.md` R6's second half is only demonstrated if a unit can be driven
-# from end to end through this without a line of Python changing.
+# The same set `coscc/units/states_test.py` uses: no stage name, artifact or status is shared with
+# the default.
 OTHER = {
     "name": "two-step",
     "absent": "nowhere",
@@ -57,7 +56,7 @@ class Fixture(unittest.TestCase):
 
 
 class DeletingTheLastRowMovesTheUnitBack(Fixture):
-    """R1. There is no current-state column, and this is how you can tell."""
+    """There is no current-state column, and this is how you can tell."""
 
     def test_the_projection_falls_back_with_nothing_else_updated(self):
         self.history.record(WS, UNIT, "intent.md", "draft")
@@ -75,9 +74,12 @@ class DeletingTheLastRowMovesTheUnitBack(Fixture):
         # the thing that would let the test above keep passing while being wrong.
         self.history.record(WS, UNIT, "intent.md", "draft")
         with self.data.connect() as conn:
-            tables = [r["name"] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )]
+            tables = [
+                r["name"]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                )
+            ]
             for table in tables:
                 names = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
                 for banned in ("state", "status", "current_state", "current"):
@@ -92,7 +94,7 @@ class DeletingTheLastRowMovesTheUnitBack(Fixture):
 
 
 class EveryFieldIsWrittenOrSaysItIsNotKnown(Fixture):
-    """R3. Never a NULL, never a blank, never a column left out."""
+    """Never a NULL, never a blank, never a column left out."""
 
     def test_what_a_caller_does_not_supply_becomes_the_word_unknown(self):
         row = self.history.record(WS, UNIT, "intent.md", "draft")
@@ -107,7 +109,9 @@ class EveryFieldIsWrittenOrSaysItIsNotKnown(Fixture):
 
     def test_no_stored_column_is_ever_null_or_empty(self):
         self.history.record(WS, UNIT, "intent.md", "draft")
-        self.history.record(WS, UNIT, "intent.md", "accepted", actor="me", session="s1", source="run:7")
+        self.history.record(
+            WS, UNIT, "intent.md", "accepted", actor="me", session="s1", source="run:7"
+        )
         with self.data.connect() as conn:
             for row in conn.execute("SELECT * FROM transitions"):
                 for name in row.keys():
@@ -117,7 +121,6 @@ class EveryFieldIsWrittenOrSaysItIsNotKnown(Fixture):
                     self.assertNotEqual(str(row[name]).strip(), "", name)
 
     def test_a_row_with_no_guard_says_so_rather_than_leaving_it_blank(self):
-        # `0136` step 1: the four columns of R15 follow R3 like every other.
         row = self.history.record(WS, UNIT, "intent.md", "draft")
         self.assertEqual(
             (row["guard"], row["authority"], row["run"], row["inputs"]),
@@ -126,11 +129,19 @@ class EveryFieldIsWrittenOrSaysItIsNotKnown(Fixture):
 
     def test_guard_authority_run_and_inputs_are_stored_as_given(self):
         self.history.record(
-            WS, UNIT, "intent.md", "draft",
-            guard="stage-result", authority="agent", run="r1", inputs={"revision": "ab", "pr": 7},
+            WS,
+            UNIT,
+            "intent.md",
+            "draft",
+            guard="stage-result",
+            authority="agent",
+            run="r1",
+            inputs={"revision": "ab", "pr": 7},
         )
         row = self.rows()[-1]
-        self.assertEqual((row["guard"], row["authority"], row["run"]), ("stage-result", "agent", "r1"))
+        self.assertEqual(
+            (row["guard"], row["authority"], row["run"]), ("stage-result", "agent", "r1")
+        )
         self.assertEqual(json.loads(row["inputs"]), {"pr": 7, "revision": "ab"})
 
     def test_an_authority_outside_the_four_is_refused(self):
@@ -139,8 +150,8 @@ class EveryFieldIsWrittenOrSaysItIsNotKnown(Fixture):
         self.assertEqual(self.rows(), [])
 
     def test_the_state_set_the_row_was_written_under_is_recorded(self):
-        # `spec.md` C5: two configurations comparing states that never meant the same
-        # thing is a failure that runs rather than stops. The row has to say which.
+        # Two configurations comparing states that never meant the same thing is a failure that runs
+        # rather than stops. The row has to say which.
         self.history.record(WS, UNIT, "intent.md", "draft")
         self.other_history().record(WS, UNIT, "ticket.txt", "open")
         machines = [row["machine"] for row in self.rows()]
@@ -157,7 +168,7 @@ class FromStateComesFromTheLog(Fixture):
         row = self.history.record(WS, UNIT, "intent.md", "accepted")
         self.assertEqual(row["from_state"], "draft")
 
-    def test_a_settled_artifact_edited_again_is_the_event_0013_counts(self):
+    def test_a_settled_artifact_edited_again_is_the_event_counts(self):
         self.history.record(WS, UNIT, "intent.md", "draft")
         self.history.record(WS, UNIT, "intent.md", "accepted")
         self.history.record(WS, UNIT, "intent.md", "accepted", source="commit:abc")
@@ -200,10 +211,20 @@ class AStateTheArtifactCannotCarryIsRefused(Fixture):
 class AnImportCanBeRunTwice(Fixture):
     def test_a_row_with_the_same_key_is_stored_once(self):
         batch = [
-            {"workspace": WS, "unit": UNIT, "artifact": "intent.md", "to_state": "draft",
-             "once_key": "commit:aaa:intent.md"},
-            {"workspace": WS, "unit": UNIT, "artifact": "intent.md", "to_state": "accepted",
-             "once_key": "commit:bbb:intent.md"},
+            {
+                "workspace": WS,
+                "unit": UNIT,
+                "artifact": "intent.md",
+                "to_state": "draft",
+                "once_key": "commit:aaa:intent.md",
+            },
+            {
+                "workspace": WS,
+                "unit": UNIT,
+                "artifact": "intent.md",
+                "to_state": "accepted",
+                "once_key": "commit:bbb:intent.md",
+            },
         ]
         first = self.history.record_many(batch)
         second = self.history.record_many(batch)
@@ -221,7 +242,8 @@ class AnImportCanBeRunTwice(Fixture):
 
 
 class AUnitCarriesASequenceOfSessions(Fixture):
-    """R4, and the distinction `intent.md` constraint 2 says a design must keep."""
+    """A unit carries a sequence of sessions, which differs from one long session over many turns:
+    eight steps are eight sessions, and a chat over many turns is one."""
 
     def test_eight_steps_are_eight_sessions_in_order(self):
         for index, artifact in enumerate(("intent.md", "spec.md", "plan.md"), start=1):
@@ -240,9 +262,8 @@ class AUnitCarriesASequenceOfSessions(Fixture):
         self.assertEqual(found["sessions"][0]["stages"], ["intent", "spec"])
 
     def test_imported_history_reports_no_sessions_rather_than_one_called_unknown(self):
-        # `spec.md` C1. Git knows commit authors, not sessions, so the imported events
-        # have none — and a row labelled "unknown" in the sequence would read as though
-        # one session did all of it.
+        # Git knows commit authors, not sessions, so the imported events have none — and a row
+        # labelled "unknown" in the sequence would read as though one session did all of it.
         self.history.record(WS, UNIT, "intent.md", "draft", source="commit:aaa")
         self.history.record(WS, UNIT, "intent.md", "accepted", source="commit:bbb")
         found = self.history.sessions_of(WS, UNIT)
@@ -251,7 +272,7 @@ class AUnitCarriesASequenceOfSessions(Fixture):
 
 
 class WhatAUnitProduced(Fixture):
-    """R5: one table, one classifying field, and a total nobody has to add up."""
+    """One table, one classifying field, and a total nobody has to add up."""
 
     def test_the_two_kinds_are_counted_apart_and_together(self):
         self.history.add_output(WS, UNIT, "intent", DELIVERABLE, ".cos/0001/intent.md")
@@ -276,7 +297,7 @@ class WhatAUnitProduced(Fixture):
 
 
 class ADifferentStateSetDrivesAUnitEndToEnd(Fixture):
-    """`spec.md` R6, second half, end to end. Not one line of Python differs."""
+    """Not one line of Python differs."""
 
     def test_a_unit_runs_the_whole_of_a_set_this_module_has_never_seen(self):
         history = self.other_history()
@@ -288,9 +309,7 @@ class ADifferentStateSetDrivesAUnitEndToEnd(Fixture):
         # word for settled is not `accepted`.
         history.record(WS, UNIT, "ticket.txt", "closed", source="commit:zzz")
 
-        self.assertEqual(
-            history.state(WS, UNIT), {"ticket.txt": "closed", "wrap.txt": "closed"}
-        )
+        self.assertEqual(history.state(WS, UNIT), {"ticket.txt": "closed", "wrap.txt": "closed"})
         counted = settled_edits(history.transitions(WS, UNIT), history.machine)
         self.assertEqual(len(counted), 1)
         self.assertEqual(counted[0]["source"], "commit:zzz")
@@ -309,7 +328,7 @@ if __name__ == "__main__":
 
 
 class WhichStateSetTheRowsWereWrittenUnder(Fixture):
-    """`spec.md` C5. Two sets in one log is a failure that otherwise runs silently."""
+    """Two sets in one log is a failure that otherwise runs silently."""
 
     def test_one_set_reports_only_itself(self):
         self.history.record(WS, UNIT, "intent.md", "draft")
@@ -330,11 +349,9 @@ class WhichStateSetTheRowsWereWrittenUnder(Fixture):
 class SettledEditsCannotBorrowTheWrongStateSet(Fixture):
     """The `machine` argument is required, and this is why it was made so.
 
-    It defaulted to `states.default()`. Rows written under another set would then be
-    filtered by the default set's idea of "settled", match nothing, and come back as an
-    empty list with no error raised anywhere — `spec.md` C5's failure, wearing a
-    convenience.
-    """
+    A default of `states.default()` would let rows written under another set be filtered by the
+    default set's idea of "settled", match nothing, and come back as an empty list with no error
+    raised anywhere: a silent failure wearing a convenience."""
 
     def test_rows_from_another_set_counted_under_that_set(self):
         history = self.other_history()

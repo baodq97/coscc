@@ -10,17 +10,17 @@ import asyncio
 from typing import Any, AsyncIterator
 
 from coscc.runlog import notices
-from coscc.runlog.journal import BELL, Busy
+from coscc.runlog.journal import BELL
+from coscc.data import Busy
 from coscc.service.common import Invalid
 
 
 class NoticesMixin:
-
-# -- notices -------------------------------------------------------------
-#
-# One stream for every listener. A connection lasts `notices.LIFETIME_SECONDS` at most, then
-# ends and the listener comes back with `after`; a peer that vanished holds it until then or
-# until a `beat` fails to write.
+    # -- notices -------------------------------------------------------------
+    #
+    # One stream for every listener. A connection lasts `notices.LIFETIME_SECONDS` at most, then
+    # ends and the listener comes back with `after`; a peer that vanished holds it until then or
+    # until a `beat` fails to write.
 
     def notice_scope(self, workspace: str) -> str | None:
         """The journal key to narrow to, `None` for every workspace; an unknown workspace or a stream with no run log is refused."""
@@ -32,7 +32,10 @@ class NoticesMixin:
         return self._journal_key(workspace)
 
     async def follow_notices(
-        self, scope: str | None, after: int | None, beat: float = notices.BEAT_SECONDS,
+        self,
+        scope: str | None,
+        after: int | None,
+        beat: float = notices.BEAT_SECONDS,
         lifetime: float | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """With no `after`, or one past every row, a `head` line first; with one, every notice
@@ -49,8 +52,8 @@ class NoticesMixin:
         ends = loop.time() + (notices.LIFETIME_SECONDS if lifetime is None else lifetime)
         head = await asyncio.to_thread(journal.last_id)
         if after is None or after > head:
-# An `after` past every row is a cursor from a run log since replaced, whose ids start
-# again at 1: kept, it would hide every notice. The `head` line sets the listener's cursor.
+            # An `after` past every row is a cursor from a run log since replaced, whose ids start
+            # again at 1: kept, it would hide every notice. The `head` line sets the listener's cursor.
             last = head
             yield {"type": "head", "id": head}
         else:
@@ -62,7 +65,11 @@ class NoticesMixin:
                 while True:
                     try:
                         rows = await asyncio.to_thread(
-                            journal.notice_rows, last, notices.SOURCE_KINDS, scope, notices.PAGE,
+                            journal.notice_rows,
+                            last,
+                            notices.SOURCE_KINDS,
+                            scope,
+                            notices.PAGE,
                         )
                     except Busy:
                         # Read again at the next wake; nothing is skipped past.

@@ -96,8 +96,14 @@ async def snapshot(cwd: str, session_id: str) -> tuple[dict[str, Any], BaseExcep
     the caller to re-raise once it has written what it has.
     """
     fields: dict[str, Any] = {
-        "head": None, "branch": None, "base": None, "base_ref": None,
-        "commits": None, "status": None, "excerpt": None, "excerpt_total_chars": None,
+        "head": None,
+        "branch": None,
+        "base": None,
+        "base_ref": None,
+        "commits": None,
+        "status": None,
+        "excerpt": None,
+        "excerpt_total_chars": None,
     }
     errors: list[str] = []
     path = Path(cwd)
@@ -203,9 +209,7 @@ def describe_attempt(found: dict[str, Any]) -> str:
                 f"Head: {attempt['head']} on {attempt.get('branch') or '(unknown branch)'}"
             )
         if attempt.get("base"):
-            lines.append(
-                f"Base: {attempt['base']} ({attempt.get('base_ref') or '(unknown ref)'})"
-            )
+            lines.append(f"Base: {attempt['base']} ({attempt.get('base_ref') or '(unknown ref)'})")
         for c in attempt.get("commits") or []:
             lines.append(f"{c['sha']} {c['subject']}")
         for s in attempt.get("status") or []:
@@ -216,9 +220,7 @@ def describe_attempt(found: dict[str, Any]) -> str:
         excerpt = attempt.get("excerpt")
         if excerpt:
             total = attempt.get("excerpt_total_chars") or len(excerpt)
-            lines.append(
-                f"--- excerpt: last {len(excerpt)} of {total} characters, verbatim ---"
-            )
+            lines.append(f"--- excerpt: last {len(excerpt)} of {total} characters, verbatim ---")
             lines.append(excerpt)
             lines.append("--- end of excerpt ---")
 
@@ -238,8 +240,11 @@ def describe_attempt(found: dict[str, Any]) -> str:
         lines.append("")
         lines.append(
             "That review ran out of turns, and "
-            + ("the closing turn the app gave it wrote no round" if opened.get("closing")
-               else "the app could not give it a closing turn")
+            + (
+                "the closing turn the app gave it wrote no round"
+                if opened.get("closing")
+                else "the app could not give it a closing turn"
+            )
             + ": `review.md` holds nothing from it."
         )
         if opened.get("purged"):

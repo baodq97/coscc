@@ -35,13 +35,13 @@ RUNNABLE = (
     f"coscc/_web/{frontend.MARKER.as_posix()}",
     "coscc/_harness/scripts/cos.mjs",
     "coscc/_harness/skills/write-spec/SKILL.md",
-    # Committed rather than generated, unlike the four above, and checked anyway: an
-    # installed copy cannot tell how a missing file came to be missing (`0013` step 8).
+    # Committed rather than generated, unlike the four above, and checked anyway: an installed copy
+    # cannot tell how a missing file came to be missing.
     "coscc/units/states.json",
     "coscc/units/lanes.json",
     "coscc/agent/models.json",
     "coscc/agent/agents.json",
-    # `0068` R1: the commit the board shows is read from here.
+    # The commit the board shows is read from here.
     STAMP,
     "coscc/__init__.py",
 )
@@ -72,8 +72,8 @@ class TheCheckoutFindsItsOwnRules(unittest.TestCase):
 
 class RulesThatCannotBeFoundStopTheStep(unittest.TestCase):
     def test_read_skill_raises_rather_than_returning_empty(self):
-        # The whole of `spec.md` R4. An empty string here is what let a step run, spend
-        # quota, and leave a record identical to a step that had its rules.
+        # An empty string here is what let a step run, spend quota, and leave a record identical to
+        # a step that had its rules.
         with self.assertRaises(MissingRules):
             harness.read_skill("write-no-such-stage", "no-such-stage")
 
@@ -137,8 +137,8 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertTrue(any("SKILL.md" in c for c in complaints), complaints)
 
     def test_a_wheel_without_the_state_set_is_caught(self):
-        # `0013`: `coscc/units/states.py` has nothing to validate a transition against, so the
-        # log can neither be read nor written. The wheel installs and the page renders.
+        # `coscc/units/states.py` has nothing to validate a transition against, so the log can
+        # neither be read nor written. The wheel installs and the page renders.
         with tempfile.TemporaryDirectory() as tmp:
             names = [n for n in RUNNABLE if not n.endswith("states.json")]
             wheel = _wheel(Path(tmp) / "nostates.whl", names)
@@ -147,8 +147,7 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertIn("states.json", complaints[0])
 
     def test_a_wheel_without_the_model_defaults_is_caught(self):
-        # `0004_no-setting-says-which-model-runs-a-stage`: every stage would fall back to
-        # `COS_MODEL` and nothing would fail.
+        # Every stage would fall back to `COS_MODEL` and nothing would fail.
         with tempfile.TemporaryDirectory() as tmp:
             names = [n for n in RUNNABLE if not n.endswith("models.json")]
             wheel = _wheel(Path(tmp) / "nomodels.whl", names)
@@ -157,7 +156,7 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertIn("models.json", complaints[0])
 
     def test_a_wheel_without_the_agent_table_is_caught(self):
-        # `0036` R1: no session would be told its name, and nothing would fail.
+        # No session would be told its name, and nothing would fail.
         with tempfile.TemporaryDirectory() as tmp:
             names = [n for n in RUNNABLE if not n.endswith("agents.json")]
             wheel = _wheel(Path(tmp) / "noagents.whl", names)
@@ -173,7 +172,7 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertEqual(len(complaints), 2, complaints)
 
     def test_skills_are_counted_not_named(self):
-        # `spec.md` C4: nine is today's number. A tenth skill must not need this file edited.
+        # Nine is today's number. A tenth skill must not need this file edited.
         with tempfile.TemporaryDirectory() as tmp:
             names = list(RUNNABLE) + ["coscc/_harness/skills/write-tenth/SKILL.md"]
             wheel = _wheel(Path(tmp) / "ten.whl", names)
@@ -206,8 +205,13 @@ class AWheelIsChecked(unittest.TestCase):
 
     def test_a_build_stamp_without_a_full_commit_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for bad in ('{"commit": "abc1234"}', '{"commit": null}', "not json", "[]",
-                        '{"commit": "' + "G" * 40 + '"}'):
+            for bad in (
+                '{"commit": "abc1234"}',
+                '{"commit": null}',
+                "not json",
+                "[]",
+                '{"commit": "' + "G" * 40 + '"}',
+            ):
                 with self.subTest(stamp=bad):
                     wheel = _wheel(Path(tmp) / "w.whl", RUNNABLE, stamp=bad)
                     complaints = harness.wheel_complaints(wheel)

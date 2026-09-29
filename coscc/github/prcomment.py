@@ -101,7 +101,9 @@ async def _gh(argv: list[str], cwd: str, stdin: str | None) -> tuple[int, str, s
     return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 
-async def _call(run: Run, argv: list[str], cwd: str, stdin: str | None) -> tuple[int, str, str] | str:
+async def _call(
+    run: Run, argv: list[str], cwd: str, stdin: str | None
+) -> tuple[int, str, str] | str:
     """The call's answer, or a reason it could not be had."""
     try:
         return await run(argv, cwd, stdin)
@@ -136,7 +138,9 @@ async def post(
     if not pr_url:
         return Result("failed", reason="pr.md names no pull request")
     if not PR_URL_RE.match(pr_url):
-        return Result("failed", reason=f"pr.md names something that is not a pull request URL: {pr_url!r}")
+        return Result(
+            "failed", reason=f"pr.md names something that is not a pull request URL: {pr_url!r}"
+        )
 
     mark = marker(unit, n)
     got = await _call(run, ["pr", "view", pr_url, "--json", "comments"], cwd, None)
@@ -154,7 +158,10 @@ async def post(
             return Result("already", url=str(c.get("url") or ""))
 
     got = await _call(
-        run, ["pr", "comment", pr_url, "--body-file", "-"], cwd, body(unit, n, verdict, text, author)
+        run,
+        ["pr", "comment", pr_url, "--body-file", "-"],
+        cwd,
+        body(unit, n, verdict, text, author),
     )
     if isinstance(got, str):
         return Result("failed", reason=got)

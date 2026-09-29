@@ -1,21 +1,15 @@
 """Tests for the workspace list, weighted towards what must NOT happen.
 
-`spec.md` R12 and R21 are the reason this file is longer than the module deserves:
-the store is the first thing in the app a user edits by hand, and the first thing whose
-contents decide which directories the app will work in.
-
 It moved from a JSON file under the working folder into the app's SQLite database.
 Every test here that was about the *shape* of the file is now about the shape of the table,
 and the ones about `flock` are about `BEGIN IMMEDIATE`. The claims did not change; the
 thing they are claimed of did.
 
 Every `Store` below is constructed with an explicit data root. A missing second argument
-would send the test at the real `~/.cos`, which is exactly the accident worth making loud.
-"""
+would send the test at the real `~/.cos`, which is exactly the accident worth making loud."""
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import tempfile
@@ -28,7 +22,7 @@ from coscc.service.store import BadName, Busy, Store, clean_label, require_name,
 
 
 class NamesThatMayNotBecomePaths(unittest.TestCase):
-    def test_the_inputs_spec_r12_lists_are_all_refused(self):
+    def test_the_inputs_spec_lists_are_all_refused(self):
         for bad in ("../x", "/etc", "a/b", "", ".", "..", "x" * 65, "a\\b", "a b", "a\n"):
             self.assertFalse(valid_name(bad), bad)
             with self.assertRaises(BadName, msg=bad):
@@ -57,9 +51,7 @@ class PathsAreBuiltNotStored(unittest.TestCase):
             store = Store(d, d)
             store.add("repo", label="My repo")
             with store.data.connect() as conn:
-                columns = {
-                    row["name"] for row in conn.execute("PRAGMA table_info(workspaces)")
-                }
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(workspaces)")}
                 row = conn.execute("SELECT * FROM workspaces").fetchone()
             self.assertEqual(columns, {"root", "name", "label", "added_at"})
             self.assertEqual(row["root"], str(Path(d).resolve()))
@@ -87,11 +79,8 @@ class AHandEditedStoreCannotWidenTheBoundary(unittest.TestCase):
                 )
 
     def test_an_entry_naming_an_outside_path_is_dropped(self):
-        """`spec.md` R21, at the store layer.
-
-        Writing `/etc` or `../x` into the table by hand must not make it a workspace. The
-        name is rejected on read, so the entry simply does not exist.
-        """
+        """Writing `/etc` or `../x` into the table by hand must not make it a workspace. The
+        name is rejected on read, so the entry simply does not exist."""
         with tempfile.TemporaryDirectory() as d:
             store = Store(d, d)
             self._insert(store, "/etc", "../../etc", "ok")
@@ -111,9 +100,11 @@ class AHandEditedStoreCannotWidenTheBoundary(unittest.TestCase):
 
     def test_another_working_folders_entries_are_not_visible_here(self):
         """One database, several roots. A row is scoped or the boundary means nothing."""
-        with tempfile.TemporaryDirectory() as data_dir, \
-                tempfile.TemporaryDirectory() as one, \
-                tempfile.TemporaryDirectory() as two:
+        with (
+            tempfile.TemporaryDirectory() as data_dir,
+            tempfile.TemporaryDirectory() as one,
+            tempfile.TemporaryDirectory() as two,
+        ):
             Store(one, data_dir).add("mine")
             self.assertEqual([e.name for e in Store(two, data_dir).entries()], [])
             self.assertEqual([e.name for e in Store(one, data_dir).entries()], ["mine"])
@@ -126,14 +117,12 @@ class ListOperations(unittest.TestCase):
             Store(d, d).add("a", "A")
             Store(d, d).add("b")
             Store(d, d).set_label("b", "B")
-            self.assertEqual(
-                {e.name: e.label for e in Store(d, d).entries()}, {"a": "A", "b": "B"}
-            )
+            self.assertEqual({e.name: e.label for e in Store(d, d).entries()}, {"a": "A", "b": "B"})
             Store(d, d).remove("a")
             self.assertEqual([e.name for e in Store(d, d).entries()], ["b"])
 
     def test_remove_does_not_touch_the_directory(self):
-        # `spec.md` R18 and C6: the app has no undo and a clone may hold uncommitted work.
+        # The app has no undo and a clone may hold uncommitted work.
         with tempfile.TemporaryDirectory() as d:
             store = Store(d, d)
             target = store.path_of("repo")
@@ -180,7 +169,6 @@ class ListOperations(unittest.TestCase):
             self.assertEqual(len(store.entries()[0].label), 200)
 
 
-
 HOLDER = """
 import sqlite3, sys, time
 conn = sqlite3.connect(sys.argv[1], isolation_level=None)
@@ -194,17 +182,13 @@ time.sleep(60)
 
 
 class TheTransactionIsAcrossProcesses(unittest.TestCase):
-    """The old arrangement was measured leaving 8 of 20 entries behind
-    (`.cos/0004_silent-concurrent-loss/plan.md:115`).
-
-    These use a real child process, not a second connection in this one. The loss being
+    """These use a real child process, not a second connection in this one. The loss being
     fixed was between processes, and a same-process stand-in would pass even if the
     exclusion were a threading lock again.
 
     The full claim is `scripts/verify_0004.py` with four writers and twenty entries. What
     is here is the behaviour around it: a bounded wait, an error that says what happened,
-    and a crash that does not wedge the database.
-    """
+    and a crash that does not wedge the database."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -230,7 +214,7 @@ class TheTransactionIsAcrossProcesses(unittest.TestCase):
         return child
 
     def test_waiting_for_a_held_database_ends_in_an_error_not_a_hang(self):
-        """`spec.md` R10. The deadline turns a hang into something sayable."""
+        """The deadline turns a hang into something sayable."""
         store = Store(self.root, self.root)
         self._holder(store)
         with mock.patch("coscc.service.store.LOCK_TIMEOUT", 0.5):
@@ -240,8 +224,8 @@ class TheTransactionIsAcrossProcesses(unittest.TestCase):
             waited = time.monotonic() - began
         self.assertGreaterEqual(waited, 0.4, "it gave up before the deadline it was given")
         self.assertLess(waited, 5.0, "it did not give up")
-        # `spec.md` C7: a timeout reads like a broken app unless it says what is
-        # happening, and which file it is happening to.
+        # A timeout reads like a broken app unless it says what is happening, and which file it is
+        # happening to.
         self.assertIn("holding", str(caught.exception))
         self.assertIn(str(store.data.db_path), str(caught.exception))
 
@@ -295,18 +279,13 @@ class TheTransactionIsAcrossProcesses(unittest.TestCase):
 
 
 class NothingIsWrittenIntoTheWorkingFolder(unittest.TestCase):
-    """Three tests used to live here, one per artifact a pre-`0006` version left in the
-    working folder: a JSON list, a lock file, a temp file. Each named its file as a
-    literal, and those names carried the author's own — which is what
-    `.cos/0008_personal-name-blocks-publishing` exists to remove. Renaming the literals
-    would have been worse than deleting them: it would claim files once existed under a
-    name they never had.
+    """Renaming the literals would have been worse than deleting them: it would claim files once
+    existed under a name they never had.
 
     So they are replaced by the invariant they were three samples of. It is the stronger
     claim anyway: the working folder is somebody else's git checkout, and the store writes
     into `COS_DATA_DIR` or nowhere. The old assertions could only catch the three names
-    somebody thought to list; this catches a fourth.
-    """
+    somebody thought to list; this catches a fourth."""
 
     def test_a_write_leaves_the_working_folder_untouched(self):
         with tempfile.TemporaryDirectory() as work, tempfile.TemporaryDirectory() as data:

@@ -1,5 +1,5 @@
-"""Tests for `AnswersMixin` in `coscc/service/answers.py`, split from `coscc/service/service_test.py` (`0095`).
-"""
+"""Tests for `AnswersMixin` in `coscc/service/answers.py`, split from
+`coscc/service/service_test.py`."""
 
 from __future__ import annotations
 
@@ -40,7 +40,6 @@ class FakeGh:
         self.comments: list[dict] = []
 
     async def __call__(self, argv, cwd, stdin):
-        import json
 
         self.calls.append(list(argv))
         if self.fail:
@@ -58,18 +57,24 @@ class FakeGh:
 
 
 class ReviewRoundsReachThePullRequest(unittest.TestCase):
-    """`0021`. A round the app writes is posted; any round can be posted again, once."""
+    """A round the app writes is posted; any round can be posted again, once."""
 
     class Reviews:
         """A review session that adds round 2 to the round `review.md` held."""
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", REVIEW_ONE + ROUND_TWO)
-            # `0136` R5: the round's object, which `review.md` is written from.
-            await _submits(kw, verdict="changes-requested", findings=[
-                finding("F1", "fixed", "high", fixed_in="abcdef2", path="", text="the first thing"),
-                finding("F2", "open", "low", path="", text="the second thing"),
-            ])
+            # The round's object, which `review.md` is written from.
+            await _submits(
+                kw,
+                verdict="changes-requested",
+                findings=[
+                    finding(
+                        "F1", "fixed", "high", fixed_in="abcdef2", path="", text="the first thing"
+                    ),
+                    finding("F2", "open", "low", path="", text="the second thing"),
+                ],
+            )
             yield ("done", {"session_id": "sess-r", "cost": {}})
 
     def setUp(self):
@@ -87,7 +92,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
             ),
             self.Reviews(),
         )
-        self.made = create_sync(self.service,str(self.repo), "a-problem", "some words")
+        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
         self.dir = Path(self.made["path"])
         (self.dir / "pr.md").write_text(
             f"# PR: a problem\nAuthor: t. Status: accepted.\nPR: {PR_URL}\n", encoding="utf-8"
@@ -114,8 +119,10 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
                 out.append(item)
             return out
 
-        with mock.patch.object(board_reader, "gate", open_gate), \
-                mock.patch.object(prcomment, "_gh", gh):
+        with (
+            mock.patch.object(board_reader, "gate", open_gate),
+            mock.patch.object(prcomment, "_gh", gh),
+        ):
             return asyncio.run(go())
 
     def _pr_rows(self):
@@ -128,7 +135,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         [u] = asyncio.run(self.service.board(str(self.repo)))["units"]
         return {r["n"]: r["comment"] for r in u["rounds"]}
 
-    # R2
     def test_a_round_the_step_writes_is_posted_once_with_its_own_text(self):
         gh = FakeGh()
         _, done = self._run_review(gh)[-1]
@@ -140,18 +146,22 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertEqual([(c["round"], c["state"]) for c in done["comments"]], [(2, "posted")])
 
     def test_changes_requested_reaches_the_history(self):
-        """`0136` R5, `0134`: the round's verdict reaches the history whole, through guard
-        `review-round`, and no failure is swallowed on the way."""
+        """The round's verdict reaches the history whole, through guard `review-round`, and no
+        failure is swallowed on the way."""
         _, done = self._run_review(FakeGh())[-1]
         self.assertNotIn("ingest_error", done)
-        rows = [r for r in self.service.unit_history(str(self.repo), self.unit)["transitions"] if r["artifact"] == "review.md"]
+        rows = [
+            r
+            for r in self.service.unit_history(str(self.repo), self.unit)["transitions"]
+            if r["artifact"] == "review.md"
+        ]
         self.assertEqual(
             (rows[-1]["to_state"], rows[-1]["guard"], rows[-1]["authority"]),
             ("changes-requested", "review-round", "agent"),
         )
 
     def test_the_end_record_counts_the_findings_of_the_added_round(self):
-        # `0033` R10: round 2 has two findings, one of them still open.
+        # Round 2 has two findings, one of them still open.
         from coscc.runlog.journal import Journal
 
         self._run_review(FakeGh())
@@ -159,8 +169,8 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         end = j.records(str(self.repo.resolve()), kind="end")[-1]
         self.assertEqual((end["outcome"], end["findings"], end["findings_open"]), ("done", 2, 1))
 
-    def test_0093_the_end_record_carries_the_added_rounds_verdicts(self):
-        # R9: the one round this step added, round 2, asks for changes.
+    def test_the_end_record_carries_the_added_rounds_verdicts(self):
+        # The one round this step added, round 2, asks for changes.
         from coscc.runlog.journal import Journal
 
         self._run_review(FakeGh())
@@ -168,14 +178,15 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         end = j.records(str(self.repo.resolve()), kind="end")[-1]
         self.assertEqual(end["verdicts"], ["changes-requested"])
 
-    # R6
     def test_a_failed_post_leaves_review_md_byte_for_byte_the_same(self):
         self._run_review(FakeGh())
         good = (self.dir / "review.md").read_bytes()
         (self.dir / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
         _, done = self._run_review(FakeGh(fail=True))[-1]
-        # `0136` R5: the app has a row for round 2 now, so the round it writes is round 3.
-        self.assertEqual((self.dir / "review.md").read_bytes(), good.replace(b"## Round 2", b"## Round 3"))
+        # The app has a row for round 2 now, so the round it writes is round 3.
+        self.assertEqual(
+            (self.dir / "review.md").read_bytes(), good.replace(b"## Round 2", b"## Round 3")
+        )
         self.assertEqual(done["outcome"], "done")
         self.assertEqual(done["comments"][0]["state"], "failed")
         self.assertIn("Bad credentials", done["comments"][0]["reason"])
@@ -203,7 +214,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
             asyncio.run(go())
         self.assertEqual(gh.calls, [])
 
-    # R7
     def test_the_board_says_which_round_is_not_on_the_pr(self):
         (self.dir / "review.md").write_text(REVIEW_ONE + ROUND_TWO, encoding="utf-8")
         self._post(FakeGh(), 1)
@@ -218,7 +228,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self._post(FakeGh(), 1)
         self.assertTrue(self._rounds()[1]["posted"])
 
-    # R8
     def test_posting_again_never_makes_a_second_comment(self):
         gh = FakeGh()
         first = self._post(gh, 1)
@@ -255,7 +264,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertEqual((r["state"], r["reason"]), ("failed", "pr.md names no pull request"))
         self.assertEqual(gh.calls, [])
 
-    # R13
     def test_every_attempt_is_one_run_log_row(self):
         self._post(FakeGh(), 1)
         self._post(FakeGh(fail=True), 1)
@@ -293,23 +301,35 @@ class ADelegatedAnswer(unittest.TestCase):
             root = Path(d)
             cwd = str(root / "work" / "proj")
             Path(cwd).mkdir(parents=True)
-            config = Config(workspaces=(cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+            config = Config(
+                workspaces=(cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+            )
             service = Service(config, Sessions(config))
             made = create_sync(service, cwd, "a-problem", "x")
             (Path(made["path"]) / "intent.md").write_text(
                 "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n## Open questions\n\n1. One?\n2. Two?\n",
-                encoding="utf-8")
-            added = service.add_decision({"kind": "delegation", "text": "Leif đặt tên.", "source": "chat",
-                                          "agent": "Leif", "covers": "naming"})["added"]
-            asyncio.run(service.answer(cwd, made["unit"], "intent.md", 1, "Có.", "Leif (CoS)", added))
+                encoding="utf-8",
+            )
+            added = service.add_decision(
+                {
+                    "kind": "delegation",
+                    "text": "Leif đặt tên.",
+                    "source": "chat",
+                    "agent": "Leif",
+                    "covers": "naming",
+                }
+            )["added"]
+            asyncio.run(
+                service.answer(cwd, made["unit"], "intent.md", 1, "Có.", "Leif (CoS)", added)
+            )
             asyncio.run(service.answer(cwd, made["unit"], "intent.md", 2, "Không.", "Leif (CoS)"))
             [u] = asyncio.run(service.board(cwd))["units"]
-            self.assertEqual({a["n"]: a["authority"] for a in u["answers"]}, {1: "delegated", 2: "person"})
+            self.assertEqual(
+                {a["n"]: a["authority"] for a in u["answers"]}, {1: "delegated", 2: "person"}
+            )
 
 
 class RecordingAnOutcome(unittest.TestCase):
-    """`0047` R1–R4, R7, R9 through the one place logic lives."""
-
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -317,21 +337,31 @@ class RecordingAnOutcome(unittest.TestCase):
         self.cwd = str(root / "work" / "proj")
         Path(self.cwd).mkdir(parents=True)
         self.data_dir = root / "data"
-        config = Config(workspaces=(self.cwd,), working_dir=str(root / "work"),
-                        data_dir=str(self.data_dir))
+        config = Config(
+            workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(self.data_dir)
+        )
         self.service = Service(config, Sessions(config))
         made = create_sync(self.service, self.cwd, "a-problem", "x")
         self.unit = made["unit"]
         self.dir = Path(made["path"])
         for stage in ("spec", "impl", "pr", "review", "ship"):
-            (self.dir / f"{stage}.md").write_text(f"# {stage}\nStatus: accepted.\n", encoding="utf-8")
+            (self.dir / f"{stage}.md").write_text(
+                f"# {stage}\nStatus: accepted.\n", encoding="utf-8"
+            )
         (self.dir / "plan.md").write_text("# plan\nStatus: done.\n", encoding="utf-8")
         self.intent = self.dir / "intent.md"
         self.intent.write_text(OUTCOME_INTENT, encoding="utf-8")
 
     def record(self, **over):
-        kw = {"result": "đạt", "measured_by": "agent", "source": "npm test, 12 pass",
-              "reason": "", "note": "", "recorded_by": "Phong", **over}
+        kw = {
+            "result": "đạt",
+            "measured_by": "agent",
+            "source": "npm test, 12 pass",
+            "reason": "",
+            "note": "",
+            "recorded_by": "Phong",
+            **over,
+        }
         return asyncio.run(self.service.record_outcome(self.cwd, self.unit, **kw))
 
     def board_unit(self):
@@ -347,7 +377,7 @@ class RecordingAnOutcome(unittest.TestCase):
         return str(e.exception)
 
     def test_no_recorded_by_is_recorded_as_owner(self):
-        """`0082` R3: what `recorded_by="  "` was refused for until then."""
+        """What `recorded_by="  "` was refused for until then."""
         self.record(recorded_by="  ")
         block = self.intent.read_text(encoding="utf-8").split("### Outcome", 1)[1]
         self.assertIn("Answered by: owner", block)
@@ -356,12 +386,16 @@ class RecordingAnOutcome(unittest.TestCase):
         before = self.intent.read_bytes()
         got = self.record(note="Ghi chú.")
         after = self.intent.read_bytes()
-        self.assertEqual(after[:len(before)], before)
-        tail = after[len(before):].decode("utf-8")
+        self.assertEqual(after[: len(before)], before)
+        tail = after[len(before) :].decode("utf-8")
         self.assertIn("\n### Outcome\nAnswered by: Phong. Date: ", tail)
-        self.assertIn("Result: đạt\nMeasured by: agent\nSource: npm test, 12 pass\n\nGhi chú.\n", tail)
+        self.assertIn(
+            "Result: đạt\nMeasured by: agent\nSource: npm test, 12 pass\n\nGhi chú.\n", tail
+        )
         self.assertNotIn("## Answers", tail, "the existing heading is reused")
-        self.assertEqual((got["result"], got["measured_by"], got["recorded_by"]), ("đạt", "agent", "Phong"))
+        self.assertEqual(
+            (got["result"], got["measured_by"], got["recorded_by"]), ("đạt", "agent", "Phong")
+        )
         self.assertLessEqual({p.name for p in self.dir.iterdir()}, {f"{s}.md" for s in STAGE_FILES})
 
     def test_the_board_then_reads_it_and_the_last_block_is_in_force(self):
@@ -400,7 +434,9 @@ class RecordingAnOutcome(unittest.TestCase):
 
     async def _missing(self) -> str:
         try:
-            await self.service.record_outcome(self.cwd, "0099_nothing", "đạt", "agent", "x", "", "", "P")
+            await self.service.record_outcome(
+                self.cwd, "0099_nothing", "đạt", "agent", "x", "", "", "P"
+            )
         except Invalid as e:
             return str(e)
         return ""
@@ -435,7 +471,7 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertEqual(len(mine), 1)
         self.assertEqual((mine[0]["actor"], mine[0]["path"]), ("human:Phong", "intent.md"))
 
-    def test_r9_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
+    def test_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
         journal = self.service._journal()
         key = self.service._journal_key(self.cwd)
         before = len(journal.records(key))

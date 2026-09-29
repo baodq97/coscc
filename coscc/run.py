@@ -66,14 +66,16 @@ def main(argv: list[str] | None = None) -> None:
     # `proxy_headers=False`: uvicorn would trust `X-Forwarded-For` from a loopback peer, so
     # any local process could choose the address the login limiter sees. The guard reads
     # `X-Forwarded-Proto` itself, for the cookie's `Secure`.
-    server = uvicorn.Server(uvicorn.Config(
-        "coscc.coscc:served",
-        factory=True,
-        host=config.host,
-        port=config.port,
-        log_level="warning",
-        proxy_headers=False,
-    ))
+    server = uvicorn.Server(
+        uvicorn.Config(
+            "coscc.coscc:served",
+            factory=True,
+            host=config.host,
+            port=config.port,
+            log_level="warning",
+            proxy_headers=False,
+        )
+    )
     update.SERVER.register(server)
     server.run()
     # A hand-off exists only when the updater asked the server to stop; SIGTERM never gets here.
@@ -89,7 +91,10 @@ def recover_steps(config) -> None:
     try:
         runs = recovery.recover_on_start(config)
     except Exception as e:  # noqa: BLE001 - `Busy`, `Protected`, anything
-        print(f"coscc: steps the app went down under were not ended this start: {type(e).__name__}: {e}", file=sys.stderr)
+        print(
+            f"coscc: steps the app went down under were not ended this start: {type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
         return
     if runs:
         print(f"steps the app went down under, ended as failed: {runs}")
@@ -102,7 +107,10 @@ def purge_events(config) -> None:
     try:
         runs, freed = events.purge_on_start(config)
     except Exception as e:  # noqa: BLE001 - `Busy`, `Protected`, anything
-        print(f"coscc: step events were not purged this start: {type(e).__name__}: {e}", file=sys.stderr)
+        print(
+            f"coscc: step events were not purged this start: {type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
         return
     if runs:
         print(f"step events purged: {runs} run(s), {freed} bytes")
@@ -166,7 +174,10 @@ def _state(target: str) -> int:
 
     config = from_env()
     if not config.working_dir:
-        print("coscc: state needs COS_WORKING_DIR — the database keys every unit by it", file=sys.stderr)
+        print(
+            "coscc: state needs COS_WORKING_DIR — the database keys every unit by it",
+            file=sys.stderr,
+        )
         return 2
     data = Data(config.data_dir)
     names, wanted = _workspace(config, data, target)
@@ -194,13 +205,21 @@ def _workspace(config, data, target: str) -> tuple[dict[str, str], str | None]:
     from coscc.service.store import valid_name
 
     with data.connect() as conn:
-        rows = [(str(r["name"]), str(Path(r["root"]) / r["name"])) for r in conn.execute("SELECT root, name FROM workspaces")]
+        rows = [
+            (str(r["name"]), str(Path(r["root"]) / r["name"]))
+            for r in conn.execute("SELECT root, name FROM workspaces")
+        ]
     rows += [(Path(p).name, p) for p in config.workspaces]
     count = Counter(name for name, _ in rows)
     names = {name: units.key(path) for name, path in rows if count[name] == 1 and valid_name(name)}
-    wanted = names.get(target) or next((units.key(p) for _, p in rows if units.key(p) == units.key(target)), None)
+    wanted = names.get(target) or next(
+        (units.key(p) for _, p in rows if units.key(p) == units.key(target)), None
+    )
     if wanted is None:
-        print(f"coscc: no workspace named {target!r} — one of {', '.join(sorted(names)) or 'none'}", file=sys.stderr)
+        print(
+            f"coscc: no workspace named {target!r} — one of {', '.join(sorted(names)) or 'none'}",
+            file=sys.stderr,
+        )
     return names, wanted
 
 
@@ -231,7 +250,10 @@ def _skip(args: list[str]) -> int:
 
     config = from_env()
     if not config.working_dir:
-        print("coscc: skip needs COS_WORKING_DIR — the database keys every unit by it", file=sys.stderr)
+        print(
+            "coscc: skip needs COS_WORKING_DIR — the database keys every unit by it",
+            file=sys.stderr,
+        )
         return 2
     data = Data(config.data_dir)
     _, wanted = _workspace(config, data, target)
@@ -247,7 +269,8 @@ def _skip(args: list[str]) -> int:
         return 1
     with data.connect() as conn:
         known = conn.execute(
-            "SELECT 1 FROM unit_meta WHERE root = ? AND workspace = ? AND unit = ?", (meta.root, wanted, unit),
+            "SELECT 1 FROM unit_meta WHERE root = ? AND workspace = ? AND unit = ?",
+            (meta.root, wanted, unit),
         ).fetchone()
     if known is None:
         print(f"coscc: the app knows no unit {unit!r} in {target!r}", file=sys.stderr)
@@ -255,17 +278,27 @@ def _skip(args: list[str]) -> int:
     authority = "delegated" if delegated else "person"
     try:
         applied = transitions.apply(
-            meta.history, Journal(meta.root, config.data_dir),
-            machine="unit", transition="skip", workspace=wanted, unit=unit,
-            artifact="spec.md", to_state="skipped",
-            inputs={"authority": authority, "reason": reason}, authority=authority,
-            actor="human:terminal", source="cli:skip",
+            meta.history,
+            Journal(meta.root, config.data_dir),
+            machine="unit",
+            transition="skip",
+            workspace=wanted,
+            unit=unit,
+            artifact="spec.md",
+            to_state="skipped",
+            inputs={"authority": authority, "reason": reason},
+            authority=authority,
+            actor="human:terminal",
+            source="cli:skip",
         )
     except BadTransition as e:
         print(f"coscc: {e}", file=sys.stderr)
         return 1
     if not applied.open:
-        print(f"coscc: guard {applied.guard} refused the skip: {', '.join(applied.reasons)}", file=sys.stderr)
+        print(
+            f"coscc: guard {applied.guard} refused the skip: {', '.join(applied.reasons)}",
+            file=sys.stderr,
+        )
         return 1
     print(f"coscc: {unit} spec.md skipped by {authority} — {reason}")
     return 0
@@ -286,9 +319,7 @@ def banner(config) -> list[str]:
             "proxy or on a private network."
         )
         lines.append("  set COS_HOST=127.0.0.1 to bind this machine only.")
-    lines.append(
-        f"working folder: {config.working_dir or '(unset — workspace management off)'}"
-    )
+    lines.append(f"working folder: {config.working_dir or '(unset — workspace management off)'}")
     lines.append(f"env workspaces: {', '.join(config.workspaces) or '(none)'}")
     lines.append(f"tools: {config.effective_tools() or 'none (chat only)'}")
     return lines

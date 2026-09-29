@@ -23,7 +23,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from coscc.config import Config, from_env
-from coscc.service import Invalid, NotUpdatable, Service, Updating
+from coscc.service import Service
+from coscc.service.common import Invalid
+from coscc.service.common import NotUpdatable
+from coscc.service.common import Updating
 from coscc.agent.sessions import Refused, Sessions
 
 
@@ -76,7 +79,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         try:
             return await service.add_workspace(
@@ -91,7 +94,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def set_label(name: str, request: Request) -> Any:
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         try:
             return service.set_label(name, str(body.get("label", "") or ""))
@@ -120,7 +123,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         if not isinstance(body, dict):
             return _bad("body must be a JSON object")
@@ -137,7 +140,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         if not isinstance(body, dict):
             return _bad("body must be a JSON object")
@@ -160,7 +163,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         if not isinstance(body, dict):
             return _bad("body must be a JSON object")
@@ -187,12 +190,14 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         if not isinstance(body, dict):
             return _bad("body must be a JSON object")
         try:
-            return service.set_autopilot(str(body.get("cwd", "")), body.get("name"), body.get("value"))
+            return service.set_autopilot(
+                str(body.get("cwd", "")), body.get("name"), body.get("value")
+            )
         except Invalid as e:
             return _bad(str(e))
 
@@ -209,7 +214,7 @@ def build(config: Config | None = None) -> FastAPI:
         `idea.md`, which the intent step reads."""
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("send JSON")
         if not isinstance(body, dict):
             return _bad("send a JSON object")
@@ -218,7 +223,7 @@ def build(config: Config | None = None) -> FastAPI:
                 str(body.get("cwd") or ""),
                 str(body.get("slug") or ""),
                 str(body.get("brief") or ""),
-            # A unit opened from a shared idea: no brief, one line under `## Units`.
+                # A unit opened from a shared idea: no brief, one line under `## Units`.
                 idea=str(body.get("idea") or ""),
                 depends_on=str(body.get("depends_on") or ""),
             )
@@ -230,13 +235,15 @@ def build(config: Config | None = None) -> FastAPI:
         """Start an idea several units share, in the store of `cwd`. Writes only into the app's own store."""
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("send JSON")
         if not isinstance(body, dict):
             return _bad("send a JSON object")
         try:
             return service.create_idea(
-                str(body.get("cwd") or ""), str(body.get("slug") or ""), str(body.get("brief") or "")
+                str(body.get("cwd") or ""),
+                str(body.get("slug") or ""),
+                str(body.get("brief") or ""),
             )
         except Invalid as e:
             return _bad(str(e))
@@ -258,7 +265,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("send JSON")
         if not isinstance(body, dict):
             return _bad("send a JSON object")
@@ -286,7 +293,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("send JSON")
         if not isinstance(body, dict):
             return _bad("send a JSON object")
@@ -316,7 +323,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("send JSON")
         if not isinstance(body, dict):
             return _bad("send a JSON object")
@@ -342,7 +349,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("send JSON")
         if not isinstance(body, dict):
             return _bad("send a JSON object")
@@ -358,7 +365,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def _object(request: Request) -> dict[str, Any] | JSONResponse:
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("send JSON")
         return body if isinstance(body, dict) else _bad("send a JSON object")
 
@@ -373,8 +380,12 @@ def build(config: Config | None = None) -> FastAPI:
             return body
         try:
             return await service.record_estimate(
-                str(body.get("cwd") or ""), str(body.get("unit") or ""), body.get("value"),
-                body.get("effort"), body.get("basis"), body.get("by"),
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                body.get("value"),
+                body.get("effort"),
+                body.get("basis"),
+                body.get("by"),
             )
         except Invalid as e:
             return _bad(str(e))
@@ -387,7 +398,10 @@ def build(config: Config | None = None) -> FastAPI:
             return body
         try:
             return await service.record_relation(
-                *(str(body.get(k) or "") for k in ("cwd", "unit", "other", "type", "op", "reason", "by"))
+                *(
+                    str(body.get(k) or "")
+                    for k in ("cwd", "unit", "other", "type", "op", "reason", "by")
+                )
             )
         except Invalid as e:
             return _bad(str(e))
@@ -404,7 +418,9 @@ def build(config: Config | None = None) -> FastAPI:
             return body
         try:
             return await service.record_shortlist(
-                str(body.get("cwd") or ""), body.get("units"), str(body.get("reason") or ""),
+                str(body.get("cwd") or ""),
+                body.get("units"),
+                str(body.get("reason") or ""),
                 str(body.get("by") or ""),
             )
         except Invalid as e:
@@ -456,7 +472,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("send JSON")
         if not isinstance(body, dict):
             return _bad("send a JSON object")
@@ -478,7 +494,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("send JSON")
         if not isinstance(body, dict):
             return _bad("send a JSON object")
@@ -532,7 +548,7 @@ def build(config: Config | None = None) -> FastAPI:
         """The only thing the board writes, and it writes it to the journal."""
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         try:
             return await service.set_mode(
@@ -553,7 +569,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
 
         cwd, unit = str(body.get("cwd", "")), str(body.get("unit", ""))
@@ -599,7 +615,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         try:
             return await service.stop_step(
@@ -646,7 +662,9 @@ def build(config: Config | None = None) -> FastAPI:
             return _bad("before, limit and seq must be whole numbers")
         try:
             return service.events_page(
-                q.get("cwd", ""), q.get("unit", ""), q.get("run", ""),
+                q.get("cwd", ""),
+                q.get("unit", ""),
+                q.get("run", ""),
                 before=nums["before"],
                 **({"limit": nums["limit"]} if nums["limit"] is not None else {}),
                 seq=nums["seq"],
@@ -663,7 +681,9 @@ def build(config: Config | None = None) -> FastAPI:
         nums = _ints(request, "after")
         if nums is None:
             return _bad("after must be a whole number")
-        stream = service.follow_events(q.get("cwd", ""), q.get("unit", ""), q.get("run", ""), nums["after"] or 0)
+        stream = service.follow_events(
+            q.get("cwd", ""), q.get("unit", ""), q.get("run", ""), nums["after"] or 0
+        )
         try:
             first = await stream.__anext__()
         except Invalid as e:
@@ -727,7 +747,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         stream = service.integrate(str(body.get("cwd", "")), str(body.get("unit", "")))
         try:
@@ -759,7 +779,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def _release_route(request: Request, phase: str) -> Any:
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         if not isinstance(body, dict):
             return _bad("body must be a JSON object")
@@ -868,7 +888,7 @@ def build(config: Config | None = None) -> FastAPI:
         """
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
 
         cwd = str(body.get("cwd", ""))
@@ -900,12 +920,12 @@ def build(config: Config | None = None) -> FastAPI:
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
 
-# -- updating the app ----------------------------------------------------
-#
-# Whoever holds the password or a session can apply an update (which pauses every running
-# session and restarts), cancel a wait or start a local build. They cannot choose what gets
-# installed: a body is read for `channel` and `by` only, and a URL, path, version, ref or
-# `mode` in it is never read.
+    # -- updating the app ----------------------------------------------------
+    #
+    # Whoever holds the password or a session can apply an update (which pauses every running
+    # session and restarts), cancel a wait or start a local build. They cannot choose what gets
+    # installed: a body is read for `channel` and `by` only, and a URL, path, version, ref or
+    # `mode` in it is never read.
 
     def _refused(e: Invalid) -> JSONResponse:
         if isinstance(e, NotUpdatable):
@@ -917,7 +937,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def _update_body(request: Request) -> dict[str, str] | None:
         try:
             body = await request.json()
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             return None
         if not isinstance(body, dict):
             return None
@@ -958,7 +978,7 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _refused(e)
 
-# No route for `/` and no static mount: `/` has to fall through to Reflex's compiled-frontend
-# mount, and a route defined here would win over it.
+    # No route for `/` and no static mount: `/` has to fall through to Reflex's compiled-frontend
+    # mount, and a route defined here would win over it.
 
     return api

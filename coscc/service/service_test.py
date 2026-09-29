@@ -1,40 +1,27 @@
 """Tests for the one place logic lives.
 
-These exist because `spec.md` R10 is a structural rule with no automated enforcement: if
-the page and the API drift apart, it will be because someone put a decision in one of them.
-Testing the service directly — with no web framework in the test — is what makes that
-drift visible as a missing test rather than as a bug only one entry point has.
-"""
+Testing the service directly — with no web framework in the test — is what makes that drift visible
+as a missing test rather than as a bug only one entry point has."""
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import shutil
-import subprocess
 import tempfile
 import unittest
-from datetime import date
 from pathlib import Path
-from unittest import mock
 
-from coscc.runlog import events as events_mod
 from coscc import units
 from coscc.agent import harness
-from coscc.git import fetches, gitops, worktrees
 from coscc.config import Config
-from coscc.service import (
-    STAGE_FILES, STATE_COLOR, STATE_LABEL, Invalid, Service, attention_reason, describe_base, outcome_label,
-    reason_beside, shown_state, step_cwd, unit_state,
-)
-from coscc.agent.sessions import Live, Sessions
+from coscc.service import Service
+from coscc.service.common import Invalid
+from coscc.agent.sessions import Sessions
 
 REPO = str(Path(__file__).resolve().parents[2])
 
 
 def create_sync(service: Service, *args):
-    """`create_unit` is async since `0017`; these tests are not."""
     return asyncio.run(service.create_unit(*args))
 
 
@@ -79,11 +66,8 @@ class WhatCountsAsInvalid(unittest.TestCase):
 
 
 class TheGateWithAStore(unittest.TestCase):
-    """`spec.md` R21 end to end: the gate, not just the store, must hold.
-
-    The store tests prove a bad entry is dropped on read. These prove that dropping it
-    actually closes every working path, which is the claim that matters.
-    """
+    """The store tests prove a bad entry is dropped on read. These prove that dropping it
+    actually closes every working path, which is the claim that matters."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -91,9 +75,7 @@ class TheGateWithAStore(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def _svc(self):
-        config = Config(
-            workspaces=(), working_dir=str(self.root), data_dir=str(self.root)
-        )
+        config = Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root))
         return Service(config, Sessions(config))
 
     def test_a_stored_workspace_passes_the_gate(self):
@@ -142,7 +124,7 @@ class TheGateWithAStore(unittest.TestCase):
         with self.assertRaises(Invalid):
             s.check_send(str(self.root / "repo"), "hi")
 
-    def test_no_working_folder_means_no_store_and_0001_behaviour(self):
+    def test_no_working_folder_means_no_store_and_behaviour(self):
         config = Config(workspaces=(REPO,))
         s = Service(config, Sessions(config))
         self.assertIsNone(s.store)
@@ -150,9 +132,7 @@ class TheGateWithAStore(unittest.TestCase):
 
     def test_the_count_is_reported_and_tracks_both_sources(self):
         (self.root / "a").mkdir()
-        config = Config(
-            workspaces=(REPO,), working_dir=str(self.root), data_dir=str(self.root)
-        )
+        config = Config(workspaces=(REPO,), working_dir=str(self.root), data_dir=str(self.root))
         s = Service(config, Sessions(config))
         self.assertEqual(s.workspaces()["count"], 1)
         s.store.add("a")
@@ -168,13 +148,10 @@ class TheGateWithAStore(unittest.TestCase):
 
 
 class OneMembershipQuestion(unittest.TestCase):
-    """`spec.md` R10, at the place it was found broken.
-
-    The session layer keeps its own guard — it is the last thing before a CLI process is
+    """The session layer keeps its own guard — it is the last thing before a CLI process is
     spawned — but it must answer the same question the service gate answers. Before this,
     a store-backed workspace passed the gate and was refused one layer down, and only a
-    real clone-and-send found it.
-    """
+    real clone-and-send found it."""
 
     def test_the_session_layer_sees_store_workspaces_too(self):
         with tempfile.TemporaryDirectory() as d:
@@ -194,19 +171,21 @@ class OneMembershipQuestion(unittest.TestCase):
 
 class NoWebFrameworkLeaksIn(unittest.TestCase):
     def test_service_module_imports_no_web_framework(self):
-        """`spec.md` R10 in the only form a test can hold it.
-
-        If the service ever imports aiohttp, FastAPI or Reflex, logic has started moving
-        back towards one entry point and the two will drift.
-        """
+        """If the service ever imports aiohttp, FastAPI or Reflex, logic has started moving
+        back towards one entry point and the two will drift."""
         here = Path(__file__).parent
-        # `0095`: `Service` is spread over `service.py` and the modules it was split into;
-        # since `0129` they are the package `coscc/service/`, `store.py` among them.
         paths = [p for p in sorted(here.glob("*.py")) if not p.name.endswith("_test.py")]
         self.assertGreater(len(paths), 1)
         for path in paths:
             source = path.read_text()
-            for banned in ("import aiohttp", "import fastapi", "import reflex", "from fastapi", "from aiohttp", "from reflex"):
+            for banned in (
+                "import aiohttp",
+                "import fastapi",
+                "import reflex",
+                "from fastapi",
+                "from aiohttp",
+                "from reflex",
+            ):
                 with self.subTest(module=path.name, banned=banned):
                     self.assertNotIn(banned, source)
 
@@ -231,8 +210,8 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             root = Path(d)
             workspace = root / "work" / "proj"
             workspace.mkdir(parents=True)
-            # `0014`: a unit's artifacts live in the product's store, never in the
-            # workspace tree, so the fixture has to be built where the product looks.
+            # A unit's artifacts live in the product's store, never in the workspace tree, so the
+            # fixture has to be built where the product looks.
             unit = units.unit_dir(workspace, "0009_a-test-unit", root / "data")
             unit.mkdir(parents=True)
             (unit / "intent.md").write_text("Status: accepted.\nI", encoding="utf-8")
@@ -241,7 +220,9 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             # A harness carrying cos.mjs and no skills: the Board reads, every Run refuses.
             half = root / "half"
             (half / "scripts").mkdir(parents=True)
-            shutil.copy(Path(REPO) / ".claude" / "scripts" / "cos.mjs", half / "scripts" / "cos.mjs")
+            shutil.copy(
+                Path(REPO) / ".claude" / "scripts" / "cos.mjs", half / "scripts" / "cos.mjs"
+            )
             (half / "skills").mkdir()
 
             config = Config(
@@ -256,6 +237,7 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
             harness.CHECKOUT_HARNESS = half
             try:
+
                 async def go():
                     async for _ in service.run_step(str(workspace), "0009_a-test-unit", "plan"):
                         pass
@@ -265,7 +247,6 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             finally:
                 harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS = originals
 
-            # And it still says which stage and where it looked -- `spec.md` R4.
             message = str(caught.exception)
             self.assertIn("plan", message)
             self.assertIn("SKILL.md", message)

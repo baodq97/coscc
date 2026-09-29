@@ -76,7 +76,7 @@ def load_defaults(path: str | Path | None = None) -> tuple[dict[str, dict[str, s
         return {}, [f"{where.name} is not JSON: {e}"]
     rows = raw.get("agents") if isinstance(raw, dict) else None
     if not isinstance(rows, dict):
-        return {}, [f"{where.name} has no \"agents\" object"]
+        return {}, [f'{where.name} has no "agents" object']
     out: dict[str, dict[str, str]] = {}
     problems: list[str] = []
     for key, entry in rows.items():
@@ -109,10 +109,10 @@ def overrides_from(raw_rows: dict[str, str]) -> tuple[dict[str, dict[str, str]],
     for key, raw in sorted(raw_rows.items()):
         if not key.startswith(PREFIX):
             continue
-        name = key[len(PREFIX):]
+        name = key[len(PREFIX) :]
         try:
             value = json.loads(raw)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             problems.append(f"{key}: the stored value is not JSON ({raw!r}), ignored")
             continue
         if not isinstance(value, dict):
@@ -149,7 +149,9 @@ def resolve(
     return row
 
 
-def agent_for(key: str, overrides: dict[str, dict[str, str]] | None = None) -> dict[str, Any] | None:
+def agent_for(
+    key: str, overrides: dict[str, dict[str, str]] | None = None
+) -> dict[str, Any] | None:
     """The resolved row for `key`, or `None` for one the table does not know."""
     return resolve(key, load_defaults()[0], overrides or {})
 
@@ -161,7 +163,9 @@ def table(overrides: dict[str, dict[str, str]]) -> dict[str, Any]:
     defaults, problems = load_defaults()
     rows = [resolve(key, defaults, overrides) for key in defaults]
     problems += [
-        f"{PREFIX}{k}: no agent called {k!r}, ignored" for k in sorted(overrides) if k not in defaults
+        f"{PREFIX}{k}: no agent called {k!r}, ignored"
+        for k in sorted(overrides)
+        if k not in defaults
     ]
     return {"rows": rows, "problems": problems}
 
@@ -177,12 +181,15 @@ def address(row: dict[str, Any]) -> str:
 
 def settings_json(row: dict[str, Any]) -> str:
     """The `--settings` a preset session gets: `attribution` and nothing else."""
-    return json.dumps({
-        "attribution": {
-            "commit": f"Co-authored-by: {label(row)} <{address(row)}>",
-            "pr": label(row),
-        }
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "attribution": {
+                "commit": f"Co-authored-by: {label(row)} <{address(row)}>",
+                "pr": label(row),
+            }
+        },
+        ensure_ascii=False,
+    )
 
 
 def identity_section(row: dict[str, Any]) -> str:

@@ -9,7 +9,7 @@ import dataclasses
 
 import reflex as rx
 
-from coscc.service import Invalid
+from coscc.service.common import Invalid
 
 # The label each button carries, by the block's `button`.
 RELEASE_BUTTON = {"prepare": "Prepare release", "publish": "Merge and tag"}
@@ -43,8 +43,12 @@ def release_fields(block: dict | None) -> dict:
         "rel_reason": str(block.get("reason") or ""),
         "rel_last_tag": str(block.get("last_tag") or ""),
         "rel_units": [
-            ReleaseUnit(name=str(u.get("name") or ""), type=str(u.get("type") or "no type"),
-                        pr=f"#{u.get('pr')}", sha=str(u.get("sha") or "")[:7])
+            ReleaseUnit(
+                name=str(u.get("name") or ""),
+                type=str(u.get("type") or "no type"),
+                pr=f"#{u.get('pr')}",
+                sha=str(u.get("sha") or "")[:7],
+            )
             for u in block.get("units") or []
         ],
         "rel_unmatched": [
@@ -64,7 +68,6 @@ def release_fields(block: dict | None) -> dict:
 
 
 class ReleaseMixin(rx.State, mixin=True):
-
     rel_state: str = ""
     rel_reason: str = ""
     rel_last_tag: str = ""
@@ -105,6 +108,7 @@ class ReleaseMixin(rx.State, mixin=True):
         read and to write it: a press can take minutes (`uv lock`, a push, a merge and its
         poll), and the rest of the page keeps answering meanwhile."""
         from coscc.state import SERVICE
+
         async with self:
             if self.releasing or not self.rel_phase:
                 return

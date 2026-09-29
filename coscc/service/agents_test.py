@@ -1,4 +1,4 @@
-"""Tests for `AgentsMixin` in `coscc/service/agents.py` (`0036` R2)."""
+"""Tests for `AgentsMixin` in `coscc/service/agents.py`."""
 
 from __future__ import annotations
 
@@ -25,7 +25,10 @@ class AnOverrideIsCheckedSavedAndLogged(unittest.TestCase):
         self.data = Data(config.data_dir)
 
     def _settings(self):
-        return [(r["name"], r["old"], r["new"]) for r in self.service._journal().records("", kind="setting")]
+        return [
+            (r["name"], r["old"], r["new"])
+            for r in self.service._journal().records("", kind="setting")
+        ]
 
     def _rows(self, table):
         return {r["key"]: r for r in table["rows"]}
@@ -33,26 +36,41 @@ class AnOverrideIsCheckedSavedAndLogged(unittest.TestCase):
     def test_a_valid_override_is_saved_and_logged_with_old_and_new(self):
         table = self.service.set_agent("review", {"name": "Judge"})
         row = self._rows(table)["review"]
-        self.assertEqual((row["name"], row["source"]["name"], row["overridden"]), ("Judge", "override", True))
+        self.assertEqual(
+            (row["name"], row["source"]["name"], row["overridden"]), ("Judge", "override", True)
+        )
         self.assertEqual((row["glyph"], row["source"]["glyph"]), ("ᛏ", "default"))
         self.service.set_agent("review", {"role": "Reads it all."})
         self.assertEqual(self.service._agent("review")["name"], "Judge")
         self.assertEqual(self.service._agent("review")["role"], "Reads it all.")
-        self.assertEqual(self._settings(), [
-            ("agent:review", None, {"name": "Judge"}),
-            ("agent:review", {"name": "Judge"}, {"name": "Judge", "role": "Reads it all."}),
-        ])
+        self.assertEqual(
+            self._settings(),
+            [
+                ("agent:review", None, {"name": "Judge"}),
+                ("agent:review", {"name": "Judge"}, {"name": "Judge", "role": "Reads it all."}),
+            ],
+        )
 
     def test_a_wrong_field_is_refused_and_nothing_is_written(self):
         wrong = [
-            ("review", {"name": "Two words"}), ("review", {"name": "x" * 25}),
-            ("review", {"name": "Ümlaut"}), ("review", {"glyph": "abc"}), ("review", {"glyph": "a b"}),
-            ("review", {"meaning": "m" * 61}), ("review", {"meaning": "a\nb"}),
-            ("review", {"role": "r" * 201}), ("review", {"role": "a\nb"}),
-            ("review", {"colour": "red"}), ("review", {"colour": ""}), ("review", {"name": 3}),
+            ("review", {"name": "Two words"}),
+            ("review", {"name": "x" * 25}),
+            ("review", {"name": "Ümlaut"}),
+            ("review", {"glyph": "abc"}),
+            ("review", {"glyph": "a b"}),
+            ("review", {"meaning": "m" * 61}),
+            ("review", {"meaning": "a\nb"}),
+            ("review", {"role": "r" * 201}),
+            ("review", {"role": "a\nb"}),
+            ("review", {"colour": "red"}),
+            ("review", {"colour": ""}),
+            ("review", {"name": 3}),
             # Another row's name, whatever its case.
-            ("review", {"name": "uruz"}), ("review", {"name": "GEBO"}),
-            ("deploy", {"name": "Nobody"}), ("", {"name": "Nobody"}), (None, {}),
+            ("review", {"name": "uruz"}),
+            ("review", {"name": "GEBO"}),
+            ("deploy", {"name": "Nobody"}),
+            ("", {"name": "Nobody"}),
+            (None, {}),
         ]
         for key, fields in wrong:
             with self.assertRaises(Invalid, msg=(key, fields)):

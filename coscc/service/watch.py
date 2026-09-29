@@ -6,22 +6,22 @@ from __future__ import annotations
 import asyncio
 from typing import Any, AsyncIterator
 
-from coscc.units import backlog
 from coscc.runlog import events
 from coscc.data import Data
-from coscc.runlog.journal import Busy
+from coscc.data import Busy
 from coscc.service.common import Invalid
 
 
 class WatchMixin:
-
     # -- watching a step ------------------------------------------------------
     #
     # Two reads and nothing else: no row, no transition, no artifact, no gate, and nothing
     # reaches the step. Whoever holds the password or a live session reads every command,
     # path, thought and tool output a step saw.
 
-    def _run_of(self, cwd: str, unit: str, run: str) -> tuple[events.Recorder | None, dict[str, Any] | None]:
+    def _run_of(
+        self, cwd: str, unit: str, run: str
+    ) -> tuple[events.Recorder | None, dict[str, Any] | None]:
         """The recorder running `run`, or its index row; refused unless it is `unit`'s, in this
         workspace. `(None, None)` for a `run` the run log names with no index row yet."""
         self._workspace_or_refuse(cwd)
@@ -51,8 +51,13 @@ class WatchMixin:
         raise Invalid(f"no such run of {unit}: {run}")
 
     def events_page(
-        self, cwd: str, unit: str, run: str, before: int | None = None,
-        limit: int = events.PAGE_DEFAULT, seq: int | None = None,
+        self,
+        cwd: str,
+        unit: str,
+        run: str,
+        before: int | None = None,
+        limit: int = events.PAGE_DEFAULT,
+        seq: int | None = None,
     ) -> dict[str, Any]:
         """The last `limit` events of `run` below `before`, oldest first, or with `seq` that one
         event whole as stored. Same answer while the step runs (memory) and after (`step_events`).
@@ -63,8 +68,15 @@ class WatchMixin:
         recorder, row = self._run_of(cwd, unit, run)
         limit = max(1, min(events.PAGE_MAX, int(limit)))
         out: dict[str, Any] = {
-            "run": run, "unit": unit, "stage": "", "status": "none", "events": [],
-            "first_seq": None, "has_older": False, "last_at": None, "events_lost": 0,
+            "run": run,
+            "unit": unit,
+            "stage": "",
+            "status": "none",
+            "events": [],
+            "first_seq": None,
+            "has_older": False,
+            "last_at": None,
+            "events_lost": 0,
             "purged_at": None,
         }
         if recorder is not None:
@@ -79,10 +91,15 @@ class WatchMixin:
                 out["has_older"] = len(below) > len(found)
         elif row is not None:
             out.update(
-                stage=row["stage"], events_lost=int(row["lost"] or 0), purged_at=row["purged_at"],
+                stage=row["stage"],
+                events_lost=int(row["lost"] or 0),
+                purged_at=row["purged_at"],
                 last_at=row["last_at"],
                 status=(
-                    "purged" if row["purged_at"] else "ended" if row["ended_at"] is not None
+                    "purged"
+                    if row["purged_at"]
+                    else "ended"
+                    if row["ended_at"] is not None
                     else "ended-unknown"
                 ),
             )
@@ -102,7 +119,12 @@ class WatchMixin:
         return out
 
     async def follow_events(
-        self, cwd: str, unit: str, run: str, after: int = 0, gather: float = 0.0,
+        self,
+        cwd: str,
+        unit: str,
+        run: str,
+        after: int = 0,
+        gather: float = 0.0,
     ) -> AsyncIterator[tuple[str, Any]]:
         """`("events", [...])` for every event of a running `run` past `after`, in order, none
         twice, until its `end`; `("cut", n)` when this follower fell `SUB_LIMIT` behind (read

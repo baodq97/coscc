@@ -8,7 +8,7 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.runlog import events as events_mod
-from coscc.service import Invalid
+from coscc.service.common import Invalid
 from coscc.state.views import (
     NO_RUN_NOTE,
     WATCH_GATHER,
@@ -52,6 +52,7 @@ class WatchMixin(rx.State, mixin=True):
 
     def _watch_page(self, before: int | None = None) -> dict | None:
         from coscc.state import SERVICE
+
         try:
             return SERVICE.events_page(self.cwd, self.watch_unit, self.watch_run, before=before)
         except Invalid as e:
@@ -84,6 +85,7 @@ class WatchMixin(rx.State, mixin=True):
     def open_watch(self, run: str, title: str, unit: str = ""):
         """Open the pane on one step's `run`; a row with no `run` shows `NO_RUN_NOTE`."""
         from coscc.state import StudioState
+
         self._watch_reset(run, title or run, unit or self.unit_id)
         if not run:
             self.watch_run = "-"
@@ -105,6 +107,7 @@ class WatchMixin(rx.State, mixin=True):
         """The last page, then every new event of a running step, gathered up to `WATCH_GATHER`
         seconds. Following from the page's last `seq` is safe: the recorder holds every event."""
         from coscc.state import SERVICE, StudioState
+
         async with self:
             token, run = self._watch_token, self.watch_run
             page = self._watch_page()
@@ -121,7 +124,9 @@ class WatchMixin(rx.State, mixin=True):
         if page["status"] != "running":
             return
         try:
-            async for kind, value in SERVICE.follow_events(cwd, unit, run, after=last, gather=WATCH_GATHER):
+            async for kind, value in SERVICE.follow_events(
+                cwd, unit, run, after=last, gather=WATCH_GATHER
+            ):
                 async with self:
                     if self._watch_token != token:
                         return
@@ -173,6 +178,7 @@ class WatchMixin(rx.State, mixin=True):
     def watch_expand(self, seq: int):
         """One event whole, as stored, in a var of its own."""
         from coscc.state import SERVICE
+
         try:
             page = SERVICE.events_page(self.cwd, self.watch_unit, self.watch_run, seq=int(seq))
         except Invalid as e:

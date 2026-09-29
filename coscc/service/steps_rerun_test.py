@@ -1,10 +1,9 @@
-"""`0054` R10. A person runs `pr` again from the board, in-process, spending nothing.
+"""A person runs `pr` again from the board, in-process, spending nothing.
 
 The chain the spec's outcome names: the stages offered, a rerun of `pr` with a note, a `pr`
 session that ends `done`, then `cos.mjs next` naming the review and the `ship` gate closed.
 `cos.mjs` is the real one, asked through `coscc/units/board.py` as the app asks it; only the
-worktree, the pull-request lookup, the sync onto GitHub and `Runner` itself stand in.
-"""
+worktree, the pull-request lookup, the sync onto GitHub and `Runner` itself stand in."""
 
 from __future__ import annotations
 
@@ -20,11 +19,12 @@ from coscc.units.meta_test import WithSnapshot
 board_reader = WithSnapshot(_board)
 from coscc.github import integrate
 from coscc.git import worktrees
-from coscc import service as service_mod
 from coscc.config import Config
 from coscc.runner import RunError
-from coscc.service import Invalid, Service
+from coscc.service import Service
+from coscc.service.common import Invalid
 from coscc.agent.sessions import Sessions
+from coscc.service.common import unit_state
 
 SHA = "a" * 40
 PR_MD = "# PR: feat(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân cũ\n"
@@ -49,10 +49,16 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         root = Path(self._tmp.name)
         self.repo = root / "work" / "proj"
         (self.repo / ".git").mkdir(parents=True)
-        config = Config(workspaces=(str(self.repo),), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        config = Config(
+            workspaces=(str(self.repo),),
+            working_dir=str(root / "work"),
+            data_dir=str(root / "data"),
+        )
         self.service = Service(config, Sessions(config))
         self.cwd = str(self.repo)
-        self.unit = asyncio.run(self.service.create_unit(self.cwd, "awaiting-ship", "words"))["unit"]
+        self.unit = asyncio.run(self.service.create_unit(self.cwd, "awaiting-ship", "words"))[
+            "unit"
+        ]
         self.dir = self.service._unit_dir(self.cwd, self.unit)
         for name, text in ARTIFACTS.items():
             (self.dir / name).write_text(text, encoding="utf-8")
@@ -60,8 +66,14 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.seen: list[dict] = []
         self.items: list[tuple] = []
 
-    def run_step(self, stage: str, write: str | None = "# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân mới\n",
-                 file: str = "pr.md", **kw):
+    def run_step(
+        self,
+        stage: str,
+        write: str
+        | None = "# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân mới\n",
+        file: str = "pr.md",
+        **kw,
+    ):
         """`Service.run_step`, with `Runner` a stand-in that writes `file` as `write` and
         ends `done` — or, `write` None, fails before writing anything."""
         seen, directory = self.seen, self.dir
@@ -87,14 +99,15 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         async def no_sync(*a, **k):
             return {}
 
-        # `0136` R12: `pr` runs no session. The PR machine is the real one, with `gh`, the
-        # push and the head in memory; `write` None is a `gh` that cannot be reached.
+        # `pr` runs no session. The PR machine is the real one, with `gh`, the push and the head in
+        # memory; `write` None is a `gh` that cannot be reached.
         from coscc.git import gitops
         from coscc.github import prmachine
         from coscc.github.prmachine_test import FakeGh
 
         gh = FakeGh()
         if write is None:
+
             async def gh(argv, cwd):  # noqa: F811
                 seen.append({"gh": argv})
                 return 1, "", "error connecting to api.github.com"
@@ -107,7 +120,9 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
 
         def machine():
             meta = self.service._unit_meta()
-            return prmachine.Machine(meta.history, self.service._journal(), gh=gh, push=pushed, head=head)
+            return prmachine.Machine(
+                meta.history, self.service._journal(), gh=gh, push=pushed, head=head
+            )
 
         async def on_branch(*a, **k):
             return "feat/awaiting-ship"
@@ -116,13 +131,15 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
             async for item in self.service.run_step(self.cwd, self.unit, stage, **kw):
                 self.items.append(item)
 
-        with mock.patch.object(self.service, "_pr_machine", machine), \
-                mock.patch.object(gitops, "current_branch", on_branch), \
-                mock.patch("coscc.service.steps.Runner", StandIn), \
-                mock.patch.object(self.service, "_worktree", tree), \
-                mock.patch.object(self.service, "_sync_pr", no_sync), \
-                mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
-                mock.patch.object(integrate, "pr_for_branch", no_pr):
+        with (
+            mock.patch.object(self.service, "_pr_machine", machine),
+            mock.patch.object(gitops, "current_branch", on_branch),
+            mock.patch("coscc.service.steps.Runner", StandIn),
+            mock.patch.object(self.service, "_worktree", tree),
+            mock.patch.object(self.service, "_sync_pr", no_sync),
+            mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
+            mock.patch.object(integrate, "pr_for_branch", no_pr),
+        ):
             asyncio.run(go())
 
     def intent(self) -> str:
@@ -134,17 +151,19 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
     def test_the_offers_are_cos_mjs_answer(self):
         offers = self.ask(self.service.rerun_offers(self.cwd, self.unit))
         self.assertEqual([o["stage"] for o in offers["offers"]], ["intent", "spec", "plan", "pr"])
-        self.assertEqual(next(o for o in offers["offers"] if o["stage"] == "pr")["later"], ["review", "ship"])
+        self.assertEqual(
+            next(o for o in offers["offers"] if o["stage"] == "pr")["later"], ["review", "ship"]
+        )
 
     def test_without_rerun_no_runner_is_made_and_intent_is_untouched(self):
-        # `0136` R12: no session at all, rerun or not.
+        # No session at all, rerun or not.
         (self.dir / "review.md").unlink()
         self.run_step("pr")
         self.assertEqual(self.seen, [])
         self.assertEqual(self.items[-1][1]["outcome"], "done")
         self.assertEqual(self.intent(), ARTIFACTS["intent.md"])
 
-    def test_r10_rerun_pr_then_next_is_review_and_ship_is_closed(self):
+    def test_rerun_pr_then_next_is_review_and_ship_is_closed(self):
         open_before, said_before = self.ask(board_reader.gate(self.store, self.unit, "ship"))
         self.assertNotIn("stale", said_before)
         self.run_step("pr", rerun=True, note="Sửa tiêu đề: nêu R10.")
@@ -167,16 +186,21 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.assertTrue(nxt["action"].startswith("review.md is stale"), nxt["action"])
         # `pr` was written again, so it is no longer offered by the run button.
         self.assertNotIn("pr.md is stale", nxt["action"])
-        # Review F3. The card reads the stale review as the wait on CI a missing one is.
-        row = next(u for u in self.ask(board_reader.read(self.store))["units"] if u["name"] == self.unit)
-        self.assertEqual((row["at"], row["why"], row["between_pr_and_ship"]), ("review", "stale", True))
+        # The card reads the stale review as the wait on CI a missing one is.
+        row = next(
+            u for u in self.ask(board_reader.read(self.store))["units"] if u["name"] == self.unit
+        )
+        self.assertEqual(
+            (row["at"], row["why"], row["between_pr_and_ship"]), ("review", "stale", True)
+        )
         # The fixture's `intent.md` leaves Câu 1 open, and *Needs you* is tried first.
-        self.assertEqual(service_mod.unit_state(row, None, None)["state"], "needs-you")
-        got = service_mod.unit_state({**row, "open": 0}, None, None)
-        self.assertEqual((got["state"], got["ci"]), ("awaiting", {"read": False, "red": [], "at": ""}))
+        self.assertEqual(unit_state(row, None, None)["state"], "needs-you")
+        got = unit_state({**row, "open": 0}, None, None)
+        self.assertEqual(
+            (got["state"], got["ci"]), ("awaiting", {"read": False, "red": [], "at": ""})
+        )
 
     def test_the_note_reaches_no_session_and_no_file(self):
-        # Was *the prompt the runner builds carries the note*: `0136` R12 leaves no prompt.
         self.run_step("pr", rerun=True, note="NOTE-0054")
         self.assertEqual(self.seen, [])
         self.assertNotIn("NOTE-0054", self.intent())
@@ -228,8 +252,8 @@ IMPL_DRAFT = "# Impl: x\nStatus: draft.\n\n## Open questions\n\n1. Chạy lệnh
 
 
 class ADraftImplThatLosesItsAnswersSaysSo(unittest.TestCase):
-    """`0115` R7. An `impl` step writes `impl.md` itself; a `done` that no longer ends with
-    the `## Answers` it started with says `answers_lost`. The app writes nothing back."""
+    """An `impl` step writes `impl.md` itself; a `done` that no longer ends with the `## Answers` it
+    started with says `answers_lost`. The app writes nothing back."""
 
     setUp = APrRunAgainClosesShipUntilAReview.setUp
     run_step = APrRunAgainClosesShipUntilAReview.run_step
@@ -237,14 +261,18 @@ class ADraftImplThatLosesItsAnswersSaysSo(unittest.TestCase):
     def impl(self, before: str, after: str) -> dict:
         for name in ("pr.md", "review.md"):
             (self.dir / name).unlink()
-        (self.dir / "intent.md").write_text("# Intent: x\nType: feat. Status: accepted.\n", encoding="utf-8")
+        (self.dir / "intent.md").write_text(
+            "# Intent: x\nType: feat. Status: accepted.\n", encoding="utf-8"
+        )
         (self.dir / "impl.md").write_text(before, encoding="utf-8")
         self.run_step("impl", write=after, file="impl.md")
         self.assertEqual(self.items[-1][0], "done")
         return self.items[-1][1]
 
     def test_an_impl_that_keeps_its_answers_says_nothing(self):
-        done = self.impl(IMPL_DRAFT + ANSWERS, IMPL_DRAFT.replace("draft", "accepted") + "\nbuilt\n" + ANSWERS)
+        done = self.impl(
+            IMPL_DRAFT + ANSWERS, IMPL_DRAFT.replace("draft", "accepted") + "\nbuilt\n" + ANSWERS
+        )
         self.assertEqual(done.get("answers_kept"), True)
         self.assertNotIn("answers_lost", done)
 

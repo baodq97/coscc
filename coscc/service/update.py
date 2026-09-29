@@ -6,7 +6,8 @@ import asyncio
 from typing import Any
 
 from coscc.update import updater as updater_mod
-from coscc.runlog.journal import BadRecord, Busy
+from coscc.runlog.journal import BadRecord
+from coscc.data import Busy
 from coscc.service.common import Invalid, NotUpdatable, OWNER, Updating
 
 
@@ -45,7 +46,11 @@ def update_words(status: dict[str, Any]) -> dict[str, Any]:
     """What the Updates section says and which buttons it shows, from `Updater.status`.
     A button that could not be used is not listed; nothing names an environment variable."""
     if status.get("shape") != "service":
-        return {"line": "Updates apply only to an install made by install.sh.", "local_line": "", "actions": []}
+        return {
+            "line": "Updates apply only to an install made by install.sh.",
+            "local_line": "",
+            "actions": [],
+        }
     state = status.get("state") or ""
     if state == "applying":
         return {"line": "Updating now.", "local_line": "", "actions": []}
@@ -68,11 +73,10 @@ def update_words(status: dict[str, Any]) -> dict[str, Any]:
 
 
 class UpdateMixin:
-
-# -- updating the app -----------------------------------------------------
-#
-# Every decision is `Updater`'s; these translate its refusals into `Invalid`, so a route
-# maps one exception type.
+    # -- updating the app -----------------------------------------------------
+    #
+    # Every decision is `Updater`'s; these translate its refusals into `Invalid`, so a route
+    # maps one exception type.
 
     def _refuse_while_updating(self) -> None:
         try:
@@ -94,18 +98,28 @@ class UpdateMixin:
         jobs: list[dict[str, Any]] = []
         for entry in self._running.values():
             if entry["stage"] == "integrate" and entry.get("kind") != "gebo":
-                jobs.append({
-                    "kind": "integration", "id": f"integration:{entry['workspace']}:{entry['unit']}",
-                    "workspace": entry["workspace"], "unit": entry["unit"], "stage": "integrate",
-                    "started": entry["started"],
-                })
+                jobs.append(
+                    {
+                        "kind": "integration",
+                        "id": f"integration:{entry['workspace']}:{entry['unit']}",
+                        "workspace": entry["workspace"],
+                        "unit": entry["unit"],
+                        "stage": "integrate",
+                        "started": entry["started"],
+                    }
+                )
         for entry in self._retakes.values():
             # No Stop reaches it, and `retake.take` puts `.screens/` back only if it gets to.
-            jobs.append({
-                "kind": "integration", "id": f"screens:{entry['workspace']}:{entry['unit']}",
-                "workspace": entry["workspace"], "unit": entry["unit"], "stage": "screens",
-                "started": entry["started"],
-            })
+            jobs.append(
+                {
+                    "kind": "integration",
+                    "id": f"screens:{entry['workspace']}:{entry['unit']}",
+                    "workspace": entry["workspace"],
+                    "unit": entry["unit"],
+                    "stage": "screens",
+                    "started": entry["started"],
+                }
+            )
         return jobs
 
     async def suspend_sessions(self, by: str) -> list[dict[str, Any]]:
@@ -122,11 +136,16 @@ class UpdateMixin:
             if not owner.get("kind"):
                 continue  # a caller that named no owner: nothing could take it up again
             try:
-                written.append(journal.suspended(
-                    str(owner.get("workspace") or ""), str(owner.get("unit") or ""),
-                    str(owner.get("stage") or ""), by=by, **record,
-                ))
-            except (BadRecord, Busy):
+                written.append(
+                    journal.suspended(
+                        str(owner.get("workspace") or ""),
+                        str(owner.get("unit") or ""),
+                        str(owner.get("stage") or ""),
+                        by=by,
+                        **record,
+                    )
+                )
+            except BadRecord, Busy:
                 continue
         return written
 
@@ -144,7 +163,10 @@ class UpdateMixin:
             await asyncio.sleep(SETTLE_POLL)
         left = list(self._running.values())
         left += [{**entry, "kind": "after-end"} for entry, _task in self._finishing.values()]
-        return [{k: entry.get(k) for k in ("kind", "workspace", "unit", "stage", "started")} for entry in left]
+        return [
+            {k: entry.get(k) for k in ("kind", "workspace", "unit", "stage", "started")}
+            for entry in left
+        ]
 
     def update_status(self) -> dict[str, Any]:
         """`Updater.status`, unchanged, with `line`, `local_line` and `actions`."""

@@ -45,7 +45,7 @@ def _statements(text: str) -> set[int] | None:
             elif fresh and tok.type not in skip:
                 starts.add(tok.start[0])
                 fresh = False
-    except (tokenize.TokenError, SyntaxError):
+    except tokenize.TokenError, SyntaxError:
         return None
     return starts
 
@@ -132,7 +132,7 @@ def select(plan_text: str, tree: str | os.PathLike[str]) -> tuple[str, dict[str,
     chosen: list[str] = []
     for i, (short, defs) in enumerate(entries):
         whole = f"{short}\n{defs}" if defs else short
-        rest = [s for s, _ in entries[i + 1:]]
+        rest = [s for s, _ in entries[i + 1 :]]
         if _join(chosen + [whole] + rest) <= CAP_BYTES:
             chosen.append(whole)
             record["full"] += 1
@@ -159,5 +159,8 @@ def for_step(plan_path: str | os.PathLike[str], tree: str | os.PathLike[str]) ->
     try:
         section, record = select(Path(plan_path).read_text(encoding="utf-8"), tree)
     except Exception as e:  # noqa: BLE001 — recorded, never a reason to refuse the step
-        return {"plan_map": "", "plan_map_record": {**_empty(), "error": f"{type(e).__name__}: {e}"}}
+        return {
+            "plan_map": "",
+            "plan_map_record": {**_empty(), "error": f"{type(e).__name__}: {e}"},
+        }
     return {"plan_map": section, "plan_map_record": record}

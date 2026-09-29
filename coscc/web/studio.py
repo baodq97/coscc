@@ -33,8 +33,12 @@ def panel(*children, **props) -> rx.Component:
 def mark(initials, color="iris", size="40px") -> rx.Component:
     return rx.center(
         rx.text(initials, size="2", weight="bold", letter_spacing="-0.03em"),
-        width=size, height=size, flex_shrink="0", border_radius="12px",
-        background=rx.color(color, 3), color=rx.color(color, 11),
+        width=size,
+        height=size,
+        flex_shrink="0",
+        border_radius="12px",
+        background=rx.color(color, 3),
+        color=rx.color(color, 11),
         border=f"1px solid {rx.color(color, 5)}",
     )
 
@@ -54,11 +58,15 @@ def heading(title, description, *actions) -> rx.Component:
         rx.vstack(
             rx.heading(title, size="7", weight="medium", letter_spacing="-0.045em"),
             text(description, max_width="580px"),
-            spacing="2", min_width="0",
+            spacing="2",
+            min_width="0",
         ),
         rx.spacer(),
         rx.flex(*actions, gap="8px", align="center", wrap="wrap"),
-        width="100%", gap="16px", align="center", wrap="wrap",
+        width="100%",
+        gap="16px",
+        align="center",
+        wrap="wrap",
     )
 
 
@@ -70,8 +78,7 @@ def stat(label, value, hint, icon: str, color="iris") -> rx.Component:
             rx.icon(icon, size=16, color=rx.color(color, 10)),
             width="100%",
         ),
-        rx.heading(value, size="7", weight="medium", margin_top="14px",
-                   letter_spacing="-0.055em"),
+        rx.heading(value, size="7", weight="medium", margin_top="14px", letter_spacing="-0.055em"),
         text(hint, size="1", margin_top="5px"),
         padding="20px",
     )
@@ -80,16 +87,26 @@ def stat(label, value, hint, icon: str, color="iris") -> rx.Component:
 def section_head(title, *actions) -> rx.Component:
     return rx.hstack(
         rx.heading(title, size="3", weight="medium"),
-        rx.spacer(), *actions, width="100%", align="center", margin_bottom="18px",
+        rx.spacer(),
+        *actions,
+        width="100%",
+        align="center",
+        margin_bottom="18px",
     )
 
 
 def native_select(*children, **props) -> rx.Component:
     return rx.el.select(
-        *children, **props,
-        background=SURFACE, color=INK, border=f"1px solid {LINE}",
-        border_radius="8px", padding="7px 10px", font_size="12px",
-        max_width="100%", cursor="pointer",
+        *children,
+        **props,
+        background=SURFACE,
+        color=INK,
+        border=f"1px solid {LINE}",
+        border_radius="8px",
+        padding="7px 10px",
+        font_size="12px",
+        max_width="100%",
+        cursor="pointer",
     )
 
 
@@ -99,7 +116,11 @@ def details(is_open, on_toggle, label, *children, **props) -> rx.Component:
     return rx.box(
         rx.button(
             rx.cond(is_open, rx.icon("chevron-down", size=13), rx.icon("chevron-right", size=13)),
-            label, on_click=on_toggle, variant="ghost", size="1", color_scheme="gray",
+            label,
+            on_click=on_toggle,
+            variant="ghost",
+            size="1",
+            color_scheme="gray",
             aria_expanded=rx.cond(is_open, "true", "false"),
         ),
         rx.cond(is_open, rx.box(*children, padding="6px 0 0 18px", width="100%")),

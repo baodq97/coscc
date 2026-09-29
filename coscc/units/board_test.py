@@ -1,10 +1,8 @@
 """Tests for the board, run against the only real set of work units there is.
 
-This repository's own `.cos/` is the fixture. That is deliberate: the thing most likely to
-break here is not the parsing but the *agreement* between this module and
-`.claude/scripts/cos.mjs`, and a hand-built fixture would keep passing after the two drift
-apart. `spec.md` C8 is the concern these tests stand against.
-"""
+This repository's own `.cos/` is the fixture. That is deliberate: the thing most likely to break
+here is not the parsing but the *agreement* between this module and `.claude/scripts/cos.mjs`, and a
+hand-built fixture would keep passing after the two drift apart."""
 
 from __future__ import annotations
 
@@ -47,11 +45,25 @@ class TheRepositoryReadsAsABoard(unittest.TestCase):
             self.assertEqual(got, STAGES, f"{unit['name']} is missing a stage")
 
     def test_the_type_is_cos_mjs_s_verbatim(self):
-        # `0046` R3: copied from `status --json`, never read from `intent.md` here.
+        # Copied from `status --json`, never read from `intent.md` here.
         data = run(board.read(REPO))
-        out = subprocess.run(["node", str(harness.script()), "--root", str(REPO), "--state", "-", "status", "--json"],
-                             input=json.dumps(snapshot_of(REPO)),
-                             capture_output=True, text=True, check=True, env=harness.child_env()).stdout
+        out = subprocess.run(
+            [
+                "node",
+                str(harness.script()),
+                "--root",
+                str(REPO),
+                "--state",
+                "-",
+                "status",
+                "--json",
+            ],
+            input=json.dumps(snapshot_of(REPO)),
+            capture_output=True,
+            text=True,
+            check=True,
+            env=harness.child_env(),
+        ).stdout
         want = {u["name"]: str(u.get("type") or "") for u in json.loads(out)["units"]}
         self.assertEqual({u["name"]: u["type"] for u in data["units"]}, want)
         self.assertIn("feat", want.values())
@@ -83,8 +95,8 @@ class TheRepositoryReadsAsABoard(unittest.TestCase):
 
 
 class TheStageListNeedsNoWorkspace(unittest.TestCase):
-    """`0004_no-setting-says-which-model-runs-a-stage`: Settings asks for the stages with
-    no workspace, and gets the script's list, in the script's order."""
+    """Settings asks for the stages with no workspace, and gets the script's list, in the script's
+    order."""
 
     def test_stages_is_the_script_status_list(self):
         self.assertEqual(run(board.stages()), run(board.read(REPO))["stages"])
@@ -113,7 +125,7 @@ class ThePhaseIsCarriedFromTheScript(unittest.TestCase):
 
 
 class QuestionsAreCarriedFromTheScript(unittest.TestCase):
-    """`0016` R7. The board forwards what `cos.mjs` decided and recounts nothing."""
+    """The board forwards what `cos.mjs` decided and recounts nothing."""
 
     TEXT = (
         "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n"
@@ -143,25 +155,45 @@ class QuestionsAreCarriedFromTheScript(unittest.TestCase):
             self.assertEqual((u["open"], u["questions"], u["counted"]), (0, [], ""))
 
     def test_who_answered_and_every_answer_in_force_are_copied(self):
-        """`0044`. `by` on each question and `answers` on the unit, from the joined answer
-        `cos.mjs` sent; the last block for a number is the one in force."""
-        text = self.TEXT + "\n### Câu 2\nAnswered by: Jera. Date: 2026-09-25. Via: precedent.\n\nKhông.\n"
+        """`by` on each question and `answers` on the unit, from the joined answer `cos.mjs` sent;
+        the last block for a number is the one in force."""
+        text = (
+            self.TEXT
+            + "\n### Câu 2\nAnswered by: Jera. Date: 2026-09-25. Via: precedent.\n\nKhông.\n"
+        )
         with tempfile.TemporaryDirectory() as d:
             unit = Path(d) / ".cos" / "0001_q"
             unit.mkdir(parents=True)
             (unit / "intent.md").write_text(text, encoding="utf-8")
             [u] = run(board.read(d))["units"]
             self.assertEqual([q["by"] for q in u["questions"]], ["", "Jera", ""])
-            self.assertEqual(u["answers"], [{
-                "artifact": "intent.md", "n": 2, "question": "Two?", "by": "Jera", "date": "2026-09-25",
-                # `0136` R15: whose it is, as the app's import classified `Via: precedent.`
-                "via": "precedent", "text": "Không.", "authority": "agent",
-            }])
+            self.assertEqual(
+                u["answers"],
+                [
+                    {
+                        "artifact": "intent.md",
+                        "n": 2,
+                        "question": "Two?",
+                        "by": "Jera",
+                        "date": "2026-09-25",
+                        # Whose it is, as the app's import classified `Via: precedent.`
+                        "via": "precedent",
+                        "text": "Không.",
+                        "authority": "agent",
+                    }
+                ],
+            )
 
     def test_an_older_script_sends_no_answers_and_no_names(self):
         async def fake_run(argv, timeout, stdin=None):
-            return 0, ('{"stages": [], "units": [{"name": "0001_q", "questions": '
-                       '[{"artifact": "spec.md", "n": 1, "text": "x", "answered": true}]}]}'), ""
+            return (
+                0,
+                (
+                    '{"stages": [], "units": [{"name": "0001_q", "questions": '
+                    '[{"artifact": "spec.md", "n": 1, "text": "x", "answered": true}]}]}'
+                ),
+                "",
+            )
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
             [u] = run(board.read(d))["units"]
@@ -178,7 +210,7 @@ REVIEW_TWO_ROUNDS = (
 
 
 class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
-    """`0021`. The board forwards the PR and each round's text; it splits nothing itself."""
+    """The board forwards the PR and each round's text; it splits nothing itself."""
 
     def test_two_rounds_arrive_with_their_text_and_the_pr_number(self):
         with tempfile.TemporaryDirectory() as d:
@@ -190,25 +222,29 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
             (unit / "review.md").write_text(REVIEW_TWO_ROUNDS, encoding="utf-8")
             [u] = run(board.read(d))["units"]
             self.assertEqual(u["pr"], {"url": "https://github.com/o/r/pull/7", "number": 7})
-            self.assertEqual([(r["n"], r["verdict"]) for r in u["rounds"]],
-                             [(1, "changes-requested"), (2, "changes-requested")])
+            self.assertEqual(
+                [(r["n"], r["verdict"]) for r in u["rounds"]],
+                [(1, "changes-requested"), (2, "changes-requested")],
+            )
             self.assertTrue(u["rounds"][0]["text"].startswith("## Round 1\n"))
             self.assertIn("- F2 [open] the second thing", u["rounds"][0]["text"])
             self.assertNotIn("## Round 2", u["rounds"][0]["text"])
             self.assertIn("- F1 [fixed abcdef2] the first thing", u["rounds"][1]["text"])
 
     def test_each_round_carries_its_finding_counts(self):
-        # `0033` spec R10: counted off `parseReview`'s findings, not parsed again here.
+        # Counted off `parseReview`'s findings, not parsed again here.
         with tempfile.TemporaryDirectory() as d:
             unit = Path(d) / ".cos" / "0001_q"
             unit.mkdir(parents=True)
             (unit / "review.md").write_text(REVIEW_TWO_ROUNDS, encoding="utf-8")
             [u] = run(board.read(d))["units"]
-            self.assertEqual([(r["findings"], r["findings_open"]) for r in u["rounds"]], [(2, 2), (2, 1)])
+            self.assertEqual(
+                [(r["findings"], r["findings_open"]) for r in u["rounds"]], [(2, 2), (2, 1)]
+            )
 
     def test_the_script_and_the_runner_cut_rounds_at_the_same_place(self):
-        """`0021` plan, Risk 8. `coscc/runner/__init__.py` `_rounds` is an older second reading of
-        round edges; until it goes, the text posted and the text preserved must match."""
+        """`coscc/runner/__init__.py` `_rounds` is an older second reading of round edges; until it
+        goes, the text posted and the text preserved must match."""
         from coscc.runner import _rounds
 
         text = REVIEW_TWO_ROUNDS + "\n## Answers\n\n### Câu 1\nnot a round\n"
@@ -219,8 +255,8 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
             [u] = run(board.read(d))["units"]
             self.assertEqual([r["text"] for r in u["rounds"]], _rounds(text))
 
-    def test_0027_rounds_carry_what_cos_mjs_read_as_unfinished(self):
-        """`0027` R5. Round 2 lists F1 alone, so it drops F2; the board carries what the
+    def test_rounds_carry_what_cos_mjs_read_as_unfinished(self):
+        """Round 2 lists the first finding alone, so it drops the second; the board carries what the
         script read and works out nothing itself."""
         text = REVIEW_TWO_ROUNDS.replace(
             "- F1 [fixed abcdef2] the first thing\n- F2 [open] the second thing\n",
@@ -231,12 +267,15 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
             unit.mkdir(parents=True)
             (unit / "review.md").write_text(text, encoding="utf-8")
             [u] = run(board.read(d))["units"]
-            self.assertEqual([(r["dropped"], r["unfinished"]) for r in u["rounds"]],
-                             [([], False), (["F2"], True)])
+            self.assertEqual(
+                [(r["dropped"], r["unfinished"]) for r in u["rounds"]],
+                [([], False), (["F2"], True)],
+            )
             (unit / "review.md").write_text(REVIEW_TWO_ROUNDS, encoding="utf-8")
             [u] = run(board.read(d))["units"]
-            self.assertEqual([(r["dropped"], r["unfinished"]) for r in u["rounds"]],
-                             [([], False), ([], False)])
+            self.assertEqual(
+                [(r["dropped"], r["unfinished"]) for r in u["rounds"]], [([], False), ([], False)]
+            )
 
     def test_an_older_script_that_sends_neither_reads_as_none(self):
         async def fake_run(argv, timeout, stdin=None):
@@ -248,30 +287,39 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
 
 
 class TheStageAtAndWhyAreCarriedFromTheScript(unittest.TestCase):
-    """`0100` Design 2. `at` and `next.why` arrive as `status --json` sent them."""
+    """`at` and `next.why` arrive as `status --json` sent them."""
 
     def test_at_and_why_are_the_scripts(self):
         with tempfile.TemporaryDirectory() as d:
             for name, files in {
                 "0001_open": {"intent.md": "# I\nType: feat. Status: accepted.\n"},
-                "0002_draft": {"intent.md": "# I\nType: feat. Status: accepted.\n",
-                               "spec.md": "# S\nStatus: draft.\n"},
+                "0002_draft": {
+                    "intent.md": "# I\nType: feat. Status: accepted.\n",
+                    "spec.md": "# S\nStatus: draft.\n",
+                },
             }.items():
                 unit = Path(d) / ".cos" / name
                 unit.mkdir(parents=True)
                 for f, text in files.items():
                     (unit / f).write_text(text, encoding="utf-8")
             script = REPO / ".claude" / "scripts" / "cos.mjs"
-            said = json.loads(subprocess.run(
-                ["node", str(script), "--root", d, "--state", "-", "status", "--json"],
-                input=json.dumps(snapshot_of(d)), capture_output=True, text=True, check=True,
-            ).stdout)
+            said = json.loads(
+                subprocess.run(
+                    ["node", str(script), "--root", d, "--state", "-", "status", "--json"],
+                    input=json.dumps(snapshot_of(d)),
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout
+            )
             got = run(board.read(d))["units"]
         self.assertEqual(
             [(u["at"], u["why"]) for u in got],
             [(u["at"], u["next"]["why"]) for u in said["units"]],
         )
-        self.assertEqual([(u["at"], u["why"]) for u in got], [("spec", "missing"), ("spec", "draft")])
+        self.assertEqual(
+            [(u["at"], u["why"]) for u in got], [("spec", "missing"), ("spec", "draft")]
+        )
 
     def test_an_older_script_that_sends_neither_reads_as_empty(self):
         async def fake_run(argv, timeout, stdin=None):
@@ -356,7 +404,7 @@ class AnUnreadableBoardRaisesRatherThanReturningEmpty(unittest.TestCase):
         self.assertEqual(set(env), {"PATH", "HOME", "LC_ALL", "NO_COLOR"})
 
     def test_the_review_round_limit_is_the_one_setting_passed_down(self):
-        """`0015`: `COS_REVIEW_ROUNDS` reaches `cos.mjs`, and nothing else new does."""
+        """`COS_REVIEW_ROUNDS` reaches `cos.mjs`, and nothing else new does."""
         extra = {"COS_REVIEW_ROUNDS": "5", "GH_TOKEN": "secret", "COS_MODEL": "m"}
         with mock.patch.dict(os.environ, extra):
             env = board._child_env()
@@ -406,14 +454,16 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
             self.assertTrue(said.strip())
 
     def _store_unit(self, tmp: str) -> str:
-        """A unit in a store-shaped root: artifacts only, no git — what `0014` built."""
+        """A unit in a store-shaped root: artifacts only, no git."""
         name = "0001_needs-a-review"
         d = Path(tmp) / ".cos" / name
         d.mkdir(parents=True)
         (d / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n")
         for f in ("spec.md", "plan.md", "impl.md"):
             (d / f).write_text("Status: accepted.\n")
-        (d / "pr.md").write_text("# PR: feat(0001): x\nPR: https://github.com/o/r/pull/3. Status: accepted.\n")
+        (d / "pr.md").write_text(
+            "# PR: feat(0001): x\nPR: https://github.com/o/r/pull/3. Status: accepted.\n"
+        )
         return name
 
     def test_without_a_repo_the_review_gate_says_so_instead_of_reading_the_store(self):
@@ -424,7 +474,7 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
             self.assertIn("no repository given", said)
 
     def test_the_repo_reaches_the_gate_as_repo(self):
-        """`0015`: the workspace is where `review` asks gh about the pull request."""
+        """The workspace is where `review` asks gh about the pull request."""
         seen = {}
 
         async def fake_run(argv, timeout, stdin=None):
@@ -455,7 +505,7 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
 
 
 class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
-    """`0024`. The run button's stage is `cos.mjs next`'s answer, copied through."""
+    """The run button's stage is `cos.mjs next`'s answer, copied through."""
 
     def _unit(self, tmp: str, files: dict[str, str]) -> str:
         name = "0001_what-comes-next"
@@ -471,7 +521,10 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
 
         out = subprocess.run(
             ["node", str(harness.script()), "--root", tmp, "--state", "-", "next", name, *extra],
-            input=json.dumps(snapshot_of(tmp)), capture_output=True, text=True, check=True,
+            input=json.dumps(snapshot_of(tmp)),
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
         return json.loads(out)
 
@@ -481,11 +534,13 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
             {"intent.md": "# I\nAuthor: t. Type: fix. Status: draft.\n"},
             {
                 "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
-                "spec.md": "Status: skipped.\n", "plan.md": "Status: accepted.\n",
+                "spec.md": "Status: skipped.\n",
+                "plan.md": "Status: accepted.\n",
             },
             {
                 "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
-                "spec.md": "Status: accepted.\n", "plan.md": "Status: accepted.\n",
+                "spec.md": "Status: accepted.\n",
+                "plan.md": "Status: accepted.\n",
                 "impl.md": "Status: accepted.\n",
                 "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
                 "review.md": "# R\nStatus: changes-requested.\n\n## Round 1\n\n"
@@ -501,7 +556,9 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
                 self.assertEqual(got["action"], script["action"])
                 # `read` carries the file-only stage for the card, from the same script.
                 [u] = run(board.read(tmp))["units"]
-                self.assertEqual(u["next_stage"], script["stage"] if files.get("review.md") is None else "")
+                self.assertEqual(
+                    u["next_stage"], script["stage"] if files.get("review.md") is None else ""
+                )
 
     def test_the_repo_reaches_next_as_repo_with_the_gate_timeout(self):
         seen = {}
@@ -529,7 +586,9 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", spy):
             self._unit(tmp, {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"})
             run(board.read(tmp))
-        self.assertEqual([a[a.index("--root") + 2:] for a in calls], [["--state", "-", "status", "--json"]])
+        self.assertEqual(
+            [a[a.index("--root") + 2 :] for a in calls], [["--state", "-", "status", "--json"]]
+        )
 
     def test_a_unit_that_is_not_there_is_unavailable(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -537,11 +596,12 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
                 run(board.next_step(tmp, "0009_not-here"))
 
 
-# `0028`. A review round that confirmed two findings need a person, one of them answered.
+# A review round that confirmed two findings need a person, one of them answered.
 _ROUND = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
 AWAITING_PERSON = {
     "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
-    "spec.md": "Status: accepted.\n", "plan.md": "Status: accepted.\n",
+    "spec.md": "Status: accepted.\n",
+    "plan.md": "Status: accepted.\n",
     "impl.md": "# Impl\nStatus: accepted.\n\n## Needs a person\n\n- F2: no budget for --paid\n- F3: no gh\n",
     "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
     "review.md": "# R\nStatus: changes-requested.\n"
@@ -552,7 +612,7 @@ AWAITING_PERSON = {
 
 
 class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
-    """`0028` R9. `waiting` and `personFindings` are `cos.mjs`'s, copied and nothing more."""
+    """`waiting` and `personFindings` are `cos.mjs`'s, copied and nothing more."""
 
     _unit = TheNextStageIsAskedNotWorkedOut._unit
     _script_says = TheNextStageIsAskedNotWorkedOut._script_says
@@ -578,10 +638,13 @@ class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self._unit(tmp, AWAITING_PERSON)
             [u] = run(board.read(tmp))["units"]
-        self.assertEqual(u["person_findings"], [
-            {"id": "F2", "reason": "no budget for --paid", "answered": True},
-            {"id": "F3", "reason": "no gh", "answered": False},
-        ])
+        self.assertEqual(
+            u["person_findings"],
+            [
+                {"id": "F2", "reason": "no budget for --paid", "answered": True},
+                {"id": "F3", "reason": "no gh", "answered": False},
+            ],
+        )
         self.assertEqual(u["waiting"], ["F3"])
 
     def test_a_unit_without_them_reads_as_empty(self):
@@ -591,7 +654,6 @@ class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
         self.assertEqual((u["person_findings"], u["waiting"]), ([], []))
 
 
-# `0027`. Round 2 asked for changes and lists F2 alone, so it left out F1 and F3.
 UNFINISHED_ROUND = {
     **{k: v for k, v in AWAITING_PERSON.items() if k != "review.md"},
     "impl.md": "# Impl\nStatus: accepted.\n",
@@ -602,8 +664,8 @@ UNFINISHED_ROUND = {
 
 
 class TheIdsARoundLeftOutAreCarriedFromTheScript(unittest.TestCase):
-    """`0027` review F1. `next` hands the ids over as `dropped`, a list, and the board copies
-    it; its sentence names none of them."""
+    """`next` hands the ids over as `dropped`, a list, and the board copies it; its sentence names
+    none of them."""
 
     _unit = TheNextStageIsAskedNotWorkedOut._unit
     _script_says = TheNextStageIsAskedNotWorkedOut._script_says
@@ -634,7 +696,7 @@ OUTCOME_INTENT = (
 
 
 class TheOutcomeIsCopiedFromTheScript(unittest.TestCase):
-    """`0047`. The board forwards `cos.mjs` `unitOutcome`; it reads no block itself."""
+    """The board forwards `cos.mjs` `unitOutcome`; it reads no block itself."""
 
     def _read(self, files: dict[str, str]):
         with tempfile.TemporaryDirectory() as d:
@@ -647,11 +709,20 @@ class TheOutcomeIsCopiedFromTheScript(unittest.TestCase):
 
     def test_the_outcome_arrives_as_the_script_read_it(self):
         u = self._read({"intent.md": OUTCOME_INTENT})
-        self.assertEqual(u["outcome"], {
-            "deadline": "2026-10-07", "result": "missed", "by": "Linh", "date": "2026-10-08",
-            "measured_by": "agent", "source": "board, 2026-10-08", "reason": None, "note": None,
-            "invalid": 1,
-        })
+        self.assertEqual(
+            u["outcome"],
+            {
+                "deadline": "2026-10-07",
+                "result": "missed",
+                "by": "Linh",
+                "date": "2026-10-08",
+                "measured_by": "agent",
+                "source": "board, 2026-10-08",
+                "reason": None,
+                "note": None,
+                "invalid": 1,
+            },
+        )
 
     def test_a_unit_with_no_intent_has_none(self):
         self.assertIsNone(self._read({"idea.md": "# Idea\nStatus: accepted.\n"})["outcome"])
@@ -672,7 +743,7 @@ PAUSED_INTENT = (
 
 
 class TheHoldIsCarriedFromTheScript(unittest.TestCase):
-    """`0045`. `hold` and `hold_moves` are `cos.mjs`'s, copied and nothing more."""
+    """`hold` and `hold_moves` are `cos.mjs`'s, copied and nothing more."""
 
     _unit = TheNextStageIsAskedNotWorkedOut._unit
 
@@ -680,7 +751,9 @@ class TheHoldIsCarriedFromTheScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self._unit(tmp, {"intent.md": PAUSED_INTENT})
             [u] = run(board.read(tmp))["units"]
-        self.assertEqual(u["hold"], {"state": "paused", "reason": "chờ 0034", "by": "Leif", "date": "2026-09-24"})
+        self.assertEqual(
+            u["hold"], {"state": "paused", "reason": "chờ 0034", "by": "Leif", "date": "2026-09-24"}
+        )
         self.assertEqual(u["hold_moves"], ["dropped", "active"])
         self.assertTrue(u["next"].startswith("paused — chờ 0034"))
 
@@ -707,7 +780,7 @@ _MORE_ROUNDS = "\n## Answers\n\n### More rounds\nDecided by: owner. Date: 2026-0
 
 
 class MoreRoundsAreCarriedFromTheScript(unittest.TestCase):
-    """`0081` R4/R8. `more_rounds` and `rounds_granted` are `cos.mjs`'s, copied and nothing more."""
+    """`more_rounds` and `rounds_granted` are `cos.mjs`'s, copied and nothing more."""
 
     def _stuck(self, tmp: str, name: str, review: str) -> None:
         d = Path(tmp) / ".cos" / name
@@ -724,8 +797,12 @@ class MoreRoundsAreCarriedFromTheScript(unittest.TestCase):
             self._stuck(tmp, "0001_given", _STUCK_REVIEW + _MORE_ROUNDS)
             self._stuck(tmp, "0002_stuck", _STUCK_REVIEW)
             got = {u["name"]: u for u in run(board.read(tmp))["units"]}
-        self.assertEqual((got["0001_given"]["more_rounds"], got["0001_given"]["rounds_granted"]), (False, 1))
-        self.assertEqual((got["0002_stuck"]["more_rounds"], got["0002_stuck"]["rounds_granted"]), (True, 0))
+        self.assertEqual(
+            (got["0001_given"]["more_rounds"], got["0001_given"]["rounds_granted"]), (False, 1)
+        )
+        self.assertEqual(
+            (got["0002_stuck"]["more_rounds"], got["0002_stuck"]["rounds_granted"]), (True, 0)
+        )
 
     def test_an_older_script_reads_as_false_and_zero(self):
         async def fake_run(argv, timeout, stdin=None):
@@ -737,7 +814,7 @@ class MoreRoundsAreCarriedFromTheScript(unittest.TestCase):
 
 
 class TheStagesAnAnsweredDraftRunsAgainAreCarriedFromTheScript(unittest.TestCase):
-    """`0115` R4. `afterAnswers` is `cos.mjs`'s, copied onto the read and onto each unit."""
+    """`afterAnswers` is `cos.mjs`'s, copied onto the read and onto each unit."""
 
     def test_every_unit_carries_the_stages_an_answered_draft_runs_again(self):
         data = run(board.read(REPO))
@@ -763,7 +840,7 @@ PR_MD = (
 
 
 class ThePrTextIsCopiedFromTheScript(unittest.TestCase):
-    """`0055`. The title and body come from `cos.mjs` `prText`; this module cuts nothing."""
+    """The title and body come from `cos.mjs` `prText`; this module cuts nothing."""
 
     def test_a_unit_with_pr_md_gets_its_title_body_and_url(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -772,11 +849,18 @@ class ThePrTextIsCopiedFromTheScript(unittest.TestCase):
             (unit / "pr.md").write_text(PR_MD, encoding="utf-8")
             (unit / "intent.md").write_text("# I\nType: fix. Status: accepted.\n", encoding="utf-8")
             got = run(board.pr_text(tmp, "0001_a"))
-        self.assertEqual(got, {
-            "unit": "0001_a", "title": "fix(0001): a title", "body": "## Where\n\nchecks pending.\n",
-            "url": "https://github.com/o/r/pull/7", "scope": None, "status": "accepted",
-            "titleProblem": None,
-        })
+        self.assertEqual(
+            got,
+            {
+                "unit": "0001_a",
+                "title": "fix(0001): a title",
+                "body": "## Where\n\nchecks pending.\n",
+                "url": "https://github.com/o/r/pull/7",
+                "scope": None,
+                "status": "accepted",
+                "titleProblem": None,
+            },
+        )
 
     def test_a_unit_without_pr_md_is_an_answer_with_code_one(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -795,8 +879,8 @@ class ThePrTextIsCopiedFromTheScript(unittest.TestCase):
 
 
 class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
-    """`0111` R1. `board.screens` runs the app's `cos.mjs screens` against a real git
-    repository and store, and hands back what it printed."""
+    """`board.screens` runs the app's `cos.mjs screens` against a real git repository and store, and
+    hands back what it printed."""
 
     def _repo(self, tmp: str) -> tuple[Path, Path, str]:
         store, repo = Path(tmp) / "store", Path(tmp) / "repo"
@@ -807,13 +891,26 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
 
         def git(*args: str) -> str:
             return subprocess.run(
-                ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid",
-                 "-c", "commit.gpgsign=false", *args],
-                cwd=repo, check=True, capture_output=True, text=True,
+                [
+                    "git",
+                    "-c",
+                    "user.name=T",
+                    "-c",
+                    "user.email=t@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    *args,
+                ],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
             ).stdout.strip()
 
         git("init", "-q", "-b", "main")
-        (repo / ".claude" / "rules" / "ui-standard.md").write_text('---\npaths:\n  - "coscc/screens/__init__.py"\n---\n')
+        (repo / ".claude" / "rules" / "ui-standard.md").write_text(
+            '---\npaths:\n  - "coscc/screens/__init__.py"\n---\n'
+        )
         (repo / ".gitignore").write_text(".screens/\n")
         git("add", ".")
         git("commit", "-q", "-m", "first")
@@ -831,15 +928,21 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store, repo, taken = self._repo(tmp)
             hits = [{"address": "/board", "size": "390x844", "kind": "path", "snippet": "/tmp/x"}]
-            (repo / ".screens" / "manifest.json").write_text(json.dumps(
-                {"head": taken, "dirty": False, "addresses": ["/board"], "hits": hits}
-            ))
+            (repo / ".screens" / "manifest.json").write_text(
+                json.dumps({"head": taken, "dirty": False, "addresses": ["/board"], "hits": hits})
+            )
             got = run(board.screens(store, "0001_x", repo))
-        self.assertEqual(got, {
-            "unit": "0001_x", "ui": ["coscc/screens/__init__.py"],
-            "manifest": {"head": taken, "dirty": False, "addresses": ["/board"], "hits": hits},
-            "rewritten": True, "retake": True, "why": "",
-        })
+        self.assertEqual(
+            got,
+            {
+                "unit": "0001_x",
+                "ui": ["coscc/screens/__init__.py"],
+                "manifest": {"head": taken, "dirty": False, "addresses": ["/board"], "hits": hits},
+                "rewritten": True,
+                "retake": True,
+                "why": "",
+            },
+        )
 
     def test_no_manifest_is_no_retake_and_says_why(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -892,7 +995,7 @@ _TO_IMPL = {"spec.md": "# S\nStatus: accepted.\n", "plan.md": "# P\nStatus: acce
 
 
 class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):
-    """`0135`. Given a snapshot, `--state -` right after `--root`, and the JSON on stdin."""
+    """Given a snapshot, `--state -` right after `--root`, and the JSON on stdin."""
 
     def test_read_next_and_gate_hand_the_snapshot_on_stdin(self):
         seen: list[tuple[list[str], str]] = []
@@ -912,31 +1015,53 @@ class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):
             run(board.pr_text(d, "0001_x", state=snapshot))
         self.assertEqual(len(seen), 5)
         for argv, stdin in seen:
-            self.assertEqual(argv[argv.index("--root") + 2 : argv.index("--root") + 4], ["--state", "-"])
+            self.assertEqual(
+                argv[argv.index("--root") + 2 : argv.index("--root") + 4], ["--state", "-"]
+            )
             self.assertNotIn("--peer", argv)
             self.assertEqual(json.loads(stdin), snapshot)
 
 
 class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
-    """`0040` R14, since `0135`: another workspace's units reach `cos.mjs` in the snapshot,
-    under their workspace's name, where `--peer` once named their store."""
+    """Another workspace's units reach `cos.mjs` in the snapshot, under their workspace's name."""
 
     def test_a_dependency_is_read_across_workspaces_and_copied(self):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             _store(Path(a), {"0001_x": {"intent.md": "# I\nType: feat. Status: accepted.\n"}})
             _store(
                 Path(b),
-                {"0001_y": {"intent.md": "# I\nType: feat. Status: accepted.\nIdea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x.\n", **_TO_IMPL}},
-                {"0001_f.md": "# Idea: f\nStatus: accepted.\n\n## Units\n\n- a/0001_x.\n- b/0001_y. Depends on: a/0001_x.\n"},
+                {
+                    "0001_y": {
+                        "intent.md": "# I\nType: feat. Status: accepted.\nIdea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x.\n",
+                        **_TO_IMPL,
+                    }
+                },
+                {
+                    "0001_f.md": "# Idea: f\nStatus: accepted.\n\n## Units\n\n- a/0001_x.\n- b/0001_y. Depends on: a/0001_x.\n"
+                },
             )
             state = snapshot_of(b, [("a", a), ("b", b)])
             data = run(board.read(b, state=state))
             nxt = run(board.next_step(b, "0001_y", state=state))
         [u] = data["units"]
         self.assertEqual((u["idea"], u["repo"], u["why"]), ("ideas/0001_f.md", "b", "dependency"))
-        self.assertEqual(u["depends_on"], [{"ref": "a/0001_x", "merged": False, "why": "not merged: the app holds no merge of it"}])
-        self.assertEqual(data["ideas"][0]["units"][1], {"ref": "b/0001_y", "depends_on": ["a/0001_x"]})
-        self.assertEqual((nxt["stage"], nxt["why"], nxt["action"]), ("", "dependency", "waiting on a/0001_x to merge"))
+        self.assertEqual(
+            u["depends_on"],
+            [
+                {
+                    "ref": "a/0001_x",
+                    "merged": False,
+                    "why": "not merged: the app holds no merge of it",
+                }
+            ],
+        )
+        self.assertEqual(
+            data["ideas"][0]["units"][1], {"ref": "b/0001_y", "depends_on": ["a/0001_x"]}
+        )
+        self.assertEqual(
+            (nxt["stage"], nxt["why"], nxt["action"]),
+            ("", "dependency", "waiting on a/0001_x to merge"),
+        )
 
     def test_a_unit_without_links_reads_as_before(self):
         with tempfile.TemporaryDirectory() as d:
@@ -947,13 +1072,18 @@ class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
 
 
 class TheGateHandsOnACleanRebase(unittest.TestCase):
-    """`0136` review round 1, F1: `gate --json`'s `rebased` reaches the app, and nothing else does."""
+    """`gate --json`'s `rebased` reaches the app, and nothing else does."""
 
     def test_only_two_named_commits_are_taken(self):
         both = {"reviewed": "a" * 40, "head": "b" * 40}
         self.assertEqual(_board._rebased({"rebased": both}), both)
-        for bad in ({}, {"rebased": None}, {"rebased": {"reviewed": "a"}}, {"rebased": {"reviewed": "", "head": "b"}},
-                    {"rebased": "yes"}):
+        for bad in (
+            {},
+            {"rebased": None},
+            {"rebased": {"reviewed": "a"}},
+            {"rebased": {"reviewed": "", "head": "b"}},
+            {"rebased": "yes"},
+        ):
             self.assertIsNone(_board._rebased(bad), bad)
         self.assertEqual(_board.Gate(True, "open", (), both).rebased, both)
         self.assertIsNone(_board.Gate(True, "open").rebased)

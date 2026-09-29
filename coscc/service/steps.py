@@ -23,9 +23,12 @@ from coscc.units import planmap, retake
 from coscc.units.board import Unavailable
 from coscc.data import Data, now as _now
 from coscc.git.gitops import GitError
-from coscc.runlog.journal import BadRecord, Busy, Journal
+from coscc.runlog.journal import BadRecord, Journal
+from coscc.data import Busy
 from coscc.agent.policy import grant_for
-from coscc.runner import RunError, Runner, answers_section, describe_attempt
+from coscc.runner import RunError, Runner
+from coscc.runner.prompt import answers_section
+from coscc.runner.attempt import describe_attempt
 from coscc.agent import steps as steps_mod
 from coscc.agent.sessions import Suspended
 from coscc import units
@@ -73,9 +76,14 @@ def integration_since_review(journal: Journal, key: str, unit: str) -> dict[str,
     for rec in rows:
         if rec.get("kind") == "integration" and rec.get("outcome") == "pushed":
             found = rec
-        elif rec.get("kind") == "end" and rec.get("stage") == "review" and rec.get("outcome") == "done":
+        elif (
+            rec.get("kind") == "end"
+            and rec.get("stage") == "review"
+            and rec.get("outcome") == "done"
+        ):
             found = None
     return found
+
 
 # Seconds a held CI answer is trusted before a board read asks `gh` again, in the
 # background. Chosen, not measured.
@@ -83,11 +91,15 @@ CI_REFRESH = 60.0
 
 
 class StepsMixin:
-
     # -- integration -------------------------------------------------
 
     async def _attach_integration(
-        self, cwd: str, units_: list[dict[str, Any]], journal: Journal | None, key: str, prs_once=None,
+        self,
+        cwd: str,
+        units_: list[dict[str, Any]],
+        journal: Journal | None,
+        key: str,
+        prs_once=None,
     ) -> list[tuple[tuple[str, str], str, int, str]]:
         """Give every unit `integration: {...}` when it sits in the window, else None.
 
@@ -121,7 +133,11 @@ class StepsMixin:
             if info is not None:
                 u["integration"] = info
             number = (u.get("pr") or {}).get("number")
-            row = next((r for r in prs if r.get("number") == number), None) if isinstance(prs, list) else None
+            row = (
+                next((r for r in prs if r.get("number") == number), None)
+                if isinstance(prs, list)
+                else None
+            )
             if row is None:
                 continue
             slot, head = (key, u["name"]), str(row.get("headRefOid") or "")
@@ -130,7 +146,11 @@ class StepsMixin:
                 u["ci_held"] = held
             if slot in self._ci_asks:
                 continue
-            if held is None or held.get("head") != head or not _younger_than(held.get("at") or "", oldest):
+            if (
+                held is None
+                or held.get("head") != head
+                or not _younger_than(held.get("at") or "", oldest)
+            ):
                 asks.append((slot, str(root), int(number), head))
         return asks
 
@@ -162,16 +182,26 @@ class StepsMixin:
                     return
                 u = prmachine.Unit(slot[0], slot[1], Path(tree), tree, "", "", None)
                 try:
-                    self._pr_machine().record_ci(u, number, head, [c for c in checks if isinstance(c, dict)])
+                    self._pr_machine().record_ci(
+                        u, number, head, [c for c in checks if isinstance(c, dict)]
+                    )
                 except Exception as e:  # noqa: BLE001 — a background ask never raises
-                    self._ci[slot] = {"head": head, "error": f"the CI answer could not be recorded: {e}", "at": _now()}
+                    self._ci[slot] = {
+                        "head": head,
+                        "error": f"the CI answer could not be recorded: {e}",
+                        "at": _now(),
+                    }
                     return
                 self._ci.pop(slot, None)
 
             task = asyncio.get_running_loop().create_task(ask())
             self._ci_asks[slot] = task
             # Removed however it ends — cancelled included — or the unit is never asked again.
-            task.add_done_callback(lambda t, slot=slot: self._ci_asks.pop(slot, None) if self._ci_asks.get(slot) is t else None)
+            task.add_done_callback(
+                lambda t, slot=slot: (
+                    self._ci_asks.pop(slot, None) if self._ci_asks.get(slot) is t else None
+                )
+            )
 
     @staticmethod
     def _last_integrations(journal: Journal | None, key: str) -> dict[str, dict[str, Any]]:
@@ -184,7 +214,10 @@ class StepsMixin:
         return {str(r.get("unit")): r for r in rows}
 
     async def _integration_of(
-        self, root: Path, u: dict[str, Any], prs: list[dict[str, Any]] | str,
+        self,
+        root: Path,
+        u: dict[str, Any],
+        prs: list[dict[str, Any]] | str,
         last_record: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
         """One unit's state. None when its pull request is not among the open ones."""
@@ -203,7 +236,9 @@ class StepsMixin:
                 origin_sha = await gitops.rev_parse(root, "refs/remotes/origin/main")
                 head = str(pr_row.get("headRefOid") or "")
                 if not await gitops.has_commit(root, head):
-                    missing = f"the pull request's head {head[:7]} is not here: fetch, then ask again"
+                    missing = (
+                        f"the pull request's head {head[:7]} is not here: fetch, then ask again"
+                    )
                 else:
                     missing = await gitops.count_missing(root, head, origin_sha)
             except GitError as e:
@@ -216,7 +251,9 @@ class StepsMixin:
                 checks = str(e)
         verdict = integrate.classify(pr_row, missing, origin_sha, last_record, checks)
         state = verdict["state"]
-        review_status = next((r.get("status") or "" for r in u.get("stages") or [] if r.get("stage") == "review"), "")
+        review_status = next(
+            (r.get("status") or "" for r in u.get("stages") or [] if r.get("stage") == "review"), ""
+        )
         gebo = state in integrate.GEBO_STATES
         # A `current` unit also has the button, since the count may be against a
         # stale `origin/main` and only a press fetches. Both mechanical states may fall
@@ -231,16 +268,24 @@ class StepsMixin:
             "mode": "agent" if gebo else ("mechanical" if fallback else ""),
             "button": state in integrate.BUTTON_STATES or state == "current",
             "needs_person": list((last_record or {}).get("needs_person") or [])
-            if (last_record or {}).get("outcome") == "needs-person" else [],
+            if (last_record or {}).get("outcome") == "needs-person"
+            else [],
             "warnings": integrate.warnings(
-                u.get("rounds") or [], review_status, gebo or fallback, grant_for("integrate").warning,
-                fallback=fallback, name=(self._agent("integrate") or {}).get("name", ""),
+                u.get("rounds") or [],
+                review_status,
+                gebo or fallback,
+                grant_for("integrate").warning,
+                fallback=fallback,
+                name=(self._agent("integrate") or {}).get("name", ""),
             ),
             "consequence": CONSEQUENCE["integrate"],
         }
 
     async def integrate(
-        self, cwd: str, unit: str, started_by: str = "person",
+        self,
+        cwd: str,
+        unit: str,
+        started_by: str = "person",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Integrate one unit, on a person's request. Streams like `run_step`.
 
@@ -270,7 +315,9 @@ class StepsMixin:
         self._refuse_while_updating()
         journal = self._journal()
         if journal is None:
-            raise Invalid("no working folder is set, so an integration cannot be recorded — set COS_WORKING_DIR")
+            raise Invalid(
+                "no working folder is set, so an integration cannot be recorded — set COS_WORKING_DIR"
+            )
         if not unit:
             raise Invalid("name a work unit")
         directory = self._unit_dir(cwd, unit)
@@ -287,7 +334,12 @@ class StepsMixin:
         info = None
         pr = (found.get("pr") or {}).get("number")
         # Spread into every record this press writes.
-        seen: dict[str, Any] = {"fetch": None, "merge_state": "", "started_by": started_by, "completion": None}
+        seen: dict[str, Any] = {
+            "fetch": None,
+            "merge_state": "",
+            "started_by": started_by,
+            "completion": None,
+        }
         if found.get("between_pr_and_ship") and found.get("pr"):
             try:
                 seen["fetch"] = await fetches.fetch(root, BRANCH_REMOTE, BRANCH_TRUNK)
@@ -308,12 +360,12 @@ class StepsMixin:
         origin_sha = (info or {}).get("origin_sha", "")
         try:
             branch = units.branch_name(cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
-        except (CannotCreate, BadUnit):
+        except CannotCreate, BadUnit:
             branch = ""
         tree_found = None
         try:
             tree_found = await worktrees.find(cwd, unit, self.config.data_dir)
-        except (GitError, BadUnit):
+        except GitError, BadUnit:
             tree_found = None
         tree = Path(tree_found["path"]) if tree_found else None
 
@@ -323,10 +375,13 @@ class StepsMixin:
 
         def write(rec: dict[str, Any]) -> dict[str, Any]:
             if before:
-                rec = {**rec, "detail": "; ".join(before + ([rec["detail"]] if rec.get("detail") else []))}
+                rec = {
+                    **rec,
+                    "detail": "; ".join(before + ([rec["detail"]] if rec.get("detail") else [])),
+                }
             try:
                 return journal.append(rec)
-            except (BadRecord, Busy):
+            except BadRecord, Busy:
                 return rec
 
         lock = self._integrate_locks.setdefault(key, asyncio.Lock())
@@ -335,16 +390,22 @@ class StepsMixin:
             cut = None
             if not busy and tree is not None:
                 try:
-                    here = any(e["workspace"] == key and e["unit"] == unit for e in self._running.values())
+                    here = any(
+                        e["workspace"] == key and e["unit"] == unit for e in self._running.values()
+                    )
                     cut = integrate.cut_integration(journal.records(key, unit=unit), unit, here)
                 except Busy:
                     cut = None
                 try:
                     if cut is not None and await gitops.rebase_in_progress(tree):
                         await gitops.abort_rebase(tree)
-                        before.append(f"an integration cut at {cut['at']} left a rebase in progress; the app aborted it")
+                        before.append(
+                            f"an integration cut at {cut['at']} left a rebase in progress; the app aborted it"
+                        )
                 except GitError as e:
-                    before.append(f"could not abort the rebase an integration cut at {cut['at']} left: {e}")
+                    before.append(
+                        f"could not abort the rebase an integration cut at {cut['at']} left: {e}"
+                    )
             clean = on_branch = None
             local_head = ""
             if tree is not None:
@@ -355,7 +416,13 @@ class StepsMixin:
                 except GitError:
                     clean = on_branch = None
             how, how_said = "", ""
-            if clean is True and on_branch is True and pr_head and local_head and local_head != pr_head:
+            if (
+                clean is True
+                and on_branch is True
+                and pr_head
+                and local_head
+                and local_head != pr_head
+            ):
                 answers: list[bool | None] = []
                 for ancestor, descendant in ((local_head, pr_head), (pr_head, local_head)):
                     try:
@@ -371,11 +438,14 @@ class StepsMixin:
                     newer = None
                     try:
                         if not origin_sha:
-                            raise GitError("origin/main could not be read, so the two bases cannot be compared")
+                            raise GitError(
+                                "origin/main could not be read, so the two bases cannot be compared"
+                            )
                         local_base = await gitops.merge_base_of(tree, local_head, origin_sha)
                         pr_base = await gitops.merge_base_of(tree, pr_head, origin_sha)
                         newer = integrate.newer_base(
-                            local_base, pr_base, await gitops.is_ancestor(tree, pr_base, local_base))
+                            local_base, pr_base, await gitops.is_ancestor(tree, pr_base, local_base)
+                        )
                     except GitError as e:
                         how_said = str(e)
                     how = integrate.relation(local_head, pr_head, *answers, newer=newer)
@@ -384,23 +454,40 @@ class StepsMixin:
                     try:
                         await gitops.reset_branch_to(tree, branch, local_head, pr_head)
                         local_head = pr_head
-                        before.append(f"the local branch followed the pull request's head from {was[:7]} to {pr_head[:7]}")
+                        before.append(
+                            f"the local branch followed the pull request's head from {was[:7]} to {pr_head[:7]}"
+                        )
                     except GitError as e:
                         how, how_said = "", str(e)
                 if how and how != "same":
                     seen["completion"] = {"relation": how, "local_head": was, "cut": cut}
             reason = integrate.refusal(
-                in_window=info is not None, busy=busy,
-                clean=clean, branch_ok=on_branch, local_head=local_head, pr_head=pr_head, state=state,
+                in_window=info is not None,
+                busy=busy,
+                clean=clean,
+                branch_ok=on_branch,
+                local_head=local_head,
+                pr_head=pr_head,
+                state=state,
                 origin=integrate.origin_note(origin_sha, seen["fetch"]),
-                relation=how, relation_said=how_said,
+                relation=how,
+                relation_said=how_said,
             )
             if reason:
-                write(integrate.record(
-                    workspace=key, unit=unit, pr=pr, mode=(info or {}).get("mode") or "mechanical",
-                    head_before=pr_head, head_after="", origin_sha=origin_sha, outcome="refused",
-                    detail=reason, **seen,
-                ))
+                write(
+                    integrate.record(
+                        workspace=key,
+                        unit=unit,
+                        pr=pr,
+                        mode=(info or {}).get("mode") or "mechanical",
+                        head_before=pr_head,
+                        head_after="",
+                        origin_sha=origin_sha,
+                        outcome="refused",
+                        detail=reason,
+                        **seen,
+                    )
+                )
                 raise Invalid(reason)
             if state == "behind" and how not in integrate.COMPLETION:
                 # An Apply waits for a mechanical integration, so none begins once
@@ -412,13 +499,21 @@ class StepsMixin:
             # Gebo shows as running under its agent name; a mechanical rebase has no agent and
             # shows as rebasing. The same condition as below.
             rid = self._mark_running(
-                key, unit, "integrate", "rebase" if state == "behind" and not completing else "gebo")
+                key, unit, "integrate", "rebase" if state == "behind" and not completing else "gebo"
+            )
         try:
             assert tree is not None
             refused_update = None
             if state == "behind" and not completing:
                 rec, refused_update = await self._integrate_mechanical(
-                    key, unit, int(pr), tree, branch, pr_head, origin_sha, seen,
+                    key,
+                    unit,
+                    int(pr),
+                    tree,
+                    branch,
+                    pr_head,
+                    origin_sha,
+                    seen,
                 )
                 if rec is not None:
                     rec = write(rec)
@@ -430,8 +525,22 @@ class StepsMixin:
                 # paused instead, so one waiting on this can go ahead.
                 self.updater.job_ended()
             async for item in self._integrate_gebo(
-                cwd, key, unit, directory, found, data, info, int(pr), tree, branch, pr_head, origin_sha,
-                journal, write, seen, refused_update,
+                cwd,
+                key,
+                unit,
+                directory,
+                found,
+                data,
+                info,
+                int(pr),
+                tree,
+                branch,
+                pr_head,
+                origin_sha,
+                journal,
+                write,
+                seen,
+                refused_update,
                 completion=seen["completion"] if completing else None,
             ):
                 yield item
@@ -442,7 +551,14 @@ class StepsMixin:
             self._autopilot_nudge(key)
 
     async def _integrate_mechanical(
-        self, key: str, unit: str, pr: int, tree: Path, branch: str, head_before: str, origin_sha: str,
+        self,
+        key: str,
+        unit: str,
+        pr: int,
+        tree: Path,
+        branch: str,
+        head_before: str,
+        origin_sha: str,
         seen: dict[str, Any],
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """GitHub rebases, the local branch follows. No session.
@@ -453,8 +569,15 @@ class StepsMixin:
         yet, stay `failed`: there is no exit code to go on, and GitHub may still be
         rebasing, which a Gebo session would race.
         """
-        base = dict(workspace=key, unit=unit, pr=pr, mode="mechanical", head_before=head_before,
-                    origin_sha=origin_sha, **seen)
+        base = dict(
+            workspace=key,
+            unit=unit,
+            pr=pr,
+            mode="mechanical",
+            head_before=head_before,
+            origin_sha=origin_sha,
+            **seen,
+        )
         try:
             code, said = await integrate.update_branch(str(tree), pr)
         except integrate.IntegrateError as e:
@@ -473,9 +596,12 @@ class StepsMixin:
                 return None, refused
             if not head_after:
                 return integrate.record(
-                    **base, head_after="", outcome="failed", update_branch=refused,
+                    **base,
+                    head_after="",
+                    outcome="failed",
+                    update_branch=refused,
                     detail=f"gh pr update-branch exited {code}, and the pull request's head could not be "
-                           f"read to rule out a rebase on GitHub's side, so no session was opened: {unread}",
+                    f"read to rule out a rebase on GitHub's side, so no session was opened: {unread}",
                 ), None
             base["update_branch"] = refused
             said = f"gh pr update-branch exited {code}, but the pull request's head moved; no session was opened"
@@ -492,7 +618,9 @@ class StepsMixin:
                     await asyncio.sleep(integrate.POLL_DELAY)
         if not head_after or head_after == head_before:
             return integrate.record(
-                **base, head_after="", outcome="failed",
+                **base,
+                head_after="",
+                outcome="failed",
                 detail="GitHub accepted the command but the head has not changed yet",
             ), None
         try:
@@ -501,14 +629,30 @@ class StepsMixin:
         except GitError as e:
             # The push happened on GitHub's side either way; the local tree is behind it.
             detail = f"pushed on GitHub, but the local branch was not moved: {e}"
-        return integrate.record(**base, head_after=head_after, outcome="pushed", detail=detail), None
+        return integrate.record(
+            **base, head_after=head_after, outcome="pushed", detail=detail
+        ), None
 
     async def _integrate_gebo(
-        self, cwd: str, key: str, unit: str, directory: Path, found: dict[str, Any],
-        data: dict[str, Any], info: dict[str, Any], pr: int, tree: Path, branch: str,
-        head_before: str, origin_sha: str, journal: Journal, write: Any,
-        seen: dict[str, Any], refused_update: dict[str, Any] | None = None,
-        completion: dict[str, Any] | None = None, resume: dict[str, Any] | None = None,
+        self,
+        cwd: str,
+        key: str,
+        unit: str,
+        directory: Path,
+        found: dict[str, Any],
+        data: dict[str, Any],
+        info: dict[str, Any],
+        pr: int,
+        tree: Path,
+        branch: str,
+        head_before: str,
+        origin_sha: str,
+        journal: Journal,
+        write: Any,
+        seen: dict[str, Any],
+        refused_update: dict[str, Any] | None = None,
+        completion: dict[str, Any] | None = None,
+        resume: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """One Gebo session; the outcome is read from GitHub afterwards.
 
@@ -523,8 +667,11 @@ class StepsMixin:
         """
         root = Path(cwd).expanduser().resolve()
         was = dict((resume or {}).get("owner") or {})
-        rel = was.get("rel") or {} if resume is not None else await self._related(
-            root, unit, data, head_before, origin_sha)
+        rel = (
+            was.get("rel") or {}
+            if resume is not None
+            else await self._related(root, unit, data, head_before, origin_sha)
+        )
         units_root = self._units_root(cwd)
         # The `integrate` row, read once for the prompt, the records and
         # the session's commit attribution.
@@ -544,33 +691,66 @@ class StepsMixin:
             except harness.MissingRules as e:
                 raise Invalid(f"the integrate skill could not be read: {e}") from e
             prompt = integrate.build_prompt(
-                skill=skill, unit=unit, branch=branch, pr=pr, state=info["state"], reason=info.get("reason", ""),
-                head_before=head_before, origin_sha=origin_sha, rel=rel, units_root=units_root, own_paths=own,
-                refused_update=refused_update, completion=completion, agent=agent,
+                skill=skill,
+                unit=unit,
+                branch=branch,
+                pr=pr,
+                state=info["state"],
+                reason=info.get("reason", ""),
+                head_before=head_before,
+                origin_sha=origin_sha,
+                rel=rel,
+                units_root=units_root,
+                own_paths=own,
+                refused_update=refused_update,
+                completion=completion,
+                agent=agent,
             )
             model, model_source = self._model_for("impl")
             app = self._app_identity()
             try:
                 start_at = journal.started(
-                    key, unit, "integrate", "manual", started_by=seen["started_by"],
-                    prompt_chars=len(prompt), granted=list(grant.tools),
-                    max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source,
-                    pointed=list(own), app_version=app["version"], app_commit=app["commit"],
+                    key,
+                    unit,
+                    "integrate",
+                    "manual",
+                    started_by=seen["started_by"],
+                    prompt_chars=len(prompt),
+                    granted=list(grant.tools),
+                    max_turns=grant.max_turns,
+                    head=head_before,
+                    model=model,
+                    model_source=model_source,
+                    pointed=list(own),
+                    app_version=app["version"],
+                    app_commit=app["commit"],
                     # What opened this session, for *Integrate for a conflict*.
                     integrate_state=info["state"],
                     **({"agent": name} if name else {}),
                 ).get("at")
-            except (BadRecord, Busy):
+            except BadRecord, Busy:
                 pass
         else:
             prompt, model = str(resume.get("message") or ""), resume.get("model")
         # All `resume_integration` needs to take this session up again, no git read.
         owner = {
-            "kind": "integrate", "workspace": key, "workspace_dir": cwd, "unit": unit,
-            "stage": "integrate", "start_at": start_at, "max_turns": grant.max_turns,
-            "max_budget_usd": grant.max_budget_usd, "pr": pr, "tree": str(tree), "branch": branch,
-            "head_before": head_before, "origin_sha": origin_sha, "seen": seen,
-            "refused_update": refused_update, "completion": completion, "rel": rel,
+            "kind": "integrate",
+            "workspace": key,
+            "workspace_dir": cwd,
+            "unit": unit,
+            "stage": "integrate",
+            "start_at": start_at,
+            "max_turns": grant.max_turns,
+            "max_budget_usd": grant.max_budget_usd,
+            "pr": pr,
+            "tree": str(tree),
+            "branch": branch,
+            "head_before": head_before,
+            "origin_sha": origin_sha,
+            "seen": seen,
+            "refused_update": refused_update,
+            "completion": completion,
+            "rel": rel,
         }
         end: dict[str, Any] = {}
         failure = ""
@@ -578,10 +758,18 @@ class StepsMixin:
         collector = submit_mod.Collector("integrate")
         try:
             async for kind, payload in integrate.run_gebo(
-                self.sessions, tree=str(tree), workspace=cwd, prompt=prompt, grant=grant,
-                read_also=integrate.read_paths(units_root, unit, rel), lease=(branch, head_before), model=model,
+                self.sessions,
+                tree=str(tree),
+                workspace=cwd,
+                prompt=prompt,
+                grant=grant,
+                read_also=integrate.read_paths(units_root, unit, rel),
+                lease=(branch, head_before),
+                model=model,
                 settings=agents.settings_json(agent) if agent is not None else None,
-                owner=owner, resume=resume, channel=collector,
+                owner=owner,
+                resume=resume,
+                channel=collector,
             ):
                 if kind == "chunk":
                     yield ("chunk", payload)
@@ -638,20 +826,39 @@ class StepsMixin:
             )
         try:
             journal.finished(
-                key, unit, "integrate", "done" if outcome in ("pushed", "needs-person") else "failed",
-                session_id=end.get("session_id", ""), detail="; ".join(details) or None,
-                denials=end.get("denials", 0), denied=end.get("denied"),
+                key,
+                unit,
+                "integrate",
+                "done" if outcome in ("pushed", "needs-person") else "failed",
+                session_id=end.get("session_id", ""),
+                detail="; ".join(details) or None,
+                denials=end.get("denials", 0),
+                denied=end.get("denied"),
                 background=end.get("background", 0),
-                models_used=end.get("models_used") or None, **(end.get("cost") or {}),
+                models_used=end.get("models_used") or None,
+                **(end.get("cost") or {}),
             )
-        except (BadRecord, Busy):
+        except BadRecord, Busy:
             pass
-        rec = write(integrate.record(
-            workspace=key, unit=unit, pr=pr, mode="agent", head_before=head_before, head_after=head_now,
-            origin_sha=origin_sha, outcome=outcome, related_=rel, report=reply,
-            needs_person=needs_person, detail="; ".join(details),
-            update_branch=refused_update, agent=name, **seen,
-        ))
+        rec = write(
+            integrate.record(
+                workspace=key,
+                unit=unit,
+                pr=pr,
+                mode="agent",
+                head_before=head_before,
+                head_after=head_now,
+                origin_sha=origin_sha,
+                outcome=outcome,
+                related_=rel,
+                report=reply,
+                needs_person=needs_person,
+                detail="; ".join(details),
+                update_branch=refused_update,
+                agent=name,
+                **seen,
+            )
+        )
         yield ("done", {"integration": rec})
 
     async def _related(
@@ -717,13 +924,30 @@ class StepsMixin:
                 return
             asked = autopilot.open_questions(found)
             if asked:
-                journal.append({
-                    "kind": "questions", "workspace": key, "unit": unit, "stage": stage,
-                    "questions": [{"artifact": q.get("artifact"), "n": q.get("n")} for q in asked],
-                })
-            result = {"finished": "shipped", "ship-refused": "refused"}.get(str(found.get("why") or ""))
+                journal.append(
+                    {
+                        "kind": "questions",
+                        "workspace": key,
+                        "unit": unit,
+                        "stage": stage,
+                        "questions": [
+                            {"artifact": q.get("artifact"), "n": q.get("n")} for q in asked
+                        ],
+                    }
+                )
+            result = {"finished": "shipped", "ship-refused": "refused"}.get(
+                str(found.get("why") or "")
+            )
             if stage == "ship" and result:
-                journal.append({"kind": "ship", "workspace": key, "unit": unit, "stage": "ship", "result": result})
+                journal.append(
+                    {
+                        "kind": "ship",
+                        "workspace": key,
+                        "unit": unit,
+                        "stage": "ship",
+                        "result": result,
+                    }
+                )
         except Exception:  # noqa: BLE001 — `Unavailable`, `BadRecord`, `Busy` included
             return
 
@@ -740,13 +964,19 @@ class StepsMixin:
         # Asked first with no `--repo`, which reads files only: a held unit is
         # answered here, before `_worktree` could reopen the tree a drop just removed.
         try:
-            held = await board_reader.next_step(self._units_root(cwd), unit, repo=None, state=self._snapshot(cwd, [unit]))
+            held = await board_reader.next_step(
+                self._units_root(cwd), unit, repo=None, state=self._snapshot(cwd, [unit])
+            )
         except Unavailable as e:
             raise Invalid(str(e)) from e
         if held.get("hold"):
             return {
-                "cwd": cwd, "unit": unit, **{k: held[k] for k in ("stage", "action", "blocked")},
-                "waiting": [], "dropped": [], "hold": held["hold"],
+                "cwd": cwd,
+                "unit": unit,
+                **{k: held[k] for k in ("stage", "action", "blocked")},
+                "waiting": [],
+                "dropped": [],
+                "hold": held["hold"],
                 "reasons": list(held.get("reasons") or []),
             }
         # The unit's worktree is the checkout its branch and pull request are read
@@ -760,7 +990,9 @@ class StepsMixin:
         else:
             repo = cwd
         try:
-            found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit]))
+            found = await board_reader.next_step(
+                self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit])
+            )
         except Unavailable as e:
             raise Invalid(str(e)) from e
         return {
@@ -788,7 +1020,9 @@ class StepsMixin:
             raise Invalid("name a work unit")
         self._unit_dir(cwd, unit)
         try:
-            found = await board_reader.rerun(self._units_root(cwd), unit, state=self._snapshot(cwd, [unit]))
+            found = await board_reader.rerun(
+                self._units_root(cwd), unit, state=self._snapshot(cwd, [unit])
+            )
         except Unavailable as e:
             raise Invalid(str(e)) from e
         if "error" in found:
@@ -824,8 +1058,13 @@ class StepsMixin:
         return {"cwd": cwd, "unit": unit, "stage": stage, "mode": mode}
 
     async def run_step(
-        self, cwd: str, unit: str, stage: str, started_by: str = "person",
-        rerun: bool = False, note: str = "",
+        self,
+        cwd: str,
+        unit: str,
+        stage: str,
+        started_by: str = "person",
+        rerun: bool = False,
+        note: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Run one step of one unit, streaming the reply as it arrives.
 
@@ -879,7 +1118,9 @@ class StepsMixin:
             # below would refuse too, but only after `_worktree` had reopened a dropped tree.
             held = found.get("hold")
             if held:
-                raise Invalid(f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it")
+                raise Invalid(
+                    f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it"
+                )
 
             # Before a worktree is opened or the gate asked. Whether `stage` may run
             # again, and the block that says so, are `cos.mjs`'s; its refusal is passed on.
@@ -887,11 +1128,17 @@ class StepsMixin:
             rerun_block = ""
             if rerun:
                 if started_by != "person":
-                    raise Invalid("a stage is run again only by a person, from the board, never by the autopilot")
+                    raise Invalid(
+                        "a stage is run again only by a person, from the board, never by the autopilot"
+                    )
                 if len(note) > RERUN_NOTE_MAX:
-                    raise Invalid(f"the note is {len(note)} characters, over the {RERUN_NOTE_MAX} a rerun takes")
+                    raise Invalid(
+                        f"the note is {len(note)} characters, over the {RERUN_NOTE_MAX} a rerun takes"
+                    )
                 try:
-                    asked = await board_reader.rerun(self._units_root(cwd), unit, stage, state=self._snapshot(cwd, [unit]))
+                    asked = await board_reader.rerun(
+                        self._units_root(cwd), unit, stage, state=self._snapshot(cwd, [unit])
+                    )
                 except Unavailable as e:
                     raise Invalid(str(e)) from e
                 if "error" in asked:
@@ -908,14 +1155,20 @@ class StepsMixin:
             tree = await self._worktree(cwd, unit, strict=True) if is_repo else None
             if is_repo and tree is None:
                 try:
-                    tree = {"path": (await worktrees.ensure(cwd, unit, None, self.config.data_dir))["path"]}
+                    tree = {
+                        "path": (await worktrees.ensure(cwd, unit, None, self.config.data_dir))[
+                            "path"
+                        ]
+                    }
                 except (GitError, BadUnit) as e:
                     raise Invalid(f"{unit} has no worktree and one could not be opened: {e}") from e
             work = tree["path"] if tree else cwd
             # A spike is watched through the worktree's `HEAD` and `git status`;
             # with no git there is nothing to watch, so it does not run at all.
             if stage == "spike" and tree is None:
-                raise Invalid("spike needs a git worktree to watch, and this workspace is not a git repository")
+                raise Invalid(
+                    "spike needs a git worktree to watch, and this workspace is not a git repository"
+                )
             # A tree already on its branch carries whatever `_worktree` read when it was opened onto it (or nothing,
             # when it was already there before this call); a tree still detached is refreshed
             # now, on the spot, because a session about to run on it is about to read it.
@@ -951,9 +1204,22 @@ class StepsMixin:
             # no prompt: the app writes `pr.md` again from the unit's metadata.
             if stage in prmachine.STAGES:
                 if rerun:
-                    await self._append_to_answers(self._unit_dir(cwd, unit) / "intent.md", "\n" + rerun_block, "a rerun")
-                yield ("done", await self._mechanical(cwd, key, unit, stage, tree, started_by, again=rerun,
-                                                      rebased=getattr(answer, "rebased", None)))
+                    await self._append_to_answers(
+                        self._unit_dir(cwd, unit) / "intent.md", "\n" + rerun_block, "a rerun"
+                    )
+                yield (
+                    "done",
+                    await self._mechanical(
+                        cwd,
+                        key,
+                        unit,
+                        stage,
+                        tree,
+                        started_by,
+                        again=rerun,
+                        rebased=getattr(answer, "rebased", None),
+                    ),
+                )
                 return
 
             if stage == "impl" and tree is not None:
@@ -962,7 +1228,9 @@ class StepsMixin:
                 # ordinary reason, and the page has nothing better to offer than *try again*.
                 prepared = worktrees.read_prepare(Path(work))
                 if not (prepared or {}).get("ok"):
-                    prepared = await worktrees.prepare(Path(work), cwd, data_dir=self.config.data_dir)
+                    prepared = await worktrees.prepare(
+                        Path(work), cwd, data_dir=self.config.data_dir
+                    )
                 if not prepared.get("ok"):
                     raise Invalid(worktrees.describe_failure(prepared))
 
@@ -979,45 +1247,62 @@ class StepsMixin:
             # can be told apart afterwards. Taken from the board already read above.
             rounds_before = (
                 {r.get("n") for r in found.get("rounds") or []}
-                if row["file"] == "review.md" else None
+                if row["file"] == "review.md"
+                else None
             )
             # From the same board: a last round `cos.mjs` read as unfinished, and the
             # ids it dropped, for the review that runs again. Whether it counts is not asked here.
             last_round = (found.get("rounds") or [None])[-1] if row["file"] == "review.md" else None
             unfinished_kw = (
                 {"unfinished_round": {"n": last_round["n"], "dropped": list(last_round["dropped"])}}
-                if last_round and last_round.get("unfinished") else {}
+                if last_round and last_round.get("unfinished")
+                else {}
             )
             # The findings the last round left open, which an `impl` may claim only a
             # person can close: guard `impl-claim` reads them when its object arrives.
             if rounds_before:
-                unfinished_kw["rounds_known"] = tuple(sorted(n for n in rounds_before if isinstance(n, int)))
+                unfinished_kw["rounds_known"] = tuple(
+                    sorted(n for n in rounds_before if isinstance(n, int))
+                )
             if stage in ("impl", "implement") and found.get("rounds"):
                 last = found["rounds"][-1]
-                unfinished_kw.update(open_findings=tuple(last.get("open_ids") or ()), claims_round=last.get("n"))
+                unfinished_kw.update(
+                    open_findings=tuple(last.get("open_ids") or ()), claims_round=last.get("n")
+                )
             # Resolved after the gate, so a refused step reads nothing more: the plan's label,
             # the effort and, for `impl`, which run this is, read before any money is spent.
             # `Runner` does not read the run log itself; `build_prompt` only places what it is
             # handed, the same as `base_note`.
             try:
-                config = self._stage_config(stage, list(data["stages"]), directory, journal, key, unit)
+                config = self._stage_config(
+                    stage, list(data["stages"]), directory, journal, key, unit
+                )
                 failed = journal.failed_attempts(key, unit, stage)
             except Busy as e:
                 raise Invalid(str(e)) from e
             # A return to `impl` in the model trial asks `next` once whether CI sent it back;
             # `_ci_red` never raises, so nothing here refuses the step.
-            if modeltrial.FIELD in (config.get("trial_record") or {}) and (config.get("impl_run") or 0) > 1:
-                config.setdefault("trial_record", {})[modeltrial.CI_RED] = await self._ci_red(cwd, unit, work)
+            if (
+                modeltrial.FIELD in (config.get("trial_record") or {})
+                and (config.get("impl_run") or 0) > 1
+            ):
+                config.setdefault("trial_record", {})[modeltrial.CI_RED] = await self._ci_red(
+                    cwd, unit, work
+                )
             end_fields = None
             if rounds_before is not None:
+
                 async def end_fields() -> dict[str, Any]:
                     return await self._findings_added(cwd, unit, rounds_before)
+
             # The integration pushed since the last review round, for `review` only.
             integration_note = ""
             if stage == "review":
                 since = integration_since_review(journal, key, unit)
                 integration_note = (
-                    integrate.describe_for_review(since, self._agent_overrides()[0]) if since else ""
+                    integrate.describe_for_review(since, self._agent_overrides()[0])
+                    if since
+                    else ""
                 )
             # Which files the plan names `main` changed since the plan ran, for `impl`
             # only. Unlike `failed_attempts` above, nothing here may refuse the step: a
@@ -1032,8 +1317,11 @@ class StepsMixin:
                     )
                 except Exception as e:  # noqa: BLE001 — recorded as the reason
                     plan_drift = {
-                        "plan_sha": None, "main_sha": None, "files": None,
-                        "checked": False, "reason": str(e) or type(e).__name__,
+                        "plan_sha": None,
+                        "main_sha": None,
+                        "files": None,
+                        "checked": False,
+                        "reason": str(e) or type(e).__name__,
                     }
             # The files the plan names, as they stand in the tree the step runs
             # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
@@ -1045,7 +1333,12 @@ class StepsMixin:
             try:
                 shortlist = backlog.stamp(journal.records(key, kind="shortlist"), unit)
             except Exception as e:  # noqa: BLE001 — recorded as the reason
-                shortlist = {"rank": None, "of": None, "record": None, "error": str(e) or type(e).__name__}
+                shortlist = {
+                    "rank": None,
+                    "of": None,
+                    "record": None,
+                    "error": str(e) or type(e).__name__,
+                }
             # `pr` opens no session: the PR machine asks `gh pr list` itself.
             pr_note, pr_before = "", None
             # After the last refusal that reads nothing more, before any money is
@@ -1058,12 +1351,15 @@ class StepsMixin:
                 except OSError:
                     answers_before = None
             if rerun:
-                await self._append_to_answers(directory / "intent.md", "\n" + rerun_block, "a rerun")
+                await self._append_to_answers(
+                    directory / "intent.md", "\n" + rerun_block, "a rerun"
+                )
             if answers_before is not None:
                 kept_from, kept_in = answers_before, directory / row["file"]
 
                 async def end_fields() -> dict[str, Any]:
                     return {"answers_kept": _answers_kept(kept_in, kept_from)}
+
             # Only for a unit an idea lists, and only for `intent` and `impl`;
             # every other step is handed no key.
             link_kw: dict[str, Any] = {}
@@ -1100,66 +1396,85 @@ class StepsMixin:
             # between, so every list that names the step names its `run` too.
             run = uuid.uuid4().hex
             recorder = events.Recorder(
-                run, Data(self.config.data_dir), str(journal.working_dir), key, unit, stage,
+                run,
+                Data(self.config.data_dir),
+                str(journal.working_dir),
+                key,
+                unit,
+                stage,
             )
             running.run = run
             running.handle.recorder = recorder
             self._recorders[run] = recorder
             self._running[rid]["run"] = run
-            running.task = asyncio.create_task(self._drive(
-                running, mark, runner, cwd, unit, stage, row["file"], directory, tree, base, rounds_before,
-                rid, scratch,
-                dict(
-                    workspace=cwd,
-                    directory=directory,
-                    journal_key=key,
-                    unit=unit,
-                    stage=stage,
-                    artifact=row["file"],
-                    stages=list(data["stages"]),
-                    mode=mode,
-                    gate_said=said,
-                    gate_reasons=gate_reasons,
-                    cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
-                    base=base,
-                    base_note=describe_base(base),
-                    last_attempt=describe_attempt(failed) if failed else "",
-                    integration_note=integration_note,
-                    screens_note=screens_note,
-                    plan_drift=plan_drift,
-                    drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
-                    shortlist=shortlist,
-                    end_fields=end_fields,
-                    pr_note=pr_note,
-                    pr_before=pr_before,
-                    # The stage's row with today's overrides, read once
-                    # as the step starts: a rename later reaches the next step, not this one.
-                    agent=self._agent(stage),
-                    **plan_kw,
-                    **unfinished_kw,
-                    **link_kw,
-                    **config,
-                    # Only named for a spike, so a stand-in `run` without it keeps working.
-                    **({"watch": work} if scratch is not None else {}),
-                    # The same: `Runner.run` writes `person` when it is not named.
-                    **({"started_by": started_by} if started_by != "person" else {}),
-                    # The same again: only a rerun names them.
-                    **({"rerun": True, "rerun_note": note} if rerun else {}),
-                    # What `resume_step` needs of this step, in its `suspend` row.
-                    owner_extra={
-                        "workspace_dir": cwd,
-                        "rounds_before": sorted(rounds_before) if rounds_before is not None else None,
-                        "pr_before": pr_before, "tree": tree is not None,
-                        "watch": work if scratch is not None else None,
-                        "scratch": str(scratch) if scratch is not None else None,
-                        "read_also": list(link_kw.get("read_also") or ()),
-                    },
-                ),
-                answers_before=answers_before,
-            ))
-            running.task.add_done_callback(
-                lambda _task: self._never_driven(running, mark, rid)
+            running.task = asyncio.create_task(
+                self._drive(
+                    running,
+                    mark,
+                    runner,
+                    cwd,
+                    unit,
+                    stage,
+                    row["file"],
+                    directory,
+                    tree,
+                    base,
+                    rounds_before,
+                    rid,
+                    scratch,
+                    dict(
+                        workspace=cwd,
+                        directory=directory,
+                        journal_key=key,
+                        unit=unit,
+                        stage=stage,
+                        artifact=row["file"],
+                        stages=list(data["stages"]),
+                        mode=mode,
+                        gate_said=said,
+                        gate_reasons=gate_reasons,
+                        cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
+                        base=base,
+                        base_note=describe_base(base),
+                        last_attempt=describe_attempt(failed) if failed else "",
+                        integration_note=integration_note,
+                        screens_note=screens_note,
+                        plan_drift=plan_drift,
+                        drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
+                        shortlist=shortlist,
+                        end_fields=end_fields,
+                        pr_note=pr_note,
+                        pr_before=pr_before,
+                        # The stage's row with today's overrides, read once
+                        # as the step starts: a rename later reaches the next step, not this one.
+                        agent=self._agent(stage),
+                        **plan_kw,
+                        **unfinished_kw,
+                        **link_kw,
+                        **config,
+                        # Only named for a spike, so a stand-in `run` without it keeps working.
+                        **({"watch": work} if scratch is not None else {}),
+                        # The same: `Runner.run` writes `person` when it is not named.
+                        **({"started_by": started_by} if started_by != "person" else {}),
+                        # The same again: only a rerun names them.
+                        **({"rerun": True, "rerun_note": note} if rerun else {}),
+                        # What `resume_step` needs of this step, in its `suspend` row.
+                        owner_extra={
+                            "workspace_dir": cwd,
+                            "rounds_before": sorted(rounds_before)
+                            if rounds_before is not None
+                            else None,
+                            "pr_before": pr_before,
+                            "tree": tree is not None,
+                            "watch": work if scratch is not None else None,
+                            "scratch": str(scratch) if scratch is not None else None,
+                            "read_also": list(link_kw.get("read_also") or ()),
+                        },
+                    ),
+                    answers_before=answers_before,
+                )
             )
+            running.task.add_done_callback(lambda _task: self._never_driven(running, mark, rid))
             handed = True
         finally:
             if not handed:
@@ -1187,7 +1502,13 @@ class StepsMixin:
             running.listeners.discard(queue)
 
     async def _retake_screens(
-        self, cwd: str, key: str, journal: Journal, unit: str, work: str, started_by: str,
+        self,
+        cwd: str,
+        key: str,
+        journal: Journal,
+        unit: str,
+        work: str,
+        started_by: str,
     ) -> str:
         """Ask `cos.mjs screens`; when it says to, take the screenshots again under
         `_screens_lock`, judge the result and record it. Returns the section for the `review`
@@ -1195,7 +1516,9 @@ class StepsMixin:
         `RETAKE_REFUSED`; what went wrong is only in its record. No tracked file is put back;
         `.screens/` is, by `retake.take`."""
         try:
-            asked = await board_reader.screens(self._units_root(cwd), unit, work, state=self._snapshot(cwd, [unit]))
+            asked = await board_reader.screens(
+                self._units_root(cwd), unit, work, state=self._snapshot(cwd, [unit])
+            )
         except Unavailable as e:
             raise Invalid(str(e)) from e
         if not asked.get("retake"):
@@ -1217,8 +1540,12 @@ class StepsMixin:
                 # the record still says a retake was begun and did not finish.
                 gone = {"code": None, "seconds": round(datetime.now().timestamp() - started, 1)}
                 try:
-                    journal.append(retake.record(key, unit, old, gone, False, "cancelled before it finished", started_by))
-                except (BadRecord, Busy):
+                    journal.append(
+                        retake.record(
+                            key, unit, old, gone, False, "cancelled before it finished", started_by
+                        )
+                    )
+                except BadRecord, Busy:
                     pass
                 raise
             finally:
@@ -1231,7 +1558,9 @@ class StepsMixin:
             # Only a retake that was taken may say it was.
             if not ok:
                 raise Invalid(RETAKE_REFUSED) from e
-            raise Invalid(f"the screenshots were taken again, but the run log could not record it: {e}") from e
+            raise Invalid(
+                f"the screenshots were taken again, but the run log could not record it: {e}"
+            ) from e
         if not ok:
             raise Invalid(RETAKE_REFUSED)
         return retake.describe_for_review(old, result.get("manifest_after") or {})
@@ -1251,15 +1580,33 @@ class StepsMixin:
         self.steps.release(running)
         self.updater.job_ended()
         for q in list(running.listeners):
-            q.put_nowait(("raise", Invalid(
-                f"{running.unit}'s {running.stage} step was cancelled before it began; nothing ran"
-            )))
+            q.put_nowait(
+                (
+                    "raise",
+                    Invalid(
+                        f"{running.unit}'s {running.stage} step was cancelled before it began; nothing ran"
+                    ),
+                )
+            )
 
     async def _drive(
-        self, running: steps_mod.Running, mark: steps_mod.Mark, runner: Runner, cwd: str, unit: str, stage: str,
-        artifact: str, directory: Path, tree: dict[str, Any] | None, base: dict[str, Any] | None,
-        rounds_before: set[Any] | None, rid: str, scratch: Path | None, kwargs: dict[str, Any],
-        answers_before: bytes | None = None, resumed: bool = False,
+        self,
+        running: steps_mod.Running,
+        mark: steps_mod.Mark,
+        runner: Runner,
+        cwd: str,
+        unit: str,
+        stage: str,
+        artifact: str,
+        directory: Path,
+        tree: dict[str, Any] | None,
+        base: dict[str, Any] | None,
+        rounds_before: set[Any] | None,
+        rid: str,
+        scratch: Path | None,
+        kwargs: dict[str, Any],
+        answers_before: bytes | None = None,
+        resumed: bool = False,
     ) -> None:
         """One board step, start to end, as its own task.
 
@@ -1294,16 +1641,23 @@ class StepsMixin:
                 if item[0] == "done":
                     item = ("done", {**item[1], "base": base})
                     if item[1].get("outcome") != "stopped":
-                        item = ("done", {**item[1], **await self._ingest(cwd, unit, item[1], artifact)})
+                        item = (
+                            "done",
+                            {**item[1], **await self._ingest(cwd, unit, item[1], artifact)},
+                        )
                     if rounds_before is not None and item[1].get("outcome") == "done":
                         # After `Runner` has written `review.md`, never
                         # before: the artifact does not wait on GitHub.
                         item = (
                             "done",
-                            {**item[1], "comments": await self._post_new_rounds(cwd, unit, rounds_before)},
+                            {
+                                **item[1],
+                                "comments": await self._post_new_rounds(cwd, unit, rounds_before),
+                            },
                         )
                     if (
-                        answers_before is not None and item[1].get("outcome") == "done"
+                        answers_before is not None
+                        and item[1].get("outcome") == "done"
                         and not _answers_kept(directory / artifact, answers_before)
                     ):
                         item = ("done", {**item[1], "answers_lost": True})
@@ -1331,7 +1685,14 @@ class StepsMixin:
             told_done = True
         finally:
             if not told_done:
-                tell(("raise", Invalid(f"{unit}'s {stage} step ended without an outcome; the app may be shutting down")))
+                tell(
+                    (
+                        "raise",
+                        Invalid(
+                            f"{unit}'s {stage} step ended without an outcome; the app may be shutting down"
+                        ),
+                    )
+                )
             self._release(running.workspace, running.unit, mark)
             entry = self._running.pop(rid, None)
             task = asyncio.current_task()
@@ -1368,47 +1729,80 @@ class StepsMixin:
     def _pr_machine(self) -> prmachine.Machine:
         """The PR machine over the same history and run log as every other transition."""
         meta = self._unit_meta()
-        return prmachine.Machine(meta.history, self._journal() or Journal(meta.root, self.config.data_dir))
+        return prmachine.Machine(
+            meta.history, self._journal() or Journal(meta.root, self.config.data_dir)
+        )
 
     async def _mechanical(
-        self, cwd: str, key: str, unit: str, stage: str, tree: dict[str, Any] | None, started_by: str,
-        again: bool = False, rebased: dict[str, str] | None = None,
+        self,
+        cwd: str,
+        key: str,
+        unit: str,
+        stage: str,
+        tree: dict[str, Any] | None,
+        started_by: str,
+        again: bool = False,
+        rebased: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """One `pr` or `ship`, with no session, no `start` and no `end` row;
         what it did is its transitions and, for `ship`, the `ship` row notices read.
         Returns the `done` item a session's step would have ended with. `rebased` is the
         `ship` gate's clean-rebase read, which guard `ship-ready` takes."""
         if tree is None:
-            raise Invalid(f"{stage} needs the unit's git worktree, and this workspace is not a git repository")
+            raise Invalid(
+                f"{stage} needs the unit's git worktree, and this workspace is not a git repository"
+            )
         work = Path(tree["path"])
         try:
             expected = await asyncio.to_thread(
-                units.branch_name, cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
+                units.branch_name, cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit])
+            )
             branch = await gitops.current_branch(work)
         except (CannotCreate, BadUnit, GitError) as e:
             raise Invalid(str(e)) from e
-        u = prmachine.Unit(key, unit, self._unit_dir(cwd, unit), str(work), branch, expected,
-                           expected.partition("/")[0] or None)
+        u = prmachine.Unit(
+            key,
+            unit,
+            self._unit_dir(cwd, unit),
+            str(work),
+            branch,
+            expected,
+            expected.partition("/")[0] or None,
+        )
         machine = self._pr_machine()
         if stage == "pr":
             out = await machine.open_pr(u, again=again)
         else:
-            out = await machine.ship(u, authority="code" if started_by == "autopilot" else "person", rebased=rebased)
+            out = await machine.ship(
+                u, authority="code" if started_by == "autopilot" else "person", rebased=rebased
+            )
         artifact = prmachine.PR_FILE if stage == "pr" else prmachine.SHIP_FILE
         done: dict[str, Any] = {
-            "unit": unit, "stage": stage, "outcome": "done" if out.ok else "failed",
-            "artifact": artifact if out.ok else None, "session_id": None, "included": [],
-            "error": out.detail or ", ".join(out.reasons), "cost": {}, "model": None,
-            "model_source": None, "mechanical": out.as_dict(),
+            "unit": unit,
+            "stage": stage,
+            "outcome": "done" if out.ok else "failed",
+            "artifact": artifact if out.ok else None,
+            "session_id": None,
+            "included": [],
+            "error": out.detail or ", ".join(out.reasons),
+            "cost": {},
+            "model": None,
+            "model_source": None,
+            "mechanical": out.as_dict(),
         }
         if stage == "pr" and out.ok:
             # The title and body the app wrote go onto a pull request it
             # found open rather than created, and the scope is read once, as after a session.
-            done["pr_sync"] = await self._sync_pr(cwd, unit, out.url if out.result in ("found", "already") else "")
+            done["pr_sync"] = await self._sync_pr(
+                cwd, unit, out.url if out.result in ("found", "already") else ""
+            )
         refused = False
         if stage == "ship":
             merged = out.result in ("merged", "recorded", "already")
-            refused = not merged and prmachine.state(machine.history, key, unit)["state"] == "merge-requested"
+            refused = (
+                not merged
+                and prmachine.state(machine.history, key, unit)["state"] == "merge-requested"
+            )
             if merged or refused:
                 cleanup = await self._shipped(cwd, key, unit, "shipped" if merged else "refused")
                 if merged:
@@ -1418,12 +1812,21 @@ class StepsMixin:
         # did, and one that did its work lifts that stop. `merge_refused` is a merge GitHub
         # refused after the machine requested it.
         try:
-            self._journal().append({
-                "kind": autopilot.PR_MACHINE, "workspace": key, "unit": unit, "stage": stage,
-                "outcome": done["outcome"], "result": out.result, "reasons": list(out.reasons),
-                "detail": out.detail, "started_by": started_by, "merge_refused": refused,
-            })
-        except (BadRecord, Busy, AttributeError):
+            self._journal().append(
+                {
+                    "kind": autopilot.PR_MACHINE,
+                    "workspace": key,
+                    "unit": unit,
+                    "stage": stage,
+                    "outcome": done["outcome"],
+                    "result": out.result,
+                    "reasons": list(out.reasons),
+                    "detail": out.detail,
+                    "started_by": started_by,
+                    "merge_refused": refused,
+                }
+            )
+        except BadRecord, Busy, AttributeError:
             pass
         return done
 
@@ -1431,8 +1834,10 @@ class StepsMixin:
         """The `ship` row notices read, and after a merge the cleanup. From `_mechanical`, and from the PR reader and the start-up reconcile
         when they record a merge no `ship` step follows any more. Never raises; the cleanup's answer after a merge, else `None`."""
         try:
-            self._journal().append({"kind": "ship", "workspace": key, "unit": unit, "stage": "ship", "result": result})
-        except (BadRecord, Busy, AttributeError):
+            self._journal().append(
+                {"kind": "ship", "workspace": key, "unit": unit, "stage": "ship", "result": result}
+            )
+        except BadRecord, Busy, AttributeError:
             pass
         if result != "shipped":
             return None
@@ -1447,7 +1852,8 @@ class StepsMixin:
             with machine.history.data.connect() as conn:
                 rows = conn.execute(
                     "SELECT DISTINCT workspace, unit FROM transitions WHERE root = ? AND guard = 'ship-ready' "
-                    "AND artifact = ?", (str(machine.history.working_dir), prmachine.SHIP_FILE),
+                    "AND artifact = ?",
+                    (str(machine.history.working_dir), prmachine.SHIP_FILE),
                 ).fetchall()
             pending = []
             for r in rows:
@@ -1455,8 +1861,17 @@ class StepsMixin:
                 if prmachine.state(machine.history, ws, unit)["state"] != "merge-requested":
                     continue
                 tree = worktrees.path(ws, unit, self.config.data_dir)
-                pending.append(prmachine.Unit(ws, unit, self._unit_dir(ws, unit),
-                                              str(tree if tree.is_dir() else ws), "", "", None))
+                pending.append(
+                    prmachine.Unit(
+                        ws,
+                        unit,
+                        self._unit_dir(ws, unit),
+                        str(tree if tree.is_dir() else ws),
+                        "",
+                        "",
+                        None,
+                    )
+                )
             done = []
             for u in pending:
                 for o in await machine.reconcile([u]):
@@ -1508,8 +1923,14 @@ class StepsMixin:
         key = self._journal_key(cwd)
         rows = [{**r, "kind": "step"} for r in self.steps.listing(key)]
         rows += [
-            {"unit": e["unit"], "stage": "integrate", "started_at": e["started"], "stopping": False,
-             "run": None, "kind": "integration"}
+            {
+                "unit": e["unit"],
+                "stage": "integrate",
+                "started_at": e["started"],
+                "stopping": False,
+                "run": None,
+                "kind": "integration",
+            }
             for e in self._running.values()
             if e["workspace"] == key and e["stage"] == "integrate"
         ]

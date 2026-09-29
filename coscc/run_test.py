@@ -1,10 +1,7 @@
 """Tests for the startup banner. Nothing here starts a server.
 
-The banner is the only place a person is told what binding `0.0.0.0` costs them, and
-`0011`'s `spec.md` R5 makes that a requirement rather than a courtesy. A test is what
-stops it from being quietly shortened later -- there is no other check in this repository
-that would notice its absence.
-"""
+A test is what stops it from being quietly shortened later -- there is no other check in this
+repository that would notice its absence."""
 
 from __future__ import annotations
 
@@ -22,7 +19,7 @@ class WhatStartupSays(unittest.TestCase):
         self.assertEqual(Config().host, "0.0.0.0")
 
     def test_binding_every_interface_says_plain_http_is_readable(self):
-        # `0070` R12: there is a login now, and what is left to say is the wire.
+        # There is a login now, and what is left to say is the wire.
         lines = run.banner(Config(host="0.0.0.0", port=8790))
         text = "\n".join(lines)
         self.assertIn("login page", text)
@@ -47,9 +44,8 @@ class WhatStartupSays(unittest.TestCase):
         self.assertEqual(first, "coscc on http://0.0.0.0:9001")
 
 
-
 class TheVersionAnswer(unittest.TestCase):
-    """`spec.md` R8. The only thing that separates an update from an apparent update."""
+    """The only thing that separates an update from an apparent update."""
 
     def test_it_matches_the_version_the_repository_declares(self):
         # `cos.mjs check-version` keeps pyproject in step with four other places, so
@@ -89,7 +85,7 @@ class TheVersionAnswer(unittest.TestCase):
 
 
 class ResetPassword(unittest.TestCase):
-    """`0070` R10: the way back from a forgotten password, at a shell on this machine."""
+    """The way back from a forgotten password, at a shell on this machine."""
 
     def test_reset_password_clears_and_names_the_database(self):
         import contextlib
@@ -104,8 +100,10 @@ class ResetPassword(unittest.TestCase):
             data.auth_set_password("h", 1)
             data.auth_session_add("s", 1, 10**10)
             out = io.StringIO()
-            with mock.patch.dict("os.environ", {"COS_DATA_DIR": d}), \
-                    contextlib.redirect_stdout(out):
+            with (
+                mock.patch.dict("os.environ", {"COS_DATA_DIR": d}),
+                contextlib.redirect_stdout(out),
+            ):
                 run.main(["reset-password"])
             self.assertEqual(
                 out.getvalue().strip(),
@@ -116,7 +114,7 @@ class ResetPassword(unittest.TestCase):
 
 
 class TheStateCommand(unittest.TestCase):
-    """`0135` R11: the snapshot at a terminal, so `cos.mjs gate` can still be asked there."""
+    """The snapshot at a terminal, so `cos.mjs gate` can still be asked there."""
 
     def test_coscc_state_prints_what_cos_mjs_state_reads(self):
         import contextlib
@@ -138,32 +136,54 @@ class TheStateCommand(unittest.TestCase):
             (work / "proj").mkdir(parents=True)
             data = Data(data_dir)
             with data.connect() as conn:
-                conn.execute("INSERT INTO workspaces (root, name, added_at) VALUES (?, 'proj', 't')", (str(work),))
+                conn.execute(
+                    "INSERT INTO workspaces (root, name, added_at) VALUES (?, 'proj', 't')",
+                    (str(work),),
+                )
             store = units.root(work / "proj", data_dir)
             shutil.copytree(fixture, store)
             out = io.StringIO()
             env = {"COS_DATA_DIR": str(data_dir), "COS_WORKING_DIR": str(work)}
-            with mock.patch.dict("os.environ", env), contextlib.redirect_stdout(out), \
-                    self.assertRaises(SystemExit) as done:
+            with (
+                mock.patch.dict("os.environ", env),
+                contextlib.redirect_stdout(out),
+                self.assertRaises(SystemExit) as done,
+            ):
                 run.main(["state", "proj"])
             self.assertEqual(done.exception.code, 0)
             snapshot = json.loads(out.getvalue())
             self.assertEqual(snapshot["workspace"], "proj")
             gate = subprocess.run(
-                ["node", str(harness.script()), "--root", str(store), "--state", "-", "gate", "0013_open-question", "plan"],
-                input=out.getvalue(), capture_output=True, text=True, env=harness.child_env(),
+                [
+                    "node",
+                    str(harness.script()),
+                    "--root",
+                    str(store),
+                    "--state",
+                    "-",
+                    "gate",
+                    "0013_open-question",
+                    "plan",
+                ],
+                input=out.getvalue(),
+                capture_output=True,
+                text=True,
+                env=harness.child_env(),
             )
             self.assertEqual(gate.returncode, 1)
             self.assertIn("spec.md", gate.stderr)
-            with mock.patch.dict("os.environ", env), contextlib.redirect_stderr(io.StringIO()), \
-                    self.assertRaises(SystemExit) as refused:
+            with (
+                mock.patch.dict("os.environ", env),
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit) as refused,
+            ):
                 run.main(["state", "nobody"])
             self.assertEqual(refused.exception.code, 2)
 
 
 class TheSkipCommand(unittest.TestCase):
-    """`0136` R14: a spec is skipped on a person's decision, or their delegate's, and on no
-    agent's. `coscc skip` is how a person records one."""
+    """A spec is skipped on a person's decision, or their delegate's, and on no agent's. `coscc
+    skip` is how a person records one."""
 
     UNIT = "0013_open-question"
 
@@ -181,10 +201,15 @@ class TheSkipCommand(unittest.TestCase):
         (work / "proj").mkdir(parents=True)
         self.data = Data(self.data_dir)
         with self.data.connect() as conn:
-            conn.execute("INSERT INTO workspaces (root, name, added_at) VALUES (?, 'proj', 't')", (str(work),))
+            conn.execute(
+                "INSERT INTO workspaces (root, name, added_at) VALUES (?, 'proj', 't')",
+                (str(work),),
+            )
         self.store = units.root(work / "proj", self.data_dir)
         self.key = units.key(work / "proj")
-        shutil.copytree(Path(__file__).resolve().parent / "units" / "testdata" / "meta_store", self.store)
+        shutil.copytree(
+            Path(__file__).resolve().parent / "units" / "testdata" / "meta_store", self.store
+        )
         self.env = {"COS_DATA_DIR": str(self.data_dir), "COS_WORKING_DIR": str(work)}
 
     def coscc(self, *args):
@@ -193,8 +218,12 @@ class TheSkipCommand(unittest.TestCase):
         from unittest import mock
 
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.dict("os.environ", self.env), contextlib.redirect_stdout(out), \
-                contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as done:
+        with (
+            mock.patch.dict("os.environ", self.env),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+            self.assertRaises(SystemExit) as done,
+        ):
             run.main(list(args))
         return done.exception.code, out.getvalue(), err.getvalue()
 
@@ -206,8 +235,21 @@ class TheSkipCommand(unittest.TestCase):
         code, snapshot, _ = self.coscc("state", "proj")
         self.assertEqual(code, 0)
         return subprocess.run(
-            ["node", str(harness.script()), "--root", str(self.store), "--state", "-", "gate", self.UNIT, "plan"],
-            input=snapshot, capture_output=True, text=True, env=harness.child_env(),
+            [
+                "node",
+                str(harness.script()),
+                "--root",
+                str(self.store),
+                "--state",
+                "-",
+                "gate",
+                self.UNIT,
+                "plan",
+            ],
+            input=snapshot,
+            capture_output=True,
+            text=True,
+            env=harness.child_env(),
         )
 
     def spec_rows(self):
@@ -226,12 +268,16 @@ class TheSkipCommand(unittest.TestCase):
             (row["to_state"], row["guard"], row["authority"], row["actor"]),
             ("skipped", "skip-decision", "person", "human:terminal"),
         )
-        self.assertEqual(json.loads(row["inputs"]), {"authority": "person", "reason": "one file, no schema"})
+        self.assertEqual(
+            json.loads(row["inputs"]), {"authority": "person", "reason": "one file, no schema"}
+        )
         gate = self.gate_plan()
         self.assertEqual(gate.returncode, 0, gate.stderr)
 
     def test_delegated_says_whose_it_is(self):
-        self.assertEqual(self.coscc("skip", "proj", self.UNIT, "spec", "--delegated", "asked to")[0], 0)
+        self.assertEqual(
+            self.coscc("skip", "proj", self.UNIT, "spec", "--delegated", "asked to")[0], 0
+        )
         self.assertEqual(self.spec_rows()[-1]["authority"], "delegated")
         self.assertEqual(self.gate_plan().returncode, 0)
 
@@ -240,13 +286,24 @@ class TheSkipCommand(unittest.TestCase):
 
         self.assertEqual(self.coscc("state", "proj")[0], 0)
         # What the end of a spec step records when its file says `Status: skipped`.
-        History(self.env["COS_WORKING_DIR"], self.data).record_many([{
-            "workspace": self.key, "unit": self.UNIT, "artifact": "spec.md", "to_state": "skipped",
-            "actor": "stage:spec", "session": "s1", "source": "run:spec",
-        }])
+        History(self.env["COS_WORKING_DIR"], self.data).record_many(
+            [
+                {
+                    "workspace": self.key,
+                    "unit": self.UNIT,
+                    "artifact": "spec.md",
+                    "to_state": "skipped",
+                    "actor": "stage:spec",
+                    "session": "s1",
+                    "source": "run:spec",
+                }
+            ]
+        )
         gate = self.gate_plan()
         self.assertEqual(gate.returncode, 1)
-        self.assertIn("spec.md is skipped by unknown, not by a person or their delegate", gate.stderr)
+        self.assertIn(
+            "spec.md is skipped by unknown, not by a person or their delegate", gate.stderr
+        )
 
     def test_what_it_refuses(self):
         for args in (
@@ -260,8 +317,8 @@ class TheSkipCommand(unittest.TestCase):
 
 
 class TheServerIsHeld(unittest.TestCase):
-    """`0068` plan step 5. `main` keeps its own `uvicorn.Server`, registers it for the
-    updater, and after `run()` returns installs only when a hand-off was left."""
+    """`main` keeps its own `uvicorn.Server`, registers it for the updater, and after `run()`
+    returns installs only when a hand-off was left."""
 
     def main_with(self, on_run, order=None, recover=None):
         import contextlib
@@ -284,17 +341,30 @@ class TheServerIsHeld(unittest.TestCase):
 
         finished = []
         with contextlib.ExitStack() as stack:
-            # `0073`: never the real `cos.db` of whoever runs the tests.
-            stack.enter_context(mock.patch.object(
-                events, "purge_on_start", lambda config: order.append("purge") or (0, 0)))
-            stack.enter_context(mock.patch.object(
-                recovery, "recover_on_start",
-                recover or (lambda config: order.append("recover") or 0)))
+            # Never the real `cos.db` of whoever runs the tests.
+            stack.enter_context(
+                mock.patch.object(
+                    events, "purge_on_start", lambda config: order.append("purge") or (0, 0)
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    recovery,
+                    "recover_on_start",
+                    recover or (lambda config: order.append("recover") or 0),
+                )
+            )
             stack.enter_context(mock.patch("uvicorn.Server", FakeServer))
             stack.enter_context(mock.patch("uvicorn.Config", lambda *a, **k: (a, k)))
             stack.enter_context(mock.patch.object(run.frontend, "is_packaged", lambda: False))
-            stack.enter_context(mock.patch.object(run, "_refuse_a_bundle_that_does_not_match_the_source", lambda *a: None))
-            stack.enter_context(mock.patch.object(update, "finish", lambda h: finished.append(h) or 75))
+            stack.enter_context(
+                mock.patch.object(
+                    run, "_refuse_a_bundle_that_does_not_match_the_source", lambda *a: None
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(update, "finish", lambda h: finished.append(h) or 75)
+            )
             stack.enter_context(mock.patch.dict("os.environ", {}, clear=False))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             try:
@@ -311,7 +381,7 @@ class TheServerIsHeld(unittest.TestCase):
         self.assertEqual((code, finished), (None, []))
 
     def test_step_events_are_purged_before_the_server_is_built(self):
-        """`0073` R14: before the first request, and a purge that fails does not stop it."""
+        """Before the first request, and a purge that fails does not stop it."""
         from unittest import mock
 
         from coscc.runlog import events
@@ -332,7 +402,7 @@ class TheServerIsHeld(unittest.TestCase):
         self.assertIn("step events were not purged this start", err.getvalue())
 
     def test_a_recovery_that_fails_is_one_line_and_the_app_goes_on(self):
-        """`0092` R5: one line on stderr, and `main` still reaches the purge and the server."""
+        """One line on stderr, and `main` still reaches the purge and the server."""
         import contextlib
         import io
         from unittest import mock
@@ -343,7 +413,10 @@ class TheServerIsHeld(unittest.TestCase):
             raise RuntimeError("busy")
 
         err = io.StringIO()
-        with mock.patch.object(recovery, "recover_on_start", fails), contextlib.redirect_stderr(err):
+        with (
+            mock.patch.object(recovery, "recover_on_start", fails),
+            contextlib.redirect_stderr(err),
+        ):
             run.recover_steps(object())
         lines = err.getvalue().splitlines()
         self.assertEqual(len(lines), 1)
@@ -360,14 +433,14 @@ class TheServerIsHeld(unittest.TestCase):
         self.assertEqual((code, order), (None, ["recover", "purge", "server"]))
 
     def test_uvicorn_serves_the_guarded_app_and_trusts_no_proxy_header(self):
-        """`0070` step 4: the guard is the target, and `X-Forwarded-For` is never read."""
+        """The guard is the target, and `X-Forwarded-For` is never read."""
         seen = []
 
         def capture(server):
             seen.append(server.config)
 
         self.main_with(capture)
-        (args, kwargs), = seen
+        ((args, kwargs),) = seen
         self.assertEqual(args, ("coscc.coscc:served",))
         self.assertIs(kwargs["factory"], True)
         self.assertIs(kwargs["proxy_headers"], False)

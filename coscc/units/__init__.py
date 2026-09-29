@@ -68,7 +68,9 @@ def spike_dir(
     return Data(data_dir).root / "spikes" / slot(workspace) / unit
 
 
-def cos_dir(workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None) -> Path:
+def cos_dir(
+    workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None
+) -> Path:
     return root(workspace, data_dir) / COS_DIR
 
 
@@ -134,7 +136,14 @@ def branch_name(
         )
     if state is None:
         return _cos(root(workspace, data_dir), "unit-branch", unit)
-    return _cos(root(workspace, data_dir), "--state", "-", "unit-branch", unit, stdin=json.dumps(state, ensure_ascii=False))
+    return _cos(
+        root(workspace, data_dir),
+        "--state",
+        "-",
+        "unit-branch",
+        unit,
+        stdin=json.dumps(state, ensure_ascii=False),
+    )
 
 
 def create(
@@ -154,7 +163,9 @@ def create(
     store = root(workspace, data_dir)
     (store / COS_DIR).mkdir(parents=True, exist_ok=True)
 
-    reserve = [a for d in reserve_from for a in ("--reserve-from", str(Path(d).expanduser().resolve()))]
+    reserve = [
+        a for d in reserve_from for a in ("--reserve-from", str(Path(d).expanduser().resolve()))
+    ]
     printed = _cos(store, *reserve, "new-path", str(slug or "").strip())
     relative = printed.splitlines()[-1].strip() if printed else ""
     if not relative:

@@ -8,72 +8,20 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import date
 from typing import Any
 
 from coscc.runlog import events
 from coscc.config import Config
-from coscc.data import now as _now
-from coscc.runner import Runner
 from coscc.agent.sessions import Sessions
 from coscc.service.store import Store
 from coscc.agent import steps as steps_mod
 from coscc.update import updater as updater_mod
 
 # Re-exported so `coscc.service.<name>` resolves; a patch reaches only the module that looks it up.
-from coscc.service.common import (
-    STAGE_FILES,
-    BRANCH_REMOTE,
-    BRANCH_TRUNK,
-    Invalid,
-    Updating,
-    NotUpdatable,
-    _younger_than,
-    step_cwd,
-    describe_base,
-    OUTCOME_RESULTS,
-    MISSED_HINT,
-    outcome_label,
-    OWNER,
-    MISSED_HINT_LABEL,
-    CONSEQUENCE,
-    consequence,
-    attention_reason,
-    STATE_LABEL,
-    STATE_COLOR,
-    COLLAPSED_STATES,
-    FOLDED_STATES,
-    _state,
-    unit_state,
-    shown_state,
-    reason_beside,
-)
-from coscc.service.board import (
-    UNKNOWN_END_FOR,
-    _attach_comment_state,
-    answerable,
-    BoardMixin,
-)
-from coscc.service.steps import (
-    RERUN_NOTE_MAX,
-    RETAKE_REFUSED,
-    _answers_kept,
-    integration_since_review,
-    CI_REFRESH,
-    StepsMixin,
-)
-from coscc.service.update import (
-    _as_invalid,
-    _RELEASE_LINE,
-    _LOCAL_LINE,
-    update_words,
-    UpdateMixin,
-)
-from coscc.service.models import (
-    _whole_at_least_one,
-    _positive_number,
-    ModelsMixin,
-)
+from coscc.service.board import BoardMixin
+from coscc.service.steps import StepsMixin
+from coscc.service.update import UpdateMixin
+from coscc.service.models import ModelsMixin
 from coscc.service.agents import (
     AgentsMixin,
 )
@@ -150,7 +98,9 @@ class Service(
     # `(journal key, unit)` for every step, integration or hold holding its unit now, each
     # with a `Mark` (what, since when) taken before the step's first `await` (`_take`); plus
     # one lock per workspace held across an integration's check-and-mark.
-    _active: dict[tuple[str, str], steps_mod.Mark] = field(default_factory=dict, init=False, repr=False)
+    _active: dict[tuple[str, str], steps_mod.Mark] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _integrate_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     # Journal keys whose `cos.db` store was imported: an import is never undone, so
     # `_snapshot` stops asking once it is.
@@ -162,15 +112,21 @@ class Service(
     _running: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     # A step's `_after_end`, run after its `_running` entry and mark are gone. Not shown on
     # the board; an Apply's settle waits for it and `shutdown` cancels it.
-    _finishing: dict[str, tuple[dict[str, Any], asyncio.Task]] = field(default_factory=dict, init=False, repr=False)
+    _finishing: dict[str, tuple[dict[str, Any], asyncio.Task]] = field(
+        default_factory=dict, init=False, repr=False
+    )
     # By `(journal key, unit)`: the last answer of `integrate.required_checks`,
     # `{head, checks | error, at}`, and the one background ask running for it. Never waited
     # on by a board read.
     _ci: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
-    _ci_asks: dict[tuple[str, str], asyncio.Task] = field(default_factory=dict, init=False, repr=False)
+    _ci_asks: dict[tuple[str, str], asyncio.Task] = field(
+        default_factory=dict, init=False, repr=False
+    )
     # Board steps running now, each its own task, so a departing reader does not take the
     # step with it and a Stop has something to cancel.
-    steps: steps_mod.Registry = field(default_factory=lambda: steps_mod.Registry(), init=False, repr=False)
+    steps: steps_mod.Registry = field(
+        default_factory=lambda: steps_mod.Registry(), init=False, repr=False
+    )
     # The recorder of every running board step, by `run`: what `events_page` reads and
     # `follow_events` subscribes to. A step leaves it when `_drive` ends; then the tables answer.
     _recorders: dict[str, events.Recorder] = field(default_factory=dict, init=False, repr=False)
@@ -180,11 +136,17 @@ class Service(
     _autopilot_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     _autopilot_tasks: dict[str, asyncio.Task] = field(default_factory=dict, init=False, repr=False)
     _autopilot_cwd: dict[str, str] = field(default_factory=dict, init=False, repr=False)
-    _autopilot_runs: dict[str, dict[str, tuple[str, asyncio.Task]]] = field(default_factory=dict, init=False, repr=False)
-    _autopilot_stops: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict, init=False, repr=False)
+    _autopilot_runs: dict[str, dict[str, tuple[str, asyncio.Task]]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _autopilot_stops: dict[str, dict[str, dict[str, str]]] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _autopilot_pending: set[asyncio.Task] = field(default_factory=set, init=False, repr=False)
     # What the last pass held back by unit, `(code, detail)`, for the card to show.
-    _autopilot_held: dict[str, dict[str, tuple[str, str]]] = field(default_factory=dict, init=False, repr=False)
+    _autopilot_held: dict[str, dict[str, tuple[str, str]]] = field(
+        default_factory=dict, init=False, repr=False
+    )
     # The reader of each workspace's pull requests, while its autopilot is on.
     _pr_readers: dict[str, asyncio.Task] = field(default_factory=dict, init=False, repr=False)
 

@@ -1,4 +1,4 @@
-"""`coscc/units/retake.py` (`0111`): the command stood in for by a short script in a temporary git
+"""`coscc/units/retake.py`: the command stood in for by a short script in a temporary git
 repository, so nothing is built and no browser opens."""
 
 from __future__ import annotations
@@ -20,8 +20,20 @@ from coscc.units import retake
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-        cwd=repo, check=True, capture_output=True, text=True,
+        [
+            "git",
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
 
 
@@ -50,7 +62,11 @@ def _writes(head: str, dirty: bool = False, code: int = 0, then: str = "") -> li
 
 
 def _take(repo: Path, argv: list[str], timeout: float = retake.RETAKE_TIMEOUT) -> dict:
-    return asyncio.run(retake.take(repo, ["/board"], data_dir=str(repo.parent / "data"), timeout=timeout, argv=argv))
+    return asyncio.run(
+        retake.take(
+            repo, ["/board"], data_dir=str(repo.parent / "data"), timeout=timeout, argv=argv
+        )
+    )
 
 
 class ARetakeIsJudgedOnWhatItLeft(unittest.TestCase):
@@ -71,12 +87,15 @@ class ARetakeIsJudgedOnWhatItLeft(unittest.TestCase):
         self.assertIn(f"not HEAD {head[:12]}", detail)
 
     def test_an_exit_other_than_0_fails_even_over_a_manifest_of_head(self):
-        # `spike.md ## U1`, result 5: after a failed run the manifest on disk is the last one's.
         with tempfile.TemporaryDirectory() as tmp:
             repo, head = _repo(tmp)
             (repo / ".screens").mkdir()
-            (repo / ".screens" / "manifest.json").write_text(json.dumps({"head": head, "dirty": False}))
-            result = _take(repo, [sys.executable, "-c", "print('port in use'); raise SystemExit(2)"])
+            (repo / ".screens" / "manifest.json").write_text(
+                json.dumps({"head": head, "dirty": False})
+            )
+            result = _take(
+                repo, [sys.executable, "-c", "print('port in use'); raise SystemExit(2)"]
+            )
         ok, detail = retake.judge(result)
         self.assertEqual(result["manifest_after"]["head"], head)
         self.assertFalse(ok)
@@ -91,10 +110,11 @@ class ARetakeIsJudgedOnWhatItLeft(unittest.TestCase):
         self.assertIn("tree changed while it ran", detail)
 
     def test_a_changed_git_status_fails_and_names_the_file(self):
-        # `spike.md ## U1`, result 1: a failed build rewrote `reflex.lock/package.json`.
         with tempfile.TemporaryDirectory() as tmp:
             repo, head = _repo(tmp)
-            ok, detail = retake.judge(_take(repo, _writes(head, then="open('tracked.txt', 'w').write('two')")))
+            ok, detail = retake.judge(
+                _take(repo, _writes(head, then="open('tracked.txt', 'w').write('two')"))
+            )
         self.assertFalse(ok)
         self.assertIn(" M tracked.txt", detail)
 
@@ -138,7 +158,9 @@ class ARetakePastItsTimeIsKilledWithEverythingItStarted(unittest.TestCase):
             body = f"import os, time\nopen({str(pidfile)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n"
 
             async def go():
-                task = asyncio.create_task(retake.take(repo, [], data_dir=tmp, argv=[sys.executable, "-c", body]))
+                task = asyncio.create_task(
+                    retake.take(repo, [], data_dir=tmp, argv=[sys.executable, "-c", body])
+                )
                 while not pidfile.exists() or not pidfile.read_text():
                     await asyncio.sleep(0.05)
                 task.cancel()
@@ -160,7 +182,7 @@ _CLEARS = (
 
 
 class ARetakeThatFailsLeavesTheScreensItFound(unittest.TestCase):
-    """Review round 1, F1: a run that fails after `clear_out` must not take `impl`'s evidence."""
+    """A run that fails after `clear_out` must not take `impl`'s evidence."""
 
     OLD = {"head": "a" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
 
@@ -188,7 +210,9 @@ class ARetakeThatFailsLeavesTheScreensItFound(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo, _ = _repo(tmp)
             before = self._old(repo)
-            result = _take(repo, [sys.executable, "-c", _CLEARS + "import time; time.sleep(60)"], timeout=2.0)
+            result = _take(
+                repo, [sys.executable, "-c", _CLEARS + "import time; time.sleep(60)"], timeout=2.0
+            )
             self.assertEqual(result["code"], 124)
             self.assertEqual(self._screens(repo), before)
 
@@ -200,7 +224,9 @@ class ARetakeThatFailsLeavesTheScreensItFound(unittest.TestCase):
             body = _CLEARS + f"open({str(marker)!r}, 'w').write('1')\nimport time; time.sleep(60)\n"
 
             async def go():
-                task = asyncio.create_task(retake.take(repo, [], data_dir=tmp, argv=[sys.executable, "-c", body]))
+                task = asyncio.create_task(
+                    retake.take(repo, [], data_dir=tmp, argv=[sys.executable, "-c", body])
+                )
                 while not marker.exists():
                     await asyncio.sleep(0.05)
                 task.cancel()
@@ -214,10 +240,18 @@ class ARetakeThatFailsLeavesTheScreensItFound(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo, head = _repo(tmp)
             self._old(repo)
-            result = _take(repo, [sys.executable, "-c", _CLEARS + (
-                "import json\n"
-                f"json.dump({{'head': {head!r}, 'dirty': False, 'addresses': ['/board'], 'hits': []}}, open('.screens/manifest.json', 'w'))\n"
-            )])
+            result = _take(
+                repo,
+                [
+                    sys.executable,
+                    "-c",
+                    _CLEARS
+                    + (
+                        "import json\n"
+                        f"json.dump({{'head': {head!r}, 'dirty': False, 'addresses': ['/board'], 'hits': []}}, open('.screens/manifest.json', 'w'))\n"
+                    ),
+                ],
+            )
             self.assertTrue(retake.judge(result)[0])
             now = self._screens(repo)
         self.assertEqual(sorted(now), ["board-1440x900.png", "manifest.json"])
@@ -251,8 +285,16 @@ def _alive(pid: int) -> bool:
 
 class TheEnvironmentIsTheAppsWithReflexBlanked(unittest.TestCase):
     def test_reflex_names_are_blank_and_the_apps_database_protected(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-            os.environ, {"__REFLEX_SKIP_COMPILE": "1", "__REFLEX_MOUNT_FRONTEND_COMPILED_APP": "1", "COS_PORT": "8790"},
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict(
+                os.environ,
+                {
+                    "__REFLEX_SKIP_COMPILE": "1",
+                    "__REFLEX_MOUNT_FRONTEND_COMPILED_APP": "1",
+                    "COS_PORT": "8790",
+                },
+            ),
         ):
             e = retake.env(tmp)
         self.assertEqual(e["__REFLEX_SKIP_COMPILE"], "")
@@ -264,22 +306,43 @@ class TheEnvironmentIsTheAppsWithReflexBlanked(unittest.TestCase):
 
 
 class TheRecordAndTheSection(unittest.TestCase):
-    OLD = {"head": "a" * 40, "addresses": ["/board"], "hits": [{"address": "/board", "size": "390x844", "kind": "path", "snippet": "/tmp/one"}]}
+    OLD = {
+        "head": "a" * 40,
+        "addresses": ["/board"],
+        "hits": [{"address": "/board", "size": "390x844", "kind": "path", "snippet": "/tmp/one"}],
+    }
     NEW = {"head": "b" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
 
     def test_a_taken_record_carries_both_heads(self):
         result = {"code": 0, "seconds": 20.1, "manifest_after": self.NEW}
         r = retake.record("/w", "0001_x", self.OLD, result, True, "", "autopilot")
-        self.assertEqual(r, {
-            "kind": "screens", "workspace": "/w", "unit": "0001_x", "stage": "review",
-            "head_before": "a" * 40, "head_after": "b" * 40, "addresses": ["/board"],
-            "code": 0, "seconds": 20.1, "outcome": "taken", "detail": "", "started_by": "autopilot",
-        })
+        self.assertEqual(
+            r,
+            {
+                "kind": "screens",
+                "workspace": "/w",
+                "unit": "0001_x",
+                "stage": "review",
+                "head_before": "a" * 40,
+                "head_after": "b" * 40,
+                "addresses": ["/board"],
+                "code": 0,
+                "seconds": 20.1,
+                "outcome": "taken",
+                "detail": "",
+                "started_by": "autopilot",
+            },
+        )
 
     def test_a_failed_record_has_no_head_after(self):
         result = {"code": 2, "seconds": 0.4, "manifest_after": self.OLD}
-        r = retake.record("/w", "0001_x", self.OLD, result, False, "capture_screens.py exited 2", "person")
-        self.assertEqual((r["outcome"], r["head_after"], r["detail"]), ("failed", "", "capture_screens.py exited 2"))
+        r = retake.record(
+            "/w", "0001_x", self.OLD, result, False, "capture_screens.py exited 2", "person"
+        )
+        self.assertEqual(
+            (r["outcome"], r["head_after"], r["detail"]),
+            ("failed", "", "capture_screens.py exited 2"),
+        )
 
     def test_the_section_names_both_heads_who_took_them_and_every_hit(self):
         text = retake.describe_for_review(self.OLD, self.NEW)

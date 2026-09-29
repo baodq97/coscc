@@ -1,5 +1,4 @@
-"""Tests for `WatchMixin` in `coscc/service/watch.py`, split from `coscc/service/service_test.py` (`0095`).
-"""
+"""Tests for `WatchMixin` in `coscc/service/watch.py`, split from `coscc/service/service_test.py`."""
 
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ from coscc.agent.submit_test import submits as _submits
 
 
 class AStepCanBeWatched(unittest.TestCase):
-    """`0073` step 5: `events_page` and `follow_events`, while a step runs and after."""
+    """`events_page` and `follow_events`, while a step runs and after."""
 
     N = 800  # refusals the stand-in session reports before it waits
 
@@ -62,13 +61,18 @@ class AStepCanBeWatched(unittest.TestCase):
         async def go():
             self.release = asyncio.Event()
             reader = asyncio.create_task(self._drain())
-            while not self.service._recorders or next(iter(self.service._recorders.values())).seq < self.N:
+            while (
+                not self.service._recorders
+                or next(iter(self.service._recorders.values())).seq < self.N
+            ):
                 await asyncio.sleep(0.01)
             [run] = list(self.service._recorders)
             listed = self.service.running(ws)["running"][self.unit][0]["run"]
             steps_run = self.service.running_steps(ws)[0]["run"]
             live = self.service.events_page(ws, self.unit, run)
-            older = self.service.events_page(ws, self.unit, run, before=live["first_seq"], limit=9999)
+            older = self.service.events_page(
+                ws, self.unit, run, before=live["first_seq"], limit=9999
+            )
             one = self.service.events_page(ws, self.unit, run, seq=7)
             with self.assertRaises(Invalid):
                 self.service.events_page(ws, self.other, run)
@@ -85,11 +89,15 @@ class AStepCanBeWatched(unittest.TestCase):
             await reader
             await asyncio.wait_for(follower, 10)
             after = self.service.events_page(ws, self.unit, run)
-            after_older = self.service.events_page(ws, self.unit, run, before=live["first_seq"], limit=9999)
+            after_older = self.service.events_page(
+                ws, self.unit, run, before=live["first_seq"], limit=9999
+            )
             ended = [i async for i in self.service.follow_events(ws, self.unit, run, after=0)]
             return run, listed, steps_run, live, older, one, followed, after, after_older, ended
 
-        run, listed, steps_run, live, older, one, followed, after, after_older, ended = asyncio.run(go())
+        run, listed, steps_run, live, older, one, followed, after, after_older, ended = asyncio.run(
+            go()
+        )
         self.assertEqual((listed, steps_run), (run, run))
         self.assertEqual(live["status"], "running")
         self.assertEqual([e["seq"] for e in live["events"]], list(range(self.N - 199, self.N + 1)))
@@ -101,7 +109,7 @@ class AStepCanBeWatched(unittest.TestCase):
         self.assertEqual(followed, list(range(101, self.N + 2)))
         self.assertEqual(after["status"], "ended")
         self.assertEqual(after["events"][-1]["kind"], "end")
-        # R7: the same pages from the table as from memory.
+        # The same pages from the table as from memory.
         self.assertEqual(after["events"][:-1], live["events"][1:])
         self.assertEqual(after_older["events"], older["events"])
         self.assertEqual([k for k, _ in ended], ["status"])

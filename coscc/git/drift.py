@@ -38,7 +38,8 @@ def mentioned(section: str, paths: list[str]) -> list[str]:
     whitespace, `` ` ``, `:`, `)`, `,`, `|` or `*`. The negated class also matches at line ends.
     """
     found = {
-        d for d in paths
+        d
+        for d in paths
         if d and re.search(r"(?<![^\s`(|*])" + re.escape(d) + r"(?![^\s`:),|*])", section, re.M)
     }
     return sorted(found, key=lambda s: s.encode())
@@ -50,13 +51,18 @@ def plan_head(records: list[dict[str, Any]]) -> tuple[str, str]:
     Uses the `head` of the `start` record, not `base.sha`.
     """
     seq = [
-        r for r in records
+        r
+        for r in records
         if str(r.get("stage") or "") == "plan" and r.get("kind") in ("start", "end")
     ]
     chosen = None
     for i, r in enumerate(seq[:-1]):
         after = seq[i + 1]
-        if r.get("kind") == "start" and after.get("kind") == "end" and after.get("outcome") == "done":
+        if (
+            r.get("kind") == "start"
+            and after.get("kind") == "end"
+            and after.get("outcome") == "done"
+        ):
             chosen = r
     if chosen is None:
         return "", "the run log has no run of plan that ended done"
@@ -107,7 +113,11 @@ async def compute(
     which would claim "nothing changed" about something nobody checked.
     """
     out: dict[str, Any] = {
-        "plan_sha": None, "main_sha": None, "files": None, "checked": False, "reason": "",
+        "plan_sha": None,
+        "main_sha": None,
+        "files": None,
+        "checked": False,
+        "reason": "",
     }
     try:
         plan_sha, why = plan_head(records)

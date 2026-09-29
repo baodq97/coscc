@@ -1,10 +1,7 @@
 """Tests for the run log, including the one failure that was measured.
 
-The concurrency case is the reason this file is not just round-trip assertions. That
-measured four processes leaving 8 of 20 entries behind, with no error anywhere
-(`.cos/0004_silent-concurrent-loss/plan.md:115`). The same shape is run here at unit-test size:
-real processes, one folder, count what survives.
-"""
+The concurrency case is the reason this file is not just round-trip assertions. The same shape is
+run here at unit-test size: real processes, one folder, count what survives."""
 
 from __future__ import annotations
 
@@ -19,7 +16,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.runlog.journal import BELL, BadRecord, Busy, Journal, last_runs, totals_of
+from coscc.runlog.journal import BELL, BadRecord, Journal, last_runs, totals_of
+from coscc.data import Busy
 
 WRITERS = 4
 PER_WRITER = 5
@@ -106,8 +104,14 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
             j = Journal(d, d)
             j.started("w", "0009_x", "spec", "autonomous", session_id="s-1")
             j.finished(
-                "w", "0009_x", "spec", "done",
-                artifact="spec.md", input_tokens=100, output_tokens=20, turns=1,
+                "w",
+                "0009_x",
+                "spec",
+                "done",
+                artifact="spec.md",
+                input_tokens=100,
+                output_tokens=20,
+                turns=1,
             )
             [row] = j.timeline("w", "0009_x")
             self.assertEqual(row["stage"], "spec")
@@ -134,8 +138,8 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
                 Journal(d, d).finished("w", "0009_x", "impl", "probably fine")
 
     def test_a_stopped_run_says_who_stopped_it_and_claims_no_cost(self):
-        # `0034`: a person pressed Stop. The name rides on the record; a cost that never
-        # arrived is absent, not zero.
+        # A person pressed Stop. The name rides on the record; a cost that never arrived is absent,
+        # not zero.
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
             j.started("w", "0009_x", "impl", "manual")
@@ -153,10 +157,11 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
             for stage in ("intent", "spec", "plan"):
                 j.started("w", "0009_x", stage, "manual")
                 j.finished("w", "0009_x", stage, "done")
-            self.assertEqual([r["stage"] for r in j.timeline("w", "0009_x")], ["intent", "spec", "plan"])
+            self.assertEqual(
+                [r["stage"] for r in j.timeline("w", "0009_x")], ["intent", "spec", "plan"]
+            )
 
     def test_a_row_carries_its_run_and_what_was_lost_and_an_older_one_none(self):
-        # `0073` spec Design 7: the only change to the timeline.
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
             j.started("w", "0009_x", "spec", "manual")
@@ -167,7 +172,7 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
             self.assertEqual((before["run"], before["events_lost"]), (None, None))
             self.assertEqual((after["run"], after["events_lost"]), ("r-1", 3))
 
-    def test_0093_an_integrate_row_carries_the_state_that_opened_it(self):
+    def test_an_integrate_row_carries_the_state_that_opened_it(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
             j.started("w", "0009_x", "integrate", "manual", integrate_state="conflicting")
@@ -179,7 +184,7 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
             self.assertIsNone(older["integrate_state"])
 
     def test_a_folded_start_keeps_its_agent(self):
-        # `0036` R7: top level, not nested, and None for a start written before it.
+        # Top level, not nested, and None for a start written before it.
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
             j.started("w", "0009_x", "plan", "manual")
@@ -192,7 +197,7 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
 
 
 class TheTrialModelFillsInOneStart(unittest.TestCase):
-    """`0139` R17, plan Risk 6: the one field a written `start` is ever given afterwards."""
+    """The one field a written `start` is ever given afterwards."""
 
     def test_set_trial_model_touches_only_that_start(self):
         with tempfile.TemporaryDirectory() as d:
@@ -203,21 +208,25 @@ class TheTrialModelFillsInOneStart(unittest.TestCase):
             j.started("w", "0001_a", "impl", "manual")
             mine = j.started("w", "0001_a", "impl", "manual", **trial)
             before = j.records("w", kind="start")
-            self.assertTrue(j.set_trial_model("w", "0001_a", "impl", mine["at"], "claude-opus-5-5[1m]"))
+            self.assertTrue(
+                j.set_trial_model("w", "0001_a", "impl", mine["at"], "claude-opus-5-5[1m]")
+            )
             # Set once: a second answer, and a `start` stamped at another time, change nothing.
             self.assertFalse(j.set_trial_model("w", "0001_a", "impl", mine["at"], "never-started"))
             self.assertFalse(j.set_trial_model("w", "0001_a", "impl", "1999-01-01T00:00:00Z", "x"))
             after = j.records("w", kind="start")
-        self.assertEqual(after[-1]["model_trial"],
-                         {"arm": "opus-5-5", "requested": "m", "model": "claude-opus-5-5[1m]"})
+        self.assertEqual(
+            after[-1]["model_trial"],
+            {"arm": "opus-5-5", "requested": "m", "model": "claude-opus-5-5[1m]"},
+        )
         self.assertEqual(after[:-1], before[:-1])
-        self.assertEqual({k: v for k, v in after[-1].items() if k != "model_trial"},
-                         {k: v for k, v in before[-1].items() if k != "model_trial"})
+        self.assertEqual(
+            {k: v for k, v in after[-1].items() if k != "model_trial"},
+            {k: v for k, v in before[-1].items() if k != "model_trial"},
+        )
 
 
 class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
-    """`0051` plan step 2."""
-
     def test_a_start_with_no_end_is_open(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
@@ -253,7 +262,15 @@ class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
             j.set_mode("w", "0009_x", "impl", "autonomous")
             j.attempted("w", "0009_x", "impl", commits=[])
             j.append({"kind": "integration", "workspace": "w", "unit": "0009_x", "stage": "impl"})
-            j.append({"kind": "mode", "workspace": "w", "unit": "0010_y", "stage": "spec", "mode": "manual"})
+            j.append(
+                {
+                    "kind": "mode",
+                    "workspace": "w",
+                    "unit": "0010_y",
+                    "stage": "spec",
+                    "mode": "manual",
+                }
+            )
             self.assertEqual(j.open_starts("w"), before)
 
     def test_workspaces_do_not_mix(self):
@@ -264,7 +281,7 @@ class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
 
 
 class AFailedStepLeavesARecord(unittest.TestCase):
-    """`0019` plan step 4: `attempted`, `failed_attempts`, `last_runs`, and `reported`."""
+    """`attempted`, `failed_attempts`, `last_runs`, and `reported`."""
 
     def test_an_end_with_no_cost_reads_as_null_not_zero(self):
         with tempfile.TemporaryDirectory() as d:
@@ -338,51 +355,82 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             self.assertIsNone(found["attempt"])
             self.assertEqual(len(found["earlier"]), 1)
 
-    def _review_that_wrote_nothing(self, j, review_md="none", run="r1", events=None, purge=False, **end):
-        """`0085` R11: an exhausted review's `end`, and the `tool_use` events of its run."""
+    def _review_that_wrote_nothing(
+        self, j, review_md="none", run="r1", events=None, purge=False, **end
+    ):
+        """An exhausted review's `end`, and the `tool_use` events of its run."""
         if events is not None:
             j.data.step_run_open(run, "/w", "w", "0009_x", "review", 1000)
-            j.data.step_events_add(run, [
-                {"run": run, "seq": n, "at": 1000 + n, "kind": kind, "input": given}
-                for n, (kind, given) in enumerate(events, 1)
-            ])
+            j.data.step_events_add(
+                run,
+                [
+                    {"run": run, "seq": n, "at": 1000 + n, "kind": kind, "input": given}
+                    for n, (kind, given) in enumerate(events, 1)
+                ],
+            )
             if purge:
                 j.data.step_events_purge(10**12, 10**9, "2026-10-01T00:00:00+00:00")
         j.started("w", "0009_x", "review", "manual", run=run)
-        j.finished("w", "0009_x", "review", "exhausted", turns=41, cost_usd=4.1, run=run, review_md=review_md, **end)
+        j.finished(
+            "w",
+            "0009_x",
+            "review",
+            "exhausted",
+            turns=41,
+            cost_usd=4.1,
+            run=run,
+            review_md=review_md,
+            **end,
+        )
 
     def test_an_exhausted_review_that_wrote_nothing_names_what_it_opened(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
-            self._review_that_wrote_nothing(j, events=[
-                ("tool_use", {"file_path": "/w/a.py"}),
-                ("tool_result", {"file_path": "/w/nope.py"}),
-                ("tool_use", {"pattern": "def x", "path": "/w/coscc"}),
-                ("tool_use", {"pattern": "**/*.md"}),
-                ("tool_use", {"file_path": "/w/a.py"}),
-                # `events._cut` keeps a long input as the start of its JSON: read if it parses,
-                # passed over if it does not.
-                ("tool_use", '{"file_path": "/w/b.py"}'),
-                ("tool_use", '{"file_path": "/w/cut'),
-            ])
+            self._review_that_wrote_nothing(
+                j,
+                events=[
+                    ("tool_use", {"file_path": "/w/a.py"}),
+                    ("tool_result", {"file_path": "/w/nope.py"}),
+                    ("tool_use", {"pattern": "def x", "path": "/w/coscc"}),
+                    ("tool_use", {"pattern": "**/*.md"}),
+                    ("tool_use", {"file_path": "/w/a.py"}),
+                    # `events._cut` keeps a long input as the start of its JSON: read if it parses,
+                    # passed over if it does not.
+                    ("tool_use", '{"file_path": "/w/b.py"}'),
+                    ("tool_use", '{"file_path": "/w/cut'),
+                ],
+            )
             found = j.failed_attempts("w", "0009_x", "review")
-            self.assertEqual(found["opened"], {"paths": ["/w/a.py", "/w/coscc", "**/*.md", "/w/b.py"], "closing": False})
+            self.assertEqual(
+                found["opened"],
+                {"paths": ["/w/a.py", "/w/coscc", "**/*.md", "/w/b.py"], "closing": False},
+            )
 
     def test_it_says_whether_a_closing_turn_ran(self):
-        # Review F2: with no session id or no head the `end` carries no `closing`.
+        # With no session id or no head the `end` carries no `closing`.
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
             self._review_that_wrote_nothing(j, events=[], closing={"cost_unknown": True})
-            self.assertEqual(j.failed_attempts("w", "0009_x", "review")["opened"], {"paths": [], "closing": True})
+            self.assertEqual(
+                j.failed_attempts("w", "0009_x", "review")["opened"], {"paths": [], "closing": True}
+            )
 
     def test_purged_events_say_so(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
-            self._review_that_wrote_nothing(j, events=[("tool_use", {"file_path": "/w/a.py"})], purge=True)
-            self.assertEqual(j.failed_attempts("w", "0009_x", "review")["opened"], {"purged": True, "closing": False})
+            self._review_that_wrote_nothing(
+                j, events=[("tool_use", {"file_path": "/w/a.py"})], purge=True
+            )
+            self.assertEqual(
+                j.failed_attempts("w", "0009_x", "review")["opened"],
+                {"purged": True, "closing": False},
+            )
             k = Journal(Path(d) / "k", Path(d) / "k")
             self._review_that_wrote_nothing(k, run="never-recorded")
-            self.assertEqual(k.failed_attempts("w", "0009_x", "review")["opened"], {"purged": True, "closing": False})
+            self.assertEqual(
+                k.failed_attempts("w", "0009_x", "review")["opened"],
+                {"purged": True, "closing": False},
+            )
 
     def test_a_log_that_cannot_be_read_is_a_reason_not_a_refusal(self):
         with tempfile.TemporaryDirectory() as d:
@@ -395,9 +443,10 @@ class AFailedStepLeavesARecord(unittest.TestCase):
     def test_a_review_whose_closing_turn_wrote_a_round_names_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
-            self._review_that_wrote_nothing(j, review_md="incomplete", events=[("tool_use", {"file_path": "/w/a.py"})])
+            self._review_that_wrote_nothing(
+                j, review_md="incomplete", events=[("tool_use", {"file_path": "/w/a.py"})]
+            )
             self.assertNotIn("opened", j.failed_attempts("w", "0009_x", "review"))
-            # Nor does another stage, nor a row written before `0085`.
             j.started("w", "0009_x", "plan", "manual")
             j.finished("w", "0009_x", "plan", "exhausted", run="r1", review_md="none")
             self.assertNotIn("opened", j.failed_attempts("w", "0009_x", "plan"))
@@ -457,8 +506,7 @@ class TotalsAreAddedNotStored(unittest.TestCase):
 
 
 class AnEndClosesTheRunItNames(unittest.TestCase):
-    """`0092` R6, R7: an `end` is matched to its `start` by `run`, and turns and cost are
-    known apart."""
+    """An `end` is matched to its `start` by `run`, and turns and cost are known apart."""
 
     def test_an_end_written_after_a_later_start_closes_its_own_run(self):
         with tempfile.TemporaryDirectory() as d:
@@ -556,7 +604,8 @@ class FourProcessesLoseNothing(unittest.TestCase):
             journal = Journal(d, d)
             records = journal.records()
             self.assertEqual(
-                len(records), WRITERS * PER_WRITER,
+                len(records),
+                WRITERS * PER_WRITER,
                 f"expected {WRITERS * PER_WRITER} records, {len(records)} survived",
             )
             # and every stored record is whole — a torn write would show up as a parse
@@ -579,7 +628,7 @@ class FourProcessesLoseNothing(unittest.TestCase):
 
 
 class AppendCheckedReadsAndWritesInOneTransaction(unittest.TestCase):
-    """`0074`. The check sees the rows of its kinds; a refusal writes nothing."""
+    """The check sees the rows of its kinds; a refusal writes nothing."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -591,15 +640,21 @@ class AppendCheckedReadsAndWritesInOneTransaction(unittest.TestCase):
             raise BadRecord("no")
 
         with self.assertRaises(BadRecord):
-            self.j.append_checked({"kind": "shortlist", "workspace": "w", "units": ["a"]}, ["shortlist"], no)
+            self.j.append_checked(
+                {"kind": "shortlist", "workspace": "w", "units": ["a"]}, ["shortlist"], no
+            )
         self.assertEqual(self.j.records("w"), [])
 
     def test_the_check_sees_only_its_kinds_in_its_workspace(self):
         self.j.append({"kind": "shortlist", "workspace": "w", "units": ["a"]})
         self.j.append({"kind": "shortlist", "workspace": "other", "units": ["b"]})
-        self.j.append({"kind": "start", "workspace": "w", "unit": "a", "stage": "spec", "mode": "manual"})
+        self.j.append(
+            {"kind": "start", "workspace": "w", "unit": "a", "stage": "spec", "mode": "manual"}
+        )
         seen = []
-        self.j.append_checked({"kind": "relation", "workspace": "w"}, ["shortlist", "relation"], seen.append)
+        self.j.append_checked(
+            {"kind": "relation", "workspace": "w"}, ["shortlist", "relation"], seen.append
+        )
         self.assertEqual([r["units"] for r in seen[0]], [["a"]])
         self.assertEqual(len(self.j.records("w", kind="relation")), 1)
 
@@ -617,7 +672,9 @@ class AppendCheckedReadsAndWritesInOneTransaction(unittest.TestCase):
             barrier.wait()
             try:
                 Journal(self._tmp.name, self._tmp.name).append_checked(
-                    {"kind": "shortlist", "workspace": "w", "units": ["a"]}, ["shortlist"], only_first
+                    {"kind": "shortlist", "workspace": "w", "units": ["a"]},
+                    ["shortlist"],
+                    only_first,
                 )
             except BadRecord as e:
                 errors.append(e)
@@ -639,7 +696,7 @@ class AppendCheckedReadsAndWritesInOneTransaction(unittest.TestCase):
 
 
 class TheBellWakesAReaderAndTheReadsNarrow(unittest.TestCase):
-    """`0113` Design 1 and 4. What the notice stream reads, and what wakes it."""
+    """What the notice stream reads, and what wakes it."""
 
     SOURCE = ("autopilot-stop", "questions", "end", "ship")
 
@@ -677,21 +734,29 @@ class TheBellWakesAReaderAndTheReadsNarrow(unittest.TestCase):
         BELL.disarm(ticket)
 
     def test_notice_rows_are_past_after_in_id_order_and_only_source_kinds(self):
-        self.j.append({"kind": "end", "workspace": "w", "unit": "u", "stage": "spec", "outcome": "failed"})
-        self.j.append({"kind": "start", "workspace": "w", "unit": "u", "stage": "spec", "mode": "manual"})
+        self.j.append(
+            {"kind": "end", "workspace": "w", "unit": "u", "stage": "spec", "outcome": "failed"}
+        )
+        self.j.append(
+            {"kind": "start", "workspace": "w", "unit": "u", "stage": "spec", "mode": "manual"}
+        )
         self.j.append({"kind": "ship", "workspace": "w", "unit": "u", "result": "shipped"})
         self.j.append({"kind": "questions", "workspace": "w", "unit": "u"})
         rows = self.j.notice_rows(0, self.SOURCE)
         self.assertEqual([r["kind"] for _, r in rows], ["end", "ship", "questions"])
         ids = [i for i, _ in rows]
         self.assertEqual(ids, sorted(ids))
-        self.assertEqual([r["kind"] for _, r in self.j.notice_rows(ids[0], self.SOURCE)], ["ship", "questions"])
+        self.assertEqual(
+            [r["kind"] for _, r in self.j.notice_rows(ids[0], self.SOURCE)], ["ship", "questions"]
+        )
         self.assertEqual(len(self.j.notice_rows(0, self.SOURCE, limit=1)), 1)
 
     def test_notice_rows_narrow_to_one_workspace(self):
         self.j.append({"kind": "ship", "workspace": "w", "unit": "u", "result": "shipped"})
         self.j.append({"kind": "ship", "workspace": "other", "unit": "u", "result": "shipped"})
-        self.assertEqual([r["workspace"] for _, r in self.j.notice_rows(0, self.SOURCE, "w")], ["w"])
+        self.assertEqual(
+            [r["workspace"] for _, r in self.j.notice_rows(0, self.SOURCE, "w")], ["w"]
+        )
         self.assertEqual(len(self.j.notice_rows(0, self.SOURCE)), 2)
 
     def test_last_id_is_zero_on_an_empty_log(self):
@@ -705,8 +770,6 @@ async def _arm(bell):
 
 
 class ASuspendedSessionIsTakenUpOnce(unittest.TestCase):
-    """`0138` step 3."""
-
     def test_a_suspend_row_without_a_resume_row_is_unresumed(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)

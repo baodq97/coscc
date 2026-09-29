@@ -18,15 +18,45 @@ from typing import Any
 # what the guards below refuse with.
 REASONS = (
     # `cos.mjs next`'s `why`, and a hold's move.
-    "dependency", "unreadable", "finished", "paused", "dropped", "needs-person",
-    "spike-fails", "spike-missing", "missing", "rejected", "stale", "review-incomplete",
-    "ship-refused", "draft", "awaits-person", "person-answered", "changes-requested",
+    "dependency",
+    "unreadable",
+    "finished",
+    "paused",
+    "dropped",
+    "needs-person",
+    "spike-fails",
+    "spike-missing",
+    "missing",
+    "rejected",
+    "stale",
+    "review-incomplete",
+    "ship-refused",
+    "draft",
+    "awaits-person",
+    "person-answered",
+    "changes-requested",
     # `gate-closed`: a gate closed for a reason with no code of its own; its words say which.
-    "ci-pending", "ci-red", "ci-unfixable", "waiting-on", "recording-ship", "closed",
-    "overlap-pr", "needs-idea", "gate-closed", "not-in-lane",
+    "ci-pending",
+    "ci-red",
+    "ci-unfixable",
+    "waiting-on",
+    "recording-ship",
+    "closed",
+    "overlap-pr",
+    "needs-idea",
+    "gate-closed",
+    "not-in-lane",
     # The guards' own refusals.
-    "wrong-run", "stale-revision", "no-head", "head-moved", "not-open-finding",
-    "agent-cannot-skip", "no-submission", "bad-branch", "not-merged", "not-closed",
+    "wrong-run",
+    "stale-revision",
+    "no-head",
+    "head-moved",
+    "not-open-finding",
+    "agent-cannot-skip",
+    "no-submission",
+    "bad-branch",
+    "not-merged",
+    "not-closed",
 )
 
 # Who may skip a stage. `agent` and `code` never may.
@@ -127,7 +157,11 @@ def dependency_merged(inputs: Mapping[str, Any]) -> Verdict:
 
 def _same_commit(a: str, b: str) -> bool:
     """One commit named twice, the shorter a prefix of the longer (a round from prose may name a short SHA)."""
-    return bool(a) and bool(b) and (a == b or (min(len(a), len(b)) >= 7 and (a.startswith(b) or b.startswith(a))))
+    return (
+        bool(a)
+        and bool(b)
+        and (a == b or (min(len(a), len(b)) >= 7 and (a.startswith(b) or b.startswith(a))))
+    )
 
 
 def ship_ready(inputs: Mapping[str, Any]) -> Verdict:
@@ -154,8 +188,11 @@ def ship_ready(inputs: Mapping[str, Any]) -> Verdict:
     head = str(inputs.get("head") or "")
     reviewed = str(inputs.get("reviewed_head") or "")
     rebased = inputs.get("rebased") or {}
-    clean = isinstance(rebased, Mapping) and _same_commit(str(rebased.get("head") or ""), head) and _same_commit(
-        str(rebased.get("reviewed") or ""), reviewed)
+    clean = (
+        isinstance(rebased, Mapping)
+        and _same_commit(str(rebased.get("head") or ""), head)
+        and _same_commit(str(rebased.get("reviewed") or ""), reviewed)
+    )
     if not head:
         reasons.append("no-head")
     elif not _same_commit(head, reviewed) and not clean:
@@ -192,18 +229,66 @@ def close_read(inputs: Mapping[str, Any]) -> Verdict:
 GUARDS: dict[str, Guard] = {
     g.id: g
     for g in (
-        Guard("stage-result", "A stage's artifact takes the judgement its own run submitted about the revision the app read.", stage_result),
-        Guard("review-round", "A review round counts only from the run that reviewed the head the app recorded.", review_round),
-        Guard("impl-claim", "Impl may claim a person is needed only for an open finding of the last round.", impl_claim),
-        Guard("skip-decision", "Spec or plan is skipped only on the decision of a person or their delegate.", skip_decision),
-        Guard("spike-holds", "Plan opens only once every unmeasured item of the spec has a spike verdict of holds.", spike_holds),
-        Guard("dependency-merged", "Impl opens only once every unit it depends on has merged.", dependency_merged),
-        Guard("ship-ready", "Ship opens only on green CI and a passing review of the head being merged, or of one it is a clean rebase of.", ship_ready),
-        Guard("run-submitted", "A run ends done only once the app has received its object.", run_submitted),
-        Guard("branch-named", "A pull request is opened only from a branch the harness's grammar accepts.", branch_named),
-        Guard("ci-at-head", "CI moves only on a read of the required checks at the head the machine holds.", ci_at_head),
-        Guard("merge-read", "A merge is recorded only from a read that names its merge commit.", merge_read),
-        Guard("close-read", "A pull request is closed only on a read that says it is closed.", close_read),
+        Guard(
+            "stage-result",
+            "A stage's artifact takes the judgement its own run submitted about the revision the app read.",
+            stage_result,
+        ),
+        Guard(
+            "review-round",
+            "A review round counts only from the run that reviewed the head the app recorded.",
+            review_round,
+        ),
+        Guard(
+            "impl-claim",
+            "Impl may claim a person is needed only for an open finding of the last round.",
+            impl_claim,
+        ),
+        Guard(
+            "skip-decision",
+            "Spec or plan is skipped only on the decision of a person or their delegate.",
+            skip_decision,
+        ),
+        Guard(
+            "spike-holds",
+            "Plan opens only once every unmeasured item of the spec has a spike verdict of holds.",
+            spike_holds,
+        ),
+        Guard(
+            "dependency-merged",
+            "Impl opens only once every unit it depends on has merged.",
+            dependency_merged,
+        ),
+        Guard(
+            "ship-ready",
+            "Ship opens only on green CI and a passing review of the head being merged, or of one it is a clean rebase of.",
+            ship_ready,
+        ),
+        Guard(
+            "run-submitted",
+            "A run ends done only once the app has received its object.",
+            run_submitted,
+        ),
+        Guard(
+            "branch-named",
+            "A pull request is opened only from a branch the harness's grammar accepts.",
+            branch_named,
+        ),
+        Guard(
+            "ci-at-head",
+            "CI moves only on a read of the required checks at the head the machine holds.",
+            ci_at_head,
+        ),
+        Guard(
+            "merge-read",
+            "A merge is recorded only from a read that names its merge commit.",
+            merge_read,
+        ),
+        Guard(
+            "close-read",
+            "A pull request is closed only on a read that says it is closed.",
+            close_read,
+        ),
     )
 }
 

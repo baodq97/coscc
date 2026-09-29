@@ -5,7 +5,8 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.web import studio as s
-from coscc.state import NAVIGATION, WatchEvent
+from coscc.state.views import NAVIGATION
+from coscc.state.views import WatchEvent
 from coscc.screens.common import P, _MONO
 from coscc.screens.chrome import _nav, _workspace_select
 
@@ -83,7 +84,13 @@ _WATCH_JS = """
 })();
 """
 
-_WATCH_COLOR = {"denied": "red", "result": "grass", "end": "iris", "turn": "amber", "tool_use": "blue"}
+_WATCH_COLOR = {
+    "denied": "red",
+    "result": "grass",
+    "end": "iris",
+    "turn": "amber",
+    "tool_use": "blue",
+}
 
 
 def _watch_row(e: rx.Var[WatchEvent]) -> rx.Component:
@@ -92,37 +99,69 @@ def _watch_row(e: rx.Var[WatchEvent]) -> rx.Component:
     return rx.box(
         rx.hstack(
             s.text(e.when, size="1", font_family=_MONO),
-            rx.match(e.kind, *[(k, s.badge(k, c)) for k, c in _WATCH_COLOR.items()], s.badge(e.kind, "gray")),
+            rx.match(
+                e.kind,
+                *[(k, s.badge(k, c)) for k, c in _WATCH_COLOR.items()],
+                s.badge(e.kind, "gray"),
+            ),
             rx.text(e.label, size="1", weight="medium", overflow_wrap="anywhere"),
             rx.spacer(),
             rx.cond(
                 e.collapsed,
                 rx.cond(
                     opened,
-                    rx.button("Collapse", on_click=P.watch_collapse, size="1", variant="ghost",
-                              class_name="watch-collapse"),
-                    rx.button("Expand", on_click=P.watch_expand(e.seq), size="1", variant="ghost",
-                              class_name="watch-expand"),
+                    rx.button(
+                        "Collapse",
+                        on_click=P.watch_collapse,
+                        size="1",
+                        variant="ghost",
+                        class_name="watch-collapse",
+                    ),
+                    rx.button(
+                        "Expand",
+                        on_click=P.watch_expand(e.seq),
+                        size="1",
+                        variant="ghost",
+                        class_name="watch-expand",
+                    ),
                 ),
             ),
-            width="100%", align="center", spacing="2", flex_wrap="wrap",
+            width="100%",
+            align="center",
+            spacing="2",
+            flex_wrap="wrap",
         ),
         rx.cond(
             e.body != "",
             rx.el.pre(
                 rx.cond(opened, P.watch_open_text, e.body),
                 class_name=rx.cond(opened, "watch-body watch-open", "watch-body"),
-                style={"white_space": "pre-wrap", "overflow_wrap": "anywhere", "margin": "4px 0 0",
-                       "font_size": "12px", "font_family": _MONO},
+                style={
+                    "white_space": "pre-wrap",
+                    "overflow_wrap": "anywhere",
+                    "margin": "4px 0 0",
+                    "font_size": "12px",
+                    "font_family": _MONO,
+                },
             ),
         ),
         rx.cond(e.collapsed & ~opened, s.text("… collapsed; press Expand to see all", size="1")),
-        rx.cond(e.truncated,
-                s.text("cut when stored: kept the first 64 000 of " + e.original_length.to_string() + " characters",
-                       size="1", color=rx.color("amber", 11))),
+        rx.cond(
+            e.truncated,
+            s.text(
+                "cut when stored: kept the first 64 000 of "
+                + e.original_length.to_string()
+                + " characters",
+                size="1",
+                color=rx.color("amber", 11),
+            ),
+        ),
         rx.cond(e.persisted != "", s.text(e.persisted, size="1", color=rx.color("amber", 11))),
-        class_name="watch-ev", custom_attrs={"data-seq": e.seq, "data-at": e.at},
-        padding="8px 0", border_bottom=f"1px solid {s.LINE}", width="100%",
+        class_name="watch-ev",
+        custom_attrs={"data-seq": e.seq, "data-at": e.at},
+        padding="8px 0",
+        border_bottom=f"1px solid {s.LINE}",
+        width="100%",
     )
 
 
@@ -135,34 +174,63 @@ def _watch_dialog() -> rx.Component:
                 s.badge(rx.cond(P.watch_status != "", P.watch_status, "—"), "iris"),
                 rx.spacer(),
                 rx.dialog.close(s.icon_button("x", "Close")),
-                width="100%", align="center",
+                width="100%",
+                align="center",
             ),
             rx.dialog.description(
                 "This step's events, oldest first.",
-                size="1", margin_top="6px",
+                size="1",
+                margin_top="6px",
             ),
-            rx.cond(P.watch_note != "", rx.callout(P.watch_note, id="watch-note", size="1",
-                                                   color_scheme="amber", margin_top="8px")),
-            rx.button("Load older events", id="watch-older", on_click=P.watch_older,
-                      disabled=~P.watch_has_older, variant="ghost", size="1", margin_top="8px"),
+            rx.cond(
+                P.watch_note != "",
+                rx.callout(
+                    P.watch_note, id="watch-note", size="1", color_scheme="amber", margin_top="8px"
+                ),
+            ),
+            rx.button(
+                "Load older events",
+                id="watch-older",
+                on_click=P.watch_older,
+                disabled=~P.watch_has_older,
+                variant="ghost",
+                size="1",
+                margin_top="8px",
+            ),
             rx.box(
                 rx.box(id="watch-top", height="1px"),
                 rx.foreach(P.watch_events, _watch_row),
-                id="watch-list", max_height="62vh", overflow_y="auto", width="100%",
+                id="watch-list",
+                max_height="62vh",
+                overflow_y="auto",
+                width="100%",
                 style={"overflow_anchor": "none"},
             ),
             rx.hstack(
-                rx.cond(P.watch_pending > 0,
-                        s.text(P.watch_pending.to_string() + " new events", id="watch-pending", size="1")),
-                rx.cond(P.watch_has_newer,
-                        s.text("Newer events have left this view", id="watch-newer", size="1")),
-                rx.cond(P.watch_has_newer | (~P.watch_following & (P.watch_status == "running")),
-                        rx.button("Jump to latest", id="watch-live", on_click=P.watch_live, size="1")),
-                spacing="3", align="center", margin_top="8px",
+                rx.cond(
+                    P.watch_pending > 0,
+                    s.text(
+                        P.watch_pending.to_string() + " new events", id="watch-pending", size="1"
+                    ),
+                ),
+                rx.cond(
+                    P.watch_has_newer,
+                    s.text("Newer events have left this view", id="watch-newer", size="1"),
+                ),
+                rx.cond(
+                    P.watch_has_newer | (~P.watch_following & (P.watch_status == "running")),
+                    rx.button("Jump to latest", id="watch-live", on_click=P.watch_live, size="1"),
+                ),
+                spacing="3",
+                align="center",
+                margin_top="8px",
             ),
-            id="watch-pane", max_width="min(960px, 96vw)", width="96vw",
+            id="watch-pane",
+            max_width="min(960px, 96vw)",
+            width="96vw",
         ),
-        open=P.watch_run != "", on_open_change=P.toggle_watch,
+        open=P.watch_run != "",
+        on_open_change=P.toggle_watch,
     )
 
 
@@ -180,40 +248,67 @@ def _workspace_dialog() -> rx.Component:
                     "empty to adopt a folder that is already there, or give one to clone.",
                     "Only the label changes. The folder and its name stay as they are.",
                 ),
-                size="2", margin_top="8px",
+                size="2",
+                margin_top="8px",
             ),
             rx.vstack(
                 rx.el.label("Name", html_for="workspace-name", font_size="13px"),
-                rx.input(id="workspace-name", placeholder="e.g. my-project",
-                         value=P.new_name, on_change=P.set_new_name, width="100%",
-                         max_length=64, disabled=P.editing != ""),
+                rx.input(
+                    id="workspace-name",
+                    placeholder="e.g. my-project",
+                    value=P.new_name,
+                    on_change=P.set_new_name,
+                    width="100%",
+                    max_length=64,
+                    disabled=P.editing != "",
+                ),
                 rx.el.label("Label", html_for="workspace-label", font_size="13px"),
-                rx.input(id="workspace-label", placeholder="What is this for?",
-                         value=P.new_label, on_change=P.set_new_label, width="100%",
-                         max_length=200),
+                rx.input(
+                    id="workspace-label",
+                    placeholder="What is this for?",
+                    value=P.new_label,
+                    on_change=P.set_new_label,
+                    width="100%",
+                    max_length=200,
+                ),
                 rx.cond(
                     P.editing == "",
                     rx.fragment(
-                        rx.el.label("Repository URL (optional)", html_for="workspace-url",
-                                    font_size="13px"),
-                        rx.input(id="workspace-url", placeholder="https://…",
-                                 value=P.new_url, on_change=P.set_new_url, width="100%"),
+                        rx.el.label(
+                            "Repository URL (optional)", html_for="workspace-url", font_size="13px"
+                        ),
+                        rx.input(
+                            id="workspace-url",
+                            placeholder="https://…",
+                            value=P.new_url,
+                            on_change=P.set_new_url,
+                            width="100%",
+                        ),
                     ),
                 ),
-                rx.cond(P.form_error != "",
-                        rx.callout(P.form_error, color_scheme="red", role="alert",
-                                   id="workspace-form-error")),
+                rx.cond(
+                    P.form_error != "",
+                    rx.callout(
+                        P.form_error, color_scheme="red", role="alert", id="workspace-form-error"
+                    ),
+                ),
                 rx.hstack(
                     rx.dialog.close(rx.button("Cancel", variant="soft", color_scheme="gray")),
-                    rx.button("Save", id="save-workspace", on_click=P.save_workspace,
-                              loading=P.busy),
-                    justify="end", width="100%", spacing="3",
+                    rx.button(
+                        "Save", id="save-workspace", on_click=P.save_workspace, loading=P.busy
+                    ),
+                    justify="end",
+                    width="100%",
+                    spacing="3",
                 ),
-                spacing="3", width="100%", margin_top="24px",
+                spacing="3",
+                width="100%",
+                margin_top="24px",
             ),
             max_width="480px",
         ),
-        open=P.workspace_form, on_open_change=P.toggle_workspace_form,
+        open=P.workspace_form,
+        on_open_change=P.toggle_workspace_form,
     )
 
 
@@ -226,15 +321,21 @@ def _remove_dialog() -> rx.Component:
                 "uncommitted in it, is left exactly where it is.",
             ),
             rx.hstack(
-                rx.alert_dialog.cancel(rx.button("Keep it", variant="soft",
-                                                 color_scheme="gray")),
-                rx.button("Remove from list", id="confirm-remove", color_scheme="red",
-                          on_click=P.remove_workspace),
-                justify="end", spacing="3", margin_top="24px",
+                rx.alert_dialog.cancel(rx.button("Keep it", variant="soft", color_scheme="gray")),
+                rx.button(
+                    "Remove from list",
+                    id="confirm-remove",
+                    color_scheme="red",
+                    on_click=P.remove_workspace,
+                ),
+                justify="end",
+                spacing="3",
+                margin_top="24px",
             ),
             max_width="460px",
         ),
-        open=P.remove_name != "", on_open_change=P.toggle_remove,
+        open=P.remove_name != "",
+        on_open_change=P.toggle_remove,
     )
 
 
@@ -243,50 +344,89 @@ def _command_dialog() -> rx.Component:
         rx.dialog.content(
             rx.dialog.title("Find your next step.", size="5"),
             rx.dialog.description("Search screens and work in this workspace.", size="2"),
-            rx.input(rx.input.slot(rx.icon("search", size=17)),
-                     id="command-query", placeholder="Where would you like to go?",
-                     aria_label="Search screens and work", value=P.command_query,
-                     on_change=P.search_commands, margin="20px 0", width="100%"),
+            rx.input(
+                rx.input.slot(rx.icon("search", size=17)),
+                id="command-query",
+                placeholder="Where would you like to go?",
+                aria_label="Search screens and work",
+                value=P.command_query,
+                on_change=P.search_commands,
+                margin="20px 0",
+                width="100%",
+            ),
             rx.vstack(
                 *[
                     rx.cond(
                         rx.Var.create(label.lower()).contains(P.command_query.lower()),
-                        rx.button(rx.icon(icon, size=16), label, rx.spacer(),
-                                  rx.icon("arrow-up-right", size=14),
-                                  aria_label="Go to " + label, on_click=P.navigate(key),
-                                  variant="ghost", color_scheme="gray", width="100%",
-                                  justify_content="flex-start"),
-                    ) for key, label, icon in NAVIGATION
+                        rx.button(
+                            rx.icon(icon, size=16),
+                            label,
+                            rx.spacer(),
+                            rx.icon("arrow-up-right", size=14),
+                            aria_label="Go to " + label,
+                            on_click=P.navigate(key),
+                            variant="ghost",
+                            color_scheme="gray",
+                            width="100%",
+                            justify_content="flex-start",
+                        ),
+                    )
+                    for key, label, icon in NAVIGATION
                 ],
-                rx.foreach(P.cards, lambda u: rx.cond(P.command_ids.contains(u.id), rx.button(
-                    rx.icon("file-text", size=16), u.title, on_click=P.open_unit(u.id),
-                    variant="ghost", color_scheme="gray", width="100%",
-                    justify_content="flex-start", height="auto", padding="10px",
-                    white_space="normal",
-                ), rx.fragment())),
-                spacing="2", width="100%",
+                rx.foreach(
+                    P.cards,
+                    lambda u: rx.cond(
+                        P.command_ids.contains(u.id),
+                        rx.button(
+                            rx.icon("file-text", size=16),
+                            u.title,
+                            on_click=P.open_unit(u.id),
+                            variant="ghost",
+                            color_scheme="gray",
+                            width="100%",
+                            justify_content="flex-start",
+                            height="auto",
+                            padding="10px",
+                            white_space="normal",
+                        ),
+                        rx.fragment(),
+                    ),
+                ),
+                spacing="2",
+                width="100%",
             ),
-            rx.dialog.close(rx.button("Close", variant="soft", color_scheme="gray",
-                                      margin_top="20px")),
+            rx.dialog.close(
+                rx.button("Close", variant="soft", color_scheme="gray", margin_top="20px")
+            ),
             max_width="560px",
         ),
-        open=P.command_open, on_open_change=P.toggle_command,
+        open=P.command_open,
+        on_open_change=P.toggle_command,
     )
 
 
 def _mobile_dialog() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
-            rx.hstack(rx.dialog.title("CoS Studio", size="5"), rx.spacer(),
-                      rx.dialog.close(s.icon_button("x", "Close navigation")), width="100%"),
+            rx.hstack(
+                rx.dialog.title("CoS Studio", size="5"),
+                rx.spacer(),
+                rx.dialog.close(s.icon_button("x", "Close navigation")),
+                width="100%",
+            ),
             rx.dialog.description("Your workspace, your next step.", size="2"),
-            _workspace_select(aria_label="Mobile active workspace", width="100%",
-                              margin="24px 0"),
+            _workspace_select(aria_label="Mobile active workspace", width="100%", margin="24px 0"),
             _nav(mobile=True),
-            rx.button(rx.icon("search", size=16), "Search the studio",
-                      on_click=[P.toggle_mobile(False), P.toggle_command(True)],
-                      variant="soft", width="100%", margin_top="20px"),
+            rx.button(
+                rx.icon("search", size=16),
+                "Search the studio",
+                on_click=[P.toggle_mobile(False), P.toggle_command(True)],
+                variant="soft",
+                width="100%",
+                margin_top="20px",
+            ),
             max_width="360px",
         ),
-        open=P.mobile_open, on_open_change=P.toggle_mobile,
+        open=P.mobile_open,
+        on_open_change=P.toggle_mobile,
     )

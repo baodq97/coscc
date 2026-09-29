@@ -50,7 +50,11 @@ def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, busy: s
         if not moves:
             # The code decides which sentence; the words shown are `next`'s own.
             code = str(found.get("why") or "")
-            why = str(found.get("next") or "") if code in ("finished", "rejected") else "has no intent.md to record it in"
+            why = (
+                str(found.get("next") or "")
+                if code in ("finished", "rejected")
+                else "has no intent.md to record it in"
+            )
             return f"{found.get('name', 'this unit')} {why}; it cannot be paused or dropped"
         return f"{found.get('name', 'this unit')} is {now}; from there it can go to {', '.join(moves)}, not {to or 'nothing'}"
     for what, value in (("reason", reason), ("name", by)):
@@ -64,7 +68,14 @@ def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, busy: s
 
 
 def record(
-    *, workspace: str, unit: str, from_: str, to: str, reason: str, by: str, effects: list[dict[str, str]]
+    *,
+    workspace: str,
+    unit: str,
+    from_: str,
+    to: str,
+    reason: str,
+    by: str,
+    effects: list[dict[str, str]],
 ) -> dict[str, Any]:
     """The one run-log row every move leaves, side effects' results included."""
     return {
@@ -94,7 +105,16 @@ async def close_pr(root: str, branch: str, gh: prcomment.Run | None = None) -> d
         return _effect("close-pr", "skipped", "the unit has no branch")
     listed = await prcomment._call(
         gh,
-        ["pr", "list", "--state", "open", "--json", "number,headRefOid,headRefName,mergeable", "--limit", "200"],
+        [
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--json",
+            "number,headRefOid,headRefName,mergeable",
+            "--limit",
+            "200",
+        ],
         root,
         None,
     )

@@ -1,5 +1,4 @@
-"""Tests for `UpdateMixin` in `coscc/service/update.py`, split from `coscc/service/service_test.py` (`0095`).
-"""
+"""Tests for `UpdateMixin` in `coscc/service/update.py`, split from `coscc/service/service_test.py`."""
 
 from __future__ import annotations
 
@@ -14,7 +13,7 @@ from coscc.agent.sessions import Sessions
 
 
 class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
-    """`0068` R8 and R11, and `0138`'s one Apply, at the `Service` seam."""
+    """The update window and the one Apply per channel, at the `Service` seam."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -24,8 +23,8 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    async def test_r11_run_integrate_and_send_refuse_with_updating(self):
-        from coscc.service import Updating
+    async def test_run_integrate_and_send_refuse_with_updating(self):
+        from coscc.service.common import Updating
 
         self.s.updater.window = True
         with self.assertRaises(Updating):
@@ -38,7 +37,7 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         self.s.check_send(self.tmp.name, "hi")
 
     async def test_apply_waits_only_for_a_mechanical_integration_or_a_retake(self):
-        # `0138` R2, R3, C10: a step, an estimate and a chat turn are paused, not waited for.
+        # A step, an estimate and a chat turn are paused, not waited for.
         self.s.steps.claim("/w", "0001_a", "impl")
         self.s._mark_running("/w", "0002_b", "integrate", "rebase")
         self.s._mark_running("/w", "0003_c", "impl", "step")
@@ -56,32 +55,58 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.s._update_waited(), [])
 
     async def test_suspend_rows_are_written_before_hand_off(self):
-        # `0138` R6: one `suspend` row per paused session, with who pressed Apply; a stream
-        # whose caller named no owner is closed and has none.
+        # One `suspend` row per paused session, with who pressed Apply; a stream whose caller named
+        # no owner is closed and has none.
         root = Path(self.tmp.name)
-        config = Config(workspaces=(self.tmp.name,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        config = Config(
+            workspaces=(self.tmp.name,), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
         s = Service(config, Sessions(config))
-        owner = {"kind": "step", "workspace": "/w", "unit": "0001_a", "stage": "impl", "start_at": "t0"}
+        owner = {
+            "kind": "step",
+            "workspace": "/w",
+            "unit": "0001_a",
+            "stage": "impl",
+            "start_at": "t0",
+        }
 
         async def suspend_all():
-            return [{"owner": owner, "cwd": "/w/tree", "session_id": "sid", "model": "m", "start_at": "t0",
-                     "boundary": 7, "safe_uuid": "u1", "dropped": [], "api_calls": 3, "spent_usd": 0.5},
-                    {"owner": {}, "cwd": "/w", "session_id": "", "model": None, "start_at": None,
-                     "unresumable": "no session id yet"}]
+            return [
+                {
+                    "owner": owner,
+                    "cwd": "/w/tree",
+                    "session_id": "sid",
+                    "model": "m",
+                    "start_at": "t0",
+                    "boundary": 7,
+                    "safe_uuid": "u1",
+                    "dropped": [],
+                    "api_calls": 3,
+                    "spent_usd": 0.5,
+                },
+                {
+                    "owner": {},
+                    "cwd": "/w",
+                    "session_id": "",
+                    "model": None,
+                    "start_at": None,
+                    "unresumable": "no session id yet",
+                },
+            ]
 
         s.sessions.suspend_all = suspend_all  # type: ignore[method-assign]
         written = await s.suspend_sessions("an")
         self.assertEqual(len(written), 1)
         rows = s._journal().unresumed()
-        self.assertEqual([(r["unit"], r["stage"], r["by"], r["session_id"], r["safe_uuid"]) for r in rows],
-                         [("0001_a", "impl", "an", "sid", "u1")])
+        self.assertEqual(
+            [(r["unit"], r["stage"], r["by"], r["session_id"], r["safe_uuid"]) for r in rows],
+            [("0001_a", "impl", "an", "sid", "u1")],
+        )
         self.assertTrue(rows[0]["suspend_id"])
 
     async def test_a_step_with_no_session_open_finishes_before_the_settle_ends(self):
-        # Review round 2, F6: a step between its `end` and its `finally` -- posting a round,
-        # syncing `pr.md` -- had nothing to pause; the settle waits for its `_running` entry.
-        # Past that entry, in `_after_end`, is round 3's F6, driven through `_drive` in
-        # `steps_test.py`.
+        # A step between its `end` and its `finally` -- posting a round, syncing `pr.md` -- had
+        # nothing to pause; the settle waits for its `_running` entry.
         rid = self.s._mark_running("/w", "0001_a", "review", "step")
 
         async def posts_its_round():
@@ -95,10 +120,12 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
     async def test_what_outlives_the_settle_is_returned_to_be_named(self):
         self.s._mark_running("/w", "0002_b", "integrate", "gebo")
         left = await self.s.settle_after_suspend(0.05)
-        self.assertEqual([(j["kind"], j["unit"], j["stage"]) for j in left], [("gebo", "0002_b", "integrate")])
+        self.assertEqual(
+            [(j["kind"], j["unit"], j["stage"]) for j in left], [("gebo", "0002_b", "integrate")]
+        )
 
     def test_the_routes_seam_refuses_where_updates_are_not_available(self):
-        from coscc.service import NotUpdatable
+        from coscc.service.common import NotUpdatable
 
         self.assertEqual(self.s.update_status()["shape"], "unavailable")
         self.assertFalse(hasattr(self.s, "update_cut_list"))
@@ -109,25 +136,39 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
 
 
 class WhatThePanelSays(unittest.TestCase):
-    """`0138` R12, through `update_words`, the words `/settings` shows."""
-
     def test_the_updates_section_shows_one_apply_per_channel(self):
         from coscc.service.update import update_words
 
-        words = update_words({"shape": "service", "state": "idle", "release": {"state": "ready", "version": "0.13.0"},
-                              "local": {"state": "ready", "version": "0.12.0+gabc"}})
-        self.assertEqual([a for a in words["actions"] if a.startswith(("apply-", "now-"))],
-                         ["apply-release", "apply-local"])
+        words = update_words(
+            {
+                "shape": "service",
+                "state": "idle",
+                "release": {"state": "ready", "version": "0.13.0"},
+                "local": {"state": "ready", "version": "0.12.0+gabc"},
+            }
+        )
+        self.assertEqual(
+            [a for a in words["actions"] if a.startswith(("apply-", "now-"))],
+            ["apply-release", "apply-local"],
+        )
 
     def test_pending_says_what_it_waits_for_in_one_sentence(self):
         from coscc.service.update import update_words
         from coscc.update import updater
 
-        words = update_words({"shape": "service", "state": "pending", "release": {"state": "ready"}, "local": {}})
-        self.assertEqual(words["line"],
-                         "An update waits for an integration or a screenshot retake to finish.")
+        words = update_words(
+            {"shape": "service", "state": "pending", "release": {"state": "ready"}, "local": {}}
+        )
+        self.assertEqual(
+            words["line"], "An update waits for an integration or a screenshot retake to finish."
+        )
         self.assertEqual(words["line"], updater.WAITING_WARNING)
         self.assertEqual(words["line"].count("."), 1)
         self.assertNotIn("apply-release", words["actions"])
         self.assertIn("cancel", words["actions"])
-        self.assertEqual(update_words({"shape": "service", "state": "applying", "release": {}, "local": {}})["line"], "Updating now.")
+        self.assertEqual(
+            update_words({"shape": "service", "state": "applying", "release": {}, "local": {}})[
+                "line"
+            ],
+            "Updating now.",
+        )

@@ -7,11 +7,9 @@ compares its stage table to `coscc/units/states.json` field by field. A hand-wri
 would keep passing after the two drift apart, which is the failure `coscc/units/board_test.py`
 already argues against for the same reason.
 
-`ADifferentStateSetLoadsWithNoPythonChange` is `spec.md` R6's second half. It builds a set
-that shares no stage name, no artifact name and no status with the default, and asks it
-every question the log asks. If any of those answers were computed from a literal in Python
-rather than from the file, that test is where it shows.
-"""
+It builds a set that shares no stage name, no artifact name and no status with the default, and asks
+it every question the log asks. If any of those answers were computed from a literal in Python
+rather than from the file, that test is where it shows."""
 
 from __future__ import annotations
 
@@ -34,7 +32,12 @@ OTHER = {
     "settled": ["closed"],
     "stages": [
         {"name": "ticket", "artifact": "ticket.txt", "statuses": ["open", "closed"]},
-        {"name": "wrap", "artifact": "wrap.txt", "optional": True, "statuses": ["open", "closed", "void"]},
+        {
+            "name": "wrap",
+            "artifact": "wrap.txt",
+            "optional": True,
+            "statuses": ["open", "closed", "void"],
+        },
     ],
 }
 
@@ -45,14 +48,19 @@ def write(raw: dict, into: Path) -> Path:
 
 
 class TheDefaultIsTheSetInUseToday(unittest.TestCase):
-    """`spec.md` R6, first half: nine stages and the statuses `cos.mjs` enforces."""
-
     def test_it_matches_the_stage_table_cos_mjs_prints(self):
         # Run rather than parsed. `cos.mjs` is JavaScript and its table is a literal in
         # the source; asking the program is the only reading that cannot go stale.
         out = subprocess.run(
-            ["node", str(REPO / ".claude" / "scripts" / "cos.mjs"), "--state", "-", "status", "--json"],
-            # `0135`: the stage table needs no unit, so an empty snapshot.
+            [
+                "node",
+                str(REPO / ".claude" / "scripts" / "cos.mjs"),
+                "--state",
+                "-",
+                "status",
+                "--json",
+            ],
+            # The stage table needs no unit, so an empty snapshot.
             input='{"workspace": "", "units": {}}',
             cwd=REPO,
             capture_output=True,
@@ -83,14 +91,13 @@ class TheDefaultIsTheSetInUseToday(unittest.TestCase):
         # `coscc/agent/harness.py` had to learn this lesson at the cost of a unit. A default
         # sitting outside `coscc/` is a default a wheel does not ship.
         self.assertTrue(states.DEFAULT_PATH.is_file(), states.DEFAULT_PATH)
-        # Since `0129`, beside `states.py` in `coscc/units/`.
         package = Path(__file__).resolve().parents[1]
         self.assertEqual(states.DEFAULT_PATH.parent, package / "units")
         self.assertEqual(package.name, "coscc")
 
 
 class ADifferentStateSetLoadsWithNoPythonChange(unittest.TestCase):
-    """`spec.md` R6, second half. Not one name below is shared with the default."""
+    """Not one name below is shared with the default."""
 
     def test_every_question_the_log_asks_is_answered_from_the_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -132,13 +139,15 @@ class ADefinitionThatWouldLieIsRefused(unittest.TestCase):
         return str(caught.exception)
 
     def test_settled_naming_a_status_no_stage_carries(self):
-        # The one that would pass silently and report zero events. `0013`'s count is
-        # "edited while settled", so a settled set that matches nothing reads as good news.
+        # The one that would pass silently and report zero events.
         raw = {**OTHER, "settled": ["cloesd"]}
         self.assertIn("cloesd", self._bad(raw))
 
     def test_a_stage_that_can_be_written_back_into_nothing(self):
-        raw = {**OTHER, "stages": [{"name": "t", "artifact": "t.txt", "statuses": ["open", "nowhere"]}]}
+        raw = {
+            **OTHER,
+            "stages": [{"name": "t", "artifact": "t.txt", "statuses": ["open", "nowhere"]}],
+        }
         self.assertIn("nowhere", self._bad(raw))
 
     def test_two_stages_writing_the_same_artifact(self):
@@ -169,7 +178,7 @@ class ADefinitionThatWouldLieIsRefused(unittest.TestCase):
 
 
 class ALaneThatWouldDisableAGuardIsRefused(unittest.TestCase):
-    """`0136` R1: the config chooses a guard for each transition and cannot leave one out."""
+    """The config chooses a guard for each transition and cannot leave one out."""
 
     def packaged(self) -> dict:
         return json.loads(states.LANES_PATH.read_text(encoding="utf-8"))

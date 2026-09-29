@@ -1,9 +1,8 @@
-"""`0042`: which files `main` changed since a unit's plan was written.
+"""Which files `main` changed since a unit's plan was written.
 
 The pure parts are tested on strings and record lists; `compute` on a temporary repository
 whose `origin` is a bare directory, so no network is touched. The expected list is always
-`git diff --name-only` run by subprocess, never something this test worked out itself.
-"""
+`git diff --name-only` run by subprocess, never something this test worked out itself."""
 
 from __future__ import annotations
 
@@ -51,8 +50,6 @@ def end(outcome: str = "done") -> dict:
 
 
 class TheSectionAndTheMatch(unittest.TestCase):
-    """`spec.md` R3 and R9, the cases that need no repository."""
-
     def setUp(self):
         self.section = drift.files_section(PLAN)
 
@@ -74,15 +71,23 @@ class TheSectionAndTheMatch(unittest.TestCase):
             self.section,
             ["coscc/a.py", "coscc/b.py", "coscc/c.py", "coscc/d.py", "coscc/e.py"],
         )
-        self.assertEqual(got, ["coscc/a.py", "coscc/b.py", "coscc/c.py", "coscc/d.py", "coscc/e.py"])
+        self.assertEqual(
+            got, ["coscc/a.py", "coscc/b.py", "coscc/c.py", "coscc/d.py", "coscc/e.py"]
+        )
 
     def test_a_path_inside_a_longer_one_does_not_match_either_way(self):
         self.assertEqual(
-            drift.mentioned(self.section, ["lib/coscc/a.py", "coscc/a.pyx", "oscc/a.py", "coscc/a.p"]),
+            drift.mentioned(
+                self.section, ["lib/coscc/a.py", "coscc/a.pyx", "oscc/a.py", "coscc/a.p"]
+            ),
             [],
         )
-        self.assertEqual(drift.mentioned("## Files that change\n`lib/coscc/a.py`\n", ["coscc/a.py"]), [])
-        self.assertEqual(drift.mentioned("## Files that change\n`coscc/a.pyx`\n", ["coscc/a.py"]), [])
+        self.assertEqual(
+            drift.mentioned("## Files that change\n`lib/coscc/a.py`\n", ["coscc/a.py"]), []
+        )
+        self.assertEqual(
+            drift.mentioned("## Files that change\n`coscc/a.pyx`\n", ["coscc/a.py"]), []
+        )
 
     def test_a_path_only_under_answers_or_a_later_section_is_not_counted(self):
         self.assertEqual(drift.mentioned(self.section, ["coscc/f.py", "coscc/g.py"]), [])
@@ -92,11 +97,13 @@ class TheSectionAndTheMatch(unittest.TestCase):
 
     def test_the_result_is_in_byte_order(self):
         section = "## Files that change\n`b.py` `B.py` `a.py`\n"
-        self.assertEqual(drift.mentioned(section, ["b.py", "a.py", "B.py"]), ["B.py", "a.py", "b.py"])
+        self.assertEqual(
+            drift.mentioned(section, ["b.py", "a.py", "B.py"]), ["B.py", "a.py", "b.py"]
+        )
 
 
 class ChoosingTheRunOfPlan(unittest.TestCase):
-    """R1 with `spec.md ## Answers, câu 1`: the `head` of the last `done` run of `plan`."""
+    """The `head` of the last `done` run of `plan`."""
 
     def test_the_last_done_run_wins_over_a_later_failed_one(self):
         records = [start("1" * 40), end(), start("2" * 40), end(), start("3" * 40), end("failed")]
@@ -122,7 +129,12 @@ class ChoosingTheRunOfPlan(unittest.TestCase):
         self.assertEqual(drift.plan_head(records), ("1" * 40, ""))
 
     def test_each_reason_it_cannot_name_a_commit(self):
-        for records in ([], [start("1" * 40), end("failed")], [start(""), end()], [start("abc1234"), end()]):
+        for records in (
+            [],
+            [start("1" * 40), end("failed")],
+            [start(""), end()],
+            [start("abc1234"), end()],
+        ):
             sha, reason = drift.plan_head(records)
             self.assertEqual(sha, "", records)
             self.assertTrue(reason, records)
@@ -131,13 +143,27 @@ class ChoosingTheRunOfPlan(unittest.TestCase):
 class TheSentence(unittest.TestCase):
     def test_nothing_changed_adds_nothing(self):
         self.assertEqual(
-            drift.describe({"plan_sha": "a" * 40, "main_sha": "b" * 40, "files": [], "checked": True, "reason": ""}),
+            drift.describe(
+                {
+                    "plan_sha": "a" * 40,
+                    "main_sha": "b" * 40,
+                    "files": [],
+                    "checked": True,
+                    "reason": "",
+                }
+            ),
             "",
         )
 
     def test_unchecked_is_one_sentence_with_no_list(self):
         said = drift.describe(
-            {"plan_sha": "a" * 40, "main_sha": None, "files": None, "checked": False, "reason": "no origin"}
+            {
+                "plan_sha": "a" * 40,
+                "main_sha": None,
+                "files": None,
+                "checked": False,
+                "reason": "no origin",
+            }
         )
         self.assertTrue(said.startswith("The app could not check"))
         self.assertIn("no origin", said)
@@ -146,7 +172,13 @@ class TheSentence(unittest.TestCase):
 
     def test_changed_files_each_carry_their_diff_command_and_the_three_instructions(self):
         said = drift.describe(
-            {"plan_sha": "a" * 40, "main_sha": "b" * 40, "files": ["x.py", "y.py"], "checked": True, "reason": ""}
+            {
+                "plan_sha": "a" * 40,
+                "main_sha": "b" * 40,
+                "files": ["x.py", "y.py"],
+                "checked": True,
+                "reason": "",
+            }
         )
         self.assertIn(f"git diff {'a' * 40}..{'b' * 40} -- x.py", said)
         self.assertIn(f"git diff {'a' * 40}..{'b' * 40} -- y.py", said)
@@ -179,9 +211,21 @@ class ComputingOnARealRepository(unittest.TestCase):
 
     def _git(self, *args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(self.repo), "-c", "user.name=T",
-             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-            capture_output=True, text=True, check=True,
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
 
     def _merge(self, *names: str) -> str:
@@ -198,7 +242,7 @@ class ComputingOnARealRepository(unittest.TestCase):
         tree = self.repo if tree == "repo" else tree
         return asyncio.run(drift.compute(records, self.plan if plan is None else plan, tree))
 
-    def test_r4a_the_changed_files_the_plan_names(self):
+    def test_the_changed_files_the_plan_names(self):
         b = self._merge("src/a.py", "lib/src/a.py")
         got = self._compute()
         diff = self._git("diff", f"{self.a}..{b}", "--name-only").split()
@@ -208,13 +252,13 @@ class ComputingOnARealRepository(unittest.TestCase):
         self.assertTrue(got["checked"])
         self.assertEqual(got["reason"], "")
 
-    def test_r4b_nothing_the_plan_names_changed(self):
+    def test_nothing_the_plan_names_changed(self):
         self._merge("lib/src/a.py")
         got = self._compute()
         self.assertEqual(got["files"], [])
         self.assertTrue(got["checked"])
 
-    def test_r4c_each_cause_is_unchecked_with_a_reason(self):
+    def test_each_cause_is_unchecked_with_a_reason(self):
         self._merge("src/a.py")
         cases = {
             "no run of plan": dict(records=[]),
@@ -229,7 +273,7 @@ class ComputingOnARealRepository(unittest.TestCase):
             self.assertIsNone(got["files"], name)
             self.assertTrue(got["reason"], name)
 
-    def test_r4c_no_origin_main(self):
+    def test_no_origin_main(self):
         self._git("update-ref", "-d", "refs/remotes/origin/main")
         got = self._compute()
         self.assertFalse(got["checked"])

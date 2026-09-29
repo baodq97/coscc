@@ -1,5 +1,4 @@
-"""Tests for `RerunMixin` in `coscc/state/rerun.py`, split from `coscc/state/state_test.py` (`0095`).
-"""
+"""Tests for `RerunMixin` in `coscc/state/rerun.py`, split from `coscc/state/state_test.py`."""
 
 from __future__ import annotations
 
@@ -10,18 +9,22 @@ from coscc.state.state_test import SOURCE, _self_names, _state_class
 
 
 class TheRerunHoldsNoCopyOfTheRule(unittest.TestCase):
-    """`0054` R1, R9. The stages offered are `cos.mjs rerun`'s, copied by `load_next` alone,
-    and only `run_rerun` asks the service to run one again."""
+    """The stages offered are `cos.mjs rerun`'s, copied by `load_next` alone, and only `run_rerun`
+    asks the service to run one again."""
 
     def setUp(self):
         tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
         self.methods = {
-            n.name: n for n in _state_class(tree).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            n.name: n
+            for n in _state_class(tree).body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
 
     def setters_of(self, name: str) -> set[str]:
         return {
-            method for method, fn in self.methods.items() for node in ast.walk(fn)
+            method
+            for method, fn in self.methods.items()
+            for node in ast.walk(fn)
             if isinstance(node, ast.Assign) and any(name in _self_names(t) for t in node.targets)
         }
 
@@ -32,14 +35,22 @@ class TheRerunHoldsNoCopyOfTheRule(unittest.TestCase):
 
     def test_only_run_rerun_runs_a_stage_again(self):
         callers = {
-            name for name, fn in self.methods.items() for node in ast.walk(fn)
-            if isinstance(node, ast.Call) and ast.unparse(node.func) == "SERVICE.run_step"
+            name
+            for name, fn in self.methods.items()
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call)
+            and ast.unparse(node.func) == "SERVICE.run_step"
             and any(k.arg == "rerun" for k in node.keywords)
         }
         self.assertEqual(callers, {"run_rerun"})
-        call = next(n for n in ast.walk(self.methods["run_rerun"])
-                    if isinstance(n, ast.Call) and ast.unparse(n.func) == "SERVICE.run_step")
-        self.assertEqual(ast.unparse(next(k.value for k in call.keywords if k.arg == "rerun")), "True")
+        call = next(
+            n
+            for n in ast.walk(self.methods["run_rerun"])
+            if isinstance(n, ast.Call) and ast.unparse(n.func) == "SERVICE.run_step"
+        )
+        self.assertEqual(
+            ast.unparse(next(k.value for k in call.keywords if k.arg == "rerun")), "True"
+        )
 
     def test_run_rerun_runs_in_the_background_and_asks_again_after(self):
         fn = self.methods["run_rerun"]

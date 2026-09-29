@@ -6,7 +6,8 @@ from typing import Any, AsyncIterator
 
 from coscc.agent import sessions as reader
 from coscc.agent import transcript
-from coscc.runlog.journal import BadRecord, Busy
+from coscc.runlog.journal import BadRecord
+from coscc.data import Busy
 from coscc.agent import models
 from coscc.service.common import Invalid
 
@@ -15,7 +16,6 @@ CHAT_TURNS = 1
 
 
 class SessionsMixin:
-
     # -- sessions -----------------------------------------------------------
 
     def _is_member(self, cwd: str) -> bool:
@@ -37,9 +37,7 @@ class SessionsMixin:
         rows = reader.list_for_directory(cwd, limit=limit)
         for row in rows:
             # Terminal sessions show up here too; this flag says which may be written to.
-            row["resumable"] = self.config.may_resume(
-                self.sessions.created_here(row["session_id"])
-            )
+            row["resumable"] = self.config.may_resume(self.sessions.created_here(row["session_id"]))
         return {"cwd": cwd, "sessions": rows}
 
     def history(self, cwd: str, session_id: str) -> dict[str, Any]:
@@ -63,7 +61,10 @@ class SessionsMixin:
             raise Invalid("text is required")
 
     async def stream(
-        self, cwd: str, text: str, session_id: str | None = None,
+        self,
+        cwd: str,
+        text: str,
+        session_id: str | None = None,
         resume: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `(kind, payload)` exactly as the session layer does.
@@ -75,8 +76,15 @@ class SessionsMixin:
         self.check_send(cwd, text)
         # Chat is a row of the same table as the stages.
         model, model_source = self._model_for(models.CHAT)
-        extra: dict[str, Any] = {"owner": {"kind": "chat", "workspace": self._journal_key(cwd),
-                                           "workspace_dir": cwd, "unit": "", "stage": ""}}
+        extra: dict[str, Any] = {
+            "owner": {
+                "kind": "chat",
+                "workspace": self._journal_key(cwd),
+                "workspace_dir": cwd,
+                "unit": "",
+                "stage": "",
+            }
+        }
         if resume is not None:
             model, model_source = resume.get("model") or model, "resumed"
             turns, _, used_up = transcript.ceilings_left(CHAT_TURNS, None, resume)
@@ -84,7 +92,11 @@ class SessionsMixin:
                 return
             extra.update(resume_at=resume.get("safe_uuid"), max_turns=turns)
         async for item in self.sessions.stream(
-            cwd, text, session_id, **({"model": model} if model is not None else {}), **extra,
+            cwd,
+            text,
+            session_id,
+            **({"model": model} if model is not None else {}),
+            **extra,
         ):
             if item[0] == "session":
                 # `api.py` treats every kind but `chunk` as the terminal `done` row;
@@ -96,15 +108,17 @@ class SessionsMixin:
                 journal = self._journal()
                 if journal is not None:
                     try:
-                        journal.append({
-                            "kind": "chat",
-                            "workspace": self._journal_key(cwd),
-                            "unit": "",
-                            "stage": "",
-                            "model": model,
-                            "model_source": model_source,
-                            "session_id": (item[1] or {}).get("session_id", ""),
-                        })
-                    except (BadRecord, Busy):
+                        journal.append(
+                            {
+                                "kind": "chat",
+                                "workspace": self._journal_key(cwd),
+                                "unit": "",
+                                "stage": "",
+                                "model": model,
+                                "model_source": model_source,
+                                "session_id": (item[1] or {}).get("session_id", ""),
+                            }
+                        )
+                    except BadRecord, Busy:
                         pass  # a busy log must not cost the reply that was already paid for
             yield item

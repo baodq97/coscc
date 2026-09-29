@@ -1,10 +1,8 @@
 """`coscc/update/__init__.py`: identity, candidates, checked downloads, and `finish`.
 
-`.cos/0068_updating-the-app-is-a-manual-reinstall` plan step 4. Nothing here goes to the
-network: `fetch_into` gets an opener that serves bytes from a dict, and `finish` runs a
-fake `uv` — a shell script that writes a fake `coscc` printing the version it was
-"installed" from.
-"""
+Nothing here goes to the network: `fetch_into` gets an opener that serves bytes from a dict, and
+`finish` runs a fake `uv` — a shell script that writes a fake `coscc` printing the version it was
+"installed" from."""
 
 from __future__ import annotations
 
@@ -31,9 +29,18 @@ def _release(tag=TAG, assets=None):
     version = tag[1:]
     if assets is None:
         assets = [
-            {"name": f"coscc-{version}-py3-none-any.whl", "browser_download_url": f"{update.DOWNLOAD_PREFIX}{tag}/coscc-{version}-py3-none-any.whl"},
-            {"name": "install.sh", "browser_download_url": f"{update.DOWNLOAD_PREFIX}{tag}/install.sh"},
-            {"name": "SHA256SUMS", "browser_download_url": f"{update.DOWNLOAD_PREFIX}{tag}/SHA256SUMS"},
+            {
+                "name": f"coscc-{version}-py3-none-any.whl",
+                "browser_download_url": f"{update.DOWNLOAD_PREFIX}{tag}/coscc-{version}-py3-none-any.whl",
+            },
+            {
+                "name": "install.sh",
+                "browser_download_url": f"{update.DOWNLOAD_PREFIX}{tag}/install.sh",
+            },
+            {
+                "name": "SHA256SUMS",
+                "browser_download_url": f"{update.DOWNLOAD_PREFIX}{tag}/SHA256SUMS",
+            },
         ]
     return {"tag_name": tag, "assets": assets}
 
@@ -71,7 +78,9 @@ class TheRunningBuild(unittest.TestCase):
 
     def test_a_wheel_built_before_the_stamp_says_it_does_not_know(self):
         with tempfile.TemporaryDirectory() as tmp:
-            me = update.identity(from_env({}), True, stamp=Path(tmp) / "none.json", version="0.11.0")
+            me = update.identity(
+                from_env({}), True, stamp=Path(tmp) / "none.json", version="0.11.0"
+            )
             self.assertEqual((me["commit"], me["commit_label"]), ("", update.UNKNOWN_COMMIT))
 
     def test_a_checkout_reads_head_and_ignores_a_stamp_left_in_it(self):
@@ -79,8 +88,9 @@ class TheRunningBuild(unittest.TestCase):
             stamp = Path(tmp) / "_build.json"
             stamp.write_text(json.dumps({"commit": SHA}), encoding="utf-8")
             me = update.identity(from_env({}), False, stamp=stamp)
-            head = subprocess.run(["git", "-C", str(update.REPO), "rev-parse", "HEAD"],
-                                  capture_output=True, text=True).stdout.strip()
+            head = subprocess.run(
+                ["git", "-C", str(update.REPO), "rev-parse", "HEAD"], capture_output=True, text=True
+            ).stdout.strip()
             self.assertEqual(me["commit"], head)
             self.assertEqual(me["install"], "checkout")
 
@@ -91,7 +101,8 @@ class TheRunningBuild(unittest.TestCase):
 
 
 class TheServiceShape(unittest.TestCase):
-    """R2's six conditions, each false once, and the first false one is the one named."""
+    """The six conditions of the service shape, each false once, and the first false one is the one
+    named."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -115,10 +126,15 @@ class TheServiceShape(unittest.TestCase):
         self.unit.write_text(f"[Service]\nType=simple\n{text}", encoding="utf-8")
 
     def env(self, **extra):
-        return from_env({
-            "INVOCATION_ID": "x", "XDG_CONFIG_HOME": str(self.cfg_home), "PATH": str(self.bin),
-            "HOME": self.tmp.name, **extra,
-        })
+        return from_env(
+            {
+                "INVOCATION_ID": "x",
+                "XDG_CONFIG_HOME": str(self.cfg_home),
+                "PATH": str(self.bin),
+                "HOME": self.tmp.name,
+                **extra,
+            }
+        )
 
     def shape(self, config=None, packaged=True, prefix=None):
         return update.service_shape(
@@ -136,14 +152,20 @@ class TheServiceShape(unittest.TestCase):
         self.assertIn("checkout", self.shape(packaged=False)[1])
         no_id = from_env({"XDG_CONFIG_HOME": str(self.cfg_home), "PATH": str(self.bin)})
         self.assertIn("INVOCATION_ID", self.shape(config=no_id)[1])
-        self.write_unit(f"ExecStart=/elsewhere/coscc\nRestart=on-failure\n")
+        self.write_unit("ExecStart=/elsewhere/coscc\nRestart=on-failure\n")
         self.assertIn("ExecStart", self.shape()[1])
         self.write_unit(f"ExecStart={self.exe}\nRestart=always\n")
         self.assertIn("Restart=on-failure", self.shape()[1])
         self.write_unit(f"ExecStart={self.exe}\nRestart=on-failure\n")
         self.assertIn("uv-receipt", self.shape(prefix=Path(self.tmp.name))[1])
-        no_uv = from_env({"INVOCATION_ID": "x", "XDG_CONFIG_HOME": str(self.cfg_home),
-                          "PATH": "/nonexistent", "HOME": "/nonexistent"})
+        no_uv = from_env(
+            {
+                "INVOCATION_ID": "x",
+                "XDG_CONFIG_HOME": str(self.cfg_home),
+                "PATH": "/nonexistent",
+                "HOME": "/nonexistent",
+            }
+        )
         self.assertIn("uv", self.shape(config=no_uv)[1])
 
     def test_the_first_false_one_wins(self):
@@ -181,10 +203,16 @@ class WhichReleaseCounts(unittest.TestCase):
 
     def test_a_url_outside_the_source_refuses(self):
         assets = _release()["assets"]
-        assets[0] = {**assets[0], "browser_download_url": "https://evil.example/coscc-0.13.0-py3-none-any.whl"}
+        assets[0] = {
+            **assets[0],
+            "browser_download_url": "https://evil.example/coscc-0.13.0-py3-none-any.whl",
+        }
         self.assertIsNone(update.candidate(_release(assets=assets), "0.12.0", _yes))
         assets = _release()["assets"]
-        assets[2] = {**assets[2], "browser_download_url": f"{update.DOWNLOAD_PREFIX}v0.12.0/SHA256SUMS"}
+        assets[2] = {
+            **assets[2],
+            "browser_download_url": f"{update.DOWNLOAD_PREFIX}v0.12.0/SHA256SUMS",
+        }
         self.assertIsNone(update.candidate(_release(assets=assets), "0.12.0", _yes))
 
 
@@ -194,22 +222,28 @@ class CheckedDownloads(unittest.TestCase):
         self.dir = Path(self.tmp.name) / "release"
         self.cand = update.candidate(_release(), "0.12.0", _yes)
         self.wheel = b"wheel bytes"
-        self.sums = f"{hashlib.sha256(self.wheel).hexdigest()}  coscc-0.13.0-py3-none-any.whl\n".encode()
+        self.sums = (
+            f"{hashlib.sha256(self.wheel).hexdigest()}  coscc-0.13.0-py3-none-any.whl\n".encode()
+        )
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def opener(self, wheel=None, sums=None):
-        return _Opener({
-            self.cand["wheel_url"]: self.wheel if wheel is None else wheel,
-            self.cand["sums_url"]: self.sums if sums is None else sums,
-        })
+        return _Opener(
+            {
+                self.cand["wheel_url"]: self.wheel if wheel is None else wheel,
+                self.cand["sums_url"]: self.sums if sums is None else sums,
+            }
+        )
 
     def test_a_matching_checksum_is_renamed_in(self):
         got = update.fetch_into(self.dir, self.cand, self.opener())
         self.assertEqual(got["state"], "ready")
-        self.assertEqual(sorted(p.name for p in self.dir.iterdir()),
-                         ["SHA256SUMS", "coscc-0.13.0-py3-none-any.whl"])
+        self.assertEqual(
+            sorted(p.name for p in self.dir.iterdir()),
+            ["SHA256SUMS", "coscc-0.13.0-py3-none-any.whl"],
+        )
         self.assertIsNotNone(update.verified_wheel(self.dir))
 
     def test_a_mismatch_deletes_the_file(self):
@@ -238,20 +272,32 @@ class CheckedDownloads(unittest.TestCase):
         self.assertEqual(list(self.dir.iterdir()), [])
 
     def test_a_local_builds_manifest_goes_with_its_wheel(self):
-        # Review round 2, F4: a local build promoted into `current/`, then a release fetched over it.
+        # A local build promoted into `current/`, then a release fetched over it.
         self.dir.mkdir()
         old = self.dir / "coscc-0.12.0+gabcdef0-py3-none-any.whl"
         old.write_bytes(b"local")
-        update.write_json(self.dir / update.MANIFEST, {"version": "0.12.0+gabcdef0", "commit": "c" * 40,
-                                                       "sha256": hashlib.sha256(b"local").hexdigest()})
+        update.write_json(
+            self.dir / update.MANIFEST,
+            {
+                "version": "0.12.0+gabcdef0",
+                "commit": "c" * 40,
+                "sha256": hashlib.sha256(b"local").hexdigest(),
+            },
+        )
         update.fetch_into(self.dir, self.cand, self.opener())
         self.assertFalse((self.dir / update.MANIFEST).exists())
         self.assertEqual(update.verified_wheel(self.dir)["version"], "0.13.0")
 
     def test_a_manifest_for_another_wheel_is_not_read(self):
         update.fetch_into(self.dir, self.cand, self.opener())
-        update.write_json(self.dir / update.MANIFEST, {"version": "0.12.0+gabcdef0", "commit": "c" * 40,
-                                                       "sha256": hashlib.sha256(b"local").hexdigest()})
+        update.write_json(
+            self.dir / update.MANIFEST,
+            {
+                "version": "0.12.0+gabcdef0",
+                "commit": "c" * 40,
+                "sha256": hashlib.sha256(b"local").hexdigest(),
+            },
+        )
         self.assertEqual(update.verified_wheel(self.dir)["version"], "0.13.0")
 
 
@@ -272,7 +318,7 @@ chmod +x "$UV_TOOL_BIN_DIR/coscc"
 
 
 class Finishing(unittest.TestCase):
-    """R12 steps 8 to 10 with a fake `uv`: four results, `last.json`, and exit 75."""
+    """The finishing steps of an update, with a fake `uv`: four results, `last.json`, exit 75."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -286,13 +332,23 @@ class Finishing(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def handoff(self, target="coscc-0.13.0-py3-none-any.whl", current="coscc-0.12.0-py3-none-any.whl",
-                target_version="0.13.0"):
+    def handoff(
+        self,
+        target="coscc-0.13.0-py3-none-any.whl",
+        current="coscc-0.12.0-py3-none-any.whl",
+        target_version="0.13.0",
+    ):
         return update.Handoff(
-            target_wheel=str(self.root / target), target_version=target_version,
-            current_wheel=str(self.root / current), current_version="0.12.0",
-            from_version="0.12.0", uv=str(self.uv), tool_dir=str(self.root / "tools"),
-            bin_dir=str(self.bin), log=str(self.root / "update.log"), last=str(self.root / "last.json"),
+            target_wheel=str(self.root / target),
+            target_version=target_version,
+            current_wheel=str(self.root / current),
+            current_version="0.12.0",
+            from_version="0.12.0",
+            uv=str(self.uv),
+            tool_dir=str(self.root / "tools"),
+            bin_dir=str(self.bin),
+            log=str(self.root / "update.log"),
+            last=str(self.root / "last.json"),
             env={"PATH": os.environ.get("PATH", ""), "UV_CALLS": str(self.calls)},
         )
 
@@ -306,7 +362,9 @@ class Finishing(unittest.TestCase):
         self.assertEqual(set(last), {"from", "to", "result", "log", "finished_at"})
         args, offline, tool_dir, bin_dir = self.calls.read_text().splitlines()[0].split("|")
         self.assertTrue(args.startswith("tool install --force "))
-        self.assertEqual((offline, tool_dir, bin_dir), ("1", str(self.root / "tools"), str(self.bin)))
+        self.assertEqual(
+            (offline, tool_dir, bin_dir), ("1", str(self.root / "tools"), str(self.bin))
+        )
 
     def test_failed_leaves_the_old_one(self):
         update.finish(self.handoff(target="coscc-broken-py3-none-any.whl"))
@@ -319,8 +377,11 @@ class Finishing(unittest.TestCase):
         self.assertEqual(len(self.calls.read_text().splitlines()), 2)
 
     def test_a_rollback_that_fails_too_is_broken(self):
-        update.finish(self.handoff(target="coscc-garbled-py3-none-any.whl",
-                                   current="coscc-broken-py3-none-any.whl"))
+        update.finish(
+            self.handoff(
+                target="coscc-garbled-py3-none-any.whl", current="coscc-broken-py3-none-any.whl"
+            )
+        )
         self.assertEqual(self.last()["result"], "broken")
         self.assertIn("result: broken", (self.root / "update.log").read_text())
 
@@ -328,8 +389,8 @@ class Finishing(unittest.TestCase):
         self.assertEqual(update.INSTALL_TIMEOUT, 120)
 
     def test_nothing_is_imported_after_the_install_begins(self):
-        """R12: the venv is replaced under this process at step 8, so `finish` may import
-        nothing. Measured in a clean interpreter that has imported only `coscc.update`."""
+        """The venv is replaced under this process at step 8, so `finish` may import nothing.
+        Measured in a clean interpreter that has imported only `coscc.update`."""
         h = self.handoff()
         child = (
             "import json, sys\n"
@@ -339,8 +400,13 @@ class Finishing(unittest.TestCase):
             "code = update.finish(h)\n"
             "print(json.dumps({'code': code, 'new': sorted(set(sys.modules) - before)}))\n"
         )
-        out = subprocess.run([sys.executable, "-c", child], capture_output=True, text=True,
-                             cwd=str(update.REPO), check=True)
+        out = subprocess.run(
+            [sys.executable, "-c", child],
+            capture_output=True,
+            text=True,
+            cwd=str(update.REPO),
+            check=True,
+        )
         got = json.loads(out.stdout.strip().splitlines()[-1])
         self.assertEqual(got, {"code": 75, "new": []})
 
@@ -364,7 +430,9 @@ class TheSlot(unittest.TestCase):
 
 class TheRollbackCommand(unittest.TestCase):
     def test_it_names_all_five_steps(self):
-        text = update.rollback_command("/u/uv", "/t", "/b", "/w.whl", "/d/cos.db", "/d/updates/cos.db.bak")
+        text = update.rollback_command(
+            "/u/uv", "/t", "/b", "/w.whl", "/d/cos.db", "/d/updates/cos.db.bak"
+        )
         self.assertIn("systemctl --user stop coscc", text)
         self.assertIn("cp /d/updates/cos.db.bak /d/cos.db", text)
         self.assertIn("rm -f /d/cos.db-wal /d/cos.db-shm", text)

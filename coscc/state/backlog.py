@@ -9,12 +9,11 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.web import present
-from coscc.service import Invalid
+from coscc.service.common import Invalid
 from coscc.state.views import BacklogRow, tree_line
 
 
 class BacklogMixin(rx.State, mixin=True):
-
     # -- starting a unit
     new_slug: str = ""
     new_brief: str = ""
@@ -54,8 +53,16 @@ class BacklogMixin(rx.State, mixin=True):
 
     @rx.event
     def set_backlog_field(self, name: str, value: str):
-        if name in ("shortlist_reason", "est_value", "est_effort", "est_basis", "rel_other", "rel_type",
-                    "rel_op", "rel_reason"):
+        if name in (
+            "shortlist_reason",
+            "est_value",
+            "est_effort",
+            "est_basis",
+            "rel_other",
+            "rel_type",
+            "rel_op",
+            "rel_reason",
+        ):
             setattr(self, name, value)
 
     @rx.event
@@ -96,9 +103,11 @@ class BacklogMixin(rx.State, mixin=True):
     def show_backlog_history(self, unit: str):
         self.history_unit = unit
         self.history_lines = [
-            (f"{present.when(h.get('at'))} · {h.get('by')} · value {h.get('value')}, effort {h.get('effort')} — {h.get('basis')}"
-             if h.get("kind") == "estimate" else
-             f"{present.when(h.get('at'))} · {h.get('by')} · {h.get('op')} {h.get('unit')} {present.RELATION_LABEL.get(h.get('type'), h.get('type'))} {h.get('other')} — {h.get('reason')}")
+            (
+                f"{present.when(h.get('at'))} · {h.get('by')} · value {h.get('value')}, effort {h.get('effort')} — {h.get('basis')}"
+                if h.get("kind") == "estimate"
+                else f"{present.when(h.get('at'))} · {h.get('by')} · {h.get('op')} {h.get('unit')} {present.RELATION_LABEL.get(h.get('type'), h.get('type'))} {h.get('other')} — {h.get('reason')}"
+            )
             for h in self._backlog_history.get(unit) or []
         ]
 
@@ -114,28 +123,49 @@ class BacklogMixin(rx.State, mixin=True):
     @rx.event
     async def save_shortlist(self):
         from coscc.state import SERVICE
-        await self._backlog_write(SERVICE.record_shortlist(self.cwd, list(self.shortlist_draft), self.shortlist_reason, ""))
+
+        await self._backlog_write(
+            SERVICE.record_shortlist(
+                self.cwd, list(self.shortlist_draft), self.shortlist_reason, ""
+            )
+        )
 
     @rx.event
     async def save_estimate(self):
         from coscc.state import SERVICE
-        await self._backlog_write(SERVICE.record_estimate(
-            self.cwd, self.est_unit.strip(), self.est_value.strip(), self.est_effort.strip(), self.est_basis,
-            "",
-        ))
+
+        await self._backlog_write(
+            SERVICE.record_estimate(
+                self.cwd,
+                self.est_unit.strip(),
+                self.est_value.strip(),
+                self.est_effort.strip(),
+                self.est_basis,
+                "",
+            )
+        )
 
     @rx.event
     async def save_relation(self):
         from coscc.state import SERVICE
-        await self._backlog_write(SERVICE.record_relation(
-            self.cwd, self.rel_unit.strip(), self.rel_other.strip(), self.rel_type, self.rel_op, self.rel_reason,
-            "",
-        ))
+
+        await self._backlog_write(
+            SERVICE.record_relation(
+                self.cwd,
+                self.rel_unit.strip(),
+                self.rel_other.strip(),
+                self.rel_type,
+                self.rel_op,
+                self.rel_reason,
+                "",
+            )
+        )
 
     @rx.event
     async def propose_estimates(self):
         """Opens one paid session; the warning above the button says so."""
         from coscc.state import SERVICE
+
         if self.proposing:
             return
         self.proposing = True
@@ -152,7 +182,8 @@ class BacklogMixin(rx.State, mixin=True):
             self.proposing = False
         self.notice = (
             f"Proposal {done.get('outcome')}: {done.get('written', 0)} recorded, "
-            f"{len(done.get('rejected') or [])} refused" + (f" — {done['detail']}" if done.get("detail") else "")
+            f"{len(done.get('rejected') or [])} refused"
+            + (f" — {done['detail']}" if done.get("detail") else "")
         )
         await self._load_board()
 
@@ -168,6 +199,7 @@ class BacklogMixin(rx.State, mixin=True):
     async def create_unit(self):
         """Start a work unit from the page. The slug grammar and number come back from `cos.mjs`."""
         from coscc.state import SERVICE
+
         slug = self.new_slug.strip()
         if not slug:
             self.notice = "Give the work a short name, like `board-cannot-say-what-happened`."
@@ -193,6 +225,7 @@ class BacklogMixin(rx.State, mixin=True):
         """Cut the open unit's branch in the workspace: the one control here that writes to
         somebody else's git (`coscc/git/gitops.py` lists what that may be)."""
         from coscc.state import SERVICE
+
         if not self.unit_id:
             return
         try:
@@ -207,8 +240,14 @@ class BacklogMixin(rx.State, mixin=True):
             said += " The workspace was moved back to main to open it."
         prepared = cut.get("prepare") or {}
         if not prepared.get("ok", True):
-            said += (f" Preparing it failed: `{prepared.get('command')}` exited "
-                     f"{prepared.get('exit_code')} — impl will not run until it succeeds.")
+            said += (
+                f" Preparing it failed: `{prepared.get('command')}` exited "
+                f"{prepared.get('exit_code')} — impl will not run until it succeeds."
+            )
         self.notice = said
-        self._trees = {**self._trees, self.unit_id: tree_line(
-            {"path": cut["worktree"], "branch": cut["branch"], "prepare": prepared})}
+        self._trees = {
+            **self._trees,
+            self.unit_id: tree_line(
+                {"path": cut["worktree"], "branch": cut["branch"], "prepare": prepared}
+            ),
+        }
