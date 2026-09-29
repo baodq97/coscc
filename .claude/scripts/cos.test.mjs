@@ -15,7 +15,7 @@ import {
   aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip, normalizePatch, openLines,
   parseMoreRounds, reviewLimit, moreRounds, branchChecks, notAWorkBranch,
   parseIdea, parseLinks, parseIdeaRef, parseUnitRef, WAITING_ON, titleProblem,
-  unitMeta, readIdeas, NEEDS_STATE, nextAnswer, gateAnswer,
+  unitMeta, readIdeas, NEEDS_STATE, nextAnswer, gateAnswer, laneOf,
 } from './cos.mjs'
 import { createHash } from 'node:crypto'
 
@@ -71,6 +71,15 @@ function readUnit(dir, name, { state, peers, cosDir } = {}) {
 // hold `pr.md`'s title to it.
 const unit = (artifacts) => ({ name: '0001_x', type: 'feat', artifacts, problems: [] })
 const art = (status) => ({ status, skipReason: null })
+
+// The three fields a lane adds to each unit of `status --json` and to `next`, which the
+// snapshots taken before lanes existed do not hold.
+const LANE_FIELDS = ['lane', 'enteredFast', 'laneMissing']
+const withoutLane = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => !LANE_FIELDS.includes(k)))
+const statusWithoutLane = (out) => {
+  const json = JSON.parse(out)
+  return `${JSON.stringify({ ...json, units: json.units.map(withoutLane) }, null, 2)}\n`
+}
 
 // A probe that answers the way git and gh would, without either. `checks` is what
 // `gh pr checks --json name,bucket` prints; `git` maps an argument string to an answer.
@@ -4352,7 +4361,7 @@ test('0040 R2: status --json without ideas/ is byte-identical', () => {
     '0002_other': { 'intent.md': `${I40('draft')}\n## Open questions\n\n1. Which?\n` },
     '0003_shipped': Object.fromEntries(['intent', 'spec', 'plan', 'impl', 'pr', 'review', 'ship'].map((s) => [`${s}.md`, s === 'intent' ? I40('accepted') : `# ${s}\nStatus: accepted.\n`])),
   })
-  const out = cli('--root', root, 'status', '--json').stdout
+  const out = statusWithoutLane(cli('--root', root, 'status', '--json').stdout)
   // `0139` R12 renamed two stage hints, and nothing else: named back, the bytes are the same.
   const was = out.replace('"hint": "pr"', '"hint": "write-pr"').replace('"hint": "ship"', '"hint": "write-ship"')
   assert.notEqual(was, out)
@@ -4828,7 +4837,7 @@ test('status --json of the fixture store is what it was before meta existed', ()
   assert.equal(out.status, 0, out.stderr)
   const now = JSON.parse(out.stdout)
   const before = JSON.parse(readFileSync(META_BEFORE, 'utf8'))
-  assert.deepEqual({ ...now, root: before.root }, before)
+  assert.deepEqual({ ...now, root: before.root, units: now.units.map(withoutLane) }, before)
 })
 
 // --- every fixture unit answers as it did before lanes ------------------------------
@@ -4836,8 +4845,6 @@ test('status --json of the fixture store is what it was before meta existed', ()
 // `next`, `status --json` and `gate` at every stage, for each unit of the two stores the
 // suite reads from disk, hashed and compared to what they printed before lanes existed. The
 // three fields a lane adds are dropped first; every other byte must stay.
-const LANE_FIELDS = ['lane', 'enteredFast', 'laneMissing']
-const withoutLane = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => !LANE_FIELDS.includes(k)))
 const digest = (x) => createHash('sha256').update(JSON.stringify(x)).digest('hex').slice(0, 16)
 function answersOf(root) {
   const ask = (...args) => {
@@ -4888,4 +4895,68 @@ test('next, status --json and gate at every stage answer every fixture unit as b
     '0013_board-cannot-say-what-happened': '5faddaa084429bc8',
     '0014_product-cannot-start-a-work-unit': 'b74827525ff9828d',
   })
+})
+
+// --- the lane a unit walks, read off its files --------------------------------------
+
+// An intent carrying the three sections a fix enters the fast lane with; `null` leaves one out.
+const REPRO = '```\nnode --test x.test.mjs\n```'
+const EXPECTED = 'Source: coscc/units/guards.py:19-30\nThe table names every code cos.mjs hands out.'
+const intentOf = ({ type = 'fix', repro = REPRO, expected = EXPECTED, actual = 'It names one fewer.' } = {}) => [
+  '# Intent: x', `Author: t. Type: ${type}. Status: accepted.`, '',
+  ...(repro === null ? [] : ['## Reproduction', '', repro, '']),
+  ...(expected === null ? [] : ['## Expected', '', expected, '']),
+  ...(actual === null ? [] : ['## Actual', '', actual, '']),
+].join('\n')
+const laneFor = (parts = {}, { artifacts = { 'intent.md': art('accepted') }, impl = null } = {}) =>
+  laneOf({ ...unit(artifacts), type: parts.type ?? 'fix' }, { intent: intentOf(parts), impl })
+const FAST = { lane: 'fast', enteredFast: true, laneMissing: [] }
+
+test('a fix with its reproduction, a cited expected result and the actual one is in the fast lane', () => {
+  assert.deepEqual(laneFor(), FAST)
+  assert.deepEqual(laneFor({ expected: 'Source: `docs/x.md`\nIt says so.' }), FAST)
+  assert.deepEqual(laneFor({ expected: 'Source: README.md\nIt says so.' }), FAST)
+})
+
+test('a unit that is not a fix is in the full lane, and nothing is missing for it', () => {
+  assert.deepEqual(laneFor({ type: 'feat' }), { lane: 'full', enteredFast: false, laneMissing: [] })
+  assert.deepEqual(laneOf({ ...unit({}), type: undefined }, {}), { lane: 'full', enteredFast: false, laneMissing: [] })
+})
+
+test('a fix missing one mark is in the full lane, and laneMissing names that mark', () => {
+  const missing = (parts, opts) => {
+    const got = laneFor(parts, opts)
+    assert.equal(got.lane, 'full')
+    return got.laneMissing
+  }
+  assert.deepEqual(missing({ repro: null }), ['b'])
+  assert.deepEqual(missing({ repro: '```\n\n```' }), ['b'])
+  assert.deepEqual(missing({ repro: 'node --test x.test.mjs' }), ['b'])
+  assert.deepEqual(missing({ expected: null }), ['c'])
+  assert.deepEqual(missing({ expected: 'The table names every code.' }), ['c'])
+  assert.deepEqual(missing({ actual: null }), ['d'])
+  assert.deepEqual(missing({ actual: '   ' }), ['d'])
+  assert.deepEqual(missing({ repro: null, expected: null, actual: null }), ['b', 'c', 'd'])
+  assert.deepEqual(laneOf({ ...unit({}), type: 'fix' }, {}).laneMissing, ['b', 'c', 'd'])
+})
+
+test('the expected result cites one relative path outside .cos/, and says something besides', () => {
+  const c = (expected) => laneFor({ expected }).laneMissing
+  assert.deepEqual(c('Source: /etc/passwd\nIt says so.'), ['c'])
+  assert.deepEqual(c('Source: .cos/0001_x/spec.md\nIt says so.'), ['c'])
+  assert.deepEqual(c('Source: ../other/README.md\nIt says so.'), ['c'])
+  assert.deepEqual(c('Source: docs/../../x.md\nIt says so.'), ['c'])
+  assert.deepEqual(c('Source: coscc/units/guards.py:30-19\nIt says so.'), ['c'])
+  assert.deepEqual(c('Source: coscc/units/guards.py'), ['c'])
+  assert.deepEqual(c('Source: a.md\nSource: b.md\nIt says so.'), ['c'])
+  assert.deepEqual(c('Source: the guards file\nIt says so.'), ['c'])
+})
+
+test('a spec, a plan or Lane: full in the impl header keeps a fix in the full lane, and it still entered', () => {
+  const left = { lane: 'full', enteredFast: true, laneMissing: ['e'] }
+  assert.deepEqual(laneFor({}, { artifacts: { 'intent.md': art('accepted'), 'spec.md': art('draft') } }), left)
+  assert.deepEqual(laneFor({}, { artifacts: { 'intent.md': art('accepted'), 'plan.md': art('accepted') } }), left)
+  assert.deepEqual(laneFor({}, { impl: '# Impl: x\nIntent: intent.md. Lane: full. Status: draft.\n\n## Why full\n\nBigger.\n' }), left)
+  // Only the header decides: the words further down are prose.
+  assert.deepEqual(laneFor({}, { impl: '# Impl: x\nIntent: intent.md. Status: draft.\n\n## What was built\n\nNot Lane: full.\n' }), FAST)
 })

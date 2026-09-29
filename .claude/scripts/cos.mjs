@@ -28,12 +28,16 @@ const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 // `spec.md` marks a concern `[unmeasured] U<n>`, or `spike.md` already exists (`required`
 // below). Every other unit walks the loop as if it were not there. It is not `optional`,
 // which means "blocks nothing" — once required, it blocks `plan` and everything after.
+//
+// `lanes` names the lanes a stage belongs to; a stage with none belongs to every lane.
+// `spec`, `spike` and `plan` are `full`'s alone: a fix in the `fast` lane goes from its
+// intent to `impl` (`laneOf` below says which lane a unit is in).
 const STAGES = [
   { name: 'idea', file: 'idea.md', optional: true, hint: 'write-idea', statuses: ['draft', 'accepted', 'rejected'] },
   { name: 'intent', file: 'intent.md', hint: 'write-intent — the unit has no intent.md', statuses: ['draft', 'accepted', 'rejected'] },
-  { name: 'spec', file: 'spec.md', hint: 'write-spec — it assesses whether to skip first', statuses: ['draft', 'accepted', 'rejected', 'skipped'] },
-  { name: 'spike', file: 'spike.md', when: 'unmeasured', hint: 'write-spike — spec.md has [unmeasured] items', statuses: ['draft', 'accepted', 'rejected'] },
-  { name: 'plan', file: 'plan.md', hint: 'write-plan', statuses: ['draft', 'accepted', 'rejected', 'done'] },
+  { name: 'spec', file: 'spec.md',hint: 'write-spec — it assesses whether to skip first', statuses: ['draft', 'accepted', 'rejected', 'skipped'] },
+  { name: 'spike', file: 'spike.md',when: 'unmeasured', hint: 'write-spike — spec.md has [unmeasured] items', statuses: ['draft', 'accepted', 'rejected'] },
+  { name: 'plan', file: 'plan.md',hint: 'write-plan', statuses: ['draft', 'accepted', 'rejected', 'done'] },
   { name: 'impl', file: 'impl.md', hint: 'write-impl — implementation starts', statuses: ['draft', 'accepted', 'rejected', 'done'] },
   // `0139` R12: `pr` and `ship` are the app's PR machine, with no session and no skill, so
   // their hint names the stage the board's button starts, never a `write-*` skill.
@@ -988,6 +992,7 @@ export function readUnit(dir, name, { state } = {}) {
     // Derived, never typed — the `ship` gate reads the branch the review was of.
     unit.branch = branchFor(name, type).branch ?? null
   }
+  Object.assign(unit, laneOf(unit, { intent: intentText, impl: texts['impl.md'] ?? null }))
   // `0047`: read from the text already in hand, never another file. `nextAction` and
   // `checkGate` do not read it — a finished unit stays finished whatever it says.
   unit.outcome = intentText === null ? null : unitOutcome(intentText)
@@ -1308,11 +1313,75 @@ const missing = (u, f) => (present(u, f) ? `${f} exists but carries no Status li
 const SPIKE = STAGES.find((s) => s.when === 'unmeasured')
 const unmeasuredOf = (u) => u.artifacts['spec.md']?.unmeasured ?? { ids: [], problems: [] }
 
+// Which lane a unit walks, read off its files and written nowhere, so no agent can declare
+// it: `fast` when all five marks below hold, `full` when one does not. Each mark is the
+// letter `laneMissing` names it by.
+//   a  the unit is `Type: fix`;
+//   b  `intent.md ## Reproduction` holds a fenced block with something in it;
+//   c  `intent.md ## Expected` holds one `Source: <path>` or `Source: <path>:<L1>-<L2>` line,
+//      the path relative, outside `.cos/` and with no `..`, and one other line not empty;
+//   d  `intent.md ## Actual` holds a line not empty;
+//   e  neither `spec.md` nor `plan.md` is there, and `impl.md`'s header has no `Lane: full`.
+// (e) is why leaving the lane is one-way: an impl that finds the fix is not one writes
+// `Lane: full`, and the spec and plan written after it keep the unit in `full` whatever the
+// header says later. `enteredFast` is (a)-(d), which leaving does not undo, so a measure of
+// the lane still counts a unit that left it. `laneMissing` is only for a fix in `full`.
+export function laneOf(unit, { intent = null, impl = null } = {}) {
+  const lines = (title) => (intent === null ? null : section(intent, title))
+  const filled = (ls) => ls.some((l) => l.trim() !== '')
+  const marks = {
+    a: unit.type === 'fix',
+    b: fencedFilled(lines('Reproduction')),
+    c: expectedCited(lines('Expected')),
+    d: filled(lines('Actual') ?? []),
+    e: !present(unit, 'spec.md') && !present(unit, 'plan.md') && !/\bLane:\s*full\b/.test(headerOf(impl ?? '')),
+  }
+  const lane = Object.values(marks).every(Boolean) ? 'fast' : 'full'
+  const enteredFast = marks.a && marks.b && marks.c && marks.d
+  const laneMissing = marks.a && lane === 'full' ? Object.keys(marks).filter((k) => !marks[k]) : []
+  return { lane, enteredFast, laneMissing }
+}
+
+// What comes before a file's first `## ` heading: the title and the header lines under it.
+const headerOf = (text) => {
+  const lines = text.split(/\r?\n/)
+  const end = lines.findIndex((l) => l.startsWith('## '))
+  return (end === -1 ? lines : lines.slice(0, end)).join('\n')
+}
+
+// (b): a fence opened and closed with at least one line between them that is not empty.
+function fencedFilled(lines) {
+  let inside = null
+  for (const l of lines ?? []) {
+    if (/^\s*```/.test(l)) {
+      if (inside?.some((x) => x.trim() !== '')) return true
+      inside = inside === null ? [] : null
+    } else if (inside !== null) inside.push(l)
+  }
+  return false
+}
+
+// (c): exactly one `Source:` line, naming a path that cannot point into the unit's own
+// artifacts or outside the repository, beside the words of the expected result.
+const SOURCE_LINE = /^Source:\s*(`?)([^\s`:]+)(?::(\d+)-(\d+))?\1\s*$/
+function expectedCited(lines) {
+  if (!lines) return false
+  const sources = lines.filter((l) => /^Source:/.test(l.trim()))
+  if (sources.length !== 1) return false
+  const m = sources[0].trim().match(SOURCE_LINE)
+  if (!m) return false
+  const [, , path, from, to] = m
+  if (path.startsWith('/') || path === '.cos' || path.startsWith('.cos/') || path.split('/').includes('..')) return false
+  if (from !== undefined && (Number(from) < 1 || Number(to) < Number(from))) return false
+  return lines.some((l) => l.trim() !== '' && !/^Source:/.test(l.trim()))
+}
+
 // Whether stage `s` has to be behind a unit before what follows it (`0039` R4, R5). Every
-// stage but `idea` always does. `spike` does when, and only when, `spec.md` names a `U<n>`
-// (`0136` R14): a `spike.md` a spec rewritten without its questions left behind no longer
-// makes it. Never when the spec was skipped.
+// stage but `idea` always does, in the lanes it belongs to. `spike` does when, and only
+// when, `spec.md` names a `U<n>` (`0136` R14): a `spike.md` a spec rewritten without its
+// questions left behind no longer makes it. Never when the spec was skipped.
 export function required(unit, s) {
+  if (s.lanes && !s.lanes.includes(unit.lane ?? 'full')) return false
   if (!s.when) return !s.optional
   if (statusOf(unit, 'spec.md') === 'skipped') return false
   return unmeasuredOf(unit).ids.length > 0
