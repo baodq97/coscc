@@ -133,13 +133,3 @@ def addresses(static: Path) -> set[str]:
             continue
         found.update(m.group(0) for m in _AUTHORITY.finditer(text))
     return found
-
-
-def event_addresses(static: Path) -> set[str]:
-    """The `ws://` authorities the bundle carries. `.gz` sidecars included.
-
-    `addresses()` is too blunt to assert against (the bundle holds other hosts' URLs). The
-    page opens a socket only to its own backend, so after a rewrite this set must hold
-    exactly the address being served.
-    """
-    return {a for a in addresses(static) if a.startswith(("ws://", "wss://"))}

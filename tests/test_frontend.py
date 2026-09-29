@@ -171,7 +171,11 @@ class TheMarkerThatLetsAPackagedInstallStart(unittest.TestCase):
 
 
 class EventAddressesAreExact(unittest.TestCase):
-    """`addresses()` is too blunt to assert against; `event_addresses()` is exact."""
+    """`addresses()` is too blunt to assert against: the bundle holds other hosts' URLs. The page
+    opens a socket only to its own backend, so the `ws://` ones must be exactly the one served."""
+
+    def sockets(self):
+        return {a for a in frontend.addresses(self.static) if a.startswith(("ws://", "wss://"))}
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -180,7 +184,7 @@ class EventAddressesAreExact(unittest.TestCase):
 
     def test_a_rewritten_bundle_holds_exactly_one_socket_address(self):
         frontend.rewrite_address(self.static, "0.0.0.0", 9001)
-        self.assertEqual(frontend.event_addresses(self.static), {"ws://0.0.0.0:9001"})
+        self.assertEqual(self.sockets(), {"ws://0.0.0.0:9001"})
 
     def test_other_peoples_urls_do_not_disturb_it(self):
         # Measured on the real bundle 2026-09-22: eleven of the thirteen authorities it
@@ -189,7 +193,7 @@ class EventAddressesAreExact(unittest.TestCase):
             "see https://react.dev and http://localhost:3000"
         )
         frontend.rewrite_address(self.static, "0.0.0.0", 9001)
-        self.assertEqual(frontend.event_addresses(self.static), {"ws://0.0.0.0:9001"})
+        self.assertEqual(self.sockets(), {"ws://0.0.0.0:9001"})
 
 
 if __name__ == "__main__":

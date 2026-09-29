@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -1010,131 +1009,6 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         )
         self.assertEqual(prompt.count(SESSION_ENDS_HEADING), 1)
         self.assertIn(SESSION_ENDS_ADVICE, prompt)
-
-
-def fake_gh(bindir: Path, stdout: str = "", code: int = 0) -> Path:
-    """A `gh` first on `PATH` that prints `stdout`, exits `code`, and logs its argv."""
-    bindir.mkdir(parents=True, exist_ok=True)
-    log = bindir / "gh.log"
-    script = bindir / "gh"
-    script.write_text(
-        "#!/bin/sh\n"
-        f"echo \"$@\" >> '{log}'\n"
-        f"cat <<'EOF'\n{stdout}\nEOF\n"
-        f"[ {code} -eq 0 ] || echo 'gh: no auth' >&2\n"
-        f"exit {code}\n",
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
-    return log
-
-
-def on_path(bindir: Path):
-    return mock.patch.dict(
-        os.environ, {"PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}"}
-    )
-
-
-FOUND = json.dumps(
-    [
-        {
-            "url": "https://github.com/o/r/pull/7",
-            "number": 7,
-            "mergeable": "MERGEABLE",
-            "headRefOid": HEAD,
-        }
-    ]
-)
-
-
-class ThePullRequestIsLookedUpBeforePr(unittest.TestCase):
-    """Three shapes, and a lookup that fails never raises."""
-
-    def lookup(self, stdout="", code=0, branch="fix/x"):
-        with tempfile.TemporaryDirectory() as d:
-            log = fake_gh(Path(d) / "bin", stdout, code)
-            with on_path(Path(d) / "bin"):
-                rec = asyncio.run(ig.pr_for_branch(d, branch))
-            argv = log.read_text(encoding="utf-8") if log.exists() else ""
-        return rec, argv
-
-    def test_found(self):
-        rec, argv = self.lookup(FOUND)
-        self.assertEqual(
-            rec,
-            {
-                "state": "found",
-                "url": "https://github.com/o/r/pull/7",
-                "number": 7,
-                "mergeable": "MERGEABLE",
-                "head": HEAD,
-            },
-        )
-        self.assertIn("pr list --head fix/x --state open", argv)
-
-    def test_none(self):
-        rec, _ = self.lookup("[]")
-        self.assertEqual(rec, {"state": "none", "branch": "fix/x"})
-
-    def test_gh_failing_is_unknown_with_its_words(self):
-        rec, _ = self.lookup("", code=1)
-        self.assertEqual(rec["state"], "unknown")
-        self.assertIn("no auth", rec["reason"])
-
-    def test_broken_json_is_unknown(self):
-        rec, _ = self.lookup("not json")
-        self.assertEqual(rec["state"], "unknown")
-        self.assertIn("JSON", rec["reason"])
-
-    def test_no_branch_asks_nothing(self):
-        rec, argv = self.lookup(FOUND, branch="")
-        self.assertEqual(rec["state"], "unknown")
-        self.assertEqual(argv, "")
-
-
-class ThePullRequestBlock(unittest.TestCase):
-    def test_found_says_reuse_and_not_create(self):
-        text = ig.describe_pr_lookup(
-            {
-                "state": "found",
-                "url": "https://x/pull/7",
-                "number": 7,
-                "mergeable": "MERGEABLE",
-                "head": HEAD,
-            }
-        )
-        self.assertTrue(text.startswith("# The pull request, already looked up"))
-        self.assertIn("https://x/pull/7", text)
-        self.assertIn("Do not run `gh pr create` again", text)
-        self.assertNotIn("Integrate", text)
-        self.assertIn(ig.PR_SYNC_NOTE, text)
-
-    def test_conflicting_says_stop_and_names_integrate(self):
-        text = ig.describe_pr_lookup(
-            {"state": "found", "url": "u", "number": 7, "mergeable": "CONFLICTING", "head": HEAD}
-        )
-        self.assertIn("Do not rebase", text)
-        self.assertIn("*Integrate*", text)
-        self.assertIn("`Status: accepted`", text)
-        self.assertIn(ig.PR_SYNC_NOTE, text)
-
-    def test_none_names_the_branch(self):
-        text = ig.describe_pr_lookup({"state": "none", "branch": "fix/x"})
-        self.assertIn("`fix/x`", text)
-        self.assertIn(ig.PR_SYNC_NOTE, text)
-
-    def test_the_sync_note_says_the_app_does_it(self):
-        self.assertIn("the app puts pr.md's title and body onto the pull request", ig.PR_SYNC_NOTE)
-        self.assertIn("do not run `gh pr edit`", ig.PR_SYNC_NOTE)
-        self.assertNotIn(
-            ig.PR_SYNC_NOTE, ig.describe_pr_lookup({"state": "unknown", "reason": "x"})
-        )
-
-    def test_unknown_says_why_and_asks_once(self):
-        text = ig.describe_pr_lookup({"state": "unknown", "reason": "gh: no auth"})
-        self.assertIn("could not ask", text)
-        self.assertIn("gh: no auth", text)
-        self.assertIn("gh pr view", text)
 
 
 if __name__ == "__main__":

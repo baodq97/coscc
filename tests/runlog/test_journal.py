@@ -486,11 +486,8 @@ class TotalsAreAddedNotStored(unittest.TestCase):
                 j.started("w", "0009_x", stage, "autonomous")
                 j.finished("w", "0009_x", stage, "done", input_tokens=tokens, output_tokens=1)
 
-            totals = j.totals("w", "0009_x")
-            self.assertEqual(totals["total"]["input_tokens"], 1050)
-            self.assertEqual(totals["total"]["output_tokens"], 3)
-            summed = sum(b["input_tokens"] for b in totals["per_stage"].values())
-            self.assertEqual(summed, totals["total"]["input_tokens"])
+            total = totals_of(j.timeline("w", "0009_x"))
+            self.assertEqual((total["input_tokens"], total["output_tokens"]), (1050, 3))
 
     def test_two_runs_of_one_stage_add_rather_than_replace(self):
         with tempfile.TemporaryDirectory() as d:
@@ -498,11 +495,11 @@ class TotalsAreAddedNotStored(unittest.TestCase):
             for _ in range(2):
                 j.started("w", "0009_x", "impl", "autonomous")
                 j.finished("w", "0009_x", "impl", "done", input_tokens=40)
-            self.assertEqual(j.totals("w", "0009_x")["total"]["input_tokens"], 80)
+            self.assertEqual(totals_of(j.timeline("w", "0009_x"))["input_tokens"], 80)
 
     def test_a_unit_that_never_ran_totals_zero_rather_than_failing(self):
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(Journal(d, d).totals("w", "0009_x")["total"]["input_tokens"], 0)
+            self.assertEqual(totals_of(Journal(d, d).timeline("w", "0009_x"))["input_tokens"], 0)
 
 
 class AnEndClosesTheRunItNames(unittest.TestCase):
@@ -567,11 +564,6 @@ class AnEndClosesTheRunItNames(unittest.TestCase):
             j.started("w", "0009_x", "impl", "autonomous")  # still running: not unknown
             got = totals_of(j.timeline("w", "0009_x"))
             self.assertEqual((got["cost_usd"], got["unknown"]), (0.52, 1))
-            totals = j.totals("w", "0009_x")
-            self.assertEqual(totals["total"]["unknown"], 1)
-            self.assertEqual(totals["per_stage"]["impl"]["unknown"], 1)
-            self.assertEqual(totals["per_stage"]["spec"]["unknown"], 0)
-            self.assertEqual(totals["total"]["cost_usd"], 0.52)
 
 
 WRITER = """

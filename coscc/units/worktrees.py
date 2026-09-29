@@ -37,10 +37,6 @@ PREPARE_TIMEOUT = 600.0
 TAIL_CHARS = 2000
 
 
-class Unprepared(Exception):
-    """A worktree whose preparation failed. Carries the command and its exit code."""
-
-
 def _package_dir() -> Path:
     return Path(coscc.__file__).resolve().parent
 

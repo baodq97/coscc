@@ -68,12 +68,6 @@ def public(version: str) -> tuple[int, int, int] | None:
     return (int(m[1]), int(m[2]), int(m[3])) if m else None
 
 
-def local_commit(version: str) -> str:
-    """The `g<sha7>` of a local build's version, without the `g`, or ``""``."""
-    _, _, tail = version.partition("+")
-    return tail[1:] if tail.startswith("g") else ""
-
-
 # --- which build is running ----------------------------------------------------------
 
 

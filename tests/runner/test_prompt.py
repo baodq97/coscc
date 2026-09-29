@@ -674,7 +674,6 @@ def _golden_prompt(stage: str) -> str:
                 integration_note="# INTEGRATION\n\nINTEGRATION-NOTE",
                 drift_note="DRIFT-NOTE",
                 worktree="/wt" if stage == "spike" else "",
-                pr_note="# PR-NOTE\n\nPR-LOOKUP",
                 ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
             )
         text = prompt + "\n\nINCLUDED: " + ",".join(included)

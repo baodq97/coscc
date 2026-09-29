@@ -1411,8 +1411,6 @@ class Steps:
                     "record": None,
                     "error": str(e) or type(e).__name__,
                 }
-            # `pr` opens no session: the PR machine asks `gh pr list` itself.
-            pr_note, pr_before = "", None
             # After the last refusal that reads nothing more, before any money is
             # spent: every `impl` step writes `impl.md` itself, so only a comparison afterwards
             # can tell whether its `## Answers` survived.
@@ -1514,8 +1512,6 @@ class Steps:
                         drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
                         shortlist=shortlist,
                         end_fields=end_fields,
-                        pr_note=pr_note,
-                        pr_before=pr_before,
                         # The stage's row with today's overrides, read once
                         # as the step starts: a rename later reaches the next step, not this one.
                         agent=self.agents.agent(stage),
@@ -1535,7 +1531,6 @@ class Steps:
                             "rounds_before": sorted(rounds_before)
                             if rounds_before is not None
                             else None,
-                            "pr_before": pr_before,
                             "tree": tree is not None,
                             "watch": work if scratch is not None else None,
                             "scratch": str(scratch) if scratch is not None else None,

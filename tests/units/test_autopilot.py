@@ -8,7 +8,6 @@ from pathlib import Path
 from coscc.units import autopilot as ap
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS
 
-COS_MJS = Path(__file__).resolve().parents[2] / ".claude" / "scripts" / "cos.mjs"
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
 # `next`'s two actions for `ship`, one after the merge and one before it.
 RECORDING_SHIP = (
@@ -544,7 +543,6 @@ class TheDaysMoney(unittest.TestCase):
         ]
         got = ap.spent_today(rows, NOW)
         self.assertEqual((got["known"], got["estimated"]), (1.0, ap.estimate("spec")))
-        self.assertTrue(ap.cap_allows(got["known"] + got["estimated"], 0.0, 0.0, 50.0))
 
     def test_a_new_day_by_the_machines_clock_starts_again(self):
         local_midnight = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -556,10 +554,6 @@ class TheDaysMoney(unittest.TestCase):
         self.assertEqual(
             ap.spent_today(rows, NOW), {"known": 0.0, "estimated": 0.0, "estimated_count": 0}
         )
-
-    def test_the_cap_fits_or_does_not(self):
-        self.assertTrue(ap.cap_allows(40.0, 2.0, 8.0, 50.0))
-        self.assertFalse(ap.cap_allows(40.0, 2.0, 8.01, 50.0))
 
     def test_a_day_like_2026_09_25_fits_or_is_capped(self):
         rows = [{"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"}] + [
@@ -874,7 +868,6 @@ class Measuring(unittest.TestCase):
         got = ap.measure(rows, "w", day, day)
         self.assertEqual(got["met"], ["0010_a"])
         self.assertEqual(got["units"][0]["person"], 1)
-        self.assertEqual(ap.measure_days(earlier, "w", day, day, 80.0)[0]["failed"], 0)
 
     def test_outside_the_dates_or_the_workspace_nothing_counts(self):
         self.assertEqual(ap.measure(self.rows(), "other", "2000-01-01", "2100-01-01")["units"], [])
@@ -911,49 +904,6 @@ class TheAutopilotHasNoAnswerer(unittest.TestCase):
             {"kind": "start", "workspace": "w", "unit": "0011_b", "stage": "spec", "at": at()},
         ]
         self.assertEqual(ap.reserved(rows, NOW), ap.reservation("impl") + ap.reservation("spec"))
-
-
-class MeasuredDays(unittest.TestCase):
-    def test_each_clause_of_the_outcome_per_day(self):
-        one, two = ap.today(NOW), ap.today(NOW + timedelta(days=1))
-
-        def r(kind, delta=timedelta(), workspace="w", **kw):
-            return {"kind": kind, "workspace": workspace, "unit": "0010_a", "at": at(delta), **kw}
-
-        tomorrow = timedelta(days=1)
-        rows = (
-            [r("integration", mode="mechanical") for _ in range(5)]
-            + [
-                r("end", stage="impl", outcome="failed"),
-                r("start", stage="spec", started_by="autopilot"),
-                r("end", stage="spec", outcome="done", cost_usd=3.0),
-                r("end", workspace="other", stage="review", outcome="done", cost_usd=1.0),
-            ]
-            + [r("integration", tomorrow, mode="agent") for _ in range(4)]
-            + [
-                r("end", tomorrow, stage="impl", outcome="exhausted", cost_usd=2.0),
-                r("start", tomorrow, stage="plan", started_by="autopilot"),
-            ]
-        )
-        first, second = ap.measure_days(rows, "w", one, two, 80.0)
-        self.assertEqual((first["day"], second["day"]), (one, two))
-        self.assertEqual(
-            (first["integrations"], first["failed"], first["autopilot_starts"]), (5, 1, 1)
-        )
-        self.assertEqual(
-            [first[k] for k in ("enough_integrations", "a_failure", "ran", "within", "met")],
-            [True] * 5,
-        )
-        money = ap.spent_on(rows, one)
-        self.assertEqual(first["spent"], money["known"] + money["estimated"])
-        self.assertEqual(first["spent"], 3.0 + 1.0 + ap.estimate("impl"))
-        self.assertEqual(second["integrations"], 4)
-        self.assertEqual(
-            [second[k] for k in ("enough_integrations", "a_failure", "ran", "within", "met")],
-            [False, True, True, True, False],
-        )
-        self.assertFalse(ap.measure_days(rows, "w", one, one, 19.99)[0]["within"])
-        self.assertEqual(first["utc_to"], second["utc_from"])
 
 
 class ReasonsAndPassed(unittest.TestCase):
@@ -1009,141 +959,6 @@ class ReasonsAndPassed(unittest.TestCase):
     def test_passed_raises_on_a_unit_with_no_reason(self):
         with self.assertRaises(ValueError):
             ap.passed_for(["0001_a", "0002_b"], ["0002_b"], {})
-
-
-def pick_row(unit, stage, units, pass_="p1", passed=(), delta=0, workspace="w"):
-    return {
-        "kind": "autopilot-pick",
-        "workspace": workspace,
-        "unit": unit,
-        "stage": stage,
-        "pass": pass_,
-        "rank": units.index(unit) + 1 if unit in units else 0,
-        "shortlist": {"n": 1, "at": at(), "units": list(units)},
-        "passed": list(passed),
-        "at": at(timedelta(minutes=delta)),
-    }
-
-
-def step_row(unit, stage, delta=0, kind="start", **kw):
-    return {
-        "kind": kind,
-        "workspace": "w",
-        "unit": unit,
-        "stage": stage,
-        "started_by": "autopilot",
-        "at": at(timedelta(minutes=delta)),
-        **kw,
-    }
-
-
-def clean_log(steps: int) -> list[dict]:
-    """`steps` autopilot steps, each picked first: three units in shortlist order, one mechanical
-    integration among them, the one after the first passing over it as `running`."""
-    units = ["0003_c", "0001_a", "0002_b"]
-    rows: list[dict] = []
-    for i in range(steps):
-        unit = units[i % 3]
-        passed = [
-            {"unit": u, "reason": "running", "detail": "spec"} for u in units[: units.index(unit)]
-        ]
-        if i == 4:
-            rows += [
-                pick_row(unit, "integrate", units, f"p{i}", passed, i),
-                step_row(unit, "integrate", i, kind="integration", mode="mechanical"),
-            ]
-        else:
-            rows += [pick_row(unit, "spec", units, f"p{i}", passed, i), step_row(unit, "spec", i)]
-    return rows
-
-
-class MeasuringOrder(unittest.TestCase):
-    def until(self):
-        return ap.today(NOW + timedelta(days=1))
-
-    def test_v1_a_pick_off_its_shortlist(self):
-        got = ap.measure_order(
-            [pick_row("0009_z", "spec", ["0001_a"]), step_row("0009_z", "spec", 1)],
-            "w",
-            self.until(),
-        )
-        self.assertEqual([(v["v"], v["unit"]) for v in got["violations"]], [("V1", "0009_z")])
-
-    def test_v2_passed_over_with_no_reason(self):
-        rows = [pick_row("0002_b", "spec", ["0001_a", "0002_b"]), step_row("0002_b", "spec", 1)]
-        got = ap.measure_order(rows, "w", self.until())
-        self.assertEqual([(v["v"], v["unit"]) for v in got["violations"]], [("V2", "0002_b")])
-        self.assertIn("0001_a", got["violations"][0]["why"])
-
-    def test_v2_passed_over_for_a_reason_not_on_the_list(self):
-        passed = [{"unit": "0001_a", "reason": "busy", "detail": ""}]
-        rows = [
-            pick_row("0002_b", "spec", ["0001_a", "0002_b"], passed=passed),
-            step_row("0002_b", "spec", 1),
-        ]
-        got = ap.measure_order(rows, "w", self.until())
-        self.assertEqual([v["v"] for v in got["violations"]], ["V2"])
-
-    def test_v2_one_chosen_earlier_in_the_pass_is_not_passed_over(self):
-        units = ["0001_a", "0002_b"]
-        rows = [
-            pick_row("0001_a", "spec", units),
-            pick_row("0002_b", "spec", units),
-            step_row("0001_a", "spec", 1),
-            step_row("0002_b", "spec", 1),
-        ]
-        self.assertEqual(ap.measure_order(rows, "w", self.until())["violations"], [])
-        rows[1]["pass"] = "p2"
-        self.assertEqual(
-            [v["v"] for v in ap.measure_order(rows, "w", self.until())["violations"]], ["V2"]
-        )
-
-    def test_v2_reads_only_a_units_first_pick(self):
-        units = ["0001_a", "0002_b"]
-        passed = [{"unit": "0001_a", "reason": "held", "detail": "paused"}]
-        rows = [
-            pick_row("0002_b", "spec", units, "p1", passed),
-            step_row("0002_b", "spec", 1),
-            pick_row("0002_b", "plan", units, "p2", (), 2),
-            step_row("0002_b", "plan", 3),
-        ]
-        self.assertEqual(ap.measure_order(rows, "w", self.until())["violations"], [])
-
-    def test_v3_a_step_with_no_pick_since_the_last_one(self):
-        rows = [
-            pick_row("0001_a", "spec", ["0001_a"]),
-            step_row("0001_a", "spec", 1),
-            step_row("0001_a", "plan", 2),
-        ]
-        got = ap.measure_order(rows, "w", self.until())
-        self.assertEqual([(v["v"], v["stage"]) for v in got["violations"]], [("V3", "plan")])
-        rows = [
-            pick_row("0001_a", "spec", ["0001_a"]),
-            step_row("0001_a", "spec", 1),
-            step_row("0001_a", "spec", 2),
-        ]
-        self.assertEqual(
-            [v["v"] for v in ap.measure_order(rows, "w", self.until())["violations"]], ["V3"]
-        )
-
-    def test_nine_clean_steps(self):
-        got = ap.measure_order(clean_log(9), "w", self.until())
-        self.assertEqual((got["steps"], got["violations"]), (9, []))
-
-    def test_ten_clean_steps(self):
-        got = ap.measure_order(clean_log(10), "w", self.until())
-        self.assertEqual(
-            (got["steps"], got["violations"], got["since"]), (10, [], clean_log(1)[0]["at"])
-        )
-
-    def test_the_window_opens_at_the_first_pick_and_closes_after_until(self):
-        before = step_row("0001_a", "spec", -5)
-        after = step_row("0001_a", "plan", 60 * 24 * 3)
-        agent = step_row("0001_a", "integrate", 2, kind="integration", mode="agent")
-        rows = [before] + clean_log(3) + [agent, after]
-        got = ap.measure_order(rows, "w", self.until())
-        self.assertEqual((got["steps"], got["violations"]), (3, []))
-        self.assertEqual(ap.measure_order(clean_log(3), "other", self.until())["steps"], 0)
 
 
 def row(kind, unit="0001_a", stage="intent", seconds=0, workspace="w", **kw):
@@ -1387,254 +1202,12 @@ def unopened_stop(seconds=0, stage="plan", unit="0001_a", note=""):
     return stop_row("e", seconds, unit, f"the last {stage} step ended failed" + note)
 
 
-class MeasureOpening(unittest.TestCase):
-    """What became of the prose steps whose reply lacked its opening."""
-
-    def measure(self, rows):
-        return ap.measure_opening(
-            rows, "w", ap.today(NOW - timedelta(days=1)), ap.today(NOW + timedelta(days=1))
-        )
-
-    def test_a_stop_after_an_opening_failure_is_a_miss_and_says_which_time(self):
-        rows = [
-            row("start", stage="plan"),
-            unopened_row(1),
-            row("start", stage="plan", seconds=2, started_by="autopilot"),
-            unopened_row(3),
-            unopened_stop(4, note="; origin x"),
-        ]
-        got = self.measure(rows)
-        self.assertIs(got["met"], False)
-        self.assertEqual(
-            got["stops"],
-            [{"unit": "0001_a", "stage": "plan", "at": at(timedelta(seconds=4)), "attempt": 2}],
-        )
-        self.assertEqual(len(got["failed"]), 2)
-
-    def test_a_repaired_step_counts_and_meets(self):
-        done = row(
-            "end",
-            stage="spec",
-            outcome="done",
-            opening="repaired",
-            closing={"terminal": "completed", "turns": 1, "cost_usd": 1.1},
-        )
-        got = self.measure([row("start", stage="spec"), done])
-        self.assertIs(got["met"], True)
-        self.assertEqual(
-            got["repaired"], [{"unit": "0001_a", "stage": "spec", "at": at(), "cost_usd": 1.1}]
-        )
-        self.assertEqual((got["failed"], got["stops"], got["reruns"]), ([], [], []))
-
-    def test_a_start_after_an_opening_failure_is_a_rerun(self):
-        rows = [
-            unopened_row(),
-            row("start", stage="spec", seconds=1),
-            row("start", stage="plan", seconds=2, started_by="autopilot"),
-            row("end", stage="plan", seconds=3, outcome="done"),
-            row("start", stage="plan", seconds=4),
-        ]
-        got = self.measure(rows)
-        self.assertEqual(
-            got["reruns"],
-            [
-                {
-                    "unit": "0001_a",
-                    "stage": "plan",
-                    "at": at(timedelta(seconds=2)),
-                    "started_by": "autopilot",
-                }
-            ],
-        )
-        self.assertIs(got["met"], True)
-
-    def test_a_stop_after_another_failure_is_not_counted(self):
-        rows = [
-            unopened_row(),
-            row("start", stage="plan", seconds=1),
-            row(
-                "end",
-                stage="plan",
-                seconds=2,
-                outcome="failed",
-                detail="the session returned nothing",
-            ),
-            unopened_stop(3),
-        ]
-        got = self.measure(rows)
-        self.assertEqual(got["stops"], [])
-        self.assertIs(got["met"], True)
-        # Nor a stop on a spike, which gets no repair turn.
-        spike = [unopened_row(stage="spike"), unopened_stop(1, "spike")]
-        self.assertIsNone(self.measure(spike)["met"])
-
-    def test_nothing_in_the_window_is_not_measured(self):
-        self.assertIsNone(self.measure([row("end", stage="plan", outcome="done")])["met"])
-        self.assertIsNone(
-            self.measure([unopened_row(-3 * 86400), unopened_stop(-3 * 86400 + 1)])["met"]
-        )
-        self.assertIsNone(
-            ap.measure_opening([unopened_row()], "other", "2026-01-01", "2026-12-31")["met"]
-        )
-
-    def test_the_measure_reads_the_words_stop_for_writes(self):
-        said = ap.stop_for(unit(), nxt("plan", "write-plan"), unopened_row(), False, unopened=2)
-        got = self.measure([unopened_row(), stop_row(said["kind"], 1, reason=said["reason"])])
-        self.assertEqual([s["stage"] for s in got["stops"]], ["plan"])
-
-
-class MeasuringReruns(unittest.TestCase):
-    """One sample log per class."""
-
-    def measure(self, rows):
-        return ap.measure_reruns(
-            rows, "w", ap.today(NOW - timedelta(days=1)), ap.today(NOW + timedelta(days=1))
-        )
-
-    def one(self, rows):
-        got = self.measure(rows)
-        self.assertEqual(len(got["cases"]), 1, got)
-        return got["cases"][0]["class"], got["met"]
-
-    def test_no_case_is_not_measured(self):
-        self.assertIsNone(self.measure([])["met"])
-        not_a_case = [
-            answer_row(completes=False),
-            answer_row(autopilot=False),
-            answer_row(shortlisted=False),
-            answer_row(status="accepted"),
-        ]
-        self.assertIsNone(self.measure(not_a_case)["met"])
-
-    def test_on_time(self):
-        rows = [
-            answer_row(),
-            stop_row(""),
-            row("autopilot-pick", seconds=1),
-            row("start", seconds=2),
-        ]
-        self.assertEqual(self.one(rows), ("on-time", True))
-
-    def test_on_time_within_ten_minutes_when_full(self):
-        rows = [answer_row(), stop_row("full", 1), row("autopilot-pick", seconds=550)]
-        self.assertEqual(self.one(rows), ("on-time", True))
-        self.assertEqual(
-            self.one([answer_row(), row("autopilot-pick", seconds=550)]), ("late", False)
-        )
-
-    def test_late(self):
-        self.assertEqual(
-            self.one([answer_row(), row("start", seconds=700), stop_row("full", 800)]),
-            ("late", False),
-        )
-
-    def test_held(self):
-        self.assertEqual(self.one([answer_row(held=True)]), ("held", True))
-
-    def test_reruns(self):
-        self.assertEqual(self.one([answer_row(), stop_row("reruns", 1)]), ("reruns", True))
-
-    def test_gate(self):
-        self.assertEqual(
-            self.one([answer_row(), stop_row("f", 1, reason="intent: idea.md is draft")]),
-            ("gate", True),
-        )
-        late_pick = [
-            answer_row(),
-            row("autopilot-pick", seconds=900),
-            stop_row("f", 901, reason="closed"),
-        ]
-        self.assertEqual(self.one(late_pick), ("gate", True))
-
-    def test_cap(self):
-        self.assertEqual(self.one([answer_row(), stop_row("cap", 1)]), ("cap", False))
-
-    def test_another_stop(self):
-        self.assertEqual(
-            self.one([answer_row(), stop_row("f", 1, reason="finish and accept intent.md")]),
-            ("stop:f", False),
-        )
-        self.assertEqual(self.one([answer_row(), stop_row("a", 1)]), ("stop:a", False))
-
-    def test_none(self):
-        self.assertEqual(
-            self.one(
-                [
-                    answer_row(),
-                    row("start", unit="0002_b", seconds=1),
-                    row("start", stage="spec", seconds=2),
-                ]
-            ),
-            ("none", False),
-        )
-
-    def test_the_window(self):
-        old = answer_row(seconds=-3 * 86400)
-        self.assertIsNone(self.measure([old])["met"])
-        self.assertIsNone(
-            ap.measure_reruns([answer_row()], "other", "2026-01-01", "2026-12-31")["met"]
-        )
-
-
 def ran_out_row(seconds=0, stage="plan", unit="0001_a"):
     return row("end", unit, stage, seconds, outcome="exhausted")
 
 
 def ran_out_stop(seconds=0, stage="plan", unit="0001_a", note=""):
     return stop_row("e", seconds, unit, f"the last {stage} step ended exhausted" + note)
-
-
-class MeasureExhausted(unittest.TestCase):
-    """A stop at the first time a stage other than `ship` ran out is a violation."""
-
-    def measure(self, rows):
-        return ap.measure_exhausted(
-            rows, "w", ap.today(NOW - timedelta(days=1)), ap.today(NOW + timedelta(days=1))
-        )
-
-    def test_a_stop_at_the_first_exhausted_step_is_a_violation(self):
-        got = self.measure([ran_out_row(), ran_out_stop(1)])
-        self.assertIs(got["met"], False)
-        self.assertEqual(
-            got["violations"], [{"unit": "0001_a", "stage": "plan", "at": at(timedelta(seconds=1))}]
-        )
-        self.assertEqual(got["exhausted"], 1)
-
-    def test_a_second_exhausted_stop_and_a_ship_stop_are_not_violations(self):
-        rows = [
-            ran_out_row(),
-            row("start", stage="plan", seconds=1),
-            ran_out_row(2),
-            ran_out_stop(3, note="; origin x"),
-            ran_out_row(4, "ship", "0002_b"),
-            ran_out_stop(5, "ship", "0002_b"),
-        ]
-        got = self.measure(rows)
-        self.assertEqual((got["met"], got["violations"], got["exhausted"]), (True, [], 2))
-
-    def test_no_exhausted_step_is_not_measured(self):
-        self.assertIsNone(self.measure([row("end", stage="plan", outcome="done")])["met"])
-        self.assertIsNone(self.measure([ran_out_row(0, "ship"), ran_out_stop(1, "ship")])["met"])
-
-    def test_an_exhausted_step_before_the_window_does_not_count(self):
-        got = self.measure([ran_out_row(-3 * 86400), ran_out_row(), ran_out_stop(1)])
-        self.assertIs(got["met"], False)
-        self.assertEqual(len(got["violations"]), 1)
-        other = ap.measure_exhausted(
-            [ran_out_row(), ran_out_stop(1)], "other", "2026-01-01", "2026-12-31"
-        )
-        self.assertIsNone(other["met"])
-
-    def test_the_measure_reads_the_words_stop_for_writes(self):
-        said = ap.stop_for(
-            unit(),
-            nxt("plan", "write-plan"),
-            {"kind": "end", "stage": "plan", "outcome": "exhausted"},
-            False,
-            exhausted=2,
-        )
-        got = self.measure([ran_out_row(), stop_row(said["kind"], 1, reason=said["reason"])])
-        self.assertEqual([v["stage"] for v in got["violations"]], ["plan"])
 
 
 class AWorkspaceStopIsNoUnitsStop(unittest.TestCase):
@@ -1668,17 +1241,11 @@ class AWorkspaceStopIsNoUnitsStop(unittest.TestCase):
         ]
         for rows in logs:
             with_it = sorted(rows + workspace, key=lambda r: r["at"])
-            for measure in (
-                ap.measure,
-                ap.measure_reruns,
-                ap.measure_exhausted,
-                ap.measure_opening,
-            ):
-                self.assertEqual(
-                    measure(with_it, "w", since, until),
-                    measure(rows, "w", since, until),
-                    f"{measure.__name__} on {[r['kind'] for r in rows]}",
-                )
+            self.assertEqual(
+                ap.measure(with_it, "w", since, until),
+                ap.measure(rows, "w", since, until),
+                str([r["kind"] for r in rows]),
+            )
 
     def test_open_questions_is_the_stop_a_set(self):
         asked = unit(

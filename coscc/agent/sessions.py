@@ -716,31 +716,6 @@ class Sessions:
         self._turns[turn["id"]] = turn
         return turn
 
-    def in_flight(self) -> list[dict[str, Any]]:
-        """The chat turns answering now, oldest first. This process only."""
-        return [
-            {k: t[k] for k in ("id", "session_id", "workspace", "started")}
-            for t in sorted(self._turns.values(), key=lambda t: t["started"])
-        ]
-
-    async def cut_turn(self, turn_id: str) -> bool:
-        """End one chat turn: its reader is cancelled and its client closed.
-
-        `False` when the turn had already ended. The reply stops where it was; nothing is
-        written for it, like a chat whose tab was closed.
-        """
-        turn = self._turns.pop(turn_id, None)
-        if turn is None:
-            return False
-        task = turn.get("task")
-        if task is not None and task is not asyncio.current_task() and not task.done():
-            task.cancel()
-        if turn["session_id"]:
-            await self.close(turn["session_id"])
-        if self.on_turn_end is not None:
-            self.on_turn_end()
-        return True
-
     def adopt(self, session_id: str) -> None:
         """Record a session as this app's; otherwise a session created and resumed in one
         process would look foreign to knob 4."""

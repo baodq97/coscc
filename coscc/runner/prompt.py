@@ -379,7 +379,6 @@ def compose_prompt(  # noqa: C901, PLR0915 - still to split
     screens_note: str = "",
     drift_note: str = "",
     worktree: str = "",
-    pr_note: str = "",
     ceilings: tuple[int, float] | None = None,
     rerun: bool = False,
     rerun_note: str = "",
@@ -729,12 +728,6 @@ def compose_prompt(  # noqa: C901, PLR0915 - still to split
     if screens_note and stage == "review":
         included.append("screens")
         parts.append(screens_note.rstrip())
-
-    # Only for `pr`; `service.steps.run_step` looked the pull request up and
-    # `integrate.describe_pr_lookup` built the block, heading included.
-    if pr_note and stage == "pr":
-        included.append("pull-request")
-        parts.append(pr_note.rstrip())
 
     # Every artifact of the unit that exists, by absolute path, so what the prompt no longer
     # carries can still be found; `pointed` is what is here and not above.

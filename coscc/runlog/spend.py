@@ -33,7 +33,6 @@ WASTE_KINDS = (
     "integrate-not-recorded",
     "changes-requested",
 )
-ANOMALY_KINDS = ("over-budget", "failed", "reruns", "tokens-per-turn")
 
 
 def _usd(record: dict[str, Any]) -> float | None:

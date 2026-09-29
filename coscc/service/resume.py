@@ -348,7 +348,6 @@ class Resume:
             for k in (
                 "workspace_dir",
                 "rounds_before",
-                "pr_before",
                 "tree",
                 "watch",
                 "scratch",
@@ -370,7 +369,6 @@ class Resume:
             label=owner.get("label"),
             agent=self.agents.agent(stage),
             end_fields=end_fields,
-            pr_before=owner.get("pr_before"),
             read_also=tuple(owner.get("read_also") or ()),
             resume=record,
             owner_extra=extra,
