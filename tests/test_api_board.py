@@ -149,16 +149,11 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
             "/api/board/mode", content=b"not json", headers={"content-type": "application/json"}
         )
         self.assertEqual(r.status_code, 400)
-        self.assertIn("body must be JSON", r.json()["error"])
+        self.assertIn("send a JSON object", r.json()["error"])
 
     async def test_a_unit_that_never_ran_has_an_empty_timeline_and_no_cost(self):
         board_body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
-        body = (
-            await self.client.get(
-                "/api/timeline",
-                params={"cwd": str(REPO), "unit": _a_unit(board_body)},
-            )
-        ).json()
+        body = self.app.state.service.backlog.timeline(str(REPO), _a_unit(board_body))
         self.assertEqual(body["runs"], [])
         # Zeroed rather than empty: the page gets the same shape whether or not a unit has
         # ever run, so it never has to branch on the difference.

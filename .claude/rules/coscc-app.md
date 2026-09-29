@@ -46,7 +46,7 @@ logic behind `Service` (`service/`): a handler that decides anything is a bug in
 ## Docs (`.claude/docs/`, read when editing what the line names)
 
 - `.claude/docs/coscc-notices.md` — `coscc/service/notices.py`, the notice script.
-- `.claude/docs/coscc-steps.md` — `/api/timeline`, `/api/board/stop`, `/api/board/running`, `Steps.run_step`, `journal.failed_attempts`.
+- `.claude/docs/coscc-steps.md` — `Backlog.timeline`, `/api/board/stop`, `/api/board/running`, `Steps.run_step`, `journal.failed_attempts`.
 - `.claude/docs/coscc-answers.md` — answer, outcome, hold and more-rounds routes, `cos.mjs rerun`, `coscc/units/hold.py`, `coscc/runner/prompt.py` answers helpers.
 - `.claude/docs/coscc-settings.md` — `/api/settings/*`, `coscc/agent/models.py`, `/api/backlog/*`.
 - `.claude/docs/coscc-spike.md` — the `spike` grant, its scratch directory.
