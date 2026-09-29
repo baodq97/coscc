@@ -108,9 +108,6 @@ from coscc.service.ideas import (
 from coscc.service.release import (
     ReleaseMixin,
 )
-from coscc.service.knowledge import (
-    KnowledgeMixin,
-)
 from coscc.service.resume import (
     ResumeMixin,
 )
@@ -133,7 +130,6 @@ class Service(
     NoticesMixin,
     IdeasMixin,
     ReleaseMixin,
-    KnowledgeMixin,
     ResumeMixin,
 ):
     config: Config
@@ -192,8 +188,6 @@ class Service(
     _autopilot_held: dict[str, dict[str, tuple[str, str]]] = field(default_factory=dict, init=False, repr=False)
     # The reader of each workspace's pull requests, while its autopilot is on.
     _pr_readers: dict[str, asyncio.Task] = field(default_factory=dict, init=False, repr=False)
-    # The gathers after a ship running now, kept so none is collected mid-run.
-    _gathers: set[asyncio.Task] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # No working folder means no store.

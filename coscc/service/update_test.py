@@ -126,7 +126,7 @@ class WhatThePanelSays(unittest.TestCase):
 
         words = update_words({"shape": "service", "state": "pending", "release": {"state": "ready"}, "local": {}})
         self.assertEqual(words["line"],
-                         "An update waits for an integration, a screenshot retake or a knowledge gather to finish.")
+                         "An update waits for an integration or a screenshot retake to finish.")
         self.assertEqual(words["line"], updater.WAITING_WARNING)
         self.assertEqual(words["line"].count("."), 1)
         self.assertNotIn("apply-release", words["actions"])

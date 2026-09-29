@@ -399,7 +399,7 @@ class TheSession(unittest.TestCase):
         self.assertEqual((reply, end["session_id"], failure), ("hi", "s", ""))
         # `0136` R8: turns enough to submit, be refused and submit again.
         self.assertEqual((s.kw["tools"], s.kw["max_turns"]), ([], SUBMIT_TURNS))
-        self.assertNotIn("mcp_servers", s.kw, "no channel given, none opened: a knowledge batch")
+        self.assertNotIn("mcp_servers", s.kw, "no channel given, none opened")
         self.assertEqual(s.kw["max_budget_usd"], grant_for("precedent").max_budget_usd)
         self.assertNotIn("effort", s.kw)
 

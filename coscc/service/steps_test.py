@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import units
-from coscc.knowledge import modeltrial
+from coscc.agent import modeltrial
 from coscc.github import prscope
 from coscc.git import fetches, worktrees
 from coscc.config import Config
@@ -1150,7 +1150,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
             async for item in super().stream(cwd, text, session_id, max_turns, step=step, **kw):
                 yield item
 
-    def _unit(self, plan: str | None = ROUTINE, knowledge: bool = False, model: str | None = None):
+    def _unit(self, plan: str | None = ROUTINE, model: str | None = None):
         """A fresh workspace, service and unit, so two runs of one test do not share a log."""
         self.made_count += 1
         root = Path(self._tmp.name) / str(self.made_count)
@@ -1161,7 +1161,6 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
                 workspaces=(str(self.repo),),
                 working_dir=str(root / "work"),
                 data_dir=str(root / "data"),
-                knowledge=knowledge,
                 model=model,
             ),
             self.Impl(self),
@@ -1173,7 +1172,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
     def _run(self, stage: str = "impl", arm: str = "opus-5-5"):
         from coscc.units import board as board_reader
-        from coscc.knowledge import modeltrial
+        from coscc.agent import modeltrial
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, f"open: {stage} may proceed"
@@ -1316,21 +1315,6 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         self.assertIn("ci_red", start)
         self.assertIsNone(start["ci_red"])
         self.assertEqual(len(self.seen), 1)
-
-    def test_ci_red_is_recorded_with_only_cos_knowledge_on(self):
-        # `0131` R19: the same field, on a step the model trial does not take.
-        from coscc import knowledge
-
-        self._unit(plan=self.SECURITY, knowledge=True)
-        self._run()
-        self.action = "CI is red on #7: tests — back to impl: fix on the branch and push"
-        self.reasons = ["ci-red"]
-        self._run()
-        first, second = self._starts()
-        self.assertNotIn("ci_red", first)
-        self.assertIs(second["ci_red"], True)
-        self.assertNotIn("model_trial", second)
-        self.assertEqual(second[knowledge.TRIAL_FIELD], {"arm": knowledge.arm(self.made["unit"])})
 
     def test_a_first_impl_asks_nothing(self):
         self._unit()
@@ -1920,19 +1904,24 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         self.assertEqual(gh.of("view", prscope.FIELDS), [])
 
 
-class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
-    """`0090` plan step 4. `run_step` reads the store once, only with `COS_KNOWLEDGE` on and
-    only for `spec`, `spike` and `plan`, and hands `Runner.run` what applies. The gate, the
-    worktree and the runner are stand-ins: what is checked is the kwargs `Runner.run` gets."""
+class RunStepHandsOnThePlanMap(unittest.TestCase):
+    """`0096` plan step 4. `run_step` hands an `impl` step the files its plan names as they
+    stand in the step's tree, and every other stage no key. The gate, the worktree and the
+    runner are stand-ins: what is checked is the kwargs `Runner.run` gets."""
 
-    # `0136` R12, R13: `pr` and `ship` run no session, so there is no `Runner.run` to hand a
-    # key to; `test_pr_and_ship_reach_no_runner` says so.
-    ALL = ("idea", "intent", "spec", "spike", "plan", "impl", "review")
+    PLAN = "# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `pkg/m.py`.\n- `pkg/later.py`.\n"
+
+    def plan(self, text: str | bytes) -> None:
+        path = units.unit_dir(str(self.repo), self.unit, str(self.data)) / "plan.md"
+        if isinstance(text, bytes):
+            path.write_bytes(text)
+        else:
+            path.write_text(text, encoding="utf-8")
 
     def test_pr_and_ship_reach_no_runner(self):
         from coscc.units import board as board_reader
 
-        service = self.service(True)
+        service = self.service()
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, f"open: {stage} may proceed"
@@ -1962,30 +1951,15 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
         (self.repo / ".git").mkdir(parents=True)
         self.data = self.root / "data"
         self.seen: list[dict] = []
-        from coscc import knowledge
+        (self.repo / "pkg").mkdir()
+        (self.repo / "pkg" / "m.py").write_text("import os\n\n\ndef top():\n    pass\n", encoding="utf-8")
 
-        # `0131` R16: the `on` arm unless a test says otherwise, so what the store hands on is
-        # what is checked.
-        forced = mock.patch.object(knowledge, "arm", lambda unit: knowledge.ON)
-        forced.start()
-        self.addCleanup(forced.stop)
-
-    def service(self, on: bool) -> Service:
+    def service(self) -> Service:
         config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
-                        data_dir=str(self.data), knowledge=on)
+                        data_dir=str(self.data))
         service = Service(config, Sessions(config))
         self.unit = create_sync(service, str(self.repo), "a-problem", "words")["unit"]
         return service
-
-    def write_store(self, *scopes: str) -> None:
-        from coscc import knowledge
-
-        blocks = [
-            f"## K{n}\nScope: {scope}\nSource: proj-000000000000/0001_a/spike.md ## U1\nMeasured: 2026-09-25\nFact {n}."
-            for n, scope in enumerate(scopes, 1)
-        ]
-        text = f"# Knowledge\nVersion: 1. Gathered: 2026-09-27T00:00:00Z. Max id: K{len(scopes)}.\n\n" + "\n\n".join(blocks) + "\n"
-        knowledge.save(knowledge.path_of(str(self.data)) / knowledge.STORE, text)
 
     def kwargs_of(self, service: Service, stage: str) -> dict:
         from coscc.units import board as board_reader
@@ -2029,106 +2003,36 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
         self.assertEqual(len(self.seen), before + 1, str(refused.exception))
         return self.seen[-1]
 
-    def test_off_nothing_is_read_and_no_key_is_handed_on(self):
-        from coscc import knowledge
+    def test_impl_gets_the_files_of_its_plan_from_the_tree(self):
+        service = self.service()
+        self.plan(self.PLAN)
+        kw = self.kwargs_of(service, "impl")
+        self.assertEqual(kw["plan_map"], "- `pkg/m.py` — 5 lines\n  - 4 def top\n- `pkg/later.py` — new")
+        self.assertEqual((kw["plan_map_record"]["files"], kw["plan_map_record"]["new"]), (2, 1))
+        self.assertNotIn("error", kw["plan_map_record"])
 
-        service = self.service(False)
-        self.write_store("tool:x")
-        with mock.patch.object(knowledge, "load", side_effect=AssertionError("read with the flag off")):
-            for stage in self.ALL:
-                with self.subTest(stage=stage):
-                    kw = self.kwargs_of(service, stage)
-                    self.assertNotIn("knowledge", kw)
-                    self.assertNotIn("knowledge_record", kw)
-                    self.assertNotIn("knowledge_trial", kw)
+    def test_a_plan_without_the_section_is_an_empty_section_and_zero_bytes(self):
+        service = self.service()
+        self.plan("# Plan: x\nStatus: accepted.\n")
+        kw = self.kwargs_of(service, "impl")
+        self.assertEqual(kw["plan_map"], "")
+        self.assertEqual(kw["plan_map_record"]["bytes"], 0)
 
-    def test_on_spec_spike_plan_and_impl_get_the_entries_of_this_workspace(self):
-        from coscc import knowledge
-
-        service = self.service(True)
-        self.write_store("tool:x", "workspace:elsewhere-0123456789ab")
-        for stage in knowledge.STAGES:
+    def test_no_other_stage_gets_a_key(self):
+        service = self.service()
+        self.plan(self.PLAN)
+        for stage in ("plan", "review"):
             with self.subTest(stage=stage):
                 kw = self.kwargs_of(service, stage)
-                self.assertIn("Fact 1.", kw["knowledge"])
-                self.assertNotIn("Fact 2.", kw["knowledge"])
-                self.assertEqual(kw["knowledge_record"]["entries"], 1)
-                self.assertEqual(kw["knowledge_record"]["version"], knowledge.version_of(kw["knowledge"]))
+                self.assertNotIn("plan_map", kw)
+                self.assertNotIn("plan_map_record", kw)
 
-    def test_on_no_other_stage_gets_a_key(self):
-        service = self.service(True)
-        self.write_store("tool:x")
-        for stage in ("idea", "intent", "review"):
-            with self.subTest(stage=stage):
-                kw = self.kwargs_of(service, stage)
-                self.assertNotIn("knowledge", kw)
-                self.assertNotIn("knowledge_record", kw)
-
-    def test_every_start_carries_knowledge_trial_with_the_flag_on(self):
-        # `0131` R18, whichever arm.
-        from coscc import knowledge
-
-        service = self.service(True)
-        self.write_store("tool:x")
-        for arm in (knowledge.ON, knowledge.OFF):
-            with mock.patch.object(knowledge, "arm", lambda unit, arm=arm: arm):
-                for stage in self.ALL:
-                    with self.subTest(arm=arm, stage=stage):
-                        self.assertEqual(self.kwargs_of(service, stage)["knowledge_trial"], {"arm": arm})
-
-    def test_an_off_arm_unit_reads_no_store_at_any_stage(self):
-        # `0131` R17.
-        from coscc import knowledge
-
-        service = self.service(True)
-        self.write_store("tool:x")
-        with mock.patch.object(knowledge, "arm", lambda unit: knowledge.OFF), \
-                mock.patch.object(knowledge, "load", side_effect=AssertionError("read in the off arm")):
-            for stage in self.ALL:
-                with self.subTest(stage=stage):
-                    kw = self.kwargs_of(service, stage)
-                    self.assertNotIn("knowledge", kw)
-                    self.assertNotIn("knowledge_record", kw)
-                    self.assertEqual(kw["knowledge_trial"], {"arm": knowledge.OFF})
-
-    def test_impl_receives_the_store_on_every_run(self):
-        # `0131` R14: the run after a review or a red CI too.
-        service = self.service(True)
-        self.write_store("tool:x")
-        first = self.kwargs_of(service, "impl")
-        journal = service._journal()
-        journal.started(service._journal_key(str(self.repo)), self.unit, "impl", "manual")
-        second = self.kwargs_of(service, "impl")
-        self.assertEqual((first["impl_run"], second["impl_run"]), (1, 2))
-        for kw in (first, second):
-            self.assertIn("Fact 1.", kw["knowledge"])
-            self.assertEqual(kw["knowledge_record"]["ids"], ["K1"])
-
-    def test_on_with_nothing_applicable_is_an_empty_section_and_zero_entries(self):
-        service = self.service(True)
-        self.write_store("workspace:elsewhere-0123456789ab")
-        kw = self.kwargs_of(service, "spec")
-        self.assertEqual(kw["knowledge"], "")
-        self.assertEqual(kw["knowledge_record"]["entries"], 0)
-        self.assertNotIn("error", kw["knowledge_record"])
-
-    def test_settings_does_not_list_the_gathering_grant(self):
-        """Spec *Design*: no screen changes, so `/settings` lists the grants it listed before."""
-        from coscc.agent import policy
-
-        stages = [r["stage"] for r in self.service(False).settings()["grants"]]
-        self.assertNotIn("knowledge", stages)
-        self.assertEqual(
-            [s for s in stages if ":" not in s],
-            sorted(set(policy.GRANTS) - policy.TERMINAL_ONLY),
-        )
-
-    def test_on_a_store_that_cannot_be_read_still_runs_the_step(self):
-        service = self.service(True)
-        kw = self.kwargs_of(service, "plan")  # no store written at all
-        self.assertEqual(kw["knowledge"], "")
-        self.assertEqual((kw["knowledge_record"]["entries"], kw["knowledge_record"]["bytes"]), (0, 0))
-        self.assertIn("FileNotFoundError", kw["knowledge_record"]["error"])
+    def test_a_plan_that_cannot_be_read_still_runs_the_step(self):
+        service = self.service()
+        self.plan(b"# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `pkg/m.py` \xff\n")
+        kw = self.kwargs_of(service, "impl")
+        self.assertEqual(kw["plan_map"], "")
+        self.assertIn("UnicodeDecodeError", kw["plan_map_record"]["error"])
 
 
 class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
@@ -2210,10 +2114,9 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
         self.assertTrue(units.spike_dir(str(self.repo), self.unit, service.config.data_dir).is_dir())
 
 
-class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
-    """`0131` plan step 7, R1. `_drive` schedules one gather of the unit when a `ship` ends
-    `done` with the flag on, and none otherwise; the gather runs on its own `Sessions` and is
-    a job an update waits for. No session opens: `gather_unit` is a stand-in throughout."""
+class APrOrShipEndsThroughTheMachine(unittest.TestCase):
+    """`_drive` ends a `pr` or a `ship` through the PR machine and leaves the unit's last word.
+    No session opens: the runner and the machine are stand-ins throughout."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -2222,16 +2125,16 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
         self.repo = self.root / "work" / "proj"
         (self.repo / ".git").mkdir(parents=True)
 
-    def service(self, on: bool) -> Service:
+    def service(self) -> Service:
         config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
-                        data_dir=str(self.root / "data"), knowledge=on)
+                        data_dir=str(self.root / "data"))
         service = Service(config, Sessions(config))
         self.unit = create_sync(service, str(self.repo), "a-problem", "words")["unit"]
         return service
 
-    def drive(self, service: Service, stage: str, outcome: str, rebased: dict | None = None) -> list[tuple]:
-        """One step whose runner ends `outcome`, and every `_gather_soon` it made. What the
-        stand-in machine's `ship` was handed is kept in `self.shipped_with`."""
+    def drive(self, service: Service, stage: str, outcome: str, rebased: dict | None = None) -> None:
+        """One step whose runner ends `outcome`. What the stand-in machine's `ship` was handed
+        is kept in `self.shipped_with`."""
         from coscc.units import board as board_reader
         from coscc.github import integrate
 
@@ -2256,8 +2159,6 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
 
         async def no_pr(*a, **kw):
             return {"state": "none", "url": ""}
-
-        scheduled: list[tuple] = []
 
         from coscc.git import gitops
         from coscc.github import prmachine
@@ -2295,30 +2196,23 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
                 mock.patch.object(service, "_ingest", nothing), \
                 mock.patch.object(service, "_cleanup", nothing), \
                 mock.patch.object(service, "_after_end", nothing), \
-                mock.patch.object(service, "_sync_pr", nothing), \
-                mock.patch.object(service, "_gather_soon", lambda *a: scheduled.append(a)):
+                mock.patch.object(service, "_sync_pr", nothing):
             asyncio.run(go())
-        return scheduled
-
-    def test_a_done_ship_schedules_one_gather_of_that_unit(self):
-        service = self.service(True)
-        scheduled = self.drive(service, "ship", "done")
-        self.assertEqual(scheduled, [(str(self.repo), self.unit, service._journal_key(str(self.repo)))])
 
     def test_the_gates_clean_rebase_reaches_the_machines_guard(self):
         """`0136` review round 1, F1."""
-        service = self.service(False)
+        service = self.service()
         rebased = {"reviewed": "a" * 40, "head": "b" * 40}
         self.drive(service, "ship", "done", rebased=rebased)
         self.assertEqual(self.shipped_with, [rebased])
-        self.drive(self.service(False), "ship", "done")
+        self.drive(self.service(), "ship", "done")
         self.assertEqual(self.shipped_with, [None])
 
     def test_every_pr_and_ship_leaves_the_record_the_autopilots_stop_reads(self):
         """`0136` review round 1, F2: there is no `end`, so this is the unit's last word."""
         for stage, outcome in (("ship", "failed"), ("ship", "done"), ("pr", "failed"), ("pr", "done")):
             with self.subTest(stage=stage, outcome=outcome):
-                service = self.service(False)
+                service = self.service()
                 # Each subtest makes a new unit over the same data root, so only its own rows count.
                 before = len(service._journal().records(kind=autopilot.PR_MACHINE))
                 self.drive(service, stage, outcome)
@@ -2333,143 +2227,13 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
         """`0136` review round 2, F6: the autopilot stops `f` on it, not `e`."""
         from coscc.github import prmachine
 
-        service = self.service(False)
+        service = self.service()
         with mock.patch.object(prmachine, "state", lambda *a: {"state": "merge-requested"}):
             self.drive(service, "ship", "failed")
         [rec] = service._journal().records(kind=autopilot.PR_MACHINE)
         self.assertEqual((rec["outcome"], rec["merge_refused"], rec["detail"]), ("failed", True, "gh down"))
         [ship] = service._journal().records(kind="ship")
         self.assertEqual(ship["result"], "refused")
-
-    def test_a_failed_ship_or_the_flag_off_schedules_none(self):
-        for on, stage, outcome in ((True, "ship", "failed"), (False, "ship", "done"), (True, "pr", "done")):
-            with self.subTest(on=on, stage=stage, outcome=outcome):
-                self.assertEqual(self.drive(self.service(on), stage, outcome), [])
-
-    def test_a_gather_after_ship_runs_on_its_own_sessions(self):
-        from coscc.knowledge import gather
-
-        service = self.service(True)
-        membership = service.sessions.membership
-        seen = {}
-
-        async def stand_in(data_dir, journal, sessions, model, slot, unit, path, say):
-            seen.update(sessions=sessions, slot=slot, unit=unit, path=path)
-            sessions.membership = lambda d: False  # what `gather` does to the one it is handed
-            return {"outcome": "saved"}
-
-        with mock.patch.object(gather, "gather_unit", stand_in):
-            got = asyncio.run(service._gather_unit(str(self.repo), self.unit, service._journal_key(str(self.repo))))
-        self.assertEqual(got, {"outcome": "saved"})
-        self.assertIsInstance(seen["sessions"], Sessions)
-        self.assertIsNot(seen["sessions"], service.sessions)
-        self.assertIs(service.sessions.membership, membership)
-        self.assertEqual((seen["slot"], seen["unit"], seen["path"]), (units.slot(str(self.repo)), self.unit, str(self.repo)))
-
-    def test_a_gather_is_a_job_the_update_waits_for(self):
-        from coscc.knowledge import gather
-
-        service = self.service(True)
-        key = service._journal_key(str(self.repo))
-
-        async def go():
-            release = asyncio.Event()
-
-            async def stand_in(*a, **kw):
-                await release.wait()
-                return {"outcome": "saved"}
-
-            with mock.patch.object(gather, "gather_unit", stand_in):
-                service._gather_soon(str(self.repo), self.unit, key)
-                await asyncio.sleep(0)
-                during = [j for j in service._update_waited() if j["stage"] == "knowledge"]
-                release.set()
-                await asyncio.gather(*service._gathers)
-            after = [j for j in service._update_waited() if j["stage"] == "knowledge"]
-            return during, after
-
-        during, after = asyncio.run(go())
-        self.assertEqual([(j["kind"], j["unit"], j["workspace"]) for j in during], [("integration", self.unit, key)])
-        self.assertEqual(after, [])
-        self.assertEqual(service._gathers, set())
-
-    def test_no_gather_begins_once_apply_is_pressed(self):
-        # `0138` review round 1, F2: an Apply waits for a gather, so none may begin after the
-        # press; its record says why, and nothing was spent.
-        from coscc.knowledge import gather
-
-        for state in ("pending", "applying"):
-            with self.subTest(state=state):
-                service = self.service(True)
-                service.updater.state = state
-                began = []
-
-                async def stand_in(*a, **kw):
-                    began.append(a)
-                    return {"outcome": "saved"}
-
-                async def go():
-                    with mock.patch.object(gather, "gather_unit", stand_in):
-                        service._gather_soon(str(self.repo), self.unit, service._journal_key(str(self.repo)))
-                        await asyncio.sleep(0)
-                        return [j for j in service._update_waited() if j["stage"] == "knowledge"]
-
-                self.assertEqual(asyncio.run(go()), [])
-                self.assertEqual((began, service._gathers), ([], set()))
-                [row] = service._journal().records(unit=self.unit, kind=gather.KIND)
-                self.assertEqual((row["unit"], row["outcome"], row["cost_usd"]), (self.unit, "refused", 0.0))
-                self.assertIn("an update is waiting to be applied", row["reason"])
-
-
-class RunStepHandsOnThePlanMap(RunStepHandsOnTheKnowledgeStore):
-    """`0096` plan step 4. `run_step` hands an `impl` step the files its plan names as they
-    stand in the step's tree, and every other stage no key. The same stand-ins as the
-    knowledge store's; the tests of that class run here too."""
-
-    PLAN = "# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `pkg/m.py`.\n- `pkg/later.py`.\n"
-
-    def plan(self, text: str | bytes) -> None:
-        path = units.unit_dir(str(self.repo), self.unit, str(self.data)) / "plan.md"
-        if isinstance(text, bytes):
-            path.write_bytes(text)
-        else:
-            path.write_text(text, encoding="utf-8")
-
-    def setUp(self):
-        super().setUp()
-        (self.repo / "pkg").mkdir()
-        (self.repo / "pkg" / "m.py").write_text("import os\n\n\ndef top():\n    pass\n", encoding="utf-8")
-
-    def test_impl_gets_the_files_of_its_plan_from_the_tree(self):
-        service = self.service(False)
-        self.plan(self.PLAN)
-        kw = self.kwargs_of(service, "impl")
-        self.assertEqual(kw["plan_map"], "- `pkg/m.py` — 5 lines\n  - 4 def top\n- `pkg/later.py` — new")
-        self.assertEqual((kw["plan_map_record"]["files"], kw["plan_map_record"]["new"]), (2, 1))
-        self.assertNotIn("error", kw["plan_map_record"])
-
-    def test_a_plan_without_the_section_is_an_empty_section_and_zero_bytes(self):
-        service = self.service(False)
-        self.plan("# Plan: x\nStatus: accepted.\n")
-        kw = self.kwargs_of(service, "impl")
-        self.assertEqual(kw["plan_map"], "")
-        self.assertEqual(kw["plan_map_record"]["bytes"], 0)
-
-    def test_no_other_stage_gets_a_key(self):
-        service = self.service(False)
-        self.plan(self.PLAN)
-        for stage in ("plan", "review"):
-            with self.subTest(stage=stage):
-                kw = self.kwargs_of(service, stage)
-                self.assertNotIn("plan_map", kw)
-                self.assertNotIn("plan_map_record", kw)
-
-    def test_a_plan_that_cannot_be_read_still_runs_the_step(self):
-        service = self.service(False)
-        self.plan(b"# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `pkg/m.py` \xff\n")
-        kw = self.kwargs_of(service, "impl")
-        self.assertEqual(kw["plan_map"], "")
-        self.assertIn("UnicodeDecodeError", kw["plan_map_record"]["error"])
 
 
 class _AReviewStep:

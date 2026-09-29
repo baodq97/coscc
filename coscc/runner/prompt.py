@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from coscc.agent import agents, harness, submit
-from coscc.knowledge import STAGES as KNOWLEDGE_STAGES
 from coscc.agent.policy import is_prose_stage
 from coscc.runner.review import (
     INCOMPLETE_SECTIONS,
@@ -248,23 +247,6 @@ JERA_ADVICE = (
     "same question from a person replaces it."
 )
 
-# # The same words after every section of the store, so a test can look for one fixed string.
-KNOWLEDGE_ADVICE = (
-    "Each entry above is what an earlier unit measured, with its source and the date it was "
-    "measured: a measurement, not a guarantee. When you rely on one, cite it as "
-    "`knowledge K<n>` instead of measuring it again. When the work in front of you "
-    "contradicts an entry, say so under `## Concerns`, or in the spike's verdict, rather "
-    "than quietly picking one side."
-)
-# # The same for `impl`, which writes no `## Concerns`: a contradiction goes into its final reply.
-KNOWLEDGE_ADVICE_IMPL = (
-    "Each entry above is what an earlier unit measured, with its source and the date it was "
-    "measured: a measurement, not a guarantee. When you rely on one, cite it as "
-    "`knowledge K<n>` instead of measuring it again. When the code in front of you "
-    "contradicts an entry, say so in your final reply rather than quietly picking one side; "
-    "do not write a `## Concerns` section."
-)
-
 # # Two headings, and the same words after each, for `impl` only. The commands advice is prose
 # # about `policy.check_command`, and `runner_test.TheCommandsAStepMayRun` asks that function
 # # each thing it says is refused.
@@ -431,7 +413,6 @@ def compose_prompt(
     worktree: str = "",
     pr_note: str = "",
     ceilings: tuple[int, float] | None = None,
-    knowledge: str = "",
     rerun: bool = False,
     rerun_note: str = "",
     plan_map: str = "",
@@ -597,15 +578,6 @@ def compose_prompt(
             "budget ceiling, a reply with no `Status:` line, a session that broke — the app "
             "writes `spike.md` from this file."
         )
-
-    # The slice of the store `service.run_step` read for this workspace, already capped
-    # (`knowledge.slice_for`); this only places it. `""` (flag off, `off` arm, or nothing
-    # applies) adds not one byte. `impl` is told otherwise.
-    impl = stage in ("impl", "implement")
-    if knowledge and (stage in KNOWLEDGE_STAGES or impl):
-        included.append("knowledge")
-        advice = KNOWLEDGE_ADVICE_IMPL if impl else KNOWLEDGE_ADVICE
-        parts.append(f"# What earlier units measured\n\n{knowledge}\n\n{advice}")
 
     # The files the plan changes as they stand, already capped (`planmap.select`), and the first
     # words the grant allows, taken from it; this only places them.

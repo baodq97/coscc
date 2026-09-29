@@ -67,9 +67,6 @@ class Config:
     # The workspace whose `origin/main` the *Build local* button builds. Unset means no
     # button. Set in the env file, never by a request.
     update_local_from: str | None = None
-    # On, `spec`, `spike` and `plan` carry what earlier units measured
-    # (`coscc/knowledge/__init__.py`). Only the env file sets it.
-    knowledge: bool = False
     # The next five are read without the `COS_` prefix: systemd and a login shell hand
     # them to every process. `invocation_id` is systemd's `INVOCATION_ID`.
     invocation_id: str | None = None
@@ -169,7 +166,6 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         model=e.get(_ENV_PREFIX + "MODEL") or None,
         update_check=_flag(e, "UPDATE_CHECK", True),
         update_local_from=_dir(e, "UPDATE_LOCAL_FROM"),
-        knowledge=_flag(e, "KNOWLEDGE", False),
         invocation_id=(e.get("INVOCATION_ID") or "").strip() or None,
         config_home=_config_home(e),
         uv_candidates=_uv_candidates(e),

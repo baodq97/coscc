@@ -75,15 +75,6 @@ class ThePage(unittest.TestCase):
         self.assertIn("ws-path-", cards)
         self.assertIn("Read only", cards)
 
-    def test_0131_a_knowledge_reason_is_behind_a_detail(self):
-        """`0131` review F2, F3: a reason may carry a path or a slot (S3)."""
-        page = _render(screens._knowledge()).replace('\\"', '"')
-        for key in ("kn-why-", "kn-gather-why", '["key"]', '["why"]'):
-            self.assertIn(key, page)
-        # An entry's and a gather's reason, each read twice: by the test that shows its detail,
-        # and as the text inside it.
-        self.assertEqual(page.count('["reason"]'), 4)
-
     def test_0089_one_sentence_and_no_limits(self):
         """`0089` R2, R9, R10 (D44, D56, D59)."""
         for gone in ("Nothing re-asks on its own", "Bars share", "not an approval", "verbatim",

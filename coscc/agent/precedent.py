@@ -460,7 +460,7 @@ async def ask(sessions: Any, cwd: str, prompt: str, grant: Any, model: str | Non
     `Suspended` out of here, and one taken up again goes on from its row.
 
     `channel` is the `submit.Collector` the session hands its object to; the grant must carry
-    `submits` for the gate to let the call through. A knowledge batch passes none."""
+    `submits` for the gate to let the call through."""
     from coscc.runner import CEILING_MARKERS, Denials, permission_gate
     from coscc.agent.sessions import StepHandle, Suspended
     from coscc.agent.submit import SERVER

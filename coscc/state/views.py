@@ -23,7 +23,6 @@ NAVIGATION = (
     ("sessions", "Sessions", "messages-square"),
     ("activity", "Activity & usage", "chart-no-axes-combined"),
     ("cost", "Cost", "circle-dollar-sign"),
-    ("knowledge", "Knowledge", "book-open"),
     ("settings", "Settings", "settings-2"),
 )
 

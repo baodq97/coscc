@@ -1519,22 +1519,20 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [])
         gh.open_prs, gh.state = [], "MERGED"
-        cleaned, gathered = [], []
+        cleaned = []
 
         async def cleanup(cwd, unit):
             cleaned.append(unit)
             return {"removed": True}
 
         self.service._cleanup = cleanup
-        self.service._gather_soon = lambda cwd, unit, key: gathered.append(unit)
-        self.service.config = dataclasses.replace(self.service.config, knowledge=True)
         self.assertEqual((await self.service._pr_read(self.key)).moved, [("0001_a", "merged")])
         await self.until(lambda: self.launched, "the pass the merge scheduled")
         self.assertEqual(self.launched, [("0002_b", "impl", "autopilot")])
         self.assertEqual(gh.count("pr", "merge"), 0, "a merge made elsewhere is only recorded")
         # Review round 1, F3: no `ship` step follows it, so the reader writes what one did.
         ships = [(r["unit"], r["result"]) for r in self.service._journal().records(kind="ship")]
-        self.assertEqual((ships, cleaned, gathered), ([("0001_a", "shipped")], ["0001_a"], ["0001_a"]))
+        self.assertEqual((ships, cleaned), ([("0001_a", "shipped")], ["0001_a"]))
 
     async def test_a_merge_the_start_up_reconcile_records_leaves_the_ship_row(self):
         """Review round 1, F3, at a restart: a `ship` that merged and died before its row."""

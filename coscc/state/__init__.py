@@ -139,9 +139,6 @@ from coscc.state.release import (
     ReleaseCommit,
     release_fields,
 )
-from coscc.state.knowledge import (
-    KnowledgeMixin,
-)
 from coscc.state.views import IdeaRow, ChildRow, link_fields  # noqa: F401 — the page imports them from here
 
 API = build()
@@ -157,7 +154,6 @@ class StudioState(
     RerunMixin,
     IdeasMixin,
     ReleaseMixin,
-    KnowledgeMixin,
     rx.State,
 ):
     """The whole page. No business state lives here — it is all read back from `Service`."""
@@ -1175,9 +1171,6 @@ class StudioState(
         if self.screen == "cost":
             # Every arrival here reads the run log once; no other screen does.
             self._load_cost()
-        if self.screen == "knowledge":
-            # The same, for the store, `health.json` and the run log.
-            self._load_knowledge()
         if self.screen == "settings":
             # The names panel reads every workspace's board, so only an arrival at Settings pays for it.
             await self._load_decisions()

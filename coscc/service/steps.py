@@ -14,11 +14,9 @@ from typing import Any, AsyncIterator
 
 from coscc.units import autopilot, backlog
 from coscc.units import board as board_reader
-from coscc.knowledge import efforttrial, modeltrial
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
-from coscc import knowledge
-from coscc.agent import agents, harness
+from coscc.agent import agents, harness, modeltrial
 from coscc.agent import submit as submit_mod
 from coscc.github import integrate, prmachine
 from coscc.units import planmap, retake
@@ -561,8 +559,6 @@ class StepsMixin:
                     # What opened this session, for *Integrate for a conflict*.
                     integrate_state=info["state"],
                     **({"agent": name} if name else {}),
-                    # Every `start` of the unit says its arm, or `measure` drops it.
-                    **({knowledge.TRIAL_FIELD: {"arm": knowledge.arm(unit)}} if self.config.knowledge else {}),
                 ).get("at")
             except (BadRecord, Busy):
                 pass
@@ -1008,11 +1004,10 @@ class StepsMixin:
                 failed = journal.failed_attempts(key, unit, stage)
             except Busy as e:
                 raise Invalid(str(e)) from e
-            # A return to `impl` in the model trial, or with `COS_KNOWLEDGE` on, asks `next` once
-            # whether CI sent it back; `_ci_red` never raises, so nothing here refuses the step.
-            in_trial = modeltrial.FIELD in (config.get("trial_record") or {})
-            if (in_trial or self.config.knowledge) and (config.get("impl_run") or 0) > 1:
-                config.setdefault("trial_record", {})[efforttrial.CI_RED] = await self._ci_red(cwd, unit, work)
+            # A return to `impl` in the model trial asks `next` once whether CI sent it back;
+            # `_ci_red` never raises, so nothing here refuses the step.
+            if modeltrial.FIELD in (config.get("trial_record") or {}) and (config.get("impl_run") or 0) > 1:
+                config.setdefault("trial_record", {})[modeltrial.CI_RED] = await self._ci_red(cwd, unit, work)
             end_fields = None
             if rounds_before is not None:
                 async def end_fields() -> dict[str, Any]:
@@ -1053,20 +1048,6 @@ class StepsMixin:
                 shortlist = {"rank": None, "of": None, "record": None, "error": str(e) or type(e).__name__}
             # `pr` opens no session: the PR machine asks `gh pr list` itself.
             pr_note, pr_before = "", None
-            # The store, read once, only with the flag on and only for the stages
-            # that receive it; off, nothing is read and `Runner.run` is handed no key at all, so
-            # its prompt and its `start` record are unchanged. A store that cannot be
-            # read never refuses the step (`knowledge.for_step`).
-            # With the flag on every stage says the unit's arm, and only the `on`
-            # arm reads the store, checked on the step's `HEAD` off the event loop, since
-            # each git read may take `admit.TIMEOUT`.
-            knowledge_kw: dict[str, Any] = {}
-            if self.config.knowledge:
-                arm = knowledge.arm(unit)
-                knowledge_kw["knowledge_trial"] = {"arm": arm}
-                if arm == knowledge.ON and stage in knowledge.STAGES:
-                    knowledge_kw.update(await asyncio.to_thread(
-                        knowledge.for_step, self.config.data_dir, units.slot(cwd), work))
             # After the last refusal that reads nothing more, before any money is
             # spent: every `impl` step writes `impl.md` itself, so only a comparison afterwards
             # can tell whether its `## Answers` survived.
@@ -1154,7 +1135,6 @@ class StepsMixin:
                     # The stage's row with today's overrides, read once
                     # as the step starts: a rename later reaches the next step, not this one.
                     agent=self._agent(stage),
-                    **knowledge_kw,
                     **plan_kw,
                     **unfinished_kw,
                     **link_kw,
@@ -1448,8 +1428,7 @@ class StepsMixin:
         return done
 
     async def _shipped(self, cwd: str, key: str, unit: str, result: str) -> dict[str, Any] | None:
-        """The `ship` row notices read, and after a merge the cleanup and the gather (once, in
-        the background). From `_mechanical`, and from the PR reader and the start-up reconcile
+        """The `ship` row notices read, and after a merge the cleanup. From `_mechanical`, and from the PR reader and the start-up reconcile
         when they record a merge no `ship` step follows any more. Never raises; the cleanup's answer after a merge, else `None`."""
         try:
             self._journal().append({"kind": "ship", "workspace": key, "unit": unit, "stage": "ship", "result": result})
@@ -1458,8 +1437,6 @@ class StepsMixin:
         if result != "shipped":
             return None
         cleanup = await self._cleanup(cwd, unit)
-        if self.config.knowledge:
-            self._gather_soon(cwd, unit, key)
         return cleanup
 
     async def reconcile_prs(self) -> list[dict[str, Any]]:

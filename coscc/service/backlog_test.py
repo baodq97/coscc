@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import hashlib
 import json
 import subprocess
@@ -822,18 +821,6 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
         self.assertEqual(start["asked"], [["spec.md", 1], ["spec.md", 2]])
         self.assertEqual(start["max_budget_usd"], precedent_mod.ceiling(start["prompt_chars"]))
         self.assertEqual(self.sessions.kw["max_budget_usd"], start["max_budget_usd"])
-
-    def test_jera_start_says_the_units_knowledge_arm_with_the_flag_on(self):
-        """`0131` R18, review F1: a `start` without it drops the unit from `measure`."""
-        from coscc import knowledge
-
-        self.reply(self.item(1))
-        self.ask()
-        self.assertNotIn(knowledge.TRIAL_FIELD, self.rows("start")[-1])
-        self.service.config = dataclasses.replace(self.service.config, knowledge=True)
-        self.reply(self.item(2))
-        self.ask()
-        self.assertEqual(self.rows("start")[-1][knowledge.TRIAL_FIELD], {"arm": knowledge.arm(self.asked)})
 
     def test_the_autopilot_asks_only_what_was_not_asked(self):
         """`0101` R2: a person's press asks every question; the autopilot's, only the unasked."""

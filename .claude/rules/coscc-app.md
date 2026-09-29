@@ -51,5 +51,4 @@ logic behind `Service` (`service/`): a handler that decides anything is a bug in
 - `.claude/docs/coscc-settings.md` — `/api/settings/*`, `coscc/agent/models.py`, `/api/backlog/*`.
 - `.claude/docs/coscc-spike.md` — the `spike` grant, its scratch directory.
 - `.claude/docs/coscc-page-text.md` — adding or removing words on a screen.
-- `.claude/docs/coscc-knowledge.md` — `coscc/knowledge/`, the `knowledge` grant, `coscc knowledge`.
 - `.claude/docs/coscc-proofs.md` — `npm run e2e`, `capture_screens.py` (overwrites `.web`).

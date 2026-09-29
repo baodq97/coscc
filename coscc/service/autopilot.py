@@ -121,7 +121,7 @@ class AutopilotMixin:
         if not got.moved:
             return got
         merged = [c for c in got.causes if c["transition"] == "merged"]
-        # A merge made on GitHub is followed by no `ship` step, so its `ship` row, cleanup and gather
+        # A merge made on GitHub is followed by no `ship` step, so its `ship` row and cleanup
         # are the reader's, before the pass it schedules.
         for c in merged:
             await self._shipped(cwd, key, c["unit"], "shipped")

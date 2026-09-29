@@ -32,14 +32,14 @@ Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST
   change is a `setting` record with `old` and `new`. A name opens and closes nothing (spec
   C6), and a mid-unit rename leaves one unit under two names (C2).
 - **Settings does not show the model a routine `impl` runs on.** Since `0139`, a unit whose
-  name hashes to the `opus-5-5` arm (`coscc/knowledge/modeltrial.py`) runs a routine `impl`
+  name hashes to the `opus-5-5` arm (`coscc/agent/modeltrial.py`) runs a routine `impl`
   on `claude-opus-5-5[1m]`, and the `sonnet-5-5` arm on `claude-sonnet-5-5[1m]`, both at the
   `impl` row's effort, between `COS_MODEL` and `models.json`; the `impl` row still reads its
   default, because `models.table` never passes the trial's model. Only that step's `start`
   says so, as `model_source: trial` beside `model_trial: {arm, requested, model}`, `model`
   being what the session's `init` named or `never-started`. A `model:impl` override or
   `COS_MODEL` wins, and the arm is recorded all the same. `COS_EFFORT_TRIAL` (`0123`) is no
-  longer read; its rows still are, by `coscc effort measure`.
+  longer read.
 - **`POST /api/settings/autopilot` lets the app start steps, and ship, on its own.** Since
   `0043`, `{cwd, name, value}` sets one of four, in `prefs`: `autopilot:<key>` and
   `autopilot_may_ship:<key>` (booleans, off), `max_parallel:<key>` (a whole number ≥ 1, 4),

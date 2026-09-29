@@ -357,43 +357,6 @@ def seed_transitions(work: Path, data_dir: Path, proj: Path) -> None:
                    actor="capture_screens", source="capture_screens")
 
 
-def seed_knowledge(work: Path, data_dir: Path, proj: Path) -> None:
-    """`0131` spec Design 7: a small store for `proj` — one `tool:` entry, two `workspace:`
-    ones — a `health.json` that calls two of them broken, one gather after a ship that the fetch
-    refused, and steps that carried an arm, so `/knowledge` shows every table filled. The
-    reasons name a slot and a path, as real ones do, and stay behind *Why* (review F2, F3)."""
-    from coscc import knowledge, units
-    from coscc.data import Data
-    from coscc.knowledge import admit, gather
-    from coscc.runlog.journal import Journal
-
-    slot = units.slot(str(proj.resolve()))
-    src = f"{slot}/0004_finished"
-    text = (
-        "# Knowledge\nVersion: 3. Gathered: 2026-09-27T09:12:03Z. Max id: K3.\n\n"
-        f"## K1\nScope: tool:reflex 0.9.12\nSource: {src}/spike.md ## U1\nMeasured: 2026-09-25\n"
-        "A computed var over a list re-renders every row.\n\n"
-        f"## K2\nScope: workspace:{slot}\nSource: {src}/plan.md ## Order of work\nRef: README.md\n"
-        "Measured: 2026-09-26\nThe README is the one place the install steps are written.\n\n"
-        f"## K3\nScope: workspace:{slot}\nSource: {src}/review.md Round 2 F1\nRef: coscc/gone.py\n"
-        "Measured: 2026-09-26\nThe old module held the run log reader.\n"
-    )
-    knowledge.save(knowledge.path_of(data_dir) / knowledge.STORE, text)
-    admit.save_health(data_dir, {slot: "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c"},
-                      {"K1": f"no pin in {slot}", "K2": "", "K3": "ref missing: coscc/gone.py"})
-    journal, key = Journal(work, Data(data_dir)), str(proj.resolve())
-    journal.append({"kind": gather.KIND, "workspace": slot, "mode": "unit", "unit": "0004_finished",
-                    "cost_usd": 0, "outcome": "refused", "dropped": [], "sessions": [],
-                    "reason": f"git fetch origin main in {proj.resolve()} failed: could not read from remote repository"})
-    for unit, stage, arm in (("0002_open-question", "spec", knowledge.ON), ("0002_open-question", "impl", knowledge.ON),
-                             ("0004_finished", "plan", knowledge.OFF)):
-        extra = {knowledge.TRIAL_FIELD: {"arm": arm}}
-        if arm == knowledge.ON:
-            extra["knowledge"] = {"version": "v", "entries": 2, "bytes": 400, "ids": ["K1", "K2"],
-                                  "withheld": [{"id": "K3", "reason": "coscc/gone.py is not on HEAD"}], "head": ""}
-        journal.started(key, unit, stage, "manual", **extra)
-
-
 def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     """`0092` spec Design, *Screens*: a run whose cost is unknown on two units and one whose
     cost is known, written where the app reads its run log, under the key it reads by."""
@@ -578,7 +541,6 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                     ingest_fixture(work, data_dir, proj, other)
                     seed_runs(work, data_dir, proj)
                     seed_transitions(work, data_dir, proj)
-                    seed_knowledge(work, data_dir, proj)
                 except RuntimeError as e:
                     print(str(e), file=sys.stderr)
                     return EXIT_BROKEN

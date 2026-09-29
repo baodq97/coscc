@@ -12,7 +12,7 @@ from coscc.runlog import events
 from coscc.runlog import spend
 from coscc.data import Data
 from coscc.runlog.journal import COST_FIELDS, COST_USD, Busy, add_cost, zero_cost
-from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, TERMINAL_ONLY, grant_for_step
+from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, grant_for_step
 from coscc.agent import labels, precedent
 from coscc.service.common import Invalid, STAGE_FILES, consequence
 
@@ -195,7 +195,6 @@ class ActivityMixin:
                     "consequence": consequence(name),
                 }
                 for stage, own in sorted(GRANTS.items())
-                if stage not in TERMINAL_ONLY
                 for name, grant in (
                     [(stage, own)]
                     + ([(f"{stage}:{labels.NOVEL}", grant_for_step(stage, labels.NOVEL))]

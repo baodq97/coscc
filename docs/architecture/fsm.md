@@ -133,7 +133,7 @@ stateDiagram-v2
 | Transition | Decided by | Recorded |
 |---|---|---|
 | refuse before spend: busy mark, held, `cos.mjs gate` non-zero, impl tree prep fails, review screenshot retake fails (`steps.py:764-1106`) | CODE | none / `screens` |
-| prompt assembly (skill + gate text + artifacts + answers + knowledge + review history + note) (`runner/prompt.py:409-823`) | CODE | `start` (`included`, `pointed`, model, effort, grant) |
+| prompt assembly (skill + gate text + artifacts + answers + review history + note) (`runner/prompt.py:409-823`) | CODE | `start` (`included`, `pointed`, model, effort, grant) |
 | the work itself, and the artifact's `Status:` | **AGENT** | the file |
 | prose stages: app writes the file from the reply, checks the title + header `Status:` (`reply.py:36,118-130`) | CODE on AGENT text | `end.opening` |
 | tool stages: file must exist with `Status:` anywhere (`runner/__init__.py:680-684`) | CODE on AGENT file | — |
@@ -152,7 +152,7 @@ machine (a CI answer, a new head, `merged`, `closed`): one pass per workspace pe
 `merged` one for every other workspace whose autopilot is on. Such a pass's `autopilot-pick`
 rows carry `woken_by`: `{unit, transition, id}` of each transition that scheduled it. A
 `merged` the reader records is followed by what a `ship` step leaves — the `ship` row, the
-worktree's cleanup and, with `COS_KNOWLEDGE`, the gather — since no `ship` step follows it.
+worktree's cleanup — since no `ship` step follows it.
 
 A pass, all CODE (`service/autopilot.py:159-375`):
 
@@ -198,7 +198,6 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 | **Review loop** | round n: changes-requested → impl → CI → review n+1 … pass → ship | verdict and severities AGENT; rounds counted CODE; clean-rebase re-review skip CODE (0067) | review.md, `pr-comment` |
 | **Ship** | open → merged → recorded | CODE: the PR machine runs `gh pr merge --match-head-commit` behind guard `ship-ready` (`0136`); no session, skill or grant since `0139` R12; merged outside → "record, do not merge" (0116) | ship.md, `ship` row |
 | **Update** | idle → pending → applying → handoff / fail; release channel (6 h check), local channel (build-local) | CODE checks; PERSON applies (`update/updater.py:148-757`) | `update` rows |
-| **Knowledge** | gather (AGENT batches, terminal only), baseline / measure / check (CODE) | injected into spec, spike, plan when `COS_KNOWLEDGE` is on | `knowledge` rows |
 | **Model trial** (routine `impl`, since `0139`; the effort trial of `0123` ended) | arm = SHA-256(unit): `opus-5-5` / `sonnet-5-5` | CODE; `model` from the session's `init` | `start.model_trial` |
 | **Notices** | stream of autopilot-stop, questions, end, ship | CODE, read-only (`runlog/notices.py`) | — |
 | **Artifact history** | a transition table in the DB already exists (`units/history.py`, `machine.refuse`) | fed after each step from the file's `Status:` | history table |
@@ -210,7 +209,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 | app → agent | Agent SDK `query(text)` | one prompt, sections joined by `\n\n---\n\n` (`runner/prompt.py:824`); options: model, effort, max_turns, budget, tools grant, `setting_sources=[]`, cwd = worktree | — |
 | agent → app (prose stages) | SDK stream → reply text | markdown: `# <Stem>: title`, header line with `Status:`, sections | regex (`reply.py`), then `cos.mjs` regex |
 | agent → app (tool stages) | the agent's `Write` tool | markdown file | `Status:` anywhere (weaker check) |
-| agent → app (estimate, Jera, knowledge) | reply text | a ```` ```json ```` block — extracted two different ways (`backlog.py:585-600` vs `precedent.py:144-158`); since `0136` the estimate, Jera and Gebo call `submit` instead, and only knowledge still replies with JSON | JSON + CODE validation |
+| agent → app (estimate, Jera, Gebo) | the `submit` tool call (`0136`) | an object | JSON + CODE validation |
 | app ↔ cos.mjs | subprocess | JSON on stdout (`status`, `next`, `pr-text`, `rerun`, `screens`); `gate` = prose lines on stdout/stderr, exit 0/1/2, merged into one string by the app (`board.py:352`) | JSON / substring |
 | app ↔ GitHub | `gh` subprocess | `--json` fields; PR comments with a hidden marker `<!-- coscc-review unit=U round=N -->` | JSON |
 | person ↔ app | Reflex websocket (board, in-process service), REST + NDJSON streams (`/api/board/run`, `/api/notices/follow`, `/api/board/events`) | NDJSON `{type, …}` | JSON |

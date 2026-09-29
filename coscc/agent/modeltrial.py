@@ -1,7 +1,8 @@
 """Which model a routine `impl` runs on: each unit is in one of two arms, decided by its name.
 
 Pure. `start` carries `FIELD`: `{arm, requested}`, then `model` once the session's `init`
-names it, or `NEVER_STARTED` when the session ended before one.
+names it, or `NEVER_STARTED` when the session ended before one. A return to `impl` also carries
+`CI_RED`: whether CI sent it back, `None` when that could not be asked.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ MODELS = {OPUS_ARM: "claude-opus-5-5[1m]", SONNET_ARM: "claude-sonnet-5-5[1m]"}
 
 FIELD = "model_trial"
 NEVER_STARTED = "never-started"
+CI_RED = "ci_red"
 
 
 def arm(unit: str) -> str:

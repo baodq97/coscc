@@ -24,7 +24,7 @@ from coscc.runner import CEILING_MARKERS, Denials, permission_gate
 from coscc.agent.sessions import StepHandle, Suspended
 from coscc.agent import steps as steps_mod
 from coscc.service.resume import nothing, resume_kwargs
-from coscc import knowledge, units
+from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, OWNER
@@ -391,10 +391,7 @@ class BacklogMixin:
                         prompt_chars=len(prompt), granted=[], max_turns=grant.max_turns,
                         max_budget_usd=grant.max_budget_usd, model=model, model_source=model_source,
                         effort=effort, effort_source=effort_source, questions=len(questions),
-                        entries=len(store), asked=[[q["artifact"], q["n"]] for q in questions],
-# Every `start` of the unit says its arm, or `measure` drops it.
-                        **({knowledge.TRIAL_FIELD: {"arm": knowledge.arm(unit)}}
-                           if self.config.knowledge else {})).get("at")
+                        entries=len(store), asked=[[q["artifact"], q["n"]] for q in questions]).get("at")
                     started = True
                 except (BadRecord, Busy):
                     pass

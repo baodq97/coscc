@@ -286,7 +286,6 @@ class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
             grant = policy.grant_for(kind)
             self.assertTrue(grant.submits, kind)
             self.assertGreaterEqual(grant.max_turns, policy.SUBMIT_TURNS, kind)
-        self.assertFalse(policy.grant_for("knowledge").submits)
 
 
 if __name__ == "__main__":

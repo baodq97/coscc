@@ -263,19 +263,7 @@ GRANTS: dict[str, Grant] = {
         max_budget_usd=1.0,
         warning=PRECEDENT_WARNING,
     ),
-    # Not a stage either: one batch of a gather, started by `coscc knowledge gather` at a
-    # terminal or by the app after a `ship` ends `done`. No tools, no commands, one turn; the
-    # app checks the reply and writes the store (`coscc/knowledge/gather.py`). $2.00 is chosen,
-    # not measured; the CLI checks it after the turn has run, so a batch can pass it.
-    "knowledge": Grant(
-        max_turns=1,
-        max_budget_usd=2.0,
-    ),
 }
-
-# The grants no board step runs under, which `Service.settings` leaves off the page's list of
-# what the board's steps may use. `knowledge` stays here though the app now gathers too.
-TERMINAL_ONLY = frozenset({"knowledge"})
 
 # The ceilings a step gets when its plan's label is `novel` (`coscc/agent/labels.py`), as
 # `(max_turns, max_budget_usd)`; everything else about the grant stays the stage's own. A stage
@@ -309,8 +297,7 @@ SUBMITTING = ("idea", "impl", "intent", "plan", "review", "spec", "spike")
 # reply. Chosen, not measured.
 SUBMIT_TURNS = 4
 # The sessions that are no stage and hand back an object through `submit`: Gebo, the estimate
-# and Jera, `coscc/agent/submit.py`'s `SESSIONS`. `knowledge` is not one: its reply drives no
-# transition.
+# and Jera, `coscc/agent/submit.py`'s `SESSIONS`.
 SUBMITTING_SESSIONS = ("estimate", "integrate", "precedent")
 
 
