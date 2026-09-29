@@ -162,7 +162,8 @@ A pass, all CODE (`service/autopilot.py:159-375`):
    `e` last step not done (except first exhausted, first missing-opening, exhausted ship before
    a recording ship), integration failed/refused, screenshot retake failed, and since `0136` a
    `pr` or `ship` the PR machine failed or its guard refused (its `prmachine` row) · `c` ship while
-   `may_ship` off · none when rerun pending / CI pending / dependency · `f` otherwise.
+   `may_ship` off · none when rerun pending / CI pending / dependency · `f` otherwise, and a merge
+   GitHub refused after the PR machine requested it (`merge_refused`, as `0112` R7).
 3. Integrate override when behind / conflicting / red and review not passed (`:272-282`);
    CI red after its own integration → impl once, then stop `e` (0124).
 4. Answered draft → rerun, at most 2 times (0106).

@@ -2322,7 +2322,20 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
                 self.assertEqual((rec["unit"], rec["stage"], rec["outcome"], rec["started_by"]),
                                  (self.unit, stage, outcome, "person"))
                 self.assertEqual(rec["detail"], "" if outcome == "done" else "gh down")
+                self.assertFalse(rec["merge_refused"])
                 self.assertEqual(service._journal().records(kind="end"), [])
+
+    def test_a_merge_github_refused_after_the_machine_requested_it_says_so(self):
+        """`0136` review round 2, F6: the autopilot stops `f` on it, not `e`."""
+        from coscc.github import prmachine
+
+        service = self.service(False)
+        with mock.patch.object(prmachine, "state", lambda *a: {"state": "merge-requested"}):
+            self.drive(service, "ship", "failed")
+        [rec] = service._journal().records(kind=autopilot.PR_MACHINE)
+        self.assertEqual((rec["outcome"], rec["merge_refused"], rec["detail"]), ("failed", True, "gh down"))
+        [ship] = service._journal().records(kind="ship")
+        self.assertEqual(ship["result"], "refused")
 
     def test_a_failed_ship_or_the_flag_off_schedules_none(self):
         for on, stage, outcome in ((True, "ship", "failed"), (False, "ship", "done"), (True, "pr", "done")):

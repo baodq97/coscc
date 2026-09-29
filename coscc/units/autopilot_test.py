@@ -205,6 +205,17 @@ class Stops(unittest.TestCase):
         done = {"kind": ap.PR_MACHINE, "stage": "pr", "outcome": "done", "result": "opened"}
         self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), done, True))
 
+    def test_f_a_merge_github_refused_stops_on_what_gh_said(self):
+        """`0136` review round 2, F6: as `0112` R7, so the pass may still integrate a unit the
+        refusal left behind `main` (`0112` R1)."""
+        said = "the head branch is not up to date with the base branch"
+        refused = {"kind": ap.PR_MACHINE, "stage": "ship", "outcome": "failed", "result": "failed",
+                   "detail": said, "merge_refused": True}
+        self.assertEqual(ap.stop_for(unit(), nxt("", "behind"), refused, True),
+                         {"kind": "f", "reason": f"ship was refused: {said}"})
+        failed = {**refused, "merge_refused": False}
+        self.assertEqual(ap.stop_for(unit(), nxt("", "behind"), failed, True)["kind"], "e")
+
     def test_e_screenshots_that_could_not_be_taken_again_and_none_once_they_were(self):
         # `0111`: no retry; a retake that is taken, run by a person, lifts it.
         failed = {"kind": "screens", "stage": "review", "outcome": "failed", "detail": "exited 2"}

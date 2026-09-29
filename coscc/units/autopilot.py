@@ -257,9 +257,14 @@ def stop_for(
         return _stop("e", f"the last integration was {outcome}" + (f": {detail}" if detail else ""))
     # `0136` review round 1, F2: a `pr` or `ship` the PR machine ran and that failed, or whose
     # guard refused it, stops as a session that ended `failed` did; no retry, as above.
+    # Review round 2, F6: a merge GitHub refused once the machine had requested it stops `f` on
+    # what `gh` said, as `0112` R7's refused `ship` did, so a unit the refusal left behind `main`
+    # is still integrated by the pass (`0112` R1) rather than awaiting a person.
     if kind == PR_MACHINE and outcome != "done":
         detail = str(last.get("detail") or "") or ", ".join(str(r) for r in last.get("reasons") or [])
-        return _stop("e", f"the last {last.get('stage')} was {last.get('result') or outcome}" + (f": {detail}" if detail else ""))
+        if last.get("merge_refused"):
+            return _stop("f", f"ship was refused: {detail or 'no reason given'}")
+        return _stop("e",f"the last {last.get('stage')} was {last.get('result') or outcome}" + (f": {detail}" if detail else ""))
     # `0111`: the screenshots could not be taken again before `review`, which did not start.
     # No retry, as above: a person runs it again, and a retake that is taken lifts the stop.
     if kind == "screens" and outcome == "failed":

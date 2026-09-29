@@ -684,6 +684,26 @@ class Scripted(_Base):
         self.assertEqual((logged["unit"], logged["stop"]), ("0001_a", "f"))
         self.assertIn("you do not have permission to merge", logged["reason"])
 
+    async def test_a_merge_github_refused_behind_main_is_integrated_not_stopped(self):
+        """`0136` review round 2, F6: `0112` R1 and R7 through the PR machine. The merge GitHub
+        refused is the unit's last word; behind `main` the pass integrates, and current it
+        stops `f` on what `gh` said."""
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        said = "the head branch is not up to date with the base branch"
+        behind = ("#7 is 2 commit(s) behind origin/main — integrate, then review again; "
+                  "a round that passes does not count toward the limit")
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        for unit, action, state in (("0001_a", behind, "behind"), ("0002_b", "", "current")):
+            self.add(unit, "", action=action, integration={"state": state}, rounds=[{"verdict": "pass"}],
+                     between_pr_and_ship=True)
+            log.append({"kind": autopilot.PR_MACHINE, "workspace": self.key, "unit": unit, "stage": "ship",
+                        "outcome": "failed", "result": "failed", "reasons": [], "detail": said,
+                        "started_by": "autopilot", "merge_refused": True})
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "integrate", "autopilot")])
+        self.assertEqual(self.stops(), {"0002_b": "f"})
+        self.assertIn(said, self.service._autopilot_stops[self.key]["0002_b"]["reason"])
+
     async def test_red_after_its_own_integration_is_not_integrated_again(self):
         """`0124` R1, R3 a: was a stop `e` for `0001_a`, replaced by `intent.md ## Answers`,
         câu 1 and 3 — CI red on its own integration runs the `impl` `next` names, once. A

@@ -1430,6 +1430,7 @@ class StepsMixin:
             # `0055` R3, `0122` R4: the title and body the app wrote go onto a pull request it
             # found open rather than created, and the scope is read once, as after a session.
             done["pr_sync"] = await self._sync_pr(cwd, unit, out.url if out.result in ("found", "already") else "")
+        refused = False
         if stage == "ship":
             merged = out.result in ("merged", "recorded", "already")
             refused = not merged and prmachine.state(machine.history, key, unit)["state"] == "merge-requested"
@@ -1439,12 +1440,13 @@ class StepsMixin:
                     done["cleanup"] = cleanup
         # `0136` review round 1, F2: with no `end`, this is what the autopilot's stop `e` reads
         # as the unit's last word, so a `pr` or `ship` that failed or was refused stops it for a
-        # person as a failed session did, and one that did its work lifts that stop.
+        # person as a failed session did, and one that did its work lifts that stop. Review round
+        # 2, F6: `merge_refused` is a merge GitHub refused after the machine requested it.
         try:
             self._journal().append({
                 "kind": autopilot.PR_MACHINE, "workspace": key, "unit": unit, "stage": stage,
                 "outcome": done["outcome"], "result": out.result, "reasons": list(out.reasons),
-                "detail": out.detail, "started_by": started_by,
+                "detail": out.detail, "started_by": started_by, "merge_refused": refused,
             })
         except (BadRecord, Busy, AttributeError):
             pass
