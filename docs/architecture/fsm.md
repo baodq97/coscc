@@ -150,7 +150,9 @@ step ends, an integration ends, or a person answers. Not after: Jera, hold, more
 shortlist change. Since `0136` R23 also after the PR reader records a transition of the PR/CI
 machine (a CI answer, a new head, `merged`, `closed`): one pass per workspace per read, and a
 `merged` one for every other workspace whose autopilot is on. Such a pass's `autopilot-pick`
-rows carry `woken_by`: `{unit, transition, id}` of each transition that scheduled it.
+rows carry `woken_by`: `{unit, transition, id}` of each transition that scheduled it. A
+`merged` the reader records is followed by what a `ship` step leaves — the `ship` row, the
+worktree's cleanup and, with `COS_KNOWLEDGE`, the gather — since no `ship` step follows it.
 
 A pass, all CODE (`service/autopilot.py:159-375`):
 
@@ -158,7 +160,8 @@ A pass, all CODE (`service/autopilot.py:159-375`):
 2. For each shortlisted unit in order: `cos.mjs next`, then `stop_for` (`units/autopilot.py:115-198`):
    `a` open questions · `b` findings waiting / needs a person · `d` integration needs a person ·
    `e` last step not done (except first exhausted, first missing-opening, exhausted ship before
-   a recording ship), integration failed/refused, screenshot retake failed · `c` ship while
+   a recording ship), integration failed/refused, screenshot retake failed, and since `0136` a
+   `pr` or `ship` the PR machine failed or its guard refused (its `prmachine` row) · `c` ship while
    `may_ship` off · none when rerun pending / CI pending / dependency · `f` otherwise.
 3. Integrate override when behind / conflicting / red and review not passed (`:272-282`);
    CI red after its own integration → impl once, then stop `e` (0124).
@@ -223,7 +226,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 4. Gebo's `[needs-person]` lines decide the integration outcome. *`0136`: R7's order — the head moved, else `needs_person` of the object Gebo hands back through `submit`, else `failed`.*
 5. Jera's JSON becomes `### Câu N` answers later stages treat as decided. *`0136`: the object Jera hands back through `submit`, guard `run-submitted`; each answer row carries `authority: agent`.*
 6. Estimate JSON becomes backlog rows. *`0136`: the object handed back through `submit`, guard `run-submitted`; each row carries `authority: agent`.*
-7. The reviewed sha and the merge pin are copied by the model out of prompt prose. *`0136`: `ship` is the PR machine's (`coscc/github/prmachine.py`); guard `ship-ready` reads the head the review run recorded and the head its own `gh pr view` found, and the merge is pinned to that read.*
+7. The reviewed sha and the merge pin are copied by the model out of prompt prose. *`0136`: `ship` is the PR machine's (`coscc/github/prmachine.py`); guard `ship-ready` reads the head the review run recorded and the head its own `gh pr view` found, and the merge is pinned to that read. A head the `ship` gate reads as a clean rebase of the reviewed one (`0067`) stands in for it: `gate --json` hands the guard `rebased`, and the guard checks that it names those two commits.*
 8. The autopilot matches English substrings of `cos.mjs`'s messages (`CI is red on #`, `needs a person`, `record it in ship.md; do not merge`) (`units/autopilot.py:51-86` at `088101e`). *`0136`: `next` and `gate --json` hand out `reasons` from `guards.REASONS`, and the autopilot branches on them through `said` (`coscc/units/autopilot.py:60-67`). Left, for the next unit: `units/backlog.py`, `service/common.py` and `units/hold.py` still compare `next`'s words with `finished` or `closed`.*
 
 **Defects found while mapping (verified in code):**
