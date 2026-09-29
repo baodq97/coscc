@@ -55,7 +55,7 @@ from coscc.service.agents import Agents
 from coscc.service.models import Models
 from coscc.service.ideas import Ideas
 from coscc.service.answers import Answers
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +96,94 @@ def integration_since_review(journal: Journal, key: str, unit: str) -> dict[str,
         ):
             found = None
     return found
+
+
+def _gate_reasons(answer: board_reader.Gate) -> tuple[str, ...]:
+    """The codes that go with the gate's words, so no reader downstream parses these."""
+    return tuple(getattr(answer, "reasons", ()))
+
+
+def _rounds_before(found: dict[str, Any], row: dict[str, Any]) -> set[Any] | None:
+    """The rounds `review.md` held before this step, so that the ones it adds can be told apart
+    afterwards. Taken from the board already read; None for any other artifact."""
+    if row["file"] != "review.md":
+        return None
+    return {r.get("n") for r in found.get("rounds") or []}
+
+
+def _round_kwargs(
+    found: dict[str, Any], row: dict[str, Any], stage: str, rounds_before: set[Any] | None
+) -> dict[str, Any]:
+    """From the same board: a last round `cos.mjs` read as unfinished, and the ids it dropped,
+    for the review that runs again. Whether it counts is not asked here."""
+    last_round = (found.get("rounds") or [None])[-1] if row["file"] == "review.md" else None
+    kw: dict[str, Any] = (
+        {"unfinished_round": {"n": last_round["n"], "dropped": list(last_round["dropped"])}}
+        if last_round and last_round.get("unfinished")
+        else {}
+    )
+    # The findings the last round left open, which an `impl` may claim only a
+    # person can close: guard `impl-claim` reads them when its object arrives.
+    if rounds_before:
+        kw["rounds_known"] = tuple(sorted(n for n in rounds_before if isinstance(n, int)))
+    if stage in ("impl", "implement") and found.get("rounds"):
+        last = found["rounds"][-1]
+        kw.update(open_findings=tuple(last.get("open_ids") or ()), claims_round=last.get("n"))
+    return kw
+
+
+async def _plan_drift(
+    journal: Journal,
+    key: str,
+    unit: str,
+    stage: str,
+    directory: Path,
+    tree: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Which files the plan names `main` changed since the plan ran, for `impl`
+    only. Unlike `failed_attempts`, nothing here may refuse the step: a busy run log, an
+    unreadable `plan.md` or a bug in `drift.py` is "could not check"."""
+    if stage not in ("impl", "implement"):
+        return None
+    try:
+        return await drift.compute(
+            journal.records(key, unit),
+            (directory / "plan.md").read_text(encoding="utf-8"),
+            tree["path"] if tree else None,
+        )
+    except Exception as e:
+        # Recorded as the reason.
+        log.exception("the plan drift of %s could not be read", unit)
+        return {
+            "plan_sha": None,
+            "main_sha": None,
+            "files": None,
+            "checked": False,
+            "reason": str(e) or type(e).__name__,
+        }
+
+
+def _shortlist(journal: Journal, key: str, unit: str) -> dict[str, Any]:
+    """Where the unit stood in the shortlist in effect as it started, for the
+    outcome's measurement. Like the plan drift, nothing here may refuse the step."""
+    try:
+        return backlog.stamp(journal.records(key, kind="shortlist"), unit)
+    except Exception as e:
+        # Recorded as the reason.
+        log.exception("the shortlist rank of %s could not be read", unit)
+        return {"rank": None, "of": None, "record": None, "error": str(e) or type(e).__name__}
+
+
+def _answers_before(stage: str, directory: Path, row: dict[str, Any]) -> bytes | None:
+    """The `## Answers` an `impl` step finds in its artifact. Read after the last refusal
+    that reads nothing more, before any money is spent: every `impl` step writes `impl.md`
+    itself, so only a comparison afterwards can tell whether its `## Answers` survived."""
+    if stage != "impl":
+        return None
+    try:
+        return answers_section((directory / row["file"]).read_bytes())
+    except OSError:
+        return None
 
 
 # Seconds a held CI answer is trusted before a board read asks `gh` again, in the
@@ -1121,7 +1209,7 @@ class Steps:
             raise Invalid(str(e)) from e
         return {"cwd": cwd, "unit": unit, "stage": stage, "mode": mode}
 
-    async def run_step(  # noqa: C901, PLR0915 - still to split
+    async def run_step(
         self,
         cwd: str,
         unit: str,
@@ -1167,285 +1255,77 @@ class Steps:
         running: steps_mod.Running | None = None
         rid: str | None = None
         try:
-            try:
-                data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
-            except Unavailable as e:
-                raise Invalid(str(e)) from e
-
-            found = next((u for u in data["units"] if u["name"] == unit), None)
-            if found is None:
-                raise Invalid(f"no such work unit in this workspace: {unit}")
-            row = next((r for r in found["stages"] if r["stage"] == stage), None)
-            if row is None:
-                raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
-            # `cos.mjs`'s own field, read before any worktree is opened — the gate
-            # below would refuse too, but only after `worktree` had reopened a dropped tree.
-            held = found.get("hold")
-            if held:
-                raise Invalid(
-                    f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it"
-                )
-
-            # Before a worktree is opened or the gate asked. Whether `stage` may run
-            # again, and the block that says so, are `cos.mjs`'s; its refusal is passed on.
+            # Refuse, or find what the step runs on: nothing is spent until the gate is open.
+            data, found, row = await self._find_stage(cwd, unit, stage)
             note = str(note or "").strip()
-            rerun_block = ""
-            if rerun:
-                if started_by != "person":
-                    raise Invalid(
-                        "a stage is run again only by a person, from the board, never by the autopilot"
-                    )
-                if len(note) > RERUN_NOTE_MAX:
-                    raise Invalid(
-                        f"the note is {len(note)} characters, over the {RERUN_NOTE_MAX} a rerun takes"
-                    )
-                try:
-                    asked = await board_reader.rerun(
-                        self.ws.units_root(cwd), unit, stage, state=self.ws.snapshot(cwd, [unit])
-                    )
-                except Unavailable as e:
-                    raise Invalid(str(e)) from e
-                if "error" in asked:
-                    raise Invalid(str(asked["error"]))
-                rerun_block = str(asked.get("block") or "")
-
-            # `cos.mjs gate` is asked here, not left to the skill: a session often cannot run
-            # a command. Here rather than in `Runner` because a refusal must arrive before any
-            # money is spent, and `run_step` is the last place that is still true.
-            # Every step runs in the unit's own worktree. A workspace that is not a git
-            # repository has none, and its steps run where they always did — there is no
-            # branch there for another unit to take away.
-            is_repo = (Path(cwd).expanduser().resolve() / ".git").exists()
-            tree = await self.answers.worktree(cwd, unit, strict=True) if is_repo else None
-            if is_repo and tree is None:
-                try:
-                    tree = {
-                        "path": (await worktrees.ensure(cwd, unit, None, self.config.data_dir))[
-                            "path"
-                        ]
-                    }
-                except (GitError, BadUnit) as e:
-                    raise Invalid(f"{unit} has no worktree and one could not be opened: {e}") from e
-            work = tree["path"] if tree else cwd
-            # A spike is watched through the worktree's `HEAD` and `git status`;
-            # with no git there is nothing to watch, so it does not run at all.
-            if stage == "spike" and tree is None:
-                raise Invalid(
-                    "spike needs a git worktree to watch, and this workspace is not a git repository"
-                )
-            # A tree already on its branch carries whatever `worktree` read when it was opened onto it (or nothing,
-            # when it was already there before this call); a tree still detached is refreshed
-            # now, on the spot, because a session about to run on it is about to read it.
-            base: dict[str, Any] | None = None
-            if tree is not None:
-                if tree.get("branch"):
-                    base = tree.get("base")
-                else:
-                    base = await worktrees.refresh_base(cwd, unit, self.config.data_dir)
-            # `pr.md`'s title and body go up before the `ship` gate compares the
-            # title, so one a person changed on GitHub, or a `pr` step left behind, does not
-            # close it. Never raises; when it fails, the gate decides.
-            if stage == "ship":
-                await self.answers.sync_pr(cwd, unit, None, stage="ship")
-            try:
-                # `work` is the checkout the `review` and `ship` gates read git and the pull
-                # request from. The store has no git to read.
-                answer = await board_reader.gate(
-                    self.ws.units_root(cwd),
-                    unit,
-                    stage,
-                    repo=work,
-                    state=self.ws.snapshot(cwd, [unit]),
-                )
-            except Unavailable as e:
-                raise Invalid(str(e)) from e
-            allowed, said = answer
-            # The codes go with the words, so no reader downstream parses these.
-            gate_reasons = tuple(getattr(answer, "reasons", ()))
-            if not allowed:
-                raise Refused(said, gate_reasons)
+            rerun_block = await self._ask_rerun(cwd, unit, stage, started_by, note) if rerun else ""
+            tree, work = await self._open_tree(cwd, unit, stage)
+            base = await self._tree_base(cwd, unit, tree)
+            answer = await self._ask_gate(cwd, unit, stage, work)
 
             # `pr` and `ship` run no session: the PR machine pushes, opens or
             # merges, and records each move through its guard. The mark is this frame's, as for
             # any refusal above, and is given back by the `finally` below.
-            # A `pr` run again has its block appended as any rerun, and the note reaches
-            # no prompt: the app writes `pr.md` again from the unit's metadata.
             if stage in prmachine.STAGES:
-                if rerun:
-                    await self.answers.append_to_answers(
-                        self.ws.unit_dir(cwd, unit) / "intent.md", "\n" + rerun_block, "a rerun"
-                    )
                 yield (
                     "done",
-                    await self.mechanical(
-                        cwd,
-                        key,
-                        unit,
-                        stage,
-                        tree,
-                        started_by,
-                        again=rerun,
-                        rebased=getattr(answer, "rebased", None),
+                    await self._run_mechanical(
+                        cwd, key, unit, stage, tree, started_by, rerun, rerun_block, answer
                     ),
                 )
                 return
 
-            if stage == "impl" and tree is not None:
-                # A tree that cannot run its tests turns every `impl` red from the start, so
-                # the step is not started on one. Tried once more first: a network blip is the
-                # ordinary reason, and the page has nothing better to offer than *try again*.
-                prepared = worktrees.read_prepare(Path(work)) or {}
-                if not prepared.get("ok"):
-                    prepared = await worktrees.prepare(
-                        Path(work), cwd, data_dir=self.config.data_dir
-                    )
-                if not prepared.get("ok"):
-                    raise Invalid(worktrees.describe_failure(prepared))
-
-            # A UI unit whose branch was rewritten since `impl` took its
-            # screenshots has them taken again, here, before any money is spent; a retake that
-            # fails refuses the step, and no round is spent on a stale manifest.
-            screens_note = ""
-            if stage == "review" and tree is not None:
-                screens_note = await self.retake_screens(cwd, key, journal, unit, work, started_by)
-
+            # What the step is handed.
+            screens_note = await self._ready_tree(
+                cwd, key, journal, unit, stage, tree, work, started_by
+            )
             directory = self.ws.unit_dir(cwd, unit)
-            mode = journal.modes(key).get((unit, stage), "manual")
-            # The rounds `review.md` held before this step, so that the ones it adds
-            # can be told apart afterwards. Taken from the board already read above.
-            rounds_before = (
-                {r.get("n") for r in found.get("rounds") or []}
-                if row["file"] == "review.md"
-                else None
+            rounds_before = _rounds_before(found, row)
+            inputs, answers_before = await self._gather_inputs(
+                cwd=cwd,
+                key=key,
+                journal=journal,
+                unit=unit,
+                stage=stage,
+                stages=data["stages"],
+                found=found,
+                row=row,
+                directory=directory,
+                tree=tree,
+                work=work,
+                rounds_before=rounds_before,
             )
-            # From the same board: a last round `cos.mjs` read as unfinished, and the
-            # ids it dropped, for the review that runs again. Whether it counts is not asked here.
-            last_round = (found.get("rounds") or [None])[-1] if row["file"] == "review.md" else None
-            unfinished_kw = (
-                {"unfinished_round": {"n": last_round["n"], "dropped": list(last_round["dropped"])}}
-                if last_round and last_round.get("unfinished")
-                else {}
-            )
-            # The findings the last round left open, which an `impl` may claim only a
-            # person can close: guard `impl-claim` reads them when its object arrives.
-            if rounds_before:
-                unfinished_kw["rounds_known"] = tuple(
-                    sorted(n for n in rounds_before if isinstance(n, int))
-                )
-            if stage in ("impl", "implement") and found.get("rounds"):
-                last = found["rounds"][-1]
-                unfinished_kw.update(
-                    open_findings=tuple(last.get("open_ids") or ()), claims_round=last.get("n")
-                )
-            # Resolved after the gate, so a refused step reads nothing more: the plan's label,
-            # the effort and, for `impl`, which run this is, read before any money is spent.
-            # `Runner` does not read the run log itself; `build_prompt` only places what it is
-            # handed, the same as `base_note`.
-            try:
-                config = self.models.stage_config(
-                    stage, list(data["stages"]), directory, journal, key, unit
-                )
-                failed = journal.failed_attempts(key, unit, stage)
-            except Busy as e:
-                raise Invalid(str(e)) from e
-            # A return to `impl` in the model trial asks `next` once whether CI sent it back;
-            # `_ci_red` never raises, so nothing here refuses the step.
-            if (
-                modeltrial.FIELD in (config.get("trial_record") or {})
-                and (config.get("impl_run") or 0) > 1
-            ):
-                config.setdefault("trial_record", {})[modeltrial.CI_RED] = await self.models.ci_red(
-                    cwd, unit, work
-                )
-            end_fields = None
-            if rounds_before is not None:
-
-                async def end_fields() -> dict[str, Any]:
-                    return await self.models.findings_added(cwd, unit, rounds_before)
-
-            # The integration pushed since the last review round, for `review` only.
-            integration_note = ""
-            if stage == "review":
-                since = integration_since_review(journal, key, unit)
-                integration_note = (
-                    integrate.describe_for_review(since, self.agents.agent_overrides()[0])
-                    if since
-                    else ""
-                )
-            # Which files the plan names `main` changed since the plan ran, for `impl`
-            # only. Unlike `failed_attempts` above, nothing here may refuse the step: a
-            # busy run log, an unreadable `plan.md` or a bug in `drift.py` is "could not check".
-            plan_drift: dict[str, Any] | None = None
-            if stage in ("impl", "implement"):
-                try:
-                    plan_drift = await drift.compute(
-                        journal.records(key, unit),
-                        (directory / "plan.md").read_text(encoding="utf-8"),
-                        tree["path"] if tree else None,
-                    )
-                except Exception as e:
-                    # Recorded as the reason.
-                    log.exception("the plan drift of %s could not be read", unit)
-                    plan_drift = {
-                        "plan_sha": None,
-                        "main_sha": None,
-                        "files": None,
-                        "checked": False,
-                        "reason": str(e) or type(e).__name__,
-                    }
-            # The files the plan names, as they stand in the tree the step runs
-            # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
-            plan_kw: dict[str, Any] = {}
-            if stage in ("impl", "implement"):
-                plan_kw = planmap.for_step(directory / "plan.md", work)
-            # Where the unit stood in the shortlist in effect as it started, for the
-            # outcome's measurement. Like `plan_drift`, nothing here may refuse the step.
-            try:
-                shortlist = backlog.stamp(journal.records(key, kind="shortlist"), unit)
-            except Exception as e:
-                # Recorded as the reason.
-                log.exception("the shortlist rank of %s could not be read", unit)
-                shortlist = {
-                    "rank": None,
-                    "of": None,
-                    "record": None,
-                    "error": str(e) or type(e).__name__,
-                }
-            # After the last refusal that reads nothing more, before any money is
-            # spent: every `impl` step writes `impl.md` itself, so only a comparison afterwards
-            # can tell whether its `## Answers` survived.
-            answers_before: bytes | None = None
-            if stage == "impl":
-                try:
-                    answers_before = answers_section((directory / row["file"]).read_bytes())
-                except OSError:
-                    answers_before = None
             if rerun:
                 await self.answers.append_to_answers(
                     directory / "intent.md", "\n" + rerun_block, "a rerun"
                 )
-            if answers_before is not None:
-                kept_from, kept_in = answers_before, directory / row["file"]
+            inputs.update(await self._link_kwargs(cwd, unit, stage))
+            # Emptied before the step, whatever an earlier one left, and removed
+            # after it however it ends -- in `drive`, so a client that drops the stream does
+            # not decide when.
+            scratch = units.spike_dir(cwd, unit, self.config.data_dir) if stage == "spike" else None
+            kwargs = self._step_kwargs(
+                cwd=cwd,
+                key=key,
+                unit=unit,
+                stage=stage,
+                stages=data["stages"],
+                artifact=row["file"],
+                directory=directory,
+                answer=answer,
+                tree=tree,
+                work=work,
+                base=base,
+                scratch=scratch,
+                started_by=started_by,
+                rerun=rerun,
+                note=note,
+                screens_note=screens_note,
+                rounds_before=rounds_before,
+                inputs=inputs,
+            )
 
-                async def end_fields() -> dict[str, Any]:
-                    return {"answers_kept": _answers_kept(kept_in, kept_from)}
-
-            # Only for a unit an idea lists, and only for `intent` and `impl`;
-            # every other step is handed no key.
-            link_kw: dict[str, Any] = {}
-            # The answers and holds the prompt renders, from the database.
-            link_kw["meta"] = self.ws.meta_of(cwd, unit)
-            state_file = self._write_step_state(cwd, unit)
-            if state_file:
-                link_kw["state_file"] = state_file
-            if stage == "intent":
-                idea_note = self.ideas.idea_note(cwd, unit)
-                if idea_note:
-                    link_kw["idea_note"] = idea_note
-            if stage in ("impl", "implement"):
-                sibling_paths, siblings_note = await self.ideas.siblings(cwd, unit)
-                if siblings_note:
-                    link_kw.update(siblings_note=siblings_note, read_also=sibling_paths)
+            # Launch.
             runner = Runner(self.sessions, journal, app=self.app_identity())
             # The registry is what the page lists and what a Stop finds; the mark
             # taken above is what everything else asks. The same start time for both, and no
@@ -1455,104 +1335,29 @@ class Steps:
             except steps_mod.Busy as e:
                 raise Invalid(str(e)) from e
             mark.phase = "running"
-            # Emptied before the step, whatever an earlier one left, and removed
-            # after it however it ends -- in `drive`, so a client that drops the stream does
-            # not decide when.
-            scratch = units.spike_dir(cwd, unit, self.config.data_dir) if stage == "spike" else None
             rid = self.holds.mark_running(key, unit, stage, "step")
-            queue: asyncio.Queue = asyncio.Queue()
-            running.listeners.add(queue)
-            # The step's `run` and recorder, from here to the task with no `await`
-            # between, so every list that names the step names its `run` too.
-            run = uuid.uuid4().hex
-            recorder = events.Recorder(
-                run,
-                Data(self.config.data_dir),
-                str(journal.working_dir),
-                key,
-                unit,
-                stage,
+            queue = self._launch(
+                running=running,
+                mark=mark,
+                rid=rid,
+                runner=runner,
+                cwd=cwd,
+                key=key,
+                journal=journal,
+                unit=unit,
+                stage=stage,
+                artifact=row["file"],
+                directory=directory,
+                base=base,
+                rounds_before=rounds_before,
+                scratch=scratch,
+                kwargs=kwargs,
+                answers_before=answers_before,
             )
-            running.run = run
-            running.handle.recorder = recorder
-            self.recorders[run] = recorder
-            self.holds.running[rid]["run"] = run
-            running.task = asyncio.create_task(
-                self.drive(
-                    running,
-                    mark,
-                    runner,
-                    cwd,
-                    unit,
-                    stage,
-                    row["file"],
-                    directory,
-                    base,
-                    rounds_before,
-                    rid,
-                    scratch,
-                    dict(
-                        workspace=cwd,
-                        directory=directory,
-                        journal_key=key,
-                        unit=unit,
-                        stage=stage,
-                        artifact=row["file"],
-                        stages=list(data["stages"]),
-                        mode=mode,
-                        gate_said=said,
-                        gate_reasons=gate_reasons,
-                        cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
-                        base=base,
-                        base_note=describe_base(base),
-                        last_attempt=describe_attempt(failed) if failed else "",
-                        integration_note=integration_note,
-                        screens_note=screens_note,
-                        plan_drift=plan_drift,
-                        drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
-                        shortlist=shortlist,
-                        end_fields=end_fields,
-                        # The stage's row with today's overrides, read once
-                        # as the step starts: a rename later reaches the next step, not this one.
-                        agent=self.agents.agent(stage),
-                        **plan_kw,
-                        **unfinished_kw,
-                        **link_kw,
-                        **config,
-                        # Only named for a spike, so a stand-in `run` without it keeps working.
-                        **({"watch": work} if scratch is not None else {}),
-                        # The same: `Runner.run` writes `person` when it is not named.
-                        **({"started_by": started_by} if started_by != "person" else {}),
-                        # The same again: only a rerun names them.
-                        **({"rerun": True, "rerun_note": note} if rerun else {}),
-                        # What `resume_step` needs of this step, in its `suspend` row.
-                        owner_extra={
-                            "workspace_dir": cwd,
-                            "rounds_before": sorted(rounds_before)
-                            if rounds_before is not None
-                            else None,
-                            "tree": tree is not None,
-                            "watch": work if scratch is not None else None,
-                            "scratch": str(scratch) if scratch is not None else None,
-                            "read_also": list(link_kw.get("read_also") or ()),
-                        },
-                    ),
-                    answers_before=answers_before,
-                )
-            )
-            running.task.add_done_callback(lambda _task: self.never_driven(running, mark, rid))
             handed = True
         finally:
             if not handed:
-                # Past `claim`, the listing and the `holds.running` entry
-                # are this frame's to return too, or `/api/board/steps` keeps a step that
-                # never started and the next request gets past the mark to `claim` again.
-                self.holds.release(key, unit, mark)
-                if rid is not None:
-                    self.holds.running.pop(rid, None)
-                if running is not None:
-                    self.registry.release(running)
-                    self.updater.job_ended()
+                self._give_back(key, unit, mark, rid, running)
         # Only the reader lives here. A reader that goes away -- a closed
         # tab, a dropped NDJSON client -- takes its queue with it and nothing else: the
         # step runs on to its own end in `drive`. Stopping it is `stop_step`, and only that.
@@ -1566,6 +1371,447 @@ class Steps:
                     return
         finally:
             running.listeners.discard(queue)
+
+    def _give_back(
+        self,
+        key: str,
+        unit: str,
+        mark: steps_mod.Mark,
+        rid: str | None,
+        running: steps_mod.Running | None,
+    ) -> None:
+        """Return what a step that was not handed to `drive` holds. Past `claim`, the listing
+        and the `holds.running` entry are this frame's to return too, or `/api/board/steps`
+        keeps a step that never started and the next request gets past the mark to `claim` again."""
+        self.holds.release(key, unit, mark)
+        if rid is not None:
+            self.holds.running.pop(rid, None)
+        if running is not None:
+            self.registry.release(running)
+            self.updater.job_ended()
+
+    async def _find_stage(
+        self, cwd: str, unit: str, stage: str
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """The board read, the unit in it and its row for `stage`. Refuses a unit or a stage
+        that is not there, and a unit that is held."""
+        try:
+            data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+
+        found = next((u for u in data["units"] if u["name"] == unit), None)
+        if found is None:
+            raise Invalid(f"no such work unit in this workspace: {unit}")
+        row = next((r for r in found["stages"] if r["stage"] == stage), None)
+        if row is None:
+            raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
+        # `cos.mjs`'s own field, read before any worktree is opened — the gate
+        # below would refuse too, but only after `worktree` had reopened a dropped tree.
+        held = found.get("hold")
+        if held:
+            raise Invalid(
+                f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it"
+            )
+        return data, found, row
+
+    async def _ask_rerun(self, cwd: str, unit: str, stage: str, started_by: str, note: str) -> str:
+        """The `### Rerun` block for running `stage` again, asked before a worktree is opened or
+        the gate asked. Whether `stage` may run again, and the block that says so, are
+        `cos.mjs`'s; its refusal is passed on."""
+        if started_by != "person":
+            raise Invalid(
+                "a stage is run again only by a person, from the board, never by the autopilot"
+            )
+        if len(note) > RERUN_NOTE_MAX:
+            raise Invalid(
+                f"the note is {len(note)} characters, over the {RERUN_NOTE_MAX} a rerun takes"
+            )
+        try:
+            asked = await board_reader.rerun(
+                self.ws.units_root(cwd), unit, stage, state=self.ws.snapshot(cwd, [unit])
+            )
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        if "error" in asked:
+            raise Invalid(str(asked["error"]))
+        return str(asked.get("block") or "")
+
+    async def _open_tree(
+        self, cwd: str, unit: str, stage: str
+    ) -> tuple[dict[str, Any] | None, str]:
+        """The unit's worktree, and the directory the step runs in.
+
+        Every step runs in the unit's own worktree. A workspace that is not a git
+        repository has none, and its steps run where they always did — there is no
+        branch there for another unit to take away.
+        """
+        is_repo = (Path(cwd).expanduser().resolve() / ".git").exists()
+        tree = await self.answers.worktree(cwd, unit, strict=True) if is_repo else None
+        if is_repo and tree is None:
+            try:
+                tree = {
+                    "path": (await worktrees.ensure(cwd, unit, None, self.config.data_dir))["path"]
+                }
+            except (GitError, BadUnit) as e:
+                raise Invalid(f"{unit} has no worktree and one could not be opened: {e}") from e
+        work = tree["path"] if tree else cwd
+        # A spike is watched through the worktree's `HEAD` and `git status`;
+        # with no git there is nothing to watch, so it does not run at all.
+        if stage == "spike" and tree is None:
+            raise Invalid(
+                "spike needs a git worktree to watch, and this workspace is not a git repository"
+            )
+        return tree, work
+
+    async def _tree_base(
+        self, cwd: str, unit: str, tree: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """A tree already on its branch carries whatever `worktree` read when it was opened onto it (or nothing,
+        when it was already there before this call); a tree still detached is refreshed
+        now, on the spot, because a session about to run on it is about to read it."""
+        if tree is None:
+            return None
+        if tree.get("branch"):
+            return tree.get("base")
+        return await worktrees.refresh_base(cwd, unit, self.config.data_dir)
+
+    async def _ask_gate(self, cwd: str, unit: str, stage: str, work: str) -> board_reader.Gate:
+        """`cos.mjs gate` is asked here, not left to the skill: a session often cannot run
+        a command. Here rather than in `Runner` because a refusal must arrive before any
+        money is spent, and `run_step` is the last place that is still true."""
+        # `pr.md`'s title and body go up before the `ship` gate compares the
+        # title, so one a person changed on GitHub, or a `pr` step left behind, does not
+        # close it. Never raises; when it fails, the gate decides.
+        if stage == "ship":
+            await self.answers.sync_pr(cwd, unit, None, stage="ship")
+        try:
+            # `work` is the checkout the `review` and `ship` gates read git and the pull
+            # request from. The store has no git to read.
+            answer = await board_reader.gate(
+                self.ws.units_root(cwd),
+                unit,
+                stage,
+                repo=work,
+                state=self.ws.snapshot(cwd, [unit]),
+            )
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        allowed, said = answer
+        if not allowed:
+            raise Refused(said, _gate_reasons(answer))
+        return answer
+
+    async def _run_mechanical(
+        self,
+        cwd: str,
+        key: str,
+        unit: str,
+        stage: str,
+        tree: dict[str, Any] | None,
+        started_by: str,
+        rerun: bool,
+        rerun_block: str,
+        answer: board_reader.Gate,
+    ) -> dict[str, Any]:
+        """One `pr` or `ship` through the PR machine, and the `done` item it ends with.
+        A `pr` run again has its block appended as any rerun, and the note reaches
+        no prompt: the app writes `pr.md` again from the unit's metadata."""
+        if rerun:
+            await self.answers.append_to_answers(
+                self.ws.unit_dir(cwd, unit) / "intent.md", "\n" + rerun_block, "a rerun"
+            )
+        return await self.mechanical(
+            cwd,
+            key,
+            unit,
+            stage,
+            tree,
+            started_by,
+            again=rerun,
+            rebased=getattr(answer, "rebased", None),
+        )
+
+    async def _ready_tree(
+        self,
+        cwd: str,
+        key: str,
+        journal: Journal,
+        unit: str,
+        stage: str,
+        tree: dict[str, Any] | None,
+        work: str,
+        started_by: str,
+    ) -> str:
+        """Refuse a tree the step cannot start on, before any money is spent. Returns the
+        section the `review` prompt carries about its screenshots, `""` for any other step."""
+        if tree is None:
+            return ""
+        if stage == "impl":
+            # A tree that cannot run its tests turns every `impl` red from the start, so
+            # the step is not started on one. Tried once more first: a network blip is the
+            # ordinary reason, and the page has nothing better to offer than *try again*.
+            prepared = worktrees.read_prepare(Path(work)) or {}
+            if not prepared.get("ok"):
+                prepared = await worktrees.prepare(Path(work), cwd, data_dir=self.config.data_dir)
+            if not prepared.get("ok"):
+                raise Invalid(worktrees.describe_failure(prepared))
+        # A UI unit whose branch was rewritten since `impl` took its
+        # screenshots has them taken again, here, before any money is spent; a retake that
+        # fails refuses the step, and no round is spent on a stale manifest.
+        if stage == "review":
+            return await self.retake_screens(cwd, key, journal, unit, work, started_by)
+        return ""
+
+    async def _gather_inputs(
+        self,
+        *,
+        cwd: str,
+        key: str,
+        journal: Journal,
+        unit: str,
+        stage: str,
+        stages: list[str],
+        found: dict[str, Any],
+        row: dict[str, Any],
+        directory: Path,
+        tree: dict[str, Any] | None,
+        work: str,
+        rounds_before: set[Any] | None,
+    ) -> tuple[dict[str, Any], bytes | None]:
+        """What the stage is handed beyond who runs it and where: keyword arguments for
+        `Runner.run`, and `## Answers` as the artifact had it. Only a busy run log refuses
+        the step here; every other read that fails is recorded as the reason."""
+        mode = journal.modes(key).get((unit, stage), "manual")
+        round_kw = _round_kwargs(found, row, stage, rounds_before)
+        config, failed = await self._stage_config(
+            cwd, key, journal, unit, stage, stages, directory, work
+        )
+        integration_note = self._integration_note(journal, key, unit, stage)
+        plan_drift = await _plan_drift(journal, key, unit, stage, directory, tree)
+        # The files the plan names, as they stand in the tree the step runs
+        # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
+        plan_kw = (
+            planmap.for_step(directory / "plan.md", work) if stage in ("impl", "implement") else {}
+        )
+        shortlist = _shortlist(journal, key, unit)
+        answers_before = _answers_before(stage, directory, row)
+        # `dict(...)`, not a literal: two sources naming one key is a `TypeError`, not an override.
+        return dict(
+            mode=mode,
+            **round_kw,
+            **config,
+            last_attempt=describe_attempt(failed) if failed else "",
+            integration_note=integration_note,
+            plan_drift=plan_drift,
+            drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
+            shortlist=shortlist,
+            end_fields=self._end_fields(
+                cwd, unit, rounds_before, answers_before, directory / row["file"]
+            ),
+            **plan_kw,
+        ), answers_before
+
+    async def _stage_config(
+        self,
+        cwd: str,
+        key: str,
+        journal: Journal,
+        unit: str,
+        stage: str,
+        stages: list[str],
+        directory: Path,
+        work: str,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """The stage's configuration and the failed attempts before this run. Resolved after
+        the gate, so a refused step reads nothing more: the plan's label, the effort and, for
+        `impl`, which run this is, read before any money is spent. `Runner` does not read the
+        run log itself; `build_prompt` only places what it is handed, the same as `base_note`."""
+        try:
+            config = self.models.stage_config(stage, list(stages), directory, journal, key, unit)
+            failed = journal.failed_attempts(key, unit, stage)
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        # A return to `impl` in the model trial asks `next` once whether CI sent it back;
+        # `ci_red` never raises, so nothing here refuses the step.
+        if (
+            modeltrial.FIELD in (config.get("trial_record") or {})
+            and (config.get("impl_run") or 0) > 1
+        ):
+            config.setdefault("trial_record", {})[modeltrial.CI_RED] = await self.models.ci_red(
+                cwd, unit, work
+            )
+        return config, failed
+
+    def _integration_note(self, journal: Journal, key: str, unit: str, stage: str) -> str:
+        """The integration pushed since the last review round, for `review` only."""
+        if stage != "review":
+            return ""
+        since = integration_since_review(journal, key, unit)
+        if not since:
+            return ""
+        return integrate.describe_for_review(since, self.agents.agent_overrides()[0])
+
+    def _end_fields(
+        self,
+        cwd: str,
+        unit: str,
+        rounds_before: set[Any] | None,
+        answers_before: bytes | None,
+        artifact: Path,
+    ) -> Callable[[], Awaitable[dict[str, Any]]] | None:
+        """What a step that ends `done` adds to its record, asked only then: whether `impl.md`
+        kept its `## Answers`, else the findings a `review` added to `review.md`."""
+        if answers_before is not None:
+
+            async def answers_kept() -> dict[str, Any]:
+                return {"answers_kept": _answers_kept(artifact, answers_before)}
+
+            return answers_kept
+        if rounds_before is not None:
+
+            async def findings_added() -> dict[str, Any]:
+                return await self.models.findings_added(cwd, unit, rounds_before)
+
+            return findings_added
+        return None
+
+    async def _link_kwargs(self, cwd: str, unit: str, stage: str) -> dict[str, Any]:
+        """The keyword arguments the database and the unit's idea add to the prompt."""
+        # The answers and holds the prompt renders, from the database.
+        link_kw: dict[str, Any] = {"meta": self.ws.meta_of(cwd, unit)}
+        state_file = self._write_step_state(cwd, unit)
+        if state_file:
+            link_kw["state_file"] = state_file
+        # Only for a unit an idea lists, and only for `intent` and `impl`;
+        # every other step is handed no key.
+        if stage == "intent":
+            idea_note = self.ideas.idea_note(cwd, unit)
+            if idea_note:
+                link_kw["idea_note"] = idea_note
+        if stage in ("impl", "implement"):
+            sibling_paths, siblings_note = await self.ideas.siblings(cwd, unit)
+            if siblings_note:
+                link_kw.update(siblings_note=siblings_note, read_also=sibling_paths)
+        return link_kw
+
+    def _step_kwargs(
+        self,
+        *,
+        cwd: str,
+        key: str,
+        unit: str,
+        stage: str,
+        stages: list[str],
+        artifact: str,
+        directory: Path,
+        answer: board_reader.Gate,
+        tree: dict[str, Any] | None,
+        work: str,
+        base: dict[str, Any] | None,
+        scratch: Path | None,
+        started_by: str,
+        rerun: bool,
+        note: str,
+        screens_note: str,
+        rounds_before: set[Any] | None,
+        inputs: dict[str, Any],
+    ) -> dict[str, Any]:
+        """The keyword arguments `Runner.run` is called with: who runs what, where, what the
+        gate said, and the `inputs` gathered."""
+        return dict(
+            workspace=cwd,
+            directory=directory,
+            journal_key=key,
+            unit=unit,
+            stage=stage,
+            artifact=artifact,
+            stages=list(stages),
+            gate_said=answer[1],
+            gate_reasons=_gate_reasons(answer),
+            cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
+            base=base,
+            base_note=describe_base(base),
+            screens_note=screens_note,
+            # The stage's row with today's overrides, read once
+            # as the step starts: a rename later reaches the next step, not this one.
+            agent=self.agents.agent(stage),
+            **inputs,
+            # Only named for a spike, so a stand-in `run` without it keeps working.
+            **({"watch": work} if scratch is not None else {}),
+            # The same: `Runner.run` writes `person` when it is not named.
+            **({"started_by": started_by} if started_by != "person" else {}),
+            # The same again: only a rerun names them.
+            **({"rerun": True, "rerun_note": note} if rerun else {}),
+            # What `resume_step` needs of this step, in its `suspend` row.
+            owner_extra={
+                "workspace_dir": cwd,
+                "rounds_before": sorted(rounds_before) if rounds_before is not None else None,
+                "tree": tree is not None,
+                "watch": work if scratch is not None else None,
+                "scratch": str(scratch) if scratch is not None else None,
+                "read_also": list(inputs.get("read_also") or ()),
+            },
+        )
+
+    def _launch(
+        self,
+        *,
+        running: steps_mod.Running,
+        mark: steps_mod.Mark,
+        rid: str,
+        runner: Runner,
+        cwd: str,
+        key: str,
+        journal: Journal,
+        unit: str,
+        stage: str,
+        artifact: str,
+        directory: Path,
+        base: dict[str, Any] | None,
+        rounds_before: set[Any] | None,
+        scratch: Path | None,
+        kwargs: dict[str, Any],
+        answers_before: bytes | None,
+    ) -> asyncio.Queue:
+        """Start `drive` as the step's own task, and return the queue its reader streams from."""
+        queue: asyncio.Queue = asyncio.Queue()
+        running.listeners.add(queue)
+        # The step's `run` and recorder, from here to the task with no `await`
+        # between, so every list that names the step names its `run` too.
+        run = uuid.uuid4().hex
+        recorder = events.Recorder(
+            run,
+            Data(self.config.data_dir),
+            str(journal.working_dir),
+            key,
+            unit,
+            stage,
+        )
+        running.run = run
+        running.handle.recorder = recorder
+        self.recorders[run] = recorder
+        self.holds.running[rid]["run"] = run
+        running.task = asyncio.create_task(
+            self.drive(
+                running,
+                mark,
+                runner,
+                cwd,
+                unit,
+                stage,
+                artifact,
+                directory,
+                base,
+                rounds_before,
+                rid,
+                scratch,
+                kwargs,
+                answers_before=answers_before,
+            )
+        )
+        running.task.add_done_callback(lambda _task: self.never_driven(running, mark, rid))
+        return queue
 
     async def retake_screens(
         self,

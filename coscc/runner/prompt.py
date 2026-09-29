@@ -363,7 +363,525 @@ def build_prompt(*args: Any, **kwargs: Any) -> tuple[str, list[str]]:
     return prompt, included
 
 
-def compose_prompt(  # noqa: C901, PLR0915 - still to split
+def _embedded(directory: Path, name: str, unit_meta: dict[str, Any] | None) -> str:
+    """An artifact as a prompt embeds it, with its answers from `cos.db` (`with_rows`);
+    `unit_meta=None` is the file.
+    """
+    text = _read(directory / name)
+    if text and unit_meta is not None:
+        text = with_rows((directory / name).read_bytes(), name, unit_meta)
+    return text
+
+
+def _opening(stage: str, agent: dict[str, Any] | None) -> list[str]:
+    """The rules of the stage, and above them who the session is."""
+    # First, and outside any `try`. `Runner.run` calls this before it touches the journal and
+    # before `Sessions.stream` exists, so a `MissingRules` raised here means zero requests to
+    # the SDK by structure.
+    blocks = [f"# The rules for this stage\n\n{skill_for(stage)}"]
+    # Who the session is, before its rules. `None`, a stage the agent table has no row for, adds
+    # not one byte.
+    if agent is not None:
+        blocks.insert(0, agents.identity_section(agent))
+    return blocks
+
+
+def _already_asked(gate_said: str, base_note: str, drift_note: str) -> list[str]:
+    """What the app checked before it started the step, and the answer it got."""
+    blocks: list[str] = []
+    # The rules above tell this stage to run `cos.mjs gate` and stop if it exits non-zero, but
+    # most prose stages have no tools and never could. So the app asks, refuses to start the
+    # step when the answer is no, and says so here: a running step has an open gate by
+    # construction, and must not treat "I could not check" as "I must not proceed".
+    if gate_said:
+        blocks.append(
+            "# The gate, already asked\n\n"
+            "The app ran `cos.mjs gate` for this stage before starting this step, and it "
+            "is open. It would not have started otherwise. This is what the gate said:\n\n"
+            f"    {gate_said}\n\n"
+            "Do not ask it again and do not treat it as unasked — you may have no tools "
+            "to run it with, and that is not a reason to hold back an artifact."
+        )
+
+    # The app refreshes a step's detached tree from `origin/main` before running it, but a
+    # refresh can fail (remote unreachable, tree dirty, a commit not an ancestor of the tip) and
+    # the step still runs. `service.describe_base` is the one sentence saying so; this hands it
+    # to the step rather than leaving it to guess from a `git log` it may have no tool to run.
+    if base_note:
+        blocks.append(f"# The base this step runs on\n\n{base_note}")
+
+    # Which files the plan names that `main` changed since the plan ran, or why that could not
+    # be checked. Built by `drift.describe`; `""` adds nothing.
+    if drift_note:
+        blocks.append(f"# The files main changed since the plan\n\n{drift_note}")
+    return blocks
+
+
+def _what_it_follows(
+    directory: Path,
+    stage: str,
+    stages: list[str],
+    unit_meta: dict[str, Any] | None,
+    included: list[str],
+) -> list[str]:
+    """The intent, the stage before this one, and for a fix in the fast lane the intent again."""
+    blocks: list[str] = []
+    pointing = stage in _POINTING
+    intent = "" if pointing else _embedded(directory, "intent.md", unit_meta)
+    if intent:
+        included.append("intent.md")
+        blocks.append(f"# The intent this work is authorised by\n\n{intent}")
+
+    # The stage immediately before this one, taken from the stage list the board was read with
+    # so the order is not restated here. A pointing stage carries only what `_EMBED` names,
+    # under the same heading.
+    position = stages.index(stage) if stage in stages else -1
+    for earlier in reversed(stages[:position]):
+        name = f"{earlier}.md"
+        if pointing and name not in _EMBED[stage]:
+            continue
+        text = _embedded(directory, name, unit_meta)
+        if text and name not in included:
+            included.append(name)
+            blocks.append(f"# The {earlier} it follows\n\n{text}")
+            break
+
+    # A fix in the fast lane has no plan: its intent carries the reproduction and the expected
+    # and actual result, and is what impl builds from.
+    if stage in ("impl", "implement") and "plan.md" not in included:
+        text = _embedded(directory, "intent.md", unit_meta)
+        if text:
+            included.append("intent.md")
+            blocks.append(f"# The intent it follows\n\n{text}")
+    return blocks
+
+
+def _shared(stage: str, idea_note: str, siblings_note: str) -> list[str]:
+    """Right after the stage before: a child unit has no `idea.md`, and the idea it shares
+    stands where that would have.
+    """
+    blocks: list[str] = []
+    if idea_note and stage == "intent":
+        blocks.append(f"# The idea this unit was opened from\n\n{idea_note.rstrip()}")
+    if siblings_note and stage in ("impl", "implement"):
+        blocks.append(f"# The sibling repositories this step may read\n\n{siblings_note.rstrip()}")
+    return blocks
+
+
+def _second_artifact(
+    directory: Path,
+    stage: str,
+    unit_meta: dict[str, Any] | None,
+    included: list[str],
+) -> list[str]:
+    """The stage before is one artifact, and three stages need a second. `plan` follows `spike`
+    when one ran, but the requirements it orders are still in `spec.md`. A `spec` re-run after
+    a spike must be rewritten on that measurement. A `spike` re-run needs the one before it to
+    set `Round:`.
+    """
+    blocks: list[str] = []
+    spike = _read(directory / "spike.md") if stage in ("spec", "spike") else ""
+    if stage == "plan" and "spike.md" in included and "spec.md" not in included:
+        spec = _embedded(directory, "spec.md", unit_meta)
+        if spec:
+            included.append("spec.md")
+            blocks.append(f"# The spec the spike measured\n\n{spec}")
+    if stage == "spec" and spike and "spike.md" not in included:
+        included.append("spike.md")
+        blocks.append(
+            "# What the spike measured\n\n"
+            "A spike ran on the spec before this one. Rewrite the spec on these results: a "
+            "question whose verdict is `fails` does not hold, so drop its `U<n>` and every "
+            "requirement that rested on it. A new question takes a new `U<n>`.\n\n"
+            f"{spike}"
+        )
+    if stage == "spike" and spike and "spike.md" not in included:
+        included.append("spike.md")
+        blocks.append(f"# The previous spike\n\n{spike}")
+    return blocks
+
+
+def _where_you_work(
+    stage: str,
+    workspace: str | Path,
+    worktree: str,
+    ceilings: tuple[int, float] | None,
+) -> list[str]:
+    """`spike` only: its scratch directory, the worktree it may read, its progress file."""
+    if stage != "spike":
+        return []
+    scratch = Path(workspace).expanduser().resolve()
+    # `ceilings` is the grant `Runner.run` holds, so no second number is written by hand; `None`
+    # (a caller with no grant) leaves the sentence out.
+    within = (
+        f"This step has {ceilings[0]} turns and ${ceilings[1]:.2f}. "
+        if ceilings is not None
+        else ""
+    )
+    return [
+        "# Where you work\n\n"
+        f"Your working directory is `{scratch}`, a "
+        "throwaway directory the app deletes when this step ends. Write probe code "
+        "there and nowhere else.\n\n"
+        + (
+            f"The unit's worktree is `{worktree}`. Read it; never write to it. The app "
+            "records its `HEAD` and `git status --porcelain` before this step and again "
+            "after, and fails the step, writing no `spike.md`, if either changed."
+            if worktree
+            else "No worktree was named for this step."
+        )
+        + "\n\n"
+        f"Your progress file is `{scratch / PROGRESS_FILE}` (the rules' *The progress "
+        f"file*). {within}If this step ends without a usable final reply — a turn or "
+        "budget ceiling, a reply with no `Status:` line, a session that broke — the app "
+        "writes `spike.md` from this file."
+    ]
+
+
+def _tools(
+    stage: str,
+    directory: Path,
+    plan_map: str,
+    commands: tuple[str, ...],
+    runs_commands: bool,
+    state_file: str | Path | None,
+    included: list[str],
+) -> list[str]:
+    """What `impl` may read and run, and what a step holding `Bash` is told about its session."""
+    blocks: list[str] = []
+    # The files the plan changes as they stand, already capped (`planmap.select`), and the first
+    # words the grant allows, taken from it; this only places them.
+    if plan_map and stage in ("impl", "implement"):
+        included.append("plan-map")
+        blocks.append(f"{PLAN_MAP_HEADING}\n\n{plan_map}\n\n{PLAN_MAP_ADVICE}")
+    if commands and stage in ("impl", "implement"):
+        included.append("commands")
+        words = ", ".join(f"`{c}`" for c in commands)
+        blocks.append(f"{COMMANDS_HEADING}\n\n{words}\n\n{COMMANDS_ADVICE}")
+    if runs_commands:
+        blocks.append(f"{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
+        blocks.append(f"{HARNESS_HEADING}\n\n{harness_advice(directory, state_file)}")
+    return blocks
+
+
+def _answers(
+    stage: str,
+    directory: Path,
+    artifact: str,
+    writes_own: bool,
+    unit_meta: dict[str, Any] | None,
+) -> list[str]:
+    """The answers a person gave to the artifact this stage writes again."""
+    blocks: list[str] = []
+    # A prose stage re-run against an artifact that already carries `## Answers` must see a
+    # person's decision, or it may ask the same question again. `review` gets the same block
+    # after *The rounds so far*, so `stage != "review"` keeps it from landing here too.
+    if is_prose_stage(stage) and not writes_own and stage != "review":
+        block = _answers_block(
+            directory, artifact, repeat_content=stage != "intent", meta=unit_meta
+        )
+        if block:
+            blocks.append(block)
+    # A draft `impl.md` that asked a person carries the answers; the step that runs next is told
+    # them, and that the section is not its to touch.
+    if stage in ("impl", "implement"):
+        block = _impl_answers_block(directory, unit_meta)
+        if block:
+            blocks.append(block)
+    return blocks
+
+
+def _sent_back(stage: str, directory: Path, review: str, included: list[str]) -> list[str]:
+    """`impl` only: the findings the last review left open.
+
+    A review that asked for changes sends the unit back to `impl`, and the point of going back
+    is the findings; without this block the step is built from `intent.md` and `plan.md` only
+    and cannot see one.
+
+    Only while the review is `changes-requested`: a pass has nothing to act on, and a reject
+    closed the unit. It carries the header and the findings still open in the last round; the
+    whole file is named by path in *The unit's files*.
+    """
+    if stage not in ("impl", "implement"):
+        return []
+    if not review or _header_status(review) != "changes-requested" or "review-findings" in included:
+        return []
+    header, number, findings = open_findings(review)
+    included.append("review-findings")
+    return [
+        "# The review that sent this back\n\n"
+        "The last review asked for changes. Fix every finding marked `[open]` below "
+        "on the branch, one commit per finding where that is possible, then push "
+        "the branch, then record in impl.md which commit fixed which finding. The "
+        "next review is offered only once a fix is on the pull request, so a fix "
+        "left unpushed keeps this unit on impl.\n\n"
+        "Below are the review's header line and the findings its last round"
+        + (f" (Round {number})" if number is not None else "")
+        + f" left open. The whole review, every round, is `{directory.resolve() / 'review.md'}`.\n\n"
+        f"{header}\n\n{findings or '(no finding is left open)'}"
+    ]
+
+
+def _rounds_so_far(stage: str, directory: Path, review: str, included: list[str]) -> list[str]:
+    """`review` only: the last round's number and what it left open.
+
+    `review.md` accumulates rounds and the app writes it from the reply, so writing must not
+    erase the rounds already there (`merge_review`), or a loop whose counter resets every run
+    never reaches its limit. The prompt carries the last round's number and what it left open;
+    `impl.md`, `pr.md` and the earlier rounds are named by path in *The unit's files*.
+    """
+    if stage != "review" or not _rounds(review):
+        return []
+    _, number, findings = open_findings(review)
+    included.append("review-findings")
+    return [
+        "# The rounds so far\n\n"
+        f"`review.md` already holds rounds up to Round {number}, and the app keeps "
+        "them. Do not copy them into your reply. Reply with the title, the header "
+        "line and the next `## Round N` section only; the app writes the earlier "
+        "rounds back under your header, unchanged, and appends yours after them.\n\n"
+        f"The findings Round {number} left open are below. Every earlier round is "
+        f"in `{directory.resolve() / 'review.md'}`.\n\n"
+        f"{findings or '(no finding is left open)'}"
+    ]
+
+
+def _unfinished_round(
+    stage: str, unfinished_round: dict[str, Any] | None, included: list[str]
+) -> list[str]:
+    """`review` only: why it runs again after a round `cos.mjs` did not count.
+
+    The last round asked for changes but dropped ids an earlier round raised, so `cos.mjs` does
+    not count it and sent the unit here again. The block above may say nothing is left open;
+    this says why the review runs anyway. The ids are `cos.mjs`'s, carried by
+    `service.steps.run_step`.
+    """
+    if stage != "review" or not unfinished_round:
+        return []
+    number = int(unfinished_round["n"])
+    dropped = ", ".join(f"`{i}`" for i in unfinished_round.get("dropped") or [])
+    included.append("review-unfinished")
+    return [
+        "# The round that did not count\n\n"
+        f"Round {number} asked for changes but does not list {dropped}, which an earlier "
+        "round raised, so `cos.mjs` does not count it against `COS_REVIEW_ROUNDS` and "
+        f"this review runs again. Write Round {number + 1} as a full round for the commit "
+        "named below. List every finding of every earlier round with its label, "
+        f"{dropped} among them."
+    ]
+
+
+def _incomplete_round(stage: str, review: str, included: list[str]) -> list[str]:
+    """`review` only: where to go on from when the last round is one the app's closing turn
+    wrote for a review that ran out of turns. The next review goes on from it: its three
+    sections verbatim, and what the last full round before it left open.
+    """
+    if stage != "review":
+        return []
+    found = list(_ROUND_RE.finditer(review))
+    last = found[-1].group(0).rstrip() if found else ""
+    meta = _round_meta(last) if last else None
+    if meta is None or meta[1] != "incomplete":
+        return []
+    number = _round_number(last)
+    start = last.find(INCOMPLETE_SECTIONS[0])
+    sections = last[start:] if start != -1 else last
+    before = review[: found[-1].start()]
+    carried = ""
+    if any((_round_meta(r) or ("", ""))[1] != "incomplete" for r in _rounds(before)):
+        _, full, left = open_findings(before)
+        carried = (
+            f"\n\nThe findings Round {full}, the last full round, left open:\n\n"
+            f"{left or '(no finding is left open)'}"
+        )
+    included.append("review-incomplete")
+    return [
+        "# The incomplete round\n\n"
+        f"Round {number} is incomplete: the review before this one ran out of turns, "
+        "and the app asked it, with no tools left, to write down where it stood. Go "
+        "on from it. Read what it lists under *What was not reviewed* first, then "
+        f"write Round {number + 1} as a full round for the commit named below. Carry "
+        f"forward every finding of Round {number} and of every earlier round, with "
+        "its id: the `ship` gate stays closed on a round that drops one. Never write "
+        "`Verdict: incomplete` yourself; only the app's closing turn writes it.\n\n"
+        f"Round {number}, from its first section on, verbatim:\n\n{sections}"
+        f"{carried}"
+    ]
+
+
+def _review_answers(
+    stage: str,
+    directory: Path,
+    artifact: str,
+    writes_own: bool,
+    unit_meta: dict[str, Any] | None,
+) -> list[str]:
+    """`review`'s own copy of the answers block, placed after *The rounds so far*: a person can
+    answer under `## Answers` while a review is at `changes-requested`, and the next review
+    must not treat that decision as an unread finding.
+    """
+    if stage != "review" or not is_prose_stage(stage) or writes_own:
+        return []
+    block = _answers_block(directory, artifact, repeat_content=True, meta=unit_meta)
+    return [block] if block else []
+
+
+def _commit_reviewed(stage: str, head: str) -> list[str]:
+    """`review` only: the commit it reviews.
+
+    `write-review` needs the commit it reviewed, and the `ship` gate reads that line. A step
+    runs in the unit's worktree, whose `.git` is a file pointing into the main repository, and
+    a `Read` there is refused as outside both the worktree and the unit. The app has already
+    read the head for the run log, so it hands the same value over rather than widen the boundary.
+    """
+    if stage != "review":
+        return []
+    if head:
+        return [
+            "# The commit you are reviewing\n\n"
+            "The app read the head of this checkout before starting the step. Record it "
+            "on the round's `Reviewed:` line:\n\n"
+            f"    {head}\n\n"
+            "It is the same value the run log's `start` record carries. Do not read it out "
+            "of `.git/`: the checkout is a git worktree whose git directory lies outside "
+            "what this step may read."
+        ]
+    return [
+        "# The commit you are reviewing\n\n"
+        "The app could not read the head of this checkout: it is not a git checkout, "
+        "or `git rev-parse HEAD` failed. Do not guess one. Leave the round's "
+        "`Reviewed:` line without a commit and say why under "
+        "`### What was not reviewed`; the `ship` gate will stay closed, which is right."
+    ]
+
+
+def _handed(
+    stage: str,
+    last_attempt: str,
+    integration_note: str,
+    screens_note: str,
+    included: list[str],
+) -> list[str]:
+    """What `service.steps.run_step` built for this step; this only places it."""
+    blocks: list[str] = []
+    # Only when the last run of this unit and stage did not end `done`. `service.steps.run_step`
+    # decides that and builds this string (`journal.failed_attempts` + `describe_attempt`); this
+    # only places it, like `base_note`.
+    if last_attempt:
+        included.append("last-attempt")
+        blocks.append(f"# The attempt before this one\n\n{last_attempt}")
+
+    # Only for `review`, and only when `service.steps.run_step` found an integration recorded
+    # after the last review round; built by `integrate.describe_for_review`, heading included.
+    if integration_note and stage == "review":
+        included.append("integration")
+        blocks.append(integration_note.rstrip())
+
+    # Only for `review`, and only when `service.steps.run_step` took the screenshots again
+    # before it; built by `retake.describe_for_review`, heading included.
+    if screens_note and stage == "review":
+        included.append("screens")
+        blocks.append(screens_note.rstrip())
+    return blocks
+
+
+def _unit_files(
+    directory: Path, stage: str, stages: list[str], included: list[str]
+) -> tuple[list[str], list[str]]:
+    """Every artifact of the unit that exists, by absolute path, so what the prompt no longer
+    carries can still be found; `pointed` is what is here and not above.
+    """
+    pointed: list[str] = []
+    if stage not in _POINTING:
+        return [], pointed
+    lines = []
+    for s in stages:
+        name = f"{s}.md"
+        if not (directory / name).is_file():
+            continue
+        # The plan is enough to implement from; what it cites, it cites by section.
+        if stage in ("impl", "implement") and s in ("intent", "spec", "spike"):
+            continue
+        above = name in included
+        if not above:
+            pointed.append(name)
+        lines.append(f"- {directory.resolve() / name}" + (" (above)" if above else ""))
+    if not pointed:
+        return [], pointed
+    return ["# The unit's files\n\n" + "\n".join(lines) + "\n\n" + UNIT_FILES_ADVICE], pointed
+
+
+def _task(
+    workspace: str | Path,
+    directory: Path,
+    unit: str,
+    stage: str,
+    artifact: str,
+    writes_own: bool,
+) -> str:
+    """What the step is asked to do, and where it leaves the artifact."""
+    location = directory / artifact
+    if writes_own and stage == "ship":
+        # `ship` runs outside every checkout (`service.step_cwd`): inside the unit's worktree,
+        # `gh pr merge --delete-branch` merges and then exits 1. Calling this directory "the
+        # repository" would send the session looking for one.
+        return (
+            f"# Your task\n\n"
+            f"Merge this unit's pull request, then write `{location}` recording what went "
+            "out.\n\n"
+            "You are deliberately not inside a git checkout. Name the pull request by the "
+            "URL in `pr.md`'s `PR:` field in every `gh` command; a bare number cannot be "
+            "resolved from here.\n\n"
+            "That file must carry the `Status:` line the rules above describe. Prose in "
+            "Vietnamese; filenames and headings in English. Write it yourself with your "
+            "tools — do not paste it into your reply."
+        )
+    if writes_own and stage == "pr":
+        # Says where `pr.md` goes, where its shape is, the order that writes it before anything
+        # waits, and when to stop; sharing `impl`'s sentence made `pr` spend turns rebasing or
+        # copying another unit's `pr.md`.
+        return (
+            f"# Your task\n\n"
+            f"Open this unit's pull request from the repository at "
+            f"`{Path(workspace).expanduser().resolve()}`, then write `{location}` "
+            "recording it.\n\n"
+            "Its shape is `## Output` in the rules above. You do not need another unit's "
+            "`pr.md` as an example, and the read boundary refuses one.\n\n"
+            "In this order: find out whether the pull request already exists — the block "
+            "above says, or ask `gh pr view` once. If it does not, push the branch and "
+            "`gh pr create`. As soon as you have its URL, write `PR:` and "
+            "`Status: accepted` into pr.md. Only after that read `gh pr checks` — once, "
+            "never `--watch` — and record what it said.\n\n"
+            "If the branch conflicts with `main`, or a required check is red, write that "
+            "under `## Where` and stop. Do not rebase, merge, pull or change code: a "
+            "conflict is *Integrate*'s on the board, and a red check sends the unit back "
+            "to `impl`.\n\n"
+            "That file must carry the `Status:` line the rules above describe. Prose in "
+            "Vietnamese; filenames and headings in English. Write it yourself with your "
+            "tools — do not paste it into your reply."
+        )
+    if writes_own:
+        # A stage with tools does the work and then records it. Asking it to *reply* with the file as
+        # well would let the file and the reply disagree.
+        return (
+            f"# Your task\n\n"
+            f"Do the work this unit's plan authorises, in the repository at "
+            f"`{Path(workspace).expanduser().resolve()}`, then write `{location}` "
+            "recording what you did.\n\n"
+            "That file must carry the `Status:` line the rules above describe. Prose in "
+            "Vietnamese; filenames and headings in English. Write it yourself with your "
+            "tools — do not paste it into your reply."
+        )
+    return (
+        f"# Your task\n\n"
+        f"Write `{artifact}` for the work unit `{unit}`.\n\n"
+        "Reply with the file's complete contents and nothing else — no preamble, no "
+        "code fence, no commentary. The first lines must carry the `Status:` line the "
+        "rules above describe. Prose in Vietnamese; filenames and headings in English."
+    )
+
+
+def compose_prompt(
     workspace: str | Path,
     directory: str | Path,
     unit: str,
@@ -415,403 +933,32 @@ def compose_prompt(  # noqa: C901, PLR0915 - still to split
     """
     directory = Path(directory)
     included: list[str] = []
-    parts: list[str] = []
-    pointing = stage in _POINTING
-
-    # First, and outside any `try`. `Runner.run` calls this before it touches the journal and
-    # before `Sessions.stream` exists, so a `MissingRules` raised here means zero requests to
-    # the SDK by structure.
-    parts.append(f"# The rules for this stage\n\n{skill_for(stage)}")
-    # Who the session is, before its rules. `None`, a stage the agent table has no row for, adds
-    # not one byte.
-    if agent is not None:
-        parts.insert(0, agents.identity_section(agent))
-
-    # The rules above tell this stage to run `cos.mjs gate` and stop if it exits non-zero, but
-    # most prose stages have no tools and never could. So the app asks, refuses to start the
-    # step when the answer is no, and says so here: a running step has an open gate by
-    # construction, and must not treat "I could not check" as "I must not proceed".
-    if gate_said:
-        parts.append(
-            "# The gate, already asked\n\n"
-            "The app ran `cos.mjs gate` for this stage before starting this step, and it "
-            "is open. It would not have started otherwise. This is what the gate said:\n\n"
-            f"    {gate_said}\n\n"
-            "Do not ask it again and do not treat it as unasked — you may have no tools "
-            "to run it with, and that is not a reason to hold back an artifact."
-        )
-
-    # The app refreshes a step's detached tree from `origin/main` before running it, but a
-    # refresh can fail (remote unreachable, tree dirty, a commit not an ancestor of the tip) and
-    # the step still runs. `service.describe_base` is the one sentence saying so; this hands it
-    # to the step rather than leaving it to guess from a `git log` it may have no tool to run.
-    if base_note:
-        parts.append(f"# The base this step runs on\n\n{base_note}")
-
-    # Which files the plan names that `main` changed since the plan ran, or why that could not
-    # be checked. Built by `drift.describe`; `""` adds nothing.
-    if drift_note:
-        parts.append(f"# The files main changed since the plan\n\n{drift_note}")
-
-    def embedded(name: str) -> str:
-        """An artifact as a prompt embeds it, with its answers from `cos.db` (`with_rows`);
-        `unit_meta=None` is the file.
-        """
-        text = _read(directory / name)
-        if text and unit_meta is not None:
-            text = with_rows((directory / name).read_bytes(), name, unit_meta)
-        return text
-
-    intent = "" if pointing else embedded("intent.md")
-    if intent:
-        included.append("intent.md")
-        parts.append(f"# The intent this work is authorised by\n\n{intent}")
-
-    # The stage immediately before this one, taken from the stage list the board was read with
-    # so the order is not restated here. A pointing stage carries only what `_EMBED` names,
-    # under the same heading.
-    position = stages.index(stage) if stage in stages else -1
-    for earlier in reversed(stages[:position]):
-        name = f"{earlier}.md"
-        if pointing and name not in _EMBED[stage]:
-            continue
-        text = embedded(name)
-        if text and name not in included:
-            included.append(name)
-            parts.append(f"# The {earlier} it follows\n\n{text}")
-            break
-
-    # A fix in the fast lane has no plan: its intent carries the reproduction and the expected
-    # and actual result, and is what impl builds from.
-    if stage in ("impl", "implement") and "plan.md" not in included:
-        text = embedded("intent.md")
-        if text:
-            included.append("intent.md")
-            parts.append(f"# The intent it follows\n\n{text}")
-
-    # Right after the stage before: a child unit has no `idea.md`, and the idea it shares stands
-    # where that would have.
-    if idea_note and stage == "intent":
-        parts.append(f"# The idea this unit was opened from\n\n{idea_note.rstrip()}")
-    if siblings_note and stage in ("impl", "implement"):
-        parts.append(f"# The sibling repositories this step may read\n\n{siblings_note.rstrip()}")
-
-    # The loop above takes one artifact, and two stages need a second. `plan` follows `spike`
-    # when one ran, but the requirements it orders are still in `spec.md`. A `spec` re-run after
-    # a spike must be rewritten on that measurement. A `spike` re-run needs the one before it to
-    # set `Round:`.
-    spike = _read(directory / "spike.md")
-    if stage == "plan" and "spike.md" in included and "spec.md" not in included:
-        spec = embedded("spec.md")
-        if spec:
-            included.append("spec.md")
-            parts.append(f"# The spec the spike measured\n\n{spec}")
-    if stage == "spec" and spike and "spike.md" not in included:
-        included.append("spike.md")
-        parts.append(
-            "# What the spike measured\n\n"
-            "A spike ran on the spec before this one. Rewrite the spec on these results: a "
-            "question whose verdict is `fails` does not hold, so drop its `U<n>` and every "
-            "requirement that rested on it. A new question takes a new `U<n>`.\n\n"
-            f"{spike}"
-        )
-    if stage == "spike" and spike and "spike.md" not in included:
-        included.append("spike.md")
-        parts.append(f"# The previous spike\n\n{spike}")
-    if stage == "spike":
-        scratch = Path(workspace).expanduser().resolve()
-        # `ceilings` is the grant `Runner.run` holds, so no second number is written by hand; `None`
-        # (a caller with no grant) leaves the sentence out.
-        within = (
-            f"This step has {ceilings[0]} turns and ${ceilings[1]:.2f}. "
-            if ceilings is not None
-            else ""
-        )
-        parts.append(
-            "# Where you work\n\n"
-            f"Your working directory is `{scratch}`, a "
-            "throwaway directory the app deletes when this step ends. Write probe code "
-            "there and nowhere else.\n\n"
-            + (
-                f"The unit's worktree is `{worktree}`. Read it; never write to it. The app "
-                "records its `HEAD` and `git status --porcelain` before this step and again "
-                "after, and fails the step, writing no `spike.md`, if either changed."
-                if worktree
-                else "No worktree was named for this step."
-            )
-            + "\n\n"
-            f"Your progress file is `{scratch / PROGRESS_FILE}` (the rules' *The progress "
-            f"file*). {within}If this step ends without a usable final reply — a turn or "
-            "budget ceiling, a reply with no `Status:` line, a session that broke — the app "
-            "writes `spike.md` from this file."
-        )
-
-    # The files the plan changes as they stand, already capped (`planmap.select`), and the first
-    # words the grant allows, taken from it; this only places them.
-    if plan_map and stage in ("impl", "implement"):
-        included.append("plan-map")
-        parts.append(f"{PLAN_MAP_HEADING}\n\n{plan_map}\n\n{PLAN_MAP_ADVICE}")
-    if commands and stage in ("impl", "implement"):
-        included.append("commands")
-        words = ", ".join(f"`{c}`" for c in commands)
-        parts.append(f"{COMMANDS_HEADING}\n\n{words}\n\n{COMMANDS_ADVICE}")
-    if runs_commands:
-        parts.append(f"{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
-        parts.append(f"{HARNESS_HEADING}\n\n{harness_advice(directory, state_file)}")
-
-    # A prose stage re-run against an artifact that already carries `## Answers` must see a
-    # person's decision, or it may ask the same question again. `review` gets the same block
-    # after *The rounds so far* below, so `stage != "review"` keeps it from landing here too.
-    if is_prose_stage(stage) and not writes_own and stage != "review":
-        block = _answers_block(
-            directory, artifact, repeat_content=stage != "intent", meta=unit_meta
-        )
-        if block:
-            parts.append(block)
-    # A draft `impl.md` that asked a person carries the answers; the step that runs next is told
-    # them, and that the section is not its to touch.
-    if stage in ("impl", "implement"):
-        block = _impl_answers_block(directory, unit_meta)
-        if block:
-            parts.append(block)
-
-    # A review that asked for changes sends the unit back to `impl`, and the point of going back
-    # is the findings; without this block the step is built from `intent.md` and `plan.md` only
-    # and cannot see one.
-    #
-    # Only while the review is `changes-requested`: a pass has nothing to act on, and a reject
-    # closed the unit. It carries the header and the findings still open in the last round; the
-    # whole file is named by path in *The unit's files*.
-    review_path = directory.resolve() / "review.md"
-    if stage in ("impl", "implement"):
-        review = _read(directory / "review.md")
-        if (
-            review
-            and _header_status(review) == "changes-requested"
-            and "review-findings" not in included
-        ):
-            header, number, findings = open_findings(review)
-            included.append("review-findings")
-            parts.append(
-                "# The review that sent this back\n\n"
-                "The last review asked for changes. Fix every finding marked `[open]` below "
-                "on the branch, one commit per finding where that is possible, then push "
-                "the branch, then record in impl.md which commit fixed which finding. The "
-                "next review is offered only once a fix is on the pull request, so a fix "
-                "left unpushed keeps this unit on impl.\n\n"
-                "Below are the review's header line and the findings its last round"
-                + (f" (Round {number})" if number is not None else "")
-                + f" left open. The whole review, every round, is `{review_path}`.\n\n"
-                f"{header}\n\n{findings or '(no finding is left open)'}"
-            )
-
-    # `review.md` accumulates rounds and the app writes it from the reply, so writing must not
-    # erase the rounds already there (`merge_review`), or a loop whose counter resets every run
-    # never reaches its limit. The prompt carries the last round's number and what it left open;
-    # `impl.md`, `pr.md` and the earlier rounds are named by path in *The unit's files*.
-    if stage == "review":
-        review = _read(directory / "review.md")
-        if _rounds(review):
-            _, number, findings = open_findings(review)
-            included.append("review-findings")
-            parts.append(
-                "# The rounds so far\n\n"
-                f"`review.md` already holds rounds up to Round {number}, and the app keeps "
-                "them. Do not copy them into your reply. Reply with the title, the header "
-                "line and the next `## Round N` section only; the app writes the earlier "
-                "rounds back under your header, unchanged, and appends yours after them.\n\n"
-                f"The findings Round {number} left open are below. Every earlier round is "
-                f"in `{review_path}`.\n\n"
-                f"{findings or '(no finding is left open)'}"
-            )
-
-    # The last round asked for changes but dropped ids an earlier round raised, so `cos.mjs` does
-    # not count it and sent the unit here again. The block above may say nothing is left open;
-    # this says why the review runs anyway. The ids are `cos.mjs`'s, carried by `service.steps.run_step`.
-    if stage == "review" and unfinished_round:
-        number = int(unfinished_round["n"])
-        dropped = ", ".join(f"`{i}`" for i in unfinished_round.get("dropped") or [])
-        included.append("review-unfinished")
-        parts.append(
-            "# The round that did not count\n\n"
-            f"Round {number} asked for changes but does not list {dropped}, which an earlier "
-            "round raised, so `cos.mjs` does not count it against `COS_REVIEW_ROUNDS` and "
-            f"this review runs again. Write Round {number + 1} as a full round for the commit "
-            "named below. List every finding of every earlier round with its label, "
-            f"{dropped} among them."
-        )
-
-    # The last round is one the app's closing turn wrote for a review that ran out of turns. The
-    # next review goes on from it: its three sections verbatim, and what the last full round
-    # before it left open.
-    if stage == "review":
-        review = _read(directory / "review.md")
-        found = list(_ROUND_RE.finditer(review or ""))
-        last = found[-1].group(0).rstrip() if found else ""
-        meta = _round_meta(last) if last else None
-        if meta is not None and meta[1] == "incomplete":
-            number = _round_number(last)
-            start = last.find(INCOMPLETE_SECTIONS[0])
-            sections = last[start:] if start != -1 else last
-            earlier = [
-                r
-                for r in _rounds(review[: found[-1].start()])
-                if (_round_meta(r) or ("", ""))[1] != "incomplete"
-            ]
-            carried = ""
-            if earlier:
-                _, full, left = open_findings(review[: found[-1].start()])
-                carried = (
-                    f"\n\nThe findings Round {full}, the last full round, left open:\n\n"
-                    f"{left or '(no finding is left open)'}"
-                )
-            included.append("review-incomplete")
-            parts.append(
-                "# The incomplete round\n\n"
-                f"Round {number} is incomplete: the review before this one ran out of turns, "
-                "and the app asked it, with no tools left, to write down where it stood. Go "
-                "on from it. Read what it lists under *What was not reviewed* first, then "
-                f"write Round {number + 1} as a full round for the commit named below. Carry "
-                f"forward every finding of Round {number} and of every earlier round, with "
-                "its id: the `ship` gate stays closed on a round that drops one. Never write "
-                "`Verdict: incomplete` yourself; only the app's closing turn writes it.\n\n"
-                f"Round {number}, from its first section on, verbatim:\n\n{sections}"
-                f"{carried}"
-            )
-
-    # `review`'s own copy of the answers block, placed after *The rounds so far*: a person can
-    # answer under `## Answers` while a review is at `changes-requested`, and the next review
-    # must not treat that decision as an unread finding.
-    if stage == "review" and is_prose_stage(stage) and not writes_own:
-        block = _answers_block(directory, artifact, repeat_content=True, meta=unit_meta)
-        if block:
-            parts.append(block)
-
-    # `write-review` needs the commit it reviewed, and the `ship` gate reads that line. A step
-    # runs in the unit's worktree, whose `.git` is a file pointing into the main repository, and
-    # a `Read` there is refused as outside both the worktree and the unit. The app has already
-    # read the head for the run log, so it hands the same value over rather than widen the boundary.
-    if stage == "review" and head:
-        parts.append(
-            "# The commit you are reviewing\n\n"
-            "The app read the head of this checkout before starting the step. Record it "
-            "on the round's `Reviewed:` line:\n\n"
-            f"    {head}\n\n"
-            "It is the same value the run log's `start` record carries. Do not read it out "
-            "of `.git/`: the checkout is a git worktree whose git directory lies outside "
-            "what this step may read."
-        )
-    elif stage == "review":
-        parts.append(
-            "# The commit you are reviewing\n\n"
-            "The app could not read the head of this checkout: it is not a git checkout, "
-            "or `git rev-parse HEAD` failed. Do not guess one. Leave the round's "
-            "`Reviewed:` line without a commit and say why under "
-            "`### What was not reviewed`; the `ship` gate will stay closed, which is right."
-        )
-
-    # Only when the last run of this unit and stage did not end `done`. `service.steps.run_step` decides
-    # that and builds this string (`journal.failed_attempts` + `describe_attempt`); this only
-    # places it, like `base_note`.
-    if last_attempt:
-        included.append("last-attempt")
-        parts.append(f"# The attempt before this one\n\n{last_attempt}")
-
-    # Only for `review`, and only when `service.steps.run_step` found an integration recorded after the
-    # last review round; built by `integrate.describe_for_review`, heading included.
-    if integration_note and stage == "review":
-        included.append("integration")
-        parts.append(integration_note.rstrip())
-
-    # Only for `review`, and only when `service.steps.run_step` took the screenshots again before it;
-    # built by `retake.describe_for_review`, heading included.
-    if screens_note and stage == "review":
-        included.append("screens")
-        parts.append(screens_note.rstrip())
-
-    # Every artifact of the unit that exists, by absolute path, so what the prompt no longer
-    # carries can still be found; `pointed` is what is here and not above.
-    pointed: list[str] = []
-    if pointing:
-        lines = []
-        for s in stages:
-            name = f"{s}.md"
-            if not (directory / name).is_file():
-                continue
-            # The plan is enough to implement from; what it cites, it cites by section.
-            if stage in ("impl", "implement") and s in ("intent", "spec", "spike"):
-                continue
-            above = name in included
-            if not above:
-                pointed.append(name)
-            lines.append(f"- {directory.resolve() / name}" + (" (above)" if above else ""))
-        if pointed:
-            parts.append("# The unit's files\n\n" + "\n".join(lines) + "\n\n" + UNIT_FILES_ADVICE)
-
+    parts = _opening(stage, agent)
+    # Read once: nothing writes `review.md` while the prompt is composed.
+    review = _read(directory / "review.md") if stage in ("impl", "implement", "review") else ""
+    # The order of these calls is the order of the prompt.
+    parts += [
+        *_already_asked(gate_said, base_note, drift_note),
+        *_what_it_follows(directory, stage, stages, unit_meta, included),
+        *_shared(stage, idea_note, siblings_note),
+        *_second_artifact(directory, stage, unit_meta, included),
+        *_where_you_work(stage, workspace, worktree, ceilings),
+        *_tools(stage, directory, plan_map, commands, runs_commands, state_file, included),
+        *_answers(stage, directory, artifact, writes_own, unit_meta),
+        *_sent_back(stage, directory, review, included),
+        *_rounds_so_far(stage, directory, review, included),
+        *_unfinished_round(stage, unfinished_round, included),
+        *_incomplete_round(stage, review, included),
+        *_review_answers(stage, directory, artifact, writes_own, unit_meta),
+        *_commit_reviewed(stage, head),
+        *_handed(stage, last_attempt, integration_note, screens_note, included),
+    ]
+    files, pointed = _unit_files(directory, stage, stages, included)
+    parts += files
     # Just before the task, so the note is the last thing read before it.
     if rerun:
         parts.append(_rerun_block(directory, stage, artifact, rerun_note))
-
-    location = directory / artifact
-    if writes_own and stage == "ship":
-        # `ship` runs outside every checkout (`service.step_cwd`): inside the unit's worktree,
-        # `gh pr merge --delete-branch` merges and then exits 1. Calling this directory "the
-        # repository" would send the session looking for one.
-        parts.append(
-            f"# Your task\n\n"
-            f"Merge this unit's pull request, then write `{location}` recording what went "
-            "out.\n\n"
-            "You are deliberately not inside a git checkout. Name the pull request by the "
-            "URL in `pr.md`'s `PR:` field in every `gh` command; a bare number cannot be "
-            "resolved from here.\n\n"
-            "That file must carry the `Status:` line the rules above describe. Prose in "
-            "Vietnamese; filenames and headings in English. Write it yourself with your "
-            "tools — do not paste it into your reply."
-        )
-    elif writes_own and stage == "pr":
-        # Says where `pr.md` goes, where its shape is, the order that writes it before anything
-        # waits, and when to stop; sharing `impl`'s sentence made `pr` spend turns rebasing or
-        # copying another unit's `pr.md`.
-        parts.append(
-            f"# Your task\n\n"
-            f"Open this unit's pull request from the repository at "
-            f"`{Path(workspace).expanduser().resolve()}`, then write `{location}` "
-            "recording it.\n\n"
-            "Its shape is `## Output` in the rules above. You do not need another unit's "
-            "`pr.md` as an example, and the read boundary refuses one.\n\n"
-            "In this order: find out whether the pull request already exists — the block "
-            "above says, or ask `gh pr view` once. If it does not, push the branch and "
-            "`gh pr create`. As soon as you have its URL, write `PR:` and "
-            "`Status: accepted` into pr.md. Only after that read `gh pr checks` — once, "
-            "never `--watch` — and record what it said.\n\n"
-            "If the branch conflicts with `main`, or a required check is red, write that "
-            "under `## Where` and stop. Do not rebase, merge, pull or change code: a "
-            "conflict is *Integrate*'s on the board, and a red check sends the unit back "
-            "to `impl`.\n\n"
-            "That file must carry the `Status:` line the rules above describe. Prose in "
-            "Vietnamese; filenames and headings in English. Write it yourself with your "
-            "tools — do not paste it into your reply."
-        )
-    elif writes_own:
-        # A stage with tools does the work and then records it. Asking it to *reply* with the file as
-        # well would let the file and the reply disagree.
-        parts.append(
-            f"# Your task\n\n"
-            f"Do the work this unit's plan authorises, in the repository at "
-            f"`{Path(workspace).expanduser().resolve()}`, then write `{location}` "
-            "recording what you did.\n\n"
-            "That file must carry the `Status:` line the rules above describe. Prose in "
-            "Vietnamese; filenames and headings in English. Write it yourself with your "
-            "tools — do not paste it into your reply."
-        )
-    else:
-        parts.append(
-            f"# Your task\n\n"
-            f"Write `{artifact}` for the work unit `{unit}`.\n\n"
-            "Reply with the file's complete contents and nothing else — no preamble, no "
-            "code fence, no commentary. The first lines must carry the `Status:` line the "
-            "rules above describe. Prose in Vietnamese; filenames and headings in English."
-        )
+    parts.append(_task(workspace, directory, unit, stage, artifact, writes_own))
     block = submit_block(stage, artifact, writes_own)
     if block:
         parts.append(block)
