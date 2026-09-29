@@ -1683,6 +1683,8 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(sessions, "DISCONNECT_TIMEOUT", 0.1), mock.patch.object(sessions, "KILL_AFTER", 0.1):
             self._flow("sid-5", process=cli)
             await self.s.suspend_all()
+        # The child is reaped by the loop, which under load lags behind `suspend_all`.
+        await asyncio.wait_for(cli.wait(), 5)
         self.assertEqual(cli.returncode, -9)  # `_shut`'s SIGKILL: the tree under it is orphaned
         def running(pid):
             # A process being reaped vanishes between any two reads: ESRCH, not ENOENT.
