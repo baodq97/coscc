@@ -211,7 +211,7 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
         # `0033` spec R8, from `idea.md:23`: a starting point, not a conclusion. The ids are
         # the `[1m]` ones `0031` shipped.
         defaults, _ = models.load_defaults()
-        opus, sonnet = "claude-opus-5-5[1m]", "claude-sonnet-5[1m]"
+        opus, sonnet = "claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]"
         expected = {
             "idea": row(opus, "medium"), "intent": row(opus, "medium"),
             "spec": row(opus, "high"), "spike": row(opus, "high"), "plan": row(opus, "high"),
