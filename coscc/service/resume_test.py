@@ -20,6 +20,7 @@ from coscc.config import Config
 from coscc.service import Service
 from coscc.service import resume as resume_mod
 from coscc.service.service_test import create_sync
+from coscc.agent.submit_test import submits as _submits
 
 SID = "5f1c2d3e-0000-4000-8000-000000000001"
 DROPPED = [{"name": "Bash", "input": "sleep 60"}]
@@ -326,6 +327,7 @@ class TakingUpAfterAnUpdate(_Base):
 
         async def stream(cwd, text, session_id=None, **kw):
             streamed.append({"session_id": session_id, **kw})
+            await _submits(kw)
             yield ("done", {"session_id": SID})
 
         self.service.sessions.stream = stream  # type: ignore[method-assign]
@@ -340,6 +342,7 @@ class TakingUpAfterAnUpdate(_Base):
 
         async def stream(cwd, text, session_id=None, **kw):
             streamed.append(kw)
+            await _submits(kw)
             yield ("done", {"session_id": SID})
 
         self.service.sessions.stream = stream  # type: ignore[method-assign]
@@ -489,6 +492,7 @@ class JeraTakenUpAgain(_Base):
             calls.append({"cwd": cwd, "text": text, "session_id": session_id, **kw})
             if len(calls) == 1:
                 raise Suspended("paused for an update")
+            await _submits(kw)
             yield ("done", {"session_id": SID, "cost": {"cost_usd": 0.1}, "terminal_reason": "success"})
 
         self.service.sessions.stream = stream  # type: ignore[method-assign]

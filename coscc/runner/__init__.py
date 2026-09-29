@@ -21,7 +21,9 @@ that answers where those skills are, and a step whose rules it cannot find does 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -31,9 +33,11 @@ from coscc.agent import agents, instructions, steps, transcript
 from coscc.github.integrate import check_started_by
 from coscc.agent import sessions as sessions_mod
 from coscc.runlog.journal import Journal
-from coscc.agent.policy import beyond_reading, grant_for_step, is_prose_stage
+from coscc.agent import submit as submit_mod
+from coscc.agent.policy import Grant, beyond_reading, grant_for_step, is_prose_stage
+from coscc.units import guards
+from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
-from coscc.units.autopilot import is_recording_ship
 from coscc.knowledge import TRIAL_FIELD as KNOWLEDGE_TRIAL_FIELD
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
@@ -64,6 +68,7 @@ from coscc.runner.prompt import (
     _rerun_block,
     build_prompt,
     compose_prompt,
+    submit_prompt,
     PROGRESS_FILE,
 )
 from coscc.runner.review import (
@@ -81,9 +86,11 @@ from coscc.runner.review import (
     _headings_in_order,
     closing_prompt,
     closing_round_problem,
+    render_round,
+    replace_new_rounds,
+    UI_STANDARD,
 )
 from coscc.runner.reply import (
-    STATUS_RE,
     RunError,
     OpeningError,
     opening_prompt,
@@ -204,6 +211,67 @@ async def _opening_turn(
     return text, blocks, done
 
 
+async def _submit_turn(
+    sessions: Sessions,
+    cwd: str,
+    prompt: str,
+    session_id: str,
+    denials: Denials,
+    channel: submit_mod.Channel,
+    **kw: Any,
+) -> dict[str, Any] | None:
+    """`0136` R2. One more turn on a step's own session, holding `submit` and nothing else,
+    and its `done`. What it says is not kept: the artifact was written before it.
+    """
+    gate = permission_gate(Grant(submits=True), cwd, denials)
+    done = None
+    async for kind, payload in sessions.stream(
+        cwd, prompt, session_id, max_turns=SUBMIT_TURNS, can_use_tool=gate, tools=[],
+        step=sessions_mod.StepHandle(), mcp_servers={submit_mod.SERVER: channel.server()}, **kw,
+    ):
+        if kind == "done":
+            done = payload
+    return done
+
+
+# `0136` R2. The turns `_submit_turn` gets: a call, a refusal, a call again and the reply.
+# Chosen, not measured, as `policy.SUBMIT_TURNS` is.
+SUBMIT_TURNS = 4
+
+
+def _manifest_head(cwd: str) -> str | None:
+    """`0136` R5. The head `.screens/manifest.json` in the step's tree says its screenshots
+    were taken at: the app's read, so no model copies it. `None` when there is none."""
+    try:
+        head = json.loads((Path(cwd) / ".screens" / "manifest.json").read_text(encoding="utf-8")).get("head")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return str(head) if head else None
+
+
+def _titled(pieces: list[str], artifact: str) -> bool:
+    title = _title(artifact)
+    return any(line.startswith(title) for piece in pieces for line in piece.splitlines())
+
+
+def _unsubmitted(channel: submit_mod.Channel) -> str:
+    """`0136` R2, R3. `""` once the run holds an object its channel's guard still opens on,
+    with the app's hash taken now; else why not, the object dropped when it went stale. The
+    run itself ends `done` only as the lane's `run-submitted` guard says (R1)."""
+    got = channel.received
+    if got is not None:
+        verdict = channel.verdict(got["object"], got["revision"])
+        if not verdict.open:
+            channel.received = None
+            return (
+                f"guard {channel.guard_id} refused the object it had accepted ({', '.join(verdict.reasons)}): "
+                "the unit's files changed after it was submitted"
+            )
+    lane = unit_states.default_lanes().lane("full")
+    ran = guards.guard(lane.guard_for("run", "submitted")).check({"submitted": channel.received is not None})
+    return "" if ran.open else f"{', '.join(ran.reasons)}: no object reached submit"
+
+
 async def _nothing() -> AsyncIterator[tuple[str, Any]]:
     """`0138`. The main reply of an `opening` or `closing` turn taken up again: already said."""
     return
@@ -304,6 +372,7 @@ class Runner:
         stages: list[str],
         mode: str,
         gate_said: str = "",
+        gate_reasons: tuple[str, ...] = (),
         cwd: str | None = None,
         model: str | None = None,
         model_source: str = "",
@@ -338,6 +407,9 @@ class Runner:
         plan_map: str = "",
         plan_map_record: dict[str, Any] | None = None,
         unfinished_round: dict[str, Any] | None = None,
+        open_findings: tuple[str, ...] = (),
+        claims_round: int | None = None,
+        rounds_known: tuple[int, ...] = (),
         idea_note: str = "",
         siblings_note: str = "",
         read_also: tuple[str, ...] = (),
@@ -512,8 +584,9 @@ class Runner:
         # the way `0037` picks by `system_prompt`. Only `pr` carries it.
         pr_extra = {"pr_before": pr_before or ""} if stage == "pr" else {}
         # `0126` R3: the autopilot tells a recording `ship` that ran out from a merging one by
-        # this field. Only a `ship` whose gate named the merge already made carries it.
-        ship_extra = {"ship_mode": "record"} if stage == "ship" and is_recording_ship(gate_said) else {}
+        # this field. Only a `ship` whose gate named the merge already made carries it, by the
+        # code `recording-ship` (`0136` R11), not by its words.
+        ship_extra = {"ship_mode": "record"} if stage == "ship" and "recording-ship" in gate_reasons else {}
 
         # `0037`: the same condition that decides whether a gate and a tool list are sent.
         preset = CLAUDE_CODE_PRESET if grant.opens_anything else None
@@ -523,6 +596,26 @@ class Runner:
         # `0073`. The step's recorder, when `Service.run_step` gave it one: its `run` goes into
         # `start` and `end`, and it is closed -- everything on disk -- before `end` is written.
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
+
+        # `0136` R2. This run's `submit`, bound to it: a stage that hands back a stage result
+        # ends `done` only once the channel holds an object its guard still opens on.
+        channel = (
+            submit_mod.Channel(
+                run=str(recorder.run) if recorder is not None else uuid.uuid4().hex,
+                stage=stage, directory=directory, artifact=artifact,
+                own=not grant.app_writes_artifact,
+                head=head, open_findings=tuple(open_findings), claims_round=claims_round,
+            )
+            if grant.submits
+            else None
+        )
+        servers = {"mcp_servers": {submit_mod.SERVER: channel.server()}} if channel is not None else {}
+        # The index of the piece that began after the last `submit` call, `None` before one.
+        after_submit: int | None = None
+        # What the repair turn of `0136` R2 cost, when it ran.
+        submit_turn: dict[str, Any] | None = None
+        # `0136` R5. The rounds `review.md` held before this step's reply was written.
+        rounds_before: set[int] | None = None
 
         start_at = was.get("start_at")
         if self.journal is not None and resume is None:
@@ -702,7 +795,7 @@ class Runner:
                 # gate in front of them (`0088` R4).
                 can_use_tool=(
                     permission_gate(grant, cwd, denials, *gate_args)
-                    if grant.opens_anything
+                    if grant.opens_anything or channel is not None
                     else None
                 ),
                 tools=list(grant.tools),
@@ -723,6 +816,8 @@ class Runner:
                 **({"step": running.handle, "owner": owner} if running is not None else {}),
                 # `0138` R7, and only on a step taken up again.
                 **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
+                # `0136` R2: only a step with a channel, so every other one is what it was.
+                **servers,
             )
             async for kind, payload in main:
                 if kind == "chunk":
@@ -748,6 +843,8 @@ class Runner:
                     # `chunk` as the terminal `done` row, so a third kind reaching it would
                     # arrive at the client as a malformed `done`.
                     pieces.append("")
+                    if payload == submit_mod.NAME:
+                        after_submit = len(pieces) - 1
                 else:
                     session_id = payload.get("session_id", "")
                     cost = payload.get("cost", {}) or {}
@@ -783,7 +880,14 @@ class Runner:
                 # title it wrote before its last tool call is a draft or a first piece, and
                 # its header may well say `accepted`. Only what it said after that call is
                 # taken, as before `0099`; nothing else leaves a review its closing turn.
-                taken = pieces[-1:] if _hit_ceiling(terminal) else pieces
+                taken = pieces
+                if channel is not None and after_submit is not None and not _titled(pieces[after_submit:], artifact):
+                    # `0136`. What came after the last `submit` call, with no title in it, is
+                    # the session saying it called the tool: never part of the artifact.
+                    taken = pieces[:after_submit]
+                taken = taken[-1:] if _hit_ceiling(terminal) else taken
+                if channel is not None and stage == submit_mod.ROUND:
+                    rounds_before = {_round_number(r) for r in _rounds(_read(directory / artifact))}
                 _write_artifact(directory, artifact, _joined(taken, artifact), blocks=blocks)
                 if watch:
                     # `0080` R4: the reply was written, so the progress file is never read.
@@ -796,8 +900,7 @@ class Runner:
                 written = directory / artifact
                 if not written.exists():
                     raise RunError(f"the step did not write {artifact}")
-                if not STATUS_RE.search(written.read_text(encoding="utf-8", errors="replace")):
-                    raise RunError(f"{artifact} carries no `Status:` line")
+                # Its `Status:` line is not looked at: since `0136` what decides is the object.
             outcome = "done"
         except asyncio.CancelledError:
             if not stopped():
@@ -1026,6 +1129,87 @@ class Runner:
                 if said:
                     # R6: under the first refusal and what the session first replied.
                     detail = f"{detail}\n--- {said} ---" if detail else said
+            # `0136` R2. A step that wrote its artifact with no object the guard still opens on
+            # gets one more turn on its own session, holding `submit` and nothing else, as the
+            # opening's repair is one (`0127`). Still none, and it ends `failed`, whatever its
+            # file says. Sealed and wrapped as that turn is: the `end` row never depends on it.
+            submit_pending: BaseException | None = None
+            if channel is not None and outcome == "done" and not shutting_down:
+                why = _unsubmitted(channel)
+                said = ""
+                if why:
+                    try:
+                        if not session_id:
+                            said = "the session has no id"
+                        elif not steps.seal(running):
+                            said = "a Stop came first"
+                        elif turn_spent:
+                            said = "the budget was spent"
+                        else:
+                            done = await asyncio.wait_for(
+                                _submit_turn(
+                                    self.sessions, cwd, submit_prompt(stage, artifact, why),
+                                    session_id, denials, channel,
+                                    max_budget_usd=turn_budget,
+                                    **({"workspace": workspace} if cwd != workspace else {}),
+                                    **({"model": model} if model is not None else {}),
+                                    **({"effort": effort} if effort is not None else {}),
+                                    **({"system_prompt": dict(preset)} if preset else {}),
+                                    **({"settings": settings} if settings is not None else {}),
+                                    **({"owner": {**owner, "kind": "submit"}} if running is not None else {}),
+                                ),
+                                OPENING_TIMEOUT,
+                            )
+                            submit_turn, cost = _turn_cost(done, cost)
+                            if _hit_ceiling(str((done or {}).get("terminal_reason") or "")):
+                                channel.received = None
+                                said = "the repair turn stopped at its ceiling"
+                            else:
+                                why = _unsubmitted(channel)
+                    except asyncio.CancelledError as e:
+                        if stopped():
+                            task = asyncio.current_task()
+                            if task is not None:
+                                task.uncancel()
+                            said = "a Stop came during the repair turn"
+                        else:
+                            shutting_down = True
+                            submit_pending = e
+                    except Suspended as e:
+                        shutting_down = True
+                        submit_pending = e
+                    except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                        submit_turn = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
+                        said = f"the repair turn failed: {type(e).__name__}: {e}"
+                    if why and not shutting_down:
+                        outcome = "failed"
+                        error = {"type": "NoSubmission", "message": why}
+                        detail = f"no-submission: {why}" + (f" ({said})" if said else "")
+            # `0136` R5. The round the review handed back, written into `review.md` by the app:
+            # its number, the head the app read, the verdict, the findings and the screenshots.
+            if (
+                channel is not None and stage == submit_mod.ROUND and outcome == "done"
+                and channel.received is not None and not shutting_down
+            ):
+                try:
+                    # Past every round the file held and every one the app has a row for, so a
+                    # number is never given twice (`review_rounds_n`).
+                    number = max({*(rounds_before or ()), *rounds_known}, default=0) + 1
+                    screens = {
+                        "taken": _manifest_head(cwd), "standard": UI_STANDARD,
+                        "by": f"{(agent or {}).get('name') or 'the review session'} (agent, review)",
+                    }
+                    text = _read(directory / artifact)
+                    new = [r for r in _rounds(text) if _round_number(r) not in (rounds_before or set())]
+                    rendered = render_round(new[-1] if new else "## Round", number, head, channel.received["object"], screens)
+                    status = submit_mod.ROUND_STATES[str(channel.received["object"]["verdict"])]
+                    (directory / artifact).write_text(
+                        replace_new_rounds(text, rounds_before or set(), rendered, status), encoding="utf-8")
+                    channel.extra = {"n": number, "screens": screens}
+                except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                    outcome = "failed"
+                    error = {"type": type(e).__name__, "message": str(e)}
+                    detail = f"review.md: the round was not written from its object: {type(e).__name__}: {e}"
             # `0034` review round 1, F2. The outcome is decided here, so the door closes
             # here: a Stop that arrives while the attempt record is captured below is
             # refused (`Finishing`) rather than told "stopped" and logged as something
@@ -1163,6 +1347,10 @@ class Runner:
                     # `0127` R5-R7: only once a reply lacked its opening.
                     **({"opening": opening} if opening is not None else {}),
                     **({"opening_reason": str(unopened)} if opening == "repaired" else {}),
+                    # `0136` R2: whether the run's `submit` held an object at the end, and the
+                    # repair turn's cost when one ran. Only a step with a channel carries either.
+                    **({"submitted": channel.received is not None} if channel is not None else {}),
+                    **({"submit_turn": submit_turn} if submit_turn is not None else {}),
                     **segment_fields,
                 )
             if progress_pending is not None:
@@ -1171,6 +1359,8 @@ class Runner:
                 raise closing_pending
             if opening_pending is not None:
                 raise opening_pending
+            if submit_pending is not None:
+                raise submit_pending
             if pending is not None:
                 if not stop_came:
                     raise pending
@@ -1193,5 +1383,11 @@ class Runner:
                 "model": model,
                 "model_source": model_source,
                 **({"stopped_by": running.stopped_by} if outcome == "stopped" else {}),
+                # `0136` R4. What guard `stage-result` read, for `Service._ingest` to apply.
+                **(
+                    {"submitted": channel.inputs(channel.received["object"], channel.received["revision"])}
+                    if channel is not None and channel.received is not None and outcome == "done"
+                    else {}
+                ),
             },
         )

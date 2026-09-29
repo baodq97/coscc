@@ -176,8 +176,11 @@ class TheSnapshotDecides(Base):
         after = status(self.store, self.meta.snapshot(WS, NAMES))
         before = json.loads(BEFORE.read_text(encoding="utf-8"))
         self.assertEqual([u["name"] for u in after["units"]], [u["name"] for u in before["units"]])
+        # `0136` R14, the one field that moved: a skip read from a file is a skip no person is
+        # known to have decided, and the unit stops on it for one.
+        moved = {"0003_old-unit": {"next": ("", "agent-cannot-skip")}}
         for old, new in zip(before["units"], after["units"]):
-            self.assertEqual(r5(new), r5(old), old["name"])
+            self.assertEqual(r5(new), {**r5(old), **moved.get(old["name"], {})}, old["name"])
 
     def test_a_snapshot_for_one_unit_carries_it_and_what_it_depends_on(self):
         self.meta.import_store(WS, self.store)
@@ -258,6 +261,45 @@ class AnswersAndHolds(Base):
         self.assertEqual(unit["open"], 0)
         self.assertEqual(unit["hold"]["state"], "paused")
         self.assertEqual(unit["next"]["why"], "paused")
+
+
+class AnImportedAnswerSaysWhoseItIs(Base):
+    """`0136` R15, and plan step 14: an answer read from a file says whose it was by what the
+    file carries — Jera's `Via: precedent.`, a delegation's line — and every other is a
+    person's. Answers `0135` imported as `unknown` are classified once."""
+
+    UNIT = "0013_open-question"
+    BLOCKS = (
+        "\n### Câu 2\nAnswered by: Jera. Date: 2026-09-24. Via: precedent.\n\nBao duyệt, như D1.\n"
+        "\n### Câu 3\nAnswered by: Leif. Date: 2026-09-24. Via: product.\n\nKhông.\n\nTheo ủy quyền: D2, Bao, 2026-09-20.\n"
+    )
+
+    def setUp(self):
+        super().setUp()
+        spec = self.store / ".cos" / self.UNIT / "spec.md"
+        spec.write_text(spec.read_text(encoding="utf-8") + self.BLOCKS, encoding="utf-8")
+
+    def authorities(self) -> dict[str, str]:
+        unit = self.meta.snapshot(WS, NAMES)["units"][f"proj/{self.UNIT}"]
+        return {str(a["n"]): a["authority"] for a in unit["answers"]}
+
+    def test_the_import_reads_whose_answer_each_was(self):
+        self.meta.import_store(WS, self.store)
+        self.assertEqual(self.authorities(), {"1": "person", "2": "agent", "3": "delegated"})
+
+    def test_answers_imported_before_0136_are_classified_once(self):
+        self.meta.import_store(WS, self.store)
+        with self.data.write() as conn:
+            conn.execute("UPDATE unit_answers SET authority = 'unknown'")
+            conn.execute("DELETE FROM migrations WHERE key = ?", (self.meta.authority_key(WS),))
+        self.assertEqual(set(self.authorities().values()), {"unknown"})
+        self.assertIsNone(self.meta.import_store(WS, self.store))
+        self.assertEqual(self.authorities(), {"1": "person", "2": "agent", "3": "delegated"})
+        # Once: a row that says `unknown` afterwards is left as it is.
+        with self.data.write() as conn:
+            conn.execute("UPDATE unit_answers SET authority = 'unknown' WHERE ref = '1'")
+        self.meta.import_store(WS, self.store)
+        self.assertEqual(self.authorities()["1"], "unknown")
 
 
 class TheImportReport(unittest.TestCase):

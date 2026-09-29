@@ -215,6 +215,10 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
         out.append(f"no {skills_prefix}*/{SKILL_FILE} — every step would refuse to run")
     if state_set not in names:
         out.append(f"no {state_set} — no transition could be read or written")
+    # `0136` R1, on the same reasoning: without it no guard is chosen for any transition.
+    lanes = _posix(states.LANES_PATH.relative_to(_HERE))
+    if lanes not in names:
+        out.append(f"no {lanes} — no transition could be guarded")
     # `0004_no-setting-says-which-model-runs-a-stage`, on the same reasoning as
     # `states.json`: without it every stage falls back to `COS_MODEL`, and nothing fails.
     model_set = _posix(models.DEFAULT_PATH.relative_to(_HERE))

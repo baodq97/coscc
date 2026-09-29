@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import unittest
 
 from coscc.units import backlog as b
@@ -281,24 +280,28 @@ class TheProposal(unittest.TestCase):
         return b.parse_proposal(reply, self.BACKLOG, self.STORE, found or {}, "sess", active or [])
 
     def test_r3_a_basis_missing_all_three_goals_drops_only_that_unit(self):
-        reply = "```json\n" + json.dumps({"units": [
+        reply = {"units": [
             {"unit": "0001_a", "value": 4, "effort": "S", "similar": [], "basis": "bớt can thiệp tay: x"},
             {"unit": "0002_b", "value": 2, "effort": "M", "similar": [], "basis": "hay"},
-        ]}) + "\n```"
+        ]}
         out = self.parse(reply)
         self.assertIsNone(out["failed"])
         self.assertEqual([r["unit"] for r in out["records"]], ["0001_a"])
         self.assertEqual(out["records"][0]["by"], "agent:sess")
+        # `0136` R9: whoever `by` names, the row says it is an agent's.
+        self.assertEqual(out["records"][0]["authority"], "agent")
         self.assertEqual(out["records"][0]["effort_source"], "guess")
         self.assertEqual(out["rejected"][0]["unit"], "0002_b")
 
-    def test_not_json_writes_nothing(self):
-        out = self.parse("I think 0001 is worth 4.")
-        self.assertEqual(out["records"], [])
-        self.assertIn("not JSON", out["failed"])
+    def test_no_object_writes_nothing(self):
+        """`0136` R9: a JSON block in the reply is words, and no object is no estimate."""
+        for none in (None, {}, {"units": "0001_a"}):
+            out = self.parse(none)
+            self.assertEqual(out["records"], [])
+            self.assertEqual(out["failed"], b.NO_OBJECT)
 
     def test_two_relations_in_one_reply_cannot_close_a_cycle(self):
-        reply = json.dumps({"units": [
+        reply = ({"units": [
             {"unit": "0001_a", "value": 4, "effort": "S", "basis": "bớt chi phí",
              "relations": [{"type": "phụ thuộc", "other": "0002_b", "reason": "x"}]},
             {"unit": "0002_b", "value": 4, "effort": "S", "basis": "bớt chi phí",
@@ -310,7 +313,7 @@ class TheProposal(unittest.TestCase):
 
     def test_a_measured_effort_replaces_the_agents_word(self):
         found = {f"000{i}_f": {"cost_usd": float(i), "turns": 10 * i} for i in range(1, 7)}
-        reply = json.dumps({"units": [
+        reply = ({"units": [
             {"unit": "0001_a", "value": 4, "effort": "S", "similar": ["0006_f"], "basis": "bớt chi phí"}]})
         rec = self.parse(reply, found)["records"][0]
         self.assertEqual((rec["effort"], rec["effort_source"]), ("L", "measured"))
@@ -327,7 +330,7 @@ class TheProposal(unittest.TestCase):
     def test_0092_the_prompt_and_the_estimate_name_the_units_left_out(self):
         text = b.build_prompt([{"unit": "0001_a", "idea": "words", "problem": "", "outcome": ""}], [], 4)
         self.assertIn("## Finished units\n\n(4 finished units have an unknown cost and are left out)", text)
-        reply = json.dumps({"units": [
+        reply = ({"units": [
             {"unit": "0001_a", "value": 4, "effort": "S", "similar": [], "basis": "bớt chi phí"}]})
         out = b.parse_proposal(reply, self.BACKLOG, self.STORE, {}, "sess", [], undetermined=4)
         self.assertIn("4 finished units with an unknown cost left out", out["records"][0]["effort_basis"])

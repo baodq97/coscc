@@ -49,7 +49,7 @@ code: it may be a conflict that shows only when rebasing, or a login, the networ
 permission. When `git rebase origin/main` meets no conflict, test and push as above. When
 your own fetch or push fails the way that refusal reads — authentication, permission,
 network — stop, push nothing, and say what failed in your reply. That is not a
-`[needs-person]` line, which is for two intents that contradict; the app records the
+`needs_person` item, which is for two intents that contradict; the app records the
 attempt as `failed`.
 
 ## When the prompt says the commits were never pushed
@@ -63,8 +63,8 @@ at most once, with the lease above, and push the tree's head as it is.
 - `diverged`: the tree's head sits on a newer `main` than the pull request's; the app sends
   no other divergence here. Run the `git range-diff` the prompt names. Push only when every
   difference is context the new base brought. When any commit changes in anything else,
-  push nothing and end with one `[needs-person]` line per such commit. Here that line means
-  the content differs, not that two intents contradict.
+  push nothing and hand back one `needs_person` item per such commit, its `commit` set. Here
+  that item means the content differs, not that two intents contradict.
 
 ## When to stop
 
@@ -73,14 +73,23 @@ Stop — `git rebase --abort`, push nothing — when either holds:
 - the two sides' intents contradict and no resolution keeps both;
 - the tests cannot pass without changing a behaviour one of the two units states.
 
-Then end your reply with one line per contradiction:
+Then hand back one `needs_person` item per contradiction, `commit` being `""` unless one
+commit is the cause, and `why`:
 
 ```
-[needs-person] <side A: unit, artifact, what it requires> vs <side B: unit, artifact, what it requires>
+<side A: unit, artifact, what it requires> vs <side B: unit, artifact, what it requires>
 ```
 
 The app records these, shows them on the board, and waits for a person. It does not send
 the unit back to `impl`.
+
+## Hand back your result
+
+Before your last reply, call the `submit` tool once with `{"needs_person": [{"commit", "why"}]}`
+— `[]` when nothing needs a person, whether you pushed or not. The app reads this object and
+never your reply: a `[needs-person]` line in the reply records nothing. Whether you pushed
+it reads from the pull request's head. If `submit` returns an error, correct the object and
+call submit again.
 
 ## Report
 

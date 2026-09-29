@@ -46,48 +46,63 @@ JERA = "precedent"
 STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist", "reruns", "full")
 
 # `0104` R6. Why a unit ranked higher on the shortlist was passed over, and nothing else.
-REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing", "dependency")
+REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing", "dependency", "overlap-pr")
 # `0111`. The stop `e` of a unit whose screenshots could not be taken again before `review`.
 SCREENS_FAILED = "the screenshots could not be taken again before review"
 # `0104` R3. The workspace's stop line when there is no shortlist to follow.
 NO_SHORTLIST = "Nothing is on the shortlist, so the autopilot starts nothing."
 
-# `cos.mjs`'s own words, read here because `next` hands out no `why`. `autopilot_test.py`
-# reads each one back out of `.claude/scripts/cos.mjs`, so a change there turns it red.
-CI_PENDING = "CI has not finished on #"
-CI_RED = "CI is red on #"
-NEEDS_A_PERSON = "needs a person"
-FINISHED = "finished"
-CLOSED = "closed — "
-# `0040` R7: `impl` waits on another unit's merge, `cos.mjs` `WAITING_ON`.
-WAITING_ON = "waiting on "
-# `0126` R4: a `ship` that records a merge already made and merges nothing, `cos.mjs` `mergedLine`.
-RECORDING = "record it in ship.md; do not merge"
-
 _NUMBER = re.compile(r"^(\d+)")
 
 
-def is_waiting_on_dependency(said: str) -> bool:
+# `0136` R11: what `next` or the gate said is read by code, from `reasons` (`guards.REASONS`),
+# never from its words, which are a person's to read and `cos.mjs`'s to change.
+def said(answer: Any, reason: str) -> bool:
+    """Whether `reason` is among the codes of `answer`: `next`'s dict, or anything with
+    `reasons` — a `board.Gate`, or the exception a refused step raised with it."""
+    if isinstance(answer, dict):
+        codes = answer.get("reasons") or ()
+    else:
+        codes = getattr(answer, "reasons", None) or ()
+    return reason in codes
+
+
+def is_waiting_on_dependency(answer: Any) -> bool:
     """`0040` R7: `next` holds `impl` back until a dependency merges. Not a stop, like CI
     pending: nothing a person does here would move it, and the next pass asks again."""
-    return (said or "").startswith(WAITING_ON)
+    return said(answer, "waiting-on")
 
 
-def is_ci_pending(said: str) -> bool:
+def is_ci_pending(answer: Any) -> bool:
     """R6: the gate or `next` is waiting on CI. Not a stop; R5 d asks again."""
-    return CI_PENDING in (said or "")
+    return said(answer, "ci-pending")
 
 
-def is_ci_red(said: str) -> bool:
-    """`0124` R2: `next` sends the unit back to `impl` because CI is red. Read anywhere in
-    the words, since `onReview` and `rebased` put the gate's reason after their own."""
-    return CI_RED in (said or "")
+def is_ci_red(answer: Any) -> bool:
+    """`0124` R2: `next` sends the unit back to `impl` because CI is red."""
+    return said(answer, "ci-red")
 
 
-def is_recording_ship(said: str) -> bool:
-    """`0126` R4: `next`'s action or the gate's open line names a `ship` that only records a
-    merge already made. Both take the words from `mergedLine`, never beside a merge pin."""
-    return RECORDING in (said or "")
+def is_recording_ship(answer: Any) -> bool:
+    """`0126` R4: `next` or the gate names a `ship` that only records a merge already made."""
+    return said(answer, "recording-ship")
+
+
+def needs_a_person(answer: Any) -> bool:
+    """R6 b: `next` stops for a person — review used its rounds, a spike failed too often, a
+    red check no impl can fix, a pass left closed twice on one head, and (`0136` R14) a spec
+    or plan skipped by no person or delegate of theirs."""
+    return said(answer, "needs-person") or said(answer, "awaits-person") or said(answer, "agent-cannot-skip")
+
+
+def is_over(answer: Any) -> bool:
+    """`next` offers nothing because the unit is finished or closed."""
+    return said(answer, "finished") or said(answer, "closed")
+
+
+# `0136` review round 1, F2. The record a `pr` or `ship` the PR machine ran leaves in place of
+# an `end`: `outcome` `done` or `failed`, and the machine's `result`, `reasons` and `detail`.
+PR_MACHINE = "prmachine"
 
 
 def is_step(record: dict[str, Any]) -> bool:
@@ -170,7 +185,7 @@ def skips_exhausted(nxt: dict[str, Any], last: dict[str, Any] | None, recorded: 
     last = last or {}
     return (
         last.get("kind") == "end" and last.get("stage") == "ship" and last.get("outcome") == "exhausted"
-        and nxt.get("stage") == "ship" and is_recording_ship(str(nxt.get("action") or ""))
+        and nxt.get("stage") == "ship" and is_recording_ship(nxt)
         and not recorded
     )
 
@@ -187,7 +202,8 @@ def stop_for(
     """The first of R6's stops that holds for one unit, as `{kind, reason}`, or `None`.
 
     `unit_row` is the unit as `Service.board` has it; `nxt` is `Service.next_step`'s answer;
-    `last` the unit's latest `end`, `integration` or `screens` (`0111`) record, or `None`. `None` back means no
+    `last` the unit's latest `end`, `integration`, `screens` (`0111`) or `PR_MACHINE` (`0136`)
+    record, or `None`. `None` back means no
     stop, which is not the same as something to run: a finished, rejected or held unit, and
     one waiting on CI, have neither. `exhausted` is how many steps of `last`'s stage ended
     `exhausted` (`exhausted_of`); left at 0, an exhausted step stops as before `0120`.
@@ -200,7 +216,7 @@ def stop_for(
     action = str(nxt.get("action") or "")
     if nxt.get("hold"):
         return None
-    if not stage and (action == FINISHED or action.startswith(CLOSED)):
+    if not stage and is_over(nxt):
         return None
 
     # a. Every unanswered question of the counted artifact (`cos.mjs` `unitQuestions`).
@@ -212,12 +228,12 @@ def stop_for(
     waiting = [str(x) for x in nxt.get("waiting") or []]
     if waiting:
         return _stop("b", f"{action} (awaiting a person on {', '.join(waiting)})")
-    if not stage and action.startswith(NEEDS_A_PERSON):
+    if not stage and needs_a_person(nxt):
         return _stop("b", action)
 
     kind = (last or {}).get("kind")
     outcome = str((last or {}).get("outcome") or "")
-    # d. Gebo ended on `[needs-person]`.
+    # d. Gebo's integration ended `needs-person`: the object it handed back said so (`0136` R7).
     if kind == "integration" and outcome == "needs-person":
         said = "; ".join(str(x) for x in (last or {}).get("needs_person") or []) or "no reason given"
         return _stop("d", f"the last integration needs a person: {said}")
@@ -239,6 +255,16 @@ def stop_for(
     ):
         detail = str(last.get("detail") or "")
         return _stop("e", f"the last integration was {outcome}" + (f": {detail}" if detail else ""))
+    # `0136` review round 1, F2: a `pr` or `ship` the PR machine ran and that failed, or whose
+    # guard refused it, stops as a session that ended `failed` did; no retry, as above.
+    # Review round 2, F6: a merge GitHub refused once the machine had requested it stops `f` on
+    # what `gh` said, as `0112` R7's refused `ship` did, so a unit the refusal left behind `main`
+    # is still integrated by the pass (`0112` R1) rather than awaiting a person.
+    if kind == PR_MACHINE and outcome != "done":
+        detail = str(last.get("detail") or "") or ", ".join(str(r) for r in last.get("reasons") or [])
+        if last.get("merge_refused"):
+            return _stop("f", f"ship was refused: {detail or 'no reason given'}")
+        return _stop("e",f"the last {last.get('stage')} was {last.get('result') or outcome}" + (f": {detail}" if detail else ""))
     # `0111`: the screenshots could not be taken again before `review`, which did not start.
     # No retry, as above: a person runs it again, and a retake that is taken lifts the stop.
     if kind == "screens" and outcome == "failed":
@@ -252,10 +278,10 @@ def stop_for(
     # stop. Whether it may be is the pass's to say (`reruns_of`, `answered_since_start`).
     if not stage and nxt.get("rerun"):
         return None
-    if not stage and is_waiting_on_dependency(action):
+    if not stage and is_waiting_on_dependency(nxt):
         return None
     # f. Nothing to run, and not because CI is still running.
-    if not stage and not is_ci_pending(action):
+    if not stage and not is_ci_pending(nxt):
         return _stop("f", action or "cos.mjs next named no stage")
     return None
 
@@ -308,7 +334,7 @@ def after_own_integration(
         return None
     red_state = (integration or {}).get("state") == "red-after-integration"
     fixing = nxt.get("stage") == "impl"
-    red_next = fixing and is_ci_red(str(nxt.get("action") or ""))
+    red_next = fixing and is_ci_red(nxt)
     again = _stop("e", "CI is still red after the autopilot's last integration")
     if after is None:
         return ("", again) if red_state else None
@@ -469,6 +495,7 @@ def pick(
     running: Iterable[dict[str, Any]],
     max_parallel: int,
     room: float,
+    open_prs: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     """R8 a–f and R7 over the steps that could start, highest on the shortlist first
     (`0104` R4).
@@ -479,8 +506,15 @@ def pick(
     what to start, what the cap alone held back, and `(reason, detail)` for each candidate
     another rule held back (`0104` R6). What `max_parallel` held back is in none of them:
     nothing after it is chosen, so nothing passes over it.
+
+    `open_prs` is `0136` R22: `{unit, number, files}` for each pull request of the workspace
+    that is open and not merged, `files` `None` when its diff could not be read. An `impl` of
+    a unit with no pull request of its own waits while one of another unit's touches a file
+    its plan names, so two open pull requests on one file never wait on each other.
     """
     running = list(running)
+    open_prs = list(open_prs)
+    with_pr = {p["unit"] for p in open_prs}
     busy = {r["unit"] for r in running}
     taken = list(running)
     chosen: list[dict[str, Any]] = []
@@ -503,6 +537,13 @@ def pick(
         if crossing is not None:
             held[c["unit"]] = ("overlap", crossing["unit"])
             continue
+        if c["stage"] in ("impl", "implement") and c["unit"] not in with_pr:
+            blocking = next((
+                p for p in open_prs if p["unit"] != c["unit"] and overlaps(c.get("files"), p.get("files"))
+            ), None)
+            if blocking is not None:
+                held[c["unit"]] = ("overlap-pr", f"#{blocking['number']}")
+                continue
         need = float(c.get("need") or 0.0)
         if need > room:
             capped.append(c)
@@ -532,13 +573,13 @@ def reason_for(
         return ("stop", f"{stop['kind']}: {stop['reason']}")
     if nxt.get("hold"):
         return ("held", str((nxt["hold"] or {}).get("state") or "held"))
-    if action == FINISHED:
+    if said(nxt, "finished"):
         return ("finished", action)
-    if action.startswith(CLOSED):
+    if said(nxt, "closed"):
         return ("closed", action)
-    if is_ci_pending(action):
+    if is_ci_pending(nxt):
         return ("ci", action)
-    if is_waiting_on_dependency(action):
+    if is_waiting_on_dependency(nxt):
         return ("dependency", action)
     raise ValueError(f"no reason for a unit with no stage and no stop: {action or 'nothing said'}")
 

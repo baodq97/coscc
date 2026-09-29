@@ -20,6 +20,7 @@ import httpx
 from coscc import update
 from coscc.web.api import build
 from coscc.config import Config
+from coscc.agent.submit_test import submits as _submits
 
 
 def _tmp_config(test: unittest.TestCase) -> Config:
@@ -940,6 +941,7 @@ class AskingJeraOverHttp(unittest.IsolatedAsyncioTestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.calls += 1
             yield ("chunk", self.text)
+            await _submits(kw)
             yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01, "turns": 1}})
 
     async def asyncSetUp(self):
@@ -1644,6 +1646,7 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_propose_streams_and_a_refusal_is_a_400(self):
         class Replies:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                # `0136` R9: it hands back no object, so the proposal fails.
                 yield ("chunk", "not json")
                 yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01}})
 
@@ -1853,7 +1856,7 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
             f"# Intent: f\nAuthor: t. Type: feat. Status: accepted.\nIdea: {idea['ref']}. Repo: proj. Depends on: {back_ref}.\n",
             encoding="utf-8",
         )
-        (front_dir / "spec.md").write_text("# S\nStatus: skipped.\n", encoding="utf-8")
+        (front_dir / "spec.md").write_text("# S\nStatus: accepted.\n", encoding="utf-8")
         (front_dir / "plan.md").write_text("# P\nStatus: accepted.\n", encoding="utf-8")
         (units.unit_dir(self.cwd["api"], back.json()["unit"], data) / "intent.md").write_text(
             f"# Intent: b\nAuthor: t. Type: feat. Status: accepted.\nIdea: {idea['ref']}. Repo: api.\n", encoding="utf-8",

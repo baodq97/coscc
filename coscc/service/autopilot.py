@@ -6,15 +6,17 @@ Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a 
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from coscc.units import autopilot, backlog, guide
+from coscc.units import autopilot, backlog, guide, states
 from coscc.agent import precedent
 from coscc.git import fetches
-from coscc.github import integrate
+from coscc.github import integrate, prmachine
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord, Busy
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid
@@ -39,6 +41,8 @@ class AutopilotMixin:
         if task is not None and not task.done():
             return
         self._autopilot_tasks[key] = asyncio.get_running_loop().create_task(self._autopilot_loop(key))
+        # `0136` R23: the reader of the workspace's pull requests lives and dies with it.
+        self._pr_readers[key] = asyncio.get_running_loop().create_task(self._pr_reader_loop(key))
 
     def autopilot_stop(self, key: str) -> None:
         """Turned off: no more passes and no more `gh` calls for it (R1). A step it already
@@ -46,7 +50,11 @@ class AutopilotMixin:
         task = self._autopilot_tasks.pop(key, None)
         if task is not None:
             task.cancel()
+        reader = self._pr_readers.pop(key, None)
+        if reader is not None:
+            reader.cancel()
         self._autopilot_stops.pop(key, None)
+        self._autopilot_held.pop(key, None)
 
     def autopilot_resume(self) -> list[str]:
         """R5 c: at start-up, every workspace whose switch is on starts again. Returns them."""
@@ -63,12 +71,13 @@ class AutopilotMixin:
         task = self._autopilot_tasks.get(key)
         return task is not None and not task.done()
 
-    def _autopilot_nudge(self, key: str) -> None:
+    def _autopilot_nudge(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
         """R5 a, b: a step or an integration ended, or an answer was written. One pass is
-        scheduled and not waited for; nothing happens when the switch is off."""
+        scheduled and not waited for; nothing happens when the switch is off. `woken_by`: the
+        transitions of the PR machine that scheduled it (`0136` R23), which its picks record."""
         if not self._autopilot_on(key):
             return
-        task = asyncio.get_running_loop().create_task(self._autopilot_guarded(key))
+        task = asyncio.get_running_loop().create_task(self._autopilot_guarded(key, woken_by))
         self._autopilot_pending.add(task)
         task.add_done_callback(self._autopilot_pending.discard)
 
@@ -77,10 +86,53 @@ class AutopilotMixin:
             await self._autopilot_guarded(key)
             await asyncio.sleep(autopilot.POLL_SECONDS)
 
-    async def _autopilot_guarded(self, key: str) -> None:
+    async def _pr_reader_loop(self, key: str) -> None:
+        """`0136` R23: every `ci_poll_seconds` of the lane config, one read of the workspace's
+        pull requests. The 300-second pass goes on beside it as the net."""
+        poll = states.default_lanes().ci_poll_seconds
+        while True:
+            await asyncio.sleep(poll)
+            try:
+                await self._pr_read(key)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — the next read tries again; the pass is the net
+                print(f"coscc: the pull request reader of {key} failed: {e}", file=sys.stderr)
+
+    async def _pr_read(self, key: str) -> prmachine.Read:
+        """One read (spec Design "Người đọc PR"). Whatever it recorded schedules one pass for
+        this workspace, however many transitions that was; a merge also schedules one for every
+        other workspace the autopilot is on in, where a unit may depend on it."""
+        cwd = self._autopilot_cwd.get(key)
+        if cwd is None or not self._autopilot_on(key):
+            return prmachine.Read()
+        root = Path(cwd).expanduser().resolve()
+
+        def directory_of(unit: str) -> Path:
+            try:
+                return self._unit_dir(cwd, unit)
+            except Invalid:
+                return self._units_root(cwd) / unit
+
+        got = await self._pr_machine().read(str(root), key, directory_of)
+        if not got.moved:
+            return got
+        merged = [c for c in got.causes if c["transition"] == "merged"]
+        # `0136` review round 1, F3: a merge made on GitHub is followed by no `ship` step, so
+        # its `ship` row, cleanup and gather are the reader's, before the pass it schedules.
+        for c in merged:
+            await self._shipped(cwd, key, c["unit"], "shipped")
+        self._autopilot_nudge(key, got.causes)
+        if merged:
+            for other in list(self._autopilot_tasks):
+                if other != key:
+                    self._autopilot_nudge(other, merged)
+        return got
+
+    async def _autopilot_guarded(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
         """A pass that raises leaves a stop line saying so, not a dead loop."""
         try:
-            await self._autopilot_pass(key)
+            await (self._autopilot_pass(key, woken_by) if woken_by else self._autopilot_pass(key))
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — shown on the board, never swallowed
@@ -157,7 +209,7 @@ class AutopilotMixin:
             except (BadRecord, Busy):
                 pass
 
-    async def _autopilot_pass(self, key: str) -> None:
+    async def _autopilot_pass(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
         """One look at a workspace: follow its shortlist (`0104`), find each listed unit's stop
         or why it waits, then start what may start, highest first, each after its record."""
         cwd = self._autopilot_cwd.get(key)
@@ -179,7 +231,8 @@ class AutopilotMixin:
             data = await self.board(cwd)
             try:
                 records = journal.records(
-                    kinds=("start", "end", "integration", "shortlist", "answer", "screens", "precedent"),
+                    kinds=("start", "end", "integration", "shortlist", "answer", "screens", "precedent",
+                           autopilot.PR_MACHINE),
                 )
             except Busy as e:
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
@@ -219,8 +272,10 @@ class AutopilotMixin:
             for r in records:
                 if r.get("workspace") == key and r.get("kind") == "start" and autopilot.is_step(r):
                     starts[(str(r.get("unit") or ""), str(r.get("stage") or ""))] = r
-                # `0111`: a retake of the screenshots that failed is the unit's last word too.
-                if r.get("workspace") == key and r.get("kind") in ("end", "integration", "screens") and autopilot.is_step(r):
+                # `0111`: a retake of the screenshots that failed is the unit's last word too, and
+                # since `0136` so is a `pr` or `ship` the PR machine ran.
+                if r.get("workspace") == key and r.get("kind") in ("end", "integration", "screens", autopilot.PR_MACHINE) \
+                        and autopilot.is_step(r):
                     last[str(r.get("unit") or "")] = r
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r
@@ -352,7 +407,12 @@ class AutopilotMixin:
             elsewhere = sum(1 for (k, unit) in autopilot.open_starts(records, now) if k == key and unit not in here)
             cap = self._autopilot_cap(records, settings["daily_cap_usd"])
             room = cap["limit"] - cap["spent"] - cap["running"]
-            picked = autopilot.pick(candidates, running, settings["max_parallel"] - elsewhere, room)
+            # `0136` R22: the pull requests the PR machine holds open, with the files it read.
+            try:
+                prs = prmachine.open_prs(self._pr_machine().history, key)
+            except (sqlite3.Error, OSError, Busy):
+                prs = []
+            picked = autopilot.pick(candidates, running, settings["max_parallel"] - elsewhere, room, prs)
             reasons.update(picked["held"])
             est = f" ({cap['estimated']:.2f} estimated)" if cap["estimated_count"] else ""
             for c in picked["capped"]:
@@ -376,6 +436,7 @@ class AutopilotMixin:
             if not self._autopilot_on(key) or not self._autopilot_values(key)["autopilot"]:
                 return
             self._autopilot_set_stops(key, found)
+            self._autopilot_held[key] = dict(picked["held"])
             run_id = uuid.uuid4().hex
             shortlist = {"n": n, "at": listed.get("at"), "units": names}
             for c, over in zip(picked["chosen"], passed):
@@ -386,6 +447,8 @@ class AutopilotMixin:
                         "kind": "autopilot-pick", "workspace": key, "unit": c["unit"], "stage": c["stage"],
                         "pass": run_id, "rank": c["rank"], "shortlist": shortlist, "passed": over,
                         **({"past_exhausted": c["past_exhausted"]} if c.get("past_exhausted") else {}),
+                        # `0136` R23: the transitions whose read scheduled this pass.
+                        **({"woken_by": woken_by} if woken_by else {}),
                     })
                 except (BadRecord, Busy) as e:
                     self._autopilot_set_stops(key, {**found, "": {
@@ -420,7 +483,8 @@ class AutopilotMixin:
             raise
         except Exception as e:  # noqa: BLE001 — the reason is shown, not swallowed
             said = str(e)
-            if not autopilot.is_ci_pending(said) and not self._busy(key, unit):
+            # `0136` R11: a gate's refusal carries its codes (`Refused`); anything else has none.
+            if not autopilot.is_ci_pending(e) and not self._busy(key, unit):
                 self._autopilot_set_stops(key, {unit: {"unit": unit, "kind": "f", "reason": said}}, {unit})
         finally:
             runs = self._autopilot_runs.get(key) or {}

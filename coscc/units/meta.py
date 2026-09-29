@@ -18,11 +18,11 @@ import json
 import re
 import sqlite3
 import subprocess
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import harness
+from coscc.agent import harness, precedent
 from coscc.data import Data, now
 from coscc.units.history import History
 from coscc.units.states import Machine
@@ -65,6 +65,18 @@ def _no_status(artifact: str, raw: str | None, machine: Machine) -> str:
     return machine.refuse(artifact, raw) or f'status "{raw}" is not one the app records'
 
 
+def authority_of(via: str | None, text: str | None) -> str:
+    """`0136` R15, of an answer read from a file, which does not say whose it was: Jera's,
+    `Via: precedent.`, is `agent`; one opening a line with `precedent.DELEGATION` was given
+    under a delegation, `delegated`; any other is `person`, as the answer route defaults.
+    Read only on an import, once; an answer the app takes now is classified by its road."""
+    if via == precedent.VIA:
+        return "agent"
+    if any(line.startswith(precedent.DELEGATION) for line in (text or "").splitlines()):
+        return "delegated"
+    return "person"
+
+
 class UnitMeta:
     """The metadata of every unit under one working folder, as `History` is its transitions.
 
@@ -89,6 +101,29 @@ class UnitMeta:
     def import_key(self, workspace: str) -> str:
         return f"unit-meta:0135:{self.root}/{workspace}"
 
+    def authority_key(self, workspace: str) -> str:
+        return f"unit-meta:0136-authority:{self.root}/{workspace}"
+
+    def classify_answers(self, workspace: str) -> None:
+        """`0136` R15, once per store: the answers `0135`'s import read from files before a
+        row said whose answer it was, classified as `authority_of` classifies one it reads now.
+        Every answer since carries its own, from the road it came by (`Service._append_answers`)."""
+        key = self.authority_key(workspace)
+        if self.data.has_run(key):
+            return
+        with self.data.write() as conn:
+            if self.data.has_run(key, conn):
+                return
+            rows = conn.execute(
+                "SELECT id, via, text FROM unit_answers WHERE root = ? AND workspace = ? AND authority = 'unknown'",
+                (self.root, workspace),
+            ).fetchall()
+            conn.executemany(
+                "UPDATE unit_answers SET authority = ? WHERE id = ?",
+                [(authority_of(r["via"], r["text"]), r["id"]) for r in rows],
+            )
+            Data.mark_run(conn, key)
+
     def imported(self, workspace: str) -> bool:
         return self.data.has_run(self.import_key(workspace))
 
@@ -101,6 +136,7 @@ class UnitMeta:
         """
         key = self.import_key(workspace)
         if self.data.has_run(key):
+            self.classify_answers(workspace)
             return None
         found = read(store)
         with self.data.write() as conn:
@@ -111,6 +147,8 @@ class UnitMeta:
                 unknowns += self._apply(conn, workspace, unit, meta, imported=True)
             self._write_ideas(conn, workspace, found.get("ideas"))
             Data.mark_run(conn, key)
+            # Its answers were classified as they were read, just above.
+            Data.mark_run(conn, self.authority_key(workspace))
         return unknowns
 
     # -- ingest, at the end of a step ----------------------------------------
@@ -125,6 +163,7 @@ class UnitMeta:
         session: str,
         source: str,
         wrote: str | None = None,
+        decided: Collection[str] = (),
     ) -> list[dict[str, Any]]:
         """R7: read one unit's files through `cos.mjs meta`, and write what changed.
 
@@ -135,6 +174,9 @@ class UnitMeta:
         R6, because rewriting a settled artifact is the event `0013` counts. Answers and
         holds are not read: since `0135` the app writes them here and nowhere else. Raises
         `MetaError` or `sqlite3.Error`; the caller records the failure (spec C3).
+
+        `0136` R4: an artifact in `decided` takes its status and its questions from the
+        object its run submitted (`record_result`), so neither is read from its file here.
         """
         found = read(store, unit)
         meta = (found.get("units") or {}).get(unit) or {}
@@ -143,6 +185,7 @@ class UnitMeta:
             return self._apply(
                 conn, workspace, unit, meta, imported=False,
                 provenance={"actor": actor, "session": session, "source": source}, wrote=wrote,
+                decided=decided,
             )
 
     def ingest_failed(self, workspace: str, unit: str, reason: str) -> None:
@@ -170,6 +213,7 @@ class UnitMeta:
         imported: bool,
         provenance: Mapping[str, str] | None = None,
         wrote: str | None = None,
+        decided: Collection[str] = (),
     ) -> list[dict[str, Any]]:
         """Write one unit's `meta` output. Returns the fields it could not read."""
         scope = (self.root, workspace, unit)
@@ -193,6 +237,14 @@ class UnitMeta:
         ]
         for artifact, a in changed:
             conn.execute(f"DELETE FROM unit_unknowns WHERE {_ONE} AND artifact = ?", (*scope, artifact))
+            if artifact in decided:
+                # `0136` R4: its `Status:` and `## Open questions` are prose for a reader now.
+                conn.execute(
+                    "INSERT INTO unit_seen (root, workspace, unit, artifact, sha256, questions) VALUES (?, ?, ?, ?, ?, 1) "
+                    "ON CONFLICT (root, workspace, unit, artifact) DO UPDATE SET sha256 = excluded.sha256",
+                    (*scope, artifact, str(a.get("sha256") or "")),
+                )
+                continue
             status, raw = a.get("status"), a.get("raw")
             if status is not None and self.machine.refuse(artifact, status) is None:
                 if artifact == wrote or latest.get((workspace, unit, artifact), self.machine.absent) != status:
@@ -234,7 +286,8 @@ class UnitMeta:
         if imported:
             for i, a in enumerate(meta.get("answers") or []):
                 self._answer(conn, workspace, unit, a["artifact"], a["id"] or str(a["n"]), a["text"],
-                             a["by"], a["date"], a["via"], f"{SOURCE}:{workspace}/{unit}/{a['artifact']}/answer/{i}")
+                             a["by"], a["date"], a["via"], f"{SOURCE}:{workspace}/{unit}/{a['artifact']}/answer/{i}",
+                             authority=authority_of(a["via"], a["text"]))
             for i, h in enumerate(meta.get("holds") or []):
                 if h.get("by") is None:
                     unknowns.append({"unit": unit, "artifact": "intent.md", "field": "hold",
@@ -251,6 +304,58 @@ class UnitMeta:
         )
         return unknowns
 
+    def record_result(
+        self, conn: sqlite3.Connection, workspace: str, unit: str, stage: str, artifact: str,
+        submitted: Mapping[str, Any],
+    ) -> None:
+        """`0136` R4. What a stage result carries beside its transition, in the caller's
+        transaction (`transitions.apply(also=…)`): its row in `stage_results`, and the
+        artifact's open questions, which the snapshot reads as it read them from the file."""
+        obj = dict(submitted.get("object") or {})
+        scope = (self.root, workspace, unit)
+        conn.execute(
+            "INSERT INTO stage_results (at, root, workspace, unit, stage, run, revision, judgement, object) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now(), *scope, stage, str(submitted.get("run") or ""), str(submitted.get("revision") or ""),
+             str(obj.get("judgement") or ""), json.dumps(obj, ensure_ascii=False)),
+        )
+        conn.execute(f"DELETE FROM unit_questions WHERE {_ONE} AND artifact = ?", (*scope, artifact))
+        conn.executemany(
+            "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text) VALUES (?, ?, ?, ?, ?, ?)",
+            [(*scope, artifact, int(q["n"]), str(q["text"])) for q in obj.get("questions") or []],
+        )
+        conn.execute(
+            "INSERT INTO unit_seen (root, workspace, unit, artifact, sha256, questions) VALUES (?, ?, ?, ?, '', 1) "
+            "ON CONFLICT (root, workspace, unit, artifact) DO UPDATE SET questions = 1",
+            (*scope, artifact),
+        )
+        # R6: impl's claims, each against the round whose open findings guard `impl-claim` read.
+        conn.executemany(
+            "INSERT INTO impl_claims (at, root, workspace, unit, run, round, finding) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(now(), *scope, str(submitted.get("run") or ""), int(submitted.get("claims_round") or 0), str(f))
+             for f in obj.get("needs_person") or ()],
+        )
+
+    def record_round(self, conn: sqlite3.Connection, workspace: str, unit: str, submitted: Mapping[str, Any]) -> None:
+        """`0136` R5. A review round and its findings, in the caller's transaction. `n` and
+        `head` are the app's: the number the runner wrote the round under and the head it read
+        when the run opened (R3 c); `screens` is the object's list with where the app read
+        they were taken."""
+        obj = dict(submitted.get("object") or {})
+        screens = {**dict(submitted.get("screens") or {}), "shots": list(obj.get("screens") or ())}
+        cur = conn.execute(
+            "INSERT INTO review_rounds (at, root, workspace, unit, n, run, head, verdict, screens) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now(), self.root, workspace, unit, int(submitted["n"]), str(submitted.get("run") or ""),
+             str(submitted.get("head") or ""), str(obj["verdict"]), json.dumps(screens, ensure_ascii=False)),
+        )
+        conn.executemany(
+            "INSERT INTO review_findings (round, finding, open, label, fixed_in, severity, rule, path, lines, text) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(cur.lastrowid, f["id"], 1 if f["state"] == "open" else 0, f["state"], f["fixed_in"],
+              f["severity"], f["rule"], f["path"], f["lines"], f["text"]) for f in obj.get("findings") or ()],
+        )
+
     def _write_ideas(self, conn: sqlite3.Connection, workspace: str, ideas: Iterable[Mapping[str, Any]] | None) -> None:
         conn.execute("DELETE FROM idea_meta WHERE root = ? AND workspace = ?", (self.root, workspace))
         conn.executemany(
@@ -264,11 +369,13 @@ class UnitMeta:
 
     # -- answers and holds, which only the app writes -------------------------
 
-    def _answer(self, conn, workspace, unit, artifact, ref, text, by, date, via, once_key="") -> None:
+    def _answer(self, conn, workspace, unit, artifact, ref, text, by, date, via, once_key="",
+                authority="unknown") -> None:
         conn.execute(
-            "INSERT OR IGNORE INTO unit_answers (root, workspace, unit, artifact, ref, text, answered_by, date, via, once_key) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (self.root, workspace, unit, artifact, str(ref), text, by, date, via, once_key),
+            "INSERT OR IGNORE INTO unit_answers "
+            "(root, workspace, unit, artifact, ref, text, answered_by, date, via, once_key, authority) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (self.root, workspace, unit, artifact, str(ref), text, by, date, via, once_key, authority),
         )
 
     def _hold(self, conn, workspace, unit, state, reason, by, date, via, once_key="") -> None:
@@ -281,12 +388,15 @@ class UnitMeta:
     def add_answer(
         self, workspace: str, unit: str, artifact: str, ref: str | int, text: str,
         by: str, date: str, via: str, conn: sqlite3.Connection | None = None,
+        authority: str = "unknown",
     ) -> None:
-        """R8. `ref` is a question's number or a finding's `F<k>`; the last row for it wins."""
+        """R8. `ref` is a question's number or a finding's `F<k>`; the last row for it wins.
+        `authority` (`0136` R8, R15) is `person`, `delegated` or `agent`: whose answer it is,
+        which no name in `by` settles."""
         if conn is not None:
-            return self._answer(conn, workspace, unit, artifact, ref, text, by, date, via)
+            return self._answer(conn, workspace, unit, artifact, ref, text, by, date, via, authority=authority)
         with self.data.write() as c:
-            self._answer(c, workspace, unit, artifact, ref, text, by, date, via)
+            self._answer(c, workspace, unit, artifact, ref, text, by, date, via, authority=authority)
 
     def add_hold(
         self, workspace: str, unit: str, state: str, reason: str,
@@ -369,12 +479,44 @@ class UnitMeta:
                 return None if e is None else e["artifacts"].setdefault(r["artifact"], {"status": None, "raw": None, "questions": None})
 
             for r in rows(
-                "SELECT workspace, unit, artifact, to_state FROM transitions WHERE id IN "
+                "SELECT workspace, unit, artifact, to_state, authority FROM transitions WHERE id IN "
                 "(SELECT MAX(id) FROM transitions WHERE {where} GROUP BY workspace, unit, artifact)"
             ):
                 a = artifact(r)
                 if a is not None and r["to_state"] != self.machine.absent:
                     a["status"] = r["to_state"]
+                    # `0136` R14: whose skip it was, which `cos.mjs` stops the unit on unless it
+                    # was a person's or their delegate's. Only on a skip, which is all it reads.
+                    if r["to_state"] == "skipped":
+                        a["authority"] = r["authority"]
+            # `0136` R4: the last stage result of each stage, which `cos.mjs` reads a spec's
+            # `U<n>` and a spike's verdicts from rather than from the file.
+            for r in rows(
+                "SELECT workspace, unit, stage, object FROM stage_results WHERE id IN "
+                "(SELECT MAX(id) FROM stage_results WHERE {where} GROUP BY workspace, unit, stage)"
+            ):
+                a = artifact({"workspace": r["workspace"], "unit": r["unit"], "artifact": f"{r['stage']}.md"})
+                if a is not None:
+                    a["result"] = json.loads(r["object"])
+            # `0136` R5: every round a review handed back, which `cos.mjs` reads in place of
+            # the round of the same number in `review.md`.
+            by_id: dict[int, dict[str, Any]] = {}
+            for r in rows("SELECT id, workspace, unit, n, head, verdict, screens FROM review_rounds WHERE {where} ORDER BY n"):
+                a = artifact({"workspace": r["workspace"], "unit": r["unit"], "artifact": "review.md"})
+                if a is not None:
+                    by_id[r["id"]] = {"n": r["n"], "reviewed": r["head"], "verdict": r["verdict"],
+                                      "screens": json.loads(r["screens"]), "findings": []}
+                    a.setdefault("rounds", []).append(by_id[r["id"]])
+            for r in rows(
+                "SELECT f.round, f.finding, f.label, f.fixed_in, f.severity, f.rule, f.path, f.lines, f.text "
+                "FROM review_findings f JOIN review_rounds ON f.round = review_rounds.id WHERE {where} ORDER BY f.rowid"
+            ):
+                if r["round"] in by_id:
+                    by_id[r["round"]]["findings"].append({
+                        "id": r["finding"], "label": r["label"], "fixedIn": r["fixed_in"] or None,
+                        "severity": r["severity"], "rule": r["rule"], "path": r["path"], "lines": r["lines"],
+                        "text": r["text"],
+                    })
             for r in rows("SELECT workspace, unit, artifact, questions FROM unit_seen WHERE {where}"):
                 a = artifact(r)
                 if a is not None and r["questions"]:
@@ -398,14 +540,15 @@ class UnitMeta:
                     e["links"]["dependsOn"] = [*(e["links"]["dependsOn"] or []), r["ref"]]
                 else:
                     e["links"][r["kind"]] = r["ref"]
-            for r in rows("SELECT workspace, unit, artifact, ref, text, answered_by, date, via FROM unit_answers WHERE {where} ORDER BY id"):
+            for r in rows("SELECT workspace, unit, artifact, ref, text, answered_by, date, via, authority "
+                          "FROM unit_answers WHERE {where} ORDER BY id"):
                 e = entry(r)
                 if e is not None:
                     number = r["ref"].isdigit()
                     e["answers"].append({
                         "artifact": r["artifact"], "n": int(r["ref"]) if number else None,
                         "id": None if number else r["ref"], "by": r["answered_by"], "date": r["date"],
-                        "via": r["via"], "text": r["text"],
+                        "via": r["via"], "text": r["text"], "authority": r["authority"],
                     })
             for r in rows("SELECT workspace, unit, move, reason, decided_by, date, via FROM unit_holds WHERE {where} ORDER BY id"):
                 e = entry(r)

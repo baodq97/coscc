@@ -168,5 +168,54 @@ class ADefinitionThatWouldLieIsRefused(unittest.TestCase):
         self.assertIn(str(missing), str(caught.exception))
 
 
+class ALaneThatWouldDisableAGuardIsRefused(unittest.TestCase):
+    """`0136` R1: the config chooses a guard for each transition and cannot leave one out."""
+
+    def packaged(self) -> dict:
+        return json.loads(states.LANES_PATH.read_text(encoding="utf-8"))
+
+    def _bad(self, raw) -> str:
+        with self.assertRaises(states.BadLanes) as caught:
+            states.build_lanes(raw)
+        return str(caught.exception)
+
+    def test_the_packaged_lanes_load(self):
+        self.assertIn("full", states.load_lanes().lanes)
+
+    def test_a_lane_missing_a_guard_the_machine_needs_is_refused(self):
+        raw = self.packaged()
+        del raw["lanes"]["full"]["guards"]["unit"]["ship"]
+        self.assertIn("'ship' has no guard", self._bad(raw))
+
+    def test_a_guard_set_to_nothing_is_refused(self):
+        raw = self.packaged()
+        raw["lanes"]["full"]["guards"]["pr"]["merged"] = ""
+        self.assertIn("'merged' has no guard", self._bad(raw))
+
+    def test_a_guard_that_cannot_decide_that_transition_is_refused(self):
+        raw = self.packaged()
+        raw["lanes"]["full"]["guards"]["unit"]["ship"] = "run-submitted"
+        self.assertIn("cannot decide", self._bad(raw))
+
+    def test_an_empty_config_is_refused(self):
+        self.assertIn("params", self._bad({}))
+        self.assertIn("lanes", self._bad({"params": {"ci_poll_seconds": 60}, "lanes": {}}))
+
+    def test_a_machine_with_no_guards_is_refused(self):
+        raw = self.packaged()
+        del raw["lanes"]["full"]["guards"]["run"]
+        self.assertIn("'run' machine", self._bad(raw))
+
+    def test_a_stage_the_state_set_does_not_have_is_refused(self):
+        raw = self.packaged()
+        raw["lanes"]["full"]["path"].append({"stage": "deploy", "when": "always"})
+        self.assertIn("'deploy'", self._bad(raw))
+
+    def test_a_poll_that_is_not_a_positive_number_is_refused(self):
+        raw = self.packaged()
+        raw["params"]["ci_poll_seconds"] = 0
+        self.assertIn("ci_poll_seconds", self._bad(raw))
+
+
 if __name__ == "__main__":
     unittest.main()

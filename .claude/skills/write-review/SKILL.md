@@ -186,7 +186,8 @@ offers no third.
 ## Output
 
 One file, `review.md`, in the unit's directory. The header line is rewritten each round to
-carry the current status; everything under it is appended.
+carry the current status; everything under it is appended. Since `0136` the app sets that
+`Status:` from the verdict your round's object hands back.
 
 ```markdown
 # Review: <title>
@@ -224,6 +225,10 @@ Taken at: <the manifest's head>. Standard: .claude/rules/ui-standard.md. Looked 
 
 `Status` is `draft`, `changes-requested`, `accepted` or `rejected`. `accepted` is a pass.
 `rejected` closes the unit; `changes-requested` does not.
+
+## Hand back your round
+
+The app does not read a round's verdict, its findings or its screenshots out of `review.md` to decide anything (`0136`). A step started from the board holds a `submit` tool: call it with `verdict` (`pass`, `changes-requested` or `needs-person`), `findings` (every finding of the round, earlier ones carried forward, each `{id, state, fixed_in, severity, rule, path, lines, text}`, `state` being the label above without its sha and `fixed_in` that sha) and `screens` (`{path, size, address, result}` per screenshot, `[]` for none). The app then writes the round's `Reviewed:` line, `### Findings` and `### Screens` from the object, with the head the step ran on, where the manifest says the screenshots were taken and the round's number; everything else in the round stays yours. Call it before you reply. If `submit` returns an error, the app has checked your object against the unit: correct the object and call `submit` again until it is accepted. A review that hands back no round ends failed. At a terminal there is no such tool, and the file is all there is.
 
 ## Invariants
 

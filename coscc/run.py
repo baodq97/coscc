@@ -201,9 +201,12 @@ def _answer_and_stop(args: list[str]) -> None:
         return
     if args[0] == "state" and len(args) == 2:
         raise SystemExit(_state(args[1]))
+    if args[0] == "skip":
+        raise SystemExit(_skip(args[1:]))
     print(
         f"coscc: unrecognised argument {args[0]!r}\n"
-        "usage: coscc [--version | reset-password | state <workspace> | knowledge ... | effort measure ...]\n"
+        "usage: coscc [--version | reset-password | state <workspace> | skip <workspace> <unit> spec [--delegated] <reason> "
+        "| knowledge ... | effort measure ...]\n"
         "everything else is configuration, and it is read from the environment "
         "(COS_HOST, COS_PORT, COS_WORKING_DIR, ...) -- see docs/install.md",
         file=sys.stderr,
@@ -221,13 +224,10 @@ def _state(target: str) -> int:
     or one `valid_name` refuses, for neither.
     """
     import json
-    from collections import Counter
-    from pathlib import Path
 
     from coscc import units
     from coscc.config import from_env
     from coscc.data import Data
-    from coscc.service.store import valid_name
     from coscc.units.meta import MetaError, UnitMeta
 
     config = from_env()
@@ -235,14 +235,8 @@ def _state(target: str) -> int:
         print("coscc: state needs COS_WORKING_DIR — the database keys every unit by it", file=sys.stderr)
         return 2
     data = Data(config.data_dir)
-    with data.connect() as conn:
-        rows = [(str(r["name"]), str(Path(r["root"]) / r["name"])) for r in conn.execute("SELECT root, name FROM workspaces")]
-    rows += [(Path(p).name, p) for p in config.workspaces]
-    count = Counter(name for name, _ in rows)
-    names = {name: units.key(path) for name, path in rows if count[name] == 1 and valid_name(name)}
-    wanted = names.get(target) or next((units.key(p) for _, p in rows if units.key(p) == units.key(target)), None)
+    names, wanted = _workspace(config, data, target)
     if wanted is None:
-        print(f"coscc: no workspace named {target!r} — one of {', '.join(sorted(names)) or 'none'}", file=sys.stderr)
         return 2
     meta = UnitMeta(config.working_dir, data)
     try:
@@ -254,6 +248,99 @@ def _state(target: str) -> int:
         print(f"coscc: {e}", file=sys.stderr)
         return 1
     print(json.dumps(meta.snapshot(wanted, names), ensure_ascii=False))
+    return 0
+
+
+def _workspace(config, data, target: str) -> tuple[dict[str, str], str | None]:
+    """Every workspace by its name on the board, as `Service._peer_table` names them -- a name
+    two share, or one `valid_name` refuses, for neither -- and the key of the one `target`
+    names, by name or by path. `None` when none does, and stderr says so."""
+    from collections import Counter
+    from pathlib import Path
+
+    from coscc import units
+    from coscc.service.store import valid_name
+
+    with data.connect() as conn:
+        rows = [(str(r["name"]), str(Path(r["root"]) / r["name"])) for r in conn.execute("SELECT root, name FROM workspaces")]
+    rows += [(Path(p).name, p) for p in config.workspaces]
+    count = Counter(name for name, _ in rows)
+    names = {name: units.key(path) for name, path in rows if count[name] == 1 and valid_name(name)}
+    wanted = names.get(target) or next((units.key(p) for _, p in rows if units.key(p) == units.key(target)), None)
+    if wanted is None:
+        print(f"coscc: no workspace named {target!r} — one of {', '.join(sorted(names)) or 'none'}", file=sys.stderr)
+    return names, wanted
+
+
+SKIP_USAGE = "usage: coscc skip <workspace> <unit> spec [--delegated] <reason>"
+
+
+def _skip(args: list[str]) -> int:
+    """`0136` R14. A person's decision to skip a unit's spec: the one way a skip reaches
+    `cos.db` as `person`'s, or `delegated`'s with `--delegated`. `cos.mjs` stops a unit on any
+    other skip, an agent's or one read from a file.
+
+    Here for the reason `reset-password` is: it needs a shell on this machine and no route
+    reaches it, so no session can make it -- `COSCC_PROTECTED_DB` refuses one the database.
+    It writes the transition through guard `skip-decision`, and no file: `cos.mjs` reads a
+    skip a person recorded without one. Only `spec`, because the unit machine
+    (`coscc/units/states.json`) has no `skipped` for `plan.md`.
+    """
+    delegated = "--delegated" in args
+    rest = [a for a in args if a != "--delegated"]
+    reason = " ".join(rest[3:]).strip()
+    if len(rest) < 4 or rest[2] != "spec" or not reason:
+        print(f"coscc: {SKIP_USAGE}", file=sys.stderr)
+        return 2
+    target, unit = rest[0], rest[1]
+
+    from coscc import units
+    from coscc.config import from_env
+    from coscc.data import Data
+    from coscc.runlog.journal import Journal
+    from coscc.units import transitions
+    from coscc.units.history import BadTransition
+    from coscc.units.meta import MetaError, UnitMeta
+
+    config = from_env()
+    if not config.working_dir:
+        print("coscc: skip needs COS_WORKING_DIR — the database keys every unit by it", file=sys.stderr)
+        return 2
+    data = Data(config.data_dir)
+    _, wanted = _workspace(config, data, target)
+    if wanted is None:
+        return 2
+    meta = UnitMeta(config.working_dir, data)
+    try:
+        store = units.root(wanted, config.data_dir)
+        if (store / units.COS_DIR).is_dir():
+            meta.import_store(wanted, store)
+    except MetaError as e:
+        print(f"coscc: {e}", file=sys.stderr)
+        return 1
+    with data.connect() as conn:
+        known = conn.execute(
+            "SELECT 1 FROM unit_meta WHERE root = ? AND workspace = ? AND unit = ?", (meta.root, wanted, unit),
+        ).fetchone()
+    if known is None:
+        print(f"coscc: the app knows no unit {unit!r} in {target!r}", file=sys.stderr)
+        return 2
+    authority = "delegated" if delegated else "person"
+    try:
+        applied = transitions.apply(
+            meta.history, Journal(meta.root, config.data_dir),
+            machine="unit", transition="skip", workspace=wanted, unit=unit,
+            artifact="spec.md", to_state="skipped",
+            inputs={"authority": authority, "reason": reason}, authority=authority,
+            actor="human:terminal", source="cli:skip",
+        )
+    except BadTransition as e:
+        print(f"coscc: {e}", file=sys.stderr)
+        return 1
+    if not applied.open:
+        print(f"coscc: guard {applied.guard} refused the skip: {', '.join(applied.reasons)}", file=sys.stderr)
+        return 1
+    print(f"coscc: {unit} spec.md skipped by {authority} — {reason}")
     return 0
 
 

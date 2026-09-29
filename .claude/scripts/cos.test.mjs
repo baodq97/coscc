@@ -15,7 +15,7 @@ import {
   aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip, normalizePatch, openLines,
   parseMoreRounds, reviewLimit, moreRounds, branchChecks, notAWorkBranch,
   parseIdea, parseLinks, parseIdeaRef, parseUnitRef, WAITING_ON, titleProblem,
-  unitMeta, readIdeas, NEEDS_STATE,
+  unitMeta, readIdeas, NEEDS_STATE, nextAnswer, gateAnswer,
 } from './cos.mjs'
 import { createHash } from 'node:crypto'
 
@@ -26,7 +26,11 @@ import { createHash } from 'node:crypto'
 // as `coscc/units/meta.py` imports a store. `stores` maps a workspace name to its `.cos/`;
 // `own` is the name of the store the command reads, `''` when it has none.
 const entryFrom = (m) => ({
-  artifacts: Object.fromEntries(Object.entries(m.artifacts).map(([f, a]) => [f, { status: a.status, raw: a.raw, questions: a.questions }])),
+  // `0136` R14: a skip in these files stands for one a person recorded; a test of an agent's
+  // skip says so in the entry it builds.
+  artifacts: Object.fromEntries(Object.entries(m.artifacts).map(([f, a]) => [f, {
+    status: a.status, raw: a.raw, questions: a.questions, ...(a.status === 'skipped' ? { authority: 'person' } : {}),
+  }])),
   type: m.type ?? null,
   links: m.links ?? { idea: null, repo: null, dependsOn: null },
   holds: (m.holds ?? []).filter((h) => h.by !== null),
@@ -1167,7 +1171,7 @@ test('cos.mjs next prints one JSON line, and misuse is exit 2', () => {
   const { root } = questionTree({ 'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n' })
   const out = cli('--root', root, 'next', '0001_q')
   assert.equal(out.status, 0)
-  assert.deepEqual(JSON.parse(out.stdout), { unit: '0001_q', stage: 'spec', action: 'write-spec — it assesses whether to skip first', blocked: true })
+  assert.deepEqual(JSON.parse(out.stdout), { unit: '0001_q', stage: 'spec', action: 'write-spec — it assesses whether to skip first', blocked: true, reasons: ['missing'] })
   assert.equal(cli('--root', root, 'next').status, 2)
   assert.equal(cli('--root', root, 'next', '0009_nope').status, 2)
   assert.equal(cli('--root', root, 'next', '0001_q', '--repo', tmpdir()).status, 0)
@@ -1579,6 +1583,59 @@ test('parseSpike reads verdicts and blocks per U<n>, and stops at ## Answers (R6
   assert.equal(parseSpike('## U1\nVerdict: holds.\n').round, null)
 })
 
+test('0136 R4: a stage result decides the spec\'s U<n> and the spike\'s verdicts, not the files', () => {
+  const dir = unitDir({
+    'intent.md': INTENT_0039,
+    'spec.md': specText('- **C1.** nothing unmeasured here.'),
+    'spike.md': spikeText(1, [['U1', 'holds']]),
+  })
+  const read = (spec, spike) => {
+    const state = stateOfRoots(dirname(dirname(dir)))
+    const entry = (state.units[`${state.workspace}/0039_x`] = entryFrom(unitMeta(dir)))
+    entry.artifacts['spec.md'].result = { stage: 'spec', judgement: 'ready', questions: [], ...spec }
+    if (spike) entry.artifacts['spike.md'].result = { stage: 'spike', judgement: 'ready', questions: [], ...spike }
+    return readUnit(dir, '0039_x', { state })
+  }
+  // The file names no U<n>; the object does, so the unit needs a spike.
+  const asked = read({ unmeasured: ['U1'] }, { verdicts: [{ id: 'U1', verdict: 'fails' }] })
+  assert.deepEqual(asked.artifacts['spec.md'].unmeasured.ids, ['U1'])
+  // The file says U1 holds; the object says it fails, so plan stays shut.
+  assert.equal(checkGate(asked, 'plan').ok, false)
+  assert.match(checkGate(asked, 'plan').need.join('\n'), /U1: spike\.md measured that it does not hold/)
+  const held = read({ unmeasured: ['U1'] }, { verdicts: [{ id: 'U1', verdict: 'holds' }] })
+  assert.equal(checkGate(held, 'plan').ok, true)
+  // With no U<n> in the object, `unmeasured` is absent, as it is for a file with none.
+  assert.ok(!('unmeasured' in read({ unmeasured: [] }).artifacts['spec.md']))
+})
+
+test('0136 R5, R6: a round and the claims the app holds decide, not review.md and impl.md', () => {
+  const dir = unitDir({
+    'intent.md': INTENT_0039,
+    'review.md': '# Review: x\nStatus: changes-requested.\n\n## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n\n' +
+      '### Findings\n\n- F1 [open] a.py:3 — high — old\n\n## Round 2\n\nReviewed: abc1234. Verdict: pass.\n\n### Findings\n\nNone.\n',
+    'impl.md': '# Impl: x\nStatus: accepted.\n\n## Needs a person\n\n- F2: a login\n',
+  })
+  const state = stateOfRoots(dirname(dirname(dir)))
+  const entry = (state.units[`${state.workspace}/0039_x`] = entryFrom(unitMeta(dir)))
+  const row = (label, severity = 'medium') => ({ id: 'F2', label, fixedIn: null, severity, rule: 'S3', path: 'b.py', lines: '9', text: 'new' })
+  entry.artifacts['review.md'].rounds = [{ n: 2, reviewed: 'f'.repeat(40), verdict: 'changes-requested', screens: {}, findings: [row('open')] }]
+  entry.artifacts['impl.md'].result = { stage: 'impl', judgement: 'ready', questions: [], needs_person: [] }
+  const u = readUnit(dir, '0039_x', { state })
+  const rounds = u.artifacts['review.md'].review.rounds
+  // Round 1 only the file holds; round 2 is the app's row, whatever the file says of it.
+  assert.deepEqual(rounds.map((r) => [r.n, r.reviewed, r.verdict]), [[1, 'abc1234', 'changes-requested'], [2, 'f'.repeat(40), 'changes-requested']])
+  assert.deepEqual(rounds[1].findings.map((f) => [f.id, f.label, f.severity]), [['F2', 'open', 'medium']])
+  assert.deepEqual(rounds[1].dropped, ['F1'])
+  assert.match(rounds[1].text, /Verdict: pass/)
+  // `## Needs a person` names F2; the object claims nothing, so nothing is claimed.
+  assert.deepEqual(u.artifacts['impl.md'].needsPerson, [])
+  entry.artifacts['impl.md'].result.needs_person = ['F2']
+  assert.deepEqual(readUnit(dir, '0039_x', { state }).artifacts['impl.md'].needsPerson, [{ id: 'F2', reason: 'a login' }])
+  // `S<n>` makes a low block, from the field as from the line.
+  entry.artifacts['review.md'].rounds[0].findings = [row('open', 'low')]
+  assert.deepEqual(nonBlocking(readUnit(dir, '0039_x', { state })), [])
+})
+
 test('parseSpike reads Round: from the header line only, never from a fenced block', () => {
   const text =
     '# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Status: accepted.\n\n' +
@@ -1671,11 +1728,61 @@ test(`a question still failing at round ${SPIKE_ROUNDS} needs a person`, () => {
   assert.equal(next.action, `needs a person — spike round ${SPIKE_ROUNDS} of ${SPIKE_ROUNDS} found U3 does not hold`)
 })
 
-test('a spec rewritten without its questions still reads the spike beside it', () => {
+test('a spec rewritten without its questions no longer needs the spike beside it (0136 R14)', () => {
   const u = spikeUnit({ 'spec.md': specText('- none left'), 'spike.md': spikeText(1, [['U1', 'fails']]) })
-  // the old measurement is required to be accepted, but an id the spec dropped is not judged
+  // an id the spec dropped is not judged
   assert.equal(nextAction(u).stage, 'plan')
   assert.equal(checkGate(u, 'plan').ok, true)
+  // Spike is required when, and only when, the spec names a `U<n>`: a draft one left behind
+  // does not hold `plan` either, as it did while a present `spike.md` made it required.
+  const draft = spikeUnit({ 'spec.md': specText('- none left'), 'spike.md': '# Spike\nStatus: draft.\n' })
+  assert.equal(nextAction(draft).stage, 'plan')
+  assert.equal(checkGate(draft, 'plan').ok, true)
+  assert.equal(checkGate(draft, 'spike').ok, false)
+})
+
+// `0136` R14: `spec.md` skipped, and the snapshot saying whose decision the skip was.
+const skipTree = (authority, files = { 'spec.md': '# Spec\nStatus: skipped.\n' }) => {
+  const dir = unitDir({ 'intent.md': INTENT_0039, ...files })
+  const state = stateOfRoots(dirname(dirname(dir)))
+  const e = entryFrom(unitMeta(dir))
+  e.artifacts['spec.md'] = { raw: null, questions: null, ...e.artifacts['spec.md'], status: 'skipped', authority }
+  state.units[`${state.workspace}/0039_x`] = e
+  return readUnitWith(dir, '0039_x', { state })
+}
+
+test('0136 R14: a skip an agent wrote, or one whose author the app does not know, stops the unit for a person', () => {
+  for (const authority of ['agent', 'code', 'unknown', undefined]) {
+    const u = skipTree(authority)
+    assert.deepEqual(u.artifacts['spec.md'].agentSkip, { by: authority ?? null })
+    const next = nextAnswer(u)
+    assert.equal(next.stage, '', authority)
+    assert.equal(next.blocked, true)
+    assert.deepEqual(next.reasons, ['agent-cannot-skip'])
+    assert.match(next.action, /spec\.md is skipped by .*, not by a person or their delegate — a person records the skip \(coscc skip\), or runs write-spec/)
+    const gate = gateAnswer(u, 'plan')
+    assert.equal(gate.ok, false)
+    assert.deepEqual(gate.reasons, ['agent-cannot-skip'])
+    assert.match(gate.need.join('\n'), /spec\.md is skipped by/)
+  }
+})
+
+test('0136 R14: a skip a person or their delegate decided opens plan, with or without a spec.md', () => {
+  for (const authority of ['person', 'delegated']) {
+    const written = skipTree(authority)
+    assert.equal(written.artifacts['spec.md'].agentSkip, undefined)
+    assert.equal(nextAction(written).stage, 'plan')
+    assert.equal(checkGate(written, 'plan').ok, true)
+    // `coscc skip` records the decision and writes no file.
+    const recorded = skipTree(authority, {})
+    assert.deepEqual(recorded.artifacts['spec.md'], { status: 'skipped', skipReason: null })
+    assert.deepEqual(recorded.problems.filter((p) => /spec\.md/.test(p)), [])
+    assert.equal(checkGate(recorded, 'plan').ok, true)
+  }
+  // An agent's skip with no file is a status the file does not back, as before.
+  const bare = skipTree('agent', {})
+  assert.equal(bare.artifacts['spec.md'], undefined)
+  assert.match(bare.problems.join('\n'), /the app records spec\.md as skipped, but the file does not exist/)
 })
 
 test('with a spike required, impl opens only on a plan that cites spike.md (R9)', () => {
@@ -2831,7 +2938,7 @@ function answeredTree(files) {
 
 test('0106 R1: a draft intent with every question answered is rerun: intent, and nothing else changes', () => {
   const { next } = answeredTree({ 'intent.md': DRAFT_INTENT + answerBlock(1, 'A', 'x') + answerBlock(2, 'A', 'y') })
-  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept intent.md', blocked: true, rerun: 'intent' })
+  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept intent.md', blocked: true, rerun: 'intent', reasons: ['draft'] })
 })
 
 test('0106 R1: one question left unanswered is no rerun', () => {
@@ -2890,7 +2997,7 @@ test('0115 R1: a draft impl with an open question is listed and counted', () => 
 
 test('0115 R3: a draft impl answered in full is rerun: impl', () => {
   const { next } = implTree(`${DRAFT_IMPL}\n## Answers\n${answerBlock(1, 'A', 'x')}`)
-  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept impl.md', blocked: true, rerun: 'impl' })
+  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept impl.md', blocked: true, rerun: 'impl', reasons: ['draft'] })
 })
 
 test('0115 R3: a draft impl with one question unanswered is no rerun', () => {
@@ -4058,6 +4165,54 @@ test('0103 R3: every branch of next that reads CI stops on the same line, and th
   assert.deepEqual(checkGate(branched(passed), 'ship', { probe: rebased() }), { ok: false, need: [STOP_97] })
 })
 
+// --- 0136 R11: codes beside the words ------------------------------------------------
+
+test('0136 R11: next and gate name CI, a person, a merge made and a closed unit by code', () => {
+  const has = (answer, ...codes) => codes.forEach((c) => assert.ok(answer.reasons.includes(c), `${c} in ${answer.reasons}`))
+  const pending = greenProbe([{ name: 'tests', bucket: 'pending' }])
+  has(nextAnswer(branched(CHAIN), { probe: pending }), 'ci-pending')
+  has(gateAnswer(branched(CHAIN), 'review', { probe: pending }), 'ci-pending')
+  const red = headProbe(greenProbe([{ name: 'tests', bucket: 'fail' }]), { head: 'feat/x' })
+  const back = nextAnswer(branched(CHAIN), { probe: red })
+  assert.equal(back.stage, 'impl')
+  has(back, 'ci-red')
+  assert.ok(!back.reasons.includes('ci-pending'))
+  has(nextAnswer(branched(CHAIN), { probe: headProbe(greenProbe(RED_97)) }), 'ci-unfixable', 'needs-person')
+  // `0116`: the gate opens to record a merge already made, and says so by code alone.
+  assert.deepEqual(gateAnswer(passedOnce(), 'ship', { probe: mergedProbe() }).reasons, ['recording-ship'])
+  has(nextAnswer(passedOnce(), { probe: mergedProbe() }), 'recording-ship')
+  assert.deepEqual(gateAnswer(passedOnce(), 'ship', { probe: greenProbe() }).reasons, [])
+  assert.deepEqual(nextAnswer(branched({ ...CHAIN, 'plan.md': art('done') })).reasons, ['finished'])
+  has(nextAnswer(branched({ ...CHAIN, 'spec.md': art('rejected') })), 'closed')
+  // The words stay where they were: `nextStep` and `checkGate` hand out no codes.
+  assert.equal('reasons' in nextStep(branched(CHAIN), { probe: pending }), false)
+  assert.equal('reasons' in checkGate(branched(CHAIN), 'review', { probe: pending }), false)
+})
+
+test('0136 R11: every closed gate names at least one code', () => {
+  const u = branched({ 'intent.md': art('accepted'), 'spec.md': art('draft') })
+  for (const stage of STAGE_NAMES) {
+    const g = gateAnswer(u, stage, { probe: greenProbe() })
+    if (!g.ok) assert.ok(g.reasons.length, stage)
+  }
+  assert.deepEqual(gateAnswer(u, 'plan').reasons, ['draft'])
+  assert.deepEqual(gateAnswer({ ...u, hold: { state: 'paused', reason: 'x', by: 'b', date: 'd' } }, 'plan').reasons, ['paused'])
+  assert.deepEqual(gateAnswer(u, 'nope').reasons, ['unreadable'])
+})
+
+test('0136 R11: gate --json prints the lines it prints without it, its codes, and the same exit', () => {
+  const { root } = questionTree({ 'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n' })
+  const words = cli('--root', root, 'gate', '0001_q', 'plan')
+  const json = cli('--root', root, 'gate', '0001_q', 'plan', '--json')
+  assert.equal(words.status, 1)
+  assert.equal(json.status, 1)
+  const said = JSON.parse(json.stdout)
+  assert.deepEqual(said.lines, words.stderr.trimEnd().split('\n'))
+  assert.deepEqual([said.ok, said.reasons], [false, ['missing']])
+  const open = JSON.parse(cli('--root', root, 'gate', '--json', '0001_q', 'spec').stdout)
+  assert.deepEqual(open, { ok: true, lines: [cli('--root', root, 'gate', '0001_q', 'spec').stdout.trim()], reasons: [] })
+})
+
 test('0103 R7: a red read asks gh once more for the head, a green read never does', () => {
   const read = ['gh pr checks 7 --required --json name,bucket']
   for (const [checks, more] of [
@@ -4274,7 +4429,7 @@ test('0040 R7: impl gate stays shut while the dependency\'s ship.md is not accep
 test('0040 R7: next says why dependency and names the ref', () => {
   const { a, b } = pair40()
   assert.deepEqual(json40(cli('--root', b, 'next', '0001_y', '--peer', `a=${a}`)),
-    { unit: '0001_y', stage: '', action: `${WAITING_ON}a/0001_x to merge`, blocked: true, why: 'dependency' })
+    { unit: '0001_y', stage: '', action: `${WAITING_ON}a/0001_x to merge`, blocked: true, why: 'dependency', reasons: ['dependency', 'waiting-on'] })
   const [u] = json40(cli('--root', b, 'status', '--json', '--peer', `a=${a}`)).units
   assert.equal(u.next.why, 'dependency')
   assert.equal(u.next.action, `${WAITING_ON}a/0001_x to merge`)

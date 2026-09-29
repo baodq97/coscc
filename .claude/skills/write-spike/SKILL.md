@@ -88,6 +88,10 @@ $ <the command, exactly as run>
 ...
 ````
 
+## Hand back your judgement
+
+The app does not read `Status:` or `## Open questions` out of the file to decide anything (`0136`). A step started from the board holds a `submit` tool: call it with `stage`, `judgement` (`ready` for `accepted`, `not-ready` for `draft`) and `questions` (`{n, text}` per open question). `verdicts` holds one `{id, verdict}` per `## U<n>`. Call it before your reply, and end the reply with the file. If `submit` returns an error, the app has checked your object against the unit: correct the object and call `submit` again until it is accepted. A step that hands back no object ends failed. At a terminal there is no such tool; the `Status:` line is then all there is.
+
 ## Invariants
 
 1. One `## U<n>` for every `U<n>` the spec carries now, headed exactly so.

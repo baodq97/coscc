@@ -851,6 +851,15 @@ async def push_branch(tree: Path, expected: Path, branch: str, timeout: float = 
         ["git", "-C", str(tree), "push", "--", "origin", f"refs/heads/{branch}:refs/heads/{branch}"], timeout)
 
 
+async def push_unit_branch(tree: Path, branch: str, timeout: float = FETCH_TIMEOUT) -> str:
+    """`0136` R12: a unit's branch to `origin`, as the mechanical `pr` pushes it. No `--force`:
+    a branch someone rewrote on GitHub is refused here rather than overwritten."""
+    if not _BRANCH_RE.match(branch or ""):
+        raise GitError(f"not a unit branch name: {branch!r}")
+    return await _run(
+        ["git", "-C", str(tree), "push", "--", "origin", f"refs/heads/{branch}:refs/heads/{branch}"], timeout)
+
+
 async def push_tag(tree: Path, expected: Path, tag: str, sha: str, timeout: float = FETCH_TIMEOUT) -> str:
     """`push origin <sha>:refs/tags/<tag>`: a lightweight tag made on the remote, the push that
     builds the release (R10.4, R10.5). No local tag first, so a refused push leaves none

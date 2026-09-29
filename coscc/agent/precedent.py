@@ -4,7 +4,8 @@
 and unknown to `cos.mjs`: one tool-less session per press of *Ask Jera*, or per pick of the
 autopilot (`0101` R1), under the grant `precedent` (`coscc/agent/policy.py`) with a ceiling
 set by the prompt's length (`grant_for_prompt`). Everything it may read is in its prompt;
-everything it says is in one JSON block the app reads, filters and writes.
+since `0136` R8 everything it decides is one object it hands back through `submit`, which
+the app filters and writes. Its reply is not read.
 `Service.precedent` is the one caller that writes; `scripts/verify_0044.py --measure` asks
 and writes nothing.
 
@@ -30,10 +31,11 @@ What is decided here, and what is not:
 from __future__ import annotations
 
 import dataclasses
-import json
 import math
 import re
 from typing import Any, Iterable, Mapping
+
+from coscc.agent.submit import AGAIN as SUBMIT_AGAIN
 
 AGENT = "Jera"
 VIA = "precedent"
@@ -80,6 +82,9 @@ CITES = "Tiền lệ:"
 
 # `spec.md` R4. Said for a question the reply left out or said nothing usable about.
 NOT_ANSWERED = "Jera did not answer this question."
+
+# `0136` R2, R8. Why a run is `failed` when Jera called `submit` with nothing it kept.
+NO_OBJECT = "no-submission: Jera handed back no verdicts through submit"
 
 # `0137` R1. Who decided an entry, computed on every read and never typed by anyone.
 ORIGINATOR, DELEGATED, INFERRED = "originator", "delegated", "inferred"
@@ -225,8 +230,8 @@ def entries(units: Iterable[dict[str, Any]], prefs_text: str, exclude_units: Ite
 def asked(unit: dict[str, Any]) -> list[dict[str, Any]]:
     """`spec.md` R2. The questions Jera is given: not answered, not in `review.md`, on a unit
     that is neither finished nor closed. `[{unit, artifact, n, text}]`."""
-    action = str(unit.get("next") or "")
-    if action == "finished" or action.startswith("closed"):
+    # `0136` R11: by the rule of `decide` that answered, never by the words of `next`.
+    if str(unit.get("why") or "") in ("finished", "rejected"):
         return []
     return [
         {"unit": str(unit.get("name") or ""), "artifact": str(q["artifact"]), "n": int(q["n"]),
@@ -258,7 +263,7 @@ def build_prompt(questions: list[dict[str, Any]], store: list[dict[str, str]], r
     lines = [
         f"You are {AGENT}. You answer the open questions of one unit of work from precedent: "
         "decisions already made in this project, listed under *Precedent* below. You have no "
-        "tools and one turn; everything you may use is in this prompt.",
+        "tools but `submit`; everything you may use is in this prompt.",
         "",
         "For every question under *Questions*, give exactly one verdict:",
         "- `answer`: the precedent settles it. `cites` lists the id of every precedent entry "
@@ -283,11 +288,13 @@ def build_prompt(questions: list[dict[str, Any]], store: list[dict[str, str]], r
         "Write `text` and `reason` in Vietnamese: they are added to the unit's files. No line of "
         "`text` may start with `#`.",
         "",
-        "Reply with one JSON block, and nothing in it but the list:",
+        "Hand your verdicts back through the `submit` tool; the app does not read your reply. "
+        "The object, one element per question:",
         "```json",
-        '[{"artifact":"spec.md","n":1,"verdict":"answer","category":"other","text":"...",'
-        '"reason":"","cites":["pref:1"]}]',
+        '{"verdicts":[{"artifact":"spec.md","n":1,"verdict":"answer","category":"other","text":"...",'
+        '"reason":"","cites":["pref:1"]}]}',
         "```",
+        f"If `submit` returns an error: {SUBMIT_AGAIN}",
         "",
         "## Questions",
     ]
@@ -340,23 +347,6 @@ _PARTS = (
 )
 
 
-_JSON_BLOCK = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
-
-
-def _first_list(reply: str) -> list[Any] | None:
-    """The first fenced block that parses as a JSON list, else the whole reply if it does."""
-    for raw in [m.group(1) for m in _JSON_BLOCK.finditer(reply or "")] + [reply or ""]:
-        try:
-            data = json.loads(raw)
-        except (ValueError, TypeError):
-            continue
-        if isinstance(data, dict) and isinstance(data.get("questions"), list):
-            data = data["questions"]
-        if isinstance(data, list):
-            return data
-    return None
-
-
 def _number(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
@@ -366,20 +356,23 @@ def _number(value: Any) -> int | None:
         return None
 
 
-def verdicts(reply: str, questions: list[dict[str, Any]], who: Mapping[str, str]) -> dict[str, Any]:
+def verdicts(submitted: Mapping[str, Any] | None, questions: list[dict[str, Any]],
+             who: Mapping[str, str]) -> dict[str, Any]:
     """`spec.md` R4, R5, R6. `{failed, verdicts, ignored}`.
 
-    `who` maps every id of the store Jera was given to who decided that entry (`0137` R1).
+    `submitted` is the object Jera handed back through `submit` (`0136` R8), `None` when it
+    handed back none; the reply's words are never read for it. `who` maps every id of the
+    store Jera was given to who decided that entry (`0137` R1).
 
-    `failed` is a reason when the reply holds no JSON list, and then nothing else is read.
+    `failed` is a reason when there is no object, and then nothing else is read.
     Otherwise `verdicts` has one element per question in `questions`, in their order, each
     `{artifact, n, question, verdict, category, text, reason, cites}`. An element naming a
     question not in `questions` — any `review.md`, any `F<n>` — is `ignored` and reaches
     nothing. Every downgrade to `needs-person` says why in `reason`.
     """
-    data = _first_list(reply)
-    if data is None:
-        return {"failed": "the reply holds no JSON list", "verdicts": [], "ignored": []}
+    data = (submitted or {}).get("verdicts") if isinstance(submitted, Mapping) else None
+    if not isinstance(data, list):
+        return {"failed": NO_OBJECT, "verdicts": [], "ignored": []}
     known = set(who)
     wanted = {(q["artifact"], int(q["n"])): q for q in questions}
     said: dict[tuple[str, int], dict[str, Any]] = {}
@@ -477,15 +470,21 @@ def words_of(text: str) -> str:
 
 async def ask(sessions: Any, cwd: str, prompt: str, grant: Any, model: str | None,
               effort: str | None, owner: dict[str, Any] | None = None,
-              resume: dict[str, Any] | None = None) -> tuple[str, dict[str, Any], str]:
+              resume: dict[str, Any] | None = None,
+              channel: Any = None) -> tuple[str, dict[str, Any], str]:
     """One tool-less session, as `Service.propose_estimates` runs its own. `(reply, end,
     failure)`: `end` holds `session_id`, `cost` and `terminal_reason`; `failure` is `""`
     unless the session broke or stopped at a ceiling, which counts as broken.
 
     `owner` and `resume` are `0138`'s, as `Sessions.stream` takes them: a session an update
-    pauses raises `Suspended` out of here, and one taken up again goes on from its row."""
+    pauses raises `Suspended` out of here, and one taken up again goes on from its row.
+
+    `channel` (`0136` R8) is the `submit.Collector` the session hands its object to; the
+    grant must carry `submits` for the gate to let the call through. A knowledge batch
+    passes none, and its session has no tool at all."""
     from coscc.runner import CEILING_MARKERS, Denials, permission_gate
     from coscc.agent.sessions import StepHandle, Suspended
+    from coscc.agent.submit import SERVER
     from coscc.service.resume import nothing, resume_kwargs
 
     reply, end, failure = "", {}, ""
@@ -494,9 +493,11 @@ async def ask(sessions: Any, cwd: str, prompt: str, grant: Any, model: str | Non
     try:
         async for kind, payload in nothing() if used_up else sessions.stream(
             cwd, given.pop("text"), given.pop("session_id"), tools=[],
-            # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses them.
+            # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses every
+            # one but `submit`, and that only on a grant that `submits`.
             can_use_tool=permission_gate(grant, cwd, Denials()), step=StepHandle(),
             **given,
+            **({"mcp_servers": {SERVER: channel.server()}} if channel is not None else {}),
             **({"owner": owner} if owner is not None else {}),
             **({"model": model} if model is not None else {}),
             **({"effort": effort} if effort is not None else {}),

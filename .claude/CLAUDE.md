@@ -14,7 +14,7 @@ npm test                                           # every test, both runtimes
 uv sync                                            # dependencies, after a fresh clone
 
 node .claude/scripts/cos.mjs status [--json]       # where every unit stands
-node .claude/scripts/cos.mjs gate <unit> <stage> [--repo <dir>]   # 0 open · 1 blocked, with reasons · 2 misuse
+node .claude/scripts/cos.mjs gate <unit> <stage> [--repo <dir>] [--json]   # 0 open · 1 blocked, with reasons · 2 misuse
 node .claude/scripts/cos.mjs next <unit> [--repo <dir>]           # JSON: the one stage to run now, or "" and why
 node .claude/scripts/cos.mjs new-path <slug>       # allocates the number, validates the slug
 node .claude/scripts/cos.mjs new-idea <slug>       # an idea several units share: .claude/docs/ideas.md
@@ -33,7 +33,8 @@ that directory's numbers as taken. `status`, `gate`, `next`, `rerun`, `unit-bran
 without it: `uv run coscc state <workspace> | node … --state - …` (`0135`). `gate` and `next` take `--repo <dir>`, the
 checkout whose branch and pull request the `review` and `ship` gates read: with `--root` and no `--repo`
 those two gates stay closed. `next` names a stage and opens nothing — ask `gate` before
-running it. `COS_REVIEW_ROUNDS` (default 3) is how many review rounds may ask for changes
+running it. `next` and `gate --json` hand out `reasons`, codes of `coscc/units/guards.py`
+`REASONS`: code branches on those, never on the words. `COS_REVIEW_ROUNDS` (default 3) is how many review rounds may ask for changes
 before the loop needs a person.
 
 Tests must be green before any task is reported complete; never skip or delete a failing
@@ -59,6 +60,9 @@ copy of it.
 `[unmeasured] U<n>` puts it between `spec` and `plan`, and `plan` does not open until every
 `U<n>` has `Verdict: holds`.
 
+**A skip is a person's.** `spec.md: skipped` counts only once a person runs `uv run coscc
+skip <workspace> <unit> spec [--delegated] <reason>`; any other skip stops the unit.
+
 **`plan.md: done` is terminal.** Once the app has read it, `cos.mjs` reports a unit finished
 without reading a single later artifact. Set it only after the proof command has passed, and never to close a unit
 that still has stages left.
@@ -80,14 +84,16 @@ The order per unit, and the reason it cannot be reordered:
 4. `git switch -c <that name>` — cut from `main`, before the first commit. `main` is closed;
    a commit made on it is a commit that has to be moved.
 5. Work the stages. Each artifact is its own commit.
-6. `pr`: `gh pr create`, then wait for the required checks. Red sends the work back to
-   `impl` on the same branch; the `review` gate stays closed until every check is green.
+6. `pr`: `gh pr create` (from the board the app does it, no session), then wait for the
+   required checks. Red sends the work back to `impl` on the same branch; the `review` gate
+   stays closed until every check is green.
 7. `review`: a separate agent session appends a round to `review.md`. Open findings mean
    `changes-requested`, a fix, green CI and another round, until `COS_REVIEW_ROUNDS` sends
    it to a person. An `[open]` `low` does not block; a finding naming a rule of the UI
    standard (`S<n>`) does. The detail is in `.claude/docs/branches.md`.
 8. `ship`: only once `cos.mjs gate <unit> ship` exits 0, `gh pr merge --squash --delete-branch`
-   with `--match-head-commit` set to the head the gate names.
+   with `--match-head-commit` set to the head the gate names. From the board the app merges,
+   pinned to the head its own guard read.
 
 Rebase, never merge `main` in; do it before a review round, not after a pass
 (`.claude/docs/branches.md` says why).
@@ -119,8 +125,8 @@ or a grant, read `.claude/docs/not-built.md`.
   not reason your way past it. A stage started from the coscc board has had this asked for
   it already — the app refuses to start a step the gate closes, and puts the gate's answer
   in the prompt. That is for the five prose stages, which run no command — `idea` and
-  `intent` hold no tools at all, `spec`, `plan` and `review` may only read — and so could
-  never obey this line themselves; at a terminal it still means you.
+  `intent` hold only `submit`, `spec`, `plan` and `review` may only read and submit — and so
+  could never obey this line themselves; at a terminal it still means you.
 - No code while `plan.md` is `draft`. Accept the plan in its own commit, so the
   authorization is separable from the thing it authorizes.
 - Take unit paths from `cos.mjs new-path`. Never guess a number.

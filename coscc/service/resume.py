@@ -186,6 +186,9 @@ class ResumeMixin:
         for start in starts:
             if start is not None:
                 _spawn(start)
+        # `0136` R13: a merge asked for before the app went down is recorded before the
+        # autopilot could ask for it again.
+        await self.reconcile_prs()
         self.autopilot_resume()
         return said
 

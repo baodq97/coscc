@@ -33,7 +33,7 @@ Read this before adding a route, a button or a grant, and before copying this ha
   the stage `cos.mjs next` names after each step or integration ends, after an answer, and
   every 5 minutes for a unit between `pr` and `ship`, through the same `run_step` a press
   uses, so the gate is asked there. It stops at an open question, where `next` awaits a
-  person, at `ship` unless its own switch is on, at a Gebo `[needs-person]`, after a step
+  person, at `ship` unless its own switch is on, at a Gebo `needs_person`, after a step
   that did not end `done` (a first `exhausted` one, not `ship`, runs once more: `0120`), and
   where the gate refuses; and at a daily cap for the whole
   app. None of that makes a gate more than advice or a grant more than a reading of words,
@@ -85,7 +85,7 @@ Read this before adding a route, a button or a grant, and before copying this ha
   board counted `current` against a stale ref also has the button. Gebo's grant allows one push, with a
   lease bound to the head it began at, and refuses the other roads its own commands hold
   (`gh api`, `git send-pack`, an alias made during the step) — but, like every grant here,
-  it reads words: `node -e` or `python -c` pushing by itself still walks past. Gebo stops with `[needs-person]` rather than drop one side. How
+  it reads words: `node -e` or `python -c` pushing by itself still walks past. Gebo stops with a `needs_person` item rather than drop one side. How
   a conflict was resolved is the app's or an agent's word; the next review round is the
   only thing that reads it. No board read, timer or finished step presses the button unless
   the workspace's autopilot is on (`0043`), which integrates a unit behind, conflicting or
@@ -148,7 +148,7 @@ Read this before adding a route, a button or a grant, and before copying this ha
   so `verify_0074 --measure` can tell afterwards whether work was taken from it.
 - **An answer from precedent is not a person's, and the autopilot starts it unpressed.**
   Since `0044` *Ask Jera* on a unit's Questions tab (`POST /api/units/precedent`) opens one
-  paid session under the grant `precedent` — no tools, one turn — that answers the unit's
+  paid session under the grant `precedent` — no tool but `submit` — that answers the unit's
   open questions from the Settings text *Decision preferences*, the answers already given in
   the same workspace and, since `0101`, the rules in Settings' *Decision rules* (the app's
   default while that box is empty). An answer that cites only that store, or `practice` on a

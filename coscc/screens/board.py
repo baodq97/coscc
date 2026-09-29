@@ -28,6 +28,8 @@ def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
             # `0100` R9. The state, as the service decided it; a paused or dropped hold is
             # this badge's word. `attention_reason` stays in the dialog (spec C3).
             rx.cond(unit.state != "ready", s.badge(unit.state_label, unit.state_color)),
+            # `0136` R22. The code the autopilot's last pass held the unit back with.
+            rx.cond(unit.held != "", s.badge(unit.held, "amber")),
             *([s.badge(unit.at, "gray")] if grouped else []),
             # `0133` R7: the badges `0016`, `0035`, `0047`, `0074`, `0082` and `0040` put here
             # live in the dialog's header (`_unit_badges`).

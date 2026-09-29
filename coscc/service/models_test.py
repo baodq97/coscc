@@ -14,6 +14,7 @@ from coscc.config import Config
 from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.service.service_test import create_sync
+from coscc.agent.submit_test import submits as _submits
 
 
 class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
@@ -27,6 +28,7 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.models.append(kw.get("model"))
             yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-m", "cost": {}})
 
     def setUp(self):

@@ -16,10 +16,12 @@ from coscc import units
 from coscc.github import prscope
 from coscc.git import fetches, worktrees
 from coscc.config import Config
+from coscc.units import autopilot
 from coscc.service.common import Invalid, describe_base, step_cwd
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import create_sync
+from coscc.agent.submit_test import submits as _submits
 
 
 class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
@@ -39,6 +41,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
     class Replies:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-30", "cost": {"output_tokens": 3}})
 
     def setUp(self):
@@ -239,6 +242,7 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.prompts.append(text)
             yield ("chunk", self.reply)
+            await _submits(kw)
             yield ("done", {"session_id": "sess-42", "cost": {"output_tokens": 3}})
 
     def setUp(self):
@@ -369,6 +373,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
     class Replies:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-42", "cost": {"output_tokens": 3}})
 
     def setUp(self):
@@ -463,6 +468,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
     def test_a_failed_step_records_nothing(self):
         class Empty:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-0", "cost": {}})
 
         self.service.sessions = Empty()
@@ -487,11 +493,14 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
     whether the unit merged. Driven like `AStepRecordsTheTransitionItCaused`."""
 
     ASKS = "# Spec: a problem\nAuthor: t. Status: draft.\n\n## Body\n\n## Open questions\n\n1. Which one?\n"
+    # `0136` R4: what the session hands back beside `ASKS`; the questions are the object's.
+    ASKED = {"judgement": "not-ready", "questions": [{"n": 1, "text": "Which one?"}]}
 
-    def replies(self, text: str, outcome: dict | None = None):
+    def replies(self, text: str, outcome: dict | None = None, **fields):
         class Replies:
             async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
                 yield ("chunk", text)
+                await _submits(kw, **fields)
                 yield ("done", outcome or {"session_id": "sess-1", "cost": {"output_tokens": 3}})
 
         return Replies()
@@ -505,7 +514,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.config = Config(
             workspaces=(str(self.repo),), working_dir=str(self.root / "work"), data_dir=str(self.root / "data"),
         )
-        self.service = Service(self.config, self.replies(self.ASKS))
+        self.service = Service(self.config, self.replies(self.ASKS, **self.ASKED))
         self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
         self.unit = self.made["unit"]
         (Path(self.made["path"]) / "intent.md").write_text(
@@ -535,7 +544,8 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         _, payload = self._run()[-1]
         self.assertEqual(payload["outcome"], "done")
         kinds = [r["kind"] for r in self.records()]
-        self.assertEqual(kinds[-2:], ["end", "questions"])
+        # `0136` R16: the status the object set, and its event, between the two.
+        self.assertEqual(kinds[-3:], ["end", "transition", "questions"])
         [asked] = [r for r in self.records() if r["kind"] == "questions"]
         self.assertEqual((asked["workspace"], asked["stage"]), (self.key, "spec"))
         self.assertEqual(asked["questions"], [{"artifact": "spec.md", "n": 1}])
@@ -587,7 +597,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         with mock.patch.object(board_reader, "read", broken):
             _, payload = self._run()[-1]
         self.assertEqual(payload["outcome"], "done")
-        self.assertEqual([r["kind"] for r in self.records()][-1], "end")
+        self.assertEqual([r["kind"] for r in self.records()][-2:], ["end", "transition"])
         self.assertEqual(self.service._active, {})
 
     async def _ended(self, after_end) -> asyncio.Task:
@@ -627,7 +637,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
             return left
 
         self.assertEqual(asyncio.run(go()), [])
-        self.assertEqual([r["kind"] for r in self.records()][-2:], ["end", "questions"])
+        self.assertEqual([r["kind"] for r in self.records()][-3:], ["end", "transition", "questions"])
         self.assertEqual(self.service._finishing, {})
 
     def test_an_after_end_that_outlives_the_settle_is_named_and_cancelled(self):
@@ -669,6 +679,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
                 yield ("chunk", "# Spec: a problem\n")
                 await asyncio.wait_for(self.gate(unit).wait(), 10)
                 yield ("chunk", "Author: t. Status: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-7", "terminal_reason": "success",
                                 "cost": {"output_tokens": 3, "cost_usd": 0.01}})
             finally:
@@ -809,6 +820,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
     class Empty:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("session", "sess-fail")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-fail", "cost": {"turns": 3, "cost_usd": 0.02}})
 
     def setUp(self):
@@ -846,6 +858,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 self.seen = text
                 yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-ok", "cost": {}})
 
         probe = Probe()
@@ -858,6 +871,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
         class Replies:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
         self.service.sessions = Replies()
@@ -870,6 +884,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 self.seen = text
                 yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-2", "cost": {}})
 
         probe = Probe()
@@ -934,6 +949,7 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
             # once to repair it. That is the same step, so only a new session is counted.
             self.calls += session_id is None
             yield ("chunk", "# Ship: no\nAuthor: t. Status: accepted.\n\n## Body\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s", "cost": {}})
 
     def setUp(self):
@@ -1042,6 +1058,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.test.seen.append({**kw, "max_turns": max_turns})
             (self.test.dir / "impl.md").write_text("# Impl: x\nStatus: accepted.\n", encoding="utf-8")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-i", "cost": {}, "terminal_reason": self.test.terminal})
 
     def _run(self):
@@ -1113,6 +1130,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self.terminal = None
         self.asked: list[dict] = []
         self.action = "review: run a review round"
+        self.reasons: list[str] = []
         self.next_fails: Exception | None = None
         self.made_count = 0
 
@@ -1151,7 +1169,8 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
             self.asked.append({"unit": unit, "repo": repo})
             if self.next_fails is not None:
                 raise self.next_fails
-            return {"unit": unit, "stage": "impl", "action": self.action, "blocked": False, "waiting": []}
+            return {"unit": unit, "stage": "impl", "action": self.action, "blocked": False, "waiting": [],
+                    "reasons": self.reasons}
 
         async def go():
             return [i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)]
@@ -1268,6 +1287,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self._unit(effort_trial=True)
         self._run()
         self.action = "CI is red on #7: tests — back to impl: fix on the branch and push"
+        self.reasons = ["ci-red"]
         self._run()
         self.assertEqual(self.asked, [{"unit": self.made["unit"], "repo": str(self.repo)}])
         self.assertIs(self._starts()[1]["ci_red"], True)
@@ -1300,6 +1320,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self._unit(effort_trial=False, knowledge=True)
         self._run()
         self.action = "CI is red on #7: tests — back to impl: fix on the branch and push"
+        self.reasons = ["ci-red"]
         self._run()
         first, second = self._starts()
         self.assertNotIn("ci_red", first)
@@ -1439,6 +1460,7 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
                 raise RuntimeError("the session broke")
             yield ("chunk", "# Spike: x\nSpec: spec.md. Round: 1. Status: accepted.\n\n"
                             "## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-spike", "cost": {}})
 
     class RunsOut:
@@ -1450,6 +1472,7 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             (Path(cwd) / "spike.md").write_text(self.PROGRESS, encoding="utf-8")
             yield ("chunk", "Tôi hết lượt.")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-spike", "terminal_reason": "max_turns", "cost": {}})
 
     def test_the_progress_file_is_read_before_the_scratch_is_removed(self):
@@ -1541,80 +1564,97 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
         self.assertEqual(probe.seen, [])
 
 
-class APrStepIsHandedItsPullRequest(unittest.TestCase):
-    """`0041` R2, through `run_step`: one `gh pr list` in the unit's tree, before the
-    session starts, and its answer in both the prompt and the `start` record. The fixture
-    is `AUnitsBaseIsTheRemoteTrunk`'s, with a `gh` first on `PATH`."""
+class APrStepIsMechanical(unittest.TestCase):
+    """`0136` R12, through `run_step`, in place of `0041` R2's *a `pr` step is handed its pull
+    request*: no session runs, so there is no prompt to hand the lookup to. The same three
+    answers of `gh pr list` now decide what the step does -- take the pull request the branch
+    has, open one, or fail with what `gh` said. The fixture is `AUnitsBaseIsTheRemoteTrunk`'s,
+    whose bare remote takes the push."""
 
     setUp = AUnitsBaseIsTheRemoteTrunk.setUp
     _git = AUnitsBaseIsTheRemoteTrunk._git
     _typed_unit = AUnitsBaseIsTheRemoteTrunk._typed_unit
 
-    class Replies:
-        """A `pr` session: keeps the prompt, writes `pr.md` itself."""
+    class NoSession:
+        async def stream(self, *a, **kw):
+            raise AssertionError("a pr step opened a session")
+            yield  # pragma: no cover
 
-        def __init__(self):
-            self.prompt = ""
-            self.directory: Path | None = None
+    Replies = NoSession
 
-        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            self.prompt = text
-            (self.directory / "pr.md").write_text(
-                "# PR: a problem\nAuthor: t. Status: accepted.\nPR: https://x/pull/7\n",
-                encoding="utf-8",
-            )
-            yield ("chunk", "done")
-            yield ("done", {"session_id": "sess-41", "cost": {}})
+    class Gh:
+        """`integrate._gh` and `prcomment._gh`, in memory."""
 
-    def _run_pr(self, stdout: str, code: int = 0) -> tuple[str, dict, str]:
+        def __init__(self, rows: list[dict] | None):
+            self.rows = rows
+            self.calls: list[list[str]] = []
+
+        async def __call__(self, argv, cwd, stdin=None):
+            self.calls.append(list(argv))
+            if argv[:2] == ["pr", "list"]:
+                return (1, "", "error connecting to api.github.com") if self.rows is None else (0, json.dumps(self.rows), "")
+            if argv[:2] == ["pr", "create"]:
+                return 0, "https://github.com/o/r/pull/8\n", ""
+            if argv[:2] == ["pr", "view"]:
+                return 0, json.dumps({"title": "", "body": ""}), ""
+            return 0, "", ""
+
+        def of(self, verb: str) -> list[list[str]]:
+            return [c for c in self.calls if c[:2] == ["pr", verb]]
+
+    def _run_pr(self, gh: Gh) -> tuple[dict, str]:
         from coscc.units import board as board_reader
-        from coscc.github.integrate_test import fake_gh, on_path
+        from coscc.github import integrate, prcomment
         from coscc.runlog.journal import Journal
 
         unit = self._typed_unit()
         self._git("branch", "fix/a-problem")
-        replies = self.Replies()
-        replies.directory = self.service._unit_dir(str(self.repo), unit)
-        self.service.sessions = replies
+        self.service.sessions = self.NoSession()
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, "open: pr may proceed"
 
         async def go():
-            last = None
-            async for item in self.service.run_step(str(self.repo), unit, "pr"):
-                last = item
-            return last
+            return [item async for item in self.service.run_step(str(self.repo), unit, "pr")]
 
-        bindir = self.root / "bin"
-        log = fake_gh(bindir, stdout, code)
-        with on_path(bindir), mock.patch.object(board_reader, "gate", open_gate):
-            _, done = asyncio.run(go())
+        with mock.patch.object(board_reader, "gate", open_gate), \
+                mock.patch.object(integrate, "_gh", gh), mock.patch.object(prcomment, "_gh", gh):
+            items = asyncio.run(go())
+        self.assertEqual([k for k, _ in items], ["done"])
         j = Journal(self.config.working_dir, self.config.data_dir)
-        start = j.records(str(self.repo.resolve()), kind="start")[-1]
-        self.assertEqual(done["outcome"], "done", done)
-        return replies.prompt, start, log.read_text(encoding="utf-8")
+        self.assertEqual([r for r in j.records(str(self.repo.resolve()), kind="start") if r.get("stage") == "pr"], [])
+        return items[-1][1], unit
+
+    def _pushed(self) -> str:
+        return subprocess.run(["git", "-C", str(self.remote), "rev-parse", "--verify", "--quiet", "refs/heads/fix/a-problem"],
+                              capture_output=True, text=True).stdout.strip()
 
     def test_found(self):
-        rows = json.dumps([{"url": "https://github.com/o/r/pull/7", "number": 7,
-                            "mergeable": "CONFLICTING", "headRefOid": "a" * 40}])
-        prompt, start, argv = self._run_pr(rows)
-        self.assertIn("pr list --head fix/a-problem --state open", argv)
-        self.assertIn("# The pull request, already looked up", prompt)
-        self.assertIn("https://github.com/o/r/pull/7", prompt)
-        self.assertIn("*Integrate*", prompt)
-        self.assertEqual(start["pr_before"], "https://github.com/o/r/pull/7")
+        gh = self.Gh([{"url": "https://github.com/o/r/pull/7", "number": 7, "headRefOid": "a" * 40}])
+        done, unit = self._run_pr(gh)
+        self.assertEqual((done["outcome"], done["mechanical"]["result"], done["mechanical"]["number"]), ("done", "found", 7))
+        self.assertEqual(gh.of("create"), [])
+        self.assertTrue(self._pushed())
+        text = (self.service._unit_dir(str(self.repo), unit) / "pr.md").read_text(encoding="utf-8")
+        self.assertIn("# PR: fix(0001): a problem", text)
+        self.assertEqual(done["pr_sync"]["existed"], True)
 
     def test_none(self):
-        prompt, start, _ = self._run_pr("[]")
-        self.assertIn("no open pull request for the branch `fix/a-problem`", prompt)
-        self.assertEqual(start["pr_before"], "")
+        gh = self.Gh([])
+        done, _ = self._run_pr(gh)
+        self.assertEqual((done["mechanical"]["result"], done["mechanical"]["number"]), ("opened", 8))
+        [create] = gh.of("create")
+        self.assertEqual(create[create.index("--title") + 1], "fix(0001): a problem")
+        self.assertEqual(done["pr_sync"]["existed"], False)
 
-    def test_unknown_still_runs_the_step(self):
-        prompt, start, _ = self._run_pr("", code=1)
-        self.assertIn("could not ask `gh`", prompt)
-        self.assertIn("no auth", prompt)
-        self.assertEqual(start["pr_before"], "")
+    def test_unknown_fails_and_records_nothing(self):
+        gh = self.Gh(None)
+        done, unit = self._run_pr(gh)
+        self.assertEqual(done["outcome"], "failed")
+        self.assertIn("error connecting", done["error"])
+        self.assertEqual(gh.of("create"), [])
+        history = self.service._unit_meta().history
+        self.assertEqual(history.transitions(self.service._journal_key(str(self.repo)), unit, "pr.md"), [])
 
 
 class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
@@ -1646,6 +1686,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                 yield ("chunk", self.reply)
                 if self.hold:
                     await asyncio.sleep(10)
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-55", "cost": {}})
             finally:
                 if step is not None:
@@ -1687,7 +1728,10 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         def of(self, sub: str, json_: str | None = None):
             return [c for c in self.calls if c[0][:2] == ["pr", sub] and (json_ is None or c[0][-1] == json_)]
 
-    def _run(self, text, gh, stage="pr", hold=False, prepare=None, gate=None):
+    def _run(self, text, gh, stage="pr", hold=False, prepare=None, gate=None, via_step=False):
+        """`0136` R12: a `pr` step writes `pr.md` itself and runs no session, so a `pr.md` of
+        any other words -- `text` -- reaches `_sync_pr` only by calling it as the step does,
+        with the lookup the step made before `0136`. `via_step` runs the step itself."""
         from coscc.units import board as board_reader
         from coscc.github import integrate, prcomment
 
@@ -1706,12 +1750,15 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         open_gate = gate or open_gate
 
         async def go():
+            if stage == "pr" and not via_step:
+                if text is not None:
+                    (directory / "pr.md").write_text(text, encoding="utf-8")
+                await self.service._ingest(str(self.repo), unit, {"outcome": "done", "stage": "pr"}, "pr.md")
+                lookup = await integrate.pr_for_branch(str(self.repo), "fix/a-problem")
+                before = None if lookup.get("state") == "unknown" else lookup.get("url", "")
+                return [("done", {"outcome": "done", "pr_sync": await self.service._sync_pr(str(self.repo), unit, before)})]
             agen = self.service.run_step(str(self.repo), unit, stage)
-            out = [await agen.__anext__()]
-            if hold:
-                await self.service.stop_step(str(self.repo), unit, "Lan")
-            out += [i async for i in agen]
-            return out
+            return [i async for i in agen]
 
         with mock.patch.object(board_reader, "gate", open_gate), \
                 mock.patch.object(integrate, "_gh", gh), mock.patch.object(prcomment, "_gh", gh):
@@ -1745,9 +1792,6 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         done, [row], _ = self._run(self.ACCEPTED, gh)
         self.assertEqual((row["outcome"], row["existed"]), ("updated", None))
         self.assertIsNone(done["pr_sync"]["existed"])
-        [start] = [r for r in self.service._journal().records(self.service._journal_key(str(self.repo)), kind="start")
-                   if r.get("stage") == "pr"]
-        self.assertEqual(start["pr_before"], "")
 
     def test_already_there_is_not_written_again(self):
         gh = self.Gh(listed=True, title=self.TITLE, body=self.BODY)
@@ -1755,10 +1799,12 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         self.assertEqual(gh.of("edit"), [])
         self.assertEqual(row["outcome"], "already")
 
-    def test_a_stopped_step_calls_nothing_and_writes_no_row(self):
-        gh = self.Gh(listed=True)
-        done, rows, _ = self._run(self.ACCEPTED, gh, hold=True)
-        self.assertEqual(done["outcome"], "stopped")
+    def test_a_pr_step_that_fails_calls_nothing_and_writes_no_row(self):
+        # Was *a stopped step*: `0136` R12's step has no session to stop, and one that
+        # fails -- here `gh pr list` -- is what leaves no `pr.md` to put up.
+        gh = self.Gh(listed=True, fail="list")
+        done, rows, _ = self._run(None, gh, via_step=True)
+        self.assertEqual(done["outcome"], "failed")
         self.assertEqual((gh.of("view"), gh.of("edit"), rows), ([], [], []))
         self.assertNotIn("pr_sync", done)
 
@@ -1875,7 +1921,34 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
     only for `spec`, `spike` and `plan`, and hands `Runner.run` what applies. The gate, the
     worktree and the runner are stand-ins: what is checked is the kwargs `Runner.run` gets."""
 
-    ALL = ("idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship")
+    # `0136` R12, R13: `pr` and `ship` run no session, so there is no `Runner.run` to hand a
+    # key to; `test_pr_and_ship_reach_no_runner` says so.
+    ALL = ("idea", "intent", "spec", "spike", "plan", "impl", "review")
+
+    def test_pr_and_ship_reach_no_runner(self):
+        from coscc.units import board as board_reader
+
+        service = self.service(True)
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, f"open: {stage} may proceed"
+
+        async def tree(*a, **kw):
+            return {"path": str(self.repo), "branch": "feat/a-problem", "base": None}
+
+        async def mechanical(cwd, key, unit, stage, tree, started_by, again=False, rebased=None):
+            return {"unit": unit, "stage": stage, "outcome": "done"}
+
+        async def go(stage):
+            return [i async for i in service.run_step(str(self.repo), self.unit, stage)]
+
+        for stage in ("pr", "ship"):
+            with self.subTest(stage=stage), mock.patch.object(board_reader, "gate", open_gate), \
+                    mock.patch("coscc.service.steps.Runner", side_effect=AssertionError("a runner was made")), \
+                    mock.patch.object(service, "_worktree", tree), \
+                    mock.patch.object(service, "_sync_pr", mock.AsyncMock()), \
+                    mock.patch.object(service, "_mechanical", mechanical):
+                self.assertEqual(asyncio.run(go(stage)), [("done", {"unit": self.unit, "stage": stage, "outcome": "done"})])
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1981,7 +2054,7 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
     def test_on_no_other_stage_gets_a_key(self):
         service = self.service(True)
         self.write_store("tool:x")
-        for stage in ("idea", "intent", "pr", "review", "ship"):
+        for stage in ("idea", "intent", "review"):
             with self.subTest(stage=stage):
                 kw = self.kwargs_of(service, stage)
                 self.assertNotIn("knowledge", kw)
@@ -2152,8 +2225,9 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
         self.unit = create_sync(service, str(self.repo), "a-problem", "words")["unit"]
         return service
 
-    def drive(self, service: Service, stage: str, outcome: str) -> list[tuple]:
-        """One step whose runner ends `outcome`, and every `_gather_soon` it made."""
+    def drive(self, service: Service, stage: str, outcome: str, rebased: dict | None = None) -> list[tuple]:
+        """One step whose runner ends `outcome`, and every `_gather_soon` it made. What the
+        stand-in machine's `ship` was handed is kept in `self.shipped_with`."""
         from coscc.units import board as board_reader
         from coscc.github import integrate
 
@@ -2165,7 +2239,10 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
                 yield ("done", {"outcome": outcome})
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
-            return True, f"open: {stage} may proceed"
+            return board_reader.Gate(True, f"open: {stage} may proceed", (), rebased)
+
+        self.shipped_with: list[dict | None] = []
+        shipped_with = self.shipped_with
 
         async def tree(*a, **kw):
             return {"path": str(self.repo), "branch": "feat/a-problem", "base": None}
@@ -2178,6 +2255,24 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
 
         scheduled: list[tuple] = []
 
+        from coscc.git import gitops
+        from coscc.github import prmachine
+
+        class Machine:
+            """`0136` R12, R13: `pr` and `ship` end through the PR machine, not a runner."""
+
+            history = service._unit_meta().history
+
+            async def open_pr(self, u, again=False):
+                return prmachine.Outcome("opened" if outcome == "done" else "failed", detail="" if outcome == "done" else "gh down")
+
+            async def ship(self, u, authority="person", rebased=None):
+                shipped_with.append(rebased)
+                return prmachine.Outcome("merged" if outcome == "done" else "failed", detail="" if outcome == "done" else "gh down")
+
+        async def on_branch(*a, **kw):
+            return "feat/a-problem"
+
         async def go():
             async for _ in service.run_step(str(self.repo), self.unit, stage):
                 pass
@@ -2185,7 +2280,10 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
             others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
             await asyncio.gather(*others, return_exceptions=True)
 
-        with mock.patch.object(board_reader, "gate", open_gate), \
+        with mock.patch.object(service, "_pr_machine", Machine), \
+                mock.patch.object(units, "branch_name", lambda *a, **kw: "feat/a-problem"), \
+                mock.patch.object(gitops, "current_branch", on_branch), \
+                mock.patch.object(board_reader, "gate", open_gate), \
                 mock.patch("coscc.service.steps.Runner", StandIn), \
                 mock.patch.object(service, "_worktree", tree), \
                 mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
@@ -2202,6 +2300,42 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
         service = self.service(True)
         scheduled = self.drive(service, "ship", "done")
         self.assertEqual(scheduled, [(str(self.repo), self.unit, service._journal_key(str(self.repo)))])
+
+    def test_the_gates_clean_rebase_reaches_the_machines_guard(self):
+        """`0136` review round 1, F1."""
+        service = self.service(False)
+        rebased = {"reviewed": "a" * 40, "head": "b" * 40}
+        self.drive(service, "ship", "done", rebased=rebased)
+        self.assertEqual(self.shipped_with, [rebased])
+        self.drive(self.service(False), "ship", "done")
+        self.assertEqual(self.shipped_with, [None])
+
+    def test_every_pr_and_ship_leaves_the_record_the_autopilots_stop_reads(self):
+        """`0136` review round 1, F2: there is no `end`, so this is the unit's last word."""
+        for stage, outcome in (("ship", "failed"), ("ship", "done"), ("pr", "failed"), ("pr", "done")):
+            with self.subTest(stage=stage, outcome=outcome):
+                service = self.service(False)
+                # Each subtest makes a new unit over the same data root, so only its own rows count.
+                before = len(service._journal().records(kind=autopilot.PR_MACHINE))
+                self.drive(service, stage, outcome)
+                [rec] = service._journal().records(kind=autopilot.PR_MACHINE)[before:]
+                self.assertEqual((rec["unit"], rec["stage"], rec["outcome"], rec["started_by"]),
+                                 (self.unit, stage, outcome, "person"))
+                self.assertEqual(rec["detail"], "" if outcome == "done" else "gh down")
+                self.assertFalse(rec["merge_refused"])
+                self.assertEqual(service._journal().records(kind="end"), [])
+
+    def test_a_merge_github_refused_after_the_machine_requested_it_says_so(self):
+        """`0136` review round 2, F6: the autopilot stops `f` on it, not `e`."""
+        from coscc.github import prmachine
+
+        service = self.service(False)
+        with mock.patch.object(prmachine, "state", lambda *a: {"state": "merge-requested"}):
+            self.drive(service, "ship", "failed")
+        [rec] = service._journal().records(kind=autopilot.PR_MACHINE)
+        self.assertEqual((rec["outcome"], rec["merge_refused"], rec["detail"]), ("failed", True, "gh down"))
+        [ship] = service._journal().records(kind="ship")
+        self.assertEqual(ship["result"], "refused")
 
     def test_a_failed_ship_or_the_flag_off_schedules_none(self):
         for on, stage, outcome in ((True, "ship", "failed"), (False, "ship", "done"), (True, "pr", "done")):
@@ -2326,7 +2460,7 @@ class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):
         service = self.service(False)
         self.shipped(service, "## Round 1\n\n- F1 [open] coscc/service/__init__.py:9 — high — x\n")
         self.plan(self.PLAN)
-        for stage in ("plan", "pr", "review", "ship"):
+        for stage in ("plan", "review"):
             with self.subTest(stage=stage):
                 kw = self.kwargs_of(service, stage)
                 self.assertNotIn("prior_findings", kw)
@@ -2383,7 +2517,7 @@ class RunStepHandsOnThePlanMap(RunStepHandsOnTheKnowledgeStore):
     def test_no_other_stage_gets_a_key(self):
         service = self.service(False)
         self.plan(self.PLAN)
-        for stage in ("plan", "pr", "review", "ship"):
+        for stage in ("plan", "review"):
             with self.subTest(stage=stage):
                 kw = self.kwargs_of(service, stage)
                 self.assertNotIn("plan_map", kw)

@@ -631,7 +631,8 @@ class ImplAndShipKeepTheirTaskByteForByte(unittest.TestCase):
     def task(self, d, stage):
         directory = make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
         prompt, _ = build_prompt(d, directory, UNIT, stage, STAGES, f"{stage}.md", writes_own=True)
-        return prompt.split("\n\n---\n\n")[-1], directory
+        # `0136`: the stages that hand back a stage result have *Hand back your judgement* after.
+        return next(p for p in prompt.split("\n\n---\n\n") if p.startswith("# Your task")), directory
 
     def test_impl(self):
         with tempfile.TemporaryDirectory() as d:
@@ -696,7 +697,10 @@ class TheStagesThatReadWholeInputsKeepTheirPrompt(unittest.TestCase):
 
     `0135` review F5 did: `_ANSWERS_ADVICE` no longer says the app writes the answers back
     onto the artifact, since they are rows in `cos.db`. That sentence is the only change to
-    `idea`, `intent`, `spec` and `plan`; `spike` does not carry it."""
+    `idea`, `intent`, `spec` and `plan`; `spike` does not carry it.
+
+    `0136` R2 appends `submit_block` to all five and changes nothing before it: the digests
+    are of the prompt without it, which must then end with it, before `INCLUDED:`."""
 
     BEFORE = {
         "idea": "9267c865c80da178ba395a2cdd9f338275803bbc443a3cb9620e3f9f1470972e",
@@ -711,7 +715,12 @@ class TheStagesThatReadWholeInputsKeepTheirPrompt(unittest.TestCase):
 
         for stage, digest in self.BEFORE.items():
             with self.subTest(stage=stage):
+                from coscc.runner.prompt import submit_block
+
+                block = "\n\n---\n\n" + submit_block(stage, f"{stage}.md", False)
                 text = _golden_prompt(stage)
+                self.assertEqual(text.count(block + "\n\nINCLUDED:"), 1)
+                text = text.replace(block, "")
                 self.assertNotIn("# The unit's files", text)
                 self.assertEqual(hashlib.sha256(text.encode("utf-8")).hexdigest(), digest)
 

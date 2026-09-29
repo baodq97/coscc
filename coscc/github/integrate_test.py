@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.github import integrate as ig
+from coscc.agent.submit_test import submits as _submits
 
 HEAD = "a" * 40
 NEW = "b" * 40
@@ -273,14 +274,20 @@ class Related(unittest.TestCase):
 
 
 class NeedsPersonAndOutcome(unittest.TestCase):
-    def test_parse(self):
-        reply = "Tried.\n- [needs-person] A keeps x, B drops x\n[needs-person] second\nnot [needs-person] this"
-        self.assertEqual(ig.parse_needs_person(reply), ["A keeps x, B drops x", "second"])
+    def test_what_needs_a_person_is_the_object_gebo_handed_back(self):
+        """`0136` R7: one line per item, the commit first when it names one."""
+        obj = {"needs_person": [{"commit": "", "why": "A keeps x, B drops x"},
+                                {"commit": "abc1234", "why": "second"}, {"commit": "", "why": " "}]}
+        self.assertEqual(ig.needs_person_of(obj), ["A keeps x, B drops x", "abc1234: second"])
+        self.assertEqual(ig.needs_person_of(None), [])
+        self.assertEqual(ig.needs_person_of({"needs_person": []}), [])
 
-    def test_the_outcome_is_read_from_git_not_the_reply(self):
-        self.assertEqual(ig.outcome_of_session(HEAD, NEW, ""), "pushed")
-        self.assertEqual(ig.outcome_of_session(HEAD, HEAD, "I pushed it."), "failed")
-        self.assertEqual(ig.outcome_of_session(HEAD, HEAD, "[needs-person] x"), "needs-person")
+    def test_the_outcome_is_read_from_git_then_the_object(self):
+        """`0136` R7's order: the head moved, else the object's `needs_person`, else failed."""
+        self.assertEqual(ig.outcome_of_session(HEAD, NEW, ["x"]), "pushed")
+        self.assertEqual(ig.outcome_of_session(HEAD, NEW, []), "pushed")
+        self.assertEqual(ig.outcome_of_session(HEAD, HEAD, []), "failed")
+        self.assertEqual(ig.outcome_of_session(HEAD, HEAD, ["x"]), "needs-person")
 
 
 class Record(unittest.TestCase):
@@ -467,7 +474,7 @@ class ThePrompt(unittest.TestCase):
         cut = {"at": "2026-09-26T13:12:35+00:00", "head": HEAD}
         text = self.completion_prompt({"relation": "diverged", "local_head": NEW, "cut": cut})
         for want in ("# Commits that were never pushed", NEW, HEAD, "`diverged`", "2026-09-26T13:12:35+00:00",
-                     f"git range-diff origin/main {HEAD} {NEW}", "[needs-person]",
+                     f"git range-diff origin/main {HEAD} {NEW}", "one `needs_person` item",
                      "Do not rebase, commit or reset",
                      # The lease is still the pull request's head.
                      f"--force-with-lease=feat/x:{HEAD}"):
@@ -587,14 +594,20 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
                 gate = kw["can_use_tool"]
                 seen["push_ok"] = await gate("Bash", {"command": f"git push --force-with-lease=feat/x:{HEAD} origin feat/x"}, None)
                 seen["push_bad"] = await gate("Bash", {"command": "git push --force origin feat/x"}, None)
-                yield ("chunk", "[needs-person] A vs B")
+                seen["submit"] = await gate("mcp__cos__submit", {}, None)
+                yield ("chunk", "[needs-person] C vs D")
+                await _submits(kw, needs_person=[{"commit": "", "why": "A vs B"}])
                 yield ("done", {"session_id": "s", "cost": {"usd": 0.1}})
+
+        from coscc.agent import submit
+
+        collector = submit.Collector("integrate")
 
         async def go():
             out = []
             async for item in ig.run_gebo(FakeSessions(), tree="/t", workspace="/w", prompt="p",
                                           grant=grant_for("integrate"), read_also=(), lease=("feat/x", HEAD),
-                                          model=None):
+                                          model=None, channel=collector):
                 out.append(item)
             return out
 
@@ -603,10 +616,13 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         self.assertEqual(seen["cwd"], "/t")
         self.assertEqual(type(seen["push_ok"]).__name__, "PermissionResultAllow")
         self.assertEqual(type(seen["push_bad"]).__name__, "PermissionResultDeny")
+        self.assertEqual(type(seen["submit"]).__name__, "PermissionResultAllow")
         end = out[-1][1]
-        self.assertEqual(end["reply"], "[needs-person] A vs B")
+        self.assertEqual(end["reply"], "[needs-person] C vs D")
         self.assertEqual(end["denials"], 1)
-        self.assertEqual(ig.outcome_of_session(HEAD, HEAD, end["reply"]), "needs-person")
+        # `0136` R7: the object's words, never the reply's.
+        self.assertEqual(ig.needs_person_of(collector.object()), ["A vs B"])
+        self.assertEqual(ig.outcome_of_session(HEAD, HEAD, ig.needs_person_of(collector.object())), "needs-person")
 
     def test_gebo_counts_the_background_runs_it_was_refused(self):
         """`0130` R3."""
@@ -616,6 +632,7 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
             async def stream(self, cwd, prompt, session_id, **kw):
                 await kw["can_use_tool"]("Bash", {"command": "npm test &"}, None)
                 await kw["can_use_tool"]("Bash", {"command": "git push --force origin feat/x"}, None)
+                await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {}})
 
         async def go():

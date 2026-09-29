@@ -36,12 +36,65 @@ class OnlyImplAndOnlyAutonomous(unittest.TestCase):
         there is no `manual` left to carry nothing. What stays locked is a stage the table
         does not name.
         """
-        self.assertEqual(grant_for("idea"), Grant())
-        self.assertEqual(grant_for("intent"), Grant())
+        self.assertEqual(grant_for("idea"), Grant(submits=True, max_turns=policy.SUBMIT_TURNS))
+        self.assertEqual(grant_for("intent"), Grant(submits=True, max_turns=policy.SUBMIT_TURNS))
+        self.assertEqual(grant_for("no-such-stage"), Grant())
 
     def test_impl_writes_its_own_artifact_and_prose_stages_do_not(self):
         self.assertFalse(IMPL.app_writes_artifact)
         self.assertTrue(grant_for("spec").app_writes_artifact)
+
+
+class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
+    """`0136` spec C4. The prose stages gain exactly `mcp__cos__submit` beyond their old grant,
+    and that tool writes nothing and runs nothing."""
+
+    def test_every_prose_stage_holding_a_result_gains_submit_and_nothing_else(self):
+        from coscc.agent import submit
+
+        self.assertEqual(set(policy.SUBMITTING), {*submit.STAGE_RESULT, submit.ROUND})
+        self.assertEqual(policy.SUBMIT_TOOL, submit.NAME)
+        for stage in policy.SUBMITTING:
+            g = grant_for(stage)
+            self.assertTrue(g.submits, stage)
+            old = policy.GRANTS.get(stage, Grant())
+            self.assertEqual(replace(g, submits=False, max_turns=old.max_turns), old, stage)
+            self.assertGreaterEqual(g.max_turns, policy.SUBMIT_TURNS, stage)
+            self.assertNotIn(submit.NAME, g.tools, stage)
+            self.assertEqual(decide(g, submit.NAME, {"stage": stage}, "/tmp/ws"), "", stage)
+            if policy.is_prose_stage(stage):
+                self.assertEqual(policy.beyond_reading(g), (), stage)
+
+    def test_no_other_mcp_tool_and_no_other_stage_gets_through(self):
+        for stage in ("pr", "ship", "knowledge", "x"):
+            self.assertIn("not granted", decide(grant_for(stage), policy.SUBMIT_TOOL, {}, "/tmp/ws"), stage)
+        for name in ("mcp__cos__other", "mcp__other__submit", "submit"):
+            self.assertIn("not granted", decide(grant_for("spec"), name, {}, "/tmp/ws"), name)
+
+    def test_gebo_jera_and_the_estimate_gain_submit_and_nothing_else(self):
+        """`0136` R7, R8, R9: the sessions that are no stage, each with its old grant but
+        `submits` and at least `SUBMIT_TURNS` turns."""
+        from coscc.agent import submit
+
+        self.assertEqual(set(policy.SUBMITTING_SESSIONS), set(submit.SESSIONS))
+        for kind in policy.SUBMITTING_SESSIONS:
+            g, old = grant_for(kind), policy.GRANTS[kind]
+            self.assertEqual(replace(g, submits=False, max_turns=old.max_turns), old, kind)
+            self.assertEqual(g.max_turns, max(old.max_turns, policy.SUBMIT_TURNS), kind)
+            self.assertEqual(decide(g, submit.NAME, {}, "/tmp/ws"), "", kind)
+            self.assertIn("not granted", decide(g, "mcp__cos__other", {}, "/tmp/ws"), kind)
+
+    def test_the_tool_touches_no_disk_and_runs_nothing(self):
+        import ast
+
+        from coscc.agent import submit
+
+        tree = ast.parse(Path(submit.__file__).read_text(encoding="utf-8"))
+        imported = {a.name for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names}
+        imported |= {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
+        self.assertFalse(imported & {"subprocess", "os", "shutil", "sqlite3", "coscc.data"}, imported)
+        called = {n.func.attr for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+        self.assertFalse(called & {"write_text", "write_bytes", "open", "unlink", "mkdir", "write"}, called)
 
 
 class OneGrantPerStage(unittest.TestCase):
@@ -83,14 +136,16 @@ class OneGrantPerStage(unittest.TestCase):
         """`0020` R6: the values each stage held before this unit, written out."""
         rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS
         expected = {
+            # `0136`: `submits` on the stages that hand back a stage result.
             "impl": Grant(tools=rw, commands=policy.IMPL_COMMANDS, max_turns=120,
-                          max_budget_usd=8.0, app_writes_artifact=False),
-            "plan": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0),
+                          max_budget_usd=8.0, app_writes_artifact=False, submits=True),
+            "plan": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
             "pr": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
                         max_budget_usd=3.0, app_writes_artifact=False,
                         warning=policy.PR_WARNING, denied=policy.PR_DENIED,
                         push_no_force=True),  # `0041` R3; the ceilings are R6's, unchanged
-            "review": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0),  # `0085` R1
+            # `0085` R1; `0136` R5: the round comes back through `submit`.
+            "review": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
             "ship": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
                           max_budget_usd=3.0, app_writes_artifact=False,
                           warning=policy.SHIP_WARNING),
@@ -323,25 +378,27 @@ class TheKnownLimit(unittest.TestCase):
 
 
 class TheEstimateGrantOpensNothing(unittest.TestCase):
-    """`0074` R17, R19: one turn, $2.00, no tool, no command, and a warning for the page."""
+    """`0074` R17, R19: $2.00, no tool, no command, and a warning for the page. One turn
+    until `0136` R9 handed it `submit` and `SUBMIT_TURNS`."""
 
     def test_the_grant(self):
         g = grant_for("estimate")
         self.assertFalse(g.opens_anything)
-        self.assertEqual((g.max_turns, g.max_budget_usd), (1, 2.0))
+        self.assertEqual((g.max_turns, g.max_budget_usd), (policy.SUBMIT_TURNS, 2.0))
         self.assertIn("paid session", g.warning)
         self.assertIn("password", g.warning)
 
 
 class TheJeraGrantOpensNothing(unittest.TestCase):
-    """`0044` R13: Jera starts from the locked position — no tool, no command, one turn, $1.00."""
+    """`0044` R13: Jera starts from the locked position — no tool, no command, $1.00. One turn
+    until `0136` R8 handed it `submit` and `SUBMIT_TURNS`."""
 
     def test_the_grant(self):
         g = grant_for("precedent")
         self.assertEqual((g.tools, g.commands), ((), ()))
         self.assertEqual(policy.beyond_reading(g), ())
         self.assertFalse(g.opens_anything)
-        self.assertEqual((g.max_turns, g.max_budget_usd), (1, 1.0))
+        self.assertEqual((g.max_turns, g.max_budget_usd), (policy.SUBMIT_TURNS, 1.0))
         self.assertIn("paid session", g.warning)
         self.assertIn("password", g.warning)
 
@@ -1072,7 +1129,7 @@ class TheLabelDecidesImplsCeilings(unittest.TestCase):
         """R2: the grant `0020` R6 pins, written out again."""
         rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS
         written = Grant(tools=rw, commands=policy.IMPL_COMMANDS, max_turns=120,
-                        max_budget_usd=8.0, app_writes_artifact=False)
+                        max_budget_usd=8.0, app_writes_artifact=False, submits=True)
         for label in ("routine", None):
             with self.subTest(label=label):
                 self.assertEqual(grant_for_step("impl", label), grant_for("impl"))
