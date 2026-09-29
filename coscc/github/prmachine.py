@@ -41,6 +41,8 @@ STAGES = ("pr", "ship")
 # finds it by its branch.
 STATES = ("none", "open", "merge-requested", "merged", "closed")
 
+# `gh.Run` by another name: the `gh` parameter below hides the module.
+Gh = gh.Run
 Push = Callable[[str, str], Awaitable[Any]]
 Head = Callable[[str], Awaitable[str]]
 
@@ -355,7 +357,7 @@ class Machine:
         history: History,
         journal: Journal,
         *,
-        gh: gh.Run | None = None,
+        gh: Gh | None = None,
         push: Push | None = None,
         head: Head | None = None,
         notify: Callable[[transitions.Applied], None] | None = None,

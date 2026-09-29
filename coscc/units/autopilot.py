@@ -179,13 +179,13 @@ def stop_for(
     if not stage and needs_a_person(nxt):
         return _stop("b", action)
 
-    kind = (last or {}).get("kind")
-    outcome = str((last or {}).get("outcome") or "")
+    # The last record, or nothing when there is none.
+    seen = last or {}
+    kind = seen.get("kind")
+    outcome = str(seen.get("outcome") or "")
     # d. Gebo's integration ended `needs-person`.
     if kind == "integration" and outcome == "needs-person":
-        said = (
-            "; ".join(str(x) for x in (last or {}).get("needs_person") or []) or "no reason given"
-        )
+        said = "; ".join(str(x) for x in seen.get("needs_person") or []) or "no reason given"
         return _stop("d", f"the last integration needs a person: {said}")
     # e. The unit's last step did not end `done`. The first time a stage other than `ship` ends
     # `exhausted` is no stop: it runs again once, and the second time stops; `ship` stops the
@@ -193,7 +193,7 @@ def stop_for(
     # because its reply lacked its opening. Otherwise no retry: `failed`, `cancelled`,
     # `stopped`, an integration that failed or that the autopilot started and was refused,
     # and a `ship` that ran out before `next` names one that only records the merge.
-    ran_out_once = outcome == "exhausted" and (last or {}).get("stage") != "ship" and exhausted == 1
+    ran_out_once = outcome == "exhausted" and seen.get("stage") != "ship" and exhausted == 1
     unopened_once = _unopened(last) and unopened == 1
     skipped = skips_exhausted(nxt, last, recorded)
     if (
@@ -204,25 +204,25 @@ def stop_for(
         and not skipped
     ):
         return _stop(
-            "e", f"the last {last.get('stage')} step ended {outcome or 'without an outcome'}"
+            "e", f"the last {seen.get('stage')} step ended {outcome or 'without an outcome'}"
         )
     if kind == "integration" and (
-        outcome == "failed" or (outcome == "refused" and last.get("started_by") == "autopilot")
+        outcome == "failed" or (outcome == "refused" and seen.get("started_by") == "autopilot")
     ):
-        detail = str(last.get("detail") or "")
+        detail = str(seen.get("detail") or "")
         return _stop("e", f"the last integration was {outcome}" + (f": {detail}" if detail else ""))
     # A `pr` or `ship` the PR machine ran that failed, or whose guard refused it, stops as a
     # `failed` session does. A merge GitHub refused stops `f` on what `gh` said, so the pass
     # can still integrate a unit the refusal left behind `main`.
     if kind == PR_MACHINE and outcome != "done":
-        detail = str(last.get("detail") or "") or ", ".join(
-            str(r) for r in last.get("reasons") or []
+        detail = str(seen.get("detail") or "") or ", ".join(
+            str(r) for r in seen.get("reasons") or []
         )
-        if last.get("merge_refused"):
+        if seen.get("merge_refused"):
             return _stop("f", f"ship was refused: {detail or 'no reason given'}")
         return _stop(
             "e",
-            f"the last {last.get('stage')} was {last.get('result') or outcome}"
+            f"the last {seen.get('stage')} was {seen.get('result') or outcome}"
             + (f": {detail}" if detail else ""),
         )
     # The screenshots could not be taken again before `review`, which did not start. No retry:

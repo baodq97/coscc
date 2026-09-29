@@ -15,6 +15,7 @@ broken" — which is the exit-code split both proofs are built around.
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import secrets
 import socket
@@ -58,10 +59,11 @@ GIT_ID = (
 # Done here, once, rather than as `flush=True` on each call: the proofs print from `say`
 # and from bare `print` both, and a second mechanism is how half of them keep the old
 # behaviour. Importing this module is already what a proof does first.
-try:
-    sys.stdout.reconfigure(line_buffering=True)
-except AttributeError, ValueError, OSError:  # not a real stream; nothing to configure
-    pass
+if isinstance(sys.stdout, io.TextIOWrapper):  # else not a real stream; nothing to configure
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except ValueError, OSError:
+        pass
 
 
 def say(ok: bool, claim: str, detail: str = "") -> bool:
@@ -184,7 +186,9 @@ class RealApp:
         deadline = time.monotonic() + BOOT_TIMEOUT_S
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
-                err = (self.proc.stderr.read() or b"").decode()[-400:]
+                err = ((self.proc.stderr.read() if self.proc.stderr else b"") or b"").decode()[
+                    -400:
+                ]
                 print(f"the app exited before serving:\n{err}", file=sys.stderr)
                 raise SystemExit(EXIT_ENV)
             try:
@@ -314,7 +318,8 @@ class Cut:
 
     def stop(self) -> None:
         async def go():
-            self._server.close()
+            if self._server is not None:
+                self._server.close()
             for p in self.pairs:
                 p["w"].transport.abort()
                 p["uw"].transport.abort()

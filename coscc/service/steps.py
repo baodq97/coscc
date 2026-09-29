@@ -1296,8 +1296,8 @@ class Steps:
                 # A tree that cannot run its tests turns every `impl` red from the start, so
                 # the step is not started on one. Tried once more first: a network blip is the
                 # ordinary reason, and the page has nothing better to offer than *try again*.
-                prepared = worktrees.read_prepare(Path(work))
-                if not (prepared or {}).get("ok"):
+                prepared = worktrees.read_prepare(Path(work)) or {}
+                if not prepared.get("ok"):
                     prepared = await worktrees.prepare(
                         Path(work), cwd, data_dir=self.config.data_dir
                     )
@@ -1887,34 +1887,44 @@ class Steps:
         # a `pr` or `ship` that failed or was refused stops it for a person as a failed session
         # did, and one that did its work lifts that stop. `merge_refused` is a merge GitHub
         # refused after the machine requested it.
-        try:
-            self.ws.journal().append(
-                {
-                    "kind": autopilot.PR_MACHINE,
-                    "workspace": key,
-                    "unit": unit,
-                    "stage": stage,
-                    "outcome": done["outcome"],
-                    "result": out.result,
-                    "reasons": list(out.reasons),
-                    "detail": out.detail,
-                    "started_by": started_by,
-                    "merge_refused": refused,
-                }
-            )
-        except BadRecord, Busy, AttributeError:
-            pass
+        journal = self.ws.journal()
+        if journal is not None:
+            try:
+                journal.append(
+                    {
+                        "kind": autopilot.PR_MACHINE,
+                        "workspace": key,
+                        "unit": unit,
+                        "stage": stage,
+                        "outcome": done["outcome"],
+                        "result": out.result,
+                        "reasons": list(out.reasons),
+                        "detail": out.detail,
+                        "started_by": started_by,
+                        "merge_refused": refused,
+                    }
+                )
+            except BadRecord, Busy:
+                pass
         return done
 
     async def shipped(self, cwd: str, key: str, unit: str, result: str) -> dict[str, Any] | None:
         """The `ship` row notices read, and after a merge the cleanup. From `mechanical`, and from the PR reader and the start-up reconcile
         when they record a merge no `ship` step follows any more. Never raises; the cleanup's answer after a merge, else `None`."""
-        try:
-            self.ws.journal().append(
-                {"kind": "ship", "workspace": key, "unit": unit, "stage": "ship", "result": result}
-            )
-        except BadRecord, Busy, AttributeError:
-            pass
+        journal = self.ws.journal()
+        if journal is not None:
+            try:
+                journal.append(
+                    {
+                        "kind": "ship",
+                        "workspace": key,
+                        "unit": unit,
+                        "stage": "ship",
+                        "result": result,
+                    }
+                )
+            except BadRecord, Busy:
+                pass
         if result != "shipped":
             return None
         cleanup = await self.cleanup(cwd, unit)

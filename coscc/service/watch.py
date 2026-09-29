@@ -4,7 +4,8 @@ Mixed into `Service`; no fields."""
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from coscc.runlog import events
 from coscc.data import Data
@@ -134,7 +135,7 @@ class Watch:
         run: str,
         after: int = 0,
         gather: float = 0.0,
-    ) -> AsyncIterator[tuple[str, Any]]:
+    ) -> AsyncGenerator[tuple[str, Any], None]:
         """`("events", [...])` for every event of a running `run` past `after`, in order, none
         twice, until its `end`; `("cut", n)` when this follower fell `SUB_LIMIT` behind (read
         again from `n`); one `("status", page)` when the `run` is not running here.

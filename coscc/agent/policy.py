@@ -779,8 +779,7 @@ class _Reader:
             # `$"…"` is a translated string: to this reader, a double-quoted one.
             self.i = j
             self.double(word)
-        elif c and _NAME_START.match(c):
-            name = _NAME.match(s, j)
+        elif c and _NAME_START.match(c) and (name := _NAME.match(s, j)):
             word.expanded = True
             word.buf.append("$" + name.group(0))
             self.i = name.end()
@@ -1013,10 +1012,10 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
     while k < len(all_words) - 1 and _ASSIGNMENT.match(all_words[k]):
         k += 1
     word = all_words[k]
-    if _ASSIGNMENT.match(word):
+    if assigned := _ASSIGNMENT.match(word):
         # Refused by what it is: named by the last `/` of its value it would read `this step may
         # not run 'coscc-fb0599d12eeb'` for `S=/home/.../coscc-fb0599d12eeb`, which is no command.
-        name = _ASSIGNMENT.match(word).group(0)
+        name = assigned.group(0)
         return f"a command that only assigns ({name}…) is not allowed: this step runs only the commands it names"
     if simple.expanded[k]:
         # What runs is whatever the variable holds, which this reader cannot know.

@@ -15,7 +15,9 @@ _ROUND_RE = re.compile(r"^## Round \d+\b.*?(?=^## |\Z)", re.MULTILINE | re.DOTAL
 
 
 def _round_number(section: str) -> int:
-    return int(re.match(r"## Round (\d+)", section).group(1))
+    found = re.match(r"## Round (\d+)", section)
+    # Every section `_ROUND_RE` finds starts so.
+    return int(found.group(1)) if found else 0
 
 
 def merge_review(existing: str, reply: str) -> str:

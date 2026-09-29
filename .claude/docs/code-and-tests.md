@@ -14,10 +14,11 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
   `noqa` nothing needs. No style rule.
 - `ruff format --check`: one format, line length 100. Never format by hand.
 - `ty check`: types, on `coscc/` and `scripts/`, not on `tests/` (running them checks them).
-  - Off everywhere: `unresolved-attribute`, `invalid-argument-type`, `invalid-assignment` and
-    `not-subscriptable`. Reflex `Var` fields make them report about 2,000 false findings.
-  - Also off in `coscc/screens/` and `coscc/state/` (Reflex): `unsupported-operator`,
-    `deprecated`, `no-matching-overload` and `invalid-return-type`.
+  - Off everywhere: `invalid-argument-type`, `invalid-assignment` and `not-subscriptable`.
+    Reflex `Var` fields make them report false findings.
+  - Also off in `coscc/screens/` and `coscc/state/` (Reflex): `unresolved-attribute`,
+    `unsupported-operator`, `deprecated`, `no-matching-overload` and `invalid-return-type`.
+    Elsewhere a value that may be `None` is checked before its attribute is read.
   - What stays on catches a name that does not import, a call with wrong arguments and an
     `await` on what cannot be awaited.
 - `tests/test_comments.py`: no unit or requirement id (`0088`, `R3`, `spec.md C7`,

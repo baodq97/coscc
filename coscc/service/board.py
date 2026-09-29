@@ -192,17 +192,18 @@ class Board:
             ranking = [r for r in rows if r.get("kind") in backlog.KINDS]
         _attach_comment_state(data["units"], comments)
         # Display only: nothing below reads it, and `next`/`blocked` are untouched.
+        folded = backlog.fold(
+            data["units"],
+            ranking,
+            backlog.measured(timelines, data["units"]),
+            backlog.undetermined(timelines, data["units"]),
+        )
+        per_unit = folded.pop("per_unit")
         data["backlog"] = {
-            **backlog.fold(
-                data["units"],
-                ranking,
-                backlog.measured(timelines, data["units"]),
-                backlog.undetermined(timelines, data["units"]),
-            ),
+            **folded,
             "propose_warning": grant_for("estimate").warning,
             "propose_consequence": CONSEQUENCE["estimate"],
         }
-        per_unit = data["backlog"].pop("per_unit")
         for unit in data["units"]:
             unit["backlog"] = per_unit.get(unit["name"]) or {
                 "rank": None,
