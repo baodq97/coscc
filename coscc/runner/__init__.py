@@ -334,6 +334,922 @@ async def _from_progress(
     return "progress", "spike.md written from the progress file"
 
 
+def _stop_asked(running: steps.Running | None) -> bool:
+    return running is not None and running.stop_requested
+
+
+def _uncancel() -> None:
+    task = asyncio.current_task()
+    if task is not None:
+        task.uncancel()
+
+
+def _taken_back(
+    running: steps.Running | None, e: asyncio.CancelledError
+) -> asyncio.CancelledError | None:
+    """`None` when the cancel was a Stop's, taken back here; else `e`, the app going down."""
+    if not _stop_asked(running):
+        return e
+    _uncancel()
+    return None
+
+
+def _noted(detail: str, said: str) -> str:
+    """`detail` with `said` under it."""
+    if not said:
+        return detail
+    return f"{detail}\n--- {said} ---" if detail else said
+
+
+def _admitted(
+    started_by: str, stage: str, label: str | None, directory: str | Path, workspace: str, unit: str
+) -> Grant:
+    """The stage's grant, once the step may run at all: else `ValueError` or `RunError`."""
+    check_started_by(started_by)
+    grant = grant_for_step(stage, label)
+    if not Path(directory).exists():
+        raise RunError(f"no such work unit for {workspace}: {unit}")
+    if is_prose_stage(stage):
+        # Belt and braces against a future edit to the table: a prose stage that acquired the ability
+        # to write or run a command would stop being covered. Asks `beyond_reading`, not
+        # `opens_anything`, because `plan` holds `Read`, `Glob` and `Grep`; the guard's purpose is that
+        # the app writes a prose stage's artifact, so the stage must not be able to.
+        beyond = beyond_reading(grant)
+        if beyond:
+            raise RunError(f"{stage} is a prose stage and must not carry {', '.join(beyond)}")
+    return grant
+
+
+async def _compose(
+    cwd: str,
+    directory: Path,
+    unit: str,
+    stage: str,
+    stages: list[str],
+    artifact: str,
+    grant: Grant,
+    resume: dict[str, Any] | None,
+    was: dict[str, Any],
+    watch: str | None,
+    *,
+    gate_said: str,
+    base_note: str,
+    last_attempt: str,
+    integration_note: str,
+    screens_note: str,
+    drift_note: str,
+    rerun: bool,
+    rerun_note: str,
+    plan_map: str,
+    unfinished_round: dict[str, Any] | None,
+    idea_note: str,
+    siblings_note: str,
+    agent: dict[str, Any] | None,
+    meta: dict[str, Any] | None,
+    state_file: str | None,
+) -> tuple[str, str, list, list]:
+    """`(head, prompt, included, pointed)` of the step: the message of a step taken up again, or the
+    prompt composed from the unit's files."""
+    if resume is not None:
+        # Nothing of git is read or run on a step taken up again; what the first start read is in its
+        # owner.
+        return str(was.get("head") or ""), str(resume.get("message") or ""), [], []
+    head = await _head_of(watch or cwd)
+    prompt, included, pointed = compose_prompt(
+        cwd,
+        directory,
+        unit,
+        stage,
+        stages,
+        artifact,
+        writes_own=not grant.app_writes_artifact,
+        gate_said=gate_said,
+        head=head,
+        base_note=base_note,
+        last_attempt=last_attempt,
+        integration_note=integration_note,
+        screens_note=screens_note,
+        drift_note=drift_note,
+        worktree=watch or "",
+        ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
+        rerun=rerun,
+        rerun_note=rerun_note,
+        plan_map=plan_map,
+        commands=grant.commands if stage in ("impl", "implement") else (),
+        unfinished_round=unfinished_round,
+        idea_note=idea_note,
+        siblings_note=siblings_note,
+        runs_commands="Bash" in grant.tools,
+        agent=agent,
+        unit_meta=meta,
+        state_file=state_file,
+    )
+    return head, prompt, included, pointed
+
+
+def _session_kw(
+    workspace: str,
+    cwd: str,
+    model: str | None,
+    effort: str | None,
+    grant: Grant,
+    agent: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """What every session of a step is given beyond its prompt, each named only when it differs."""
+    # The same condition that decides whether a gate and a tool list are sent.
+    preset = CLAUDE_CODE_PRESET if grant.opens_anything else None
+    # Only beside a preset: a tool-less session's argv is unchanged.
+    settings = agents.settings_json(agent) if agent is not None and preset else None
+    return {
+        # Only named when it differs, so a stand-in `stream` without a `workspace` parameter keeps
+        # working for a plain step.
+        **({"workspace": workspace} if cwd != workspace else {}),
+        # The same: a stand-in with no `model` parameter keeps working for a step nobody resolved a
+        # model for.
+        **({"model": model} if model is not None else {}),
+        **({"effort": effort} if effort is not None else {}),
+        # And again: a tool-less step passes nothing, so it gets the session it always got.
+        **({"system_prompt": dict(preset)} if preset else {}),
+        # Only a preset session with an agent row passes it.
+        **({"settings": settings} if settings is not None else {}),
+    }
+
+
+def _turn_kw(
+    kw: dict[str, Any],
+    owner: dict[str, Any],
+    kind: str,
+    running: steps.Running | None,
+    turn_budget: float | None,
+    take_up: bool = False,
+    resume: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """`kw` and what one more turn on the step's session is given: its budget, its owner (a board
+    step's only) and, for a turn taken up again, where to go on from."""
+    return {
+        **kw,
+        "max_budget_usd": turn_budget,
+        **({"owner": {**owner, "kind": kind}} if running is not None else {}),
+        **({"resume_at": (resume or {}).get("safe_uuid")} if take_up else {}),
+    }
+
+
+def _channel_for(
+    grant: Grant,
+    recorder: Any,
+    stage: str,
+    directory: Path,
+    artifact: str,
+    head: str,
+    open_findings: tuple[str, ...],
+    claims_round: int | None,
+) -> submit_mod.Channel | None:
+    """This run's `submit`, bound to it: a stage that hands back a stage result ends `done` only
+    once the channel holds an object its guard still opens on."""
+    if not grant.submits:
+        return None
+    return submit_mod.Channel(
+        run=str(recorder.run) if recorder is not None else uuid.uuid4().hex,
+        stage=stage,
+        directory=directory,
+        artifact=artifact,
+        own=not grant.app_writes_artifact,
+        head=head,
+        open_findings=tuple(open_findings),
+        claims_round=claims_round,
+    )
+
+
+def _owner(
+    journal_key: str,
+    unit: str,
+    stage: str,
+    start_at: Any,
+    grant: Grant,
+    head: str,
+    label: str | None,
+    effort: str | None,
+    artifact: str,
+    was: dict[str, Any],
+    recorder: Any,
+    resume: dict[str, Any] | None,
+    owner_extra: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Whose session this is, for a `suspend` row, and all an update's next start needs to take it
+    up again without reading git."""
+    segments = list(was.get("segments") or [])
+    if resume is not None:
+        # This segment, filled in when its first `done` comes.
+        segments.append(
+            {
+                "suspend_id": resume.get("suspend_id"),
+                **({"cost_unknown": True} if resume.get("cost_unknown") else {}),
+            }
+        )
+    return {
+        "kind": "step",
+        "workspace": journal_key,
+        "unit": unit,
+        "stage": stage,
+        "start_at": start_at,
+        "max_turns": grant.max_turns,
+        "max_budget_usd": grant.max_budget_usd,
+        "head": head,
+        "label": label,
+        "effort": effort,
+        "artifact": artifact,
+        "segments": segments,
+        **({"run": recorder.run} if recorder is not None else {}),
+        **(owner_extra or {}),
+    }
+
+
+def _carried(
+    resume: dict[str, Any] | None, was: dict[str, Any], turn_kind: str
+) -> tuple[list[str], int, str, str, dict[str, Any]]:
+    """`(pieces, blocks, terminal, session_id, cost)` a step starts from: nothing, or what it had
+    before the update that paused it."""
+    # What the session said, one entry per stretch between two tool calls. A step taken up again
+    # starts from what it had said before its safe point.
+    pieces = [*((resume or {}).get("pieces") or []), ""] if resume is not None else [""]
+    # How many pieces of text, blank ones aside, the session said.
+    blocks = sum(1 for p in pieces if p.strip())
+    terminal = ""
+    session_id = str((resume or {}).get("session_id") or "")
+    cost: dict[str, Any] = {}
+    if turn_kind in ("opening", "closing"):
+        # The main reply ended before the update; what it ended with is in the owner.
+        terminal = str(was.get("main_terminal") or "")
+        cost = dict(was.get("main_cost") or {})
+    elif resume is not None and resume.get("spent_usd") is not None:
+        cost = {"cost_usd": float(resume["spent_usd"])}
+    return pieces, blocks, terminal, session_id, cost
+
+
+async def _tree_before(
+    resume: dict[str, Any] | None,
+    was: dict[str, Any],
+    watch: str | None,
+    owner: dict[str, Any],
+) -> tuple[str, str] | None:
+    """The spike's worktree as it stood before the session, or as the first start read it."""
+    if resume is not None:
+        return tuple(was["before"]) if watch and was.get("before") else None
+    before = await _tree_state(watch) if watch else None
+    if before is not None:
+        owner["before"] = list(before)
+    return before
+
+
+def _denials(recorder: Any) -> Denials:
+    """What a step was refused, told to its recorder when it has one."""
+    denials = Denials()
+    if recorder is not None:
+        denials.listener = recorder.denied
+    return denials
+
+
+def _after_call(pieces: list[str], tool: str, after_submit: int | None) -> int | None:
+    """Starts the piece after a tool call; the index of the one after a `submit` call, else
+    `after_submit`.
+
+    Kept: what comes after a tool call is the next piece, and `_joined` puts it on a line of its
+    own. Dropping all text before the last call lost the head of any artifact written in pieces;
+    `_write_artifact` drops what comes before the artifact's last title line instead.
+    """
+    pieces.append("")
+    return len(pieces) - 1 if tool == submit_mod.NAME else after_submit
+
+
+def _reply_done(
+    payload: dict[str, Any], segment_done: dict[str, Any] | None, resume: dict[str, Any] | None
+) -> tuple[str, dict[str, Any], str, list[str], dict[str, Any] | None]:
+    """`(session_id, cost, terminal, models_used, segment_done)` once the main reply's `done` came."""
+    return (
+        payload.get("session_id", ""),
+        payload.get("cost", {}) or {},
+        str(payload.get("terminal_reason") or ""),
+        list(payload.get("models_used") or []),
+        payload if resume is not None and segment_done is None else segment_done,
+    )
+
+
+def _rounds_before(
+    grant: Grant,
+    channel: submit_mod.Channel | None,
+    stage: str,
+    directory: Path,
+    artifact: str,
+) -> set[int] | None:
+    """The rounds `review.md` held before this step's reply is written, for a review that hands
+    its round back through `submit`; else `None`.
+
+    Taken before the write and kept when it is refused: the round is numbered past these.
+    """
+    if not (grant.app_writes_artifact and channel is not None and stage == submit_mod.ROUND):
+        return None
+    return {_round_number(r) for r in _rounds(_read(directory / artifact))}
+
+
+def _write_reply(
+    grant: Grant,
+    directory: Path,
+    artifact: str,
+    stage: str,
+    watch: str | None,
+    pieces: list[str],
+    after_submit: int | None,
+    channel: submit_mod.Channel | None,
+    terminal: str,
+    blocks: int,
+    spike_md: str | None,
+    review_md: str | None,
+) -> tuple[str | None, str | None]:
+    """The artifact, written from the reply or found on disk: `(spike_md, review_md)`."""
+    if not grant.app_writes_artifact:
+        # The session had the tools to write it. Believing it did, rather than looking, is how a step
+        # reports success for a file that is not there.
+        if not (directory / artifact).exists():
+            raise RunError(f"the step did not write {artifact}")
+        # Its `Status:` line is not looked at: what decides is the object.
+        return spike_md, review_md
+    # Synchronous, so nothing yields between reading the `## Answers` already on disk and writing
+    # the artifact over it.
+    #
+    # A session stopped at its ceiling was cut off, so a title it wrote before its last tool call
+    # is a draft or a first piece whose header may say `accepted`. Only what it said after that
+    # call is taken.
+    taken = pieces
+    if (
+        channel is not None
+        and after_submit is not None
+        and not _titled(pieces[after_submit:], artifact)
+    ):
+        # What came after the last `submit` call, with no title in it, is the session saying it
+        # called the tool: never part of the artifact.
+        taken = pieces[:after_submit]
+    taken = taken[-1:] if _hit_ceiling(terminal) else taken
+    _write_artifact(directory, artifact, _joined(taken, artifact), blocks=blocks)
+    if watch:
+        # The reply was written, so the progress file is never read.
+        spike_md = "reply"
+    if stage == "review":
+        review_md = "round"
+    return spike_md, review_md
+
+
+def _judged(
+    e: BaseException,
+    running: steps.Running | None,
+    pieces: list[str],
+    terminal: str,
+    unit: str,
+    stage: str,
+) -> tuple[str, str, dict[str, str] | None, OpeningError | None] | None:
+    """How a step that raised ends: `(outcome, detail, error, unopened)`; `None` when the app is
+    going down or an update paused the session, and the caller lets `e` through with no `end`.
+
+    `error` is set only here, so a step that finished (even one that merely hit its ceiling)
+    carries no error.
+    """
+    if isinstance(e, asyncio.CancelledError):
+        if _taken_back(running, e) is not None:
+            return None
+        # The cancel was `Steps.stop_step`'s own. Taken back, so the `end` is written and the
+        # step's reader still gets its `done` row.
+        return "stopped", "", None, None
+    if isinstance(e, Suspended):
+        # An update paused the session and wrote its `suspend` row: like an app going down, no
+        # `attempt` and no `end`. The next start takes it up.
+        return None
+    error = {"type": type(e).__name__, "message": str(e)}
+    if isinstance(e, (RunError, Refused)):
+        # "The step did not write impl.md" is a real reason to stop, so it goes into the attempt
+        # record's `error` like any other.
+        unopened = e if isinstance(e, OpeningError) else None
+        # What the session said, kept: the money was spent, and a reply with no `Status:` line is
+        # often a good artifact with a preamble that a person can judge in a second.
+        detail = _with_reply(str(e), _joined(pieces))
+        ceiling = f"stopped at the ceiling: {terminal} — {detail}"
+    else:
+        log.exception("the session of %s %s failed", unit, stage)
+        unopened = None
+        detail = _with_reply(f"{type(e).__name__}: {e}", _joined(pieces))
+        ceiling = f"stopped at the ceiling: {terminal}"
+    # A step stopped by its own ceiling was bounded, not failed. `journal.OUTCOMES` keeps the two
+    # apart so a reader can tell a defect from a limit working as intended.
+    if _hit_ceiling(terminal):
+        return "exhausted", ceiling, error, unopened
+    return "failed", detail, error, unopened
+
+
+async def _spike_progress(
+    cwd: str,
+    watch: str,
+    before: tuple[str, str] | None,
+    running: steps.Running | None,
+    tree_changed: bool,
+    directory: Path,
+    artifact: str,
+    detail: str,
+    unit: str,
+) -> tuple[str | None, str, BaseException | None]:
+    """A spike's `spike.md` from its progress file, when its reply was not written:
+    `(spike_md, detail, held)`.
+
+    Read here, before `service.steps.run_step` removes `cwd`, and not in the `except` branches: an
+    exception raised inside one (a Stop's cancel landing on an `await`) is not caught by its
+    siblings and would leave with no `end`. Wrapped like `snapshot`; `outcome` is never changed.
+    `held` is the cancel of an app going down, which the caller raises once the `end` is written.
+    """
+    try:
+        spike_md, said = await _from_progress(
+            cwd, watch, before, running, tree_changed, directory, artifact
+        )
+        return spike_md, _noted(detail, said), None
+    except asyncio.CancelledError as e:
+        held = _taken_back(running, e)
+        return ("withheld" if held is None else None), detail, held
+    except Exception as e:
+        # The `end` row never depends on it.
+        log.exception("the progress file of %s was not read", unit)
+        said = f"the progress file was not read: {type(e).__name__}: {e}"
+        return "unusable", _noted(detail, said), None
+
+
+async def _close_review(
+    sessions: Sessions,
+    cwd: str,
+    head: str,
+    directory: Path,
+    artifact: str,
+    session_id: str,
+    denials: Denials,
+    turn_kw: dict[str, Any],
+    take_up: bool,
+    running: steps.Running | None,
+    cost: dict[str, Any],
+    taken: bool,
+    segment_done: dict[str, Any] | None,
+    detail: str,
+    unit: str,
+    stage: str,
+    message: str,
+) -> tuple[
+    str | None,
+    str,
+    dict[str, Any] | None,
+    dict[str, Any],
+    bool,
+    dict[str, Any] | None,
+    BaseException | None,
+]:
+    """A review that ran out of turns before its reply could be written gets one closing turn on its
+    own session, asking for an incomplete round: `(review_md, detail, closing, cost, taken,
+    segment_done, held)`.
+
+    Sealed first, as the reply's road is: from here a Stop is refused, so the turn cannot be
+    cut halfway; `CLOSING_TIMEOUT` bounds it instead. The budget does not: the CLI compares the
+    whole session's cost after the turn has run. Wrapped, for the reason the progress file is
+    read in the `finally`: `outcome` stays `exhausted` and the `end` row never depends on it.
+    """
+    review_md: str | None = None
+    closing: dict[str, Any] | None = None
+    held: BaseException | None = None
+    said = ""
+    try:
+        if not steps.seal(running):
+            review_md = "withheld"
+        else:
+            number = (
+                max(
+                    (_round_number(r) for r in _rounds(_read(directory / artifact))),
+                    default=0,
+                )
+                + 1
+            )
+            reply, done = await asyncio.wait_for(
+                _closing_turn(
+                    sessions,
+                    cwd,
+                    message if take_up else closing_prompt(head, number),
+                    session_id,
+                    denials,
+                    **turn_kw,
+                ),
+                CLOSING_TIMEOUT,
+            )
+            if take_up:
+                taken, segment_done = True, segment_done or done
+            closing, cost = _turn_cost(done, cost)
+            # Judged on the text, never on `after`. No `await` from here to the write, as on the reply's
+            # road.
+            problem = closing_round_problem(_read(directory / artifact), reply, head)
+            if problem:
+                review_md, said = (
+                    "none",
+                    f"review.md: the closing turn's reply was not written: {problem}",
+                )
+            else:
+                try:
+                    _write_artifact(directory, artifact, reply)
+                    review_md, said = (
+                        "incomplete",
+                        f"review.md: Round {number} incomplete, written by the closing turn",
+                    )
+                except RunError as e:
+                    review_md, said = (
+                        "none",
+                        f"review.md: the closing turn's reply was not written: {e}",
+                    )
+    except asyncio.CancelledError as e:
+        held = _taken_back(running, e)
+        if held is None:
+            review_md = "withheld"
+    except Suspended as e:
+        # Paused by an update, like the main reply: no `end`.
+        held = e
+    except Exception as e:
+        # The `end` row never depends on it.
+        log.exception("the closing turn of %s %s failed", unit, stage)
+        closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
+        review_md, said = (
+            "none",
+            f"review.md: the closing turn failed: {type(e).__name__}: {e}",
+        )
+    return review_md, _noted(detail, said), closing, cost, taken, segment_done, held
+
+
+async def _repair_opening(
+    sessions: Sessions,
+    cwd: str,
+    artifact: str,
+    session_id: str,
+    denials: Denials,
+    unopened: OpeningError,
+    turn_kw: dict[str, Any],
+    take_up: bool,
+    turn_spent: bool,
+    running: steps.Running | None,
+    cost: dict[str, Any],
+    directory: Path,
+    segment_done: dict[str, Any] | None,
+    detail: str,
+    unit: str,
+    stage: str,
+    message: str,
+) -> tuple[
+    str | None,
+    str,
+    dict[str, Any] | None,
+    dict[str, Any],
+    bool,
+    dict[str, Any] | None,
+    BaseException | None,
+]:
+    """A prose step whose reply was refused for its opening alone gets one more turn on its own
+    session, with no tools, asking for the artifact again: `(opening, detail, closing, cost,
+    taken, segment_done, held)`, `opening` being `repaired`, `none` or `withheld`, and `detail`
+    `""` once repaired.
+
+    Not a spike (progress file), and not a step at its ceiling (closing turn). Wrapped, for the
+    closing turn's reasons: the `end` row never depends on it. Sealed first, so a Stop is refused
+    until the turn is over; `OPENING_TIMEOUT` bounds it, and the budget does not. `taken` is
+    whether the turn an update paused was reached again.
+    """
+    opening: str | None = None
+    closing: dict[str, Any] | None = None
+    held: BaseException | None = None
+    taken = False
+    said = ""
+    try:
+        if not session_id:
+            opening, said = (
+                "none",
+                f"{artifact}: the opening was not repaired: the session has no id",
+            )
+        elif not steps.seal(running):
+            opening = "withheld"
+        elif turn_spent:
+            # The turn would stop at the ceiling, and be refused.
+            taken = take_up
+            opening, said = (
+                "none",
+                f"{artifact}: the repair turn's reply was not written: it stopped at the ceiling: error_max_budget_usd",
+            )
+        else:
+            reply, again, done = await asyncio.wait_for(
+                _opening_turn(
+                    sessions,
+                    cwd,
+                    message if take_up else opening_prompt(artifact, unopened.problem),
+                    session_id,
+                    denials,
+                    **turn_kw,
+                ),
+                OPENING_TIMEOUT,
+            )
+            if take_up:
+                taken, segment_done = True, segment_done or done
+            closing, cost = _turn_cost(done, cost)
+            after = str((done or {}).get("terminal_reason") or "")
+            # A turn that stopped at a ceiling writes nothing. At `max_turns` it was cut off: an MCP tool
+            # still reaches a session with `tools=[]`, and one call refused by `deny_all` ends the only
+            # turn, so what came before may be a draft whose header says `accepted`. At the budget the
+            # turn ran whole and the CLI compared the cost after, so its reply may be complete; it is
+            # refused all the same, because the reply's road never ends a step past its ceiling `done`.
+            if _hit_ceiling(after):
+                opening, said = (
+                    "none",
+                    f"{artifact}: the repair turn's reply was not written: it stopped at the ceiling: {after}",
+                )
+            else:
+                # The road every reply takes, and nothing of the first reply joined to it. No `await` from
+                # here to the write.
+                try:
+                    _write_artifact(directory, artifact, reply, blocks=again)
+                except RunError as e:
+                    opening, said = (
+                        "none",
+                        f"{artifact}: the repair turn's reply was not written: {e}",
+                    )
+                else:
+                    opening, detail = "repaired", ""
+    except asyncio.CancelledError as e:
+        held = _taken_back(running, e)
+        if held is None:
+            opening = "withheld"
+    except Suspended as e:
+        held = e
+    except Exception as e:
+        # The `end` row never depends on it.
+        log.exception("the opening turn of %s %s failed", unit, stage)
+        closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
+        opening, said = (
+            "none",
+            f"{artifact}: the repair turn failed: {type(e).__name__}: {e}",
+        )
+    # Under the first refusal and what the session first replied.
+    return opening, _noted(detail, said), closing, cost, taken, segment_done, held
+
+
+async def _repair_submit(
+    sessions: Sessions,
+    cwd: str,
+    stage: str,
+    artifact: str,
+    session_id: str,
+    denials: Denials,
+    channel: submit_mod.Channel,
+    turn_kw: dict[str, Any],
+    turn_spent: bool,
+    running: steps.Running | None,
+    cost: dict[str, Any],
+    outcome: str,
+    error: dict[str, str] | None,
+    detail: str,
+    unit: str,
+) -> tuple[
+    str,
+    dict[str, str] | None,
+    str,
+    dict[str, Any] | None,
+    dict[str, Any],
+    BaseException | None,
+]:
+    """A step that wrote its artifact with no object the guard still opens on gets one more turn on
+    its own session, holding `submit` and nothing else, as the opening's repair is one: `(outcome,
+    error, detail, submit_turn, cost, held)`.
+
+    Still none, and it ends `failed`, whatever its file says. Sealed and wrapped as that turn is:
+    the `end` row never depends on it.
+    """
+    submit_turn: dict[str, Any] | None = None
+    held: BaseException | None = None
+    why = _unsubmitted(channel)
+    said = ""
+    if not why:
+        return outcome, error, detail, submit_turn, cost, held
+    try:
+        if not session_id:
+            said = "the session has no id"
+        elif not steps.seal(running):
+            said = "a Stop came first"
+        elif turn_spent:
+            said = "the budget was spent"
+        else:
+            done = await asyncio.wait_for(
+                _submit_turn(
+                    sessions,
+                    cwd,
+                    submit_prompt(stage, artifact, why),
+                    session_id,
+                    denials,
+                    channel,
+                    **turn_kw,
+                ),
+                OPENING_TIMEOUT,
+            )
+            submit_turn, cost = _turn_cost(done, cost)
+            if _hit_ceiling(str((done or {}).get("terminal_reason") or "")):
+                channel.received = None
+                said = "the repair turn stopped at its ceiling"
+            else:
+                why = _unsubmitted(channel)
+    except asyncio.CancelledError as e:
+        held = _taken_back(running, e)
+        if held is None:
+            said = "a Stop came during the repair turn"
+    except Suspended as e:
+        held = e
+    except Exception as e:
+        # The `end` row never depends on it.
+        log.exception("the repair turn of %s %s failed", unit, stage)
+        submit_turn = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
+        said = f"the repair turn failed: {type(e).__name__}: {e}"
+    if why and held is None:
+        outcome = "failed"
+        error = {"type": "NoSubmission", "message": why}
+        detail = f"no-submission: {why}" + (f" ({said})" if said else "")
+    return outcome, error, detail, submit_turn, cost, held
+
+
+def _write_round(
+    cwd: str,
+    directory: Path,
+    artifact: str,
+    head: str,
+    agent: dict[str, Any] | None,
+    channel: submit_mod.Channel,
+    rounds_before: set[int] | None,
+    rounds_known: tuple[int, ...],
+    unit: str,
+    outcome: str,
+    error: dict[str, str] | None,
+    detail: str,
+) -> tuple[str, dict[str, str] | None, str]:
+    """The round the review handed back, written into `review.md` by the app: its number, the head
+    the app read, the verdict, the findings and the screenshots. `(outcome, error, detail)`, the
+    step failed if it could not be."""
+    try:
+        # Past every round the file held and every one the app has a row for, so a number is never
+        # given twice (`review_rounds_n`).
+        number = max({*(rounds_before or ()), *rounds_known}, default=0) + 1
+        screens = {
+            "taken": _manifest_head(cwd),
+            "standard": UI_STANDARD,
+            "by": f"{(agent or {}).get('name') or 'the review session'} (agent, review)",
+        }
+        text = _read(directory / artifact)
+        new = [r for r in _rounds(text) if _round_number(r) not in (rounds_before or set())]
+        received = channel.received or {}
+        rendered = render_round(
+            new[-1] if new else "## Round", number, head, received["object"], screens
+        )
+        status = submit_mod.ROUND_STATES[str(received["object"]["verdict"])]
+        (directory / artifact).write_text(
+            replace_new_rounds(text, rounds_before or set(), rendered, status),
+            encoding="utf-8",
+        )
+        channel.extra = {"n": number, "screens": screens}
+    except Exception as e:
+        # The `end` row never depends on it.
+        log.exception("the review round of %s was not written", unit)
+        return (
+            "failed",
+            {"type": type(e).__name__, "message": str(e)},
+            f"review.md: the round was not written from its object: {type(e).__name__}: {e}",
+        )
+    return outcome, error, detail
+
+
+async def _close_recorder(
+    recorder: Any, outcome: str, detail: str, unit: str, stage: str
+) -> tuple[dict[str, Any], int | None, str]:
+    """`(run_fields, stored, stored_from)`: the recorder closed, everything on disk, before the
+    attempt record, so the turns it counts go into both."""
+    try:
+        lost = await recorder.close(outcome, detail)
+    except Exception:
+        # How many is unknown, so all of them.
+        log.exception("the events of %s %s were not closed", unit, stage)
+        lost = max(1, int(getattr(recorder, "seq", 0) or 0))
+    run_fields = {"run": recorder.run, "events_lost": lost}
+    stored: int | None = None
+    stored_from = ""
+    if outcome != "done":
+        try:
+            stored, stored_from = await recorder.stored_turns()
+        except Exception:
+            # The `end` row never depends on it.
+            log.exception("the stored turns of %s %s were not read", unit, stage)
+            stored = None
+    return run_fields, stored, stored_from
+
+
+def _unwritten(mark: str | None, applies: bool, outcome: str) -> str | None:
+    """`mark` as it was, or for one nothing wrote (`None`) where it applies: `withheld` for a Stop,
+    else `none`."""
+    if not applies or mark is not None:
+        return mark
+    return "withheld" if outcome == "stopped" else "none"
+
+
+def _cost_fields(
+    cost: dict[str, Any], counted: bool, outcome: str, stored: int | None, stored_from: str
+) -> dict[str, Any]:
+    """A step that did not finish counts its turns from its events, and keeps the CLI's own count,
+    when one came, as `cli_turns`. With no `ResultMessage` there is no `cost_usd` at all, never
+    a zero. `done` is written as it always was."""
+    fields: dict[str, Any] = dict(cost)
+    if counted and outcome != "done":
+        if isinstance(stored, int) and stored > 0:
+            if cost:
+                fields["cli_turns"] = fields.pop("turns", None)
+            fields["turns"] = stored
+            if stored_from == "memory":
+                fields["turns_from"] = "memory"
+        if not cost and outcome != "stopped":
+            # A Stop's `end` says this below, beside `stopped_by`.
+            fields["cost_unknown"] = True
+    return fields
+
+
+def _segment_fields(
+    owner: dict[str, Any],
+    resume: dict[str, Any] | None,
+    segment_done: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Each segment an update's resume began, with the tokens of its first call and what it cost;
+    `cost_partial` when one before it left no cost."""
+    fields: dict[str, Any] = {}
+    if owner["segments"]:
+        if resume is not None and segment_done is not None:
+            segment = owner["segments"][-1]
+            segment["first_call"] = segment_done.get("first_call")
+            total = (segment_done.get("cost") or {}).get("cost_usd")
+            if total is not None:
+                # A CLI killed without its `cost-state` leaves the next one counting from zero, so its total
+                # is this segment's alone.
+                spent = 0.0 if resume.get("cost_unknown") else float(resume.get("spent_usd") or 0.0)
+                segment["cost_usd"] = round(float(total) - spent, 6)
+        fields["segments"] = owner["segments"]
+        if any(s.get("cost_unknown") for s in owner["segments"]):
+            fields["cost_partial"] = True
+    return fields
+
+
+async def _attempt(
+    journal: Journal,
+    journal_key: str,
+    unit: str,
+    stage: str,
+    cwd: str,
+    session_id: str,
+    outcome: str,
+    terminal: str,
+    error: dict[str, str] | None,
+    cost: dict[str, Any],
+    turns: Any,
+) -> BaseException | None:
+    """A stopped step's tree and transcript, captured *before* `end` is written: the attempt record,
+    or the cancel the capture met (`pending`).
+
+    Only for a run that is not `done`: a step that wrote its artifact needs no attempt record, and
+    this must not touch anything a `done` run left behind.
+    """
+    pending: BaseException | None = None
+    try:
+        fields, pending = await snapshot(cwd, session_id)
+        journal.attempted(
+            journal_key,
+            unit,
+            stage,
+            outcome=outcome,
+            terminal=terminal or None,
+            error=error,
+            turns=turns,
+            cost_usd=cost.get("cost_usd"),
+            session_id=session_id or None,
+            **fields,
+        )
+    except Exception:
+        # A failure here must not change the outcome or the `end` record that follows. The attempt
+        # record is best-effort; the run log's `end` row is the one thing never put at risk.
+        log.exception("the attempt record of %s %s was not written", unit, stage)
+    return pending
+
+
+async def _end_extra(end_fields: Any, unit: str, stage: str) -> dict[str, Any]:
+    """What `end_fields` adds to a `done` step's `end`; none if it raises. The same rule as the
+    attempt record: the `end` row never depends on it."""
+    try:
+        return dict(await end_fields())
+    except Exception:
+        log.exception("the end fields of %s %s were not read", unit, stage)
+        return {}
+
+
 class Runner:
     """Runs one step. Owns no state beyond what it was handed."""
 
@@ -344,7 +1260,7 @@ class Runner:
         # `start` without them.
         self.app = app
 
-    async def run(  # noqa: C901, PLR0915 - still to split
+    async def run(
         self,
         workspace: str,
         directory: str | Path,
@@ -438,276 +1354,121 @@ class Runner:
         reply again from those pieces and takes up that one turn. `owner_extra` is what `Service`
         adds to the owner a `suspend` row carries.
         """
-        check_started_by(started_by)
-        grant = grant_for_step(stage, label)
+        grant = _admitted(started_by, stage, label, directory, workspace, unit)
         directory = Path(directory)
         cwd = cwd or workspace
-        if not directory.exists():
-            raise RunError(f"no such work unit for {workspace}: {unit}")
         was = dict((resume or {}).get("owner") or {})
         turn_kind = str(was.get("kind") or "step") if resume is not None else ""
-
-        if is_prose_stage(stage):
-            # Belt and braces against a future edit to the table: a prose stage that acquired the ability
-            # to write or run a command would stop being covered. Asks `beyond_reading`, not
-            # `opens_anything`, because `plan` holds `Read`, `Glob` and `Grep`; the guard's purpose is that
-            # the app writes a prose stage's artifact, so the stage must not be able to.
-            beyond = beyond_reading(grant)
-            if beyond:
-                raise RunError(f"{stage} is a prose stage and must not carry {', '.join(beyond)}")
-
-        if resume is not None:
-            # Nothing of git is read or run on a step taken up again; what the first start read is in its
-            # owner.
-            head = str(was.get("head") or "")
-            prompt, included, pointed = str(resume.get("message") or ""), [], []
-        else:
-            head = await _head_of(watch or cwd)
-            prompt, included, pointed = compose_prompt(
-                cwd,
-                directory,
-                unit,
-                stage,
-                stages,
-                artifact,
-                writes_own=not grant.app_writes_artifact,
-                gate_said=gate_said,
-                head=head,
-                base_note=base_note,
-                last_attempt=last_attempt,
-                integration_note=integration_note,
-                screens_note=screens_note,
-                drift_note=drift_note,
-                worktree=watch or "",
-                ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
-                rerun=rerun,
-                rerun_note=rerun_note,
-                plan_map=plan_map,
-                commands=grant.commands if stage in ("impl", "implement") else (),
-                unfinished_round=unfinished_round,
-                idea_note=idea_note,
-                siblings_note=siblings_note,
-                runs_commands="Bash" in grant.tools,
-                agent=agent,
-                unit_meta=meta,
-                state_file=state_file,
-            )
-
-        # The autopilot tells a recording `ship` that ran out from a merging one by this field. Only
-        # a `ship` whose gate named the merge already made carries it, by the code `recording-ship`.
-        ship_extra = (
-            {"ship_mode": "record"} if stage == "ship" and "recording-ship" in gate_reasons else {}
+        head, prompt, included, pointed = await _compose(
+            cwd,
+            directory,
+            unit,
+            stage,
+            stages,
+            artifact,
+            grant,
+            resume,
+            was,
+            watch,
+            gate_said=gate_said,
+            base_note=base_note,
+            last_attempt=last_attempt,
+            integration_note=integration_note,
+            screens_note=screens_note,
+            drift_note=drift_note,
+            rerun=rerun,
+            rerun_note=rerun_note,
+            plan_map=plan_map,
+            unfinished_round=unfinished_round,
+            idea_note=idea_note,
+            siblings_note=siblings_note,
+            agent=agent,
+            meta=meta,
+            state_file=state_file,
         )
-
-        # The same condition that decides whether a gate and a tool list are sent.
-        preset = CLAUDE_CODE_PRESET if grant.opens_anything else None
-        # Only beside a preset: a tool-less session's argv is unchanged.
-        settings = agents.settings_json(agent) if agent is not None and preset else None
-
+        kw = _session_kw(workspace, cwd, model, effort, grant, agent)
         # The step's recorder, when `Steps.run_step` gave it one: its `run` goes into `start` and
         # `end`, and it is closed, everything on disk, before `end` is written.
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
-
-        # This run's `submit`, bound to it: a stage that hands back a stage result ends `done` only
-        # once the channel holds an object its guard still opens on.
-        channel = (
-            submit_mod.Channel(
-                run=str(recorder.run) if recorder is not None else uuid.uuid4().hex,
-                stage=stage,
-                directory=directory,
-                artifact=artifact,
-                own=not grant.app_writes_artifact,
-                head=head,
-                open_findings=tuple(open_findings),
-                claims_round=claims_round,
-            )
-            if grant.submits
-            else None
+        channel = _channel_for(
+            grant, recorder, stage, directory, artifact, head, open_findings, claims_round
         )
         servers = (
             {"mcp_servers": {submit_mod.SERVER: channel.server()}} if channel is not None else {}
         )
-        # The index of the piece that began after the last `submit` call, `None` before one.
-        after_submit: int | None = None
-        # What the repair turn cost, when it ran.
-        submit_turn: dict[str, Any] | None = None
-        # The rounds `review.md` held before this step's reply was written.
-        rounds_before: set[int] | None = None
-
-        start_at = was.get("start_at")
-        if self.journal is not None and resume is None:
-            start_at = self.journal.started(
-                journal_key,
-                unit,
-                stage,
-                mode,
-                started_by=started_by,
-                prompt_chars=len(prompt),
-                included=included,
-                # The artifacts named by path only, `[]` for a stage that names none.
-                pointed=pointed,
-                # Which build ran the step, so a measurement splits by what ran rather than by a date.
-                **(
-                    {
-                        "app_version": self.app.get("version", ""),
-                        "app_commit": self.app.get("commit", ""),
-                    }
-                    if self.app is not None
-                    else {}
-                ),
-                granted=list(grant.tools),
-                max_turns=grant.max_turns,
-                head=head,
-                model=model,
-                model_source=model_source,
-                effort=effort,
-                effort_source=effort_source,
-                label_declared=label_declared,
-                label=label,
-                label_source=label_source,
-                **({"impl_run": impl_run} if impl_run is not None else {}),
-                agents=SESSIONS_PER_STEP,
-                base=base,
-                # Which system prompt the step ran on. `""` means no preset, and nothing more: a step
-                # without one whose `cwd` holds project instructions runs on those as its whole system
-                # prompt, and only `instructions` below says whether it did.
-                system_prompt="claude_code" if preset else "",
-                # Which project files `_options` puts into the system prompt, whole or as a line of contents.
-                # Read again there, so a file edited in between is not seen here.
-                instructions=instructions.read(cwd).record(),
-                **({"plan_drift": plan_drift} if plan_drift is not None else {}),
-                **({"shortlist": shortlist} if shortlist is not None else {}),
-                # Every routine `impl`'s `model_trial`, and `ci_red`.
-                **(trial_record or {}),
-                # Every `impl` start, `bytes: 0` when the plan names no file.
-                **({"plan_map": plan_map_record} if plan_map_record is not None else {}),
-                # Only on a stage run again from the board.
-                **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),
-                **ship_extra,
-                # Top level, the name when the step began; none for a stage the agent table has no row for.
-                **({"agent": agent["name"]} if agent is not None else {}),
-                # Whose step this is, so the next start can tell one this process still runs from one the app
-                # went down under.
-                **({"run": recorder.run, "pid": os.getpid()} if recorder is not None else {}),
-            ).get("at")
-
-        # Whose session this is, for a `suspend` row, and all an update's next start needs to take it
-        # up again without reading git.
-        owner: dict[str, Any] = {
-            "kind": "step",
-            "workspace": journal_key,
-            "unit": unit,
-            "stage": stage,
-            "start_at": start_at,
-            "max_turns": grant.max_turns,
-            "max_budget_usd": grant.max_budget_usd,
-            "head": head,
-            "label": label,
-            "effort": effort,
-            "artifact": artifact,
-            "segments": list(was.get("segments") or []),
-            **({"run": recorder.run} if recorder is not None else {}),
-            **(owner_extra or {}),
-        }
+        start_at = self._write_start(
+            was.get("start_at"),
+            resume,
+            journal_key,
+            unit,
+            stage,
+            mode,
+            started_by,
+            prompt,
+            included,
+            pointed,
+            grant,
+            head,
+            cwd,
+            recorder,
+            gate_reasons,
+            model=model,
+            model_source=model_source,
+            effort=effort,
+            effort_source=effort_source,
+            label_declared=label_declared,
+            label=label,
+            label_source=label_source,
+            impl_run=impl_run,
+            base=base,
+            plan_drift=plan_drift,
+            shortlist=shortlist,
+            trial_record=trial_record,
+            plan_map_record=plan_map_record,
+            rerun=rerun,
+            rerun_note=rerun_note,
+            agent=agent,
+        )
+        owner = _owner(
+            journal_key,
+            unit,
+            stage,
+            start_at,
+            grant,
+            head,
+            label,
+            effort,
+            artifact,
+            was,
+            recorder,
+            resume,
+            owner_extra,
+        )
         # A routine `impl` in the model trial has its `start` told the model the session's `init`
         # named, once, when it comes, or `never-started` at the end.
         trial_at = start_at if (trial_record or {}).get(modeltrial.FIELD) and start_at else None
-
-        def trial_model(said: str) -> None:
-            nonlocal trial_at
-            if trial_at is None or self.journal is None:
-                return
-            try:
-                self.journal.set_trial_model(journal_key, unit, stage, trial_at, said)
-            except Exception:
-                # A measurement, never a reason to fail the step.
-                log.exception("the trial model of %s %s was not recorded", unit, stage)
-            trial_at = None
-
         # What is left of the two ceilings after the part of the session before the cut.
-        turns_left, budget_left = grant.max_turns, grant.max_budget_usd or None
-        used_up = ""
-        if resume is not None:
-            turns_left, budget_left, used_up = transcript.ceilings_left(
-                grant.max_turns, grant.max_budget_usd, resume
-            )
-            # This segment, filled in when its first `done` comes.
-            owner["segments"].append(
-                {
-                    "suspend_id": resume.get("suspend_id"),
-                    **({"cost_unknown": True} if resume.get("cost_unknown") else {}),
-                }
-            )
-        # The budget a closing or repair turn is given. The CLI compares it only after the turn has
-        # run, so on one turn it bounds nothing; one already spent is not passed at all, since `0`
-        # reaches `_options` as no ceiling. `turn_spent` is what that turn would then have ended with.
-        turn_spent = budget_left is not None and budget_left <= 0
-        turn_budget = None if turn_spent else budget_left
-        # The `done` of the first call on the resumed session, which fills that segment in.
-        segment_done: dict[str, Any] | None = None
-        # Whether the `opening` or `closing` turn the update paused was reached again.
-        turn_taken = False
-
-        denials = Denials()
-        if recorder is not None:
-            denials.listener = recorder.denied
-        # What the session said, one entry per stretch between two tool calls. A step taken up again
-        # starts from what it had said before its safe point.
-        pieces = [*((resume or {}).get("pieces") or []), ""] if resume is not None else [""]
-        # How many pieces of text, blank ones aside, the session said.
-        blocks = sum(1 for p in pieces if p.strip())
-        terminal = ""
-        session_id = str((resume or {}).get("session_id") or "")
-        cost: dict[str, Any] = {}
-        if turn_kind in ("opening", "closing"):
-            # The main reply ended before the update; what it ended with is in the owner.
-            terminal = str(was.get("main_terminal") or "")
-            cost = dict(was.get("main_cost") or {})
-        elif resume is not None and resume.get("spent_usd") is not None:
-            cost = {"cost_usd": float(resume["spent_usd"])}
-        # What the session says it was billed to. The `start` record says what was asked for.
-        models_used: list[str] = []
-        outcome = "failed"
-        detail = ""
-        # Set only in an `except` branch, so a step that finished (even one that merely hit its
-        # ceiling) carries no error here.
-        error: dict[str, str] | None = None
-        # A spike writes only its `cwd`; the worktree and the unit are read. Only when a sibling was
-        # named, so every other step's gate is unchanged.
-        gate_args = (
-            (None, (watch, str(directory)))
-            if watch
-            else (str(directory), tuple(read_also))
-            if read_also
-            else (str(directory),)
+        turns_left, budget_left, used_up = (
+            transcript.ceilings_left(grant.max_turns, grant.max_budget_usd, resume)
+            if resume is not None
+            else (grant.max_turns, grant.max_budget_usd or None, "")
         )
-        # Set when the task is cancelled with no Stop behind it: the app is going down, and no `end`
-        # is what says so.
-        shutting_down = False
-        # Where a spike's `spike.md` came from, for its `end` row; only a step with `watch` carries
-        # it. `None` until something decides it.
-        spike_md: str | None = None
-        # What reached `review.md`, for a review's `end` row: `round`, `incomplete` (the closing
-        # turn's), `none` or `withheld`. `closing` is set only when that turn ran.
-        review_md: str | None = None
-        closing: dict[str, Any] | None = None
-        # The refusal of a reply that lacked its opening, which a repair turn may follow, and what
-        # came of that turn: `repaired`, `none` or `withheld`.
-        unopened: OpeningError | None = None
-        opening: str | None = None
-        before: tuple[str, str] | None = None
-        tree_changed = False
-
-        def stopped() -> bool:
-            return running is not None and running.stop_requested
-
+        denials = _denials(recorder)
+        pieces, blocks, terminal, session_id, cost = _carried(resume, was, turn_kind)
+        # `models_used` is what the session says it was billed to; the `start` record says what was
+        # asked for. `shutting_down` is set when the task is cancelled with no Stop behind it.
+        outcome, detail, error, shutting_down, tree_changed, models_used = (
+            "failed", "", None, False, False, []
+        )  # fmt: skip
+        # The index of the piece that began after the last `submit` call, `None` before one; the
+        # rounds `review.md` held before this step's reply was written; the `done` of the first call on
+        # a resumed session, which fills that segment in; the worktree's state before the session; the
+        # refusal of a reply that lacked its opening, which a repair turn may follow; and where a
+        # spike's `spike.md` and a review's `review.md` came from, for their `end` row.
+        after_submit = rounds_before = segment_done = before = unopened = None
+        spike_md = review_md = None
         try:
-            if resume is not None:
-                before = tuple(was["before"]) if watch and was.get("before") else None
-            else:
-                before = await _tree_state(watch) if watch else None
-                if before is not None:
-                    owner["before"] = list(before)
+            before = await _tree_before(resume, was, watch, owner)
             if used_up and turn_kind not in ("opening", "closing"):
                 # Nothing left to resume with, so no session is opened. Not for a closing or repair turn:
                 # that is one turn of its own, bounded by its timeout.
@@ -715,708 +1476,134 @@ class Runner:
                 raise RunError(
                     "the ceiling was used up before the update, so the step was not resumed"
                 )
-            # An `opening` or `closing` turn taken up again has its main reply already.
-            main = (
-                _nothing()
-                if turn_kind in ("opening", "closing")
-                else self.sessions.stream(
-                    cwd,
-                    prompt,
-                    session_id or None,
-                    max_turns=turns_left,
-                    # Only pass a gate when something was actually granted. The list is always the grant's, `[]`
-                    # when empty: `None` would fall back to `COS_TOOLS`, and an `idea` on a machine that set it
-                    # held tools with no gate in front of them.
-                    can_use_tool=(
-                        permission_gate(grant, cwd, denials, *gate_args)
-                        if grant.opens_anything or channel is not None
-                        else None
-                    ),
-                    tools=list(grant.tools),
-                    max_budget_usd=budget_left,
-                    # Only named when it differs, so a stand-in `stream` without a `workspace` parameter keeps
-                    # working for a plain step.
-                    **({"workspace": workspace} if cwd != workspace else {}),
-                    # The same: a stand-in with no `model` parameter keeps working for a step nobody resolved a
-                    # model for.
-                    **({"model": model} if model is not None else {}),
-                    **({"effort": effort} if effort is not None else {}),
-                    # And again: a tool-less step passes nothing, so it gets the session it always got.
-                    **({"system_prompt": dict(preset)} if preset else {}),
-                    # Only a preset session with an agent row passes it.
-                    **({"settings": settings} if settings is not None else {}),
-                    # Only a board step has a row.
-                    **({"step": running.handle, "owner": owner} if running is not None else {}),
-                    # Only on a step taken up again.
-                    **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
-                    # Only a step with a channel.
-                    **servers,
-                    # Only a grant holding the helpers' tool gets them: impl.
-                    **({"agents": SUBAGENTS} if AGENT_TOOL in grant.tools else {}),
-                )
-            )
-            async for kind, payload in main:
+            async for kind, payload in self._open_main(
+                cwd,
+                prompt,
+                session_id,
+                turns_left,
+                budget_left,
+                grant,
+                denials,
+                channel,
+                watch,
+                directory,
+                read_also,
+                kw,
+                running,
+                owner,
+                resume,
+                servers,
+                turn_kind,
+            ):
                 if kind == "chunk":
                     pieces[-1] += payload
-                    if payload.strip():
-                        blocks += 1
+                    blocks += bool(payload.strip())
                     yield ("chunk", payload)
                 elif kind == "session":
                     # The one place this app learns a session id before the step is over. Not forwarded: only
                     # `chunk` may cross this boundary as itself.
                     session_id = str(payload)
-                    if running is not None and running.handle.init_model:
-                        trial_model(running.handle.init_model)
+                    trial_at = self._trial_model(
+                        trial_at,
+                        journal_key,
+                        unit,
+                        stage,
+                        running.handle.init_model if running is not None else "",
+                    )
                 elif kind == "tool":
-                    # Kept: what comes after a tool call is the next piece, and `_joined` puts it on a line of
-                    # its own. Dropping all text before the last call lost the head of any artifact written in
-                    # pieces; `_write_artifact` drops what comes before the artifact's last title line instead.
-                    #
                     # Not forwarded: `coscc/api.py` treats every kind that is not `chunk` as the terminal
                     # `done` row, so a third kind would arrive at the client as a malformed `done`.
-                    pieces.append("")
-                    if payload == submit_mod.NAME:
-                        after_submit = len(pieces) - 1
+                    after_submit = _after_call(pieces, payload, after_submit)
                 else:
-                    session_id = payload.get("session_id", "")
-                    cost = payload.get("cost", {}) or {}
-                    terminal = str(payload.get("terminal_reason") or "")
-                    models_used = list(payload.get("models_used") or [])
-                    if resume is not None and segment_done is None:
-                        segment_done = payload
+                    session_id, cost, terminal, models_used, segment_done = _reply_done(
+                        payload, segment_done, resume
+                    )
             # What the main reply ended with, for an `opening` or `closing` turn an update pauses: its
             # next start goes through this reply again without a session.
             owner.update(main_terminal=terminal, main_cost=dict(cost))
 
-            if watch:
-                # Before anything is written: a spike that touched the branch it was meant only to read must
-                # leave no `spike.md` saying it measured.
-                changed = describe_tree_change(before, await _tree_state(watch))
-                if changed:
-                    spike_md, tree_changed = "withheld", True
-                    raise RunError(f"the worktree changed during spike: {changed}")
+            # Before anything is written: a spike that touched the branch it was meant only to read must
+            # leave no `spike.md` saying it measured.
+            changed = describe_tree_change(before, await _tree_state(watch)) if watch else ""
+            if changed:
+                spike_md, tree_changed = "withheld", True
+                raise RunError(f"the worktree changed during spike: {changed}")
 
             # Nothing of the artifact has been read or written yet. From here on a Stop is refused;
             # before here, one that already came ends the step unwritten.
             if not steps.seal(running):
-                if watch:
-                    spike_md = "withheld"
-                if stage == "review":
-                    review_md = "withheld"
+                spike_md, review_md = (
+                    "withheld" if watch else spike_md,
+                    "withheld" if stage == "review" else review_md,
+                )
                 raise _Stopped()
-            if grant.app_writes_artifact:
-                # Synchronous, so nothing yields between reading the `## Answers` already on disk and writing
-                # the artifact over it.
-                #
-                # A session stopped at its ceiling was cut off, so a title it wrote before its last tool call
-                # is a draft or a first piece whose header may say `accepted`. Only what it said after that
-                # call is taken.
-                taken = pieces
-                if (
-                    channel is not None
-                    and after_submit is not None
-                    and not _titled(pieces[after_submit:], artifact)
-                ):
-                    # What came after the last `submit` call, with no title in it, is the session saying it
-                    # called the tool: never part of the artifact.
-                    taken = pieces[:after_submit]
-                taken = taken[-1:] if _hit_ceiling(terminal) else taken
-                if channel is not None and stage == submit_mod.ROUND:
-                    rounds_before = {_round_number(r) for r in _rounds(_read(directory / artifact))}
-                _write_artifact(directory, artifact, _joined(taken, artifact), blocks=blocks)
-                if watch:
-                    # The reply was written, so the progress file is never read.
-                    spike_md = "reply"
-                if stage == "review":
-                    review_md = "round"
-            else:
-                # The session had the tools to write it. Believing it did, rather than looking, is how a step
-                # reports success for a file that is not there.
-                written = directory / artifact
-                if not written.exists():
-                    raise RunError(f"the step did not write {artifact}")
-                # Its `Status:` line is not looked at: what decides is the object.
+            rounds_before = _rounds_before(grant, channel, stage, directory, artifact)
+            spike_md, review_md = _write_reply(
+                grant,
+                directory,
+                artifact,
+                stage,
+                watch,
+                pieces,
+                after_submit,
+                channel,
+                terminal,
+                blocks,
+                spike_md,
+                review_md,
+            )
             outcome = "done"
-        except asyncio.CancelledError:
-            if not stopped():
+        except (asyncio.CancelledError, Exception) as e:
+            judged = _judged(e, running, pieces, terminal, unit, stage)
+            if judged is None:
                 shutting_down = True
                 raise
-            # The cancel was `Steps.stop_step`'s own. Taken back, so the `end` below is written and the
-            # step's reader still gets its `done` row.
-            task = asyncio.current_task()
-            if task is not None:
-                task.uncancel()
-            outcome = "stopped"
-        except Suspended:
-            # An update paused the session and wrote its `suspend` row: like an app going down, no
-            # `attempt` and no `end`. The next start takes it up.
-            shutting_down = True
-            raise
-        except (RunError, Refused) as e:
-            # "The step did not write impl.md" is a real reason to stop, so it goes into the attempt
-            # record's `error` like any other.
-            error = {"type": type(e).__name__, "message": str(e)}
-            detail = str(e)
-            unopened = e if isinstance(e, OpeningError) else None
-            # What the session said, kept: the money was spent, and a reply with no `Status:` line is
-            # often a good artifact with a preamble that a person can judge in a second.
-            detail = _with_reply(detail, _joined(pieces))
-            # A step stopped by its own ceiling was bounded, not failed. `journal.OUTCOMES` keeps the two
-            # apart so a reader can tell a defect from a limit working as intended.
-            if _hit_ceiling(terminal):
-                outcome, detail = "exhausted", f"stopped at the ceiling: {terminal} — {detail}"
-        except Exception as e:
-            log.exception("the session of %s %s failed", unit, stage)
-            error = {"type": type(e).__name__, "message": str(e)}
-            detail = _with_reply(f"{type(e).__name__}: {e}", _joined(pieces))
-            if _hit_ceiling(terminal):
-                outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
+            outcome, detail, error, unopened = judged
         else:
             if _hit_ceiling(terminal):
                 # It wrote something, but it ran out of room doing it. Saying `done` here would hide that
                 # the work may be half finished.
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
-            # A spike whose reply was not written gets its progress file read here, before
-            # `service.steps.run_step` removes `cwd`. Here and not in the `except` branches: an exception raised
-            # inside one (a Stop's cancel landing on an `await`) is not caught by its siblings and would
-            # leave with no `end`. Wrapped like `snapshot` below; `outcome` is never changed.
-            progress_pending: BaseException | None = None
-            if (
-                watch
-                and not shutting_down
-                and outcome in ("failed", "exhausted")
-                and spike_md is None
-            ):
-                try:
-                    spike_md, said = await _from_progress(
-                        cwd, watch, before, running, tree_changed, directory, artifact
-                    )
-                    if said:
-                        detail = f"{detail}\n--- {said} ---" if detail else said
-                except asyncio.CancelledError as e:
-                    if stopped():
-                        task = asyncio.current_task()
-                        if task is not None:
-                            task.uncancel()
-                        spike_md = "withheld"
-                    else:
-                        # The app going down: no `end`, and the cancel goes on once the rest of this block has done
-                        # what it does for one.
-                        shutting_down = True
-                        progress_pending = e
-                except Exception as e:
-                    # The `end` row never depends on it.
-                    log.exception("the progress file of %s was not read", unit)
-                    spike_md = "unusable"
-                    said = f"the progress file was not read: {type(e).__name__}: {e}"
-                    detail = f"{detail}\n--- {said} ---" if detail else said
-            # A review that ran out of turns before its reply could be written gets one closing turn on
-            # its own session, asking for an incomplete round. Here and wrapped, for the reason the
-            # progress file is read here: `outcome` stays `exhausted` and the `end` row never depends on it.
-            #
-            # Sealed first, as the reply's road is: from here a Stop is refused, so the turn cannot be
-            # cut halfway; `CLOSING_TIMEOUT` bounds it instead. The budget does not: the CLI compares the
-            # whole session's cost after the turn has run.
-            closing_pending: BaseException | None = None
-            if (
-                stage == "review"
-                and grant.app_writes_artifact
-                and not shutting_down
-                and outcome == "exhausted"
-                and review_md is None
-                and session_id
-                and head
-                and not stopped()
-            ):
-                said = ""
-                try:
-                    if not steps.seal(running):
-                        review_md = "withheld"
-                    else:
-                        number = (
-                            max(
-                                (_round_number(r) for r in _rounds(_read(directory / artifact))),
-                                default=0,
-                            )
-                            + 1
-                        )
-                        # The closing turn an update paused is taken up, not asked again.
-                        take_up = turn_kind == "closing"
-                        reply, done = await asyncio.wait_for(
-                            _closing_turn(
-                                self.sessions,
-                                cwd,
-                                str((resume or {}).get("message") or "")
-                                if take_up
-                                else closing_prompt(head, number),
-                                session_id,
-                                denials,
-                                max_budget_usd=turn_budget,
-                                **({"workspace": workspace} if cwd != workspace else {}),
-                                **({"model": model} if model is not None else {}),
-                                **({"effort": effort} if effort is not None else {}),
-                                **({"system_prompt": dict(preset)} if preset else {}),
-                                **({"settings": settings} if settings is not None else {}),
-                                **(
-                                    {"owner": {**owner, "kind": "closing"}}
-                                    if running is not None
-                                    else {}
-                                ),
-                                **(
-                                    {"resume_at": (resume or {}).get("safe_uuid")}
-                                    if take_up
-                                    else {}
-                                ),
-                            ),
-                            CLOSING_TIMEOUT,
-                        )
-                        if take_up:
-                            turn_taken, segment_done = True, segment_done or done
-                        closing, cost = _turn_cost(done, cost)
-                        # Judged on the text, never on `after`. No `await` from here to the write, as on the reply's
-                        # road.
-                        problem = closing_round_problem(_read(directory / artifact), reply, head)
-                        if problem:
-                            review_md, said = (
-                                "none",
-                                f"review.md: the closing turn's reply was not written: {problem}",
-                            )
-                        else:
-                            try:
-                                _write_artifact(directory, artifact, reply)
-                                review_md, said = (
-                                    "incomplete",
-                                    f"review.md: Round {number} incomplete, written by the closing turn",
-                                )
-                            except RunError as e:
-                                review_md, said = (
-                                    "none",
-                                    f"review.md: the closing turn's reply was not written: {e}",
-                                )
-                except asyncio.CancelledError as e:
-                    if stopped():
-                        task = asyncio.current_task()
-                        if task is not None:
-                            task.uncancel()
-                        review_md = "withheld"
-                    else:
-                        shutting_down = True
-                        closing_pending = e
-                except Suspended as e:
-                    # Paused by an update, like the main reply: no `end`.
-                    shutting_down = True
-                    closing_pending = e
-                except Exception as e:
-                    # The `end` row never depends on it.
-                    log.exception("the closing turn of %s %s failed", unit, stage)
-                    closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
-                    review_md, said = (
-                        "none",
-                        f"review.md: the closing turn failed: {type(e).__name__}: {e}",
-                    )
-                if said:
-                    detail = f"{detail}\n--- {said} ---" if detail else said
-            # A prose step whose reply was refused for its opening alone gets one more turn on its own
-            # session, with no tools, asking for the artifact again. Not a spike (progress file), and not
-            # a step at its ceiling (closing turn). Here and wrapped, for the closing turn's reasons: the
-            # `end` row never depends on it.
-            #
-            # Sealed first, so a Stop is refused until the turn is over; `OPENING_TIMEOUT` bounds it, and
-            # the budget does not.
-            opening_pending: BaseException | None = None
-            if (
-                unopened is not None
-                and is_prose_stage(stage)
-                and grant.app_writes_artifact
-                and not watch
-                and outcome == "failed"
-                and not shutting_down
-            ):
-                said = ""
-                try:
-                    if not session_id:
-                        opening, said = (
-                            "none",
-                            f"{artifact}: the opening was not repaired: the session has no id",
-                        )
-                    elif not steps.seal(running):
-                        opening = "withheld"
-                    elif turn_spent:
-                        # The turn would stop at the ceiling, and be refused.
-                        turn_taken = turn_kind == "opening"
-                        opening, said = (
-                            "none",
-                            f"{artifact}: the repair turn's reply was not written: it stopped at the ceiling: error_max_budget_usd",
-                        )
-                    else:
-                        take_up = turn_kind == "opening"
-                        reply, again, done = await asyncio.wait_for(
-                            _opening_turn(
-                                self.sessions,
-                                cwd,
-                                str((resume or {}).get("message") or "")
-                                if take_up
-                                else opening_prompt(artifact, unopened.problem),
-                                session_id,
-                                denials,
-                                max_budget_usd=turn_budget,
-                                **({"workspace": workspace} if cwd != workspace else {}),
-                                **({"model": model} if model is not None else {}),
-                                **({"effort": effort} if effort is not None else {}),
-                                **({"system_prompt": dict(preset)} if preset else {}),
-                                **({"settings": settings} if settings is not None else {}),
-                                **(
-                                    {"owner": {**owner, "kind": "opening"}}
-                                    if running is not None
-                                    else {}
-                                ),
-                                **(
-                                    {"resume_at": (resume or {}).get("safe_uuid")}
-                                    if take_up
-                                    else {}
-                                ),
-                            ),
-                            OPENING_TIMEOUT,
-                        )
-                        if take_up:
-                            turn_taken, segment_done = True, segment_done or done
-                        closing, cost = _turn_cost(done, cost)
-                        after = str((done or {}).get("terminal_reason") or "")
-                        # A turn that stopped at a ceiling writes nothing. At `max_turns` it was cut off: an MCP tool
-                        # still reaches a session with `tools=[]`, and one call refused by `deny_all` ends the only
-                        # turn, so what came before may be a draft whose header says `accepted`. At the budget the
-                        # turn ran whole and the CLI compared the cost after, so its reply may be complete; it is
-                        # refused all the same, because the reply's road never ends a step past its ceiling `done`.
-                        if _hit_ceiling(after):
-                            opening, said = (
-                                "none",
-                                f"{artifact}: the repair turn's reply was not written: it stopped at the ceiling: {after}",
-                            )
-                        else:
-                            # The road every reply takes, and nothing of the first reply joined to it. No `await` from
-                            # here to the write.
-                            try:
-                                _write_artifact(directory, artifact, reply, blocks=again)
-                            except RunError as e:
-                                opening, said = (
-                                    "none",
-                                    f"{artifact}: the repair turn's reply was not written: {e}",
-                                )
-                            else:
-                                outcome, error, detail, opening = "done", None, "", "repaired"
-                                if stage == "review":
-                                    review_md = "round"
-                except asyncio.CancelledError as e:
-                    if stopped():
-                        task = asyncio.current_task()
-                        if task is not None:
-                            task.uncancel()
-                        opening = "withheld"
-                    else:
-                        shutting_down = True
-                        opening_pending = e
-                except Suspended as e:
-                    shutting_down = True
-                    opening_pending = e
-                except Exception as e:
-                    # The `end` row never depends on it.
-                    log.exception("the opening turn of %s %s failed", unit, stage)
-                    closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
-                    opening, said = (
-                        "none",
-                        f"{artifact}: the repair turn failed: {type(e).__name__}: {e}",
-                    )
-                if said:
-                    # Under the first refusal and what the session first replied.
-                    detail = f"{detail}\n--- {said} ---" if detail else said
-            # A step that wrote its artifact with no object the guard still opens on gets one more turn
-            # on its own session, holding `submit` and nothing else, as the opening's repair is one.
-            # Still none, and it ends `failed`, whatever its file says. Sealed and wrapped as that turn
-            # is: the `end` row never depends on it.
-            submit_pending: BaseException | None = None
-            if channel is not None and outcome == "done" and not shutting_down:
-                why = _unsubmitted(channel)
-                said = ""
-                if why:
-                    try:
-                        if not session_id:
-                            said = "the session has no id"
-                        elif not steps.seal(running):
-                            said = "a Stop came first"
-                        elif turn_spent:
-                            said = "the budget was spent"
-                        else:
-                            done = await asyncio.wait_for(
-                                _submit_turn(
-                                    self.sessions,
-                                    cwd,
-                                    submit_prompt(stage, artifact, why),
-                                    session_id,
-                                    denials,
-                                    channel,
-                                    max_budget_usd=turn_budget,
-                                    **({"workspace": workspace} if cwd != workspace else {}),
-                                    **({"model": model} if model is not None else {}),
-                                    **({"effort": effort} if effort is not None else {}),
-                                    **({"system_prompt": dict(preset)} if preset else {}),
-                                    **({"settings": settings} if settings is not None else {}),
-                                    **(
-                                        {"owner": {**owner, "kind": "submit"}}
-                                        if running is not None
-                                        else {}
-                                    ),
-                                ),
-                                OPENING_TIMEOUT,
-                            )
-                            submit_turn, cost = _turn_cost(done, cost)
-                            if _hit_ceiling(str((done or {}).get("terminal_reason") or "")):
-                                channel.received = None
-                                said = "the repair turn stopped at its ceiling"
-                            else:
-                                why = _unsubmitted(channel)
-                    except asyncio.CancelledError as e:
-                        if stopped():
-                            task = asyncio.current_task()
-                            if task is not None:
-                                task.uncancel()
-                            said = "a Stop came during the repair turn"
-                        else:
-                            shutting_down = True
-                            submit_pending = e
-                    except Suspended as e:
-                        shutting_down = True
-                        submit_pending = e
-                    except Exception as e:
-                        # The `end` row never depends on it.
-                        log.exception("the repair turn of %s %s failed", unit, stage)
-                        submit_turn = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
-                        said = f"the repair turn failed: {type(e).__name__}: {e}"
-                    if why and not shutting_down:
-                        outcome = "failed"
-                        error = {"type": "NoSubmission", "message": why}
-                        detail = f"no-submission: {why}" + (f" ({said})" if said else "")
-            # The round the review handed back, written into `review.md` by the app: its number, the
-            # head the app read, the verdict, the findings and the screenshots.
-            if (
-                channel is not None
-                and stage == submit_mod.ROUND
-                and outcome == "done"
-                and channel.received is not None
-                and not shutting_down
-            ):
-                try:
-                    # Past every round the file held and every one the app has a row for, so a number is never
-                    # given twice (`review_rounds_n`).
-                    number = max({*(rounds_before or ()), *rounds_known}, default=0) + 1
-                    screens = {
-                        "taken": _manifest_head(cwd),
-                        "standard": UI_STANDARD,
-                        "by": f"{(agent or {}).get('name') or 'the review session'} (agent, review)",
-                    }
-                    text = _read(directory / artifact)
-                    new = [
-                        r for r in _rounds(text) if _round_number(r) not in (rounds_before or set())
-                    ]
-                    rendered = render_round(
-                        new[-1] if new else "## Round",
-                        number,
-                        head,
-                        channel.received["object"],
-                        screens,
-                    )
-                    status = submit_mod.ROUND_STATES[str(channel.received["object"]["verdict"])]
-                    (directory / artifact).write_text(
-                        replace_new_rounds(text, rounds_before or set(), rendered, status),
-                        encoding="utf-8",
-                    )
-                    channel.extra = {"n": number, "screens": screens}
-                except Exception as e:
-                    # The `end` row never depends on it.
-                    log.exception("the review round of %s was not written", unit)
-                    outcome = "failed"
-                    error = {"type": type(e).__name__, "message": str(e)}
-                    detail = f"review.md: the round was not written from its object: {type(e).__name__}: {e}"
-            # The outcome is decided here, so the door closes here: a Stop that arrives while the attempt
-            # record is captured below is refused (`Finishing`) rather than told "stopped" and logged as
-            # something else. `seal` is False only when a Stop already came, and that one is honoured.
-            stop_came = not steps.seal(running)
-            # Only a step with a `running` entry can be stopped; after the seal no stop changes it.
-            stopped_by = running.stopped_by if running is not None else None
-            if not shutting_down and stop_came and outcome != "done":
-                # Whatever the stop raised on its way in (a closed stream, a cancel, `_Stopped` at the seal),
-                # a person asked, and that is the outcome.
-                outcome = "stopped"
-                error = None
-                detail = f"stopped by {stopped_by}"
-                if not terminal:
-                    # No `ResultMessage` came back, so nothing was billed that this app saw. Absent, not zero.
-                    cost = {}
-            if watch and not shutting_down and spike_md is None:
-                # Nothing wrote it: a Stop withheld it, or there was no file.
-                spike_md = "withheld" if outcome == "stopped" else "none"
-            if stage == "review" and not shutting_down and review_md is None:
-                # The same way.
-                review_md = "withheld" if outcome == "stopped" else "none"
-            # Not for an app going down: `drive` writes what it can, and no `end`. Closed before the
-            # attempt record rather than after it, so the turns it counts go into both.
-            run_fields: dict[str, Any] = {}
-            stored: int | None = None
-            stored_from = ""
-            if recorder is not None and not shutting_down:
-                try:
-                    lost = await recorder.close(outcome, detail)
-                except Exception:
-                    # How many is unknown, so all of them.
-                    log.exception("the events of %s %s were not closed", unit, stage)
-                    lost = max(1, int(getattr(recorder, "seq", 0) or 0))
-                run_fields = {"run": recorder.run, "events_lost": lost}
-                if outcome != "done":
-                    try:
-                        stored, stored_from = await recorder.stored_turns()
-                    except Exception:
-                        # The `end` row never depends on it.
-                        log.exception("the stored turns of %s %s were not read", unit, stage)
-                        stored = None
-            # A step that did not finish counts its turns from its events, and keeps the CLI's own count,
-            # when one came, as `cli_turns`. With no `ResultMessage` there is no `cost_usd` at all, never
-            # a zero. `done` is written as it always was.
-            cost_fields: dict[str, Any] = dict(cost)
-            if recorder is not None and not shutting_down and outcome != "done":
-                if isinstance(stored, int) and stored > 0:
-                    if cost:
-                        cost_fields["cli_turns"] = cost_fields.pop("turns", None)
-                    cost_fields["turns"] = stored
-                    if stored_from == "memory":
-                        cost_fields["turns_from"] = "memory"
-                if not cost and outcome != "stopped":
-                    # A Stop's `end` says this below, beside `stopped_by`.
-                    cost_fields["cost_unknown"] = True
-            # Each segment an update's resume began, with the tokens of its first call and what it cost;
-            # `cost_partial` when one before it left no cost.
-            segment_fields: dict[str, Any] = {}
-            if owner["segments"]:
-                if resume is not None and segment_done is not None:
-                    segment = owner["segments"][-1]
-                    segment["first_call"] = segment_done.get("first_call")
-                    total = (segment_done.get("cost") or {}).get("cost_usd")
-                    if total is not None:
-                        # A CLI killed without its `cost-state` leaves the next one counting from zero, so its total
-                        # is this segment's alone.
-                        spent = (
-                            0.0
-                            if resume.get("cost_unknown")
-                            else float(resume.get("spent_usd") or 0.0)
-                        )
-                        segment["cost_usd"] = round(float(total) - spent, 6)
-                segment_fields["segments"] = owner["segments"]
-                if any(s.get("cost_unknown") for s in owner["segments"]):
-                    segment_fields["cost_partial"] = True
-            if turn_kind in ("opening", "closing") and not turn_taken and not shutting_down:
-                said = f"the {turn_kind} turn an update paused was not reached again, so it was dropped"
-                detail = f"{detail}\n--- {said} ---" if detail else said
-            # An app going down writes neither record. No `end` is what an interrupted step looks like.
-            record = self.journal is not None and not shutting_down
-            # A stopped step's tree and transcript are captured *before* `end` is written, and only for a
-            # run that is not `done`: a step that wrote its artifact needs no attempt record, and this
-            # must not touch anything a `done` run left behind.
-            pending: BaseException | None = None
-            if record and outcome != "done":
-                try:
-                    fields, pending = await snapshot(cwd, session_id)
-                    self.journal.attempted(
-                        journal_key,
-                        unit,
-                        stage,
-                        outcome=outcome,
-                        terminal=terminal or None,
-                        error=error,
-                        turns=cost_fields.get("turns"),
-                        cost_usd=cost.get("cost_usd"),
-                        session_id=session_id or None,
-                        **fields,
-                    )
-                except Exception:
-                    log.exception("the attempt record of %s %s was not written", unit, stage)
-                    # A failure here must not change the outcome or the `end` record that follows. The attempt
-                    # record is best-effort; the run log's `end` row is the one thing never put at risk.
-                    pass
-            extra: dict[str, Any] = {}
-            if record and outcome == "done" and end_fields is not None:
-                try:
-                    extra = dict(await end_fields())
-                except Exception:
-                    log.exception("the end fields of %s %s were not read", unit, stage)
-                    # The same rule as the attempt record: the `end` row never depends on it.
-                    extra = {}
-            if record and trial_at is not None:
-                trial_model(
-                    (running.handle.init_model if running is not None else "")
-                    or modeltrial.NEVER_STARTED
-                )
-            if record:
-                self.journal.finished(
-                    journal_key,
-                    unit,
-                    stage,
-                    outcome,
-                    session_id=session_id,
-                    artifact=artifact if outcome == "done" else None,
-                    detail=detail or None,
-                    denials=denials.count,
-                    denied=denials.reasons or None,
-                    # Every step that may run a command says how many it was refused for running in the
-                    # background, zero included.
-                    **({"background": denials.background} if "Bash" in grant.tools else {}),
-                    models_used=models_used or None,
-                    terminal=terminal or None,
-                    **(
-                        {
-                            "stopped_by": stopped_by,
-                            **({} if cost else {"cost_unknown": True}),
-                        }
-                        if outcome == "stopped"
-                        else {}
-                    ),
-                    **cost_fields,
-                    # The `Author:` the artifact carries, as written: `""` for none, never checked against the
-                    # table and never a reason to refuse.
-                    **(
-                        {"author": agents.author_of(_read(directory / artifact))}
-                        if outcome == "done"
-                        else {}
-                    ),
-                    **extra,
-                    **run_fields,
-                    # Only a spike's `end` carries it.
-                    **({"spike_md": spike_md} if watch else {}),
-                    # Only a review's; `closing` only when that turn ran.
-                    **({"review_md": review_md} if stage == "review" else {}),
-                    **({"closing": closing} if closing is not None else {}),
-                    # Only once a reply lacked its opening.
-                    **({"opening": opening} if opening is not None else {}),
-                    **({"opening_reason": str(unopened)} if opening == "repaired" else {}),
-                    # Whether the run's `submit` held an object at the end, and the repair turn's cost when one
-                    # ran. Only a step with a channel carries either.
-                    **({"submitted": channel.received is not None} if channel is not None else {}),
-                    **({"submit_turn": submit_turn} if submit_turn is not None else {}),
-                    **segment_fields,
-                )
-            if progress_pending is not None:
-                raise progress_pending
-            if closing_pending is not None:
-                raise closing_pending
-            if opening_pending is not None:
-                raise opening_pending
-            if submit_pending is not None:
-                raise submit_pending
-            if pending is not None:
-                if not stop_came:
-                    raise pending
-                # A Stop's cancel that landed in the capture rather than the session.
-                task = asyncio.current_task()
-                if task is not None:
-                    task.uncancel()
+            outcome, detail, cost, stopped_by = await self._conclude(
+                journal_key=journal_key,
+                unit=unit,
+                stage=stage,
+                artifact=artifact,
+                cwd=cwd,
+                watch=watch,
+                directory=directory,
+                grant=grant,
+                head=head,
+                agent=agent,
+                kw=kw,
+                owner=owner,
+                resume=resume,
+                turn_kind=turn_kind,
+                running=running,
+                recorder=recorder,
+                channel=channel,
+                denials=denials,
+                end_fields=end_fields,
+                rounds_known=rounds_known,
+                budget_left=budget_left,
+                before=before,
+                tree_changed=tree_changed,
+                rounds_before=rounds_before,
+                trial_at=trial_at,
+                terminal=terminal,
+                session_id=session_id,
+                models_used=models_used,
+                shutting_down=shutting_down,
+                spike_md=spike_md,
+                review_md=review_md,
+                unopened=unopened,
+                segment_done=segment_done,
+                outcome=outcome,
+                detail=detail,
+                error=error,
+                cost=cost,
+            )
 
         yield (
             "done",
@@ -1444,3 +1631,464 @@ class Runner:
                 ),
             },
         )
+
+    def _write_start(
+        self,
+        start_at: Any,
+        resume: dict[str, Any] | None,
+        journal_key: str,
+        unit: str,
+        stage: str,
+        mode: str,
+        started_by: str,
+        prompt: str,
+        included: list,
+        pointed: list,
+        grant: Grant,
+        head: str,
+        cwd: str,
+        recorder: Any,
+        gate_reasons: tuple[str, ...],
+        *,
+        model: str | None,
+        model_source: str,
+        effort: str | None,
+        effort_source: str,
+        label_declared: str | None,
+        label: str | None,
+        label_source: str | None,
+        impl_run: int | None,
+        base: dict[str, Any] | None,
+        plan_drift: dict[str, Any] | None,
+        shortlist: dict[str, Any] | None,
+        trial_record: dict[str, Any] | None,
+        plan_map_record: dict[str, Any] | None,
+        rerun: bool,
+        rerun_note: str,
+        agent: dict[str, Any] | None,
+    ) -> Any:
+        """The step's `start` record, and its `at`; `start_at` as it was for a step taken up again or
+        with no journal."""
+        if self.journal is None or resume is not None:
+            return start_at
+        # The autopilot tells a recording `ship` that ran out from a merging one by this field. Only
+        # a `ship` whose gate named the merge already made carries it, by the code `recording-ship`.
+        ship_extra = (
+            {"ship_mode": "record"} if stage == "ship" and "recording-ship" in gate_reasons else {}
+        )
+        return self.journal.started(
+            journal_key,
+            unit,
+            stage,
+            mode,
+            started_by=started_by,
+            prompt_chars=len(prompt),
+            included=included,
+            # The artifacts named by path only, `[]` for a stage that names none.
+            pointed=pointed,
+            # Which build ran the step, so a measurement splits by what ran rather than by a date.
+            **(
+                {
+                    "app_version": self.app.get("version", ""),
+                    "app_commit": self.app.get("commit", ""),
+                }
+                if self.app is not None
+                else {}
+            ),
+            granted=list(grant.tools),
+            max_turns=grant.max_turns,
+            head=head,
+            model=model,
+            model_source=model_source,
+            effort=effort,
+            effort_source=effort_source,
+            label_declared=label_declared,
+            label=label,
+            label_source=label_source,
+            **({"impl_run": impl_run} if impl_run is not None else {}),
+            agents=SESSIONS_PER_STEP,
+            base=base,
+            # Which system prompt the step ran on. `""` means no preset, and nothing more: a step
+            # without one whose `cwd` holds project instructions runs on those as its whole system
+            # prompt, and only `instructions` below says whether it did.
+            system_prompt="claude_code" if grant.opens_anything else "",
+            # Which project files `_options` puts into the system prompt, whole or as a line of contents.
+            # Read again there, so a file edited in between is not seen here.
+            instructions=instructions.read(cwd).record(),
+            **({"plan_drift": plan_drift} if plan_drift is not None else {}),
+            **({"shortlist": shortlist} if shortlist is not None else {}),
+            # Every routine `impl`'s `model_trial`, and `ci_red`.
+            **(trial_record or {}),
+            # Every `impl` start, `bytes: 0` when the plan names no file.
+            **({"plan_map": plan_map_record} if plan_map_record is not None else {}),
+            # Only on a stage run again from the board.
+            **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),
+            **ship_extra,
+            # Top level, the name when the step began; none for a stage the agent table has no row for.
+            **({"agent": agent["name"]} if agent is not None else {}),
+            # Whose step this is, so the next start can tell one this process still runs from one the app
+            # went down under.
+            **({"run": recorder.run, "pid": os.getpid()} if recorder is not None else {}),
+        ).get("at")
+
+    def _trial_model(
+        self, trial_at: Any, journal_key: str, unit: str, stage: str, said: str
+    ) -> Any:
+        """Tells a routine `impl`'s `start` the model the session's `init` named, once, when it
+        comes, or `never-started` at the end. `trial_at` once told, or as it was when there is
+        nothing to tell."""
+        if not said or trial_at is None or self.journal is None:
+            return trial_at
+        try:
+            self.journal.set_trial_model(journal_key, unit, stage, trial_at, said)
+        except Exception:
+            # A measurement, never a reason to fail the step.
+            log.exception("the trial model of %s %s was not recorded", unit, stage)
+        return None
+
+    def _open_main(
+        self,
+        cwd: str,
+        prompt: str,
+        session_id: str,
+        turns_left: int,
+        budget_left: float | None,
+        grant: Grant,
+        denials: Denials,
+        channel: submit_mod.Channel | None,
+        watch: str | None,
+        directory: Path,
+        read_also: tuple[str, ...],
+        kw: dict[str, Any],
+        running: steps.Running | None,
+        owner: dict[str, Any],
+        resume: dict[str, Any] | None,
+        servers: dict[str, Any],
+        turn_kind: str,
+    ) -> AsyncIterator[tuple[str, Any]]:
+        """The main reply's stream. An `opening` or `closing` turn taken up again has its main reply
+        already."""
+        if turn_kind in ("opening", "closing"):
+            return _nothing()
+        # A spike writes only its `cwd`; the worktree and the unit are read. Only when a sibling was
+        # named, so every other step's gate is unchanged.
+        gate_args = (
+            (None, (watch, str(directory)))
+            if watch
+            else (str(directory), tuple(read_also))
+            if read_also
+            else (str(directory),)
+        )
+        return self.sessions.stream(
+            cwd,
+            prompt,
+            session_id or None,
+            max_turns=turns_left,
+            # Only pass a gate when something was actually granted. The list is always the grant's, `[]`
+            # when empty: `None` would fall back to `COS_TOOLS`, and an `idea` on a machine that set it
+            # held tools with no gate in front of them.
+            can_use_tool=(
+                permission_gate(grant, cwd, denials, *gate_args)
+                if grant.opens_anything or channel is not None
+                else None
+            ),
+            tools=list(grant.tools),
+            max_budget_usd=budget_left,
+            **kw,
+            # Only a board step has a row.
+            **({"step": running.handle, "owner": owner} if running is not None else {}),
+            # Only on a step taken up again.
+            **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
+            # Only a step with a channel.
+            **servers,
+            # Only a grant holding the helpers' tool gets them: impl.
+            **({"agents": SUBAGENTS} if AGENT_TOOL in grant.tools else {}),
+        )
+
+    async def _conclude(
+        self,
+        *,
+        journal_key: str,
+        unit: str,
+        stage: str,
+        artifact: str,
+        cwd: str,
+        watch: str | None,
+        directory: Path,
+        grant: Grant,
+        head: str,
+        agent: dict[str, Any] | None,
+        kw: dict[str, Any],
+        owner: dict[str, Any],
+        resume: dict[str, Any] | None,
+        turn_kind: str,
+        running: steps.Running | None,
+        recorder: Any,
+        channel: submit_mod.Channel | None,
+        denials: Denials,
+        end_fields: Any,
+        rounds_known: tuple[int, ...],
+        budget_left: float | None,
+        before: tuple[str, str] | None,
+        tree_changed: bool,
+        rounds_before: set[int] | None,
+        trial_at: Any,
+        terminal: str,
+        session_id: str,
+        models_used: list[str],
+        shutting_down: bool,
+        spike_md: str | None,
+        review_md: str | None,
+        unopened: OpeningError | None,
+        segment_done: dict[str, Any] | None,
+        outcome: str,
+        detail: str,
+        error: dict[str, str] | None,
+        cost: dict[str, Any],
+    ) -> tuple[str, str, dict[str, Any], str | None]:
+        """The end of a step, whatever ended it: the turns that repair a reply, the attempt record and
+        the `end` row. `(outcome, detail, cost, stopped_by)`.
+
+        `shutting_down` is set when the task is cancelled with no Stop behind it: the app is going
+        down, and no `end` is what says so. What must be raised once the rest has done what it does
+        for one is raised at the end.
+        """
+        # The budget a closing or repair turn is given. The CLI compares it only after the turn has
+        # run, so on one turn it bounds nothing; one already spent is not passed at all, since `0`
+        # reaches `_options` as no ceiling. `turn_spent` is what that turn would then have ended with.
+        turn_spent = budget_left is not None and budget_left <= 0
+        turn_budget = None if turn_spent else budget_left
+        # Whether the `opening` or `closing` turn the update paused was reached again.
+        turn_taken = False
+        held: BaseException | None = None
+        closing = opening = submit_turn = None
+        message = str((resume or {}).get("message") or "")
+        if watch and not shutting_down and outcome in ("failed", "exhausted") and spike_md is None:
+            spike_md, detail, held = await _spike_progress(
+                cwd, watch, before, running, tree_changed, directory, artifact, detail, unit
+            )
+            shutting_down = held is not None
+        if (
+            stage == "review"
+            and grant.app_writes_artifact
+            and not shutting_down
+            and outcome == "exhausted"
+            and review_md is None
+            and session_id
+            and head
+            and not _stop_asked(running)
+        ):
+            # The closing turn an update paused is taken up, not asked again.
+            take_up = turn_kind == "closing"
+            review_md, detail, closing, cost, turn_taken, segment_done, held = await _close_review(
+                self.sessions,
+                cwd,
+                head,
+                directory,
+                artifact,
+                session_id,
+                denials,
+                _turn_kw(kw, owner, "closing", running, turn_budget, take_up, resume),
+                take_up,
+                running,
+                cost,
+                turn_taken,
+                segment_done,
+                detail,
+                unit,
+                stage,
+                message,
+            )
+            shutting_down = held is not None
+        if (
+            unopened is not None
+            and is_prose_stage(stage)
+            and grant.app_writes_artifact
+            and not watch
+            and outcome == "failed"
+            and not shutting_down
+        ):
+            take_up = turn_kind == "opening"
+            opening, detail, closing, cost, turn_taken, segment_done, held = await _repair_opening(
+                self.sessions,
+                cwd,
+                artifact,
+                session_id,
+                denials,
+                unopened,
+                _turn_kw(kw, owner, "opening", running, turn_budget, take_up, resume),
+                take_up,
+                turn_spent,
+                running,
+                cost,
+                directory,
+                segment_done,
+                detail,
+                unit,
+                stage,
+                message,
+            )
+            shutting_down = held is not None
+            if opening == "repaired":
+                outcome, error = "done", None
+                review_md = "round" if stage == "review" else review_md
+        if channel is not None and outcome == "done" and not shutting_down:
+            outcome, error, detail, submit_turn, cost, held = await _repair_submit(
+                self.sessions,
+                cwd,
+                stage,
+                artifact,
+                session_id,
+                denials,
+                channel,
+                _turn_kw(kw, owner, "submit", running, turn_budget),
+                turn_spent,
+                running,
+                cost,
+                outcome,
+                error,
+                detail,
+                unit,
+            )
+            shutting_down = held is not None
+        if (
+            channel is not None
+            and stage == submit_mod.ROUND
+            and outcome == "done"
+            and channel.received is not None
+            and not shutting_down
+        ):
+            outcome, error, detail = _write_round(
+                cwd,
+                directory,
+                artifact,
+                head,
+                agent,
+                channel,
+                rounds_before,
+                rounds_known,
+                unit,
+                outcome,
+                error,
+                detail,
+            )
+        # The outcome is decided here, so the door closes here: a Stop that arrives while the attempt
+        # record is captured below is refused (`Finishing`) rather than told "stopped" and logged as
+        # something else. `seal` is False only when a Stop already came, and that one is honoured.
+        stop_came = not steps.seal(running)
+        # Only a step with a `running` entry can be stopped; after the seal no stop changes it.
+        stopped_by = running.stopped_by if running is not None else None
+        if not shutting_down and stop_came and outcome != "done":
+            # Whatever the stop raised on its way in (a closed stream, a cancel, `_Stopped` at the seal),
+            # a person asked, and that is the outcome. No `ResultMessage` came back, so nothing was
+            # billed that this app saw: absent, not zero.
+            outcome, error, detail = "stopped", None, f"stopped by {stopped_by}"
+            cost = cost if terminal else {}
+        # Nothing wrote a spike's or a review's mark: a Stop withheld it, or there was no file.
+        spike_md = _unwritten(spike_md, bool(watch) and not shutting_down, outcome)
+        review_md = _unwritten(review_md, stage == "review" and not shutting_down, outcome)
+        # Not for an app going down: `drive` writes what it can, and no `end`.
+        run_fields, stored, stored_from = (
+            await _close_recorder(recorder, outcome, detail, unit, stage)
+            if recorder is not None and not shutting_down
+            else ({}, None, "")
+        )
+        cost_fields = _cost_fields(
+            cost, recorder is not None and not shutting_down, outcome, stored, stored_from
+        )
+        segment_fields = _segment_fields(owner, resume, segment_done)
+        dropped = turn_kind in ("opening", "closing") and not turn_taken and not shutting_down
+        detail = _noted(
+            detail,
+            f"the {turn_kind} turn an update paused was not reached again, so it was dropped"
+            if dropped
+            else "",
+        )
+        # An app going down writes neither record. No `end` is what an interrupted step looks like.
+        journal = self.journal
+        record = journal is not None and not shutting_down
+        pending: BaseException | None = None
+        if journal is not None and record and outcome != "done":
+            pending = await _attempt(
+                journal,
+                journal_key,
+                unit,
+                stage,
+                cwd,
+                session_id,
+                outcome,
+                terminal,
+                error,
+                cost,
+                cost_fields.get("turns"),
+            )
+        extra = (
+            await _end_extra(end_fields, unit, stage)
+            if record and outcome == "done" and end_fields is not None
+            else {}
+        )
+        if record and trial_at is not None:
+            self._trial_model(
+                trial_at,
+                journal_key,
+                unit,
+                stage,
+                (running.handle.init_model if running is not None else "")
+                or modeltrial.NEVER_STARTED,
+            )
+        if journal is not None and record:
+            journal.finished(
+                journal_key,
+                unit,
+                stage,
+                outcome,
+                session_id=session_id,
+                artifact=artifact if outcome == "done" else None,
+                detail=detail or None,
+                denials=denials.count,
+                denied=denials.reasons or None,
+                # Every step that may run a command says how many it was refused for running in the
+                # background, zero included.
+                **({"background": denials.background} if "Bash" in grant.tools else {}),
+                models_used=models_used or None,
+                terminal=terminal or None,
+                **(
+                    {
+                        "stopped_by": stopped_by,
+                        **({} if cost else {"cost_unknown": True}),
+                    }
+                    if outcome == "stopped"
+                    else {}
+                ),
+                **cost_fields,
+                # The `Author:` the artifact carries, as written: `""` for none, never checked against the
+                # table and never a reason to refuse.
+                **(
+                    {"author": agents.author_of(_read(directory / artifact))}
+                    if outcome == "done"
+                    else {}
+                ),
+                **extra,
+                **run_fields,
+                # Only a spike's `end` carries it.
+                **({"spike_md": spike_md} if watch else {}),
+                # Only a review's; `closing` only when that turn ran.
+                **({"review_md": review_md} if stage == "review" else {}),
+                **({"closing": closing} if closing is not None else {}),
+                # Only once a reply lacked its opening.
+                **({"opening": opening} if opening is not None else {}),
+                **({"opening_reason": str(unopened)} if opening == "repaired" else {}),
+                # Whether the run's `submit` held an object at the end, and the repair turn's cost when one
+                # ran. Only a step with a channel carries either.
+                **({"submitted": channel.received is not None} if channel is not None else {}),
+                **({"submit_turn": submit_turn} if submit_turn is not None else {}),
+                **segment_fields,
+            )
+        if held is not None:
+            raise held
+        if pending is not None:
+            if not stop_came:
+                raise pending
+            # A Stop's cancel that landed in the capture rather than the session.
+            _uncancel()
+        return outcome, detail, cost, stopped_by
