@@ -27,8 +27,6 @@ DEFAULT_PATH = Path(__file__).resolve().parent / "models.json"
 CHAT = "chat"
 # The backlog's proposal session: a row of its own, shown just before `chat`.
 ESTIMATE = "estimate"
-# Jera's session, the same kind of row: after `estimate`, before `chat`.
-PRECEDENT = "precedent"
 PREFIX = "model:"
 EFFORT_PREFIX = "effort:"
 NOVEL_SUFFIX = ":novel"
@@ -152,7 +150,7 @@ def resolve(
 
 def rows_for(stages: Iterable[str]) -> list[str]:
     """Every row Settings shows: each stage, its `:novel` variant right after it when the
-    stage comes after `plan`, then `estimate`, `precedent`, then `chat`."""
+    stage comes after `plan`, then `estimate`, then `chat`."""
     names = [str(s) for s in stages]
     after_plan = names.index("plan") + 1 if "plan" in names else len(names)
     out: list[str] = []
@@ -160,7 +158,7 @@ def rows_for(stages: Iterable[str]) -> list[str]:
         out.append(name)
         if i >= after_plan:
             out.append(name + NOVEL_SUFFIX)
-    return out + [ESTIMATE, PRECEDENT, CHAT]
+    return out + [ESTIMATE, CHAT]
 
 
 def table(

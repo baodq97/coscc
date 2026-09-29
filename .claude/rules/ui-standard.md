@@ -46,9 +46,6 @@ paths:
   - "coscc/state/views.py"
   - "coscc/state/watch.py"
   - "coscc/state/workspaces.py"
-  - "coscc/screens/knowledge.py"
-  - "coscc/state/knowledge.py"
-  - "coscc/service/knowledge.py"
   - "coscc/service/resume.py"
 ---
 

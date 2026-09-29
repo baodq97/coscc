@@ -16,8 +16,8 @@ from coscc.agent.submit import AGAIN, Channel
 
 def _filled(channel: Channel | submit.Collector, fields: dict[str, Any]) -> dict[str, Any]:
     if isinstance(channel, submit.Collector):
-        # Each session's empty object: no verdict, no estimate, nothing needing a person.
-        empty = {"precedent": "verdicts", "estimate": "units", "integrate": "needs_person"}[channel.kind]
+        # Each session's empty object: no estimate, nothing needing a person.
+        empty = {"estimate": "units", "integrate": "needs_person"}[channel.kind]
         return {empty: [], **fields}
     if channel.stage == submit.ROUND:
         return {"verdict": "pass", "findings": [], "screens": [], **fields}
@@ -252,13 +252,11 @@ class AStandInReachesTheChannelThroughItsServer(unittest.TestCase):
 
 
 class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
-    """`0136` R7, R8, R9: Gebo, Jera and the estimate each submit against their own schema."""
+    """Gebo and the estimate each submit against their own schema."""
 
     def test_each_kind_keeps_the_object_that_fits_its_schema(self):
         good = {
             "integrate": {"needs_person": [{"commit": "abc1234", "why": "A vs B"}]},
-            "precedent": {"verdicts": [{"artifact": "spec.md", "n": 1, "verdict": "answer", "category": "other",
-                                        "text": "Có.", "reason": "", "cites": ["pref:1"]}]},
             "estimate": {"units": [{"unit": "0001_a", "value": 3, "effort": "M", "similar": [], "basis": "x",
                                     "relations": []}]},
         }
@@ -271,14 +269,13 @@ class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
 
     def test_an_object_outside_its_schema_is_not_kept(self):
         for kind, bad in (("integrate", {"needs_person": ["a line"]}),
-                          ("precedent", {"verdicts": [{"artifact": "spec.md", "n": 1}]}),
                           ("estimate", {"units": "none"})):
             collector = submit.Collector(kind)
             said = asyncio.run(submits({"mcp_servers": {"cos": collector.server()}}, **bad))
             self.assertTrue(said["is_error"], kind)
             self.assertIsNone(collector.object(), kind)
 
-    def test_the_three_are_the_grants_that_submit_and_are_no_stage(self):
+    def test_the_two_are_the_grants_that_submit_and_are_no_stage(self):
         from coscc.agent import policy
 
         self.assertEqual(set(submit.SESSIONS), set(policy.SUBMITTING_SESSIONS))
@@ -286,7 +283,6 @@ class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
             grant = policy.grant_for(kind)
             self.assertTrue(grant.submits, kind)
             self.assertGreaterEqual(grant.max_turns, policy.SUBMIT_TURNS, kind)
-        self.assertFalse(policy.grant_for("knowledge").submits)
 
 
 if __name__ == "__main__":

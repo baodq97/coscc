@@ -1,4 +1,4 @@
-"""`0101` R10. The guide's three lists, with no service and no run log on disk."""
+"""`0101` R10. The guide's two lists, with no service and no run log on disk."""
 
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -16,12 +16,12 @@ def at(days: float = 0.0, minutes: float = 0.0) -> str:
 class TheLists(unittest.TestCase):
     def test_running_names_each_agent_oldest_first(self):
         got = guide.running({
-            "0002_b": [{"stage": "precedent", "agent": {"glyph": "ᛃ", "name": "Jera"}, "started": at(minutes=1)}],
+            "0002_b": [{"stage": "spec", "agent": {"glyph": "ᚲ", "name": "Kenaz"}, "started": at(minutes=1)}],
             "0001_a": [{"stage": "integrate", "agent": None, "started": at(minutes=5)}],
         })
         self.assertEqual(got, [
             {"unit": "0001_a", "stage": "integrate", "agent": "", "started": at(minutes=5)},
-            {"unit": "0002_b", "stage": "precedent", "agent": "Jera", "started": at(minutes=1)},
+            {"unit": "0002_b", "stage": "spec", "agent": "Kenaz", "started": at(minutes=1)},
         ])
 
     def test_every_stop_kind_but_full_has_one_thing_to_do(self):
@@ -34,14 +34,3 @@ class TheLists(unittest.TestCase):
     def test_a_workspace_stop_links_to_no_unit(self):
         [got] = guide.needs_you([{"unit": "", "kind": "f", "reason": "the pass failed"}])
         self.assertEqual((got["screen"], got["tab"]), ("board", ""))
-
-    def test_decided_keeps_only_written_answers_of_the_window(self):
-        def row(days, **kw):
-            return {"kind": "precedent", "unit": "0001_a", "artifact": "spec.md", "n": 1, "verdict": "answer",
-                    "written": True, "at": at(days), **kw}
-
-        rows = [row(8), row(1, verdict="needs-person", written=False), row(1, written=False), row(2, n=2),
-                {"kind": "answer", "at": at(0)}]
-        self.assertEqual(guide.decided(rows, NOW), [
-            {"unit": "0001_a", "artifact": "spec.md", "n": 2, "at": at(2), "tab": "questions"},
-        ])

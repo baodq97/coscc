@@ -1,4 +1,4 @@
-"""What a person writes into a unit from the page: answers, Jera, outcomes, review rounds
+"""What a person writes into a unit from the page: answers, outcomes, review rounds
 posted, integration, holds and review rounds allowed.
 
 Handlers import `SERVICE` in their bodies: this module cannot import `coscc.state` at the top.
@@ -10,7 +10,7 @@ import reflex as rx
 
 from coscc.web import present
 from coscc.service import Invalid
-from coscc.state.views import DecisionRow, NameRow, _key_label
+from coscc.state.views import DecisionRow, _key_label
 
 # The fields of the decision form, and what each starts as.
 DECISION_FORM = {"kind": "decision", "text": "", "source": "", "workspace": "All workspaces", "until": "",
@@ -30,12 +30,6 @@ class AnswersMixin(rx.State, mixin=True):
     posting_round: int = 0
     # True while an integration runs; locks the *Integrate* button.
     integrating: bool = False
-    # True while Jera runs on the open unit; locks *Ask Jera*.
-    asking_jera: bool = False
-    # The Settings text Jera reads as precedent, as typed and as last saved.
-    decision_preferences: str = ""
-    # What Jera's prompt says about deciding, as typed and as last saved; empty is the default rules.
-    decision_rules: str = ""
     # The outcome form. `outcome_measured_by` starts as `agent`, the case with no script to
     # run. Both hold the English label the select shows; `record_outcome` sends the stored word.
     outcome_result: str = "met"
@@ -49,13 +43,11 @@ class AnswersMixin(rx.State, mixin=True):
     holding: bool = False
     # True while one more review round is being allowed; locks its button.
     granting_round: bool = False
-    # The two Settings panels, read on arriving at Settings, and the form as typed;
+    # The Settings panel, read on arriving at Settings, and the form as typed;
     # `decision_workspaces` is what the form's workspace select offers.
     decision_rows: list[DecisionRow] = []
     decision_workspaces: list[str] = ["All workspaces"]
     decision_form: dict[str, str] = dict(DECISION_FORM)
-    name_rows: list[NameRow] = []
-    name_problems: list[str] = []
 
     def _show_decisions(self, data: dict) -> None:
         self.decision_rows = [
@@ -71,18 +63,12 @@ class AnswersMixin(rx.State, mixin=True):
         ]
         self.decision_workspaces = ["All workspaces", *[str(n) for n in data.get("workspaces") or []]]
 
-    async def _load_decisions(self) -> None:
-        """Both panels: one read of `cos.db` and one board read per workspace."""
+    def _load_decisions(self) -> None:
         from coscc.state import SERVICE
         try:
             self._show_decisions(SERVICE.decisions_table())
-            names = await SERVICE.answer_names()
         except Invalid as e:
             self._fail(e)
-            return
-        self.name_rows = [NameRow(name=str(r["name"]), count=int(r["count"]), mine=bool(r["mine"]))
-                          for r in names.get("rows") or []]
-        self.name_problems = [str(p) for p in names.get("problems") or []]
 
     @rx.event
     def edit_decision(self, field: str, value: str):
@@ -114,19 +100,6 @@ class AnswersMixin(rx.State, mixin=True):
             self.notice = str(e)
             return
         self.notice = f"Withdrew {decision_id}."
-
-    @rx.event
-    def set_name_mine(self, name: str, on: bool):
-        """Whether the name may be marked is `Service.set_name_mine`'s call."""
-        from coscc.state import SERVICE
-        try:
-            done = SERVICE.set_name_mine(name, bool(on))
-        except Invalid as e:
-            self.notice = str(e)
-            return
-        self.name_rows = [NameRow(name=r.name, count=r.count, mine=done["mine"] if r.name == name else r.mine)
-                          for r in self.name_rows]
-        self.notice = f"{name} {'counts' if done['mine'] else 'no longer counts'} as you."
 
     @rx.event
     async def answer_question(self, key: str):
@@ -178,42 +151,6 @@ class AnswersMixin(rx.State, mixin=True):
             await self._load_board()
             self._load_artifact()
         except Exception as e:  # noqa: BLE001 - the answer is written; say so regardless
-            self.notice += f" The board could not be read again: {type(e).__name__}: {e}"
-
-    @rx.event
-    def use_proposal(self, key: str, text: str):
-        """Put Jera's proposal in that question's box. Nothing is sent: the person still presses
-        *Send this answer*."""
-        self.answer_target, self.answer_text = key, text
-
-    @rx.event
-    async def ask_jera(self):
-        """Ask Jera to answer the open unit's questions from precedent; what is written is
-        `Service.precedent`'s. The `yield` sends `asking_jera` to the browser."""
-        from coscc.state import SERVICE
-        if self.asking_jera:
-            return
-        self.error, self.notice = "", ""
-        self.asking_jera = True
-        yield
-        try:
-            done = await SERVICE.precedent(self.cwd, self.unit_id)
-        except Invalid as e:
-            self._fail(e)
-            return
-        finally:
-            self.asking_jera = False
-        if done.get("outcome") == "failed":
-            self.error = f"Jera's reply could not be read, so nothing was written: {done.get('detail')}"
-        else:
-            self.notice = (
-                f"Jera answered {len(done['written'])}; {len(done['needs_person'])} need a person"
-                + (f"; {len(done['skipped'])} were answered meanwhile." if done["skipped"] else ".")
-            )
-        try:
-            await self._load_board()
-            self._load_artifact()
-        except Exception as e:  # noqa: BLE001 - what Jera wrote is written; say so regardless
             self.notice += f" The board could not be read again: {type(e).__name__}: {e}"
 
     @rx.event

@@ -1,6 +1,6 @@
 # Routes that write into a unit's artifacts
 
-Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold` or `/more-rounds`, `POST /api/board/run`'s `rerun`, `coscc/units/hold.py`, `coscc/agent/precedent.py`, `Service._append_answers` or `_append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `POST /api/units/answer`, `/outcome`, `/hold` or `/more-rounds`, `POST /api/board/run`'s `rerun`, `coscc/units/hold.py`, `Service._append_answers` or `_append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
 - **`POST /api/units/answer` writes a stranger's words into a paid prompt.** Since `0016`
   it records an answer to an artifact, and the next stage's prompt carries it. Since `0135`
@@ -10,7 +10,7 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/
   identity; a request that carries a name still has it written. Whoever holds the password
   or a live session can put text there that a stage will read as a person's decision. The
   only trace is the row and an `outputs` row with `actor = human:<name>` — `human:owner`
-  from the board. Since `0106` every block, a person's or Jera's, also leaves an `answer`
+  from the board. Since `0106` every block also leaves an `answer`
   record in `runs`; it starts nothing, but the autopilot runs a draft again only on one
   written since the stage's last `start` (`autopilot.answered_since_start`), and counts it
   toward the two times it may (`autopilot.reruns_of`). A record lost to a busy run log is not
@@ -23,51 +23,11 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/
   a merge.
   Since `0137` it also takes `delegation: "D<n>"`: while a `delegation` entered on Settings
   is in force in the workspace, whoever holds the password or a live session can write an
-  answer under the name of the agent it names, ending `Theo ủy quyền: D<n>`, and Jera then
-  reads it as the person's (`delegated`), as good as their own answer. Whether the question
+  answer under the name of the agent it names, ending `Theo ủy quyền: D<n>`; the row is
+  recorded as `delegated`, as good as their own answer. Whether the question
   is one the delegation `covers` is not checked (that unit's spec ## Out of scope). The
-  decisions and the names marked "This was me" are written only from the Settings screen,
-  never over HTTP, but the screen cannot tell a person from an agent with a browser; the
-  only trace is the `decisions` row and the `answer_names_mine` preference.
-- **`POST /api/units/precedent` puts an agent's words into a paid prompt as decided.** Since
-  `0044` it opens one paid session (Jera, grant `precedent`: no tools, one turn, a ceiling
-  from $1.00 to $3.00 set by the prompt's length since `0101`) and records each answer that
-  survives `precedent.verdicts` through `Service._append_answers`, the same path as a
-  person's (a row since `0135`), headed `Answered by: Jera. … Via: precedent.`. Whoever holds the password or a
-  live session can press it, as often as they like: `_take` stops only a second run on the
-  same unit. Since `0101` the autopilot's pass opens it too, once per question
-  (`.claude/docs/not-built.md`). What stands between Jera and a later stage is the app's
-  filter, and it cannot see everything:
-  - The category is Jera's word (0044 spec C2). A question about permissions
-    that Jera files as `other` is answered and written.
-  - The store is every answer in force in the workspace, Leif's included (C3), the
-    *Decision preferences* text and, since `0137`, the person's decisions in force, all sent
-    word for word; nothing checks any of them for a company name (C4). Since `0137` each
-    entry is labelled `originator`, `delegated` or `inferred` from its `Answered by:` name
-    alone (`precedent.decided_by`), and an `answer` citing only `inferred` entries is taken
-    to `needs-person` (R8). A name is a claim: an agent that answers over the route with no
-    name is written `owner`, and reads as the person's.
-  - The later stage is told which blocks are Jera's (`runner._jera_answers`, R15), and the
-    skills say to cite them as an inference; nothing checks that it does.
-  - The board read and the write share `_answer_lock`, and a question a person answered
-    while Jera ran is skipped, but the runner holds no such lock: a stage re-run that
-    renumbers `## Open questions` while Jera runs leaves its `### Câu N` on the wrong
-    question, and nothing says so (C6, the same window as below). `_take` keeps a step of
-    the same unit out in this process only.
-  - The whole store goes into one prompt, never cut. A prompt whose ceiling would pass
-    $3.00 (`precedent.PRECEDENT_MAX_USD`) opens no session and is refused as `Invalid`; one
-    under it that still runs out is a failed `end` row with the money spent and nothing
-    written (`0101` C5).
-  - `practice`, cited on a question of category `other`, stands for a best practice Jera
-    names in the answer; nothing checks that it is one (`0101` C2).
-  - With the workspace's autopilot on and the unit on its shortlist, a Jera answer that
-    clears the last open question lets the pass `precedent` wakes (`_autopilot_nudge`,
-    since `0101`) start the next stage on it unpressed — or, when the artifact is a `draft`
-    of `intent`, `spec`, `spike` or `plan`, run that stage again (`0106`). The autopilot
-    reads past Jera's own `start`/`end` rows (`autopilot.is_step`), so a Jera run neither
-    lifts nor sets the stop on a failed step.
-  - *Use this proposal* on the Questions tab (`0101` R9) only puts Jera's proposal in the
-    question's box; a person still presses *Send this answer*, and the block is `owner`'s.
+  decisions are written only from the Settings screen, never over HTTP, but the screen
+  cannot tell a person from an agent with a browser; the only trace is the `decisions` row.
 - **Re-running a prose stage keeps `## Answers` byte for byte; a reply's own attempt at
   one is dropped, silently.** Since `0135` the section on disk holds only what was there
   before and the blocks the app still appends — `### Rerun`, `### More rounds`,
@@ -79,7 +39,7 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/
   says under its own `## Answers` heading — copied from the artifact, forged, or a model
   answering its own question — never reaches disk, and nothing records that a reply tried.
   A window remains between the answer route's read and the runner's: the two hold no lock
-  in common (the lock is `Service._answer_lock`, `coscc/service/__init__.py:144`, and `Runner` carries
+  in common (the lock is `Service._answer_lock`, `coscc/service/__init__.py:139`, and `Runner` carries
   no reference to it). Byte-identical is not meaning-identical: a re-run that renumbers
   `## Open questions` leaves `### Câu N` on disk pointing at whichever question now
   carries that number, not the one a person answered

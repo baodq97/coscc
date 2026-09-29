@@ -8,7 +8,7 @@ paths:
 - `POST /api/units/integrate` force-pushes under this machine's `gh` login. On `behind` it runs
   `gh pr update-branch --rebase` and moves the local branch with `reset --keep`. On
   `conflicting` or `red-after-integration` it opens Gebo, a paid session under the
-  `integrate` grant (`coscc/agent/policy.py:238-242`) that allows one push: `--force-with-lease=<branch>:<head at start>`
+  `integrate` grant (`coscc/agent/policy.py:228-237`) that allows one push: `--force-with-lease=<branch>:<head at start>`
   to the unit's own branch.
   - Denied by words: `gh api`, `gh repo sync`, `gh extension`, `git send-pack`, `git http-push`,
     and an alias, include or `GIT_CONFIG_*` made during the step. Any program it may start

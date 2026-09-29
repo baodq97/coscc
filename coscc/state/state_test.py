@@ -605,15 +605,10 @@ class _Page:
             "running_steps": counted("running_steps", []),
             "timeline": counted("timeline", {"runs": []}),
             "cost": counted("cost", {"recording": False}),
-            # `0131`: read only on arriving at Knowledge.
-            "knowledge_page": counted("knowledge_page", {"note": "No knowledge has been gathered yet.",
-                                                         "entries": [], "recent": [], "measure": {}}),
             "unit_cost": counted("unit_cost", {"by_stage": [], "anomalies": [], "recording": True}),
             "artifact": counted("artifact", {"file": "impl.md", "exists": False, "text": ""}),
             # `0137`: read only on arriving at Settings.
             "decisions_table": counted("decisions_table", {"rows": [], "workspaces": ["a", "b"]}),
-            "answer_names": acounted("answer_names", {"rows": [{"name": "Phong", "count": 2, "mine": False}],
-                                                      "problems": []}),
             "next_step": mock.AsyncMock(side_effect=page.Invalid("not asked in this test")),
         }.items():
             stack.enter_context(mock.patch.object(page.SERVICE, name, value))
@@ -645,8 +640,6 @@ class AnArrivalReadsOnce(unittest.TestCase):
                         "board": fake.calls["board"] - before.get("board", 0),
                         "timeline": fake.calls["timeline"] - before.get("timeline", 0),
                         "decisions": fake.calls["decisions_table"] - before.get("decisions_table", 0),
-                        "names": fake.calls["answer_names"] - before.get("answer_names", 0),
-                        "name_rows": [r.name for r in studio.name_rows],
                         "screen": studio.screen, "cwd": studio.cwd, "unit": studio.unit_id,
                         "tab": studio.detail_tab, "notice": studio.notice,
                         "redirects": list(fake.redirects),
@@ -680,11 +673,11 @@ class AnArrivalReadsOnce(unittest.TestCase):
         self.assertEqual((seen[3]["unit"], seen[4]["screen"]), ("", "sessions"))
         self.assertEqual((seen[5]["cwd"], seen[6]["cwd"]), ("/b", "/b"))
         self.assertEqual([s["redirects"] for s in seen], [[]] * 7)
-        # `0137`: none of these arrivals is at Settings, so neither panel is read.
-        self.assertEqual([(s["decisions"], s["names"]) for s in seen], [(0, 0)] * 7)
+        # `0137`: none of these arrivals is at Settings, so the panel is not read.
+        self.assertEqual([s["decisions"] for s in seen], [0] * 7)
 
-    def test_arriving_at_settings_reads_decisions_and_names_once(self):
-        """`0137` R5, R6: each arrival at Settings reads both panels once; no other screen does."""
+    def test_arriving_at_settings_reads_decisions_once(self):
+        """`0137` R5, R6: each arrival at Settings reads the panel once; no other screen does."""
         seen = self._walk([
             ("/board?ws=a", "s1"),
             ("/settings?ws=a", "s1"),
@@ -693,8 +686,7 @@ class AnArrivalReadsOnce(unittest.TestCase):
             ("/settings/?ws=a", "s2"),  # reload
         ])
         self.assertEqual([s["screen"] for s in seen], ["board", "settings", "board", "settings", "settings"])
-        self.assertEqual([(s["decisions"], s["names"]) for s in seen], [(0, 0), (1, 1), (0, 0), (1, 1), (1, 1)])
-        self.assertEqual(seen[1]["name_rows"], ["Phong"])
+        self.assertEqual([s["decisions"] for s in seen], [0, 1, 0, 1, 1])
 
     def test_an_address_without_ws_is_replaced_by_one_with_it(self):
         seen = self._walk([("/board", "s1"), ("/board?ws=a", "s1")])
@@ -1185,7 +1177,7 @@ class TheBoardIsDrawnFromTheStages(unittest.TestCase):
         StudioState._show_agents(page, {**table, "problems": ["p"]})
         review = next(r for r in page.agent_rows if r.key == "review")
         self.assertEqual((review.name, review.name_source, review.glyph_source), ("Judge", "override", "default"))
-        self.assertEqual(len(page.agent_rows), 9)
+        self.assertEqual(len(page.agent_rows), 8)
         self.assertEqual(page.agent_problems, ["p"])
 
 
@@ -1505,71 +1497,6 @@ class CostIsReadWhereItIsShown(unittest.TestCase):
             asyncio.run(go())
         self.assertEqual([c for c, _ in seen], [0, 0, 1, 1, 2, 2, 3])
         self.assertEqual([u for _, u in seen], [0, 0, 0, 0, 0, 1, 1])
-
-
-class KnowledgeIsReadWhereItIsShown(unittest.TestCase):
-    """`0131` R24. `SERVICE.knowledge_page` is asked once per arrival at *Knowledge*."""
-
-    def test_knowledge_is_read_once_per_arrival_and_on_no_other_screen(self):
-        import asyncio
-
-        fake = _Page()
-        token = "state-test-knowledge-read"
-        steps = [("/board?ws=a", "s1"), ("/cost?ws=a", "s1"), ("/knowledge?ws=a", "s1"),
-                 ("/board?ws=a", "s1"), ("/knowledge?ws=a", "s1"), ("/unit?ws=a&id=0009_x", "s1"),
-                 ("/knowledge/?ws=a", "s2")]
-        seen = []
-
-        async def go():
-            manager, processor, _ = _processor(token)
-            arrive = _arrival(manager, processor, token)
-            async with processor:
-                for address, sid in steps:
-                    await arrive(address, sid)
-                    seen.append(fake.calls["knowledge_page"])
-                await arrive("/sessions?ws=a", "s9")
-                await asyncio.sleep(0.15)
-
-        with fake.patches():
-            asyncio.run(go())
-        self.assertEqual(seen, [0, 0, 1, 1, 2, 2, 3])
-
-    def test_the_fields_say_not_checked_yet_hide_the_slot_and_shorten_the_sha(self):
-        from coscc.state import knowledge as kn
-
-        page = {
-            "note": "", "log_note": "", "checked": {"sha": "a" * 40, "at": "2026-09-27T00:00:00+00:00"},
-            "entries": [
-                {"id": "K1", "scope": "tool:reflex 0.9.12", "statement": "S.", "measured": "2026-09-25",
-                 "sources": [{"slot": "proj-aaaaaaaaaaaa", "unit": "0001_a", "file": "plan.md", "anchor": "## Order"}],
-                 "refs": [], "broken": None},
-                {"id": "K2", "scope": "workspace:proj-aaaaaaaaaaaa", "statement": "T.", "measured": "",
-                 "sources": [], "refs": ["a.py"], "broken": "ref missing: a.py"},
-            ],
-            "last_gather": {"at": "2026-09-27T00:00:00+00:00", "unit": "0001_a", "outcome": "saved",
-                            "cost_usd": 0.47, "reason": ""},
-            "recent": [{"unit": "0001_a", "stage": "impl", "at": "2026-09-27T00:00:00+00:00", "arm": "on",
-                        "ids": ["K1"], "withheld": [{"id": "K2", "reason": "a.py is not on HEAD"}]}],
-            "measure": {"verdict": "chưa đủ mẫu", "reduction": 0.25, "deadline": "2026-10-16",
-                        "on": {"n": 1, "median": {"turns": 40}, "mean": {"ci_red": 0}}, "off": {"n": 0}},
-        }
-        f = kn.knowledge_fields(page)
-        self.assertEqual([(e.status, e.color) for e in f["kn_entries"]], [("not checked yet", "gray"), ("broken", "red")])
-        self.assertEqual((f["kn_entries"][0].sources, f["kn_entries"][0].slots),
-                         (["0001_a · plan.md · ## Order"], "proj-aaaaaaaaaaaa"))
-        # The slot of a `workspace:` scope is in the details only (S3).
-        self.assertEqual((f["kn_entries"][1].scope, f["kn_entries"][1].slots), ("workspace", "proj-aaaaaaaaaaaa"))
-        self.assertTrue(f["kn_checked"].endswith("on origin/main " + "a" * 12))
-        self.assertNotIn("a" * 13, f["kn_checked"])
-        self.assertNotIn("T00:00", f["kn_checked"] + f["kn_gathers"][0].at + f["kn_steps"][0].at)
-        self.assertEqual(f["kn_gathers"][0].cost, "$0.470")
-        # Review F2: a reason may carry a path, so only the ids are in view and the reasons are
-        # a detail; F3: the same for an entry's, which may name a slot (S3).
-        self.assertEqual((f["kn_steps"][0].withheld, f["kn_steps"][0].why, f["kn_steps"][0].key),
-                         ("K2", ["K2: a.py is not on HEAD"], "kn-step-0"))
-        self.assertEqual(f["kn_entries"][1].reason, "ref missing: a.py")
-        self.assertEqual((f["kn_verdict"], f["kn_reduction"], f["kn_deadline"]), ("too few units yet", "25%", "Oct 16, 2026"))
-        self.assertEqual(kn.knowledge_fields({"checked": None})["kn_checked"], "Not checked yet.")
 
 
 class CostRowsAreCopiedAndLabelled(unittest.TestCase):

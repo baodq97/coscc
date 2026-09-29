@@ -42,10 +42,10 @@ NAMES = {
     ),
     "runner": (
         "ATTEMPT_EXCERPT", "CEILING_MARKERS", "CLAUDE_CODE_PRESET", "CLOSING_TIMEOUT",
-        "COMMANDS_ADVICE", "COMMANDS_HEADING", "Denials", "KNOWLEDGE_ADVICE",
+        "COMMANDS_ADVICE", "COMMANDS_HEADING", "Denials",
         "PLAN_MAP_ADVICE", "PLAN_MAP_HEADING",
         "RunError", "Runner", "SESSIONS_PER_STEP",
-        "_POINTING", "_jera_answers", "_joined", "_rounds", "_tree_state", "_unfence",
+        "_POINTING", "_joined", "_rounds", "_tree_state", "_unfence",
         "_write_artifact", "answers_section", "build_prompt", "check_reply",
         "closing_round_problem", "compose_prompt", "describe_attempt", "from_title",
         "merge_review", "open_findings", "opening_problem", "opening_reason",

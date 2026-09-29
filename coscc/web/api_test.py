@@ -20,7 +20,6 @@ import httpx
 from coscc import update
 from coscc.web.api import build
 from coscc.config import Config
-from coscc.agent.submit_test import submits as _submits
 
 
 def _tmp_config(test: unittest.TestCase) -> Config:
@@ -246,15 +245,14 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         return {row["name"]: row for row in r.json()["rows"]}
 
-    async def test_twelve_rows_with_nothing_configured(self):
+    async def test_eleven_rows_with_nothing_configured(self):
         # `0033` R9 and `0039`: the seven stages that run a session (`pr` and `ship` do not,
-        # `0139` R12), a `:novel` row for `impl` and `review`, `estimate` (`0074`),
-        # `precedent` (`0044`), chat.
+        # `0139` R12), a `:novel` row for `impl` and `review`, `estimate` (`0074`), chat.
         rows = await self.rows()
-        self.assertEqual(len(rows), 12)
+        self.assertEqual(len(rows), 11)
         self.assertNotIn("pr", rows)
         self.assertNotIn("ship", rows)
-        self.assertEqual(list(rows)[-3:], ["estimate", "precedent", "chat"])
+        self.assertEqual(list(rows)[-2:], ["estimate", "chat"])
         self.assertEqual(rows["impl"]["source"], "default")
         self.assertEqual((rows["impl:novel"]["effort"], rows["impl:novel"]["effort_source"]), ("high", "default"))
 
@@ -295,7 +293,7 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         # `0036` R2.
         r = await self.client.get("/api/settings/agents")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(len(r.json()["rows"]), 9)
+        self.assertEqual(len(r.json()["rows"]), 8)
         r = await self.client.post("/api/settings/agents", json={"key": "review", "name": "Judge"})
         self.assertEqual(r.status_code, 200)
         row = next(x for x in r.json()["rows"] if x["key"] == "review")
@@ -859,9 +857,6 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         got = await self.client.post("/api/units/answer", json=self.body(cwd="/etc"))
         self.assertEqual(got.status_code, 400)
 
-    async def test_nobody_answers_as_jera(self):  # `0044` R11
-        self.assertIn("Jera", await self.refused(answered_by=" jera "))
-
     # -- `0137` R10 -------------------------------------------------------------------
 
     def decide(self, **over) -> str:
@@ -901,7 +896,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
             ("is a decision, not a delegation", self.decide(kind="decision")),
             ("is not in force today", self.decide(from_day="2026-01-01", until_day="2026-01-02")),
             ("is not in force today", self.decide(withdrawn=today)),
-            ("delegates to Jera", self.decide(agent="Jera")),
+            ("delegates to Kenaz", self.decide(agent="Kenaz")),
             ("does not cover this workspace", self.decide(workspace="elsewhere-000000000000")),
         ]
         for said, d in cases:
@@ -923,58 +918,6 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
             self.rows(columns="artifact, ref, answered_by, date, via, text"),
             [("intent.md", "2", "Phong", date.today().isoformat(), "product", "Tách ra. MARK-0016")],
         )
-
-
-class AskingJeraOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0044`. `POST /api/units/precedent`: a 400 before any session, or a summary."""
-
-    # The fixture of the class above, borrowed rather than inherited so its tests run once.
-    _answering_setup = AnsweringAQuestionOverHttp.asyncSetUp
-    asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
-    body = AnsweringAQuestionOverHttp.body
-    post = AnsweringAQuestionOverHttp.post
-
-    class _Sessions:
-        def __init__(self) -> None:
-            self.text, self.calls = "", 0
-
-        def in_flight(self):
-            return []
-
-        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            self.calls += 1
-            yield ("chunk", self.text)
-            await _submits(kw)
-            yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01, "turns": 1}})
-
-    async def asyncSetUp(self):
-        await self._answering_setup()
-        self.sessions = self._Sessions()
-        self.app.state.service.sessions = self.sessions
-
-    async def ask(self, **over):
-        return await self.client.post("/api/units/precedent", json={"cwd": self.cwd, "unit": self.unit, **over})
-
-    async def test_a_unit_with_no_open_question_is_a_400_and_spends_nothing(self):
-        for n in (1, 2, 3):
-            self.assertEqual((await self.post(question=n)).status_code, 200)
-        got = await self.ask()
-        self.assertEqual(got.status_code, 400, got.text)
-        self.assertEqual(self.sessions.calls, 0)
-        self.assertEqual((await self.ask(unit="0099_nothing")).status_code, 400)
-        self.assertEqual((await self.client.post("/api/units/precedent", content=b"nope")).status_code, 400)
-
-    async def test_a_reply_comes_back_as_a_summary(self):
-        before = self.intent.read_bytes()
-        self.sessions.text = '```json\n[{"artifact": "intent.md", "n": 1, "verdict": "needs-person", ' \
-                             '"category": "product-direction", "text": "Đề xuất.", "reason": "hướng", "cites": []}]\n```'
-        got = await self.ask()
-        self.assertEqual(got.status_code, 200, got.text)
-        body = got.json()
-        self.assertEqual(body["outcome"], "done")
-        self.assertEqual([q["n"] for q in body["needs_person"]], [1, 2, 3])
-        self.assertEqual((body["written"], body["cost_usd"]), ([], 0.01))
-        self.assertEqual(self.intent.read_bytes(), before)
 
 
 class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):

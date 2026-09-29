@@ -138,9 +138,9 @@ whether a newer build is ready:
   `github.com/baodq97/coscc`, and runs `scripts/build_wheel.sh --local` from `origin/main`
   in a throwaway worktree. That runs upstream `main`'s build scripts under your user.
 
-*Apply* waits until no mechanical integration, screenshot retake or knowledge gather of
+*Apply* waits until no mechanical integration or screenshot retake of
 this process is running, and none of those can start once it is pressed. Every other agent
-session — a step, Gebo, an estimate, Jera, a chat turn — keeps running through the trial;
+session — a step, Gebo, an estimate, a chat turn — keeps running through the trial;
 then each is paused, and whatever command it was running is killed with its children. When
 the app is back, each goes on in the same session, told which commands were cut. That needs
 its transcript under `~/.claude/projects`: delete that directory while an update is under
@@ -155,17 +155,10 @@ back to. A release fetches it from its own GitHub release — at each check, or,
 build has no release to fetch from: once it is running, `current/` holds it only if it was
 applied from the board, and otherwise the panel says `blocked` and offers no press.
 
-`COS_KNOWLEDGE=1` in the env file, and a restart, hands `spec`, `spike` and `plan` what
-earlier units measured, from `<COS_DATA_DIR>/knowledge/knowledge.md`; unset, no prompt
-changes. The store is written only by `coscc knowledge gather`, at a terminal, which opens
-paid sessions (`coscc knowledge` alone prints the usage). Run `coscc knowledge baseline`
-before turning the flag on, or `coscc knowledge measure` refuses to compare.
-
 A routine `impl` runs on Opus for about half the units, chosen by name, and on Sonnet for
 the rest, at the same effort (`0139`); no setting turns this on or off, and a `model:impl`
 override set on Settings still wins. The half on Opus can cost more. `COS_EFFORT_TRIAL`,
-which ran the earlier trial of effort, is no longer read; `coscc effort measure` still
-prints that trial's verdict from the rows it left.
+which ran the earlier trial of effort, is no longer read.
 
 **What does not come back by itself.** If the new version passes its trial but fails to
 start for real, there is no board left to say so and nothing rolls it back: `systemctl

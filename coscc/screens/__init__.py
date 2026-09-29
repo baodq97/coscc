@@ -100,9 +100,6 @@ from coscc.screens.backlog import (
     _backlog_editor,
     _backlog_screen,
 )
-from coscc.screens.knowledge import (
-    _knowledge,
-)
 from coscc.screens.idea import (
     _idea_screen,
 )
@@ -131,7 +128,6 @@ def _screen() -> rx.Component:
         ("sessions", _sessions()),
         ("activity", _activity()),
         ("cost", _cost()),
-        ("knowledge", _knowledge()),
         ("settings", _settings()),
         ("idea", _idea_screen()),
         rx.fragment(),

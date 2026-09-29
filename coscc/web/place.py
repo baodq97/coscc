@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlencode
 
 # The screens with a route of their own, in `NAVIGATION`'s order. `unit` is the Board with a
 # unit's dialog open.
-SCREENS = ("overview", "workspaces", "board", "backlog", "sessions", "activity", "cost", "knowledge", "settings")
+SCREENS = ("overview", "workspaces", "board", "backlog", "sessions", "activity", "cost", "settings")
 
 TABS = ("overview", "artifacts", "questions", "comments", "timeline")
 

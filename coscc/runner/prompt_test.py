@@ -26,48 +26,6 @@ from coscc.runner.runner_test import (
 )
 
 
-class AnAgentsAnswerIsSaidToBeOne(unittest.TestCase):
-    """`0044` R15. A stage whose prompt carries or names a file holding a block Jera wrote
-    is told those blocks are an agent's inference; a unit without one gets the old prompt."""
-
-    SPEC = (
-        "Status: accepted.\nSPEC\n\n## Open questions\n\n1. a?\n2. b?\n\n## Answers\n"
-        "\n### Câu 1\nAnswered by: {by}. Date: 2026-09-25. Via: {via}.\n\nyes\n\nTiền lệ: pref:1\n"
-        "\n### Câu 2\nAnswered by: owner. Date: 2026-09-25. Via: product.\n\nno\n"
-    )
-
-    def prompts(self, by: str, via: str, stage: str) -> tuple[str, str]:
-        """The prompt, and the same prompt built with this unit's section switched off."""
-        from coscc.runner import prompt as runner_prompt
-
-        with tempfile.TemporaryDirectory() as d:
-            make_unit(Path(d), intent_md="Status: accepted.\nINTENT", spec_md=self.SPEC.format(by=by, via=via),
-                      plan_md="Status: accepted.\nPLAN")
-            args = (d, Path(d) / ".cos" / UNIT, UNIT, stage, STAGES, f"{stage}.md")
-            prompt = build_prompt(*args)[0]
-            with mock.patch.object(runner_prompt, "_jera_answers", lambda *a: ""):
-                return prompt, build_prompt(*args)[0]
-
-    def prompt(self, by: str, via: str, stage: str) -> str:
-        return self.prompts(by, via, stage)[0]
-
-    def test_it_is_said_when_the_prompt_carries_the_file(self):
-        prompt = self.prompt("Jera", "precedent", "plan")
-        self.assertIn("# Answers an agent gave\n\n- spec.md ### Câu 1\n\n", prompt)
-        self.assertNotIn("- spec.md ### Câu 2", prompt, "a person's block is not listed")
-
-    def test_it_is_said_when_the_prompt_only_names_the_file(self):
-        prompt = self.prompt("Jera", "precedent", "review")
-        self.assertIn("- spec.md ### Câu 1", prompt)
-        self.assertIn("not by the person who started this work", prompt)
-
-    def test_a_unit_without_one_gets_the_prompt_byte_for_byte(self):
-        for stage in ("spec", "plan", "impl", "review"):
-            prompt, without = self.prompts("owner", "product", stage)
-            self.assertEqual(prompt, without, stage)
-            self.assertNotIn("Answers an agent gave", prompt)
-
-
 class AChildUnitsIntentCarriesItsIdea(unittest.TestCase):
     """`0040` R12. A unit opened from a shared idea has no `idea.md`; the idea arrives by link."""
 
@@ -873,12 +831,15 @@ class TheNextReviewIsToldWhyARoundDidNotCount(unittest.TestCase):
         self.assertLess(prompt.index(self.HEADING), prompt.index("# The commit you are reviewing"))
 
 
-class WhatEarlierUnitsMeasured(unittest.TestCase):
-    """`0090` plan step 3. `service.run_step` reads the store; this module only places what it
-    is handed, and with nothing handed not one byte of any prompt changes (R2)."""
+class ThePlanMapAndTheCommands(unittest.TestCase):
+    """`0096` plan step 3. `service.run_step` builds the map and `Runner.run` hands on the
+    grant's words; this module places both for `impl` only, and every other stage's prompt is
+    what it was, byte for byte (R11)."""
+
+    MAP = "- `coscc/runner/__init__.py` — 2000 lines\n  - 307 def compose_prompt MAP-MARKER"
+    WORDS = ("git", "npm", "COMMAND-MARKER")
 
     ANSWERS = "\n\n## Open questions\n\n1. a?\n\n## Answers\n\n### Câu 1\nAnswered by: o. Date: 2026-09-26. Via: product.\n\nyes\n"
-    SECTION = "## K1\nScope: tool:x\nSource: s-000000000000/0001_a/spike.md ## U1\nMeasured: 2026-09-25\nA fact."
 
     def unit(self, d: str) -> Path:
         return make_unit(
@@ -892,83 +853,6 @@ class WhatEarlierUnitsMeasured(unittest.TestCase):
         """`implement` is an alias with no skill file of its own in this checkout; the rest
         read their real rules, which both sides of each comparison share."""
         return "RULES for implement" if stage == "implement" else skill_for(stage)
-
-    def test_no_knowledge_is_every_prompt_byte_for_byte(self):
-        from coscc.runner import prompt as runner_prompt
-
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
-            directory = self.unit(d)
-            for stage in SESSION_STAGES + ["implement"]:
-                with self.subTest(stage=stage):
-                    args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
-                    without = compose_prompt(*args)
-                    self.assertEqual(compose_prompt(*args, knowledge=""), without)
-                    self.assertNotIn("What earlier units measured", without[0])
-                    self.assertNotIn("knowledge", without[1])
-
-    def test_spec_spike_and_plan_carry_it_once_between_what_they_follow_and_their_answers(self):
-        import re
-
-        from coscc.runner import KNOWLEDGE_ADVICE
-
-        with tempfile.TemporaryDirectory() as d:
-            directory = self.unit(d)
-            for stage in ("spec", "spike", "plan"):
-                with self.subTest(stage=stage):
-                    prompt, included, _ = compose_prompt(
-                        d, directory, UNIT, stage, STAGES, f"{stage}.md", knowledge=self.SECTION)
-                    self.assertEqual(prompt.count("# What earlier units measured"), 1)
-                    here = prompt.index("# What earlier units measured")
-                    follows = [m.start() for m in re.finditer(r"^# The \w+ it follows$", prompt, re.M)]
-                    self.assertTrue(follows)
-                    self.assertLess(max(follows), here)
-                    if stage == "spike":
-                        # Not a prose stage: it writes its own artifact and gets no answers block.
-                        self.assertLess(prompt.index("# Where you work"), here)
-                    else:
-                        self.assertLess(here, prompt.index("# The answers already given to this artifact"))
-                    self.assertIn(f"# What earlier units measured\n\n{self.SECTION}\n\n{KNOWLEDGE_ADVICE}", prompt)
-                    self.assertIn("knowledge", included)
-
-    def test_no_other_stage_carries_it_even_when_handed_it(self):
-        from coscc.runner import prompt as runner_prompt
-
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
-            directory = self.unit(d)
-            for stage in ("idea", "intent", "review"):
-                with self.subTest(stage=stage):
-                    args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
-                    self.assertEqual(compose_prompt(*args, knowledge=self.SECTION), compose_prompt(*args))
-
-    def test_impl_is_told_to_name_a_contradicting_entry_in_its_reply(self):
-        # `0131` R14, R15.
-        from coscc.runner import prompt as runner_prompt
-
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
-            directory = self.unit(d)
-            for stage in ("impl", "implement"):
-                with self.subTest(stage=stage):
-                    prompt, included, _ = compose_prompt(
-                        d, directory, UNIT, stage, STAGES, "impl.md", knowledge=self.SECTION)
-                    self.assertIn(f"# What earlier units measured\n\n{self.SECTION}\n\n"
-                                  f"{runner_prompt.KNOWLEDGE_ADVICE_IMPL}", prompt)
-                    self.assertNotIn(runner_prompt.KNOWLEDGE_ADVICE, prompt)
-                    self.assertIn("say so in your final reply", runner_prompt.KNOWLEDGE_ADVICE_IMPL)
-                    self.assertIn("do not write a `## Concerns` section", runner_prompt.KNOWLEDGE_ADVICE_IMPL)
-                    self.assertIn("knowledge", included)
-
-
-class ThePlanMapAndTheCommands(unittest.TestCase):
-    """`0096` plan step 3. `service.run_step` builds the map and `Runner.run` hands on the
-    grant's words; this module places both for `impl` only, and every other stage's prompt is
-    what it was, byte for byte (R11)."""
-
-    MAP = "- `coscc/runner/__init__.py` — 2000 lines\n  - 307 def compose_prompt MAP-MARKER"
-    WORDS = ("git", "npm", "COMMAND-MARKER")
-
-    unit = WhatEarlierUnitsMeasured.unit
-    ANSWERS = WhatEarlierUnitsMeasured.ANSWERS
-    rules = staticmethod(WhatEarlierUnitsMeasured.rules)
 
     def test_no_stage_but_impl_carries_them_even_when_handed_them(self):
         from coscc.runner import prompt as runner_prompt

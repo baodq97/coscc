@@ -9,7 +9,7 @@ paths:
 
 - `POST /api/update/*` pauses work, restarts the app and builds upstream code, for whoever holds
   the password.
-  - *Apply* waits only for a mechanical integration, a screenshot retake and a knowledge gather.
+  - *Apply* waits only for a mechanical integration and a screenshot retake.
     Then `Sessions.suspend_all` pauses every agent session: descendants listed, transcript line
     count read, `interrupt()`, client closed, live descendants SIGKILLed (one that left by
     `setsid` is not). Each is a `suspend` row and a local build is cut. Work with no session open

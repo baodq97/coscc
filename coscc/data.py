@@ -434,7 +434,7 @@ _COLUMNS = (
     # The head and the artifacts' revisions a run was handed when it opened.
     ("step_runs", "head", "TEXT NOT NULL DEFAULT ''"),
     ("step_runs", "revisions", "TEXT NOT NULL DEFAULT '{}'"),
-    # Whose answer a row is: `person`, `delegated` or `agent` (Jera's).
+    # Whose answer a row is: `person`, `delegated` or `agent` (an earlier version's precedent answers).
     ("unit_answers", "authority", "TEXT NOT NULL DEFAULT 'unknown'"),
     # The CI answer read at `ci_head`, written only with a `ci-at-head` transition; the checks
     # it was read from (JSON, for the names of the red ones) and when.

@@ -20,7 +20,6 @@ from coscc.agent import agents
 from coscc.units import board as board_reader
 from coscc.git import gitops
 from coscc.github import integrate
-from coscc.agent import precedent as precedent_mod
 from coscc.units.board import Unavailable
 from coscc.data import Data, now as _now
 from coscc.git.gitops import GitError
@@ -79,30 +78,6 @@ def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, 
                 if k in posted
                 else {"posted": False, "url": "", "reason": failed.get(k)}
             )
-
-
-def _attach_precedent(units_: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
-    """On each question: `by_jera`, its `cites` and the words it `said` when the answer in
-    force is Jera's, and — while it is still unanswered — `needs_person`, `proposal` and
-    `reason` from the last `precedent` row for it. Display only: `cos.mjs` never sees this."""
-    last: dict[tuple[str, str, Any], dict[str, Any]] = {}
-    for r in rows:
-        last[(str(r.get("unit") or ""), str(r.get("artifact") or ""), r.get("n"))] = r
-    for unit in units_:
-        answers = {(a["artifact"], a["n"]): a for a in unit.get("answers") or []}
-        for q in unit.get("questions") or []:
-            jera = bool(q.get("answered")) and precedent_mod.is_jera(q.get("by"))
-            said = answers.get((q.get("artifact"), q.get("n"))) or {}
-            row = last.get((unit["name"], str(q.get("artifact") or ""), q.get("n"))) or {}
-            waiting = not q.get("answered") and row.get("verdict") == precedent_mod.PERSON
-            q["by_jera"] = jera
-            # Whose the answer in force is, as the app recorded it.
-            q["authority"] = str(said.get("authority") or "") if q.get("answered") else ""
-            q["cites"] = precedent_mod.cites_of(str(said.get("text") or "")) if jera else []
-            q["said"] = precedent_mod.words_of(str(said.get("text") or "")) if jera else ""
-            q["needs_person"] = waiting
-            q["proposal"] = str(row.get("text") or "") if waiting else ""
-            q["reason"] = str(row.get("reason") or "") if waiting else ""
 
 
 def answerable(unit: dict[str, Any]) -> bool:
@@ -367,11 +342,7 @@ class BoardMixin:
             timelines = timelines_of(rows)
             comments = [r for r in rows if r.get("kind") == "pr-comment"]
             ranking = [r for r in rows if r.get("kind") in backlog.KINDS]
-            verdicts = [r for r in rows if r.get("kind") == "precedent"]
-        else:
-            verdicts = []
         _attach_comment_state(data["units"], comments)
-        _attach_precedent(data["units"], verdicts)
         # Display only: nothing below reads it, and `next`/`blocked` are untouched.
         data["backlog"] = {
             **backlog.fold(
@@ -432,8 +403,8 @@ class BoardMixin:
         data["recording"] = journal is not None
         # Display only: the page shows it and decides nothing from it.
         data["autopilot"] = self._autopilot_block(key)
-        # Display only, from the rows read above: no second read of the run log.
-        data["guide"] = self._guide_block(key, verdicts)
+        # Display only.
+        data["guide"] = self._guide_block(key)
         data["read_only_because"] = (
             None if journal is not None
             else "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR"

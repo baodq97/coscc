@@ -208,10 +208,9 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         for stage in ("pr:novel", "review:novel", "ship:novel"):
             self.assertNotIn(stage, stages)
 
-    def test_settings_shows_jeras_ceiling_as_its_range(self):
-        """`0101` R5, review F1: the static $1.00 is only Jera's floor."""
+    def test_settings_shows_each_grants_ceiling(self):
         rows = {r["stage"]: r for r in self.service.settings()["grants"]}
-        self.assertEqual(rows["precedent"]["budget"], "$1.00–$3.00")
+        self.assertNotIn("precedent", rows)
         self.assertEqual(rows["impl"]["budget"], "$8.00")
 
     def test_settings_never_show_the_trial(self):

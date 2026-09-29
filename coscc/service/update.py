@@ -81,31 +81,22 @@ class UpdateMixin:
             raise _as_invalid(e) from e
 
     def _refuse_mechanical_while_updating(self) -> None:
-        """A mechanical integration, a retake or a knowledge gather is refused once Apply is pressed."""
+        """A mechanical integration or a retake is refused once Apply is pressed."""
         try:
             self.updater.refuse_mechanical_while_updating()
         except updater_mod.Refused as e:
             raise _as_invalid(e) from e
 
     def _update_waited(self) -> list[dict[str, Any]]:
-        """What an Apply waits for: a mechanical integration, a screenshot retake and a
-        knowledge gather, whose sessions are not the app's. Gebo sessions, steps, estimates,
-        Jera and chat are paused by `suspend_sessions`; what of them had no session open gets
-        `settle_after_suspend`'s bounded wait."""
+        """What an Apply waits for: a mechanical integration and a screenshot retake.
+        Gebo sessions, steps, estimates and chat are paused by `suspend_sessions`; what of
+        them had no session open gets `settle_after_suspend`'s bounded wait."""
         jobs: list[dict[str, Any]] = []
         for entry in self._running.values():
             if entry["stage"] == "integrate" and entry.get("kind") != "gebo":
                 jobs.append({
                     "kind": "integration", "id": f"integration:{entry['workspace']}:{entry['unit']}",
                     "workspace": entry["workspace"], "unit": entry["unit"], "stage": "integrate",
-                    "started": entry["started"],
-                })
-            elif entry["stage"] == "knowledge":
-                # Waited for, never paused: it runs on a `Sessions` of its own that
-                # `suspend_sessions` does not reach.
-                jobs.append({
-                    "kind": "integration", "id": f"knowledge:{entry['workspace']}:{entry['unit']}",
-                    "workspace": entry["workspace"], "unit": entry["unit"], "stage": "knowledge",
                     "started": entry["started"],
                 })
         for entry in self._retakes.values():

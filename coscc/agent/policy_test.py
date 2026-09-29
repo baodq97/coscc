@@ -69,14 +69,14 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
                 self.assertEqual(policy.beyond_reading(g), (), stage)
 
     def test_no_other_mcp_tool_and_no_other_stage_gets_through(self):
-        for stage in ("pr", "ship", "knowledge", "x"):
+        for stage in ("pr", "ship", "x"):
             self.assertIn("not granted", decide(grant_for(stage), policy.SUBMIT_TOOL, {}, "/tmp/ws"), stage)
         for name in ("mcp__cos__other", "mcp__other__submit", "submit"):
             self.assertIn("not granted", decide(grant_for("spec"), name, {}, "/tmp/ws"), name)
 
-    def test_gebo_jera_and_the_estimate_gain_submit_and_nothing_else(self):
-        """`0136` R7, R8, R9: the sessions that are no stage, each with its old grant but
-        `submits` and at least `SUBMIT_TURNS` turns."""
+    def test_gebo_and_the_estimate_gain_submit_and_nothing_else(self):
+        """The sessions that are no stage, each with its old grant but `submits` and at least
+        `SUBMIT_TURNS` turns."""
         from coscc.agent import submit
 
         self.assertEqual(set(policy.SUBMITTING_SESSIONS), set(submit.SESSIONS))
@@ -148,11 +148,9 @@ class OneGrantPerStage(unittest.TestCase):
         }
         # `integrate` since `0035`: not a stage, and pinned in `GeboPushesOnlyWithTheLease`.
         # `spike` since `0039`: pinned in `SpikeWritesOnlyItsScratch`.
-        # `precedent` since `0044`: pinned in `TheJeraGrantOpensNothing`.
-        # `knowledge` since `0090`: pinned in `TheGatheringGrantOpensNothing`.
         self.assertEqual(
             set(policy.GRANTS),
-            set(expected) | {"spec", "integrate", "spike", "estimate", "precedent", "knowledge"},
+            set(expected) | {"spec", "integrate", "spike", "estimate"},
         )
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
@@ -372,37 +370,6 @@ class TheEstimateGrantOpensNothing(unittest.TestCase):
         self.assertEqual((g.max_turns, g.max_budget_usd), (policy.SUBMIT_TURNS, 2.0))
         self.assertIn("paid session", g.warning)
         self.assertIn("password", g.warning)
-
-
-class TheJeraGrantOpensNothing(unittest.TestCase):
-    """`0044` R13: Jera starts from the locked position — no tool, no command, $1.00. One turn
-    until `0136` R8 handed it `submit` and `SUBMIT_TURNS`."""
-
-    def test_the_grant(self):
-        g = grant_for("precedent")
-        self.assertEqual((g.tools, g.commands), ((), ()))
-        self.assertEqual(policy.beyond_reading(g), ())
-        self.assertFalse(g.opens_anything)
-        self.assertEqual((g.max_turns, g.max_budget_usd), (policy.SUBMIT_TURNS, 1.0))
-        self.assertIn("paid session", g.warning)
-        self.assertIn("password", g.warning)
-
-
-class TheGatheringGrantOpensNothing(unittest.TestCase):
-    """`0090` plan step 5: one batch of `coscc knowledge gather` — no tool, no command, one
-    turn, $2.00. The session runs in the store's directory (`coscc/knowledge/gather.py`); a tool here
-    would let it read whatever is there (plan Risk 5)."""
-
-    def test_the_grant(self):
-        g = grant_for("knowledge")
-        self.assertEqual((g.tools, g.commands), ((), ()))
-        self.assertEqual(policy.beyond_reading(g), ())
-        self.assertFalse(g.opens_anything)
-        self.assertEqual((g.max_turns, g.max_budget_usd), (1, 2.0))
-
-    def test_it_is_a_terminal_grant(self):
-        self.assertEqual(policy.TERMINAL_ONLY, {"knowledge"})
-        self.assertTrue(policy.TERMINAL_ONLY <= set(policy.GRANTS))
 
 
 if __name__ == "__main__":

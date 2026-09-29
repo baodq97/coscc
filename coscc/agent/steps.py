@@ -33,13 +33,13 @@ class Finishing(ValueError):
 
 @dataclass(eq=False)  # identity, not value: `Service._release` removes this one and no other
 class Mark:
-    """What holds a unit in `Service._active`: a step, an integration, a hold, Jera or a
-    review round being allowed.
+    """What holds a unit in `Service._active`: a step, an integration, a hold or a review round
+    being allowed.
 
     `phase` is a step's only: `preparing` until the registry lists it, `running` after.
     """
 
-    kind: str  # "step" | "integrate" | "hold" | "precedent" | "more-rounds"
+    kind: str  # "step" | "integrate" | "hold" | "more-rounds"
     stage: str = ""
     phase: str = ""
     started_at: str = field(default_factory=now)
@@ -50,8 +50,6 @@ def describe(unit: str, mark: Mark) -> str:
     t = mark.started_at
     if mark.kind == "integrate":
         return f"{unit} is busy: it is being integrated since {t}; wait for the integration to end"
-    if mark.kind == "precedent":
-        return f"{unit} is busy: Jera is answering its questions since {t}; wait for it to end"
     if mark.kind == "hold":
         return f"{unit} is busy: a hold is being recorded since {t}; try again in a moment"
     if mark.kind == "more-rounds":

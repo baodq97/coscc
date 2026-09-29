@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from coscc.agent import agents, harness, submit
-from coscc.knowledge import STAGES as KNOWLEDGE_STAGES
 from coscc.agent.policy import is_prose_stage
 from coscc.runner.review import (
     INCOMPLETE_SECTIONS,
@@ -237,34 +236,6 @@ def _impl_answers_block(directory: Path, meta: dict[str, Any] | None = None) -> 
     )
 
 
-# # The header `Service.precedent` writes (`Answered by: Jera. … Via: precedent.`).
-_JERA_META = re.compile(r"^Answered by:\s*Jera\.", re.IGNORECASE)
-_BLOCK_HEAD = re.compile(r"^###\s+(.+?)\s*$")
-
-JERA_ADVICE = (
-    "Those blocks were written by Jera, an agent that infers an answer from precedent — "
-    "decisions already recorded in this project — not by the person who started this work. "
-    "Cite each as Jera's inference, never as that person's decision. A later block for the "
-    "same question from a person replaces it."
-)
-
-# # The same words after every section of the store, so a test can look for one fixed string.
-KNOWLEDGE_ADVICE = (
-    "Each entry above is what an earlier unit measured, with its source and the date it was "
-    "measured: a measurement, not a guarantee. When you rely on one, cite it as "
-    "`knowledge K<n>` instead of measuring it again. When the work in front of you "
-    "contradicts an entry, say so under `## Concerns`, or in the spike's verdict, rather "
-    "than quietly picking one side."
-)
-# # The same for `impl`, which writes no `## Concerns`: a contradiction goes into its final reply.
-KNOWLEDGE_ADVICE_IMPL = (
-    "Each entry above is what an earlier unit measured, with its source and the date it was "
-    "measured: a measurement, not a guarantee. When you rely on one, cite it as "
-    "`knowledge K<n>` instead of measuring it again. When the code in front of you "
-    "contradicts an entry, say so in your final reply rather than quietly picking one side; "
-    "do not write a `## Concerns` section."
-)
-
 # # Two headings, and the same words after each, for `impl` only. The commands advice is prose
 # # about `policy.check_command`, and `runner_test.TheCommandsAStepMayRun` asks that function
 # # each thing it says is refused.
@@ -321,38 +292,6 @@ def harness_advice(directory: Path, state_file: str | Path | None = None) -> str
             "this step began. Without it they exit 2; no other command takes it."
         )
     return said
-
-
-def _jera_answers(directory: Path, names: list[str], meta: dict[str, Any] | None = None) -> str:
-    """`# Answers an agent gave`, listing every `<artifact> ### Câu N` block Jera wrote in
-    `names`; `""` when there is none. Read off `meta`'s rows, or the file's blocks when there is
-    no `meta`.
-    """
-    found: list[str] = []
-    for name in names:
-        if meta is not None:
-            found += [
-                f"- {name} ### Câu {a.get('n')}" for a in meta.get("answers") or []
-                if a.get("artifact") == name and _JERA_META.match(f"Answered by: {a.get('by')}.")
-            ]
-            continue
-        try:
-            section = answers_section((directory / name).read_bytes())
-        except OSError:
-            continue
-        if section is None:
-            continue
-        head = ""
-        for line in section.decode("utf-8", errors="replace").splitlines():
-            m = _BLOCK_HEAD.match(line)
-            if m:
-                head = m.group(1)
-            elif head and _JERA_META.match(line.strip()):
-                found.append(f"- {name} ### {head}")
-                head = ""
-    if not found:
-        return ""
-    return "# Answers an agent gave\n\n" + "\n".join(found) + "\n\n" + JERA_ADVICE
 
 
 # # The stages whose prompt names the unit's artifacts by path instead of carrying them, and
@@ -431,7 +370,6 @@ def compose_prompt(
     worktree: str = "",
     pr_note: str = "",
     ceilings: tuple[int, float] | None = None,
-    knowledge: str = "",
     rerun: bool = False,
     rerun_note: str = "",
     plan_map: str = "",
@@ -598,15 +536,6 @@ def compose_prompt(
             "writes `spike.md` from this file."
         )
 
-    # The slice of the store `service.run_step` read for this workspace, already capped
-    # (`knowledge.slice_for`); this only places it. `""` (flag off, `off` arm, or nothing
-    # applies) adds not one byte. `impl` is told otherwise.
-    impl = stage in ("impl", "implement")
-    if knowledge and (stage in KNOWLEDGE_STAGES or impl):
-        included.append("knowledge")
-        advice = KNOWLEDGE_ADVICE_IMPL if impl else KNOWLEDGE_ADVICE
-        parts.append(f"# What earlier units measured\n\n{knowledge}\n\n{advice}")
-
     # The files the plan changes as they stand, already capped (`planmap.select`), and the first
     # words the grant allows, taken from it; this only places them.
     if plan_map and stage in ("impl", "implement"):
@@ -623,18 +552,15 @@ def compose_prompt(
     # A prose stage re-run against an artifact that already carries `## Answers` must see a
     # person's decision, or it may ask the same question again. `review` gets the same block
     # after *The rounds so far* below, so `stage != "review"` keeps it from landing here too.
-    own_answers = False
     if is_prose_stage(stage) and not writes_own and stage != "review":
         block = _answers_block(directory, artifact, repeat_content=stage != "intent", meta=unit_meta)
         if block:
-            own_answers = True
             parts.append(block)
     # A draft `impl.md` that asked a person carries the answers; the step that runs next is told
     # them, and that the section is not its to touch.
     if stage in ("impl", "implement"):
         block = _impl_answers_block(directory, unit_meta)
         if block:
-            own_answers = True
             parts.append(block)
 
     # A review that asked for changes sends the unit back to `impl`, and the point of going back
@@ -740,7 +666,6 @@ def compose_prompt(
     if stage == "review" and is_prose_stage(stage) and not writes_own:
         block = _answers_block(directory, artifact, repeat_content=True, meta=unit_meta)
         if block:
-            own_answers = True
             parts.append(block)
 
     # `write-review` needs the commit it reviewed, and the `ship` gate reads that line. A step
@@ -809,12 +734,6 @@ def compose_prompt(
             lines.append(f"- {directory.resolve() / name}" + (" (above)" if above else ""))
         if pointed:
             parts.append("# The unit's files\n\n" + "\n".join(lines) + "\n\n" + UNIT_FILES_ADVICE)
-
-    # Only when one of the files this prompt carries or names holds a block Jera wrote.
-    seen = [n for n in included if n.endswith(".md")] + pointed + ([artifact] if own_answers else [])
-    jera = _jera_answers(directory, list(dict.fromkeys(seen)), unit_meta)
-    if jera:
-        parts.append(jera)
 
     # Just before the task, so the note is the last thing read before it.
     if rerun:

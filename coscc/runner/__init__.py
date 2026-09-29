@@ -21,7 +21,7 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from coscc.agent import agents, instructions, steps, transcript
+from coscc.agent import agents, instructions, modeltrial, steps, transcript
 from coscc.github.integrate import check_started_by
 from coscc.agent import sessions as sessions_mod
 from coscc.runlog.journal import Journal
@@ -30,8 +30,6 @@ from coscc.agent.policy import AGENT_TOOL, SUBAGENTS, Grant, beyond_reading, gra
 from coscc.units import guards
 from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
-from coscc.knowledge import TRIAL_FIELD as KNOWLEDGE_TRIAL_FIELD
-from coscc.knowledge import modeltrial
 
 # # These live in modules of their own and are imported back so `coscc.runner.<name>` still
 # # resolves; a patch reaches only the module that looks it up.
@@ -44,15 +42,10 @@ from coscc.runner.prompt import (
     _open_questions,
     _ANSWERS_ADVICE,
     _answers_block,
-    _JERA_META,
-    _BLOCK_HEAD,
-    JERA_ADVICE,
-    KNOWLEDGE_ADVICE,
     PLAN_MAP_HEADING,
     PLAN_MAP_ADVICE,
     COMMANDS_HEADING,
     COMMANDS_ADVICE,
-    _jera_answers,
     _EMBED,
     _POINTING,
     UNIT_FILES_ADVICE,
@@ -381,10 +374,7 @@ class Runner:
         pr_before: str | None = None,
         running: steps.Running | None = None,
         started_by: str = "person",
-        knowledge: str = "",
-        knowledge_record: dict[str, Any] | None = None,
         trial_record: dict[str, Any] | None = None,
-        knowledge_trial: dict[str, Any] | None = None,
         rerun: bool = False,
         rerun_note: str = "",
         plan_map: str = "",
@@ -412,8 +402,8 @@ class Runner:
         and the journal's subject; unset, the two are the same.
 
         `model`, `model_source`, `effort`, the label fields, `impl_run`, `base`, `plan_drift`,
-        `shortlist`, `started_by` (`person` or `autopilot`, else `ValueError`), `knowledge*`,
-        `trial_record`, `knowledge_trial`, `plan_map*`, `rerun*`, `agent`
+        `shortlist`, `started_by` (`person` or `autopilot`, else `ValueError`),
+        `trial_record`, `plan_map*`, `rerun*`, `agent`
         (the stage's resolved agent-table row; a preset session gets its commit attribution as
         `settings`) and `meta` (the unit's snapshot entry) are carried into the prompt or the
         `start` record and nowhere else; this module reads no git and decides no meaning.
@@ -486,7 +476,6 @@ class Runner:
                 worktree=watch or "",
                 pr_note=pr_note,
                 ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
-                knowledge=knowledge,
                 rerun=rerun,
                 rerun_note=rerun_note,
                 plan_map=plan_map,
@@ -566,10 +555,6 @@ class Runner:
                 instructions=instructions.read(cwd).record(),
                 **({"plan_drift": plan_drift} if plan_drift is not None else {}),
                 **({"shortlist": shortlist} if shortlist is not None else {}),
-                # Beside `model`, and only when the flag was on for this stage.
-                **({"knowledge": knowledge_record} if knowledge_record is not None else {}),
-                # Every stage, only with `COS_KNOWLEDGE` on.
-                **({KNOWLEDGE_TRIAL_FIELD: knowledge_trial} if knowledge_trial is not None else {}),
                 # Every routine `impl`'s `model_trial`, and `ci_red`.
                 **(trial_record or {}),
                 # Every `impl` start, `bytes: 0` when the plan names no file.

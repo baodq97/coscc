@@ -212,7 +212,7 @@ async def read(
             "type": str(u.get("type") or ""),
             # Which items under `## Open questions` a person has answered, and how many are still open; copied, never recounted.
             "questions": _questions_of(u),
-            # Every answer in force, off `artifacts[*].questions[].answer`, the store Jera reads its precedent from.
+            # Every answer in force, off `artifacts[*].questions[].answer`.
             "answers": _answers_of(u),
             "open": int(u.get("open") or 0),
             "counted": u.get("counted") or "",

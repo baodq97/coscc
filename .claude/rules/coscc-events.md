@@ -15,7 +15,7 @@ paths:
   recorder when `cos.db` is busy; the card reads "running" and *Stop* is refused meanwhile.
 - A second copy of the app on the same data root writes into the same tables; this copy reads
   its steps as `ended-unknown` while they run.
-- The watch pane holds at most `WATCH_WINDOW` (`coscc/state/views.py:940`) events, since every
+- The watch pane holds at most `WATCH_WINDOW` (`coscc/state/views.py:928`) events, since every
   frame resends the list. Each open pane keeps a follower until the step ends, the pane closes,
   or it falls `SUB_LIMIT` (`coscc/runlog/events.py:54`) behind; a closed tab is not noticed.
   The list is drawn by position, so prepending rewrites rows in place.

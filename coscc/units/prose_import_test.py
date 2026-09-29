@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 
 from coscc.units import prose_import
-from coscc.units.eight_places_test import _Review
+from coscc.units.seven_places_test import _Review
 
 PROSE = """# Review: a problem
 PR: pr.md. Author: t. Status: accepted.

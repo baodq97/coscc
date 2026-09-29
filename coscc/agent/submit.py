@@ -34,7 +34,7 @@ AGAIN = "Correct the object and call submit again."
 JUDGEMENTS = {"ready": "accepted", "not-ready": "draft"}
 
 # The stages whose run hands back a stage result. `review` hands back a round and the
-# integrate, precedent and estimate sessions their own objects. A set, as `policy.SUBMITTING` is.
+# integrate and estimate sessions their own objects. A set, as `policy.SUBMITTING` is.
 STAGE_RESULT = ("idea", "impl", "intent", "plan", "spec", "spike")
 ROUND = "review"
 
@@ -88,8 +88,8 @@ def stage_result_schema(stage: str) -> dict[str, Any]:
 # review made of impl's claim or of a person's answer.
 FINDING_STATES = ("open", "fixed", "needs-person", "claim-rejected", "answered")
 
-# The other kinds of object. Jera's and the estimate's fields are checked by
-# `precedent.verdicts` and `backlog.parse_proposal`: the schema holds types, the app its rules.
+# The other kinds of object. The estimate's fields are checked by `backlog.parse_proposal`:
+# the schema holds types, the app its rules.
 SCHEMAS: dict[str, dict[str, Any]] = {
     "review-round": {
         "type": "object",
@@ -156,30 +156,6 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["needs_person"],
         "additionalProperties": False,
     },
-    "precedent-verdicts": {
-        "type": "object",
-        "properties": {
-            "verdicts": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "artifact": {"type": "string"},
-                        "n": {"type": "integer", "minimum": 1},
-                        "verdict": {"type": "string", "enum": ["answer", "needs-person"]},
-                        "category": {"type": "string"},
-                        "text": {"type": "string"},
-                        "reason": {"type": "string"},
-                        "cites": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "required": ["artifact", "n", "verdict", "category", "text", "reason", "cites"],
-                    "additionalProperties": False,
-                },
-            }
-        },
-        "required": ["verdicts"],
-        "additionalProperties": False,
-    },
     "estimate": {
         "type": "object",
         "properties": {
@@ -225,7 +201,6 @@ SESSIONS: dict[str, tuple[str, str]] = {
         "integrate-result",
         "Hand the app the commits only a person can settle, each with why; `[]` when there is none.",
     ),
-    "precedent": ("precedent-verdicts", "Hand the app your verdict on every question you were asked."),
 }
 
 
@@ -408,7 +383,7 @@ class Channel:
 
 
 class Collector:
-    """The `submit` of a session that is no stage: Gebo, Jera, an estimate.
+    """The `submit` of a session that is no stage: Gebo, an estimate.
 
     No artifact to hash and no unit run to match: it checks the schema alone (the SDK does
     that) and keeps the last object handed in. What of it is written is the caller's to decide.

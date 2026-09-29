@@ -106,45 +106,9 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
             # A finding a person is awaited on reads as one, by its `F<n>`.
             s.text(rx.cond(q.number == 0, "finding ", "question ") + q.label, size="1"),
             rx.spacer(),
-            # Whose answer is in force, or that Jera left it to a person.
-            rx.cond(q.by_jera, s.badge("Answered by Jera", "iris")),
-            # Whose decision the answer in force is, as the app recorded it.
-            rx.cond(q.authority != "", s.badge(q.authority, "gray")),
-            rx.cond(q.needs_person, s.badge("Needs a person", "red")),
             width="100%", align="center",
         ),
         rx.box(rx.markdown(q.text), width="100%", margin_top="8px"),
-        rx.cond(
-            q.by_jera,
-            rx.vstack(
-                s.text("Jera's answer", size="1", weight="medium"),
-                rx.box(rx.markdown(q.said), width="100%", data_testid="jera-said"),
-                rx.flex(
-                    s.text("Precedent", size="1", weight="medium"),
-                    rx.foreach(q.cites, lambda c: s.badge(c, "gray")),
-                    gap="6px", wrap="wrap", align="center", width="100%",
-                ),
-                spacing="1", width="100%", margin_top="8px", align="start",
-            ),
-        ),
-        rx.cond(
-            q.needs_person,
-            rx.vstack(
-                s.text("Jera's proposal", size="1", weight="medium"),
-                rx.box(rx.markdown(q.proposal), width="100%"),
-                s.text(q.reason, size="1", color=rx.color("red", 11)),
-                # Fills the box below and sends nothing; hidden where no answer may be given, or there is nothing to use.
-                rx.cond(
-                    (q.proposal != "") & ~P.unit_dropped & P.current_unit.answerable,
-                    rx.button(
-                        rx.icon("clipboard-paste", size=14), "Use this proposal",
-                        on_click=P.use_proposal(q.key, q.proposal), size="1", variant="soft",
-                        id="use-proposal-" + q.key,
-                    ),
-                ),
-                spacing="1", width="100%", margin_top="8px", align="start",
-            ),
-        ),
         # A dropped unit is read, not answered, nor a finished or closed one: the service's `answerable` says which.
         rx.cond(~P.current_unit.answerable, s.badge("Not answered", "gray")),
         rx.cond(
@@ -174,19 +138,6 @@ def _questions_tab() -> rx.Component:
                        "The app keeps your answer, and the next step reads it.",
                        "This unit is finished; its questions are shown to read."),
                size="1"),
-        # Hidden, not greyed, when there is nothing Jera may answer.
-        rx.cond(
-            P.jera_can_ask & ~P.unit_dropped,
-            rx.hstack(
-                rx.button(
-                    rx.icon("scroll-text", size=14), "Ask Jera",
-                    on_click=P.ask_jera, loading=P.asking_jera, disabled=P.asking_jera,
-                    size="1", id="ask-jera",
-                ),
-                s.text(CONSEQUENCE["precedent"], size="1", id="ask-jera-consequence"),
-                spacing="2", align="center", wrap="wrap", width="100%",
-            ),
-        ),
         rx.foreach(P.open_questions_here, _question_row),
         rx.cond(P.open_questions_here.length() == 0,
                 s.text("No question in this unit is waiting for an answer.")),

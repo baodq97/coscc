@@ -148,7 +148,6 @@ CONSEQUENCE = {
     "ship": "Merges the pull request with this machine's gh login, and spends quota.",
     "integrate": "Rebases this pull request with this machine's gh login; a conflict opens a paid session.",
     "estimate": "Opens one paid session that proposes estimates.",
-    "precedent": "Opens one paid session; its answers reach later stages as decided.",
     "drop": "Closes this unit's open pull request with this machine's gh login.",
     # The whole warning is `release.WARNING`, in `/api/board`.
     "release": "Commits, pushes, merges and tags on main with this machine's gh login.",

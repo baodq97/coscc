@@ -129,15 +129,6 @@ def _answer_and_stop(args: list[str]) -> None:
     if args in (["--version"], ["-V"]):
         print(f"coscc {installed_version()}")
         return
-    if args[0] == "knowledge":
-        # Shell-only, like `reset-password`.
-        from coscc.knowledge import cli as knowledge_cli
-
-        raise SystemExit(knowledge_cli.main(args[1:]))
-    if args[0] == "effort":
-        from coscc.knowledge import effort_measure
-
-        raise SystemExit(effort_measure.main(args[1:]))
     if args == ["reset-password"]:
         from coscc.config import from_env
         from coscc.data import Data
@@ -152,8 +143,7 @@ def _answer_and_stop(args: list[str]) -> None:
         raise SystemExit(_skip(args[1:]))
     print(
         f"coscc: unrecognised argument {args[0]!r}\n"
-        "usage: coscc [--version | reset-password | state <workspace> | skip <workspace> <unit> spec [--delegated] <reason> "
-        "| knowledge ... | effort measure ...]\n"
+        "usage: coscc [--version | reset-password | state <workspace> | skip <workspace> <unit> spec [--delegated] <reason>]\n"
         "everything else is configuration, and it is read from the environment "
         "(COS_HOST, COS_PORT, COS_WORKING_DIR, ...) -- see docs/install.md",
         file=sys.stderr,

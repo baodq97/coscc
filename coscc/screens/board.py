@@ -366,7 +366,7 @@ def _guide_list(title: str, items, empty: str, testid: str) -> rx.Component:
 
 
 def _guide_panel() -> rx.Component:
-    """What runs, what needs you and what Jera decided, under the day's cap line. Off, one sentence and the way to Settings."""
+    """What runs and what needs you, under the day's cap line. Off, one sentence and the way to Settings."""
     return rx.cond(
         P.autopilot_on,
         rx.vstack(
@@ -383,14 +383,12 @@ def _guide_panel() -> rx.Component:
                 rx.el.summary(s.text(
                     P.guide_running.length().to_string() + " running · "
                     + P.guide_needs_you.length().to_string()
-                    + rx.cond(P.guide_needs_you.length() == 1, " needs you · ", " need you · ")
-                    + P.guide_decided.length().to_string() + " decided for you",
+                    + rx.cond(P.guide_needs_you.length() == 1, " needs you", " need you"),
                     size="1", as_="span"), cursor="pointer"),
                 rx.grid(
                     _guide_list("RUNNING", P.guide_running, "Nothing is running.", "guide-running"),
                     _guide_list("NEEDS YOU", P.guide_needs_you, "Nothing waits for you.", "guide-needs-you"),
-                    _guide_list("DECIDED FOR YOU", P.guide_decided, "Jera decided nothing in the last seven days.", "guide-decided"),
-                    columns=rx.breakpoints(initial="1", md="3"), gap="16px", width="100%", margin_top="8px",
+                    columns=rx.breakpoints(initial="1", md="2"), gap="16px", width="100%", margin_top="8px",
                 ),
                 id="guide-lists", width="100%",
             ),

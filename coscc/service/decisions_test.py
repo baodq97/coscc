@@ -1,13 +1,12 @@
-"""`0137` R4-R6, R11, R12: the person's decisions, the names in answers, and the measure.
+"""The person's decisions and delegations.
 
 Every write here goes through `Service`, as the Settings screen's handlers do; no route
-reaches it (`test_no_route_writes_decisions_or_names`).
+reaches it (`test_no_route_writes_decisions`).
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import tempfile
 import unittest
 from datetime import date, timedelta
@@ -19,23 +18,12 @@ from coscc.data import Data
 from coscc.service import Service
 from coscc.service.common import Invalid
 from coscc.agent.sessions import Sessions
-from coscc.service.service_test import create_sync
 
 REPO = Path(__file__).resolve().parents[2]
 
-INTENT = (
-    "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n## Open questions\n\n"
-    "1. A?\n2. B?\n3. C?\n4. D?\n5. E?\n\n## Answers\n"
-)
-SPEC = "# Spec: q\nIntent: intent.md. Author: t. Status: accepted.\n\n## Open questions\n\n1. A?\n2. B?\n\n## Answers\n"
-
-
-def block(n: int, by: str, text: str = "Có.") -> str:
-    return f"\n### Câu {n}\nAnswered by: {by}. Date: 2026-09-01. Via: product.\n\n{text}\n"
-
 
 class Fixture(unittest.TestCase):
-    """One workspace, `proj`, whose unit's answers carry every kind of name."""
+    """One workspace, `proj`, and a service on a scratch data directory."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -46,23 +34,9 @@ class Fixture(unittest.TestCase):
         Path(self.cwd).mkdir(parents=True)
         self.config = Config(workspaces=(self.cwd,), working_dir=str(self.work), data_dir=str(self.data))
         self.service = Service(self.config, Sessions(self.config))
-        made = create_sync(self.service, self.cwd, "answered", "x")
-        self.unit, self.dir = made["unit"], Path(made["path"])
-        (self.dir / "intent.md").write_text(
-            INTENT + block(1, "owner") + block(2, "Phong") + block(3, "Leif (CoS), thay người khởi xướng")
-            + block(4, "Kenaz (agent, spec)") + block(5, "Minh"), encoding="utf-8")
-        (self.dir / "spec.md").write_text(SPEC + block(1, "phong") + block(2, "Jera"), encoding="utf-8")
-        self.asked = create_sync(self.service, self.cwd, "asked", "x")["unit"]
-
-    def store(self) -> dict[str, str]:
-        units = asyncio.run(self.service.board(self.cwd))["units"]
-        found = next(u for u in units if u["name"] == self.asked)
-        _, store, _ = self.service._precedent_prompt(units, found, self.asked, cwd=self.cwd)
-        return {e["id"]: e["who"] for e in store}
 
 
 class TheDecisionsPanel(Fixture):
-    """R4, R5."""
 
     GOOD = {"kind": "decision", "text": "Luôn rẻ.", "source": "chat 2026-09-28"}
 
@@ -110,62 +84,19 @@ class TheDecisionsPanel(Fixture):
         self.assertEqual(len(Data(self.data).decisions()), 2)
 
 
-class TheNamesPanel(Fixture):
-    """R6, R2."""
-
-    def names(self) -> list[tuple[str, int, bool]]:
-        return [(r["name"], r["count"], r["mine"]) for r in asyncio.run(self.service.answer_names())["rows"]]
-
-    def test_names_in_answers_lists_every_non_owner_non_agent_name_with_its_count(self):
-        self.assertEqual(self.names(), [("Phong", 2, False), ("Minh", 1, False)])
-
-    def test_marking_a_name_mine_makes_its_answers_originator_in_the_store(self):
-        before = self.store()
-        self.assertEqual((before[f"{self.unit}/intent.md#Câu 2"], before[f"{self.unit}/spec.md#Câu 1"]),
-                         ("inferred", "inferred"))
-        self.service.set_name_mine("PHONG", True)
-        after = self.store()
-        self.assertEqual((after[f"{self.unit}/intent.md#Câu 2"], after[f"{self.unit}/spec.md#Câu 1"]),
-                         ("originator", "originator"))
-        self.assertEqual(after[f"{self.unit}/intent.md#Câu 5"], "inferred")
-        self.assertEqual(self.names(), [("Phong", 2, True), ("Minh", 1, False)])
-        self.service.set_name_mine("Phong", False)
-        self.assertEqual(self.store()[f"{self.unit}/intent.md#Câu 2"], "inferred")
-
-    def test_an_agent_name_cannot_be_marked_mine(self):
-        for name in ("Leif (CoS)", "kenaz", "Jera", "owner", "", "a\nb"):
-            with self.assertRaises(Invalid, msg=name):
-                self.service.set_name_mine(name, True)
-        self.assertIsNone(Data(self.data).pref("answer_names_mine"))
-        self.assertNotIn("answer_names_mine", self.service.PREFERENCES)
-        with self.assertRaises(Invalid):
-            self.service.set_preference("answer_names_mine", "Leif")
-
-    def test_building_the_store_and_reading_names_leave_every_md_byte_for_byte(self):
-        """R11."""
-        def hashes() -> dict[str, str]:
-            return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(self.data.rglob("*.md"))}
-
-        before = hashes()
-        self.assertTrue(before)
-        self.store()
-        asyncio.run(self.service.answer_names())
-        self.assertEqual(hashes(), before)
-
-
 class NoRouteReachesThem(unittest.TestCase):
-    """R4, R6: only the Settings screen's handlers call the three writers."""
+    """Only the Settings screen's handlers call the two writers."""
 
-    WRITERS = ("add_decision", "withdraw_decision", "set_name_mine")
+    WRITERS = ("add_decision", "withdraw_decision")
 
-    def test_no_route_writes_decisions_or_names(self):
+    def test_no_route_writes_decisions(self):
         import httpx
 
         from coscc.web.api import build
 
         called: list[str] = []
         # Every public method of `Service` is a stub for this test, so a route posted an
-        # empty body starts nothing; the three writers count their calls.
+        # empty body starts nothing; the two writers count their calls.
         stubs = {}
         for name in dir(Service):
             if name.startswith("_") or not callable(getattr(Service, name)) or isinstance(getattr(Service, name), type):

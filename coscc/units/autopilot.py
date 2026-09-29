@@ -13,7 +13,6 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from coscc.agent import labels
-from coscc.agent import precedent
 from coscc.runlog import spend
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, grant_for, grant_for_step, is_prose_stage
 
@@ -28,10 +27,9 @@ OPEN_FOR = timedelta(hours=24)
 # The stages that write code, and so may not run beside another whose files overlap.
 CODE_STAGES = ("impl", "implement", "integrate")
 
-# Jera writes `start` and `end` on the unit it answers for, under a stage that is none of the
-# loop's; none of its lines is the unit's last step, a start, or a failed step.
+# Run-log lines under a stage that is none of the loop's (an earlier version wrote its answering
+# session here); none of them is the unit's last step, a start, or a failed step.
 NOT_STEPS = ("precedent",)
-JERA = "precedent"
 
 # The stop kinds `a`-`f`, plus an empty shortlist, a draft run again as often as it may, and
 # one waiting for a free place.
@@ -108,61 +106,8 @@ def open_questions(unit_row: dict[str, Any]) -> list[dict[str, Any]]:
     return [q for q in unit_row.get("questions") or [] if q.get("counted") and not q.get("answered")]
 
 
-def _n(value: Any) -> Any:
-    """A question's number as the board has it: an int where it reads as one."""
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        return value
-
-
-def unasked(
-    unit_row: dict[str, Any], records: Iterable[dict[str, Any]], workspace: str,
-) -> list[dict[str, Any]]:
-    """The open questions of the stop `a` Jera has not been asked, `[{artifact, n}]`.
-
-    Only those `open_questions` counts that Jera may be given (never `review.md`). A question
-    was asked when, after the latest `end` of the stage that writes its artifact, the run log
-    holds a `precedent` row for it, or a `start` of Jera whose `asked` names it; the latter
-    covers a session that failed, was cancelled or ran out, which writes no `precedent` row.
-    """
-    name = str(unit_row.get("name") or "")
-    may = {(q["artifact"], q["n"]) for q in precedent.asked(unit_row)}
-    open_ = [
-        (str(q.get("artifact") or ""), _n(q.get("n"))) for q in open_questions(unit_row)
-        if (str(q.get("artifact") or ""), _n(q.get("n"))) in may
-    ]
-    writes = {str(s.get("file") or ""): str(s.get("stage") or "") for s in unit_row.get("stages") or []}
-    asked: set[tuple[str, Any]] = set()
-    for r in records:
-        if r.get("workspace") != workspace or r.get("unit") != name:
-            continue
-        kind = r.get("kind")
-        if kind == "end" and is_step(r):
-            stage = str(r.get("stage") or "")
-            asked = {(a, n) for (a, n) in asked if writes.get(a) != stage}
-        elif kind == "precedent":
-            asked.add((str(r.get("artifact") or ""), _n(r.get("n"))))
-        elif kind == "start" and r.get("stage") == JERA:
-            for item in r.get("asked") or []:
-                if isinstance(item, (list, tuple)) and len(item) == 2:
-                    asked.add((str(item[0]), _n(item[1])))
-    return [{"artifact": a, "n": n} for (a, n) in open_ if (a, n) not in asked]
-
-
 def _listed(questions: Iterable[dict[str, Any]]) -> str:
     return ", ".join(f"{q.get('artifact')} question {q.get('n')}" for q in questions)
-
-
-def waiting_for_you(open_: list[dict[str, Any]]) -> dict[str, str]:
-    """The stop `a` once Jera has been asked every open question it may be. `open_` is every
-    open question, `review.md`'s included, which Jera is never asked."""
-    count = "1 question waits" if len(open_) == 1 else f"{len(open_)} questions wait"
-    return _stop("a", f"{count} for you: {_listed(open_)}")
-
-
-# The stop `a` when the prompt would cost more than one session may.
-STORE_PAST_CEILING = "The precedent store is past what one Jera session may cost, so its questions wait for you."
 
 
 def skips_exhausted(nxt: dict[str, Any], last: dict[str, Any] | None, recorded: bool) -> bool:
@@ -356,10 +301,7 @@ def spent_today(records: Iterable[dict[str, Any]], now: datetime) -> dict[str, A
 
 def reservation(stage: str) -> float:
     """What a step of `stage` is counted at before it ends: the largest `max_budget_usd` any
-    label can give it (`coscc/agent/policy.py` `grant_for_step`). Jera's is the most any of its
-    sessions may cost."""
-    if stage == JERA:
-        return precedent.PRECEDENT_MAX_USD
+    label can give it (`coscc/agent/policy.py` `grant_for_step`)."""
     if stage == "integrate":
         return float(grant_for("integrate").max_budget_usd or 0.0)
     return float(max(
@@ -415,22 +357,13 @@ def reserved(
     records: Iterable[dict[str, Any]], now: datetime, active: Iterable[tuple[str, str, str]] = (),
 ) -> float:
     """What the steps running now are counted at: every open `start`, and every step this
-    process holds (`(workspace, unit, stage)`) that has not written its `start` yet. An open
-    `start` of Jera counts at the ceiling it recorded."""
+    process holds (`(workspace, unit, stage)`) that has not written its `start` yet."""
     opened = open_starts(records, now)
-    total = sum(_held_at(r) for r in opened.values())
+    total = sum(reservation(str(r.get("stage") or "")) for r in opened.values())
     for workspace, unit, stage in active:
         if (workspace, unit) not in opened:
             total += reservation(stage)
     return total
-
-
-def _held_at(start: dict[str, Any]) -> float:
-    stage = str(start.get("stage") or "")
-    ceiling = start.get("max_budget_usd")
-    if stage == JERA and isinstance(ceiling, (int, float)) and not isinstance(ceiling, bool):
-        return float(ceiling)
-    return reservation(stage)
 
 
 def cap_allows(spent: float, running: float, need: float, limit: float) -> bool:
@@ -685,25 +618,20 @@ def measure(
 
     A person's start is at a stop when the last `autopilot-stop` record of the unit before it
     names one, or when the unit's last `end` before it was not `done`. A mechanical
-    integration writes no `start`; its `integration` record counts instead. Each unit also
-    carries what `_jera_of` counts, read before Jera's lines are left out.
+    integration writes no `start`; its `integration` record counts instead.
     """
     window = [
         r for r in records
         if r.get("workspace") == workspace and since <= spend.local_day(r.get("at")) <= until
     ]
     rows = [r for r in window if is_step(r)]
-    jera = _jera_of(window)
     per_unit: dict[str, dict[str, Any]] = {}
     stopped: dict[str, str] = {}
     last_end: dict[str, str] = {}
 
     def blank(unit: str) -> dict[str, Any]:
-        return {"unit": unit, "reached": False, "autopilot": 0, "person": 0, "outside": [],
-                **(jera.get(unit) or _no_jera())}
+        return {"unit": unit, "reached": False, "autopilot": 0, "person": 0, "outside": []}
 
-    for unit in jera:
-        per_unit[unit] = blank(unit)
     for r in rows:
         unit = str(r.get("unit") or "")
         if not unit:
@@ -736,52 +664,6 @@ def measure(
     units_ = sorted(per_unit.values(), key=lambda u: (unit_number(u["unit"]), u["unit"]))
     met = [u["unit"] for u in units_ if u["reached"] and u["autopilot"] and not u["outside"]]
     return {"workspace": workspace, "since": since, "until": until, "units": units_, "met": met}
-
-
-def _no_jera() -> dict[str, Any]:
-    return {"to_person": 0, "by_jera": 0, "jera_cost_usd": 0.0, "unpicked_precedent": []}
-
-
-def _jera_of(window: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Per unit of `window`:
-
-    - `to_person`: the questions whose latest `precedent` row said `needs-person`, plus every
-      `answer` not written through Jera;
-    - `by_jera`: every `answer` written through Jera;
-    - `jera_cost_usd`: what Jera's `end`s cost, those that say;
-    - `unpicked_precedent`: each `start` of Jera with no `autopilot-pick` of Jera on the unit
-      since the one before it, `{at, started_by}` — a person's press, or a pick not recorded.
-
-    An answer written at a terminal leaves no `answer` row, so it is not counted.
-    """
-    out: dict[str, dict[str, Any]] = {}
-    verdict: dict[tuple[str, str, Any], str] = {}
-    picked: dict[str, bool] = {}
-    for r in window:
-        unit = str(r.get("unit") or "")
-        if not unit:
-            continue
-        kind, stage = r.get("kind"), r.get("stage")
-        if kind == "precedent":
-            verdict[(unit, str(r.get("artifact") or ""), _n(r.get("n")))] = str(r.get("verdict") or "")
-            out.setdefault(unit, _no_jera())
-        elif kind == "answer":
-            u = out.setdefault(unit, _no_jera())
-            u["by_jera" if r.get("via") == precedent.VIA else "to_person"] += 1
-        elif kind == "end" and stage == JERA and r.get("cost_usd") is not None:
-            u = out.setdefault(unit, _no_jera())
-            u["jera_cost_usd"] = round(u["jera_cost_usd"] + float(r["cost_usd"]), 6)
-        elif kind == "autopilot-pick" and stage == JERA:
-            picked[unit] = True
-        elif kind == "start" and stage == JERA:
-            u = out.setdefault(unit, _no_jera())
-            if not picked.get(unit):
-                u["unpicked_precedent"].append({"at": r.get("at"), "started_by": started_by(r)})
-            picked[unit] = False
-    for (unit, _, _), said in verdict.items():
-        if said == precedent.PERSON:
-            out[unit]["to_person"] += 1
-    return out
 
 
 def _autopilot_step(r: dict[str, Any]) -> str | None:

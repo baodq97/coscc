@@ -93,7 +93,6 @@ from coscc.state.views import (
     ModelRow,
     AgentRow,
     DecisionRow,  # noqa: F401 — the page imports it from here
-    NameRow,  # noqa: F401 — the page imports it from here
     ImportRow,
     GrantRow,
     _run_target,
@@ -139,9 +138,6 @@ from coscc.state.release import (
     ReleaseCommit,
     release_fields,
 )
-from coscc.state.knowledge import (
-    KnowledgeMixin,
-)
 from coscc.state.views import IdeaRow, ChildRow, link_fields  # noqa: F401 — the page imports them from here
 
 API = build()
@@ -157,7 +153,6 @@ class StudioState(
     RerunMixin,
     IdeasMixin,
     ReleaseMixin,
-    KnowledgeMixin,
     rx.State,
 ):
     """The whole page. No business state lives here — it is all read back from `Service`."""
@@ -227,11 +222,9 @@ class StudioState(
     autopilot_stops: list[AutopilotStop] = []
     autopilot_cap: str = ""
     autopilot_refused: str = ""
-    # The board's `guide` block, copied: what runs, what needs a person, and what Jera
-    # decided lately.
+    # The board's `guide` block, copied: what runs, and what needs a person.
     guide_running: list[GuideItem] = []
     guide_needs_you: list[GuideItem] = []
-    guide_decided: list[GuideItem] = []
     run_log: str = ""
     # The unit whose step this page is streaming into `run_log`, so another unit's reply
     # is never shown under the one now open.
@@ -440,18 +433,9 @@ class StudioState(
 
     @rx.var
     def open_questions_here(self) -> list[Question]:
-        """The open unit's unanswered questions, counted artifact's first, then the ones Jera
-        answered, so a person can read them and answer over them."""
-        shown = [q for q in self.current_unit.questions if not q.answered or q.by_jera]
-        return sorted(shown, key=lambda q: (q.answered, not q.counted))
-
-    @rx.var
-    def jera_can_ask(self) -> bool:
-        """An unanswered question outside `review.md`, as the page can see it.
-        `Service.precedent` still decides; this only hides a button it would refuse."""
-        return self.current_unit.answerable and any(
-            not q.answered and q.artifact != "review.md" for q in self.current_unit.questions
-        )
+        """The open unit's unanswered questions, the counted artifact's first."""
+        shown = [q for q in self.current_unit.questions if not q.answered]
+        return sorted(shown, key=lambda q: not q.counted)
 
     @rx.var
     def next_stage(self) -> str:
@@ -612,12 +596,6 @@ class StudioState(
             GuideItem(unit=str(r.get("unit") or ""), what=str(r.get("do") or ""), detail=str(r.get("reason") or ""),
                       href=link(str(r.get("screen") or ""), str(r.get("unit") or ""), str(r.get("tab") or "")))
             for r in block.get("needs_you") or []
-        ]
-        self.guide_decided = [
-            GuideItem(unit=str(r.get("unit") or ""), what=f"{r.get('artifact')} question {r.get('n')}",
-                      detail=present.when(r.get("at")),
-                      href=link("unit", str(r.get("unit") or ""), str(r.get("tab") or "")))
-            for r in block.get("decided") or []
         ]
 
     def _show_autopilot(self, data: dict) -> None:
@@ -1042,8 +1020,6 @@ class StudioState(
             prefs = SERVICE.preferences()
             self.density = str(prefs.get("density") or "comfortable")
             self.board_view = str(prefs.get("board_view") or "Board")
-            self.decision_preferences = str(prefs.get("decision_preferences") or "")
-            self.decision_rules = str(prefs.get("decision_rules") or "")
             self._load_workspaces()
         except Invalid as e:
             self._fail(e)
@@ -1175,12 +1151,8 @@ class StudioState(
         if self.screen == "cost":
             # Every arrival here reads the run log once; no other screen does.
             self._load_cost()
-        if self.screen == "knowledge":
-            # The same, for the store, `health.json` and the run log.
-            self._load_knowledge()
         if self.screen == "settings":
-            # The names panel reads every workspace's board, so only an arrival at Settings pays for it.
-            await self._load_decisions()
+            self._load_decisions()
         self._read_cwd = cwd
         self.unit_id, self.detail_tab = unit, tab
         self._set_current()
@@ -1289,29 +1261,6 @@ class StudioState(
             return
         self.board_view = value
         self._remember("board_view", value)
-
-    @rx.event
-    def edit_decision_preferences(self, value: str):
-        self.decision_preferences = value
-
-    @rx.event
-    def save_decision_preferences(self):
-        """Kept as typed; each paragraph becomes one `pref:<k>` Jera may cite."""
-        self._remember("decision_preferences", self.decision_preferences)
-        self.notice = "Decision preferences saved; Jera reads them on its next run."
-
-    @rx.event
-    def edit_decision_rules(self, value: str):
-        self.decision_rules = value
-
-    @rx.event
-    def save_decision_rules(self):
-        """Kept as typed; an empty box is the default rules again."""
-        self._remember("decision_rules", self.decision_rules)
-        self.notice = (
-            "Decision rules saved; Jera reads them on its next run." if self.decision_rules.strip()
-            else "Decision rules cleared; Jera reads the default rules on its next run."
-        )
 
     @rx.event
     def set_density(self, value: str):

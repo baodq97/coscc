@@ -133,7 +133,7 @@ stateDiagram-v2
 | Transition | Decided by | Recorded |
 |---|---|---|
 | refuse before spend: busy mark, held, `cos.mjs gate` non-zero, impl tree prep fails, review screenshot retake fails (`steps.py:764-1106`) | CODE | none / `screens` |
-| prompt assembly (skill + gate text + artifacts + answers + knowledge + review history + note) (`runner/prompt.py:409-823`) | CODE | `start` (`included`, `pointed`, model, effort, grant) |
+| prompt assembly (skill + gate text + artifacts + answers + review history + note) (`runner/prompt.py:409-823`) | CODE | `start` (`included`, `pointed`, model, effort, grant) |
 | the work itself, and the artifact's `Status:` | **AGENT** | the file |
 | prose stages: app writes the file from the reply, checks the title + header `Status:` (`reply.py:36,118-130`) | CODE on AGENT text | `end.opening` |
 | tool stages: file must exist with `Status:` anywhere (`runner/__init__.py:680-684`) | CODE on AGENT file | — |
@@ -146,13 +146,13 @@ stateDiagram-v2
 
 Settings (PERSON, `setting` rows): `autopilot`, `autopilot_may_ship`, `max_parallel`,
 `daily_cap_usd` (one cap for the app). Loop: off ↔ on; a **pass** runs every 300 s and after a
-step ends, an integration ends, or a person answers. Not after: Jera, hold, more-rounds,
+step ends, an integration ends, or a person answers. Not after: hold, more-rounds,
 shortlist change. Since `0136` R23 also after the PR reader records a transition of the PR/CI
 machine (a CI answer, a new head, `merged`, `closed`): one pass per workspace per read, and a
 `merged` one for every other workspace whose autopilot is on. Such a pass's `autopilot-pick`
 rows carry `woken_by`: `{unit, transition, id}` of each transition that scheduled it. A
 `merged` the reader records is followed by what a `ship` step leaves — the `ship` row, the
-worktree's cleanup and, with `COS_KNOWLEDGE`, the gather — since no `ship` step follows it.
+worktree's cleanup — since no `ship` step follows it.
 
 A pass, all CODE (`service/autopilot.py:159-375`):
 
@@ -192,13 +192,12 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 
 | Machine | States | Transitions / decided by | Recorded |
 |---|---|---|---|
-| **Questions & answers** | open → answered | detection CODE (`cos.mjs`); answer PERSON `POST /api/units/answer` appends `### Câu N` / `### F<n>` (`answers.py:299-544`); **Ask Jera** only on a press: one AGENT session, 1 turn, $1, JSON verdicts filtered by CODE (never review.md or `F<n>`) (`backlog.py:255-362`, `precedent.py:170-245`) | `questions`, `answer`, `precedent` |
+| **Questions & answers** | open → answered | detection CODE (`cos.mjs`); answer PERSON `POST /api/units/answer` appends `### Câu N` / `### F<n>` (`answers.py:299-544`) | `questions`, `answer` |
 | **Holds** | active, paused, dropped | PERSON `POST /api/units/hold`; dropped → CODE closes the PR and removes the worktree (`units/hold.py:99-165`) | `### Paused…` block + `hold` row |
 | **PR / CI / integrate** | unknown, conflicting, red-after-integration, behind, current (`github/integrate.py:80-111`) | read by `gh pr list` on each board read, `gh pr checks` ≤ every 60 s per head, and the 300 s pass — no dedicated poller. `behind` → CODE `gh pr update-branch`; conflicting / red / refused / diverged head → **AGENT Gebo** (120 turns, $8, leased push) (`steps.py:417-594`); Gebo's `[needs-person]` lines set the outcome (since `0136`, the object it hands back through `submit`) | `integration`, `start`/`end` |
 | **Review loop** | round n: changes-requested → impl → CI → review n+1 … pass → ship | verdict and severities AGENT; rounds counted CODE; clean-rebase re-review skip CODE (0067) | review.md, `pr-comment` |
 | **Ship** | open → merged → recorded | CODE: the PR machine runs `gh pr merge --match-head-commit` behind guard `ship-ready` (`0136`); no session, skill or grant since `0139` R12; merged outside → "record, do not merge" (0116) | ship.md, `ship` row |
 | **Update** | idle → pending → applying → handoff / fail; release channel (6 h check), local channel (build-local) | CODE checks; PERSON applies (`update/updater.py:148-757`) | `update` rows |
-| **Knowledge** | gather (AGENT batches, terminal only), baseline / measure / check (CODE) | injected into spec, spike, plan when `COS_KNOWLEDGE` is on | `knowledge` rows |
 | **Model trial** (routine `impl`, since `0139`; the effort trial of `0123` ended) | arm = SHA-256(unit): `opus-5-5` / `sonnet-5-5` | CODE; `model` from the session's `init` | `start.model_trial` |
 | **Notices** | stream of autopilot-stop, questions, end, ship | CODE, read-only (`runlog/notices.py`) | — |
 | **Artifact history** | a transition table in the DB already exists (`units/history.py`, `machine.refuse`) | fed after each step from the file's `Status:` | history table |
@@ -210,7 +209,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 | app → agent | Agent SDK `query(text)` | one prompt, sections joined by `\n\n---\n\n` (`runner/prompt.py:824`); options: model, effort, max_turns, budget, tools grant, `setting_sources=[]`, cwd = worktree | — |
 | agent → app (prose stages) | SDK stream → reply text | markdown: `# <Stem>: title`, header line with `Status:`, sections | regex (`reply.py`), then `cos.mjs` regex |
 | agent → app (tool stages) | the agent's `Write` tool | markdown file | `Status:` anywhere (weaker check) |
-| agent → app (estimate, Jera, knowledge) | reply text | a ```` ```json ```` block — extracted two different ways (`backlog.py:585-600` vs `precedent.py:144-158`); since `0136` the estimate, Jera and Gebo call `submit` instead, and only knowledge still replies with JSON | JSON + CODE validation |
+| agent → app (estimate, Gebo) | the `submit` tool call (`0136`) | an object | JSON + CODE validation |
 | app ↔ cos.mjs | subprocess | JSON on stdout (`status`, `next`, `pr-text`, `rerun`, `screens`); `gate` = prose lines on stdout/stderr, exit 0/1/2, merged into one string by the app (`board.py:352`) | JSON / substring |
 | app ↔ GitHub | `gh` subprocess | `--json` fields; PR comments with a hidden marker `<!-- coscc-review unit=U round=N -->` | JSON |
 | person ↔ app | Reflex websocket (board, in-process service), REST + NDJSON streams (`/api/board/run`, `/api/notices/follow`, `/api/board/events`) | NDJSON `{type, …}` | JSON |
@@ -225,10 +224,9 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 2. Review `Verdict`, finding states and severities decide the ship gate. *`0136`: the round object, guard `review-round`, at the head the app recorded. Left, for the next unit: a round `cos.db` holds no row for (a terminal run's, or the closing turn's `incomplete`) is still read from `review.md` (`parseReview`).*
 3. `impl.md ## Needs a person` routes the unit back to review. *`0136`: `needs_person` of impl's stage result, guard `impl-claim`. Left, for the next unit: when the last impl run handed back no result, `cos.mjs` still reads the claims from `## Needs a person`.*
 4. Gebo's `[needs-person]` lines decide the integration outcome. *`0136`: R7's order — the head moved, else `needs_person` of the object Gebo hands back through `submit`, else `failed`.*
-5. Jera's JSON becomes `### Câu N` answers later stages treat as decided. *`0136`: the object Jera hands back through `submit`, guard `run-submitted`; each answer row carries `authority: agent`.*
-6. Estimate JSON becomes backlog rows. *`0136`: the object handed back through `submit`, guard `run-submitted`; each row carries `authority: agent`.*
-7. The reviewed sha and the merge pin are copied by the model out of prompt prose. *`0136`: `ship` is the PR machine's (`coscc/github/prmachine.py`); guard `ship-ready` reads the head the review run recorded and the head its own `gh pr view` found, and the merge is pinned to that read. A head the `ship` gate reads as a clean rebase of the reviewed one (`0067`) stands in for it: `gate --json` hands the guard `rebased`, and the guard checks that it names those two commits.*
-8. The autopilot matches English substrings of `cos.mjs`'s messages (`CI is red on #`, `needs a person`, `record it in ship.md; do not merge`) (`units/autopilot.py:51-86` at `088101e`). *`0136`: `next` and `gate --json` hand out `reasons` from `guards.REASONS`, and the autopilot branches on them through `said` (`coscc/units/autopilot.py:60-67`). Left, for the next unit: `units/backlog.py`, `service/common.py` and `units/hold.py` still compare `next`'s words with `finished` or `closed`.*
+5. Estimate JSON becomes backlog rows. *`0136`: the object handed back through `submit`, guard `run-submitted`; each row carries `authority: agent`.*
+6. The reviewed sha and the merge pin are copied by the model out of prompt prose. *`0136`: `ship` is the PR machine's (`coscc/github/prmachine.py`); guard `ship-ready` reads the head the review run recorded and the head its own `gh pr view` found, and the merge is pinned to that read. A head the `ship` gate reads as a clean rebase of the reviewed one (`0067`) stands in for it: `gate --json` hands the guard `rebased`, and the guard checks that it names those two commits.*
+7. The autopilot matches English substrings of `cos.mjs`'s messages (`CI is red on #`, `needs a person`, `record it in ship.md; do not merge`) (`units/autopilot.py:51-86` at `088101e`). *`0136`: `next` and `gate --json` hand out `reasons` from `guards.REASONS`, and the autopilot branches on them through `said` (`coscc/units/autopilot.py:60-67`). Left, for the next unit: `units/backlog.py`, `service/common.py` and `units/hold.py` still compare `next`'s words with `finished` or `closed`.*
 
 **Defects found while mapping (verified in code):**
 
@@ -245,7 +243,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 - Unit state lives in files and is recomputed by regex on every read; app facts live in the DB.
   Holds, reruns, answers and more-rounds are *both* a markdown block and (some of them) a row.
 - Three triggers drive the autopilot (timer, end, answer); several events that change what it
-  should do (Jera, hold, shortlist) do not nudge it.
+  should do (hold, shortlist) do not nudge it.
 - `overlap` sees only running steps, not open PRs. *Fixed by `0136` R22: an `impl` whose
   plan shares a file with another unit's open PR waits with `overlap-pr #n`.*
 - There is no poller for CI or merge state; freshness depends on board reads and the 300 s pass.
@@ -279,8 +277,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 - An idea is finished by its acceptance criteria and cross-repository evidence, not only by
   every child unit having merged.
 - Every recorded decision says who made it: the person, delegated by the person, or inferred
-  by an agent. Precedent weighs them differently; an inference is never promoted to the
-  person's intent.
+  by an agent. An inference is never promoted to the person's intent.
 - The reviewer gets evidence the app collected (diff, base/head, test results, screenshots
   from a real build), not only the implementer's report.
 - Recovery is split by cause: a malformed reply repairs the protocol, CI pending waits, a

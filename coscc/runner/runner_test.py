@@ -20,8 +20,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.agent import harness, policy
-from coscc.knowledge import efforttrial, modeltrial
+from coscc.agent import harness, modeltrial, policy
 from coscc.git import gitops
 from coscc.runlog.journal import Journal
 from coscc.agent.policy import decide, grant_for
@@ -1693,35 +1692,6 @@ def incomplete_reply(head: str, number: int = 2, verdict: str = "incomplete",
             f"## Round {number}\n\nReviewed: {head}. Verdict: {verdict}.\n\n{body}")
 
 
-class AStepRecordsTheKnowledgeItCarried(AStepRecordsTheBaseItRanOn):
-    """`0090` R2, R4: the record handed in is the record written, and none is no field."""
-
-    def test_no_record_handed_in_leaves_no_field(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertNotIn("knowledge", self._start_record(d))
-
-    def test_the_record_handed_in_is_the_record_written(self):
-        record = {"version": "abc", "entries": 0, "bytes": 0}
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(self._start_record(d, knowledge_record=record)["knowledge"], record)
-
-    def test_start_carries_knowledge_trial_and_the_extended_knowledge_record(self):
-        # `0131` R10, R18: both land as given, side by side; none handed in is no field.
-        from coscc import knowledge
-
-        record = {"version": "abc", "entries": 1, "bytes": 9, "ids": ["K1"],
-                  "withheld": [{"id": "K2", "reason": "coscc/screens.py is not on HEAD"}], "head": "f" * 40}
-        with tempfile.TemporaryDirectory() as d:
-            start = self._start_record(d, knowledge_record=record, knowledge_trial={"arm": knowledge.ON})
-        self.assertEqual((start["knowledge"], start[knowledge.TRIAL_FIELD]), (record, {"arm": knowledge.ON}))
-        with tempfile.TemporaryDirectory() as d:
-            off = self._start_record(d, knowledge_trial={"arm": knowledge.OFF})
-        self.assertEqual(off[knowledge.TRIAL_FIELD], {"arm": knowledge.OFF})
-        self.assertNotIn("knowledge", off)
-        with tempfile.TemporaryDirectory() as d:
-            self.assertNotIn(knowledge.TRIAL_FIELD, self._start_record(d))
-
-
 class AStepRecordsTheModelTrial(AStepRecordsTheBaseItRanOn):
     """`0139` R17: the record handed in lands in `start`, none is no field, and its `model` is
     what the session's `init` named, or `never-started` (C10)."""
@@ -1742,16 +1712,16 @@ class AStepRecordsTheModelTrial(AStepRecordsTheBaseItRanOn):
         with tempfile.TemporaryDirectory() as d:
             none = self._start_record(d, trial_record=None)
         self.assertEqual(set(unnamed), set(none))
-        for field in (modeltrial.FIELD, efforttrial.FIELD, efforttrial.CI_RED):
+        for field in (modeltrial.FIELD, modeltrial.CI_RED):
             self.assertNotIn(field, unnamed)
 
     def test_a_session_that_never_named_its_model_is_recorded_never_started(self):
-        record = {**self.TRIAL, efforttrial.CI_RED: None}
+        record = {**self.TRIAL, modeltrial.CI_RED: None}
         with tempfile.TemporaryDirectory() as d:
             start = self._start_record(d, trial_record=record)
         self.assertEqual(start[modeltrial.FIELD], {**self.TRIAL[modeltrial.FIELD], "model": "never-started"})
-        self.assertIn(efforttrial.CI_RED, start)
-        self.assertIsNone(start[efforttrial.CI_RED])
+        self.assertIn(modeltrial.CI_RED, start)
+        self.assertIsNone(start[modeltrial.CI_RED])
 
     def test_the_model_init_named_reaches_the_start(self):
         from coscc.agent import steps as steps_mod

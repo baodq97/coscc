@@ -482,61 +482,27 @@ class FindingsAwaitingAPersonAreCopied(unittest.TestCase):
         self.assertEqual(setters, {"load_next"})
 
 
-class JerasAnswersAreShownAndAnswerable(unittest.TestCase):
-    """`0044` R10. What `Service.board` decided about Jera is copied onto each row, and the
-    tab keeps Jera's answers in view under the ones still waiting."""
+class TheQuestionsTabListsWhatWaits(unittest.TestCase):
+    """What `Service.board` sent is copied onto each row, and the tab lists only the questions
+    still waiting, the counted artifact's first."""
 
     UNIT = {
-        "open": 1,
+        "open": 2,
         "questions": [
-            {"artifact": "spec.md", "n": 1, "text": "a", "answered": True, "counted": True, "by_jera": True,
-             "cites": ["0001_a/spec.md#Câu 1"], "said": "Có."},
-            {"artifact": "spec.md", "n": 2, "text": "b", "answered": False, "counted": True,
-             "needs_person": True, "proposal": "Đề xuất.", "reason": "tiền"},
-            {"artifact": "spec.md", "n": 3, "text": "c", "answered": True, "counted": True},
+            {"artifact": "spec.md", "n": 1, "text": "a", "answered": True, "counted": True},
             {"artifact": "intent.md", "n": 1, "text": "d", "answered": False, "counted": False},
+            {"artifact": "spec.md", "n": 2, "text": "b", "answered": False, "counted": True},
         ],
     }
 
-    def page(self, unit=None, answerable=True):
+    def test_only_the_unanswered_are_listed_and_the_counted_artifact_comes_first(self):
         from types import SimpleNamespace
 
-        from coscc.state import _questions
+        from coscc.state import StudioState, _questions
 
-        _, asked = _questions(unit or self.UNIT)
-        return SimpleNamespace(current_unit=SimpleNamespace(questions=asked, answerable=answerable))
-
-    def test_the_fields_are_copied(self):
-        from coscc.state import _questions
-
-        _, (q1, q2, _q3, q4) = _questions(self.UNIT)
-        self.assertEqual((q1.by_jera, q1.cites, q1.said, q1.needs_person), (True, ["0001_a/spec.md#Câu 1"], "Có.", False))
-        self.assertEqual((q2.needs_person, q2.proposal, q2.reason), (True, "Đề xuất.", "tiền"))
-        self.assertEqual((q4.by_jera, q4.cites, q4.said, q4.needs_person, q4.proposal), (False, [], "", False, ""))
-
-    def test_waiting_first_then_jeras_and_never_a_persons(self):
-        from coscc.state import StudioState
-
-        shown = StudioState.computed_vars["open_questions_here"].fget(self.page())
-        self.assertEqual([q.key for q in shown], ["spec.md#2", "intent.md#1", "spec.md#1"])
-
-    def test_ask_jera_is_offered_only_with_a_question_it_may_answer(self):
-        from coscc.state import StudioState
-
-        can = StudioState.computed_vars["jera_can_ask"].fget
-        self.assertTrue(can(self.page()))
-        self.assertFalse(can(self.page(answerable=False)))
-        only_review = {"questions": [{"artifact": "review.md", "n": 1, "text": "x", "answered": False}]}
-        self.assertFalse(can(self.page(only_review)))
-        answered = {"questions": [dict(q, answered=True) for q in self.UNIT["questions"]]}
-        self.assertFalse(can(self.page(answered)))
-
-    def test_the_handler_only_calls_the_service(self):
-        tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
-        fn = next(f for f in _state_class(tree).body if getattr(f, "name", "") == "ask_jera")
-        calls = {n.func.attr for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                 and isinstance(n.func.value, ast.Name) and n.func.value.id == "SERVICE"}
-        self.assertEqual(calls, {"precedent"})
+        _, asked = _questions(self.UNIT)
+        shown = StudioState.computed_vars["open_questions_here"].fget(SimpleNamespace(current_unit=SimpleNamespace(questions=asked)))
+        self.assertEqual([q.key for q in shown], ["spec.md#2", "intent.md#1"])
 
 
 class TheBoardShowsTheGuardAndWhoseDecision(unittest.TestCase):
@@ -560,16 +526,6 @@ class TheBoardShowsTheGuardAndWhoseDecision(unittest.TestCase):
         )
         self.assertEqual((old.guard_label, old.authority, old.key),
                          ("No guard was recorded for this change.", "Author not recorded", "move-1"))
-
-    def test_an_answered_question_says_whose_decision_it_is_and_an_open_one_says_nothing(self):
-        from coscc.state import _questions
-
-        _, (a, b, c) = _questions({"questions": [
-            {"artifact": "spec.md", "n": 1, "text": "a", "answered": True, "authority": "agent"},
-            {"artifact": "spec.md", "n": 2, "text": "b", "answered": True, "authority": "delegated"},
-            {"artifact": "spec.md", "n": 3, "text": "c", "answered": False, "authority": "person"},
-        ]})
-        self.assertEqual((a.authority, b.authority, c.authority), ("By an agent", "By their delegate", ""))
 
     def test_the_card_carries_the_code_the_autopilot_held_it_back_with(self):
         from coscc.state import Unit, _card
