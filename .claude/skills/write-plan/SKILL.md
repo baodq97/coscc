@@ -5,26 +5,37 @@ description: Write the plan.md that turns an accepted spec into an implementatio
 
 # Write a plan
 
-A plan names the files that change, the order, what could break, and the command that decides
-done. Accepting it authorizes the code.
+A plan names the files that change, the order, what could break, how done is checked and what
+can run in parallel. Accepting it authorizes the code.
+
+## Where it runs
+
+In plan mode, in a session with a person, in this checkout: no worktree, no edits until the
+plan is approved, no command that builds, tests or runs the app. From the board the inputs and
+the gate are in the prompt; hand the plan back as the prompt says instead of `ExitPlanMode`.
 
 ## What you are given (trust it)
 
-`intent.md`, `spec.md`, `spike.md` and the answers are in the prompt. Do not re-read them.
-A spec question with a block under `## Answers` is decided: plan to it, cite it as
-`spec.md ## Answers, câu N`, quote the person, never write into that section. `Answered by: Jera`
-is an agent's inference: cite it as such.
+`intent.md`, `spec.md`, `spike.md` and their answers: read each once (from the board they are
+in the prompt). A spec question with a block under `## Answers` is decided: plan to it, cite
+it as `spec.md ## Answers, câu N`. `Answered by: Jera` is an agent's inference: cite it as such.
+Do not check the spec again.
 
-Gate: from the board it was asked (the prompt says so); at a terminal run
-`node .claude/scripts/cos.mjs gate <NNNN_slug> plan` first and stop on non-zero.
+## Reading the tree
+
+- One batched `Glob` (or one `ls`) of every path you mean to name; mark missing ones `(new)`.
+- Read only files you will name, and only the part the change touches: `Grep` for the symbol,
+  then `Read` with an offset. `git log` / `git show` when history decides a choice.
+- Run no test: `## Proof` and `## Verification` say what impl runs.
 
 ## Steps
 
-1. One batched `Glob` (or one `ls`) of every existing path you mean to name; mark those that
-   do not exist `(new)`. Do not read files you will not name.
-2. Write `.cos/NNNN_<slug>/plan.md` from the template. An engineer who never saw this
-   conversation must be able to implement from it alone.
-3. Say what you chose not to do where a reader would assume it was overlooked.
+1. Read the inputs, then the tree as above.
+2. Write the plan from the template, at most 4 KB. At most 10 paths under `## Files that
+   change`; more means the unit is too big: say how to split it and stop.
+3. `## Risks` answers what could break, which step is riskiest and which option you rejected.
+4. Present it with `ExitPlanMode`; revise until the person approves.
+5. Write it to the unit's `plan.md`, and nothing else.
 
 ````markdown
 # Plan: <title>
@@ -34,15 +45,21 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
 - path (new)
 
 ## Order of work
-1. <a step that leaves the repository checkable>
+1. <a step that leaves the repository checkable; cite the spec's requirement, do not restate it>
 
 ## Risks
-<what breaks and what would show it, by blast radius>
+<what breaks and what would show it, by blast radius; the riskiest step; the option rejected and why>
 
 ## Proof
-<`npm test` with tests named for the behaviour, or `npm run e2e` with a named case, and the
-result that counts as passing. A baseline or outcome to measure is not impl's work: name it
-under `## Risks`; the app or Leif measures it>
+<the tests named for the behaviour and the result that counts as passing. A baseline or outcome
+to measure is not impl's work: name it under `## Risks`>
+
+## Verification
+<the commands impl runs at the end and their healthy output, e.g. `npm test`: `ℹ fail 0`, `N passed`>
+
+## Parallelization
+<steps on disjoint files that separate sessions or subagents can do, each with its scope and
+what it reports; or "none: one session">
 ````
 
 ## Lines the app and `cos.mjs` read
