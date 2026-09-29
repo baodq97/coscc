@@ -5,48 +5,30 @@ paths:
   - "coscc/agent/instructions.py"
 ---
 
-# Sessions: their data root and what they load
+# Things that break here
 
-- **A session reads a scratch `COS_DATA_DIR`, and `cos.db` is a tripwire, not a lock.** Every
-  session `Sessions` opens — each stage's step, Gebo, chat — gets `COS_DATA_DIR` pointed at
-  a fresh `/tmp/coscc-session-*` (`sessions.scratch_dir`), and it and the commands
-  `worktrees.prepare` runs carry `COSCC_PROTECTED_DB`, this app's `cos.db` appended to
-  whatever list the app itself was given; `Data.connect` raises `Protected` before opening a
-  listed file, reads included.
-  - What it does not stop: a branch that edits the check has only the scratch directory
-    (0076 spec C1); `python -c`, `sqlite3` or anything opening `~/.cos/cos.db`
-    by its literal path walks past both.
-  - A board step's directory is removed after its CLI is closed. Gebo's and a chat's live
-    with their client in `Sessions._live` — Gebo streams with no `step` — and nothing in the
-    app closes one but `Sessions.suspend_all` and `Sessions.close_all`, which the installed
-    service runs only on an update: every Gebo run and every new chat adds one that stays
-    until then. A paused session goes on after the restart from its transcript under
-    `~/.claude/projects`, which is not the scratch root (0138 C8). A SIGKILL of the app, or any restart without that update,
-    leaves every `/tmp/coscc-session-*` behind for good, and nothing sweeps them (C4, size
-    unmeasured). Chat does not fall back to `~/.cos` (C6).
-  - A measuring script's `--measure` run inside a step reads an empty database and exits
-    2: run it at a terminal. If the app itself is started with its own `cos.db` in
-    `COSCC_PROTECTED_DB`, every route that reads it is a `500` while `/api/health` says `ok`
-    (0076 plan Risk 2).
-- **A session reads nothing of `~/.claude/`, and of the project only what the app hands it.**
-  `sessions._options` sets `setting_sources=[]` and `strict_mcp_config=True` for every
-  session. `None` there, on claude-agent-sdk 0.2.158 and 0.2.159 (0088 spike ## U6), passes no flag, and
-  the CLI then loads every source — the machine's MCP servers, skills, plugins, hooks and
-  `permissions.allow`. Consequences:
-  - A proxy or a key in the `env` block of `~/.claude/settings.json` is not used: it belongs
-    in the service's env file (`docs/install.md`).
-  - `CLAUDE.md`, `.claude/CLAUDE.md` and every rule without `paths:` reach the session
-    through `coscc/agent/instructions.py`, in the system prompt — handed over as a file in the
-    session's data root, never as an argument, since Linux refuses one argument past
-    128 KiB with `E2BIG` (`coscc/agent/sessions.py` `_options`) and every session would fail to start.
-  - A rule **with** `paths:` — every file under `.claude/rules/` here — arrives only as one
-    line telling the session to `Read` it, and nothing checks that it did (the `start` row's
-    `instructions` lists what was sent, not what was read). Each such rule costs every
-    session that one line; `coscc/rules_budget_test.py` holds their size, not their count.
-  - `@path` in those files is not resolved, and `CLAUDE.local.md`, parent directories and
-    `.claude/settings*.json` of the project are not read.
-  - The CLI's own built-in skills and slash commands are still in every init: no option
-    measured removes them (0088 spike ## U8).
-  - A session with a preset — a step with tools, Gebo — also gets `--settings`, holding
-    only `attribution` (`agents.settings_json`, 0036 R8). Any other key put there reaches
-    the session past `setting_sources=[]`.
+- Every session gets `COS_DATA_DIR` pointed at a fresh `/tmp/coscc-session-*`
+  (`sessions.scratch_dir`) and `COSCC_PROTECTED_DB` naming this app's `cos.db`; `Data.connect`
+  raises `Protected` on a listed file. This is a tripwire, not a lock: `python -c`, `sqlite3` or
+  a literal `~/.cos/cos.db` path walks past it.
+  - A step's scratch directory is removed when its CLI closes. Gebo's and a chat's live in
+    `Sessions._live` until `suspend_all` or `close_all`, which run only on an update. A SIGKILL
+    or any restart without one leaves every `/tmp/coscc-session-*` behind, unswept. A paused
+    session resumes from its transcript under `~/.claude/projects`.
+  - A measuring script's `--measure` inside a step reads an empty database and exits 2: run it
+    at a terminal. With the app's own `cos.db` in `COSCC_PROTECTED_DB`, every route reading it
+    is a `500` while `/api/health` says `ok`.
+- `sessions._options` sets `setting_sources=[]` and `strict_mcp_config=True`. `None` there
+  passes no flag and the CLI loads the machine's MCP servers, skills, plugins, hooks and
+  `permissions.allow`.
+  - A proxy or key in `~/.claude/settings.json` `env` is not used: put it in the service's env
+    file (`docs/install.md`).
+  - `CLAUDE.md`, `.claude/CLAUDE.md` and every rule without `paths:` reach the session through
+    `coscc/agent/instructions.py`, handed over as a file in the session's data root, never as an
+    argument (Linux refuses one past 128 KiB with `E2BIG`).
+  - A rule with `paths:` arrives as one line telling the session to `Read` it; nothing checks
+    that it did. `coscc/rules_budget_test.py` holds sizes, not the count.
+  - `@path` imports, `CLAUDE.local.md`, parent directories and the project's
+    `.claude/settings*.json` are not read.
+  - A session with a preset also gets `--settings` holding only `attribution`
+    (`agents.settings_json`); any other key there reaches the session past `setting_sources=[]`.

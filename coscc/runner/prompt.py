@@ -399,7 +399,7 @@ _EMBED: dict[str, tuple[str, ...]] = {
     "implement": ("plan.md",),
     "pr": (),
     "ship": ("pr.md",),
-    "review": (),
+    "review": ("impl.md",),
 }
 _POINTING = frozenset(_EMBED)
 

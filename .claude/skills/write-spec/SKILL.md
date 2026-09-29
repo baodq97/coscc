@@ -5,69 +5,31 @@ description: Write the spec.md that turns an accepted intent into requirements a
 
 # Write a spec
 
-A spec decides what the system must do and how it should be shaped, and it answers only to
-the intent that authorized it. It is the last point where a decision is still a matter of
-editing a document, so a concern raised here costs a paragraph and the same concern raised
-later costs a rewrite.
+A spec decides what the system must do and its shape; a concern raised here costs a paragraph,
+later a rewrite.
 
-## Before writing
+## What you are given (trust it)
 
-```
-node .claude/scripts/cos.mjs gate <NNNN_slug> spec
-```
+`intent.md`, the answers, and any prior `spec.md` or `spike.md` are in the prompt. Do not
+re-read or re-verify them. A question with a block under `## Answers` is decided: cite it as
+`<artifact> ## Answers, câu N`, quote the person, never re-ask, never write into that section.
+`Answered by: Jera` is an agent's inference from precedent: cite it as such.
 
-Exit 0 means proceed. Anything else means stop and report what it printed — it names what
-is missing. Do not write the spec anyway, and do not change a status to open your own gate.
+Gate: from the board it was asked (the prompt says so); at a terminal run
+`node .claude/scripts/cos.mjs gate <NNNN_slug> spec` first and stop on non-zero.
 
-Then run the skip assessment. Report all five criteria with a verdict on each:
+## Steps
 
-1. The change touches two or fewer files that already exist.
-2. No public interface, API contract, data schema or stored data changes.
-3. No dependency is added.
-4. No behaviour appears beyond what `intent.md` already states.
-5. Nothing in auth, PII or the security surface is touched.
-
-All five pass means the spec *may* be skipped. Say so and let the human decide — the
-decision is theirs, not yours. Any criterion failing means write the spec, and name the
-criterion that forced it.
-
-A skip is still written down. Record it as `spec.md` with `Status: skipped`, the reason,
-and the assessment that produced it:
-
-````markdown
-# Spec: <title>
-Intent: intent.md. Author: <name>. Status: skipped.
-
-## Why skipped
-<the criteria, and who decided>
-````
-
-Writing that file skips nothing (`0136` R14). The unit stops on it until a person records
-the skip as theirs, from a shell: `coscc skip <workspace> <unit> spec [--delegated] <reason>`.
-Only that command makes it a person's, and no session can run it. Hand back `judgement:
-not-ready`, and say in your reply that the skip is theirs to record.
-
-## Screens
-
-This applies when the spec means to change a file listed under `paths:` in
-`.claude/rules/ui-standard.md` — a **UI unit** (`0083`). `impl` will take screenshots of
-the addresses this spec names, and `review` will judge them against that file's rules.
-
-In `## Design`, list every screen the change reaches as an address of the app, at most six,
-and the rules `S<n>` that apply to each. The screenshots run on a fixed fixture: workspace
-`proj`, units `0001_fresh-intent`, `0002_open-question`, `0003_awaiting-ship`,
-`0004_finished` and `0005_unfinished-review` — for example `/board`, `/settings`,
-`/unit?ws=proj&id=0002_open-question&tab=questions` (`tab` is one of `coscc/web/place.py`'s
-`TABS`). A screen only an action reaches (a running step, a dialog opened by a button) has
-no address: say so, because no screenshot will show it. A unit's dialog is taken as the
-viewport shows it, so what it scrolls to below the fold is not in the image either.
-
-## Output
-
-One file, `.cos/NNNN_<slug>/spec.md`, in the directory the intent already occupies. Do not
-create a new work unit and do not renumber the existing one.
-
-## Template
+1. Write `.cos/NNNN_<slug>/spec.md` from the template.
+2. Every requirement traces to the intent's outcome and is testable (a number with a unit).
+   `## Design` names components, boundaries and data crossing them, not files or order of work.
+3. Two contradicting constraints: name it under `## Concerns` and who decides. Never pick silently.
+4. A doubt you cannot measure from here (does an SDK, CLI or process behave as assumed) is an
+   `[unmeasured]` item, not a guess.
+5. A UI unit (spec changes a path under `paths:` in `.claude/rules/ui-standard.md`): list in
+   `## Design` each screen (at most six) as an app address with the `S<n>` rules that apply,
+   on fixture workspace `proj`, units `0001_fresh-intent`, `0002_open-question`,
+   `0003_awaiting-ship`, `0004_finished`, `0005_unfinished-review`; say when a screen has no address.
 
 ````markdown
 # Spec: <title>
@@ -78,86 +40,33 @@ Intent: intent.md. Author: <name>. Status: accepted.
 ## Design
 
 ## Out of scope
+<what a reader would expect and will not get>
 
 ## Concerns
 
 ## Open questions
 ````
 
-## Hand back your judgement
+## Lines the app and `cos.mjs` read
 
-The app does not read `Status:` or `## Open questions` out of the file to decide anything (`0136`). A step started from the board holds a `submit` tool: call it with `stage`, `judgement` (`ready` for `accepted`, `not-ready` for `draft`) and `questions` (`{n, text}` per open question). `unmeasured` lists every `U<n>` a `## Concerns` item opens with `[unmeasured]`. Call it before your reply, and end the reply with the file. If `submit` returns an error, the app has checked your object against the unit: correct the object and call `submit` again until it is accepted. A step that hands back no object ends failed. At a terminal there is no such tool; the `Status:` line is then all there is.
+- `- [unmeasured] U1. <question>` at column 0 under `## Concerns`; list the ids in `unmeasured`
+  of `submit`. It sends the unit to `spike`. The id is the question's identity: keep it across
+  rewrites, never reuse or duplicate one. After a spike `fails`, drop that id and every
+  requirement resting on it; if no direction holds, write `Status: draft` with the question.
+- `## Open questions`: a real question is an item `N. ` at column 0 whose first paragraph holds
+  a `?`, and the same go into `questions` of `submit`. Anything else is a plain sentence. Keep
+  the heading even when empty.
+- `Status: accepted` is your judgement, not approval; `draft` stops the loop.
 
-## Invariants
+## Skip
 
-1. Every requirement traces back to the outcome stated in `intent.md`. A requirement that
-   nothing in the intent authorizes is cut, not justified.
-2. Requirements are testable. "Fast" is not a requirement; a number with a unit is.
-3. Where two constraints contradict, name the contradiction under `## Concerns` and say
-   which policy owner decides it. Never resolve it silently by picking a side — a
-   contradiction that reaches the plan hidden reaches production hidden.
-4. `## Design` describes the shape of the solution: the components, their boundaries, and
-   the data that crosses them. It does not name the order of work or the files to edit;
-   the plan decides those.
-5. Carry the intent's open questions forward. Answer them, or restate them under
-   `## Open questions` as `N. …?`, with what an answer would change. Silence loses them.
-6. `## Out of scope` names what a reader would reasonably expect and will not get. An
-   empty section here usually means the boundary was never thought about.
-7. Every figure names its source or is marked unverifiable. Cite only a file committed in
-   this repository, by path and line range.
-8. Accept it and commit it. `accepted` means you judged it finished — no one else will look,
-   so the `## Concerns` section is where a doubt gets recorded instead of resolved by you.
-9. A question with a block under `## Answers` in the artifact that holds it, as your
-   prompt shows it, has been decided. Do not carry it forward as open and do not ask it
-   again. Cite it as `<artifact> ## Answers, câu N`. The words of an answer are a person's,
-   not yours: quote them, and do not restate them as your own finding. The app
-   keeps answers in its database and puts them in the prompt; the file on disk may not
-   carry them. Never write into that section yourself. A block headed `Answered by: Jera. … Via:
-   precedent.` is the exception: an agent inferred it from precedent, so cite it as Jera's
-   inference and never present it as the originator's decision.
-10. A concern you could not measure from here — whether an SDK, a CLI or a process behaves
-    the way the design assumes — is written as an item at column 0 under `## Concerns`
-    that opens `[unmeasured]` and an id: `- [unmeasured] U1. Does disconnect() make the
-    process exit within 10 s?`. List the same ids in the `unmeasured` you submit: from the
-    board that list is what `cos.mjs` reads, and at a terminal it reads these items. A spec
-    that carries one sends the unit to `spike` (`write-spike`) before `plan`. `U<n>` is the question's identity:
-    keep it across rewrites. An item with no id, or one id used twice, closes the `plan`
-    gate. A spec with no such item never runs `spike`.
-11. Rewritten after a spike found a `U<n>` that `fails`: drop that id and every
-    requirement resting on it — never keep it. A new question takes a new id; never reuse
-    one. When no direction left holds, write `Status: draft` with the question under
-    `## Open questions`: a draft stops the loop until a person answers.
-12. Under `## Open questions`, each question is an item `N. ` at column 0 whose first
-    paragraph holds a `?`, and the same questions go into the `questions` you submit — from
-    the board those are what stop the autopilot. At a terminal `cos.mjs` counts nothing else:
-    a bullet, or a numbered line with no `?`, is read as a note. So a real question always
-    carries its `?`. A note — no question is left open, how the answers were used, the
-    originator should reread this — is a plain sentence there or goes in another section,
-    never an item. When nothing is left open, keep the heading: the latest artifact with
-    it is the one counted (`cos.mjs`, `unitQuestions`), so dropping it would count the
-    intent's questions again.
+Only when proposing a skip: report each of five criteria: (1) at most two existing files
+touched, (2) no public interface, schema or stored data changes, (3) no dependency added,
+(4) no behaviour beyond the intent, (5) nothing in auth, PII or security. All pass means the
+spec *may* be skipped; the decision is a person's. Write `spec.md` with `Status: skipped`,
+`## Why skipped` and the assessment, and submit `not-ready`: only `coscc skip` makes it a
+person's.
 
 ## Done when
 
-An engineer can plan against this file alone, and every concern that would have stopped
-them later is already written down under `## Concerns`.
-
-## Next
-
-`write-spike`, once this file is accepted, when it carries an `[unmeasured] U<n>` item.
-Otherwise `write-plan`, once this file is accepted and committed. If the spec was skipped instead,
-`write-plan` runs on the accepted intent alone and records the reason.
-
-You may run it yourself. Nothing separates the two stages, so the separation has to come
-from you: finish the spec, commit it, and re-read it before planning against it. Never run
-`write-plan` on a `draft` — a file you have not judged finished cannot authorize the thing
-after it.
-
-## Limit
-
-The gate is decided by a script, so the answer does not vary with how carefully a session
-reads. What stays advisory is the invocation: nothing forces a session to run it, or to
-stop when it exits non-zero. A `PreToolUse` hook would.
-
-The invariants above are advisory throughout — they describe judgement, and no script
-checks them.
+An engineer can plan from this file alone and every doubt is written under `## Concerns`.

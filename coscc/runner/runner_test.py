@@ -1664,7 +1664,8 @@ class TheStartRecordSaysWhatRanAndWhatWasNamed(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             start = self.start(d, "review", {"version": "0.12.0", "commit": "c" * 40})
             self.assertEqual((start["app_version"], start["app_commit"]), ("0.12.0", "c" * 40))
-            self.assertIn("impl.md", start["pointed"])
+            self.assertIn("plan.md", start["pointed"])
+            self.assertIn("impl.md", start["included"])
             self.assertIn("review-findings", start["included"])
             self.assertNotIn("review.md", start["included"])
 

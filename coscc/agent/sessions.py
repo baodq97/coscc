@@ -27,6 +27,7 @@ from typing import Any
 
 import claude_agent_sdk as sdk
 from claude_agent_sdk import (
+    AgentDefinition,
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
@@ -600,6 +601,7 @@ def _options(
     data_dir: str,
     resume_at: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
+    agents: dict[str, dict[str, Any]] | None = None,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -698,6 +700,9 @@ def _options(
         options.max_budget_usd = float(max_budget_usd)
     if mcp_servers:
         options.mcp_servers = dict(mcp_servers)
+    if agents:
+        # `policy.SUBAGENTS`: helpers inside this session, held by its own `can_use_tool`.
+        options.agents = {name: AgentDefinition(**spec) for name, spec in agents.items()}
     project = instructions.read(cwd).text
     if system_prompt is not None:
         options.system_prompt = dict(system_prompt)
@@ -877,6 +882,7 @@ class Sessions:
         resume_at: str | None = None,
         spent_before: dict[str, float] | None = None,
         mcp_servers: dict[str, Any] | None = None,
+        agents: dict[str, dict[str, Any]] | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -920,6 +926,7 @@ class Sessions:
             cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
             workspace, model, system_prompt, effort, step, settings,
             flow=flow, resume_at=resume_at, spent_before=spent_before, mcp_servers=mcp_servers,
+            agents=agents,
         )
         if step is None:
             turn = flow
@@ -962,6 +969,7 @@ class Sessions:
         workspace, model, system_prompt, effort, step, settings=None,
         *, flow: Any = None, resume_at: str | None = None, spent_before: dict[str, float] | None = None,
         mcp_servers: dict[str, Any] | None = None,
+        agents: dict[str, dict[str, Any]] | None = None,
     ):
         member =workspace if workspace is not None else cwd
         if not self.membership(member):
@@ -1002,6 +1010,7 @@ class Sessions:
                             data_dir=str(scratch),
                             resume_at=resume_at,
                             mcp_servers=mcp_servers,
+                            agents=agents,
                         )
                     )
                     if step is None:

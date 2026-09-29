@@ -87,6 +87,34 @@ READ_TOOLS = ("Read", "Glob", "Grep")
 SUBMIT_TOOL = "mcp__cos__submit"
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 EXEC_TOOLS = ("Bash",)
+# Hands work to one of `SUBAGENTS` inside the same session. Every tool call a helper makes
+# reaches the same `decide` and the same grant as the session's own (measured on SDK
+# 0.2.161, with a refusal that held), and its spend is in the session's cost.
+AGENT_TOOL = "Agent"
+# Named helpers with a bounded report, so big reads and test output stay out of the main
+# context. `sessions._options` turns each into an `AgentDefinition`.
+SUBAGENTS = {
+    "scout": {
+        "description": "Maps where things are in the named files. Read-only.",
+        "prompt": (
+            "You are given files and a question. Answer with a short map of `path:line` "
+            "entries, one per line, each with a few words on what is there; at most 30 "
+            "lines. Write \"unsure\" beside anything you did not confirm. Never edit."
+        ),
+        "tools": list(READ_TOOLS),
+        "model": "sonnet",
+    },
+    "tester": {
+        "description": "Runs the named test commands and reports only failures.",
+        "prompt": (
+            "Run only the test commands you are given, as given. Report the pass and fail "
+            "counts, then each failure: test name, the assertion, `path:line`. No passing "
+            "output, no advice. Never edit a file and never run anything else."
+        ),
+        "tools": list(EXEC_TOOLS),
+        "model": "sonnet",
+    },
+}
 
 # Commands `impl` may run, matched on the first word of every segment of the command line.
 # Deliberately short: this is the list that lets a step check its own work, not a shell.
@@ -201,7 +229,7 @@ GRANTS: dict[str, Grant] = {
     # still spends the money and leaves no record of what it did.
     # `0019_a-failed-step-destroys-the-work-that-succeeded` is that, and it is the real fix.
     "impl": Grant(
-        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
+        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS + (AGENT_TOOL,),
         commands=IMPL_COMMANDS,
         max_turns=120,
         max_budget_usd=8.0,
@@ -1269,6 +1297,9 @@ def decide(
     if tool not in grant.tools:
         # Covers MCP tools by construction: their names are never in a grant.
         return f"this step was not granted {tool}"
+
+    if tool == AGENT_TOOL and tool_input.get("subagent_type") not in SUBAGENTS:
+        return f"only these helpers may be started: {', '.join(SUBAGENTS)}"
 
     if tool in EXEC_TOOLS:
         # `0130` R1. Only the calls the CLI asks about reach here: one it takes for read-only

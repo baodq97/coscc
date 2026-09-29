@@ -4,32 +4,19 @@ paths:
   - "coscc/run.py"
 ---
 
-# The login door
+# Things that break here
 
-- **`coscc/web/auth.py` is the only door, and it opens on one password.** uvicorn serves
-  `coscc.coscc:served`, the composed app wrapped by `auth.Guard` — the one position
-  0070 spike ## U1 measured to see every scope, CORS preflight included; moving
-  the guard into `api_transformer` lets Reflex answer `OPTIONS` without it. `auth.EXEMPT`
-  (`coscc/web/auth.py:58`) is the whole list of what answers without a session (`/api/health`,
-  `/login`, and `/setup` while no password is stored); anything else, a route added later
-  included, is refused; `coscc/web/auth_test.py` counts that.
-- **What no test sees.**
-  - `proxy_headers=False` in `coscc/run.py`, so behind a proxy every client shares one
-    failure count and a stranger can lock the owner out for up to an hour
-    (0070 spec C2).
-  - A state-changing request or websocket handshake whose `Origin` does not match `Host`
-    is `403`, so a proxy that rewrites `Host` breaks the page (C3).
-  - `HASH_CONCURRENCY` (`coscc/web/auth.py:82`) argon2 hashes run at once, about 64 MiB each
-    (0070 spike ## U2); another waits `HASH_WAIT` (`coscc/web/auth.py:85`) and gets
-    `429` — many addresses trying at once can refuse the owner too.
-  - The failure count and the setup token live in memory: a restart clears the one and
-    mints the other. A setup token sits in the journal until the password is set.
-  - The guard opens a SQLite connection per request (unmeasured cost); a `Busy` there is a
-    `500`, still a refusal.
-  - A page it lets through goes out `Cache-Control: no-cache`: without it chromium reused a
-    cached `index.html` after logout, a board whose socket the guard refused, and never
-    reached `/login`.
-- `scripts/e2e.py` opens chromium behind the guard on loopback only — not off it, not behind
-  a proxy, and not on the installed service.
-- The default bind is `0.0.0.0` and the app serves plain HTTP; `COS_HOST=127.0.0.1` is the
-  loopback posture. `coscc reset-password` is the only way back from a forgotten password.
+- `auth.Guard` wraps the served app and is the only door; `auth.EXEMPT` (`coscc/web/auth.py:58`)
+  lists what answers without a session, and any new route is refused unless added there.
+  Moving the guard into `api_transformer` lets Reflex answer `OPTIONS` without it.
+- `proxy_headers=False` in `coscc/run.py`: behind a proxy every client shares one failure count,
+  so a stranger can lock the owner out for up to an hour.
+- A state-changing request or websocket handshake whose `Origin` does not match `Host` is `403`;
+  a proxy that rewrites `Host` breaks the page.
+- `HASH_CONCURRENCY` (`coscc/web/auth.py:82`) argon2 hashes run at once, about 64 MiB each;
+  another waits `HASH_WAIT` (`coscc/web/auth.py:85`) and gets `429`.
+- The failure count and setup token live in memory; a restart clears the one and mints the other.
+- The guard opens a SQLite connection per request; a `Busy` there is a `500`.
+- A page it lets through goes out `Cache-Control: no-cache`, or chromium reuses a cached
+  `index.html` after logout.
+- `scripts/e2e.py` opens chromium on loopback only, not behind a proxy or on the installed service.

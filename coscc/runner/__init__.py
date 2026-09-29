@@ -34,7 +34,7 @@ from coscc.github.integrate import check_started_by
 from coscc.agent import sessions as sessions_mod
 from coscc.runlog.journal import Journal
 from coscc.agent import submit as submit_mod
-from coscc.agent.policy import Grant, beyond_reading, grant_for_step, is_prose_stage
+from coscc.agent.policy import AGENT_TOOL, SUBAGENTS, Grant, beyond_reading, grant_for_step, is_prose_stage
 from coscc.units import guards
 from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
@@ -833,6 +833,8 @@ class Runner:
                 **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
                 # `0136` R2: only a step with a channel, so every other one is what it was.
                 **servers,
+                # Only a grant holding the helpers' tool gets them: impl.
+                **({"agents": SUBAGENTS} if AGENT_TOOL in grant.tools else {}),
             )
             async for kind, payload in main:
                 if kind == "chunk":

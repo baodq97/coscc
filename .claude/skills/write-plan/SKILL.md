@@ -5,117 +5,56 @@ description: Write the plan.md that turns an accepted spec into an implementatio
 
 # Write a plan
 
-A plan names the files that change, the order they change in, what could break, and the
-command that decides whether the work is done. It is written before any code, and accepting
-it is what authorizes the code.
+A plan names the files that change, the order, what could break, and the command that decides
+done. Accepting it authorizes the code.
 
-## Before writing
+## What you are given (trust it)
 
-```
-node .claude/scripts/cos.mjs gate <NNNN_slug> plan
-```
+`intent.md`, `spec.md`, `spike.md` and the answers are in the prompt. Do not re-read them.
+A spec question with a block under `## Answers` is decided: plan to it, cite it as
+`spec.md ## Answers, câu N`, quote the person, never write into that section. `Answered by: Jera`
+is an agent's inference: cite it as such.
 
-Exit 0 means proceed. Anything else means stop and report what it printed. The gate clears
-on an accepted spec or on one marked `skipped`; a missing `spec.md` does not clear it,
-because a spec nobody wrote looks exactly like a spec someone decided to skip. Never change
-a status yourself to unblock your own work.
+Gate: from the board it was asked (the prompt says so); at a terminal run
+`node .claude/scripts/cos.mjs gate <NNNN_slug> plan` first and stop on non-zero.
 
-Then read `intent.md` and `spec.md` in full — the gate checks that they are settled, not
-what they say.
+## Steps
 
-Read the files the plan will touch before naming them. A plan built from a guess at what
-the code looks like is a plan the first step invalidates.
-
-## Output
-
-One file, `.cos/NNNN_<slug>/plan.md`, in the directory the intent already occupies.
-
-## Template
+1. One batched `Glob` (or one `ls`) of every existing path you mean to name; mark those that
+   do not exist `(new)`. Do not read files you will not name.
+2. Write `.cos/NNNN_<slug>/plan.md` from the template. An engineer who never saw this
+   conversation must be able to implement from it alone.
+3. Say what you chose not to do where a reader would assume it was overlooked.
 
 ````markdown
 # Plan: <title>
 Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: accepted. Impl: routine | novel.
 
 ## Files that change
+- path (new)
 
 ## Order of work
+1. <a step that leaves the repository checkable>
 
 ## Risks
+<what breaks and what would show it, by blast radius>
 
 ## Proof
+<`npm test` with tests named for the behaviour, or `npm run e2e` with a named case, or a
+one-time measurement `impl.md` records, and the result that counts as passing>
 ````
 
-## Hand back your judgement
+## Lines the app and `cos.mjs` read
 
-The app does not read `Status:` or `## Open questions` out of the file to decide anything (`0136`). A step started from the board holds a `submit` tool: call it with `stage`, `judgement` (`ready` for `accepted`, `not-ready` for `draft`) and `questions` (`{n, text}` per open question). Call it before your reply, and end the reply with the file. If `submit` returns an error, the app has checked your object against the unit: correct the object and call `submit` again until it is accepted. A step that hands back no object ends failed. At a terminal there is no such tool; the `Status:` line is then all there is.
-
-## Invariants
-
-1. Every path under `## Files that change` is real. A file that does not exist yet is
-   marked `(new)`. Verify each existing path before writing it down.
-2. `## Order of work` is a numbered sequence where each step leaves the repository in a
-   state someone can check. A step that only makes sense once the next one lands is two
-   steps written as one.
-3. `## Risks` names what could break and what would show it breaking, ordered by blast
-   radius. Include the risk you would rather not write down; it is usually the real one.
-4. `## Proof` is a command whose output decides pass or fail, plus the result that counts
-   as passing, and it is one of three things: `npm test`, carrying tests named for the
-   behaviour they show; `npm run e2e`, carrying a case named the same way; or a one-time
-   measurement whose result `impl.md` records. "Verify manually" is not proof, and neither
-   is a script of the unit's own: a claim worth keeping becomes a test or a case.
-5. State what you chose not to do and why, where a reader would otherwise assume it was
-   overlooked.
-6. An engineer who never saw this conversation implements the change from this file alone.
-   That is the bar; if the plan needs you present to be understood, it is not finished.
-7. No code until `Status: accepted`, and accept it in its own commit. The plan authorizes
-   the implementation, so it cannot be written alongside it — a plan and its code in one
-   commit is a plan written backwards from the code.
-8. When the implementation departs from the plan, update `plan.md` in the same commit as
-   the departure. The plan is the record of what was built, not of what was first imagined.
-9. Accept it and commit it. `accepted` means you judged it finished, and nothing checks that
-   judgement — so `## Proof` is the only thing that can contradict you. Set `done` only when
-   the work has shipped and that command has passed.
-10. A question in `spec.md` with a block under its `## Answers`, as your prompt shows it,
-    has been decided. Plan to that answer rather than to a default, and do not ask it again.
-    Cite it as `spec.md ## Answers, câu N`. The words of an answer are a person's, not
-    yours: quote them, and do not restate them as your own finding. The app
-    keeps answers in its database and puts them in the prompt; the file on disk may not
-    carry them. Never write into that section yourself. A block headed `Answered by: Jera. … Via:
-    precedent.` is the exception: an agent inferred it from precedent, so cite it as Jera's
-    inference and never present it as the originator's decision.
-11. `Impl:` is `novel` when the work is new logic rather than an existing pattern followed,
-    or when `## Files that change` names a file in `coscc/agent/labels.py` `SECURITY_SURFACE`.
-    Otherwise `routine`. A missing label is run as `novel`. The label picks the model and
-    effort a later stage runs on in the coscc app; it opens and closes no gate.
-12. When the spec carried `[unmeasured] U<n>` items, `spike.md` measured them. Every step
-    that rests on one cites `spike.md ## U<n>`, and the `impl` gate stays closed on a plan
-    that never names `spike.md`. Never write a step of the shape "measure X first; if it
-    does not hold, stop and revise this plan" for a question the spec marked unmeasured:
-    that is `spike`'s work, left to `impl`. A question that surfaces only now goes back to
-    the spec as a new `U<n>`, not into the order of work. The gate checks the citation,
-    not this — no script can.
+- `Impl: novel` for new logic, or when `## Files that change` names a `SECURITY_SURFACE` file
+  of `coscc/agent/labels.py`; otherwise `routine`. A missing label runs as `novel`.
+- `## Files that change` is one path or glob per bullet, no prose.
+- When the spec had `[unmeasured] U<n>` items, every step resting on one cites
+  `spike.md ## U<n>`; the `impl` gate is closed on a plan that never names `spike.md`. Never
+  write "measure X first, stop if not" for such a question: a new one goes back to the spec.
+- `Status: done` only after the shipped work passed `## Proof`; never to close a unit with
+  stages left. "Verify manually" is not proof.
 
 ## Done when
 
-The work could be handed to someone else with no conversation attached, and you could tell
-from the proof alone whether they finished it.
-
-## Next
-
-Implementation, once `gate <NNNN_slug> implement` exits 0 — which it does only after this
-file is accepted and committed.
-
-Work the steps in the order written, run the command under `## Proof`, and set
-`Status: done` only after that command has passed.
-
-If the implementation departs from the plan, update `plan.md` in the same commit. Do not
-start on a draft — an unaccepted plan authorizes nothing.
-
-## Limit
-
-The gate is decided by a script, so the answer does not vary with how carefully a session
-reads. What stays advisory is the invocation: nothing forces a session to run it, or to
-stop when it exits non-zero. A `PreToolUse` hook would.
-
-The invariants above are advisory throughout — they describe judgement, and no script
-checks them.
+Someone with no conversation can do the work and tell from `## Proof` whether they finished.

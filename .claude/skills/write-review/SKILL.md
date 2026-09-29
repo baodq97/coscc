@@ -5,191 +5,58 @@ description: Write or extend the review.md that records a round of review of an 
 
 # Write a review round
 
-Read this section before anything else, because it is the reason this stage is the weakest
-one in the loop.
+Review the open pull request for bugs, security and compliance with the plan, and append one
+round to `review.md`. You are an agent judging an agent's work: `Concluded by:` says so, and
+nothing here reads as a person's approval.
 
-**There is no separation of duties here, and this file must not pretend otherwise.**
-The review happens **before** the merge (`0015`), and a separate agent session sits in
-the chair — not the session that wrote the code. That makes this a step that can say "not
-yet", and the `ship` gate will not open until it says "pass". It does not make it a
-person's approval: it is still an agent judging an agent, and `Concluded by:` has to say
-so. A `review.md` that reads as though someone other than an agent approved the change is
-more misleading than no review at all, because it looks like a person's gate.
+## What you are given (trust it)
 
-## Before writing
+`impl.md` (scope, test counts, answers), the commit under review, the gate, the earlier
+findings and any answers are in the prompt. CI is green and `impl.md` records its tests: do not
+re-run the suite or report what CI enforces. From the board the gate was asked (the prompt
+says so); at a terminal run `cos.mjs gate <unit> review` first and stop on non-zero. Read the
+changed files, not the whole tree.
 
-```
-node .claude/scripts/cos.mjs gate <NNNN_slug> review
-```
+## Round
 
-The gate is closed while `pr.md` names no pull request, while any required check on it is
-red or still running, and once the round limit is used up. Red CI means the work goes back
-to `impl` on the branch; it is not something this stage reviews around.
+1. Copy the commit from *The commit you are reviewing* (at a terminal, `git rev-parse HEAD`).
+2. List findings. Carry forward every finding of every earlier round, `[fixed <sha>]` or
+   `[open]`, a `low` too; a round that drops one is not counted and runs again.
+3. Severity: `high` or `medium` only for broken behaviour, lost data, a security hole, or a UI
+   standard rule `S<n>`, and a finding naming `S<n>` always blocks. Wording, docstrings,
+   comments, citations and style are `low` nits: at most 5, the rest as a count, never
+   blocking. Lowering an earlier round's `high`/`medium` is not a fix.
+4. Verdict: any blocking finding not closed, `changes-requested` (header `Status:
+   changes-requested`); otherwise `pass` (`Status: accepted`), which opens `ship`. An `[open]`
+   `low` does not block. If every blocking one is `[needs-person]`, `needs-person`.
+5. Never write `Verdict: incomplete` (only the app's closing turn does) and never merge. After
+   an `incomplete` round, read its *What was not reviewed* first, then write a full round for
+   this head, carrying every finding forward.
 
-## The loop
+**Claims.** For each open finding `impl.md ## Needs a person` claims (`- F<k>: <reason>`),
+label it: `[needs-person]` (the grant really lacks it or it costs money), or `[claim-rejected]`
+(impl could have fixed it; say why). Never leave a claim `[open]`. `[answered]` only when
+`review.md ## Answers` holds a `### F<k>` block that settles it; if not, keep it `[open]` and
+say what is missing. An `[answered]` never returns to `[needs-person]`: raise a new id.
 
-Each run of this stage appends **one round** to `review.md`. Earlier rounds are never
-rewritten or removed.
-
-1. Read the pull request as it stands: `pr.md`, `impl.md`, and the files it changed.
-2. Record the commit at the head of the branch you reviewed. In the app this stage can
-   only read files, and only inside the unit's worktree and the unit's own directory —
-   the worktree's git directory is outside both — so the app reads the head before the
-   step starts and puts it in the prompt under *The commit you are reviewing*. Copy that
-   value. At a terminal, `git rev-parse HEAD`. Never guess.
-3. List every finding, each with a severity (below). Carry forward **every** finding any
-   earlier round raised, marked `[fixed <sha>]` with the commit that fixed it, or `[open]`
-   — a `low` one too. Dropping one is refused by the `ship` gate, and a
-   `changes-requested` round that drops one is not counted against `COS_REVIEW_ROUNDS`
-   (`0027`):
-   `cos.mjs next` sends the unit to this stage again, naming the ids it dropped.
-4. If any finding that blocks is `[open]`: `Verdict: changes-requested`, header
-   `Status: changes-requested`. The fixes are made on the same branch, pushed, CI goes
-   green again, and this stage runs again for round N+1.
-5. If every finding not closed is one that does not block: `Verdict: pass`, header
-   `Status: accepted`. That is what opens `ship`.
-
-**A round the app wrote as `incomplete`.** A review run from the board (`0085`) that
-hits its turn or budget ceiling before its reply is written gets one closing turn with no
-tools, and the app writes what it says as a round with `Verdict: incomplete` under
-`Status: draft`: `### Reviewed so far`, `### Findings`, `### What was not reviewed`. That
-round asks for another review, not for a fix, and is never counted against
-`COS_REVIEW_ROUNDS`. When the last round is one, read its *What was not reviewed* first,
-then write round N+1 as a full round for the head you are handed now, carrying forward
-every finding of the incomplete round and of every earlier one. Never write
-`Verdict: incomplete` yourself: only the app's closing turn does.
-
-**Severity, and what blocks.** Every finding carries `high`, `medium` or
-`low` between two em dashes (`—`, U+2014) right after its location:
-`- F2 [open] path/to/file.py:40 — low — what`. `cos.mjs` reads only that token. A hyphen,
-an en dash, a word in another language or no token at all reads as no severity, and a
-finding with no severity blocks. The line is the originator's (`0061` intent, Answers, Câu 1): `low` means
-nothing a user sees behaves wrongly, nothing touches security, and no data is lost;
-anything else is `medium` or above.
-
-An `[open]` finding rated `low` does not block — unless an earlier round rated the same id
-`high` or `medium`. Lowering a severity is not a fix, and the `ship` gate refuses it by
-name: fix it on the branch, or keep it at what it was. Every other finding not closed
-blocks, whatever its severity: `[needs-person]`, `[claim-rejected]` and an unbacked
-`[answered]` never become "does not block". A `low` stays `[open]` until a round sees it
-fixed, is carried forward like any other, and `ship.md` lists it. Rate a finding on what
-it is, not on what gets the unit through: a severity is one agent's word about another
-agent's work, and nothing but a person reading the pull request checks the first one given.
-
-**Findings impl says only a person can close.** `impl.md` may carry a `## Needs a person`
-section, one line per finding: `- F<k>: <reason>`. It is impl's word about its own work,
-and this stage is where it is checked. For every finding still open that impl claims there,
-decide, and label it:
-
-- `[needs-person]` — you accept the claim: the reason names something the impl grant
-  really lacks (a tool, a login) or something that costs real money, and the finding
-  cannot be closed without it. The finding stays not closed.
-- `[claim-rejected]` — impl could have fixed it. Say why in the finding's line. The unit
-  goes back to `impl`.
-- `[answered]` — a person answered it: `review.md ## Answers` holds a `### F<k>` block (in
-  your prompt: the app keeps the answer in its database, not the file), and
-  what it says settles the finding. Only use this when that block exists; the `ship` gate
-  refuses an `[answered]` with no block behind it. If the answer does not settle it, keep
-  the finding `[open]` and say what is still missing: the unit goes back to `impl`, not to
-  another review. If what is missing is something a person must do again, do not keep it
-  `[open]`: close it `[answered]` and raise a new finding with a new id for the rest
-  (rule 7), which `impl` may then claim.
-
-A claim no round has judged does not stop the loop: `cos.mjs next` sends a unit whose open
-findings are all claimed, and claimed for the first time, to this stage, not to a person.
-So never leave a claim you are judging `[open]`: give it one of the three labels above. A
-finding any round has already labelled `[needs-person]`, `[claim-rejected]` or `[answered]`
-counts as judged, and if a later round leaves it `[open]`, `next` sends it to `impl` even
-while `impl.md` still claims it. Then:
-
-6. If every finding that blocks and is not closed is `[needs-person]`:
-   `Verdict: needs-person`, header `Status: changes-requested` — even with a `low` still
-   `[open]` beside them. `cos.mjs next` then offers no stage and names the findings a
-   person must answer; each is answered on the board's *Questions* tab (or
-   `POST /api/units/answer` with `question: "F<k>"`, `artifact: "review.md"`), which records
-   it, and the next round's prompt shows it as `### F<k>` under `## Answers`. Once every one has an answer, this stage runs again and
-   closes each as `[answered]` or keeps it open.
-7. A finding once `[answered]` never goes back to `[needs-person]`. If a person must be
-   asked again, raise a new finding with a new id: the old `### F<k>` block carries no round
-   number, so reusing the id would read the old answer as the new one.
-
-**The round limit.** After `COS_REVIEW_ROUNDS` rounds (default 3) have ended in
-`changes-requested`, the gate stops the loop: `needs a person`. A person decides — grants
-more rounds from the board (`POST /api/units/more-rounds`, a `### More rounds` block), raises
-the limit, or sets `Status: rejected` to close the unit. That is one of the two places the loop waits for someone who
-is not an agent; the other is a `needs-person` round, above.
-
-Only rounds whose verdict is `changes-requested` and carry forward every earlier finding
-count toward that limit (`0027`); one that drops an id an earlier round raised is written as
-it is, not counted, and the review runs again. A round that
-passes, or one that ends `needs-person`, costs nothing, so reviewing again after a rebase
-never brings the loop closer to `needs a person`. A round left with nothing but findings
-that do not block passes, so no round is ever counted for `low` findings alone.
-
-**A rebase that changes the patch voids a pass.** `gh pr update-branch --rebase` rewrites
-every commit on the branch, so the reviewed commit is no longer on it. The `ship`
-gate then compares the unit's patch at the new head with the reviewed one (`0067`): if only
-line numbers and `index` lines differ, it opens once CI is green and no round is needed. If
-any added, removed or context line differs, it stays closed. So bring the branch up to date
-with `main` **before** a round, not between a pass and the merge. If the gate names a patch
-that differs after a pass, the order is: wait for green, append another round that reviews
-the new head (carrying every finding forward), then `ship`. The earlier pass stays in the
-history as it was written.
+**Rebase before a round, not after a pass**: a rebase that changes the patch voids a pass.
 
 ## Screens
 
-This applies when the branch changes a file listed under `paths:` in
-`.claude/rules/ui-standard.md` — a **UI unit** (`0083`). The rules are in that file, `S1` to
-`S8`; this section says only what the round must do with them.
+On a UI unit (a changed file under `paths:` in `.claude/rules/ui-standard.md`) open
+`.screens/manifest.json` and `Read` every PNG it lists against `S1`-`S8`. Add `### Screens`:
+first line exactly `Taken at: <manifest head>. Standard: .claude/rules/ui-standard.md. Looked at by: <agent session>, from screenshots.`
+then `- <path>.png — <W>×<H> — <address> — <what you saw>` per image. A violation is a finding
+whose first word after its severity is the rule id. `high`, and `changes-requested`: no
+manifest or image, a `head` older than the last UI commit, `dirty: true`, an unexplained
+`hits` entry. When the prompt carries *The screenshots, taken again*, the app took them; a hit
+counts as explained if `impl.md ## Screens` explains one with the same address, size and kind.
+At a terminal, if the manifest `head` is not an ancestor of HEAD, run
+`uv run python scripts/capture_screens.py <its addresses>` first. Name unreachable screens
+under `### What was not reviewed`. If *The gate, already asked* says a round passed and ship is
+still closed, fix what that line names in this round.
 
-1. Open `.screens/manifest.json` in the worktree, then open **every** PNG it lists with
-   `Read`. Compare each against the standard.
-2. Write a `### Screens` section in the round. Its first line is exactly
-   `Taken at: <the manifest's head>. Standard: .claude/rules/ui-standard.md. Looked at by: <which agent session>, from screenshots.`
-   — the word "agent" is required, because it was an agent looking at screenshots and not
-   a person, and nothing here may read as though a person approved the screens. Then one
-   line per image: `- <path>.png — <W>×<H> — <address> — <what you saw>`.
-3. Each violation is an ordinary finding under `### Findings`, and the first word after its
-   severity is the rule's id: `- F3 [open] coscc/screens/__init__.py:120 — medium — S3 the card shows a full sha`.
-   Such a finding **always blocks, even when rated `low`** — a screen that breaks the
-   standard is something the person sees wrong.
-4. These are `high` findings and the round ends `changes-requested`: no manifest or no
-   image; a manifest whose `head` is older than the branch's last commit touching a UI
-   file; a manifest with `dirty: true`, whose screens may not be `head`'s; a hit in the
-   manifest's `hits` that `impl.md ## Screens` does not explain.
-   - **After a rewrite, the app took them again** (`0111`). When your prompt carries *The
-     screenshots, taken again*, the branch was rebased after `impl`'s screenshots and the
-     app ran `scripts/capture_screens.py` again, on the addresses `impl` chose, before this
-     round. A hit in that new manifest counts as explained when `impl.md ## Screens`
-     explains a hit with the same `address`, `size` and `kind`; do not compare `snippet`,
-     whose `/tmp` paths change on every run. Every other `high` above still applies.
-   - **At a terminal, nothing takes them again for you.** If the manifest's `head` is not an
-     ancestor of the head you review (`git merge-base --is-ancestor <head> HEAD` exits
-     non-zero), run `uv run python scripts/capture_screens.py <the manifest's addresses>`
-     yourself before writing the round, and review what it wrote. A stale manifest after a
-     rebase is not a finding.
-5. Under `### What was not reviewed`, name the screens that can only be reached by an
-   action (a running step, a dialog opened by a button) — the screenshots do not show them.
-
-From the board, the `ship` gate reads the `screens` your round's object hands back
-(*Hand back your round*), never the images and never `### Screens`. At a terminal, where
-there is no object, it reads the words of the passing round's `### Screens`: that the first
-line has this shape and says "agent", names this standard, lists at least one `.png`, and
-that `Taken at` is an ancestor of `Reviewed` with no UI file changed between.
-Nothing checks that the images were opened. Writing the section without opening them is
-exactly the failure this stage exists to prevent.
-
-When *The gate, already asked* carries a line after `open:` saying a round passed and the
-ship gate is still closed, this round is the one retry. Fix what that line names in this
-round itself — for example, write `### Screens` again in the shape of step 2. A second
-passing round on the same head that leaves ship closed stops the unit for a person: `next`
-offers no third.
-
-## Output
-
-One file, `review.md`, in the unit's directory. The header line is rewritten each round to
-carry the current status; everything under it is appended. From the board the app sets that
-`Status:` from the verdict your round's object hands back.
+## Artifact
 
 ```markdown
 # Review: <title>
@@ -202,71 +69,21 @@ Reviewed: <40-hex sha>. Verdict: changes-requested.
 ### Findings
 
 - F1 [open] path/to/file.py:12 — high — what is wrong
-
-### What was not reviewed
-
-## Round 2
-
-Reviewed: <40-hex sha>. Verdict: pass.
-
-### Findings
-
-- F1 [fixed <sha of the fix>] path/to/file.py:12 — high — what was wrong
-- F2 [open] path/to/other.py:40 — low — what is still wrong, and does not block
+- F2 [fixed <sha>] path/to/other.py:40 — low — what was wrong
 
 ### Screens
-
-Taken at: <the manifest's head>. Standard: .claude/rules/ui-standard.md. Looked at by: <agent session, which one>, from screenshots.
-
-- .screens/board-1440x900.png — 1440×900 — /board — no violation
 
 ### What was not reviewed
 ```
 
-`### Screens` only on a UI unit (`## Screens` above).
-
-`Status` is `draft`, `changes-requested`, `accepted` or `rejected`. `accepted` is a pass.
-`rejected` closes the unit; `changes-requested` does not.
-
-## Hand back your round
-
-The app does not read a round's verdict, its findings or its screenshots out of `review.md` to decide anything (`0136`). A step started from the board holds a `submit` tool: call it with `verdict` (`pass`, `changes-requested` or `needs-person`), `findings` (every finding of the round, earlier ones carried forward, each `{id, state, fixed_in, severity, rule, path, lines, text}`, `state` being the label above without its sha and `fixed_in` that sha) and `screens` (`{path, size, address, result}` per screenshot, `[]` for none). The app then writes the round's `Reviewed:` line, `### Findings` and `### Screens` from the object, with the head the step ran on, where the manifest says the screenshots were taken and the round's number; everything else in the round stays yours. Call it before you reply. If `submit` returns an error, the app has checked your object against the unit: correct the object and call `submit` again until it is accepted. A review that hands back no round ends failed. At a terminal there is no such tool, and the file is all there is.
-
-## Invariants
-
-1. **The first non-empty line of each round is `Reviewed: <sha>. Verdict: <pass|changes-requested|needs-person>.`**
-   The `ship` gate reads it: after a pass, a commit on the branch that touches anything
-   outside `.cos/<unit>/` closes the gate, because nobody reviewed it. `needs-person` only
-   when every blocking finding not closed is `[needs-person]`; a round that says so while
-   a blocking one is `[open]`, `[claim-rejected]` or unbacked `[answered]` is read as
-   `changes-requested`. `cos.mjs` also reads `incomplete`, which only the app's closing
-   turn writes (*The loop*); a review session never does.
-2. **Rounds are numbered 1, 2, 3… with no gap.** A renumbered history is refused.
-3. **Every finding is one line under `### Findings`: `- F<k>` and one of five labels —
-   `[open]`, `[fixed <sha>]`, `[needs-person]`, `[claim-rejected]`, `[answered]` — then
-   `path:line — <high|medium|low> — what`, with em dashes.** A finding with no location is
-   an opinion. Any other label counts as not fixed. Only `[fixed <sha>]`, and `[answered]`
-   with its `### F<k>` block in `review.md ## Answers`, count as closed; an `[open]` `low`
-   is not closed, it only does not block.
-4. **`Concluded by:` is required and names an agent or a person.** If an agent reviewed,
-   write that. Do not write a person who did not read it.
-5. **`### What was not reviewed` is not optional.** A round that claims full coverage is
-   claiming something nobody checked. In the app this stage cannot run `git diff`; if you
-   did not see the diff, say so here.
-6. Do not raise the verdict above what the findings support. A pass with a blocking
-   finding `[open]` is refused by the gate anyway; do not write one. Nor lower it: a
-   `changes-requested` round whose only open findings are `low` counts toward the limit
-   for nothing — that round is a pass.
-7. Never merge from this stage.
+Lines code parses: a round opens `Reviewed: <sha>. Verdict: <pass|changes-requested|needs-person>.`;
+rounds numbered 1, 2, 3 with no gap; a finding is one line `- F<k> [label] path:line — <high|medium|low> — text`
+with em dashes (U+2014), label one of `[open]`, `[fixed <sha>]`, `[needs-person]`,
+`[claim-rejected]`, `[answered]`; a finding with no severity blocks; no location is an opinion.
+`### What was not reviewed` is required; if you did not see the diff, say so. `Status`:
+`draft`, `changes-requested`, `accepted`, `rejected`; the header is rewritten each round, the
+rest appended.
 
 ## Done when
 
-A reader can tell, round by round, what was looked at, what was not, what was found and
-what fixed it — and, without guessing, that the reviewer was an agent.
-
-## Next
-
-`changes-requested`: fix on the branch, then this stage again.
-`needs-person` round (header still `changes-requested`): a person answers each finding,
-then this stage again.
-`accepted`: `ship`, which the app runs itself and which merges, with no session and no skill.
+A reader can tell what was looked at, what was not, what was found and that an agent reviewed it.

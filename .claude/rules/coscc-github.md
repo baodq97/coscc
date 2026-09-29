@@ -5,32 +5,20 @@ paths:
   - "coscc/github/prscope.py"
 ---
 
-# What the app writes to GitHub on its own
+# Things that break here
 
-- **`POST /api/units/review-comment` writes to GitHub under this machine's `gh` login.** It
-  posts a round of `review.md` to the unit's pull request, verbatim and unfiltered: a
-  finding that quotes a token or a local path goes up with it, and a public repository's
-  pull request is public. Whoever holds the password or a live session can press it. The
-  body is only ever the round's own text, and the marker on its last line stops a second
-  copy. The trace is a `pr-comment` row in Activity and the comment itself. `run_step` also
-  posts on its own after writing a review round, which can hold the `done` row for two `gh`
-  calls of `prcomment.TIMEOUT` (`coscc/github/prcomment.py:38`) each on a slow network.
-- **Every `pr` step that is not stopped rewrites its pull request's title and body under
-  this machine's `gh` login.** After the step, `_sync_pr` reads `cos.mjs pr-text` and, when
-  `pr.md` is `accepted` and names a pull request URL, runs `gh pr view` and — unless both
-  already match — `gh pr edit` on the pull request `pr.md` names, then one read-only
-  `gh pr view --json changedFiles,additions,deletions,files` (`coscc/github/prscope.py`), holding
-  the `done` row for up to three calls of `prcomment.TIMEOUT` each (chosen, not measured).
-  - It overwrites whatever a person changed on GitHub since, and keeps the old text nowhere
-    (0055 spec C1). A `pr.md` edited by hand to name another repository's pull
-    request is written there.
-  - The trace is one `pr-sync` row in the run log per step, with `existed` (the lookup
-    before the step saw the pull request; `null` when that lookup could not answer — count
-    those apart, not as `false`), `outcome` `updated`, `already`, `failed` or `skipped`,
-    and, unless skipped or failed before the sync ran, `scope`: GitHub's counts and
-    `verdict` `match`, `mismatch` or `unread` against `pr.md ## Scope of the diff`. No gate
-    reads it and no screen shows the row. A `pr` step at a terminal leaves none.
-  - `_sync_pr` also runs before every `ship` step started from the app, before the gate is
-    asked (`0049` R7): at most two `gh` calls, no scope read, and a row with `stage` `ship`
-    and no `existed`. The `ship` gate closes on a title that differs from `pr.md`'s.
-- A review comment is not an approval, and no gate reads it (`.claude/docs/not-built.md`).
+- `POST /api/units/review-comment` posts a round of `review.md` to the pull request verbatim,
+  under this machine's `gh` login: a token or local path in a finding goes up with it, and a
+  public repository's pull request is public. `run_step` also posts after writing a round,
+  holding the `done` row for two `gh` calls of `prcomment.TIMEOUT` (`coscc/github/prcomment.py:38`).
+- Every `pr` step rewrites its pull request's title and body: `_sync_pr` reads `cos.mjs pr-text`
+  and, when `pr.md` is `accepted` and names a pull request URL, runs `gh pr view`, `gh pr edit`
+  and one `gh pr view --json changedFiles,additions,deletions,files` (`coscc/github/prscope.py`),
+  up to three `prcomment.TIMEOUT` calls on the `done` row.
+  - It overwrites what a person changed on GitHub and keeps no copy. A `pr.md` hand-edited to
+    name another repository's pull request is written there.
+  - The `pr-sync` run-log row has `existed` (`null` when the lookup could not answer: count it
+    apart from `false`), `outcome` (`updated`, `already`, `failed`, `skipped`) and `scope`
+    `verdict` (`match`, `mismatch`, `unread`). No gate reads it.
+  - `_sync_pr` also runs before every `ship` step, before the gate: at most two `gh` calls, no
+    scope read. The `ship` gate closes on a title that differs from `pr.md`'s.

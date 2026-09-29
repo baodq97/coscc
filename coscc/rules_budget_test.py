@@ -23,9 +23,9 @@ APP = RULES / "coscc-app.md"
 UI = RULES / "ui-standard.md"
 
 # Bytes, as `wc -c` counts them (R6). Chosen, not measured (spec C9).
-CLAUDE_MAX = 8_000
-APP_MAX = 12_000
-AREA_MAX = 8_000
+CLAUDE_MAX = 3_000
+APP_MAX = 3_000
+AREA_MAX = 3_000
 
 APP_PATHS = ["coscc/**", "coscc/**/*", "rxconfig.py", "scripts/*.py"]
 

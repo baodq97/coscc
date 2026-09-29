@@ -234,6 +234,18 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         self.assertEqual(options.mcp_servers["cos"]["type"], "sdk")
         self.assertIs(options.strict_mcp_config, True)
 
+    def test_helpers_are_passed_only_when_given(self):
+        from coscc.agent.policy import SUBAGENTS
+
+        self.assertEqual(_options(Config(), "/p", None).agents, None)
+        options = _options(Config(), "/p", None, agents=SUBAGENTS)
+        self.assertEqual(sorted(options.agents), ["scout", "tester"])
+        for name, spec in SUBAGENTS.items():
+            with self.subTest(helper=name):
+                self.assertEqual(options.agents[name].tools, spec["tools"])
+                self.assertEqual(options.agents[name].model, spec["model"])
+                self.assertEqual(options.agents[name].prompt, spec["prompt"])
+
     def test_the_prompt_reaches_the_model_as_written(self):
         """No `@path` expansion and no slash-command dispatch, for every session.
 
