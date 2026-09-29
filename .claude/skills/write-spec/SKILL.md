@@ -110,7 +110,7 @@ The app does not read `Status:` or `## Open questions` out of the file to decide
 9. A question with a block under `## Answers` in the artifact that holds it, as your
    prompt shows it, has been decided. Do not carry it forward as open and do not ask it
    again. Cite it as `<artifact> ## Answers, câu N`. The words of an answer are a person's,
-   not yours: quote them, and do not restate them as your own finding. Since `0135` the app
+   not yours: quote them, and do not restate them as your own finding. The app
    keeps answers in its database and puts them in the prompt; the file on disk may not
    carry them. Never write into that section yourself. A block headed `Answered by: Jera. … Via:
    precedent.` is the exception: an agent inferred it from precedent, so cite it as Jera's
@@ -118,8 +118,9 @@ The app does not read `Status:` or `## Open questions` out of the file to decide
 10. A concern you could not measure from here — whether an SDK, a CLI or a process behaves
     the way the design assumes — is written as an item at column 0 under `## Concerns`
     that opens `[unmeasured]` and an id: `- [unmeasured] U1. Does disconnect() make the
-    process exit within 10 s?`. `cos.mjs` reads these, and a spec that carries one sends
-    the unit to `spike` (`write-spike`) before `plan`. `U<n>` is the question's identity:
+    process exit within 10 s?`. List the same ids in the `unmeasured` you submit: from the
+    board that list is what `cos.mjs` reads, and at a terminal it reads these items. A spec
+    that carries one sends the unit to `spike` (`write-spike`) before `plan`. `U<n>` is the question's identity:
     keep it across rewrites. An item with no id, or one id used twice, closes the `plan`
     gate. A spec with no such item never runs `spike`.
 11. Rewritten after a spike found a `U<n>` that `fails`: drop that id and every
@@ -127,8 +128,9 @@ The app does not read `Status:` or `## Open questions` out of the file to decide
     one. When no direction left holds, write `Status: draft` with the question under
     `## Open questions`: a draft stops the loop until a person answers.
 12. Under `## Open questions`, each question is an item `N. ` at column 0 whose first
-    paragraph holds a `?`. `cos.mjs` counts nothing else: a bullet, or a numbered line with
-    no `?`, is read as a note and never stops the autopilot. So a real question always
+    paragraph holds a `?`, and the same questions go into the `questions` you submit — from
+    the board those are what stop the autopilot. At a terminal `cos.mjs` counts nothing else:
+    a bullet, or a numbered line with no `?`, is read as a note. So a real question always
     carries its `?`. A note — no question is left open, how the answers were used, the
     originator should reread this — is a plain sentence there or goes in another section,
     never an item. When nothing is left open, keep the heading: the latest artifact with

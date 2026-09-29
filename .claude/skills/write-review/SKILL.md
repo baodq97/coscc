@@ -87,7 +87,7 @@ decide, and label it:
 - `[claim-rejected]` — impl could have fixed it. Say why in the finding's line. The unit
   goes back to `impl`.
 - `[answered]` — a person answered it: `review.md ## Answers` holds a `### F<k>` block (in
-  your prompt: since `0135` the app keeps the answer in its database, not the file), and
+  your prompt: the app keeps the answer in its database, not the file), and
   what it says settles the finding. Only use this when that block exists; the `ship` gate
   refuses an `[answered]` with no block behind it. If the answer does not settle it, keep
   the finding `[open]` and say what is still missing: the unit goes back to `impl`, not to
@@ -114,9 +114,9 @@ while `impl.md` still claims it. Then:
    number, so reusing the id would read the old answer as the new one.
 
 **The round limit.** After `COS_REVIEW_ROUNDS` rounds (default 3) have ended in
-`changes-requested`, the gate stops the loop: `needs a person`. A person decides at a
-terminal — set `Status: rejected` to close the unit, or raise the limit — and nothing typed
-into the product unblocks it. That is one of the two places the loop waits for someone who
+`changes-requested`, the gate stops the loop: `needs a person`. A person decides — grants
+more rounds from the board (`POST /api/units/more-rounds`, a `### More rounds` block), raises
+the limit, or sets `Status: rejected` to close the unit. That is one of the two places the loop waits for someone who
 is not an agent; the other is a `needs-person` round, above.
 
 Only rounds whose verdict is `changes-requested` and carry forward every earlier finding
@@ -171,9 +171,11 @@ This applies when the branch changes a file listed under `paths:` in
 5. Under `### What was not reviewed`, name the screens that can only be reached by an
    action (a running step, a dialog opened by a button) — the screenshots do not show them.
 
-The `ship` gate reads the words of the passing round's `### Screens`, never the images: that
-the first line has this shape and says "agent", names this standard, lists at least one
-`.png`, and that `Taken at` is an ancestor of `Reviewed` with no UI file changed between.
+From the board, the `ship` gate reads the `screens` your round's object hands back
+(*Hand back your round*), never the images and never `### Screens`. At a terminal, where
+there is no object, it reads the words of the passing round's `### Screens`: that the first
+line has this shape and says "agent", names this standard, lists at least one `.png`, and
+that `Taken at` is an ancestor of `Reviewed` with no UI file changed between.
 Nothing checks that the images were opened. Writing the section without opening them is
 exactly the failure this stage exists to prevent.
 
@@ -186,7 +188,7 @@ offers no third.
 ## Output
 
 One file, `review.md`, in the unit's directory. The header line is rewritten each round to
-carry the current status; everything under it is appended. Since `0136` the app sets that
+carry the current status; everything under it is appended. From the board the app sets that
 `Status:` from the verdict your round's object hands back.
 
 ```markdown

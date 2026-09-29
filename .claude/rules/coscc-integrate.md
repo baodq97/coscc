@@ -56,9 +56,9 @@ paths:
   unit that is really current, it leaves a `refused` row. After the read, such a unit may
   start one background `gh pr checks` for its state badge (`0100`): one per unit at a time,
   no oftener than `CI_REFRESH` per head, never awaited by the board.
-- **Every `pr` step costs one `gh pr list` before the session starts,** under this machine's
-  `gh` login, up to `GH_TIMEOUT`. Offline or logged out, the step still runs and its prompt
-  says the lookup failed. The `pr` grant refuses `git rebase`, `git merge`, `git pull`,
+- **Every `pr` step costs one `gh pr list`,** asked by the PR machine
+  (`coscc/github/prmachine.py`) under this machine's `gh` login, up to `GH_TIMEOUT`; no
+  session opens. The `pr` grant, which only a terminal session holds, refuses `git rebase`, `git merge`, `git pull`,
   `gh pr update-branch` and a forced push (`--force`, `-f`, `--force-with-lease`,
   `--force-if-includes`, a `+` refspec) by their words. It also refuses a git alias, include
   or `GIT_CONFIG_*` made during the step, and `gh api` naming the update-branch endpoint

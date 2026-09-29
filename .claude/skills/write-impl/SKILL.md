@@ -114,7 +114,7 @@ it did. If that rebuild failed, run the command it prints before any browser pro
 
 ## Work only a person can do
 
-Since `0115`, a draft `impl.md` can wait on a person and run again on the answer.
+A draft `impl.md` can wait on a person and run again on the answer (`0115`).
 
 - Work only a person can do, that this step is waiting on while `impl.md` is `draft`, goes
   under `## Open questions`, one item each, `N. …?` at column 0: run a command at a terminal
@@ -124,7 +124,7 @@ Since `0115`, a draft `impl.md` can wait on a person and run again on the answer
 - `## Needs a person` keeps its meaning above: `- F<k>:` claims in a review round, answered
   in `review.md`.
 - Once `## Open questions` is written, keep the heading even when no question is left open.
-- The `## Answers` section at the end of the file is the app's; since `0135` a new answer is
+- The `## Answers` section at the end of the file is the app's; a new answer is
   a row in the app's database and reaches you only in the prompt. When the prompt carries
   *The answers already given to this artifact*, cite each as `impl.md ## Answers, câu N`,
   write everything above that section, and never edit, move or add to it. An answered

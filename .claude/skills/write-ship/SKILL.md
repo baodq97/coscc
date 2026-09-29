@@ -15,6 +15,10 @@ a later observation to be breached *against*.
 This is also the stage that merges (`0015`). `pr` stops at an open pull request; the
 merge waits for a review round that passed.
 
+From the board no session runs this stage: the app merges, pinned to the head its own guard
+read, and writes `ship.md` itself (`coscc/github/prmachine.py`). This skill is for a
+terminal.
+
 ## Before merging
 
 ```
@@ -64,8 +68,8 @@ gh pr merge <url> --squash --delete-branch --match-head-commit <sha the gate nam
 The URL is `pr.md`'s `PR:` field. Name the pull request by URL, not by number, and do not
 run this from inside the unit's worktree: there `--delete-branch` merges, then fails to
 switch the worktree to a `main` another worktree holds, and exits 1 with the branches left
-behind — a merge that reads as a failure. The app runs this step in the unit's own
-directory, which is not a checkout, for that reason. `--match-head-commit` is what makes the
+behind — a merge that reads as a failure; run it from the unit's own directory, which is
+not a checkout. `--match-head-commit` is what makes the
 gate's answer hold at the moment of the merge: if anything was pushed between the gate and
 this command, GitHub refuses the merge instead of landing a head nobody checked. Then ask
 the gate again.

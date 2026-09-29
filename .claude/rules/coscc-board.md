@@ -19,7 +19,7 @@ paths:
   - Re-running `impl` overwrites `impl.md`. `review.md`'s rounds are guarded on top of that:
     the reply carries only its new round, the runner writes the earlier ones back from the
     file, and it refuses a reply that rewrites one. Every prose stage's `## Answers` section
-    is guarded the same way, `review.md` included; since `0135` answers and holds are rows,
+    is guarded the same way, `review.md` included; answers and holds are rows,
     not blocks in it (`.claude/docs/coscc-answers.md`).
   - Opening a unit, finishing a step and pressing *Ask again* each ask `gh` in the
     workspace under this machine's login (how long, unmeasured); nothing re-asks

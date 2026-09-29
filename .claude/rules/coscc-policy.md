@@ -6,7 +6,7 @@ paths:
 
 # The grant table: what no test here catches
 
-- **Since `0136` no board step opens a `pr` or `ship` session.** `run_step` hands both to
+- **No board step opens a `pr` or `ship` session** (`0136`). `run_step` hands both to
   `coscc/github/prmachine.py`, which pushes the unit's branch, opens its pull request and
   merges it with this machine's `gh` login, with no model between. What stands in front of a
   merge is `cos.mjs gate` and then guard `ship-ready`, which reads CI and the last round in

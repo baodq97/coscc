@@ -97,7 +97,9 @@ The app does not read `Status:` or `## Open questions` out of the file to decide
 1. One `## U<n>` for every `U<n>` the spec carries now, headed exactly so.
 2. Each carries one line `Verdict: holds.` or `Verdict: fails.` — nothing else on it —
    and at least one fenced block holding a command that was run and what it printed. A
-   verdict with no block is not a measurement, and the gate reads it as missing.
+   verdict with no block is not a measurement: at a terminal the gate reads it as missing,
+   and from the board, where the gate reads the `verdicts` you submit, the block is the only
+   evidence a reader has, so never submit `holds` for a `U<n>` without one.
 3. `holds` means the spec's assumption stood when measured. `fails` means it did not, and
    the plan must not be written on it. A measurement that could not be taken is not
    `holds`: say why, and write `fails`.

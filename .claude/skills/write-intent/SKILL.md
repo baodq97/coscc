@@ -44,8 +44,9 @@ It reads the `Type` you just wrote, joins it to the slug, and prints `<type>/<sl
 is the whole point of the field: a branch composed by hand drifts from the unit it belongs
 to on the second try.
 
-It reads that `Type` **from disk**, and exits 2 with `No such work unit` while the file is
-missing — so it cannot answer until `intent.md` has been written. Write the file, then ask
+It reads that `Type` from the app's snapshot of the unit, not from the file, and exits 2
+with `No such work unit` while `intent.md` is missing — so it cannot answer until the file
+has been written. Write the file, then ask
 for the name, then cut the branch, and commit nothing before that branch exists.
 
 ## Template
@@ -90,12 +91,13 @@ The app does not read `Status:` or `## Open questions` out of the file to decide
 10. A question with a block under `## Answers` in the artifact that holds it, as your
     prompt shows it, has been decided. Do not ask it again. Cite it as
     `<artifact> ## Answers, câu N`. The words of an answer are a person's, not yours: quote
-    them, and do not restate them as your own finding. Since `0135` the app keeps answers
+    them, and do not restate them as your own finding. The app keeps answers
     in its database and puts them in the prompt; the file on disk may not carry them. Never
     write into that section yourself.
 11. Under `## Open questions`, each question is an item `N. ` at column 0 whose first
-    paragraph holds a `?`. `cos.mjs` counts nothing else: a bullet, or a numbered line with
-    no `?`, is read as a note and never stops the autopilot. So a real question always
+    paragraph holds a `?`, and the same questions go into the `questions` you submit — from
+    the board those are what stop the autopilot. At a terminal `cos.mjs` counts nothing else:
+    a bullet, or a numbered line with no `?`, is read as a note. So a real question always
     carries its `?`. A note — no question is left open, how the answers were used, the
     originator should reread this — is a plain sentence there or goes in another section,
     never an item. When nothing is left open, keep the heading.

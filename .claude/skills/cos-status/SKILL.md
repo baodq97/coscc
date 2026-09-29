@@ -10,8 +10,8 @@ uv run coscc state <workspace> | node .claude/scripts/cos.mjs status --state -
 uv run coscc state <workspace> | node .claude/scripts/cos.mjs status --json --state -   # same facts, for a caller that needs to branch
 ```
 
-Since `0135` a unit's statuses, type, links, answers and holds live in the app's database,
-and `status` exits 2 without that snapshot.
+A unit's statuses, type, links, answers and holds live in the app's database, and `status`
+exits 2 without that snapshot.
 
 The script owns the mechanics: which artifacts exist, what status each carries, which
 action comes next. This skill reads and reports. It writes nothing, accepts nothing, and
