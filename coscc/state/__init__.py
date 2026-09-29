@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import dataclasses
+import logging
 
 import reflex as rx
 from reflex_base.event.context import EventContext
@@ -114,6 +115,8 @@ from coscc.state.ideas import (
     IdeasMixin,
 )
 from coscc.state.release import ReleaseMixin
+
+log = logging.getLogger(__name__)
 
 API = build()
 SERVICE = API.state.service
@@ -1684,6 +1687,7 @@ class StudioState(
                     # The SDK resolves the id; take it from here rather than inventing one.
                     self.session_id = payload.get("session_id") or self.session_id
         except Exception as e:
+            log.exception("the chat turn failed")
             self._fail(e)
         finally:
             self.sending = False

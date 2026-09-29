@@ -357,7 +357,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         other = self.root / "other"
         if not other.exists():
             subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True)
-        run = lambda *a: subprocess.run(  # noqa: E731
+        run = lambda *a: subprocess.run(
             [
                 "git",
                 "-C",

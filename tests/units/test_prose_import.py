@@ -90,6 +90,14 @@ class TheRoundsOnlyTheProseHoldsAreImportedOnce(_Review):
         self._unit()
         self.assertNotIn(3, [n for n, *_ in self.rows()], "F3's line has no severity")
 
+    def test_a_round_that_names_a_finding_twice_stays_in_the_file(self):
+        twice = "- F2 [open] (none) — low — a note.\n" * 2
+        (self.dir / "review.md").write_text(
+            PROSE.replace("- F3 [open] a line with no severity in it.\n", twice), encoding="utf-8"
+        )
+        self._unit()
+        self.assertEqual([n for n, *_ in self.rows()], [1, 2])
+
     def test_a_second_read_imports_nothing(self):
         self._unit()
         meta = self.service._unit_meta()

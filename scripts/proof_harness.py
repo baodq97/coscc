@@ -117,7 +117,7 @@ def require_browser():
     try:
         p = sync_playwright().start()
         return p, p.chromium.launch()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - whatever failed, the fix is the same install
         looked = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "~/.cache/ms-playwright")
         print(
             f"no usable chromium (looked in {looked}): {type(e).__name__}\n"
@@ -268,7 +268,7 @@ class Cut:
                         await asyncio.sleep(0.05)
                     dst.write(data)
                     await dst.drain()
-            except Exception:  # noqa: BLE001 - a cut socket is the point
+            except Exception:  # noqa: BLE001, S110 - a cut socket is the point
                 pass
             finally:
                 if not pair["stalled"]:

@@ -6,11 +6,14 @@ session. Pure helpers plus `compute`, the only part that calls `git`.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 from coscc.git import gitops
+
+log = logging.getLogger(__name__)
 
 HEADING = "## Files that change"
 TRUNK_REF = "refs/remotes/origin/main"
@@ -139,7 +142,9 @@ async def compute(
         out["files"] = mentioned(section, changed)
         out["checked"] = True
         return out
-    except Exception as e:  # noqa: BLE001 -- a failure here must never stop the step.
+    except Exception as e:
+        # A failure here must never stop the step.
+        log.exception("the plan drift could not be checked")
         out["files"] = None
         out["checked"] = False
         out["reason"] = str(e) or type(e).__name__

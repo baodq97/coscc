@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import sys
@@ -32,6 +33,8 @@ from argon2.exceptions import InvalidHashError, VerificationError
 
 from coscc.config import LOOPBACK
 from coscc.data import Data
+
+log = logging.getLogger(__name__)
 
 COOKIE = "coscc_session"
 
@@ -533,6 +536,7 @@ class Guard:
                         await self._touch(sha, now)
                         touched_at, used = now, False
                 except Exception:
+                    log.exception("the session could not be checked; asked again next time")
                     # A busy database is not a logout; ask again next time.
                     continue
 
@@ -542,7 +546,7 @@ class Guard:
                 closed = True
                 try:
                     await send({"type": "websocket.close", "code": 1008})
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 - the socket may be gone already
                     pass
             return {"type": "websocket.disconnect", "code": 1008}
 

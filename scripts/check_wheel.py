@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from coscc.agent.harness import wheel_complaints  # noqa: E402
+from coscc.agent.harness import wheel_complaints
 
 
 def main(argv: list[str]) -> int:

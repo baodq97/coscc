@@ -6,8 +6,8 @@ A mixin with no fields, inherited by `Service` (`coscc/service/__init__.py`).
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
-import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +20,8 @@ from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord
 from coscc.data import Busy
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid
+
+log = logging.getLogger(__name__)
 
 
 class AutopilotMixin:
@@ -99,8 +101,9 @@ class AutopilotMixin:
                 await self._pr_read(key)
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001 — the next read tries again; the pass is the net
-                print(f"coscc: the pull request reader of {key} failed: {e}", file=sys.stderr)
+            except Exception:
+                # The next read tries again; the pass is the net.
+                log.exception("the pull request reader of %s failed", key)
 
     async def _pr_read(self, key: str) -> prmachine.Read:
         """One read of the workspace's pull requests. Whatever it recorded schedules one pass for this
@@ -141,7 +144,9 @@ class AutopilotMixin:
             await (self._autopilot_pass(key, woken_by) if woken_by else self._autopilot_pass(key))
         except asyncio.CancelledError:
             raise
-        except Exception as e:  # noqa: BLE001 — shown on the board, never swallowed
+        except Exception as e:
+            # Shown on the board, never swallowed.
+            log.exception("the autopilot pass of %s failed", key)
             self._autopilot_set_stops(
                 key, {"": {"unit": "", "kind": "f", "reason": f"the autopilot's pass failed: {e}"}}
             )
@@ -578,7 +583,9 @@ class AutopilotMixin:
                 pass
         except asyncio.CancelledError:
             raise
-        except Exception as e:  # noqa: BLE001 — the reason is shown, not swallowed
+        except Exception as e:
+            # The reason is shown, not swallowed.
+            log.exception("the autopilot could not run %s of %s", stage, unit)
             said = str(e)
             # A gate's refusal carries its codes (`Refused`); anything else has none.
             if not autopilot.is_ci_pending(e) and not self._busy(key, unit):

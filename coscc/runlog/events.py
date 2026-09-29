@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -37,6 +38,8 @@ from coscc.agent.sessions import cumulative
 from coscc.data import Data
 from coscc.data import now as iso_now
 from coscc.runlog.journal import TOKEN_FIELDS, Journal
+
+log = logging.getLogger(__name__)
 
 # Characters a text field keeps, and an `input` keeps once it is JSON. Chosen, not measured.
 FIELD_MAX = 64_000
@@ -175,8 +178,8 @@ class Recorder:
                     q.put_nowait(("cut", self.seq))
                 else:
                     q.put_nowait(("event", event))
-        except Exception:  # noqa: BLE001 - nothing here may reach the step
-            self.lost += 1
+        except Exception:  # noqa: BLE001 - `_lose` logs the first; nothing here may reach the step
+            self._lose()
 
     def message(self, msg: Any) -> None:
         """One SDK message, as one or more events. Synchronous: no `await` on this path."""
@@ -203,8 +206,15 @@ class Recorder:
             if self.seq == before:
                 # Every message yields at least one event, whatever it is.
                 self._emit("system", **_system_fields(msg))
-        except Exception:  # noqa: BLE001
-            self.lost += 1
+        except Exception:  # noqa: BLE001 - `_lose` logs the first
+            self._lose()
+
+    def _lose(self) -> None:
+        """One event lost, counted in the `end` row; the first of a run is logged with its
+        traceback, so a message the recorder cannot read logs once, not once per message."""
+        if not self.lost:
+            log.exception("run %s lost an event", self.run)
+        self.lost += 1
 
     def _block(self, block: Any, persisted: Any = None, role: str = "") -> None:
         if isinstance(block, TextBlock):
@@ -320,8 +330,8 @@ class Recorder:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:
+            log.exception("the run row of a step was not closed")
         return self.lost
 
     async def stored_turns(self) -> tuple[int | None, str]:
@@ -354,7 +364,7 @@ class Recorder:
         try:
             await self._stop_flusher()
             await asyncio.wait_for(self._flush(CLOSE_WAIT), CLOSE_WAIT * 2)
-        except BaseException:  # noqa: BLE001 - best effort, on the way out
+        except BaseException:  # noqa: BLE001, S110 - best effort, on the way out
             pass
 
 

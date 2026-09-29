@@ -8,6 +8,7 @@ prompt section and the record `Runner.run` puts into `start`. It reads only insi
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 import tokenize
@@ -16,6 +17,8 @@ from typing import Any
 
 from coscc.units.autopilot import files_of
 from coscc.git.drift import files_section
+
+log = logging.getLogger(__name__)
 
 # The bytes of the whole section, advice aside: twice what earlier reviews once took.
 CAP_BYTES = 12288
@@ -158,7 +161,9 @@ def for_step(plan_path: str | os.PathLike[str], tree: str | os.PathLike[str]) ->
     """`{plan_map, plan_map_record}` for `Runner.run`. Never raises: a failure is no section and a record with `error`."""
     try:
         section, record = select(Path(plan_path).read_text(encoding="utf-8"), tree)
-    except Exception as e:  # noqa: BLE001 — recorded, never a reason to refuse the step
+    except Exception as e:
+        # Recorded, never a reason to refuse the step.
+        log.exception("the plan map could not be read")
         return {
             "plan_map": "",
             "plan_map_record": {**_empty(), "error": f"{type(e).__name__}: {e}"},

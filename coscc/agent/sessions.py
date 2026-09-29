@@ -9,6 +9,7 @@ continues a record on disk.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import signal
@@ -36,6 +37,8 @@ from coscc import frontend
 from coscc.agent import harness, instructions, transcript
 from coscc.config import Config
 from coscc.data import Data
+
+log = logging.getLogger(__name__)
 
 
 # The app's own environment must not reach a session, and it cannot be removed, only
@@ -297,12 +300,12 @@ async def _shut(client: Any, transport: Any, reached: bool) -> None:
     async def sdk() -> None:
         try:
             await client.disconnect()
-        except Exception:  # noqa: BLE001 - closing is best-effort; the step's end must not wait on it
+        except Exception:  # noqa: BLE001, S110 - closing is best-effort; the step's end must not wait on it
             pass
         if transport is not None and not reached:
             try:
                 await transport.close()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110 - closing is best-effort
                 pass
 
     closing = _begin(sdk())
@@ -977,8 +980,8 @@ class Sessions:
                     # Synchronous and swallowing: the kinds this yields, and when, are unchanged.
                     try:
                         step.recorder.message(message)
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception:
+                        log.exception("the recorder failed on a message")
                 if isinstance(message, sdk.SystemMessage) and message.subtype == "init":
                     # The id is known here, before the first reply, so an update that pauses the
                     # session now can still name it.
@@ -1165,7 +1168,7 @@ class Sessions:
         edge = transcript.boundary(path)
         try:
             await asyncio.wait_for(client.interrupt(), INTERRUPT_TIMEOUT)
-        except Exception:  # noqa: BLE001 - a CLI that does not answer is closed all the same
+        except Exception:  # noqa: BLE001, S110 - a CLI that does not answer is closed all the same
             pass
         await close()
         _kill_left(taken)

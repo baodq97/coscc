@@ -806,24 +806,20 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_a_locked_database_before_the_answer_is_one_sentence_without_its_path(self):
         """The snapshot the answer is checked against reads `cos.db`, and `Busy` names the
         database's path. The dialog gets one sentence; the log gets the path."""
-        import contextlib
-        import io
-
         from coscc.data import Busy
         from coscc.units.meta import UnitMeta
 
         held = "another process is holding /tmp/somewhere/cos.db"
         before = self.intent.read_bytes()
-        err = io.StringIO()
         with (
             mock.patch.object(UnitMeta, "snapshot", side_effect=Busy(held)),
-            contextlib.redirect_stderr(err),
+            self.assertLogs("coscc", "WARNING") as log,
         ):
             got = await self.post()
         self.assertEqual(got.status_code, 400, got.text)
         self.assertIn("could not be read", got.text)
         self.assertNotIn("/tmp/somewhere", got.text)
-        self.assertIn(held, err.getvalue())
+        self.assertIn(held, log.output[-1])
         self.assertEqual((self.rows(), self.intent.read_bytes()), ([], before))
 
     async def test_the_board_then_counts_one_fewer_open(self):
@@ -1748,7 +1744,7 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         )
         post = lambda slug: self.client.post(
             "/api/units", json={"cwd": self.cwd, "slug": slug, "brief": "x"}
-        )  # noqa: E731
+        )
         self.a = (await post("one-problem")).json()["unit"]
         self.b = (await post("two-problem")).json()["unit"]
 

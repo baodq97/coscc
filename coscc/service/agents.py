@@ -6,10 +6,11 @@ and written back. A mixin with no fields, which `Service` inherits.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
 from coscc.agent import agents
-from coscc.data import Data
+from coscc.data import Data, Unusable
 from coscc.service.common import Invalid
 
 
@@ -19,7 +20,7 @@ class AgentsMixin:
         never a reason to refuse a step or a board read."""
         try:
             rows = Data(self.config.data_dir).pref_rows(agents.PREFIX)
-        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+        except (Unusable, sqlite3.Error, OSError) as e:
             return {}, [f"the agent overrides could not be read, so the defaults apply: {e}"]
         return agents.overrides_from(rows)
 
@@ -67,7 +68,7 @@ class AgentsMixin:
         data = Data(self.config.data_dir)
         try:
             overrides, _ = agents.overrides_from(data.pref_rows(agents.PREFIX))
-        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+        except (Unusable, sqlite3.Error, OSError) as e:
             raise Invalid(
                 f"the agent overrides could not be read, so nothing was saved: {e}"
             ) from e

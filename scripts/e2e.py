@@ -36,15 +36,15 @@ from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import httpx  # noqa: E402
+import httpx
 
 from coscc import auth
-from coscc.data import Data  # noqa: E402
-from coscc.service import notices  # noqa: E402
-from coscc.config import from_env  # noqa: E402
-from coscc.runlog.journal import Journal  # noqa: E402
-from coscc.units.meta import UnitMeta  # noqa: E402
-from scripts.proof_harness import (  # noqa: E402
+from coscc.data import Data
+from coscc.service import notices
+from coscc.config import from_env
+from coscc.runlog.journal import Journal
+from coscc.units.meta import UnitMeta
+from scripts.proof_harness import (
     EXIT_BROKEN,
     EXIT_PASS,
     Cut,

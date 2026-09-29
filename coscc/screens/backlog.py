@@ -18,7 +18,7 @@ _BACKLOG_WIDE = rx.breakpoints(initial="none", md="block")
 def _backlog_row(row: rx.Var[BacklogRow], shortlisted: bool) -> rx.Component:
     """One unit: its rank, estimate and who made it, and *Edit* in the row."""
     editing = P.backlog_editing == row.unit
-    cell = lambda value, width, **kw: s.text(value, size="1", width=width, flex_shrink="0", **kw)  # noqa: E731
+    cell = lambda value, width, **kw: s.text(value, size="1", width=width, flex_shrink="0", **kw)
     return rx.box(
         rx.hstack(
             # A unit with no estimate has no computed place, and reads "—" like its value.
@@ -106,7 +106,7 @@ def _backlog_row(row: rx.Var[BacklogRow], shortlisted: bool) -> rx.Component:
 
 def _backlog_editor(row: rx.Var[BacklogRow]) -> rx.Component:
     """The open row's estimate and relation forms; the unit is the row's, never typed."""
-    pick = lambda name, options, value: s.native_select(  # noqa: E731
+    pick = lambda name, options, value: s.native_select(
         *options, value=value, on_change=lambda v: P.set_backlog_field(name, v)
     )
     return rx.vstack(

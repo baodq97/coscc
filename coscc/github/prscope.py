@@ -12,9 +12,12 @@ is what a reader sees; a local `main` may be stale. `files` may be fewer than `c
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from coscc.git import gh
+
+log = logging.getLogger(__name__)
 
 FIELDS = "changedFiles,additions,deletions,files"
 COUNTS = ("files", "additions", "deletions")
@@ -97,5 +100,7 @@ async def read(url: str, scope: Any, cwd: str, run: gh.Run | None = None) -> dic
         except (json.JSONDecodeError, ValueError) as e:
             return {"verdict": "unread", "detail": f"gh pr view did not return JSON: {e}"}
         return compare(scope, data)
-    except Exception as e:  # noqa: BLE001 — the step is done whatever this does
+    except Exception as e:
+        # The step is done whatever this does.
+        log.exception("the scope of the pull request could not be read")
         return {"verdict": "unread", "detail": str(e) or type(e).__name__}

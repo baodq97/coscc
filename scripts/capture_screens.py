@@ -103,16 +103,16 @@ REPO = Path(__file__).resolve().parent.parent
 
 # `run.py` points Reflex at `<repo>/.web` whatever the environment says; the build must
 # write where the app will read. Set before anything imports Reflex.
-from coscc import frontend  # noqa: E402
+from coscc import frontend
 
 os.environ[frontend.WEB_WORKDIR_VAR] = str(frontend.web_dir(REPO))
 
-import httpx  # noqa: E402
+import httpx
 
 from coscc import build
-from coscc import auth  # noqa: E402
-from coscc.config import from_env  # noqa: E402
-from scripts.proof_harness import (  # noqa: E402
+from coscc import auth
+from coscc.config import from_env
+from scripts.proof_harness import (
     EXIT_BROKEN,
     EXIT_ENV,
     EXIT_PASS,
@@ -499,10 +499,10 @@ def shoot(
         page.goto(base + address, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
         try:
             page.wait_for_selector("#studio-shell", timeout=PAGE_TIMEOUT_MS)
-        except Exception:
+        except Exception as e:
             raise RuntimeError(
                 f"{address} at {size[0]}x{size[1]}: no #studio-shell within {PAGE_TIMEOUT_MS // 1000}s, on {page.url}"
-            )
+            ) from e
         if "/login" in page.url:
             raise RuntimeError(
                 f"{address} at {size[0]}x{size[1]}: landed on the login page, {page.url}"

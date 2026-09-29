@@ -5,7 +5,7 @@ A mixin with no fields, inherited by `Service`.
 
 from __future__ import annotations
 
-import sys
+import logging
 from typing import Any
 
 from coscc.runlog import spend
@@ -15,6 +15,8 @@ from coscc.data import Busy
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, grant_for_step
 from coscc.agent import labels
 from coscc.service.common import Invalid, STAGE_FILES, consequence
+
+log = logging.getLogger(__name__)
 
 
 class ActivityMixin:
@@ -218,8 +220,8 @@ class ActivityMixin:
         }
         try:
             found = self._unit_meta().unknowns()
-        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
-            print(f"coscc: the import report could not be read: {e}", file=sys.stderr)
+        except Exception:
+            log.exception("the import report could not be read")
             return {"rows": [], "problem": "The import report could not be read."}
         return {
             "rows": [
