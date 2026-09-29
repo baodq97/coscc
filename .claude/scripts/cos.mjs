@@ -1622,7 +1622,7 @@ const incompleteDraft = (unit) => statusOf(unit, 'review.md') === 'draft' && las
 // a finding an earlier round raised. Its header is still `changes-requested`, so while it is
 // last the header keeps the floor only as the `incomplete` draft does — for a round with no
 // readable verdict.
-function roundsUsed(unit) {
+export function roundsUsed(unit) {
   const rounds = reviewOf(unit)
   const asked = rounds.filter((r) => r.verdict === 'changes-requested' && !r.unfinished).length
   const waived = rounds.some((r) => r.verdict === 'needs-person')
