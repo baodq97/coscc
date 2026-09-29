@@ -721,7 +721,8 @@ class _CountingClient(_FakeClient):
 
 
 class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
-    """`in_flight` names each chat turn answering now; a board step never."""
+    """A chat turn is held while it answers and let go when it ends, which `on_turn_end` hears;
+    a board step is never one."""
 
     def setUp(self):
         self.s = Sessions(Config(workspaces=("/tmp",)))
@@ -743,9 +744,12 @@ class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
     async def _reader(self, **kw):
         return [item async for item in self.s.stream("/tmp", "hi", **kw)]
 
+    def turns(self):
+        return list(self.s._turns.values())
+
     async def _until_told(self):
         for _ in range(100):
-            turns = self.s.in_flight()
+            turns = self.turns()
             if turns and turns[0]["session_id"]:
                 return turns
             await asyncio.sleep(0.01)
@@ -759,7 +763,7 @@ class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(turns[0]["started"])
         _CountingClient.hold.set()
         await task
-        self.assertEqual((self.s.in_flight(), self.ended), ([], 1))
+        self.assertEqual((self.turns(), self.ended), ([], 1))
 
     async def test_a_turn_that_raises_is_gone(self):
         _CountingClient.fail = True
@@ -768,16 +772,7 @@ class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
         _CountingClient.hold.set()
         with self.assertRaises(RuntimeError):
             await task
-        self.assertEqual(self.s.in_flight(), [])
-
-    async def test_a_cut_turn_is_gone_and_its_reader_ends(self):
-        task = asyncio.create_task(self._reader())
-        turns = await self._until_told()
-        self.assertTrue(await self.s.cut_turn(turns[0]["id"]))
-        with self.assertRaises(asyncio.CancelledError):
-            await task
-        self.assertEqual(self.s.in_flight(), [])
-        self.assertFalse(await self.s.cut_turn(turns[0]["id"]))
+        self.assertEqual(self.turns(), [])
 
     async def test_a_board_step_is_never_a_chat_turn(self):
         seen = []
@@ -785,7 +780,7 @@ class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
 
         async def watch():
             async for _ in self.s.stream("/tmp", "hi", step=sessions.StepHandle()):
-                seen.append(self.s.in_flight())
+                seen.append(self.turns())
 
         await watch()
         self.assertTrue(seen)

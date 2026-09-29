@@ -375,8 +375,6 @@ class Runner:
         impl_run: int | None = None,
         end_fields: Any = None,
         watch: str | None = None,
-        pr_note: str = "",
-        pr_before: str | None = None,
         running: steps.Running | None = None,
         started_by: str = "person",
         trial_record: dict[str, Any] | None = None,
@@ -422,10 +420,9 @@ class Runner:
         are read before and after the session and a difference fails the step before any artifact
         is written; nothing is restored, the difference goes in `detail`.
 
-        `pr_note` and `pr_before` are the pull request looked up before a `pr` step, as a prompt
-        block and as its URL. `idea_note`, `siblings_note` and `read_also` are the shared idea, the
-        sibling checkouts `impl` may read, and the paths the read boundary lets through (never
-        writes, never `git -C`). `unfinished_round` is `{n, dropped}` for a `review` prompt only.
+        `idea_note`, `siblings_note` and `read_also` are the shared idea, the sibling checkouts
+        `impl` may read, and the paths the read boundary lets through (never writes, never
+        `git -C`). `unfinished_round` is `{n, dropped}` for a `review` prompt only.
 
         `running` is the step's row in `Service.steps`. With it the client is closed when the step
         ends, and a person's Stop ends it as `stopped`, decided by `running.stop_requested`, never
@@ -482,7 +479,6 @@ class Runner:
                 screens_note=screens_note,
                 drift_note=drift_note,
                 worktree=watch or "",
-                pr_note=pr_note,
                 ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
                 rerun=rerun,
                 rerun_note=rerun_note,
@@ -497,8 +493,6 @@ class Runner:
                 state_file=state_file,
             )
 
-        # Only `pr` carries this field.
-        pr_extra = {"pr_before": pr_before or ""} if stage == "pr" else {}
         # The autopilot tells a recording `ship` that ran out from a merging one by this field. Only
         # a `ship` whose gate named the merge already made carries it, by the code `recording-ship`.
         ship_extra = (
@@ -589,7 +583,6 @@ class Runner:
                 **({"plan_map": plan_map_record} if plan_map_record is not None else {}),
                 # Only on a stage run again from the board.
                 **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),
-                **pr_extra,
                 **ship_extra,
                 # Top level, the name when the step began; none for a stage the agent table has no row for.
                 **({"agent": agent["name"]} if agent is not None else {}),

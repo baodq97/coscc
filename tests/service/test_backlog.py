@@ -482,9 +482,6 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
             self.obj, self.gate, self.calls = obj, gate, 0
             self.text = "Here is my estimate."
 
-        def in_flight(self):
-            return []
-
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.calls += 1
             if self.gate is not None:

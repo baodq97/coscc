@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from coscc.agent import sessions
-from coscc.runlog.journal import Journal
+from coscc.runlog.journal import Journal, totals_of
 
 
 @dataclass
@@ -116,7 +116,7 @@ class TheJournalKeepsMoneyAsMoney(unittest.TestCase):
             for _ in range(3):
                 j.started("w", "0009_x", "impl", "autonomous")
                 j.finished("w", "0009_x", "impl", "done", cost_usd=0.004, input_tokens=1)
-            total = j.totals("w", "0009_x")["total"]
+            total = totals_of(j.timeline("w", "0009_x"))
             # Three turns at 0.4 cents each is 1.2 cents, not zero.
             self.assertAlmostEqual(total["cost_usd"], 0.012, places=6)
             self.assertEqual(total["input_tokens"], 3)
@@ -127,10 +127,7 @@ class TheJournalKeepsMoneyAsMoney(unittest.TestCase):
             for stage, usd in (("spec", 0.01), ("impl", 0.25)):
                 j.started("w", "0009_x", stage, "autonomous")
                 j.finished("w", "0009_x", stage, "done", cost_usd=usd)
-            totals = j.totals("w", "0009_x")
-            summed = sum(b["cost_usd"] for b in totals["per_stage"].values())
-            self.assertAlmostEqual(summed, totals["total"]["cost_usd"], places=6)
-            self.assertAlmostEqual(totals["total"]["cost_usd"], 0.26, places=6)
+            self.assertAlmostEqual(totals_of(j.timeline("w", "0009_x"))["cost_usd"], 0.26, places=6)
 
 
 if __name__ == "__main__":

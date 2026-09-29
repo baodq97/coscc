@@ -582,24 +582,6 @@ class Journal:
             out[unit] = {"open": open_rows, "last_start": starts[-1] if starts else None}
         return out
 
-    def totals(self, workspace: str, unit: str, timeout: float | None = None) -> dict[str, Any]:
-        """What one unit has cost, added up from its steps. Added rather than stored, so it cannot
-        disagree with a stored total.
-        """
-        per_stage: dict[str, dict[str, Any]] = {}
-        for row in self.timeline(workspace, unit, timeout=timeout):
-            stage = row.get("stage") or ""
-            bucket = per_stage.setdefault(stage, {**zero_cost(), "unknown": 0})
-            add_cost(bucket, row.get("cost") or {})
-            # How many of these runs have no known cost.
-            bucket["unknown"] += int(_cost_unknown(row))
-
-        total = {**zero_cost(), "unknown": 0}
-        for bucket in per_stage.values():
-            add_cost(total, bucket)
-            total["unknown"] += bucket["unknown"]
-        return {"per_stage": per_stage, "total": total}
-
     def failed_attempts(
         self, workspace: str, unit: str, stage: str, timeout: float | None = None
     ) -> dict[str, Any] | None:

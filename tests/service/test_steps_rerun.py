@@ -3,7 +3,7 @@
 The chain the spec's outcome names: the stages offered, a rerun of `pr` with a note, a `pr`
 session that ends `done`, then `cos.mjs next` naming the review and the `ship` gate closed.
 `cos.mjs` is the real one, asked through `coscc/units/board.py` as the app asks it; only the
-worktree, the pull-request lookup, the sync onto GitHub and `Runner` itself stand in."""
+worktree, the sync onto GitHub and `Runner` itself stand in."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from coscc.units import board as _board
 from tests.units.test_meta import WithSnapshot
 
 board_reader = WithSnapshot(_board)
-from coscc.github import integrate
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.runner import RunError
@@ -93,9 +92,6 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         async def tree(*a, **k):
             return {"path": self.cwd, "branch": "feat/awaiting-ship", "base": None}
 
-        async def no_pr(*a, **k):
-            return {"state": "none", "url": ""}
-
         async def no_sync(*a, **k):
             return {}
 
@@ -138,7 +134,6 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
             mock.patch.object(self.service.answers, "worktree", tree),
             mock.patch.object(self.service.answers, "sync_pr", no_sync),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
-            mock.patch.object(integrate, "pr_for_branch", no_pr),
         ):
             asyncio.run(go())
 

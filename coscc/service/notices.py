@@ -50,7 +50,6 @@ STOPS = {
 # The same, said of a whole workspace: a failed look at it, `COS_HOST` off loopback, a busy
 # run log. The reason says which; the sentence does not.
 WORKSPACE_F = "it could not look at the workspace"
-UNKNOWN_STOP = "the autopilot stopped"
 
 # How an `end` that is not `done` is said (`journal.OUTCOMES`).
 ENDED = {

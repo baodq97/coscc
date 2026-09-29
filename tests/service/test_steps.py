@@ -1930,8 +1930,8 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
     def _run(self, text, gh, stage="pr", hold=False, prepare=None, gate=None, via_step=False):
         """A `pr` step writes `pr.md` itself and runs no session, so a `pr.md` of any other words --
-        `text` -- reaches `sync_pr` only by calling it as the step does, with the lookup the
-        step makes. `via_step` runs the step itself."""
+        `text` -- reaches `sync_pr` only by calling it as the step does, with what the PR machine
+        found. `via_step` runs the step itself."""
         from coscc.units import board as board_reader
         from coscc.github import integrate
 
@@ -1956,8 +1956,9 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                 await self.service.answers.ingest(
                     str(self.repo), unit, {"outcome": "done", "stage": "pr"}, "pr.md"
                 )
-                lookup = await integrate.pr_for_branch(str(self.repo), "fix/a-problem")
-                before = None if lookup.get("state") == "unknown" else lookup.get("url", "")
+                # What the PR machine hands on: no answer, no pull request, or its URL.
+                url = "https://github.com/o/r/pull/7" if gh.listed else ""
+                before = None if gh.fail == "list" else url
                 return [
                     (
                         "done",
@@ -2255,7 +2256,6 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
 
     def kwargs_of(self, service: Service, stage: str) -> dict:
         from coscc.units import board as board_reader
-        from coscc.github import integrate
         from coscc.runner import RunError
 
         seen = self.seen
@@ -2275,9 +2275,6 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
         async def tree(*a, **kw):
             return {"path": str(self.repo), "branch": "feat/a-problem", "base": None}
 
-        async def no_pr(*a, **kw):
-            return {"state": "none", "url": ""}
-
         async def go():
             async for _ in service.steps.run_step(str(self.repo), self.unit, stage):
                 pass
@@ -2288,7 +2285,6 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
             mock.patch("coscc.service.steps.Runner", StandIn),
             mock.patch.object(service.answers, "worktree", tree),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
-            mock.patch.object(integrate, "pr_for_branch", no_pr),
         ):
             with self.assertRaises(Invalid) as refused:
                 asyncio.run(go())
@@ -2350,7 +2346,6 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
 
     def test_a_suspended_drive_abandons_its_recorder_and_nudges_nothing(self):
         from coscc.agent.sessions import Suspended
-        from coscc.github import integrate
         from coscc.runlog import events
         from coscc.units import board as board_reader
 
@@ -2372,9 +2367,6 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
 
         async def nothing(*a, **kw):
             return {}
-
-        async def no_pr(*a, **kw):
-            return {"state": "none", "url": ""}
 
         abandoned: list[str] = []
         real_abandon = events.Recorder.abandon
@@ -2401,7 +2393,6 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
             mock.patch("coscc.service.steps.Runner", StandIn),
             mock.patch.object(service.answers, "worktree", tree),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
-            mock.patch.object(integrate, "pr_for_branch", no_pr),
             mock.patch.object(service.steps, "after_end", after_end),
             mock.patch.object(service.autopilot, "nudge", nudged.append),
             mock.patch.object(events.Recorder, "abandon", abandon),
@@ -2443,7 +2434,6 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         """One step whose runner ends `outcome`. What the stand-in machine's `ship` was handed
         is kept in `self.shipped_with`."""
         from coscc.units import board as board_reader
-        from coscc.github import integrate
 
         class StandIn:
             def __init__(self, *a, **kw):
@@ -2463,9 +2453,6 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
 
         async def nothing(*a, **kw):
             return {}
-
-        async def no_pr(*a, **kw):
-            return {"state": "none", "url": ""}
 
         from coscc.git import gitops
         from coscc.github import prmachine
@@ -2506,7 +2493,6 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
             mock.patch("coscc.service.steps.Runner", StandIn),
             mock.patch.object(service.answers, "worktree", tree),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
-            mock.patch.object(integrate, "pr_for_branch", no_pr),
             mock.patch.object(service.answers, "ingest", nothing),
             mock.patch.object(service.steps, "cleanup", nothing),
             mock.patch.object(service.steps, "after_end", nothing),

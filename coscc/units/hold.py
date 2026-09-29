@@ -20,9 +20,6 @@ from coscc.units import worktrees
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 
-# The block heading for each value of `to`; which move is allowed is read off `hold_moves`.
-HEADS = {"paused": "Paused", "dropped": "Dropped", "active": "Resumed"}
-
 DROP_WARNING = (
     "Dropping closes this unit's open pull request with this machine's gh login and "
     "removes its worktree; the remote branch is kept."

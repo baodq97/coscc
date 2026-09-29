@@ -416,9 +416,6 @@ class _Asked(unittest.TestCase):
 
     def _stream(self, reply: str, obj: dict | None):
         class Session:
-            def in_flight(self):
-                return []
-
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", reply)
                 if obj is not None:

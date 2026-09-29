@@ -94,8 +94,7 @@ class TheRunningBuild(unittest.TestCase):
             self.assertEqual(me["commit"], head)
             self.assertEqual(me["install"], "checkout")
 
-    def test_a_local_build_carries_its_commit_in_the_version(self):
-        self.assertEqual(update.local_commit("0.12.0+gd02560a"), "d02560a")
+    def test_a_local_build_is_its_public_version(self):
         self.assertEqual(update.public("0.12.0+gd02560a"), (0, 12, 0))
         self.assertIsNone(update.public("0.12"))
 

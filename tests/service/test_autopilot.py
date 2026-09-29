@@ -338,13 +338,6 @@ class OnTheRealLoop(_Base):
             "### Câu 1",
             (self.service.ws.unit_dir(self.ws, unit) / "intent.md").read_text(encoding="utf-8"),
         )
-        found = autopilot.measure_reruns(
-            Journal(self.config.working_dir, self.config.data_dir).records(),
-            self.key,
-            "2000-01-01",
-            "2999-12-31",
-        )
-        self.assertEqual(([c["class"] for c in found["cases"]], found["met"]), (["on-time"], True))
 
     async def test_a_rerun_that_keeps_its_answered_question_is_not_run_again(self):
         # The draft the rerun writes still asks question 1, which the kept block answers, so `next`
