@@ -16,6 +16,7 @@ from coscc import units
 from coscc.github import prscope
 from coscc.git import fetches, worktrees
 from coscc.config import Config
+from coscc.units import autopilot
 from coscc.service.common import Invalid, describe_base, step_cwd
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
@@ -2308,6 +2309,20 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
         self.assertEqual(self.shipped_with, [rebased])
         self.drive(self.service(False), "ship", "done")
         self.assertEqual(self.shipped_with, [None])
+
+    def test_every_pr_and_ship_leaves_the_record_the_autopilots_stop_reads(self):
+        """`0136` review round 1, F2: there is no `end`, so this is the unit's last word."""
+        for stage, outcome in (("ship", "failed"), ("ship", "done"), ("pr", "failed"), ("pr", "done")):
+            with self.subTest(stage=stage, outcome=outcome):
+                service = self.service(False)
+                # Each subtest makes a new unit over the same data root, so only its own rows count.
+                before = len(service._journal().records(kind=autopilot.PR_MACHINE))
+                self.drive(service, stage, outcome)
+                [rec] = service._journal().records(kind=autopilot.PR_MACHINE)[before:]
+                self.assertEqual((rec["unit"], rec["stage"], rec["outcome"], rec["started_by"]),
+                                 (self.unit, stage, outcome, "person"))
+                self.assertEqual(rec["detail"], "" if outcome == "done" else "gh down")
+                self.assertEqual(service._journal().records(kind="end"), [])
 
     def test_a_failed_ship_or_the_flag_off_schedules_none(self):
         for on, stage, outcome in ((True, "ship", "failed"), (False, "ship", "done"), (True, "pr", "done")):

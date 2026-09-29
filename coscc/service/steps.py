@@ -1444,6 +1444,17 @@ class StepsMixin:
                 if self.config.knowledge:
                     # `0131` R1. Once, in the background: nothing here waits for it.
                     self._gather_soon(cwd, unit, key)
+        # `0136` review round 1, F2: with no `end`, this is what the autopilot's stop `e` reads
+        # as the unit's last word, so a `pr` or `ship` that failed or was refused stops it for a
+        # person as a failed session did, and one that did its work lifts that stop.
+        try:
+            self._journal().append({
+                "kind": autopilot.PR_MACHINE, "workspace": key, "unit": unit, "stage": stage,
+                "outcome": done["outcome"], "result": out.result, "reasons": list(out.reasons),
+                "detail": out.detail, "started_by": started_by,
+            })
+        except (BadRecord, Busy, AttributeError):
+            pass
         return done
 
     async def reconcile_prs(self) -> list[dict[str, Any]]:

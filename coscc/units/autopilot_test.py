@@ -194,6 +194,17 @@ class Stops(unittest.TestCase):
         theirs = {"kind": "integration", "outcome": "refused", "started_by": "person"}
         self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), theirs, True))
 
+    def test_e_a_pr_or_ship_the_machine_failed_or_refused_and_none_once_one_did_its_work(self):
+        """`0136` review round 1, F2: with no `end`, the machine's record is the last word."""
+        refused = {"kind": ap.PR_MACHINE, "stage": "ship", "outcome": "failed", "result": "refused",
+                   "reasons": ["head-moved"], "detail": ""}
+        got = ap.stop_for(unit(), nxt("ship", "x"), refused, True)
+        self.assertEqual(got, {"kind": "e", "reason": "the last ship was refused: head-moved"})
+        failed = {"kind": ap.PR_MACHINE, "stage": "pr", "outcome": "failed", "result": "failed", "detail": "gh down"}
+        self.assertEqual(ap.stop_for(unit(), nxt("pr", "x"), failed, True)["reason"], "the last pr was failed: gh down")
+        done = {"kind": ap.PR_MACHINE, "stage": "pr", "outcome": "done", "result": "opened"}
+        self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), done, True))
+
     def test_e_screenshots_that_could_not_be_taken_again_and_none_once_they_were(self):
         # `0111`: no retry; a retake that is taken, run by a person, lifts it.
         failed = {"kind": "screens", "stage": "review", "outcome": "failed", "detail": "exited 2"}

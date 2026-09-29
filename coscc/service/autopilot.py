@@ -227,7 +227,8 @@ class AutopilotMixin:
             data = await self.board(cwd)
             try:
                 records = journal.records(
-                    kinds=("start", "end", "integration", "shortlist", "answer", "screens", "precedent"),
+                    kinds=("start", "end", "integration", "shortlist", "answer", "screens", "precedent",
+                           autopilot.PR_MACHINE),
                 )
             except Busy as e:
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
@@ -267,8 +268,10 @@ class AutopilotMixin:
             for r in records:
                 if r.get("workspace") == key and r.get("kind") == "start" and autopilot.is_step(r):
                     starts[(str(r.get("unit") or ""), str(r.get("stage") or ""))] = r
-                # `0111`: a retake of the screenshots that failed is the unit's last word too.
-                if r.get("workspace") == key and r.get("kind") in ("end", "integration", "screens") and autopilot.is_step(r):
+                # `0111`: a retake of the screenshots that failed is the unit's last word too, and
+                # since `0136` so is a `pr` or `ship` the PR machine ran.
+                if r.get("workspace") == key and r.get("kind") in ("end", "integration", "screens", autopilot.PR_MACHINE) \
+                        and autopilot.is_step(r):
                     last[str(r.get("unit") or "")] = r
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r

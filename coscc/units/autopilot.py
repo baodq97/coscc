@@ -100,6 +100,11 @@ def is_over(answer: Any) -> bool:
     return said(answer, "finished") or said(answer, "closed")
 
 
+# `0136` review round 1, F2. The record a `pr` or `ship` the PR machine ran leaves in place of
+# an `end`: `outcome` `done` or `failed`, and the machine's `result`, `reasons` and `detail`.
+PR_MACHINE = "prmachine"
+
+
 def is_step(record: dict[str, Any]) -> bool:
     """False for a line of a session that is no stage of `cos.mjs`'s loop (`NOT_STEPS`)."""
     return record.get("stage") not in NOT_STEPS
@@ -197,7 +202,8 @@ def stop_for(
     """The first of R6's stops that holds for one unit, as `{kind, reason}`, or `None`.
 
     `unit_row` is the unit as `Service.board` has it; `nxt` is `Service.next_step`'s answer;
-    `last` the unit's latest `end`, `integration` or `screens` (`0111`) record, or `None`. `None` back means no
+    `last` the unit's latest `end`, `integration`, `screens` (`0111`) or `PR_MACHINE` (`0136`)
+    record, or `None`. `None` back means no
     stop, which is not the same as something to run: a finished, rejected or held unit, and
     one waiting on CI, have neither. `exhausted` is how many steps of `last`'s stage ended
     `exhausted` (`exhausted_of`); left at 0, an exhausted step stops as before `0120`.
@@ -249,6 +255,11 @@ def stop_for(
     ):
         detail = str(last.get("detail") or "")
         return _stop("e", f"the last integration was {outcome}" + (f": {detail}" if detail else ""))
+    # `0136` review round 1, F2: a `pr` or `ship` the PR machine ran and that failed, or whose
+    # guard refused it, stops as a session that ended `failed` did; no retry, as above.
+    if kind == PR_MACHINE and outcome != "done":
+        detail = str(last.get("detail") or "") or ", ".join(str(r) for r in last.get("reasons") or [])
+        return _stop("e", f"the last {last.get('stage')} was {last.get('result') or outcome}" + (f": {detail}" if detail else ""))
     # `0111`: the screenshots could not be taken again before `review`, which did not start.
     # No retry, as above: a person runs it again, and a retake that is taken lifts the stop.
     if kind == "screens" and outcome == "failed":
