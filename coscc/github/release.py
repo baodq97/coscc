@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from coscc.agent.harness import child_env
+from coscc.git import gh
 from coscc.github import integrate
 
 STATES = ("nothing", "ready", "pr-open", "merged-untagged", "tagged", "published", "unknown")
@@ -426,15 +427,11 @@ def set_version_text(name: str, text: str, old: str, new: str) -> str:
 
 
 async def _gh(argv: list[str], cwd: str) -> tuple[int, str, str]:
-    """One `gh` call, through `integrate._gh`: the same environment and `GH_TIMEOUT`."""
-    try:
-        return await integrate._gh(argv, cwd)
-    except integrate.IntegrateError as e:
-        raise ReleaseError(str(e)) from e
-
-
-def _said(out: str, err: str) -> str:
-    return integrate._said(out, err)
+    """One `gh` call; one that could not be made is a `ReleaseError`."""
+    got = await gh.call(gh.run, argv, cwd)
+    if isinstance(got, str):
+        raise ReleaseError(got)
+    return got
 
 
 def release_prs(prs: list[dict]) -> list[dict]:
@@ -460,7 +457,7 @@ async def merged_release_pr(root: str, branch: str) -> dict:
         root,
     )
     if code != 0:
-        raise ReleaseError(_said(out, err))
+        raise ReleaseError(gh.said(code, out, err))
     try:
         rows = json.loads(out or "[]")
     except ValueError as e:
@@ -482,7 +479,7 @@ async def create_pr(tree: str, branch: str, title: str, body: str) -> int:
         ["pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", body], tree
     )
     if code != 0:
-        raise ReleaseError(_said(out, err))
+        raise ReleaseError(gh.said(code, out, err))
     m = _URL_NUMBER.search(out.strip().splitlines()[-1] if out.strip() else "")
     if not m:
         raise ReleaseError(f"gh pr create printed no pull request URL: {out.strip()[:200]}")
@@ -496,7 +493,7 @@ async def merge_pr(tree: str, n: int, head: str) -> None:
         tree,
     )
     if code != 0:
-        raise ReleaseError(_said(out, err))
+        raise ReleaseError(gh.said(code, out, err))
 
 
 async def merge_commit(tree: str, n: int) -> str:
@@ -514,7 +511,7 @@ async def merge_commit(tree: str, n: int) -> str:
                 return sha
             said = f"the pull request is {data.get('state') or 'unread'}"
         else:
-            said = _said(out, err)
+            said = gh.said(code, out, err)
         if attempt + 1 < integrate.POLL_TRIES:
             await asyncio.sleep(integrate.POLL_DELAY)
     raise ReleaseError(f"no merge commit for #{n}: {said}")

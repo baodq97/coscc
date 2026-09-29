@@ -108,7 +108,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         gh = FakeGh()
         if write is None:
 
-            async def gh(argv, cwd):  # noqa: F811
+            async def gh(argv, cwd, stdin=None):  # noqa: F811
                 seen.append({"gh": argv})
                 return 1, "", "error connecting to api.github.com"
 

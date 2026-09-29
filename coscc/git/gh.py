@@ -21,7 +21,7 @@ PR_URL_RE = re.compile(r"^https://[^\s/]+/[^\s/]+/[^\s/]+/pull/\d+$")
 Run = Callable[[list[str], str, "str | None"], Awaitable[tuple[int, str, str]]]
 
 
-async def run(argv: list[str], cwd: str, stdin: str | None) -> tuple[int, str, str]:
+async def run(argv: list[str], cwd: str, stdin: str | None = None) -> tuple[int, str, str]:
     """One `gh` call: exit code and both streams. Raises what the child raised."""
     proc = await asyncio.create_subprocess_exec(
         "gh",
@@ -44,7 +44,7 @@ async def run(argv: list[str], cwd: str, stdin: str | None) -> tuple[int, str, s
 
 
 async def call(
-    runner: Run, argv: list[str], cwd: str, stdin: str | None
+    runner: Run, argv: list[str], cwd: str, stdin: str | None = None
 ) -> tuple[int, str, str] | str:
     """The call's answer, or a reason it could not be had."""
     try:

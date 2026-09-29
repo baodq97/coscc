@@ -50,7 +50,7 @@ class FakeGh:
     def count(self, *words):
         return sum(1 for c in self.calls if c[: len(words)] == list(words))
 
-    async def __call__(self, argv, cwd):
+    async def __call__(self, argv, cwd, stdin=None):
         self.calls.append(list(argv))
         verb = argv[:2]
         if verb == ["pr", "list"]:
@@ -423,7 +423,7 @@ class TheReaderRecordsWhatChanged(Fixture):
         m = self.reader(gh)
         before = len(self.history.transitions(WS, NAME))
 
-        async def broken(argv, cwd):
+        async def broken(argv, cwd, stdin=None):
             return 1, "", "HTTP 502"
 
         m._gh = broken

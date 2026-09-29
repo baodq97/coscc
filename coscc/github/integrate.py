@@ -19,15 +19,14 @@ The pure functions come first; the `gh` calls after them; the session last.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from coscc.agent import agents
-from coscc.agent.harness import child_env
 from coscc.agent.transcript import ceilings_left
+from coscc.git import gh
 from coscc.runner import check_started_by
 from coscc.runner.attempt import CLAUDE_CODE_PRESET, Denials, permission_gate
 from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
@@ -39,8 +38,6 @@ STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown"
 BUTTON_STATES = ("behind", "conflicting", "red-after-integration")
 GEBO_STATES = ("conflicting", "red-after-integration")
 OUTCOMES = ("pushed", "needs-person", "refused", "failed")
-# Seconds. Chosen, not measured; the same as `board.GATE_TIMEOUT` and `gh.TIMEOUT`.
-GH_TIMEOUT = 30.0
 # How long the app waits for GitHub's rebase to show as a new head. Chosen, not measured.
 POLL_TRIES = 5
 POLL_DELAY = 2.0
@@ -628,32 +625,11 @@ def _completion_section(completion: dict, branch: str, pr_head: str) -> str:
 
 
 async def _gh(argv: list[str], cwd: str) -> tuple[int, str, str]:
-    """One `gh` call, as `gh.run` makes it: exit code and both streams."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "gh",
-            *argv,
-            cwd=cwd,
-            env=child_env(),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except OSError as e:
-        raise IntegrateError(f"gh could not be started: {e}") from e
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=GH_TIMEOUT)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise IntegrateError(
-            f"gh {' '.join(argv[:2])} did not answer within {GH_TIMEOUT:.0f}s"
-        ) from None
-    return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
-
-
-def _said(out: str, err: str) -> str:
-    return (err.strip() or out.strip() or "gh failed and said nothing").splitlines()[-1]
+    """One `gh` call; one that could not be made is an `IntegrateError`."""
+    got = await gh.call(gh.run, argv, cwd)
+    if isinstance(got, str):
+        raise IntegrateError(got)
+    return got
 
 
 async def open_prs(root: str) -> list[dict]:
@@ -672,7 +648,7 @@ async def open_prs(root: str) -> list[dict]:
         root,
     )
     if code != 0:
-        raise IntegrateError(_said(out, err))
+        raise IntegrateError(gh.said(code, out, err))
     try:
         rows = json.loads(out or "[]")
     except ValueError as e:
@@ -692,7 +668,7 @@ async def required_checks(tree: str, n: int) -> list[dict]:
     except ValueError:
         rows = None
     if not isinstance(rows, list):
-        raise IntegrateError(_said(out, err) if code else "gh pr checks returned no list")
+        raise IntegrateError(gh.said(code, out, err) if code else "gh pr checks returned no list")
     return [r for r in rows if isinstance(r, dict)]
 
 
@@ -722,7 +698,7 @@ async def pr_head(tree: str, n: int) -> str:
     """The pull request's head as GitHub has it now."""
     code, out, err = await _gh(["pr", "view", str(int(n)), "--json", "headRefOid"], tree)
     if code != 0:
-        raise IntegrateError(_said(out, err))
+        raise IntegrateError(gh.said(code, out, err))
     try:
         return str(json.loads(out).get("headRefOid") or "")
     except (ValueError, AttributeError) as e:
@@ -757,7 +733,7 @@ async def pr_for_branch(tree: str, branch: str) -> dict:
     except IntegrateError as e:
         return {"state": "unknown", "reason": str(e)}
     if code != 0:
-        return {"state": "unknown", "reason": _said(out, err)}
+        return {"state": "unknown", "reason": gh.said(code, out, err)}
     try:
         rows = json.loads(out or "[]")
     except ValueError as e:

@@ -103,7 +103,7 @@ class StepsMixin:
     ) -> list[tuple[tuple[str, str], str, int, str]]:
         """Give every unit `integration: {...}` when it sits in the window, else None.
 
-        **Reads only.** One `gh pr list` for the workspace (up to `integrate.GH_TIMEOUT`),
+        **Reads only.** One `gh pr list` for the workspace (up to `gh.TIMEOUT`),
         `git` counts against the `origin/main` the last fetch brought — no fetch here — and
         `gh pr checks` only for a unit whose head is the one its last integration pushed.
         Nothing here writes a record, calls `update-branch` or opens a session.
