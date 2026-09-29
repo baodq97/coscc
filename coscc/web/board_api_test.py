@@ -131,8 +131,9 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after["mode"], "autonomous")
         self.assertEqual(before["grants"], after["grants"])
         self.assertEqual(before["warning"], after["warning"])
+        # `0139` R12: `pr` is the PR machine's and holds no grant, so there is nothing to show.
         self.assertEqual(after["grants"], list(grant_for("pr").tools))
-        self.assertTrue(after["warning"])
+        self.assertEqual((after["grants"], after["warning"]), ([], ""))
 
     async def test_a_mode_is_validated_against_the_board_not_a_second_list(self):
         body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()

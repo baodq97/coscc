@@ -35,13 +35,15 @@ const STAGES = [
   { name: 'spike', file: 'spike.md', when: 'unmeasured', hint: 'write-spike — spec.md has [unmeasured] items', statuses: ['draft', 'accepted', 'rejected'] },
   { name: 'plan', file: 'plan.md', hint: 'write-plan', statuses: ['draft', 'accepted', 'rejected', 'done'] },
   { name: 'impl', file: 'impl.md', hint: 'write-impl — implementation starts', statuses: ['draft', 'accepted', 'rejected', 'done'] },
-  { name: 'pr', file: 'pr.md', hint: 'write-pr', statuses: ['draft', 'accepted', 'rejected'] },
+  // `0139` R12: `pr` and `ship` are the app's PR machine, with no session and no skill, so
+  // their hint names the stage the board's button starts, never a `write-*` skill.
+  { name: 'pr', file: 'pr.md', hint: 'pr', statuses: ['draft', 'accepted', 'rejected'] },
   // `changes-requested` is the one status that sends work back rather than forward or
   // out: the reviewer looked, found something, and the unit goes on. `rejected` still
   // closes the unit, as it does on every other artifact. `settled` below does not include
   // it, so the `ship` gate is closed by it without a line of its own.
   { name: 'review', file: 'review.md', hint: 'write-review', statuses: ['draft', 'changes-requested', 'accepted', 'rejected'] },
-  { name: 'ship', file: 'ship.md', hint: 'write-ship', statuses: ['draft', 'accepted', 'rejected'] },
+  { name: 'ship', file: 'ship.md', hint: 'ship', statuses: ['draft', 'accepted', 'rejected'] },
 ]
 
 // `implement` was the stage name for the first seven units and it is still written into
@@ -529,7 +531,7 @@ function titleNeeds(unit) {
   return wrong ? [`${wrong} — the pr stage writes the # PR: line of pr.md again`] : []
 }
 
-// `0122` R2, R3. What `pr.md ## Scope of the diff` states, in write-pr's grammar: the first
+// `0122` R2, R3. What `pr.md ## Scope of the diff` states, in the grammar of `0122`: the first
 // non-blank line `<N> files, +<A>/-<D>`, then one `` - `<path>` `` per file, then prose.
 // `null` with no such heading, a first line in any other form, or a path listed twice.
 // Regexes and comparisons only, so no string makes it throw; a bug here is a red test, not
@@ -2110,7 +2112,7 @@ function shipNeeds(unit, probe, said = {}) {
   if (view.title?.trim() === mine) return []
   said.title = 'differs'
   const theirs = view.title === null ? 'no title gh could read' : `the title "${view.title}"`
-  return [`#${pr.number} carries ${theirs}, not pr.md's "${mine}" — put pr.md onto it (write-pr step 5), or start ship from the board, which does that first`]
+  return [`#${pr.number} carries ${theirs}, not pr.md's "${mine}" — start ship from the board, which puts pr.md onto it first`]
 }
 
 // `0116`: a pull request already merged — by a `ship` whose `--delete-branch` then exited 1,
@@ -2118,7 +2120,7 @@ function shipNeeds(unit, probe, said = {}) {
 // here and on `origin/main`, and nothing else: the branch may be gone, and CI, a rebase and
 // `behind` speak of a merge still to come. It sets `said.merged` and no `said.head`, so there
 // is nothing to pin. A head that moved after the pass does not close it (spec C1): closing
-// cannot undo the merge, and `write-ship` records the difference.
+// cannot undo the merge, and the `ship.md` the PR machine writes records the head it merged.
 function mergedNeeds(probe, pr, view, said) {
   const { commit, at } = view.merged
   const again = '— fetch, then ask again'
@@ -2477,7 +2479,7 @@ function stepOf(unit, { probe = null, limit = REVIEW_ROUNDS } = {}, seen = {}) {
   // `0116` R4: a pull request already merged leaves `ship` its record to write, and no merge.
   const recorded = (g) => {
     seen.recorded = true
-    return { blocked: true, action: `write-ship — ${mergedLine(g.said.merged)}`, stage: 'ship' }
+    return { blocked: true, action: `ship — ${mergedLine(g.said.merged)}`, stage: 'ship' }
   }
 
   if (due && next.stage === 'ship') {
@@ -2512,12 +2514,12 @@ function stepOf(unit, { probe = null, limit = REVIEW_ROUNDS } = {}, seen = {}) {
     if (g.said.ci === 'unfixable') return none(g.need.join('; '))
     if (g.said.moved || g.said.screens) return again(g)
     if (g.said.rebased && g.said.ci === 'red') return { blocked: true, action: g.need.join('; '), stage: 'impl' }
-    if (g.said.title === 'differs') return { blocked: true, action: `write-ship — ${g.need.join('; ')}`, stage: 'ship' }
+    if (g.said.title === 'differs') return { blocked: true, action: `ship — ${g.need.join('; ')}`, stage: 'ship' }
     if (!g.ok) return none(g.need.join('; '))
     // `0067` R5: a merge refused as not up to date, then rebased clean, adds no round to go
     // past it — the clean rebase is what cures that refusal. Any other refusal still stops.
     const cured = g.said.rebased && /not up to date/i.test(ship.refused ?? '')
-    if (ship.round < last.n || cured) return { blocked: true, action: `write-ship — merge with --match-head-commit ${g.said.head}`, stage: 'ship' }
+    if (ship.round < last.n || cured) return { blocked: true, action: `ship — merge with --match-head-commit ${g.said.head}`, stage: 'ship' }
     return none(`ship was refused: ${ship.refused ?? 'ship.md names no refusal'} — finish and accept ship.md`)
   }
 

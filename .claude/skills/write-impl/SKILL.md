@@ -26,7 +26,7 @@ stage runs again on the same branch. Fix what the review or CI named, commit, an
 `cos.mjs next <unit> --repo <dir>` offers `impl` until a commit outside the unit's own
 `.cos/` files reaches the pull request's head, so a fix that stays local keeps the loop on
 this stage. Then record in `impl.md` which commit fixed which finding. The step after is
-`write-review` once CI is green — not `write-pr`, which already ran.
+`write-review` once CI is green — not `pr`, which already ran.
 
 **A finding rated `low`.** A review rates each finding `high`, `medium` or
 `low`, and an `[open]` `low` does not block (`write-review`, *Severity, and what blocks*).
@@ -190,4 +190,5 @@ can tell which parts of it were checked and which were not.
 
 ## Next
 
-`write-pr`.
+`pr`, which the app runs itself: it pushes the branch and opens the pull request, with no
+session and no skill.

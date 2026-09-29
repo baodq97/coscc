@@ -36,23 +36,11 @@
       "meaning": "the strength that gives shape",
       "role": "Builds what the accepted plan names and nothing beyond it."
     },
-    "pr": {
-      "glyph": "ᚨ",
-      "name": "Ansuz",
-      "meaning": "message",
-      "role": "Opens the pull request and reports what was built, and changes no code."
-    },
     "review": {
       "glyph": "ᛏ",
       "name": "Tiwaz",
       "meaning": "Tyr: justice and judgement",
       "role": "Judges the change and never edits code."
-    },
-    "ship": {
-      "glyph": "ᛟ",
-      "name": "Othala",
-      "meaning": "home and inheritance",
-      "role": "Brings the change home to main only once its gate is open, and changes no code."
     },
     "integrate": {
       "glyph": "ᚷ",

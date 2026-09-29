@@ -69,9 +69,6 @@ class Grant:
     # request had when the step began, and name the unit's own branch. The lease itself is
     # not in the grant — it is per run — and reaches `decide` as `lease`.
     push_needs_lease: bool = False
-    # `0041` R3: no `git push` may force — `--force`, `-f`, `--force-with-lease`,
-    # `--force-if-includes` or a `+` refspec. A plain push stays open.
-    push_no_force: bool = False
     # `0136` R2. Whether the session is handed `submit` (`coscc/agent/submit.py`), the one
     # tool beyond this grant's list `decide` lets through. It writes nothing and runs nothing,
     # and is not in `tools`: `--tools` names the built-in set, and an SDK server's tool
@@ -99,72 +96,16 @@ IMPL_COMMANDS = (
     "echo", "printf", "test", "which", "pwd", "sort", "uniq",
 )
 
-# What `pr` may run. Shorter than `impl`'s on purpose: this step proposes a change that
-# already exists, so it needs version control and the reading to describe it, and nothing
-# that builds or installs.
-#
-# `node` is here for one reason: `cos.mjs` is a node script, and `.claude/skills/write-pr/
-# SKILL.md` opens by telling this stage to run `node .claude/scripts/cos.mjs gate <unit>
-# pr`. This table did not carry it, so on 2026-09-23 a real `pr` step was refused with
-# `this step may not run 'node'` and stopped — correctly, rather than deciding the gate's
-# answer by reading its rules. That is the same shape as `plan` above: a skill requiring
-# what the grant forbade, found by running a unit through the product and not by reading
-# either file.
-#
-# It is not a small addition and is not written here as one. `node -e` runs anything, so
-# this word widens the step by more than the one command it was added for. What bounds the
-# step is unchanged, and `TheKnownLimit` in `coscc/agent/policy_test.py` already states it: the
-# session's `cwd`, the write check, and the turn and budget ceilings — never this list.
-#
-# `npm` and `uv` stay off. Nothing asks this stage to build or install, and the sentence
-# above about that is still true.
-PR_COMMANDS = (
-    "git", "gh", "node",
-    "ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "diff",
-    "echo", "printf", "test", "which", "pwd",
-)
-
-# Said on the page before the step starts. `gh` is logged in at the machine level — checked
-# on 2026-09-21, account `baodq97` in `~/.config/gh/hosts.yml` — so a step that may run it
-# can reach every repository that account can reach, not only this workspace. That is the
-# same shape of hazard the zero-tool default is about, opened deliberately this time.
-PR_WARNING = (
-    "This step runs `git` and `gh` with the GitHub login already on this machine. "
-    "That reaches every repository that account can reach, not just this workspace. "
-    "After the step, the app itself rewrites the pull request's title and body from pr.md under that login."
-)
-
-# `0015`: the pull request `pr` opens is merged by `ship`, after a review that passed, and
-# never by the stage that opened it.
+# `0015`: a pull request is merged by `ship`, after a review that passed, and since `0139`
+# R12 only by the PR machine (`coscc/github/prmachine.py`): no session merges, and no stage
+# has a `pr` or `ship` grant any more.
 #
 # Matched on the words left once flags are removed (`_words` below), so a `-R o/r` in front
-# does not walk past it. `gh alias set` is refused too: an alias `pr` defines is an alias
-# `pr` can then run under another name.
+# does not walk past it. `gh alias set` is refused too: an alias a step defines is an alias
+# it can then run under another name.
 MERGE_IS_SHIPS = (
     (("gh", "pr", "merge"), "merging is the ship stage's"),
     (("gh", "alias", "set"), "an alias is a merge under another name; merging is the ship stage's"),
-)
-
-# `0041` R3: on 2026-09-24 a `pr` step of `0019` met a conflict with `main`, rebased it
-# itself, and ran out of turns in the middle — no `pr.md`, and a rebase left half done in
-# the tree. Bringing `main` in is integration's (`0035`, Gebo), never `pr`'s. The push
-# itself stays open; forcing it is refused by `push_no_force`.
-_INTEGRATION_IS_NOT_PRS = (
-    "bringing main in is integration's — record the conflict in pr.md, accept it and stop; "
-    "a person presses *Integrate* on the board"
-)
-PR_DENIED = MERGE_IS_SHIPS + (
-    (("git", "rebase"), _INTEGRATION_IS_NOT_PRS),
-    (("git", "merge"), _INTEGRATION_IS_NOT_PRS),
-    (("git", "pull"), _INTEGRATION_IS_NOT_PRS),
-    (("gh", "pr", "update-branch"), _INTEGRATION_IS_NOT_PRS),
-)
-
-SHIP_WARNING = (
-    "This step merges the pull request into main with `gh pr merge`, using the GitHub "
-    "login already on this machine. That login reaches every repository its account can "
-    "reach. The gate has checked that the review passed with nothing open and that no code "
-    "landed after it; nobody but an agent has read the change."
 )
 
 # `0035`: Gebo, the integration step. Not a stage — it runs outside the loop, on a unit
@@ -329,16 +270,6 @@ GRANTS: dict[str, Grant] = {
         app_writes_artifact=True,
         warning=SPIKE_WARNING,
     ),
-    "pr": Grant(
-        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
-        commands=PR_COMMANDS,
-        max_turns=30,
-        max_budget_usd=3.0,
-        app_writes_artifact=False,
-        warning=PR_WARNING,
-        denied=PR_DENIED,
-        push_no_force=True,
-    ),
     # `0015`: a separate agent session reviews the open pull request, before the merge. It
     # reads and only reads, like `plan`: the app still writes `review.md` from the reply.
     # It cannot run `git diff`, so it sees the working tree and `impl.md`, not the diff —
@@ -354,16 +285,8 @@ GRANTS: dict[str, Grant] = {
         max_turns=40,
         max_budget_usd=4.0,
     ),
-    # `0015`: `ship` merges, so it needs what `pr` has. Its ceilings are copied from `pr`,
-    # chosen rather than measured.
-    "ship": Grant(
-        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
-        commands=PR_COMMANDS,
-        max_turns=30,
-        max_budget_usd=3.0,
-        app_writes_artifact=False,
-        warning=SHIP_WARNING,
-    ),
+    # `0139` R12: no `pr` and no `ship` entry. Both are the PR machine's, with no session
+    # (`coscc/github/prmachine.py`), so a step of either falls through to the locked `Grant()`.
     # `0035`. Ceilings chosen, not measured: `spec.md ## Answers`, answer 1 — "start from
     # impl's ceilings (120 turns, $8)", and lower them once real runs are recorded. No
     # Gebo run existed when this was written.
@@ -1152,7 +1075,7 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
     base = word.rsplit("/", 1)[-1]
     if base not in grant.commands:
         return f"this step may not run {base!r}"
-    if base in ("git", "gh") and (grant.denied or grant.push_needs_lease or grant.push_no_force):
+    if base in ("git", "gh") and (grant.denied or grant.push_needs_lease):
         # `0060` R4: `gh $P merge` is `gh pr merge` once `P=pr`. Refused by the variable's
         # name, since the value is not known here.
         for other, expanded in zip(all_words, simple.expanded):
@@ -1166,9 +1089,6 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
     if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
         # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
         return "this step may not call the merge endpoint: merging is the ship stage's"
-    if base == "gh" and grant.push_no_force and any(_UPDATE_BRANCH_ENDPOINT.search(t) for t in all_words):
-        # `0041` review round 1, F1: `gh pr update-branch` by the API, REST or GraphQL.
-        return f"this step may not call the update-branch endpoint: {_INTEGRATION_IS_NOT_PRS}"
     # Read on the text as written, quotes kept, as before `0060` — and on the words with
     # their quotes removed too, so `al\ias.p` or `$'\x61lias.p'` is not a way round it.
     config_road = bool(_GIT_CONFIG_ROAD.search(simple.source)) or any(
@@ -1176,10 +1096,6 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
     )
     if base == "git" and grant.push_needs_lease and config_road:
         return "this step may not define a git alias, an include or GIT_CONFIG_*: it can rename `push` past the lease"
-    if base == "git" and grant.push_no_force and config_road:
-        # `0041` review round 1, F1: `git -c alias.r=rebase r main`, or `git config
-        # alias.p push` and then `git p --force`, renames the refused words.
-        return f"this step may not define a git alias, an include or GIT_CONFIG_*: it can rename a refused command; {_INTEGRATION_IS_NOT_PRS}"
     if base == "git" and grant.push_needs_lease and _may_be_push(raw):
         # `0035` R6. `push` must be the first word after `git`, so a `-C dir` or
         # `-c k=v` in front cannot hide what it pushes.
@@ -1189,10 +1105,6 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
         reason = check_push(raw[1:], branch, head)
         if reason:
             return reason
-    if base == "git" and grant.push_no_force and _may_be_push(raw):
-        forced = _forces(raw[raw.index("push") + 1:])
-        if forced:
-            return f"a push may not use {forced}: {_INTEGRATION_IS_NOT_PRS}"
     return ""
 
 
@@ -1258,21 +1170,6 @@ def _in_step_tmp(redirect: _Redirect, unit: str) -> bool:
     return len(rel.parts) >= 2 and unit in rel.parts[0]
 
 
-def _forces(words: list[str]) -> str:
-    """The first token after `push` that overwrites what is on the remote, or ""."""
-    for token in words:
-        if token in ("--force", "-f", "--force-with-lease", "--force-if-includes"):
-            return token
-        if token.startswith("--force-with-lease="):
-            return "--force-with-lease"
-        # A cluster of short flags carrying `f`, read as `check_push` reads it.
-        if token.startswith("-") and not token.startswith("--") and "f" in token[1:]:
-            return token
-        if token.startswith("+"):
-            return f"the forced refspec {token}"
-    return ""
-
-
 # Flags `gh` reads a value after, anywhere on the line. Their values are dropped with them,
 # so `gh -R o/r pr merge` and `gh pr --repo o/r merge` read as `gh pr merge` (`0015` review
 # round 1, F1). Every other `-x` / `--x` / `--x=v` is dropped alone.
@@ -1281,7 +1178,6 @@ _GH_VALUE_FLAGS = frozenset({"-R", "--repo", "--hostname"})
 # `git rebase main` (`0041` R3). Only the two git itself reads a separate value after.
 _GIT_VALUE_FLAGS = frozenset({"-C", "-c"})
 _MERGE_ENDPOINT = re.compile(r"pulls/[^/\s]+/merge\b")
-_UPDATE_BRANCH_ENDPOINT = re.compile(r"pulls/[^/\s]+/update-branch\b|updatePullRequestBranch")
 
 
 def _may_be_push(raw: list[str]) -> bool:
@@ -1302,7 +1198,7 @@ def _words(base: str, rest: list[str]) -> tuple[str, ...]:
 
     Still a reading of tokens, not of what the program will do: an alias defined before
     the step, or `node -e` spawning `gh`, is not seen. `.claude/CLAUDE.md` says so. The
-    `integrate` and `pr` grants also refuse an alias made during the step (`_GIT_CONFIG_ROAD`).
+    `integrate` grant also refuses an alias made during the step (`_GIT_CONFIG_ROAD`).
     """
     out = [base]
     skip = False
@@ -1344,8 +1240,8 @@ def decide(
     about its arguments matters.
 
     **`unit_dir` widens the write boundary by exactly one directory, and `0014` `spec.md`
-    C2 is why it had to.** A step that writes its own artifact — `impl` and `pr`, the two
-    with `app_writes_artifact=False` — used to write it inside the workspace. `0014` moved
+    C2 is why it had to.** A step that writes its own artifact — `impl`, and `pr` until
+    `0139` R12 took its session away — used to write it inside the workspace. `0014` moved
     every artifact into the product's own store so that nothing of coscc's lands in a
     repository a team shares, and that put the file the step must write outside the only
     place the step may write.

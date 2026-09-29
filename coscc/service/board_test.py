@@ -70,7 +70,8 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
         # `0036` R5: every stage the board read names, from the table, overrides included.
         self.service.set_agent("review", {"name": "Judge"})
         data = asyncio.run(self.service.board(str(self.repo)))
-        self.assertEqual(set(data["stage_agents"]), set(data["stages"]))
+        # `pr` and `ship` have no agent since `0139` R12, and their columns no glyph.
+        self.assertEqual(set(data["stage_agents"]), set(data["stages"]) - {"pr", "ship"})
         self.assertEqual(data["stage_agents"]["plan"], {
             "glyph": "ᚱ", "label": "Raidho (agent, plan)",
             "meaning": "journey: the right road in the right order",

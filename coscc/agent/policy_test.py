@@ -19,6 +19,9 @@ from coscc.agent import policy
 from coscc.agent.policy import READ_TOOLS, Grant, check_command, decide, grant_for, grant_for_step
 
 IMPL = grant_for("impl")
+# `0139` R12 took the `pr` grant, which carried the merge refusal alone. The deny list's own
+# reading is still `integrate`'s, and is pinned here on a grant that holds nothing else.
+MERGING = Grant(tools=policy.EXEC_TOOLS, commands=("git", "gh", "node"), denied=policy.MERGE_IS_SHIPS)
 
 
 class OnlyImplAndOnlyAutonomous(unittest.TestCase):
@@ -140,15 +143,8 @@ class OneGrantPerStage(unittest.TestCase):
             "impl": Grant(tools=rw, commands=policy.IMPL_COMMANDS, max_turns=120,
                           max_budget_usd=8.0, app_writes_artifact=False, submits=True),
             "plan": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
-            "pr": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
-                        max_budget_usd=3.0, app_writes_artifact=False,
-                        warning=policy.PR_WARNING, denied=policy.PR_DENIED,
-                        push_no_force=True),  # `0041` R3; the ceilings are R6's, unchanged
             # `0085` R1; `0136` R5: the round comes back through `submit`.
             "review": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
-            "ship": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
-                          max_budget_usd=3.0, app_writes_artifact=False,
-                          warning=policy.SHIP_WARNING),
         }
         # `integrate` since `0035`: not a stage, and pinned in `GeboPushesOnlyWithTheLease`.
         # `spike` since `0039`: pinned in `SpikeWritesOnlyItsScratch`.
@@ -160,6 +156,15 @@ class OneGrantPerStage(unittest.TestCase):
         )
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
+
+    def test_pr_and_ship_hold_no_grant(self):
+        """`0139` R12: both are the PR machine's, with no session, so neither is in the table
+        and a step of either would start from the locked position."""
+        for stage in ("pr", "ship"):
+            with self.subTest(stage=stage):
+                self.assertNotIn(stage, policy.GRANTS)
+                self.assertEqual(grant_for(stage), Grant())
+                self.assertEqual(grant_for_step(stage, "novel"), Grant())
 
 
 class AToolNobodyGrantedIsRefused(unittest.TestCase):
@@ -253,61 +258,11 @@ class CommandsAreCheckedSegmentBySegment(unittest.TestCase):
         self.assertEqual(decide(IMPL, "Bash", {"command": "npm test"}, "/tmp"), "")
 
 
-class ThePrStepSaysWhatItWillReach(unittest.TestCase):
-    PR = grant_for("pr")
-
-    def test_it_may_run_git_and_gh_and_not_a_package_manager(self):
-        self.assertEqual(check_command(self.PR, "git push -u origin HEAD"), "")
-        self.assertEqual(check_command(self.PR, "gh pr create --fill"), "")
-        # `pr` proposes a change that already exists; it has no reason to build or install.
-        for bad in ("npm install x", "uv run python -m pytest"):
-            self.assertIn("may not run", check_command(self.PR, bad), bad)
-
-    def test_it_may_ask_its_own_gate(self):
-        """The first line of `write-pr/SKILL.md`, which this grant used to refuse.
-
-        Measured 2026-09-23: a `pr` step running through the board was refused with
-        `this step may not run 'node'` and stopped before pushing, because the gate it is
-        told to consult is a node script. It was right to stop; the table was wrong.
-        """
-        gate = (
-            "node .claude/scripts/cos.mjs --root /store gate "
-            "0001_product-describes-a-state-it-is-not-in pr"
-        )
-        self.assertEqual(check_command(self.PR, gate), "")
-
-    def test_it_carries_a_warning_and_impl_does_not(self):
-        # `spec.md` C4: the capability comes from the machine's own gh login, so it has to
-        # be readable before the step starts rather than only in a design document.
-        self.assertIn("gh", self.PR.warning.lower())
-        self.assertIn("every repository", self.PR.warning)
-        self.assertEqual(IMPL.warning, "")
-
-    def test_the_warning_is_on_the_only_grant_pr_has(self):
-        """Was `test_manual_carries_neither_tools_nor_warning`.
-
-        `0020` `spec.md` `## Answers`, answer 1: there is one grant per stage now, so no
-        mode exists in which `pr` runs without its warning shown before the button.
-        """
-        self.assertTrue(grant_for("pr").opens_anything)
-        self.assertEqual(grant_for("pr").warning, policy.PR_WARNING)
-
-    def test_0055_the_warning_says_the_app_rewrites_title_and_body(self):
-        self.assertIn(
-            "After the step, the app itself rewrites the pull request's title and body from pr.md under that login.",
-            policy.PR_WARNING,
-        )
-
-    def test_its_ceilings_are_lower_than_impls(self):
-        self.assertLess(self.PR.max_turns, IMPL.max_turns)
-        self.assertLess(self.PR.max_budget_usd, IMPL.max_budget_usd)
-
-
 class MergingIsShipsNotPrs(unittest.TestCase):
-    """`0015`: `pr` stops at an open pull request; `ship` merges after a review passed."""
+    """`0015`: a session never merges; `ship` does, after a review passed. Since `0139` R12
+    `ship` is the PR machine's alone, and the deny list is read on `MERGING`."""
 
-    PR = grant_for("pr")
-    SHIP = grant_for("ship")
+    PR = MERGING
 
     def test_pr_is_refused_the_merge_and_told_whose_it_is(self):
         for line in (
@@ -323,17 +278,11 @@ class MergingIsShipsNotPrs(unittest.TestCase):
         for line in ("gh pr create --fill", "gh pr checks 7 --watch", "gh pr view 7"):
             self.assertEqual(check_command(self.PR, line), "", line)
 
-    def test_ship_may_merge(self):
-        self.assertEqual(check_command(self.SHIP, "gh pr merge --squash --delete-branch"), "")
-        self.assertFalse(self.SHIP.app_writes_artifact)
-        self.assertIn("gh pr merge", self.SHIP.warning)
-
-    def test_ship_is_no_longer_a_prose_stage(self):
-        """Was `..._and_manual_ship_carries_nothing`. `0020` `spec.md` `## Answers`,
-        answer 1, removed the mode from the grant, so the second half now says what `ship`
-        does carry rather than what `manual` did not."""
+    def test_ship_is_no_prose_stage_and_no_session(self):
+        """Was `test_ship_is_no_longer_a_prose_stage`. `0139` R12: `ship` holds no grant at
+        all now, so the second half says it carries nothing."""
         self.assertNotIn("ship", policy.PROSE_STAGES)
-        self.assertNotEqual(grant_for("ship").commands, ())
+        self.assertEqual(grant_for("ship").commands, ())
 
     def test_review_reads_and_only_reads(self):
         review = grant_for("review")
@@ -730,62 +679,21 @@ class GeboPushesOnlyWithTheLease(unittest.TestCase):
                 self.assertEqual(self.run_(command), "")
 
     def test_the_new_refusals_are_geboes_alone(self):
-        self.assertEqual(check_command(grant_for("pr"), "gh api repos/o/r/pulls/7"), "")
+        self.assertEqual(check_command(MERGING, "gh api repos/o/r/pulls/7"), "")
         self.assertEqual(check_command(grant_for("impl"), "git config alias.st status"), "")
 
     def test_other_grants_push_as_before(self):
-        self.assertEqual(check_command(grant_for("pr"), "git push origin feat/x"), "")
+        self.assertEqual(check_command(MERGING, "git push origin feat/x"), "")
+        self.assertEqual(check_command(IMPL, "git push origin feat/x"), "")
 
 
-class IntegrationIsNotPrs(unittest.TestCase):
-    """`0041` R3. `pr` met a conflict with `main` on 2026-09-24, rebased it itself and ran
-    out of turns in the middle. Bringing `main` in is integration's; `pr` records the
-    conflict and stops. By the command's words, like the merge — C2 is the same limit."""
+class IntegrateKeepsItsDenyList(unittest.TestCase):
+    """What was left of `IntegrationIsNotPrs` (`0041` R3) once `0139` R12 took the `pr`
+    grant, whose rebase, pull and forced-push refusals went with it."""
 
-    PR = grant_for("pr")
-
-    def test_integration_is_refused_and_named(self):
-        for command in ("git rebase origin/main", "git -C . rebase main", "git -c k=v rebase main",
-                        "git merge origin/main", "git pull --rebase", "gh pr update-branch 7 --rebase",
-                        "git push --force", "git push -f", "git push -uf origin HEAD",
-                        "git push --force-with-lease", "git push --force-with-lease=b:abc",
-                        "git push --force-if-includes origin b", "git push origin +HEAD:b",
-                        "git -C . push --force origin b"):
-            with self.subTest(command=command):
-                self.assertIn("Integrate", check_command(self.PR, command))
-
-    def test_opening_and_reading_the_pull_request_stay_open(self):
-        for command in ("git push -u origin HEAD", "git push origin HEAD:fix/x",
-                        "gh pr create --title 'fix(0049): a pr title is taken from pr.md' --body-file pr.md",
-                        "gh pr view --json url",
-                        "gh pr checks 7 --required", "git log --grep rebase",
-                        "git commit -m merge", "git log --oneline main..HEAD"):
-            with self.subTest(command=command):
-                self.assertEqual(check_command(self.PR, command), "")
-
-    def test_ship_and_integrate_are_unchanged(self):
-        self.assertEqual(grant_for("ship").denied, ())
-        self.assertFalse(grant_for("ship").push_no_force)
+    def test_integrate_is_unchanged(self):
         self.assertIs(grant_for("integrate").denied, policy.INTEGRATE_DENIED)
-        self.assertFalse(grant_for("integrate").push_no_force)
-        self.assertEqual(check_command(grant_for("ship"), "git rebase origin/main"), "")
-
-    def test_the_merge_is_still_ships(self):
-        self.assertIn("ship stage's", check_command(self.PR, "gh pr merge 7"))
-
-    def test_the_other_roads_to_the_same_words_are_refused(self):
-        # Review round 1, F1: an alias made during the step, or the endpoint behind
-        # `gh pr update-branch`, renamed what the prefixes above refuse.
-        for command in ("git -c alias.r=rebase r main", "git config alias.r rebase",
-                        "git -c alias.p=push p --force", "GIT_CONFIG_COUNT=1 git r main",
-                        "gh api -X PUT repos/o/r/pulls/7/update-branch",
-                        "gh api graphql -f query=mutation{updatePullRequestBranch(input:{})}"):
-            with self.subTest(command=command):
-                self.assertIn("Integrate", check_command(self.PR, command))
-
-    def test_the_known_limit_c2(self):
-        # Words, not capability: a program the grant may start can still rebase.
-        self.assertEqual(check_command(self.PR, "node -e 'require(\"child_process\")'"), "")
+        self.assertIn("ship stage's", check_command(grant_for("integrate"), "gh pr merge 7"))
 
 
 class GeboReadsAnExplicitList(unittest.TestCase):
@@ -980,7 +888,7 @@ class TheShellIsReadAsTheShellReadsIt(unittest.TestCase):
 
     def test_a_variable_passed_to_git_or_gh_is_refused_where_words_are_denied(self):
         """R4, second case. `0060 spec.md` C8: tighter than before, on purpose."""
-        pr, integrate = grant_for("pr"), grant_for("integrate")
+        pr, integrate = MERGING, grant_for("integrate")
         self.assertIn("may not pass ${P} to gh", check_command(pr, "gh ${P} merge"))
         self.assertIn("may not pass $P to gh", check_command(pr, "gh $P merge"))
         self.assertIn("may not pass $SUB to git", check_command(integrate, "git $SUB --force"))
@@ -989,7 +897,7 @@ class TheShellIsReadAsTheShellReadsIt(unittest.TestCase):
 
     def test_quotes_no_longer_hide_a_refused_word(self):
         """Read after quote removal: bash runs `gh pr merge` for all of these."""
-        pr = grant_for("pr")
+        pr = MERGING
         for command in ("gh pr 'merge' 7", 'gh "pr" merge', "gh pr m\\erge", "gh pr $'merge'"):
             with self.subTest(command=command):
                 self.assertIn("ship stage's", check_command(pr, command))
@@ -1264,7 +1172,7 @@ class ABackgroundCommandIsRefused(unittest.TestCase):
     """`0130` R1 and R2: a step's session ends with its turn, so nothing it starts in the
     background is ever read back."""
 
-    STAGES = ("impl", "spike", "pr", "ship", "integrate")
+    STAGES = ("impl", "spike", "integrate")
     UNIT_DIR = "/data/units/slot/.cos/0130_x"
 
     def d(self, stage, tool_input):

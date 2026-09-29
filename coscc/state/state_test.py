@@ -1185,7 +1185,7 @@ class TheBoardIsDrawnFromTheStages(unittest.TestCase):
         StudioState._show_agents(page, {**table, "problems": ["p"]})
         review = next(r for r in page.agent_rows if r.key == "review")
         self.assertEqual((review.name, review.name_source, review.glyph_source), ("Judge", "override", "default"))
-        self.assertEqual(len(page.agent_rows), 11)
+        self.assertEqual(len(page.agent_rows), 9)
         self.assertEqual(page.agent_problems, ["p"])
 
 

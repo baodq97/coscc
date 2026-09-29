@@ -228,7 +228,7 @@ test('a done artifact is behind us, not in the way', () => {
 
 test('nextAction walks past an accepted plan into the new stages', () => {
   const base = { 'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('accepted') }
-  assert.match(nextAction(unit({ ...base, 'impl.md': art('accepted') })).action, /write-pr/)
+  assert.equal(nextAction(unit({ ...base, 'impl.md': art('accepted') })).action, 'pr')
   assert.match(
     nextAction(unit({ ...base, 'impl.md': art('accepted'), 'pr.md': art('accepted') })).action,
     /write-review/,
@@ -1132,7 +1132,7 @@ test('0024 g: the last round passed and the ship gate is open: ship, pinned', ()
   const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
   const n = nextStep(u, { probe: greenProbe() })
   assert.equal(n.stage, 'ship')
-  assert.match(n.action, new RegExp(`write-ship — merge with --match-head-commit ${SHA}`))
+  assert.match(n.action, new RegExp(`^ship — merge with --match-head-commit ${SHA}`))
 })
 
 test('0024 h: a done plan offers nothing, whatever the later files say', () => {
@@ -2058,7 +2058,7 @@ test('0061 R7: a pass that leaves lows open costs no round', () => {
 
 // --- 0055: the title and body pr.md puts on its pull request -----------------------
 
-// The template of `.claude/skills/write-pr/SKILL.md ## Output`, filled in.
+// The template `.claude/skills/write-pr/SKILL.md ## Output` gave before `0139` R12, filled in.
 const PR_MD = [
   '# PR: the pr body is taken from pr.md',
   'Intent: intent.md. Impl: impl.md. PR: https://github.com/o/r/pull/7. Author: a. Status: accepted.',
@@ -2822,7 +2822,7 @@ test('0054 R5, R10: rerunning pr closes ship until pr and then review are writte
   assert.deepEqual(u.artifacts['pr.md'].stale, { stage: 'pr', date: u.artifacts['review.md'].stale.date })
   // The stage run again comes first: a rerun that never ran is offered again.
   assert.equal(nextStep(u, { probe }).stage, 'pr')
-  assert.match(nextStep(u, { probe }).action, /^pr\.md is stale — pr was rerun on .*: write-pr again$/)
+  assert.match(nextStep(u, { probe }).action, /^pr\.md is stale — pr was rerun on .*: pr again$/)
   // An answer appended to pr.md does not make it fresh.
   t.append('pr.md', answerBlock(1, 'A', 'x'))
   assert.ok(t.read().artifacts['pr.md'].stale)
@@ -3235,7 +3235,7 @@ test('0112 R6 a: a draft ship.md from an older round is a missing one: ship, rev
   const text = `${round(1, 'pass')}\n${round(2, 'pass').replace(SHA, REB)}`
   const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', text), 'ship.md': shipArt(shipDraft(1)) })
   const at = (git) => greenProbe(undefined, git, { state: 'OPEN', headRefOid: REB })
-  assert.deepEqual(nextStep(u, { probe: at({}) }), { blocked: true, action: `write-ship — merge with --match-head-commit ${REB}`, stage: 'ship' })
+  assert.deepEqual(nextStep(u, { probe: at({}) }), { blocked: true, action: `ship — merge with --match-head-commit ${REB}`, stage: 'ship' })
   assert.equal(nextStep(u, { probe: at({ [`diff --name-only ${REB}..${REB}`]: ok('src/a.py') }) }).stage, 'review')
   const behind = at({
     [`merge-base --is-ancestor ${TRUNK} ${REB}`]: { code: 1, out: '', err: '' },
@@ -3466,7 +3466,7 @@ test('0067 R5: next offers ship on a green clean rebase, impl on red, nothing wh
 
 test('0067 R5: a ship refused as not up to date and then rebased clean is offered ship again; another refusal still stops', () => {
   const u = (refused) => branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')), 'ship.md': shipArt(shipDraft(1, refused)) })
-  assert.deepEqual(nextStep(u(), { probe: rebasedProbe() }), { blocked: true, action: `write-ship — merge with --match-head-commit ${REB}`, stage: 'ship' })
+  assert.deepEqual(nextStep(u(), { probe: rebasedProbe() }), { blocked: true, action: `ship — merge with --match-head-commit ${REB}`, stage: 'ship' })
   assert.equal(nextStep(u(), { probe: rebasedProbe({ checks: [{ name: 'tests', bucket: 'fail' }] }) }).stage, 'impl')
   assert.equal(nextStep(u(), { probe: rebasedProbe({ checks: [{ name: 'tests', bucket: 'pending' }] }) }).stage, '')
   // Refused for something else: a clean rebase does not cure it.
@@ -3928,8 +3928,8 @@ test('0116 R3: a pull request closed without merging still closes ship with the 
   }
 })
 
-test('0116 R4: next offers write-ship for a merged pull request when ship.md is missing, stale or a refused draft, and never says MERGED, not open', () => {
-  const action = `write-ship — #7 was merged as ${MERGE} at ${MERGED_AT}: record it in ship.md; do not merge`
+test('0116 R4: next offers ship for a merged pull request when ship.md is missing, stale or a refused draft, and never says MERGED, not open', () => {
+  const action = `ship — #7 was merged as ${MERGE} at ${MERGED_AT}: record it in ship.md; do not merge`
   const stale = { ...art('accepted'), stale: { stage: 'review', date: '2026-09-26' } }
   const refused = shipArt(shipDraft(1, 'failed to delete local branch fix/x: cannot switch to main'))
   for (const ship of [undefined, stale, refused]) {
@@ -4353,7 +4353,10 @@ test('0040 R2: status --json without ideas/ is byte-identical', () => {
     '0003_shipped': Object.fromEntries(['intent', 'spec', 'plan', 'impl', 'pr', 'review', 'ship'].map((s) => [`${s}.md`, s === 'intent' ? I40('accepted') : `# ${s}\nStatus: accepted.\n`])),
   })
   const out = cli('--root', root, 'status', '--json').stdout
-  assert.equal(createHash('sha256').update(out.split(join(root, '.cos')).join('<root>')).digest('hex'), BEFORE_0040)
+  // `0139` R12 renamed two stage hints, and nothing else: named back, the bytes are the same.
+  const was = out.replace('"hint": "pr"', '"hint": "write-pr"').replace('"hint": "ship"', '"hint": "write-ship"')
+  assert.notEqual(was, out)
+  assert.equal(createHash('sha256').update(was.split(join(root, '.cos')).join('<root>')).digest('hex'), BEFORE_0040)
   assert.doesNotMatch(out, /"ideas":|"idea":|"repo":|"dependsOn":/)
 })
 
@@ -4629,7 +4632,7 @@ test('0049 R6: the ship gate is closed when the open pull request\'s title diffe
   const g = checkGate(passedOnce(), 'ship', { probe: differs })
   assert.equal(g.ok, false)
   assert.equal(g.need.length, 1, 'the title is the only reason')
-  assert.equal(g.need[0], '#7 carries the title "wip: something else", not pr.md\'s "feat(0001): x" — put pr.md onto it (write-pr step 5), or start ship from the board, which does that first')
+  assert.equal(g.need[0], '#7 carries the title "wip: something else", not pr.md\'s "feat(0001): x" — start ship from the board, which puts pr.md onto it first')
   // gh giving no title is not a title that matches.
   const none = checkGate(passedOnce(), 'ship', { probe: greenProbe(undefined, {}, { state: 'OPEN', headRefOid: SHA, title: undefined }) })
   assert.equal(none.ok, false)
@@ -4664,7 +4667,7 @@ test('0049: next offers ship when a differing title is the only thing closing it
   const n = nextStep(passedOnce(), { probe: differs })
   assert.equal(n.stage, 'ship')
   assert.equal(n.blocked, true)
-  assert.match(n.action, /^write-ship — #7 carries the title "feat\(0001\): y", not pr\.md's "feat\(0001\): x"/)
+  assert.match(n.action, /^ship — #7 carries the title "feat\(0001\): y", not pr\.md's "feat\(0001\): x"/)
   // A draft ship.md a refused merge left, against the last round: the same.
   const refused = branched({
     ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')),
@@ -4672,7 +4675,7 @@ test('0049: next offers ship when a differing title is the only thing closing it
   })
   assert.deepEqual(nextStep(refused, { probe: differs }), {
     blocked: true, stage: 'ship',
-    action: 'write-ship — #7 carries the title "feat(0001): y", not pr.md\'s "feat(0001): x" — put pr.md onto it (write-pr step 5), or start ship from the board, which does that first',
+    action: 'ship — #7 carries the title "feat(0001): y", not pr.md\'s "feat(0001): x" — start ship from the board, which puts pr.md onto it first',
   })
   // Any other reason alongside it and ship is not offered: the title is compared last.
   const behind = greenProbe(undefined, { [`merge-base --is-ancestor refs/remotes/origin/main ${SHA}`]: { code: 1, out: '', err: '' } }, { state: 'OPEN', headRefOid: SHA, title: 'feat(0001): y' })
@@ -4681,15 +4684,25 @@ test('0049: next offers ship when a differing title is the only thing closing it
   assert.doesNotMatch(late.action, /carries the title/)
 })
 
-test('0049 R1: no skill opens a pull request with --fill, and write-pr names the title grammar', () => {
+// `0139` R12 removed `write-pr`, whose title grammar the test below also held; the PR
+// machine's title is `coscc/github/prmachine.py` `title_of`, held by `prmachine_test.py`.
+test('0049 R1: no skill opens a pull request with --fill', () => {
   const skills = join(REPO, '.claude', 'skills')
   const files = readdirSync(skills, { recursive: true }).filter((p) => p.endsWith('.md'))
   assert.ok(files.length > 5, files.join(', '))
   for (const f of files) assert.doesNotMatch(readFileSync(join(skills, f), 'utf8'), /--fill/, f)
-  const pr = readFileSync(join(skills, 'write-pr', 'SKILL.md'), 'utf8')
-  assert.match(pr, /<type>\(<NNNN>\): <text>/)
-  assert.match(pr, /gh pr create --title/)
-  assert.match(pr, /cos\.mjs pr-text <NNNN_slug>/)
+})
+
+// `0139` R12: `pr` and `ship` have no skill and no session, so no answer of `next` names one.
+test('0139 R12: next never names write-pr or write-ship', () => {
+  const skills = join(REPO, '.claude', 'skills')
+  for (const gone of ['write-pr', 'write-ship']) assert.equal(existsSync(join(skills, gone)), false, gone)
+  const base = { 'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('accepted'), 'impl.md': art('accepted') }
+  const pr = nextAction(unit(base))
+  assert.deepEqual([pr.stage, pr.action], ['pr', 'pr'])
+  const ship = nextAction(unit({ ...base, 'pr.md': art('accepted'), 'review.md': art('accepted') }))
+  assert.deepEqual([ship.stage, ship.action], ['ship', 'ship'])
+  assert.doesNotMatch(readFileSync(SCRIPT, 'utf8'), /action: `write-(pr|ship)|hint: 'write-(pr|ship)'/)
 })
 
 // --- 0135: metadata read once, by `meta` ----------------------------------------

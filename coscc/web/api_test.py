@@ -246,11 +246,14 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         return {row["name"]: row for row in r.json()["rows"]}
 
-    async def test_sixteen_rows_with_nothing_configured(self):
-        # `0033` R9 and `0039`: nine stages, a `:novel` row for each of the four after `plan`,
-        # `estimate` (`0074`), `precedent` (`0044`), chat.
+    async def test_twelve_rows_with_nothing_configured(self):
+        # `0033` R9 and `0039`: the seven stages that run a session (`pr` and `ship` do not,
+        # `0139` R12), a `:novel` row for `impl` and `review`, `estimate` (`0074`),
+        # `precedent` (`0044`), chat.
         rows = await self.rows()
-        self.assertEqual(len(rows), 16)
+        self.assertEqual(len(rows), 12)
+        self.assertNotIn("pr", rows)
+        self.assertNotIn("ship", rows)
         self.assertEqual(list(rows)[-3:], ["estimate", "precedent", "chat"])
         self.assertEqual(rows["impl"]["source"], "default")
         self.assertEqual((rows["impl:novel"]["effort"], rows["impl:novel"]["effort_source"]), ("high", "default"))
@@ -292,7 +295,7 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         # `0036` R2.
         r = await self.client.get("/api/settings/agents")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(len(r.json()["rows"]), 11)
+        self.assertEqual(len(r.json()["rows"]), 9)
         r = await self.client.post("/api/settings/agents", json={"key": "review", "name": "Judge"})
         self.assertEqual(r.status_code, 200)
         row = next(x for x in r.json()["rows"] if x["key"] == "review")

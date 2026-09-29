@@ -15,6 +15,7 @@ from coscc.units.board import Unavailable
 from coscc.data import Data
 from coscc.runlog.journal import BadRecord, Busy, Journal
 from coscc.agent import labels, models
+from coscc.github import prmachine
 from coscc.knowledge import modeltrial
 from coscc.config import LOOPBACK
 from coscc.runner import SESSIONS_PER_STEP
@@ -130,10 +131,11 @@ class ModelsMixin:
         """Every row Settings shows: stage, agents, model, effort, where each came from.
 
         When `node` cannot run there is no stage list, and inventing one here would be the
-        second copy of the loop. So the table is empty and `problems` says why.
+        second copy of the loop. So the table is empty and `problems` says why. `pr` and
+        `ship` run no session (`0139` R12), so they have no model to show.
         """
         try:
-            stages = await board_reader.stages()
+            stages = [s for s in await board_reader.stages() if s not in prmachine.STAGES]
         except Unavailable as e:
             return {"rows": [], "problems": [str(e)], "cos_model": self.config.model}
         overrides, bad_rows = self._model_overrides()

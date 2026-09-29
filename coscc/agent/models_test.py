@@ -9,9 +9,11 @@ import unittest
 from pathlib import Path
 
 from coscc.agent import models
+from coscc.github import prmachine
 
 REPO = Path(__file__).resolve().parents[2]
-STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
+# The stages that run a session: `pr` and `ship` are the PR machine's since `0139` R12.
+STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "review"]
 
 
 def row(model=None, effort=None):
@@ -105,8 +107,8 @@ class TheTrialTier(unittest.TestCase):
 class TheTable(unittest.TestCase):
     def test_chat_comes_after_the_stages_in_their_order(self):
         t = models.table(STAGES, {}, {}, {}, None, 1)
-        expected = ["idea", "intent", "spec", "spike", "plan", "impl", "impl:novel", "pr", "pr:novel",
-                    "review", "review:novel", "ship", "ship:novel", "estimate", "precedent", "chat"]
+        expected = ["idea", "intent", "spec", "spike", "plan", "impl", "impl:novel",
+                    "review", "review:novel", "estimate", "precedent", "chat"]
         self.assertEqual([r["name"] for r in t["rows"]], expected)
         self.assertTrue(all(r["agents"] == 1 for r in t["rows"]))
 
@@ -203,8 +205,8 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
         self.assertEqual(problems, [])
         base = {k for k in defaults if not k.endswith(models.NOVEL_SUFFIX)}
         # `0074`: `estimate` is a row of its own, not a stage `cos.mjs` names; `precedent`
-        # (`0044`) too.
-        self.assertEqual(base, set(names) | {models.ESTIMATE, models.PRECEDENT})
+        # (`0044`) too. `pr` and `ship` run no session and have none (`0139` R12).
+        self.assertEqual(base, (set(names) - set(prmachine.STAGES)) | {models.ESTIMATE, models.PRECEDENT})
         # `0033` spec R8: the only variants shipped are these two.
         self.assertEqual(set(defaults) - base, {"impl:novel", "review:novel"})
         self.assertEqual(models.table(names, {}, {}, defaults, None, 1)["problems"], [])
@@ -219,7 +221,6 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
             "spec": row(opus, "high"), "spike": row(opus, "high"), "plan": row(opus, "high"),
             "impl": row(sonnet, "medium"), "impl:novel": row(opus, "high"),
             "review": row(opus, "high"), "review:novel": row(opus, "xhigh"),
-            "pr": row(sonnet, "low"), "ship": row(sonnet, "low"),
             # `0074`: chosen, not measured — the same row as `idea` and `intent`.
             "estimate": row(opus, "medium"),
             # `0044`: chosen, not measured — copied from `estimate`.

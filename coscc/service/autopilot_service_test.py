@@ -1323,8 +1323,8 @@ class Scripted(_Base):
 
     # --- `0126`, an old exhausted `ship` before one that only records ---------------
 
-    RECORDING = "write-ship — #95 was merged as abc1234 at 2026-09-20T00:00:00Z: record it in ship.md; do not merge"
-    MERGING = "write-ship — merge with --match-head-commit abc1234"
+    RECORDING = "ship — #95 was merged as abc1234 at 2026-09-20T00:00:00Z: record it in ship.md; do not merge"
+    MERGING = "ship — merge with --match-head-commit abc1234"
 
     def shipped(self, unit, **start):
         Journal(self.config.working_dir, self.config.data_dir).append(

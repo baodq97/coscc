@@ -69,7 +69,7 @@
     {
       "name": "pr",
       "file": "pr.md",
-      "hint": "write-pr",
+      "hint": "pr",
       "statuses": [
         "draft",
         "accepted",
@@ -90,7 +90,7 @@
     {
       "name": "ship",
       "file": "ship.md",
-      "hint": "write-ship",
+      "hint": "ship",
       "statuses": [
         "draft",
         "accepted",
