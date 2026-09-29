@@ -82,7 +82,7 @@ def permission_gate(
     capability. `read_also` and `lease` are passed to `decide` unchanged.
     """
 
-    async def can_use_tool(tool: str, tool_input: dict, context: Any):
+    async def can_use_tool(tool: str, tool_input: dict, _context: Any):
         reason = decide(grant, tool, tool_input or {}, workspace, unit_dir, read_also, lease)
         if reason:
             denials.record(tool, reason, tool_input)

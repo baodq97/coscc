@@ -455,7 +455,7 @@ class _Reader:
 
     # --- the command level ---------------------------------------------------
 
-    def commands(self, opened: int | None = None) -> list[_Simple]:
+    def commands(self, opened: int | None = None) -> list[_Simple]:  # noqa: C901, PLR0915 - still to split
         """Read commands until the end, or — when `opened` is the position of a `$(`, `<(`
         or `>(` — until the `)` that closes it."""
         s = self.s

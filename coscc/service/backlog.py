@@ -143,7 +143,7 @@ class Backlog:
             "effort_basis": "",
             "by": by,
         }
-        return {"recorded": self._append_checked(journal, record, lambda rows: "")}
+        return {"recorded": self._append_checked(journal, record, lambda _rows: "")}
 
     async def record_relation(
         self,
@@ -217,7 +217,7 @@ class Backlog:
             )
         }
 
-    async def propose_estimates(
+    async def propose_estimates(  # noqa: C901, PLR0915 - still to split
         self,
         cwd: str,
         resume: dict[str, Any] | None = None,
@@ -411,7 +411,7 @@ class Backlog:
                         )
                     )(rec)
                 else:
-                    check = lambda live: ""
+                    check = lambda _live: ""
                 try:
                     self._append_checked(journal, rec, check)
                     written += 1

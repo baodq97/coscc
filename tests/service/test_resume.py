@@ -560,7 +560,6 @@ class APausedOwnerEndsNothing(_Base):
                 None,
                 None,
                 None,
-                None,
                 7,
                 self.tree,
                 "feat/a-problem",

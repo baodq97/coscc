@@ -326,7 +326,7 @@ def every_place_opens_at_its_address_and_stays_after_a_reload(context, base, sce
     return ok
 
 
-def back_and_forward_return_to_the_screens_the_page_moved_between(context, base, scene) -> bool:
+def back_and_forward_return_to_the_screens_the_page_moved_between(context, base, _scene) -> bool:
     """`0056` (c): moved with the sidebar, Back and Forward retrace it."""
     page = context.new_page()
     try:
@@ -708,7 +708,7 @@ def a_page_without_a_session_is_sent_to_the_login(browser, base) -> bool:
         context.close()
 
 
-def logging_out_ends_at_the_login_page(context, base, scene) -> bool:
+def logging_out_ends_at_the_login_page(context, base, _scene) -> bool:
     """`0070` --browser: *Log out* ends the session and `/` then asks for the password."""
     page = context.new_page()
     try:
@@ -918,7 +918,7 @@ def cursor_never_passes_the_dom(page, known: set[int], label: str) -> bool:
     )
 
 
-def notices_through(
+def notices_through(  # noqa: PLR0915 - still to split
     browser, app, cut, journal, key: str, token: str, jar: Path, where: Path, mode: str
 ) -> bool:
     """One cut, `close` or `stall`, with a fresh browser profile and a fresh terminal cursor."""

@@ -340,7 +340,7 @@ class Steps:
             "consequence": CONSEQUENCE["integrate"],
         }
 
-    async def integrate(
+    async def integrate(  # noqa: C901, PLR0915 - still to split
         self,
         cwd: str,
         unit: str,
@@ -591,7 +591,6 @@ class Steps:
                 key,
                 unit,
                 directory,
-                found,
                 data,
                 info,
                 int(pr),
@@ -695,13 +694,12 @@ class Steps:
             **base, head_after=head_after, outcome="pushed", detail=detail
         ), None
 
-    async def integrate_gebo(
+    async def integrate_gebo(  # noqa: PLR0915 - still to split
         self,
         cwd: str,
         key: str,
         unit: str,
         directory: Path,
-        found: dict[str, Any],
         data: dict[str, Any],
         info: dict[str, Any],
         pr: int,
@@ -1123,7 +1121,7 @@ class Steps:
             raise Invalid(str(e)) from e
         return {"cwd": cwd, "unit": unit, "stage": stage, "mode": mode}
 
-    async def run_step(
+    async def run_step(  # noqa: C901, PLR0915 - still to split
         self,
         cwd: str,
         unit: str,
@@ -1491,7 +1489,6 @@ class Steps:
                     stage,
                     row["file"],
                     directory,
-                    tree,
                     base,
                     rounds_before,
                     rid,
@@ -1663,7 +1660,7 @@ class Steps:
                 )
             )
 
-    async def drive(
+    async def drive(  # noqa: C901, PLR0915 - still to split
         self,
         running: steps_mod.Running,
         mark: steps_mod.Mark,
@@ -1673,7 +1670,6 @@ class Steps:
         stage: str,
         artifact: str,
         directory: Path,
-        tree: dict[str, Any] | None,
         base: dict[str, Any] | None,
         rounds_before: set[Any] | None,
         rid: str,

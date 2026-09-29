@@ -593,7 +593,7 @@ class UnitMeta:
                 for r in conn.execute(sql + " ORDER BY workspace, unit, artifact, field", args)
             ]
 
-    def snapshot(
+    def snapshot(  # noqa: C901, PLR0915 - still to split
         self, own: str, names: Mapping[str, str], units_: Iterable[str] | None = None
     ) -> dict[str, Any]:
         """What `cos.mjs --state` reads, for the store `own` and every workspace `names` maps a name to.

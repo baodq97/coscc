@@ -229,7 +229,7 @@ class Release:
         if str(tree.resolve()) in listed:
             await gitops.release_tree_remove(root, tree, self.release_tree_path(cwd))
 
-    async def _release_press(
+    async def _release_press(  # noqa: PLR0915 - still to split
         self,
         cwd: str,
         phase: str,

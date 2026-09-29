@@ -433,12 +433,12 @@ class Guard:
             if live:
                 await _redirect(send, "/")
             else:
-                await self._page(send, scope, 200, _login_page(scope))
+                await self._page(send, 200, _login_page(scope))
             return
         ip = _peer(scope)
         wait = self.limiter.wait(ip)
         if wait:
-            await self._page(send, scope, 429, _login_page(scope, _locked(wait)))
+            await self._page(send, 429, _login_page(scope, _locked(wait)))
             return
         form = await self._form(receive)
         if isinstance(form, int):
@@ -450,23 +450,23 @@ class Guard:
             return
         ok = await self._hashing(lambda: self._verify(stored, form.get("password", "")))
         if ok is _BUSY:
-            await self._page(send, scope, 429, _login_page(scope, _BUSY_TEXT))
+            await self._page(send, 429, _login_page(scope, _BUSY_TEXT))
             return
         if not ok:
             self.limiter.fail(ip)
-            await self._page(send, scope, 401, _login_page(scope, "Wrong password."))
+            await self._page(send, 401, _login_page(scope, "Wrong password."))
             return
         self.limiter.clear(ip)
         await _redirect(send, "/", [await self._new_session(scope)])
 
     async def _setup(self, scope, receive, send, method) -> None:
         if method == "GET":
-            await self._page(send, scope, 200, _setup_page())
+            await self._page(send, 200, _setup_page())
             return
         ip = _peer(scope)
         wait = self.limiter.wait(ip)
         if wait:
-            await self._page(send, scope, 429, _setup_page(_locked(wait)))
+            await self._page(send, 429, _setup_page(_locked(wait)))
             return
         form = await self._form(receive)
         if isinstance(form, int):
@@ -484,11 +484,11 @@ class Guard:
             problem = f"The password must be at least {MIN_PASSWORD} characters."
         if problem is not None:
             self.limiter.fail(ip)
-            await self._page(send, scope, 400, _setup_page(problem))
+            await self._page(send, 400, _setup_page(problem))
             return
         hashed = await self._hashing(lambda: self.hasher.hash(password))
         if hashed is _BUSY:
-            await self._page(send, scope, 429, _setup_page(_BUSY_TEXT))
+            await self._page(send, 429, _setup_page(_BUSY_TEXT))
             return
         stored = await asyncio.to_thread(self.data.auth_set_password, hashed, int(self.clock()))
         if not stored:
@@ -501,7 +501,7 @@ class Guard:
         await _redirect(send, "/", [await self._new_session(scope)])
 
     @staticmethod
-    async def _page(send, scope, status: int, html: str) -> None:
+    async def _page(send, status: int, html: str) -> None:
         await _respond(send, status, list(_HTML), html.encode("utf-8"))
 
     # -- a socket that got through --------------------------------------------------

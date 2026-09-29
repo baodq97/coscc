@@ -753,7 +753,7 @@ class Updater:
         self._build_task = asyncio.get_running_loop().create_task(self._build(name))
         return self.status()
 
-    async def _build(self, by: str) -> None:
+    async def _build(self, by: str) -> None:  # noqa: PLR0915 - still to split
         logs = self.root / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         log = logs / f"{_stamp()}-build.log"

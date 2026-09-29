@@ -124,7 +124,7 @@ def _per_turn(record: dict[str, Any]) -> float | None:
     return sum(int(record.get(f) or 0) for f in TOKEN_FIELDS) / turns
 
 
-def model(
+def model(  # noqa: PLR0915 - still to split
     records: Iterable[dict[str, Any]],
     rounds: dict[str, list[str]] | None = None,
     tz: tzinfo | None = None,

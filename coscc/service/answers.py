@@ -565,7 +565,6 @@ class Answers:
                     question,
                     str(answer or "").strip("\n"),
                     name,
-                    via,
                     today,
                     delegation,
                 )
@@ -679,7 +678,6 @@ class Answers:
         question: Any,
         text: str,
         name: str,
-        via: str,
         today: str,
         delegation: str = "",
     ) -> tuple[int | str, str, str]:
@@ -883,7 +881,7 @@ class Answers:
             raise Invalid(f"{cited} could not be withdrawn: {e}") from e
         return {"withdrawn": cited, **self.decisions_table()}
 
-    async def record_outcome(
+    async def record_outcome(  # noqa: C901, PLR0915 - still to split
         self,
         cwd: str,
         unit: str,
