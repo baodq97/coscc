@@ -174,7 +174,7 @@ class Recorder:
                     q.put_nowait(("cut", self.seq))
                 else:
                     q.put_nowait(("event", event))
-        except Exception:  # noqa: BLE001 - R5: nothing here may reach the step
+        except Exception:  # noqa: BLE001 - nothing here may reach the step
             self.lost += 1
 
     def message(self, msg: Any) -> None:
@@ -202,7 +202,7 @@ class Recorder:
             if self.seq == before:
                 # Every message yields at least one event, whatever it is.
                 self._emit("system", **_system_fields(msg))
-        except Exception:  # noqa: BLE001 - R5
+        except Exception:  # noqa: BLE001
             self.lost += 1
 
     def _block(self, block: Any, persisted: Any = None, role: str = "") -> None:

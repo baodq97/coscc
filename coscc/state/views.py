@@ -1128,7 +1128,7 @@ def _run_dropped(data: dict) -> list[str]:
 
 def _key_label(key: str) -> str:
     """A Questions row's key as a person reads it: `intent.md#1` is
-    `question 1 of intent.md`, `review.md#F2` is `finding F2 of review.md`."""
+    `question 1 of intent.md`, `review.md#F<k>` is `finding F<k> of review.md`."""
     artifact, _, number = key.rpartition("#")
     kind = "finding" if number.startswith("F") else "question"
     return f"{kind} {number} of {artifact}"
@@ -1190,7 +1190,7 @@ def _usd(cost: dict) -> str:
 
 
 def _title_of(unit_name: str) -> str:
-    """`0006_demo-data-and-no-durable-store` reads as `Demo data and no durable store`.
+    """`NNNN_demo-data-and-no-durable-store` reads as `Demo data and no durable store`.
 
     The slug is the only human-written name a unit has before its artifacts are read, and
     reading eight files per card to find a better one would make opening the board cost a

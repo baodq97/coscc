@@ -28,7 +28,7 @@ Tests green before done. Never skip or delete a failing test: fix the code. No l
   `vX.Y.Z`, `vX.Y.Z-rc.N`. Never compose one by hand: `unit-branch`, `check-branch`, `check-tag`.
 - One branch and one PR per change, squashed, rebased onto `main` (never merge `main` in).
   `main` is not a work branch.
-- No unit numbers or requirement ids (`0139`, `R16`) in code, comments, docstrings or rules.
+- No unit or requirement ids in comments, docstrings or rules (`coscc/comments_test.py`).
 - Code little and simple; split a file only when truly needed.
 - Take unit paths from `new-path`. Cite only committed files, by path and line range. Cut a
   figure that has no source.
