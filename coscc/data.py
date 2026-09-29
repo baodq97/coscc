@@ -495,6 +495,12 @@ _COLUMNS = (
     ("step_runs", "revisions", "TEXT NOT NULL DEFAULT '{}'"),
     # `0136` R8, R15: whose answer a row is — `person`, `delegated` or `agent` (Jera's).
     ("unit_answers", "authority", "TEXT NOT NULL DEFAULT 'unknown'"),
+    # `0139` R8: the CI answer read at `ci_head`, written only with a `ci-at-head` transition;
+    # the checks it was read from (JSON, for the names of the red ones) and when.
+    ("pull_requests", "ci", "TEXT NOT NULL DEFAULT 'pending'"),
+    ("pull_requests", "ci_head", "TEXT NOT NULL DEFAULT ''"),
+    ("pull_requests", "ci_checks", "TEXT"),
+    ("pull_requests", "ci_at", "TEXT NOT NULL DEFAULT ''"),
 )
 
 

@@ -131,7 +131,7 @@ class EveryWayAStepDies(unittest.TestCase):
         )
         self.assertEqual(_usd(totals_of(rows)), f"${end['cost_usd']:.2f}" if cost_known else "unknown")
 
-        units = [{"name": UNIT, "next": "finished"}]
+        units = [{"name": UNIT, "next": "finished", "why": "finished"}]
         by_unit = timelines_of(self.journal.records(self.d))
         self.assertEqual(UNIT in backlog.measured(by_unit, units), cost_known)
         self.assertEqual(backlog.undetermined(by_unit, units), [] if cost_known else [UNIT])

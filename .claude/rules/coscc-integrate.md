@@ -8,7 +8,7 @@ paths:
 - **`POST /api/units/integrate` force-pushes under this machine's `gh` login.**
   - On a `behind` unit it runs `gh pr update-branch --rebase` and then moves the unit's
     local branch with `reset --keep`. On a `conflicting` or `red-after-integration` unit it
-    opens Gebo, a paid session (ceilings in the `integrate` grant, `coscc/agent/policy.py:370-374`,
+    opens Gebo, a paid session (ceilings in the `integrate` grant, `coscc/agent/policy.py:293-297`,
     chosen, not measured)
     whose grant allows exactly one push: `--force-with-lease=<branch>:<head at start>` to
     the unit's own branch.
@@ -58,10 +58,4 @@ paths:
   no oftener than `CI_REFRESH` per head, never awaited by the board.
 - **Every `pr` step costs one `gh pr list`,** asked by the PR machine
   (`coscc/github/prmachine.py`) under this machine's `gh` login, up to `GH_TIMEOUT`; no
-  session opens. The `pr` grant, which only a terminal session holds, refuses `git rebase`, `git merge`, `git pull`,
-  `gh pr update-branch` and a forced push (`--force`, `-f`, `--force-with-lease`,
-  `--force-if-includes`, a `+` refspec) by their words. It also refuses a git alias, include
-  or `GIT_CONFIG_*` made during the step, and `gh api` naming the update-branch endpoint
-  (`pulls/<n>/update-branch`, `updatePullRequestBranch`). It does not refuse `gh api` as a
-  whole, as the `integrate` grant does. `node -e`, or an alias defined before the step,
-  still walks past (`coscc/agent/policy_test.py`, `IntegrationIsNotPrs`).
+  session opens, and since `0139` there is no `pr` grant at all.

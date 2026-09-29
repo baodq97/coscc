@@ -934,7 +934,7 @@ class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
             nxt = run(board.next_step(b, "0001_y", state=state))
         [u] = data["units"]
         self.assertEqual((u["idea"], u["repo"], u["why"]), ("ideas/0001_f.md", "b", "dependency"))
-        self.assertEqual(u["depends_on"], [{"ref": "a/0001_x", "merged": False, "why": "not merged: its ship.md is not accepted"}])
+        self.assertEqual(u["depends_on"], [{"ref": "a/0001_x", "merged": False, "why": "not merged: the app holds no merge of it"}])
         self.assertEqual(data["ideas"][0]["units"][1], {"ref": "b/0001_y", "depends_on": ["a/0001_x"]})
         self.assertEqual((nxt["stage"], nxt["why"], nxt["action"]), ("", "dependency", "waiting on a/0001_x to merge"))
 

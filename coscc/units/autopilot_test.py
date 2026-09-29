@@ -18,8 +18,8 @@ COS_MJS = Path(__file__).resolve().parents[2] / ".claude" / "scripts" / "cos.mjs
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
 # `0126`: `next`'s two actions for `ship`, one after the merge and one before it.
-RECORDING_SHIP = "write-ship — #95 was merged as abc1234 at 2026-09-20T00:00:00Z: record it in ship.md; do not merge"
-MERGING_SHIP = "write-ship — merge with --match-head-commit abc1234"
+RECORDING_SHIP = "ship — #95 was merged as abc1234 at 2026-09-20T00:00:00Z: record it in ship.md; do not merge"
+MERGING_SHIP = "ship — merge with --match-head-commit abc1234"
 
 
 def at(delta: timedelta = timedelta()) -> str:
@@ -108,8 +108,8 @@ class Stops(unittest.TestCase):
         self.assertEqual(ap.stop_for(unit(), nxt("", said), None, False)["kind"], "f")
 
     def test_c_ship_only_when_allowed(self):
-        self.assertEqual(ap.stop_for(unit(), nxt("ship", "write-ship"), None, False)["kind"], "c")
-        self.assertIsNone(ap.stop_for(unit(), nxt("ship", "write-ship"), None, True))
+        self.assertEqual(ap.stop_for(unit(), nxt("ship", "ship"), None, False)["kind"], "c")
+        self.assertIsNone(ap.stop_for(unit(), nxt("ship", "ship"), None, True))
 
     def test_d_gebo_needs_a_person(self):
         last = {"kind": "integration", "outcome": "needs-person", "needs_person": ["both sides edit x.py"]}
@@ -134,7 +134,7 @@ class Stops(unittest.TestCase):
 
     def test_e_0120_an_exhausted_ship_stops_the_first_time(self):
         ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
-        self.assertEqual(ap.stop_for(unit(), nxt("ship", "write-ship"), ran_out, True, exhausted=1)["kind"], "e")
+        self.assertEqual(ap.stop_for(unit(), nxt("ship", "ship"), ran_out, True, exhausted=1)["kind"], "e")
 
     def test_e_0126_an_exhausted_ship_is_no_stop_before_a_recording_ship(self):
         ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
@@ -179,7 +179,7 @@ class Stops(unittest.TestCase):
             (unit(), nxt("", "answer F1", waiting=["F1"]), ran_out, "b"),
             (unit(), nxt("", "finish and accept plan.md"), ran_out, "f"),
             (unit(), nxt("", "paused — x", hold={"state": "paused"}), ran_out, None),
-            (unit(), nxt("ship", "write-ship"), {**ran_out, "stage": "review"}, "c"),
+            (unit(), nxt("ship", "ship"), {**ran_out, "stage": "review"}, "c"),
         ]
         for row_, next_, last, kind in cases:
             got = ap.stop_for(row_, next_, last, False, exhausted=1)
@@ -427,7 +427,9 @@ class TheDaysMoney(unittest.TestCase):
         self.assertEqual(set(ap.open_starts(rows, NOW)), {("w", "0010_a")})
         self.assertEqual(ap.reserved(rows, NOW), 16.0)
         # A step this process holds that has not written its `start` yet counts too, once.
-        self.assertEqual(ap.reserved(rows, NOW, [("w", "0010_a", "impl"), ("w", "0013_d", "pr")]), 19.0)
+        self.assertEqual(ap.reserved(rows, NOW, [("w", "0010_a", "impl"), ("w", "0013_d", "review")]), 20.0)
+        # `0139` R12: a `pr` or `ship` opens no session, so it is counted at nothing.
+        self.assertEqual(ap.reserved(rows, NOW, [("w", "0013_d", "pr"), ("w", "0014_e", "ship")]), 16.0)
 
 
 class Scheduling(unittest.TestCase):

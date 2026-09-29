@@ -168,7 +168,9 @@ class ResumeMixin:
                 journal.resumed(
                     str(row.get("workspace") or ""), str(row.get("unit") or ""), str(row.get("stage") or ""),
                     str(row.get("suspend_id") or ""), by="app", result="failed" if problem else "resumed",
-                    **({"detail": problem} if problem else {}),
+                    # `0139` R15: every resume goes through `sessions._options`, which sets
+                    # `snapshot` on the system prompt once `resume_at` is given.
+                    **({"detail": problem} if problem else {"system_prompt": "snapshot"}),
                 )
             except (BadRecord, Busy):
                 continue  # not taken: the next start sees it again

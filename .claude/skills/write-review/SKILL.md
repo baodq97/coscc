@@ -269,4 +269,4 @@ what fixed it — and, without guessing, that the reviewer was an agent.
 `changes-requested`: fix on the branch, then this stage again.
 `needs-person` round (header still `changes-requested`): a person answers each finding,
 then this stage again.
-`accepted`: `write-ship`, which merges.
+`accepted`: `ship`, which the app runs itself and which merges, with no session and no skill.

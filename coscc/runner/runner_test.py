@@ -21,7 +21,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.agent import harness, policy
-from coscc.knowledge import efforttrial
+from coscc.knowledge import efforttrial, modeltrial
 from coscc.git import gitops
 from coscc.runlog.journal import Journal
 from coscc.agent.policy import decide, grant_for
@@ -43,6 +43,9 @@ from coscc.runner import (
 from coscc.agent.submit_test import a_head, submits as _submits
 
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
+# The stages whose step is a session, and so has a prompt: `pr` and `ship` are the PR
+# machine's, with no skill and no session, since `0139` R12.
+SESSION_STAGES = [s for s in STAGES if s not in ("pr", "ship")]
 UNIT = "0009_a-test-unit"
 
 
@@ -406,7 +409,7 @@ class AStageRunAgainIsToldWhy(unittest.TestCase):
 
     def test_without_rerun_not_one_byte_changes(self):
         with tempfile.TemporaryDirectory() as d:
-            for stage in ("intent", "spec", "plan", "pr"):
+            for stage in ("intent", "spec", "plan"):
                 self.assertEqual(self._prompt(d, stage, rerun=False, rerun_note="x"), self._prompt(d, stage))
                 self.assertNotIn(self.HEADING, self._prompt(d, stage))
 
@@ -431,12 +434,6 @@ class AStageRunAgainIsToldWhy(unittest.TestCase):
             self.assertIn("PLAN-BODY-0054", section)
             self.assertNotIn("ANSWER-0054", section)
             self.assertNotIn("\n## Answers\n", section)
-
-    def test_pr_does_not_repeat_pr_md(self):
-        with tempfile.TemporaryDirectory() as d:
-            prompt = self._prompt(d, "pr", rerun=True, rerun_note="n")
-            self.assertIn(self.HEADING, prompt)
-            self.assertNotIn("PR-BODY-0054", prompt)
 
     def test_the_start_record_carries_the_rerun_and_nothing_otherwise(self):
         records = AStepRecordsTheBaseItRanOn()
@@ -1050,95 +1047,6 @@ class AnImplReadsItsSiblings(unittest.TestCase):
         self.assertNotIn("sibling repositories", probe.prompt)
 
 
-class PrHasItsOwnTask(unittest.TestCase):
-    """`0041` R1 and R2: `pr` is told where its file goes, where its shape is, the order
-    that writes it before anything waits, and when to stop."""
-
-    NOTE = "# The pull request, already looked up\n\nTHE-PR-NOTE https://x/pull/7"
-
-    def prompt(self, d, **kw):
-        directory = make_unit(Path(d), intent_md="Status: accepted.\nI", impl_md="Status: accepted.\nM")
-        prompt, included = build_prompt(d, directory, UNIT, "pr", STAGES, "pr.md", writes_own=True, **kw)
-        return prompt, included, directory
-
-    def test_a_to_d(self):
-        with tempfile.TemporaryDirectory() as d:
-            prompt, _, directory = self.prompt(d)
-            task = prompt.split("\n\n---\n\n")[-1]
-            self.assertIn(f"`{directory / 'pr.md'}`", task)                       # (a)
-            self.assertIn("## Output", task)                                       # (b)
-            self.assertIn("read boundary refuses", task)
-            self.assertLess(task.index("gh pr create"), task.index("`Status: accepted`"))  # (c)
-            self.assertLess(task.index("`Status: accepted`"), task.index("gh pr checks"))
-            self.assertIn("never `--watch`", task)
-            self.assertIn("Do not rebase", task)                                  # (d)
-            self.assertIn("*Integrate*", task)
-            self.assertNotIn("Do the work this unit's plan authorises", prompt)
-
-    def test_the_lookup_is_placed_only_for_pr(self):
-        with tempfile.TemporaryDirectory() as d:
-            prompt, included, _ = self.prompt(d, pr_note=self.NOTE)
-            self.assertIn("THE-PR-NOTE", prompt)
-            self.assertIn("pull-request", included)
-            self.assertLess(prompt.index("THE-PR-NOTE"), prompt.index("# Your task"))
-        with tempfile.TemporaryDirectory() as d:
-            directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
-            prompt, _ = build_prompt(d, directory, UNIT, "impl", STAGES, "impl.md",
-                                     writes_own=True, pr_note=self.NOTE)
-            self.assertNotIn("THE-PR-NOTE", prompt)
-
-    def run_stage(self, d, stage, journal, **kw):
-        class Probe:
-            async def stream(self, cwd, text, session_id=None, max_turns=1, **_):
-                (Path(d) / ".cos" / UNIT / f"{stage}.md").write_text(
-                    f"# {stage}: x\nStatus: accepted.\n", encoding="utf-8")
-                yield ("chunk", "done")
-                await _submits(_)
-                yield ("done", {"session_id": "s", "cost": {}})
-
-        directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
-        r = Runner(sessions=Probe(), journal=journal)
-
-        async def go():
-            return [ev async for ev in r.run(
-                workspace=d, directory=directory, journal_key=d, unit=UNIT, stage=stage,
-                artifact=f"{stage}.md", stages=STAGES, mode="manual", **kw,
-            )]
-
-        return asyncio.run(go())[-1][1]
-
-    def test_the_start_record_carries_pr_before_for_pr_alone(self):
-        with tempfile.TemporaryDirectory() as d:
-            journal = Journal(d, d)
-            self.run_stage(d, "pr", journal, pr_note=self.NOTE, pr_before="https://x/pull/7")
-            self.run_stage(d, "impl", journal, pr_before="https://x/pull/7")
-            by_stage = {s["stage"]: s for s in journal.records(d, kind="start")}
-            self.assertEqual(by_stage["pr"]["pr_before"], "https://x/pull/7")
-            self.assertNotIn("pr_before", by_stage["impl"])
-
-    def test_the_start_record_marks_a_recording_ship_and_nothing_else(self):
-        recording = (f"open: ship may proceed for {UNIT} — #95 was merged as abc1234 at "
-                     "2026-09-20T00:00:00Z: record it in ship.md; do not merge")
-        merging = f"open: ship may proceed for {UNIT} — merge with --match-head-commit abc1234"
-        # `0136` R11: the code decides, so the recording words with no code are a merging ship.
-        record = ("recording-ship",)
-        for stage, said, codes, mode in (("ship", recording, record, "record"), ("ship", merging, (), None),
-                                         ("pr", recording, record, None), ("ship", recording, (), None),
-                                         ("ship", merging, record, "record")):
-            with tempfile.TemporaryDirectory() as d:
-                journal = Journal(d, d)
-                self.run_stage(d, stage, journal, gate_said=said, gate_reasons=codes)
-                start = journal.records(d, kind="start")[-1]
-                self.assertEqual(start.get("ship_mode"), mode, (stage, said))
-                self.assertEqual(mode is not None, "ship_mode" in start, (stage, said))
-
-    def test_no_pull_request_before_is_the_empty_string(self):
-        with tempfile.TemporaryDirectory() as d:
-            journal = Journal(d, d)
-            self.run_stage(d, "pr", journal)
-            self.assertEqual(journal.records(d, kind="start")[-1]["pr_before"], "")
-
-
 class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
     """`0004_no-setting-says-which-model-runs-a-stage`. The runner does not choose a model;
     it passes on the one it was given and writes it into the run log."""
@@ -1380,7 +1288,7 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
         with_tools = [s for s in STAGES if grant_for(s).opens_anything]
         # Pinned, so a change to the grant table turns this red rather than quietly
         # leaving a stage out of what it checks.
-        self.assertEqual(with_tools, ["spec", "spike", "plan", "impl", "pr", "review", "ship"])
+        self.assertEqual(with_tools, ["spec", "spike", "plan", "impl", "review"])
         for stage in with_tools:
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
                 probe, _ = self.run_stage(d, stage)
@@ -1573,7 +1481,7 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
     def test_no_other_stage_prompt_changes_by_a_byte(self):
         with tempfile.TemporaryDirectory() as d:
             directory = self.unit(d, spike_md="Status: accepted.\nR")
-            for stage in STAGES:
+            for stage in SESSION_STAGES:
                 if stage == "spike":
                     continue
                 artifact = f"{stage}.md"
@@ -1813,8 +1721,19 @@ class AStepRecordsTheKnowledgeItCarried(AStepRecordsTheBaseItRanOn):
             self.assertNotIn(knowledge.TRIAL_FIELD, self._start_record(d))
 
 
-class AStepRecordsTheEffortTrial(AStepRecordsTheBaseItRanOn):
-    """`0123` R6, R7: the record handed in lands in `start` as given, and none is no field."""
+class AStepRecordsTheModelTrial(AStepRecordsTheBaseItRanOn):
+    """`0139` R17: the record handed in lands in `start`, none is no field, and its `model` is
+    what the session's `init` named, or `never-started` (C10)."""
+
+    TRIAL = {modeltrial.FIELD: {"arm": modeltrial.OPUS_ARM, "requested": "claude-opus-5-5[1m]"}}
+
+    class Initialised:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, step=None, **kw):
+            step.init_model = "claude-opus-5-5[1m]"
+            yield ("session", "s-init")
+            yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+            await _submits(kw)
+            yield ("done", {"session_id": "s-init", "cost": {}})
 
     def test_no_trial_record_leaves_the_start_record_as_it_was(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1822,16 +1741,37 @@ class AStepRecordsTheEffortTrial(AStepRecordsTheBaseItRanOn):
         with tempfile.TemporaryDirectory() as d:
             none = self._start_record(d, trial_record=None)
         self.assertEqual(set(unnamed), set(none))
-        for field in (efforttrial.FIELD, efforttrial.CI_RED):
+        for field in (modeltrial.FIELD, efforttrial.FIELD, efforttrial.CI_RED):
             self.assertNotIn(field, unnamed)
 
-    def test_a_trial_record_lands_in_start_as_given(self):
-        record = {efforttrial.FIELD: {"arm": "trial", "applied": True}, efforttrial.CI_RED: None}
+    def test_a_session_that_never_named_its_model_is_recorded_never_started(self):
+        record = {**self.TRIAL, efforttrial.CI_RED: None}
         with tempfile.TemporaryDirectory() as d:
             start = self._start_record(d, trial_record=record)
-        self.assertEqual(start[efforttrial.FIELD], {"arm": "trial", "applied": True})
+        self.assertEqual(start[modeltrial.FIELD], {**self.TRIAL[modeltrial.FIELD], "model": "never-started"})
         self.assertIn(efforttrial.CI_RED, start)
         self.assertIsNone(start[efforttrial.CI_RED])
+
+    def test_the_model_init_named_reaches_the_start(self):
+        from coscc.agent import steps as steps_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            r = Runner(sessions=self.Initialised(), journal=journal)
+            running = steps_mod.Running(d, UNIT, "spec", "")
+
+            async def go():
+                async for _ in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d, unit=UNIT,
+                    stage="spec", artifact="spec.md", stages=STAGES, mode="manual",
+                    trial_record=self.TRIAL, running=running,
+                ):
+                    pass
+
+            asyncio.run(go())
+            [start] = journal.records(d, kind="start")
+        self.assertEqual(start[modeltrial.FIELD]["model"], "claude-opus-5-5[1m]")
 
 
 class AStepRecordsThePriorFindingsItCarried(AStepRecordsTheBaseItRanOn):
@@ -1910,7 +1850,7 @@ class TheScreenshotsTakenAgain(unittest.TestCase):
     def test_no_other_stage_carries_it_and_none_handed_is_no_byte(self):
         with tempfile.TemporaryDirectory() as d:
             directory = _golden_unit(Path(d))
-            for stage in STAGES:
+            for stage in SESSION_STAGES:
                 with self.subTest(stage=stage):
                     args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
                     handed = compose_prompt(*args, screens_note=self.NOTE)
@@ -1997,7 +1937,7 @@ class TheLastTurnEndsTheSession(unittest.TestCase):
         return replies.prompt.count(SESSION_ENDS_HEADING)
 
     def test_every_stage_that_runs_commands_is_told_once(self):
-        for stage in ("impl", "spike", "pr", "ship"):
+        for stage in ("impl", "spike"):
             with self.subTest(stage=stage):
                 self.assertIn("Bash", policy.grant_for(stage).tools)
                 self.assertEqual(self.prompt_of(stage), 1)
@@ -2017,7 +1957,7 @@ class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
         from coscc.runner.prompt import HARNESS_HEADING
 
         root = Path("/store")
-        for stage in ("impl", "spike", "pr", "ship"):
+        for stage in ("impl", "spike"):
             with self.subTest(stage=stage):
                 prompt = compose_prompt(
                     "/w", root / ".cos" / UNIT, UNIT, stage, STAGES, f"{stage}.md", runs_commands=True
@@ -2028,11 +1968,11 @@ class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
     def test_the_snapshot_file_is_named_for_the_deciding_commands(self):
         """`0135`: `gate`, `pr-text` and the rest exit 2 without `--state`; the step is told its file."""
         prompt = compose_prompt(
-            "/w", Path("/store") / ".cos" / UNIT, UNIT, "ship", STAGES, "ship.md", runs_commands=True,
+            "/w", Path("/store") / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", runs_commands=True,
             state_file="/data/state/w/x.json",
         )[0]
         self.assertIn("also take `--state /data/state/w/x.json`", prompt)
-        without = compose_prompt("/w", Path("/store") / ".cos" / UNIT, UNIT, "ship", STAGES, "ship.md", runs_commands=True)[0]
+        without = compose_prompt("/w", Path("/store") / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", runs_commands=True)[0]
         self.assertNotIn("--state", without)
 
     def test_a_prose_stage_is_not_told(self):

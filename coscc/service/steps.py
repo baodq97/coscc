@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator
 
 from coscc.units import autopilot, backlog
 from coscc.units import board as board_reader
-from coscc.knowledge import efforttrial
+from coscc.knowledge import efforttrial, modeltrial
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc import knowledge
@@ -102,6 +102,10 @@ class StepsMixin:
         is for the head `gh pr list` just returned, and returns the CI asks `board` starts
         once it has answered: `(slot, tree, pr number, head)` for each unit with no answer
         for that head, or one older than `CI_REFRESH`, and no ask already running.
+
+        `0139` R8: the answer is the `pull_requests` row's, which only a `ci-at-head`
+        transition writes. `gh`'s error is no answer, so it stays in `_ci`, held only so it
+        is not asked again before `CI_REFRESH`.
         """
         for u in units_:
             u["integration"] = None
@@ -123,7 +127,7 @@ class StepsMixin:
             if row is None:
                 continue
             slot, head = (key, u["name"]), str(row.get("headRefOid") or "")
-            held = self._ci.get(slot)
+            held = self._held_ci(key, u["name"], int(number), head)
             if held is not None and held.get("head") == head:
                 u["ci_held"] = held
             if slot in self._ci_asks:
@@ -132,20 +136,39 @@ class StepsMixin:
                 asks.append((slot, str(root), int(number), head))
         return asks
 
+    def _held_ci(self, key: str, unit: str, number: int, head: str) -> dict[str, Any] | None:
+        """`0139` R8. The row's answer at `head`, else `gh`'s last error there, else `None`."""
+        try:
+            held = prmachine.ci_held(self._unit_meta().history, key, number, head)
+        except Exception:  # noqa: BLE001 — a board read never fails on this
+            held = None
+        if held is not None:
+            return held
+        error = self._ci.get((key, unit))
+        return error if error is not None and error.get("head") == head else None
+
     def _ask_ci(self, asks: list[tuple[tuple[str, str], str, int, str]]) -> None:
-        """`0100` R6. One background `gh pr checks` per ask, none awaited. Its answer, or
-        `gh`'s error, is held with the time it was read, so an error is not asked again
-        before `CI_REFRESH` either. Writes no run-log record."""
+        """`0100` R6. One background `gh pr checks` per ask, none awaited. `0139` R8: its
+        answer is recorded by `prmachine.record_ci`, through `ci-at-head`, on the unit's
+        `pull_requests` row; `gh`'s error is held in `_ci` with the time it was read, so it
+        is not asked again before `CI_REFRESH` either."""
         for slot, tree, number, head in asks:
             if slot in self._ci_asks:
                 continue
 
             async def ask(slot=slot, tree=tree, number=number, head=head) -> None:
                 try:
-                    answer: dict[str, Any] = {"checks": await integrate.required_checks(tree, number)}
+                    checks = await integrate.required_checks(tree, number)
                 except integrate.IntegrateError as e:
-                    answer = {"error": str(e)}
-                self._ci[slot] = {"head": head, **answer, "at": _now()}
+                    self._ci[slot] = {"head": head, "error": str(e), "at": _now()}
+                    return
+                u = prmachine.Unit(slot[0], slot[1], Path(tree), tree, "", "", None)
+                try:
+                    self._pr_machine().record_ci(u, number, head, [c for c in checks if isinstance(c, dict)])
+                except Exception as e:  # noqa: BLE001 — a background ask never raises
+                    self._ci[slot] = {"head": head, "error": f"the CI answer could not be recorded: {e}", "at": _now()}
+                    return
+                self._ci.pop(slot, None)
 
             task = asyncio.get_running_loop().create_task(ask())
             self._ci_asks[slot] = task
@@ -998,10 +1021,11 @@ class StepsMixin:
                 failed = journal.failed_attempts(key, unit, stage)
             except Busy as e:
                 raise Invalid(str(e)) from e
-            # `0123` R7. A return to `impl` with the trial on asks `next` once whether CI sent it
-            # back; `_ci_red` never raises, so nothing here refuses the step. `0131` R19: with
-            # `COS_KNOWLEDGE` on too, into the same field.
-            if (self.config.effort_trial or self.config.knowledge) and (config.get("impl_run") or 0) > 1:
+            # `0123` R7. A return to `impl` in the model trial (`0139` R16) asks `next` once
+            # whether CI sent it back; `_ci_red` never raises, so nothing here refuses the step.
+            # `0131` R19: with `COS_KNOWLEDGE` on too, into the same field.
+            in_trial = modeltrial.FIELD in (config.get("trial_record") or {})
+            if (in_trial or self.config.knowledge) and (config.get("impl_run") or 0) > 1:
                 config.setdefault("trial_record", {})[efforttrial.CI_RED] = await self._ci_red(cwd, unit, work)
             end_fields = None
             if rounds_before is not None:
@@ -1037,7 +1061,7 @@ class StepsMixin:
             if stage in ("impl", "implement"):
                 prior_kw = priorfindings.for_step(
                     units.cos_dir(cwd, self.config.data_dir),
-                    [u["name"] for u in data["units"] if u.get("next") == "finished"],
+                    [u["name"] for u in data["units"] if u.get("why") == "finished"],
                     directory / "plan.md",
                     unit,
                 )

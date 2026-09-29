@@ -31,14 +31,15 @@ Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST
   a change applies from the next step. A wrong field is a 400 and nothing is written; every
   change is a `setting` record with `old` and `new`. A name opens and closes nothing (spec
   C6), and a mid-unit rename leaves one unit under two names (C2).
-- **With `COS_EFFORT_TRIAL` on, Settings does not show the effort a routine `impl` runs at.**
-  Since `0123`, a unit whose name hashes to the `trial` arm (`coscc/knowledge/efforttrial.py`) runs a
-  routine `impl` at `high`, between an override and `models.json`, while the `impl` row
-  still reads `medium (default)`: `models.table` never passes the trial's effort, on
-  purpose (spec C11). Only that step's `start` record says so, as `effort_source: trial`
-  beside `effort_trial: {arm, applied}`. Setting or changing an `effort:impl` or
-  `model:impl` override while the trial runs is taken at once, and drops each unit it
-  lands in the middle of out of `coscc effort measure`'s count (spec C6).
+- **Settings does not show the model a routine `impl` runs on.** Since `0139`, a unit whose
+  name hashes to the `opus-5-5` arm (`coscc/knowledge/modeltrial.py`) runs a routine `impl`
+  on `claude-opus-5-5[1m]`, and the `sonnet-5-5` arm on `claude-sonnet-5-5[1m]`, both at the
+  `impl` row's effort, between `COS_MODEL` and `models.json`; the `impl` row still reads its
+  default, because `models.table` never passes the trial's model. Only that step's `start`
+  says so, as `model_source: trial` beside `model_trial: {arm, requested, model}`, `model`
+  being what the session's `init` named or `never-started`. A `model:impl` override or
+  `COS_MODEL` wins, and the arm is recorded all the same. `COS_EFFORT_TRIAL` (`0123`) is no
+  longer read; its rows still are, by `coscc effort measure`.
 - **`POST /api/settings/autopilot` lets the app start steps, and ship, on its own.** Since
   `0043`, `{cwd, name, value}` sets one of four, in `prefs`: `autopilot:<key>` and
   `autopilot_may_ship:<key>` (booleans, off), `max_parallel:<key>` (a whole number ≥ 1, 4),

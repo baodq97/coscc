@@ -78,7 +78,7 @@ Derived states (CODE, recomputed each read):
 - **rejected** anywhere closes the unit (`:1239`).
 - **open questions** = numbered items with `?` under `## Open questions` without a `### Câu N` answer (`:112-126,348`). They gate nothing in `cos.mjs`; a *draft* does (`:451,1255`).
 - **review rounds used** / **out of rounds** (`COS_REVIEW_ROUNDS`, default 3, plus `### More rounds`) (`:1345-1364`).
-- **dependency merged** = the dependency's `ship.md` is accepted (files only, `:1017-1031`).
+- **dependency merged** = the snapshot's `merged` for that unit: the PR machine's `merge-read` row, or, for a unit it never moved, a `ship.md: accepted` from the `0135` import or a `ship` session (`0139` R5, `units/meta.py` `snapshot`).
 
 ### 1.2 `next` — first match wins (`cos.mjs:1190-1322`)
 
@@ -196,10 +196,10 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 | **Holds** | active, paused, dropped | PERSON `POST /api/units/hold`; dropped → CODE closes the PR and removes the worktree (`units/hold.py:99-165`) | `### Paused…` block + `hold` row |
 | **PR / CI / integrate** | unknown, conflicting, red-after-integration, behind, current (`github/integrate.py:80-111`) | read by `gh pr list` on each board read, `gh pr checks` ≤ every 60 s per head, and the 300 s pass — no dedicated poller. `behind` → CODE `gh pr update-branch`; conflicting / red / refused / diverged head → **AGENT Gebo** (120 turns, $8, leased push) (`steps.py:417-594`); Gebo's `[needs-person]` lines set the outcome (since `0136`, the object it hands back through `submit`) | `integration`, `start`/`end` |
 | **Review loop** | round n: changes-requested → impl → CI → review n+1 … pass → ship | verdict and severities AGENT; rounds counted CODE; clean-rebase re-review skip CODE (0067) | review.md, `pr-comment` |
-| **Ship** | open → merged → recorded | AGENT ship session runs `gh pr merge --match-head-commit`; merged outside → "record, do not merge" (0116) | ship.md, `ship` row |
+| **Ship** | open → merged → recorded | CODE: the PR machine runs `gh pr merge --match-head-commit` behind guard `ship-ready` (`0136`); no session, skill or grant since `0139` R12; merged outside → "record, do not merge" (0116) | ship.md, `ship` row |
 | **Update** | idle → pending → applying → handoff / fail; release channel (6 h check), local channel (build-local) | CODE checks; PERSON applies (`update/updater.py:148-757`) | `update` rows |
 | **Knowledge** | gather (AGENT batches, terminal only), baseline / measure / check (CODE) | injected into spec, spike, plan when `COS_KNOWLEDGE` is on | `knowledge` rows |
-| **Effort trial** | arm = SHA-256(unit) | CODE | `start.effort_trial` |
+| **Model trial** (routine `impl`, since `0139`; the effort trial of `0123` ended) | arm = SHA-256(unit): `opus-5-5` / `sonnet-5-5` | CODE; `model` from the session's `init` | `start.model_trial` |
 | **Notices** | stream of autopilot-stop, questions, end, ship | CODE, read-only (`runlog/notices.py`) | — |
 | **Artifact history** | a transition table in the DB already exists (`units/history.py`, `machine.refuse`) | fed after each step from the file's `Status:` | history table |
 

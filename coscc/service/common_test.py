@@ -188,6 +188,7 @@ class TheStateOfAUnit(unittest.TestCase):
         dropped = self._unit(why="dropped", hold={"state": "dropped"},
                              stages=[{"stage": "intent", "status": "accepted"}, {"stage": "spec", "status": "draft"}])
         self.assertEqual(attention_reason(dropped), "Accept spec.md")
+
         self.assertEqual(reason_beside(attention_reason(dropped), unit_state(dropped, None, None)["state"]), "")
         for state in ("done", "paused"):
             self.assertEqual(reason_beside("Changes requested", state), "")
@@ -196,6 +197,16 @@ class TheStateOfAUnit(unittest.TestCase):
         self.assertEqual(reason_beside("Needs a person", "needs-you"), "Needs a person")
         self.assertEqual(reason_beside("Accept plan.md", "ready"), "Accept plan.md")
         self.assertEqual(reason_beside("Changes requested", "ready"), "Changes requested")
+
+    def test_attention_reads_the_code_and_not_the_words(self):
+        # `0139` R11: a `next` whose words say finished, closed or waiting decides nothing.
+        rows = [{"stage": "spec", "status": "draft"}]
+        for nxt in ("finished", "closed — spec rejected", "waiting on api/0001_b to merge"):
+            with self.subTest(nxt=nxt):
+                self.assertEqual(attention_reason({"next": nxt, "why": "", "stages": rows}), "Accept spec.md")
+        self.assertEqual(attention_reason({"next": "x", "why": "finished", "stages": rows}), "")
+        self.assertEqual(attention_reason({"next": "x", "why": "rejected", "stages": rows}), "")
+        self.assertEqual(attention_reason({"next": "x", "why": "dependency", "stages": rows}), "Needs a person")
 
     def test_0112_a_ship_md_a_refused_merge_left_is_not_offered_for_acceptance(self):
         """`0112` review F1. `next` works that draft; one with no `Round` reads as before."""
@@ -215,9 +226,11 @@ class WhatTheBoardSaysBesideAUnit(unittest.TestCase):
         from coscc.service import answerable
 
         self.assertTrue(answerable({"next": "spec"}))
-        for unit in ({"next": "finished"}, {"next": "closed: intent.md rejected"},
+        for unit in ({"next": "finished", "why": "finished"}, {"next": "closed: intent.md rejected", "why": "rejected"},
                      {"next": "spec", "hold": {"state": "dropped"}}):
             self.assertFalse(answerable(unit), unit)
+        # `0139` R11: the words alone close nothing.
+        self.assertTrue(answerable({"next": "finished"}))
         self.assertTrue(answerable({"next": "spec", "hold": {"state": "paused"}}))
 
     def test_each_kind_of_wait_has_its_reason_and_a_calm_unit_none(self):

@@ -161,11 +161,11 @@ changes. The store is written only by `coscc knowledge gather`, at a terminal, w
 paid sessions (`coscc knowledge` alone prints the usage). Run `coscc knowledge baseline`
 before turning the flag on, or `coscc knowledge measure` refuses to compare.
 
-`COS_EFFORT_TRIAL=1` in the env file, and a restart, runs a routine `impl` at effort `high`
-for about half the units, chosen by name, and as before for the rest; unset, no step
-changes. An `effort:impl` override set on Settings still wins over the trial. Each such
-`impl` still has 120 turns / $8.0, so the half at `high` can cost more; removing the line
-and restarting stops it. `coscc effort measure` prints the verdict, at a terminal.
+A routine `impl` runs on Opus for about half the units, chosen by name, and on Sonnet for
+the rest, at the same effort (`0139`); no setting turns this on or off, and a `model:impl`
+override set on Settings still wins. The half on Opus can cost more. `COS_EFFORT_TRIAL`,
+which ran the earlier trial of effort, is no longer read; `coscc effort measure` still
+prints that trial's verdict from the rows it left.
 
 **What does not come back by itself.** If the new version passes its trial but fails to
 start for real, there is no board left to say so and nothing rolls it back: `systemctl

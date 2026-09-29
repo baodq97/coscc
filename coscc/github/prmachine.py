@@ -230,6 +230,25 @@ def files_held(history: History, workspace: str, number: int, head: str) -> list
     return [str(f) for f in files] if isinstance(files, list) else None
 
 
+def ci_held(history: History, workspace: str, number: int, head: str) -> dict[str, Any] | None:
+    """`0139` R8: the CI answer the row holds for this pull request at this head, as
+    `{head, ci, checks, at}`; `None` until one was read there."""
+    with history.data.connect() as conn:
+        row = conn.execute(
+            "SELECT ci, ci_head, ci_checks, ci_at FROM pull_requests "
+            "WHERE root = ? AND workspace = ? AND number = ? AND head = ?",
+            (str(history.working_dir), workspace, int(number), str(head or "")),
+        ).fetchone()
+    if row is None or not row["ci_at"]:
+        return None
+    try:
+        checks = json.loads(row["ci_checks"] or "[]")
+    except ValueError:
+        checks = []
+    return {"head": row["ci_head"], "ci": row["ci"], "checks": checks if isinstance(checks, list) else [],
+            "at": row["ci_at"]}
+
+
 def open_prs(history: History, workspace: str) -> list[dict[str, Any]]:
     """R22: `{unit, number, files}` for `autopilot.pick`, from the machine's own rows; `files`
     a set, as `autopilot.files_of` gives a plan's."""
@@ -344,9 +363,10 @@ class Machine:
         )
 
     def _pull_request_row(self, u: Unit, number: int, head: str, merge_commit: str = "",
-                          files: list[str] | None = None) -> Callable[[Any], None]:
+                          files: list[str] | None = None, checks: list[dict] | None = None) -> Callable[[Any], None]:
         """A read of the files keeps the ones an earlier read at the same head found: they
-        are the same diff."""
+        are the same diff. `checks` (`0139` R8) is handed in only by a `ci` transition, the
+        one write of the row's `ci`."""
         def write(conn: Any) -> None:
             conn.execute(
                 "INSERT INTO pull_requests (root, workspace, unit, number, head, files, merge_commit, at) "
@@ -356,7 +376,35 @@ class Machine:
                 (str(self.history.working_dir), u.workspace, u.name, int(number), head,
                  None if files is None else json.dumps(files), merge_commit),
             )
+            if checks is not None:
+                conn.execute(
+                    "UPDATE pull_requests SET ci = ?, ci_head = head, ci_checks = ?, ci_at = ? "
+                    "WHERE root = ? AND workspace = ? AND number = ? AND head = ?",
+                    (ci_of(checks), json.dumps(checks), _now(), str(self.history.working_dir),
+                     u.workspace, int(number), head),
+                )
         return write
+
+    def record_ci(self, u: Unit, number: int, head: str, checks: list[dict]) -> bool:
+        """`0139` R8. The board's read of the required checks at `head`, as the reader's own:
+        a `ci` transition through `ci-at-head` when the head or the answer moved, and the
+        row's `ci` written with it. An answer that did not move only says when it was read
+        again. Whether it was taken is returned."""
+        now = state(self.history, u.workspace, u.name)
+        ci = ci_of(checks)
+        if head == now.get("head") and ci == now.get("ci") and ci_held(self.history, u.workspace, number, head):
+            with self.history.data.write() as conn:
+                conn.execute(
+                    "UPDATE pull_requests SET ci_checks = ?, ci_at = ? "
+                    "WHERE root = ? AND workspace = ? AND number = ? AND head = ?",
+                    (json.dumps(checks), _now(), str(self.history.working_dir), u.workspace, int(number), head),
+                )
+            return True
+        inputs = {"number": int(number), "head": head, "read_head": head, "ci": ci,
+                  "was_head": now.get("head"), "was_ci": now.get("ci")}
+        applied = self._apply(u, "ci", PR_FILE, "accepted", inputs, "code",
+                              also=self._pull_request_row(u, number, head, checks=checks))
+        return applied.open
 
     # -- pr -------------------------------------------------------------------
 
@@ -567,7 +615,8 @@ class Machine:
                 if head == now.get("head") and now.get("ci") in SETTLED_CI:
                     continue
                 out.calls += 1
-                ci = ci_of(await self._checks(root, number))
+                checks = await self._checks(root, number)
+                ci = ci_of(checks)
             except PrError as e:
                 out.error = out.error or str(e)
                 continue
@@ -579,7 +628,7 @@ class Machine:
             inputs = {"number": number, "head": head, "read_head": head, "ci": ci,
                       "was_head": now.get("head"), "was_ci": now.get("ci")}
             applied = self._apply(u, "ci", PR_FILE, "accepted", inputs, "code",
-                                  also=self._pull_request_row(u, number, head, files=files))
+                                  also=self._pull_request_row(u, number, head, files=files, checks=checks))
             if applied.open:
                 out.move(name, "ci", (applied.row or {}).get("id"))
         return out

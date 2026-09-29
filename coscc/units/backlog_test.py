@@ -8,13 +8,15 @@ import unittest
 from coscc.units import backlog as b
 
 
-def _unit(name, stages=("idea",), nxt="write-intent", hold=None, number=None):
+def _unit(name, stages=("idea",), nxt="write-intent", hold=None, number=None, why=None):
+    # `0139` R11: what the backlog reads is `why`; the words stay only for the reader.
     return {
         "name": name,
         "number": number if number is not None else int(name[:4]),
         "stages": [{"stage": s, "status": "accepted"} for s in stages]
         + [{"stage": "plan", "status": "not started"}],
         "next": nxt,
+        "why": why if why is not None else "finished" if nxt == "finished" else "rejected" if nxt.startswith("closed") else "",
         "hold": hold,
     }
 
@@ -29,6 +31,13 @@ def _rel(unit, other, rtype, op="add", by="Leif"):
 
 
 class TheBacklog(unittest.TestCase):
+    def test_the_code_decides_and_the_words_do_not(self):
+        # `0139` R11.
+        for nxt, why, kept in (("finished", "", True), ("closed — x", "", True),
+                               ("write-spec", "finished", False), ("write-spec", "rejected", False)):
+            with self.subTest(nxt=nxt, why=why):
+                self.assertEqual(b.in_backlog(_unit("0001_a", ("idea", "intent"), nxt=nxt, why=why)), kept)
+
     def test_r1_only_the_idea_only_unit_and_the_paused_one(self):
         units = [
             _unit("0001_done", ("idea", "intent"), nxt="finished"),

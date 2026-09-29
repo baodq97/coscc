@@ -21,7 +21,9 @@ from coscc.runner.prompt import (
     strip_answers,
     with_answers,
 )
-from coscc.runner.runner_test import REVIEW_R1, STAGES, UNIT, _golden_unit, incomplete_reply, make_unit
+from coscc.runner.runner_test import (
+    REVIEW_R1, SESSION_STAGES, STAGES, UNIT, _golden_unit, incomplete_reply, make_unit,
+)
 
 
 class AnAgentsAnswerIsSaidToBeOne(unittest.TestCase):
@@ -276,17 +278,18 @@ class ThePromptSaysTheGateWasAlreadyAsked(unittest.TestCase):
 
     def test_the_gates_own_words_reach_the_stage(self):
         with tempfile.TemporaryDirectory() as d:
+            # `ship` until `0139` R12 took its session; the words reach any stage alike.
             prompt, _ = build_prompt(
-                d, self.scene(d), UNIT, "ship", STAGES, "ship.md",
-                gate_said="open: ship may proceed for " + UNIT,
+                d, self.scene(d), UNIT, "review", STAGES, "review.md",
+                gate_said="open: review may proceed for " + UNIT,
             )
-            self.assertIn("open: ship may proceed", prompt)
+            self.assertIn("open: review may proceed", prompt)
 
     def test_it_tells_the_stage_not_to_hold_back_over_a_gate_it_cannot_run(self):
         with tempfile.TemporaryDirectory() as d:
             prompt, _ = build_prompt(
-                d, self.scene(d), UNIT, "ship", STAGES, "ship.md",
-                gate_said="open: ship may proceed",
+                d, self.scene(d), UNIT, "review", STAGES, "review.md",
+                gate_said="open: review may proceed",
             )
             # The instruction, not the transcript. Without it the stage reads "ask the
             # gate" in its own rules and has no way to know the question is already behind it.
@@ -295,7 +298,7 @@ class ThePromptSaysTheGateWasAlreadyAsked(unittest.TestCase):
     def test_a_prompt_built_without_a_gate_answer_says_nothing_about_one(self):
         """Callers that do not ask must not imply an answer they never got."""
         with tempfile.TemporaryDirectory() as d:
-            prompt, _ = build_prompt(d, self.scene(d), UNIT, "ship", STAGES, "ship.md")
+            prompt, _ = build_prompt(d, self.scene(d), UNIT, "impl", STAGES, "impl.md")
             self.assertNotIn("The gate, already asked", prompt)
 
 
@@ -602,19 +605,13 @@ class TheReviewSeesWhatWasMeasured(unittest.TestCase):
 
 
 class ShipIsNotToldItIsInARepository(unittest.TestCase):
-    """`0017` review F3. `ship` runs in the unit's directory, which is not a checkout, so
-    its prompt must not call that directory a repository, and must send it to the URL."""
+    """`0017` review F3. `ship` ran in the unit's directory; since `0139` R12 it has no
+    session, and what is left is that `impl` still names its repository."""
 
     def prompt(self, d, stage, artifact):
         make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
         directory = Path(d) / ".cos" / UNIT
         return build_prompt(directory, directory, UNIT, stage, STAGES, artifact, writes_own=True)
-
-    def test_ship_is_sent_to_the_pull_requests_url(self):
-        with tempfile.TemporaryDirectory() as d:
-            prompt, _ = self.prompt(d, "ship", "ship.md")
-            self.assertIn("URL in `pr.md`'s `PR:` field", prompt)
-            self.assertNotIn("in the repository at", prompt)
 
     def test_impl_still_names_its_repository(self):
         with tempfile.TemporaryDirectory() as d:
@@ -642,21 +639,6 @@ class ImplAndShipKeepTheirTaskByteForByte(unittest.TestCase):
                 f"Do the work this unit's plan authorises, in the repository at "
                 f"`{Path(d).expanduser().resolve()}`, then write `{directory / 'impl.md'}` "
                 "recording what you did.\n\n"
-                "That file must carry the `Status:` line the rules above describe. Prose in "
-                "Vietnamese; filenames and headings in English. Write it yourself with your "
-                "tools — do not paste it into your reply."
-            ))
-
-    def test_ship(self):
-        with tempfile.TemporaryDirectory() as d:
-            task, directory = self.task(d, "ship")
-            self.assertEqual(task, (
-                "# Your task\n\n"
-                f"Merge this unit's pull request, then write `{directory / 'ship.md'}` recording what went "
-                "out.\n\n"
-                "You are deliberately not inside a git checkout. Name the pull request by the "
-                "URL in `pr.md`'s `PR:` field in every `gh` command; a bare number cannot be "
-                "resolved from here.\n\n"
                 "That file must carry the `Status:` line the rules above describe. Prose in "
                 "Vietnamese; filenames and headings in English. Write it yourself with your "
                 "tools — do not paste it into your reply."
@@ -732,10 +714,7 @@ class ThePointingStagesNameTheirFiles(unittest.TestCase):
         # stage: (included artifacts, pointed)
         "impl": (["plan.md", "review-findings"],
                  ["idea.md", "intent.md", "spec.md", "spike.md", "impl.md", "pr.md", "review.md", "ship.md"]),
-        "pr": ([], ["idea.md", "intent.md", "spec.md", "spike.md", "plan.md", "impl.md", "pr.md",
-                    "review.md", "ship.md"]),
-        "ship": (["pr.md"], ["idea.md", "intent.md", "spec.md", "spike.md", "plan.md", "impl.md",
-                             "review.md", "ship.md"]),
+        # `pr` and `ship` left with their sessions (`0139` R12).
         "review": (["review-findings"], ["idea.md", "intent.md", "spec.md", "spike.md", "plan.md",
                                          "impl.md", "pr.md", "review.md", "ship.md"]),
     }
@@ -780,12 +759,6 @@ class ThePointingStagesNameTheirFiles(unittest.TestCase):
             self.assertIn("ROUND-TWO-F3-OPEN", prompt)
             self.assertNotIn("ROUND-TWO-F1-FIXED", prompt)
 
-    def test_ship_carries_the_pull_request_it_merges(self):
-        with tempfile.TemporaryDirectory() as d:
-            _, (prompt, _, _) = self.build(d, "ship")
-            self.assertIn("# The pr it follows", prompt)
-            self.assertIn("https://github.com/o/r/pull/9", prompt)
-
 
 class EveryPathAPromptNamesCanBeRead(unittest.TestCase):
     """`0094` R15: a path replaces an artifact only where the step's grant may `Read` it.
@@ -795,7 +768,7 @@ class EveryPathAPromptNamesCanBeRead(unittest.TestCase):
         from coscc.runner import _POINTING
 
         # `implement` is `cos.mjs`'s alias for `impl` and has no rules of its own to build from.
-        for stage in sorted(_POINTING - {"implement"}):
+        for stage in sorted(_POINTING.intersection(SESSION_STAGES)):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
                 directory = _golden_unit(Path(d) / "store")
                 tree = Path(d) / "worktree"
@@ -922,7 +895,7 @@ class WhatEarlierUnitsMeasured(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
             directory = self.unit(d)
-            for stage in STAGES + ["implement"]:
+            for stage in SESSION_STAGES + ["implement"]:
                 with self.subTest(stage=stage):
                     args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
                     without = compose_prompt(*args)
@@ -959,7 +932,7 @@ class WhatEarlierUnitsMeasured(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
             directory = self.unit(d)
-            for stage in ("idea", "intent", "pr", "review", "ship"):
+            for stage in ("idea", "intent", "review"):
                 with self.subTest(stage=stage):
                     args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
                     self.assertEqual(compose_prompt(*args, knowledge=self.SECTION), compose_prompt(*args))
@@ -997,7 +970,7 @@ class WhatEarlierReviewsSaid(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
             directory = self.unit(d)
-            for stage in [s for s in STAGES if s != "impl"]:
+            for stage in [s for s in SESSION_STAGES if s != "impl"]:
                 with self.subTest(stage=stage):
                     args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
                     self.assertEqual(compose_prompt(*args, prior_findings=self.SECTION), compose_prompt(*args))
@@ -1048,7 +1021,7 @@ class ThePlanMapAndTheCommands(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
             directory = self.unit(d)
-            for stage in [s for s in STAGES if s != "impl"]:
+            for stage in [s for s in SESSION_STAGES if s != "impl"]:
                 with self.subTest(stage=stage):
                     args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
                     self.assertEqual(compose_prompt(*args, plan_map=self.MAP, commands=self.WORDS),

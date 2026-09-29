@@ -19,6 +19,8 @@ against. The transaction is still taken — it frames a record so a reader gets 
 snapshot — but it is the second line of defence, not the first.
 
 Records are stamped and never edited. A mode change is a new record; the latest one wins.
+The one exception is `set_trial_model` (`0139` R17), which fills in one field of one `start`
+by its read and its write inside the same exclusive transaction, so nothing interleaves.
 
 **Where it lives now.** It was a JSONL file beside the workspace store, one line
 per record, `O_APPEND` under a `flock`. It is now rows in the app's SQLite database under
@@ -303,6 +305,37 @@ class Journal:
         return self.append(
             {"kind": "start", "workspace": workspace, "unit": unit, "stage": stage, "mode": mode, **extra}
         )
+
+    def set_trial_model(
+        self, workspace: str, unit: str, stage: str, at: str, model: str, timeout: float | None = None,
+    ) -> bool:
+        """`0139` R17. The one field of a written `start` this log ever fills in afterwards:
+        `model_trial.model`, the model the session's `init` named, which the `start` could
+        not know when it was written before the session opened (`0139 spike.md ## U2`).
+
+        Only one row is touched: the latest `start` of `workspace`, `unit` and `stage` stamped
+        at `at` (the `at` of the record `started` returned), and only while it carries a
+        `model_trial` with no `model` yet. Whether a row was written is returned."""
+        with self.transaction(timeout) as conn:
+            row = conn.execute(
+                "SELECT id, record FROM runs WHERE root = ? AND workspace = ? AND unit = ? AND stage = ? "
+                "AND kind = 'start' AND json_extract(record, '$.at') = ? ORDER BY id DESC LIMIT 1",
+                (self._root, workspace, unit, stage, at),
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                record = json.loads(row[1])
+            except (json.JSONDecodeError, ValueError):
+                return False
+            trial = record.get("model_trial")
+            if not isinstance(trial, dict) or trial.get("model"):
+                return False
+            record["model_trial"] = {**trial, "model": str(model)}
+            conn.execute("UPDATE runs SET record = ? WHERE id = ?",
+                         (json.dumps(record, ensure_ascii=False, sort_keys=False), row[0]))
+        BELL.ring()
+        return True
 
     def finished(
         self, workspace: str, unit: str, stage: str, outcome: str, **extra: Any

@@ -1,10 +1,9 @@
-"""`coscc/knowledge/efforttrial.py`: the arm a unit is in, and which step gets the trial's effort."""
+"""`coscc/knowledge/efforttrial.py`: the arm a unit was in, which the old rows are read by."""
 
 from __future__ import annotations
 
 import unittest
 
-from coscc.agent import models
 from coscc.knowledge import efforttrial
 
 
@@ -20,22 +19,6 @@ class TheArm(unittest.TestCase):
         share = sum(1 for n in names if efforttrial.arm(n) == efforttrial.TRIAL_ARM) / len(names)
         self.assertGreaterEqual(share, 0.45)
         self.assertLessEqual(share, 0.55)
-
-
-class TheEffort(unittest.TestCase):
-    def test_only_a_routine_impl_of_a_trial_unit_gets_the_trial_effort(self):
-        for stage in ("impl", "review", "pr", "spec", "integrate"):
-            for label in ("routine", "novel", None):
-                for arm in (efforttrial.TRIAL_ARM, efforttrial.CONTROL_ARM):
-                    with self.subTest(stage=stage, label=label, arm=arm):
-                        wanted = (
-                            "high" if (stage, label, arm) == ("impl", "routine", efforttrial.TRIAL_ARM) else None
-                        )
-                        self.assertEqual(efforttrial.effort_for(stage, label, arm), wanted)
-
-    def test_the_effort_is_one_the_cli_takes_and_not_max(self):
-        self.assertIn(efforttrial.EFFORT, models.EFFORTS)
-        self.assertNotEqual(efforttrial.EFFORT, models.OVERRIDE_ONLY)
 
 
 if __name__ == "__main__":

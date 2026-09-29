@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import units
+from coscc.knowledge import modeltrial
 from coscc.github import prscope
 from coscc.git import fetches, worktrees
 from coscc.config import Config
@@ -1070,7 +1071,9 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         async def go():
             return [i async for i in self.service.run_step(str(self.repo), self.made["unit"], "impl")]
 
-        with mock.patch.object(board_reader, "gate", open_gate):
+        # `0139` R16: a routine run asks for its arm's model; the Sonnet arm is `models.json`'s.
+        with mock.patch.object(board_reader, "gate", open_gate), \
+                mock.patch.object(modeltrial, "arm", lambda unit: modeltrial.SONNET_ARM):
             return asyncio.run(go())
 
     def _starts(self):
@@ -1114,14 +1117,16 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.assertEqual(ceilings, [(120, 8.0), (250, 16.0)])
 
 
-class AnImplStepUnderTheEffortTrial(unittest.TestCase):
-    """`0123` R1-R7. The fixture of `AnImplStepRunsUnderThePlansLabel`, with the flag set per
-    test and the arm forced by patching `efforttrial.arm`; `cos.mjs next` is a stub that
-    counts its calls and answers `self.action`, or raises `self.next_fails`."""
+class AnImplStepUnderTheModelTrial(unittest.TestCase):
+    """`0139` R16-R18. The fixture of `AnImplStepRunsUnderThePlansLabel`, with the arm forced
+    by patching `modeltrial.arm`; the session stand-in names in `init` the model it was asked
+    for, unless `self.init` says otherwise. `cos.mjs next` is a stub that counts its calls and
+    answers `self.action`, or raises `self.next_fails`."""
 
     PLAN = AnImplStepRunsUnderThePlansLabel.PLAN
     ROUTINE = "`coscc/units/board.py`"
     SECURITY = "`coscc/agent/policy.py`"
+    OPUS, SONNET = "claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]"
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1133,11 +1138,19 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self.reasons: list[str] = []
         self.next_fails: Exception | None = None
         self.made_count = 0
+        # What the stand-in's `init` names: the model asked for, `None` for no `init` at all.
+        self.init: str | None = ""
 
     class Impl(AnImplStepRunsUnderThePlansLabel.Impl):
-        pass
+        async def stream(self, cwd, text, session_id=None, max_turns=1, step=None, **kw):
+            said = self.test.init
+            if step is not None and said is not None:
+                step.init_model = said or str(kw.get("model") or "")
+                yield ("session", "sess-i")
+            async for item in super().stream(cwd, text, session_id, max_turns, step=step, **kw):
+                yield item
 
-    def _unit(self, effort_trial: bool, plan: str | None = ROUTINE, knowledge: bool = False):
+    def _unit(self, plan: str | None = ROUTINE, knowledge: bool = False, model: str | None = None):
         """A fresh workspace, service and unit, so two runs of one test do not share a log."""
         self.made_count += 1
         root = Path(self._tmp.name) / str(self.made_count)
@@ -1148,8 +1161,8 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
                 workspaces=(str(self.repo),),
                 working_dir=str(root / "work"),
                 data_dir=str(root / "data"),
-                effort_trial=effort_trial,
                 knowledge=knowledge,
+                model=model,
             ),
             self.Impl(self),
         )
@@ -1158,9 +1171,9 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         if plan is not None:
             (self.dir / "plan.md").write_text(self.PLAN.format(path=plan), encoding="utf-8")
 
-    def _run(self, stage: str = "impl", arm: str = "trial"):
+    def _run(self, stage: str = "impl", arm: str = "opus-5-5"):
         from coscc.units import board as board_reader
-        from coscc.knowledge import efforttrial
+        from coscc.knowledge import modeltrial
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, f"open: {stage} may proceed"
@@ -1177,7 +1190,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
 
         with mock.patch.object(board_reader, "gate", open_gate), \
                 mock.patch.object(board_reader, "next_step", next_step), \
-                mock.patch.object(efforttrial, "arm", lambda unit: arm):
+                mock.patch.object(modeltrial, "arm", lambda unit: arm):
             return asyncio.run(go())
 
     def _starts(self):
@@ -1191,100 +1204,91 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         data = Data(self.service.config.data_dir)
         return {**data.pref_rows(models.PREFIX), **data.pref_rows(models.EFFORT_PREFIX)}
 
-    def test_with_the_flag_off_nothing_in_the_start_record_changes(self):
-        self._unit(effort_trial=False)
-        self._run()
-        self._run()
-        off = self._starts()[0]
-        self.assertEqual(self.asked, [])
-        self.assertNotIn("effort_trial", off)
-        self.assertNotIn("ci_red", self._starts()[1])
-        self._unit(effort_trial=True)
-        self._run(arm="control")
-        control = self._starts()[0]
-        fields = ("model", "effort", "effort_source")
-        self.assertEqual([off[f] for f in fields], [control[f] for f in fields])
-        self.assertEqual(set(control) - set(off), {"effort_trial"})
-        self.assertEqual(set(off) - set(control), set())
+    def test_every_routine_impl_start_carries_arm_and_model(self):
+        for arm, model in (("opus-5-5", self.OPUS), ("sonnet-5-5", self.SONNET)):
+            with self.subTest(arm=arm):
+                self._unit()
+                self._run(arm=arm)
+                start = self._starts()[0]
+                self.assertEqual(start["model_trial"], {"arm": arm, "requested": model, "model": model})
+                self.assertEqual((start["model"], start["model_source"]), (model, "trial"))
+                self.assertEqual(self.seen[-1].get("model"), model)
+                # R16: both arms run the default's effort.
+                self.assertEqual((start["effort"], start["effort_source"]), ("medium", "default"))
+                self.assertNotIn("effort_trial", start)
 
-    def test_a_routine_impl_in_the_trial_arm_runs_at_high(self):
-        self._unit(effort_trial=True)
-        self._run(arm="control")
-        control = self._starts()[0]
-        self._unit(effort_trial=True)
-        self._run(arm="trial")
-        start = self._starts()[0]
-        self.assertEqual((start["effort"], start["effort_source"]), ("high", "trial"))
-        self.assertEqual(start["effort_trial"], {"arm": "trial", "applied": True})
-        self.assertEqual((start["model"], start["model_source"]), (control["model"], control["model_source"]))
-        self.assertEqual(self.seen[-1].get("effort"), "high")
-
-    def test_the_control_arm_runs_as_before_and_says_so(self):
-        self._unit(effort_trial=False)
-        self._run()
-        off = self._starts()[0]
-        self._unit(effort_trial=True)
-        self._run(arm="control")
-        start = self._starts()[0]
-        self.assertEqual(start["effort_trial"], {"arm": "control", "applied": False})
-        self.assertEqual((start["effort"], start["effort_source"]), (off["effort"], off["effort_source"]))
-
-    def test_an_effort_override_wins_and_is_left_alone(self):
-        self._unit(effort_trial=True)
-        asyncio.run(self.service.set_stage_effort("impl", "low"))
+    def test_an_override_keeps_the_arm_and_records_the_real_model(self):
+        self._unit()
+        asyncio.run(self.service.set_stage_model("impl", "claude-other"))
         before = self._prefs()
-        self._run(arm="trial")
+        self._run(arm="opus-5-5")
         start = self._starts()[0]
-        self.assertEqual((start["effort"], start["effort_source"]), ("low", "override"))
-        self.assertEqual(start["effort_trial"], {"arm": "trial", "applied": False})
+        self.assertEqual((start["model"], start["model_source"]), ("claude-other", "override"))
+        self.assertEqual(start["model_trial"],
+                         {"arm": "opus-5-5", "requested": "claude-other", "model": "claude-other"})
         self.assertEqual(self._prefs(), before)
+        self._unit(model="from-env")
+        self._run(arm="opus-5-5")
+        start = self._starts()[0]
+        self.assertEqual((start["model"], start["model_source"]), ("from-env", "COS_MODEL"))
+        self.assertEqual(start["model_trial"]["arm"], "opus-5-5")
 
-    def test_a_novel_impl_in_the_trial_arm_keeps_its_pair(self):
-        self._unit(effort_trial=True, plan=self.SECURITY)
-        self._run(arm="trial")
+    def test_the_model_init_names_is_the_model_recorded(self):
+        # `0139 spike.md ## U2`: `init` names what the CLI resolved, which is what is kept.
+        self._unit()
+        self.init = "claude-opus-5-5"
+        self._run(arm="opus-5-5")
+        self.assertEqual(self._starts()[0]["model_trial"]["model"], "claude-opus-5-5")
+
+    def test_a_session_dead_before_init_is_recorded_never_started(self):
+        # C10.
+        self._unit()
+        self.init = None
+        self._run(arm="sonnet-5-5")
+        self.assertEqual(self._starts()[0]["model_trial"],
+                         {"arm": "sonnet-5-5", "requested": self.SONNET, "model": "never-started"})
+
+    def test_a_novel_impl_is_not_in_the_trial(self):
+        self._unit(plan=self.SECURITY)
+        self._run(arm="sonnet-5-5")
         start = self._starts()[0]
         self.assertEqual((start["label"], start["label_source"]), ("novel", "forced"))
-        self.assertEqual((start["effort"], start["effort_source"]), ("high", "default"))
-        self.assertEqual(start["effort_trial"], {"arm": "trial", "applied": False})
+        self.assertEqual((start["model"], start["model_source"]), (self.OPUS, "default"))
+        self.assertNotIn("model_trial", start)
 
-    def test_an_impl_with_no_declared_label_in_the_trial_arm_keeps_its_pair(self):
-        self._unit(effort_trial=True, plan=None)
+    def test_an_impl_with_no_declared_label_is_not_in_the_trial(self):
+        self._unit(plan=None)
         (self.dir / "plan.md").write_text(
             self.PLAN.format(path=self.ROUTINE).replace(" Impl: routine.", ""), encoding="utf-8"
         )
-        self._run(arm="trial")
+        self._run(arm="sonnet-5-5")
         start = self._starts()[0]
         self.assertEqual((start["label"], start["label_source"]), ("novel", "missing"))
-        self.assertEqual(start["effort_source"], "default")
-        self.assertEqual(start["effort_trial"], {"arm": "trial", "applied": False})
+        self.assertNotIn("model_trial", start)
 
-    def test_an_escalated_impl_stays_in_its_arm(self):
-        self._unit(effort_trial=True)
+    def test_an_escalated_impl_leaves_the_trial(self):
+        self._unit()
         self.terminal = "max_turns"
-        self._run(arm="trial")
+        self._run(arm="sonnet-5-5")
         self.terminal = None
-        self._run(arm="trial")
+        self._run(arm="sonnet-5-5")
         first, second = self._starts()
-        self.assertEqual(first["effort_trial"], {"arm": "trial", "applied": True})
+        self.assertEqual(first["model_trial"]["arm"], "sonnet-5-5")
         self.assertEqual((second["label"], second["label_source"]), ("novel", "escalated"))
-        self.assertEqual(second["effort_trial"], {"arm": "trial", "applied": False})
-        self.assertEqual(second["effort_source"], "default")
+        self.assertNotIn("model_trial", second)
 
     def test_other_stages_carry_no_trial(self):
-        self._unit(effort_trial=False)
-        self._run(stage="spec")
-        off = self._starts()[0]
-        self._unit(effort_trial=True)
-        self._run(stage="spec", arm="trial")
+        self._unit()
+        self._run(stage="spec", arm="sonnet-5-5")
         on = self._starts()[0]
-        self.assertEqual((on["effort"], on["effort_source"]), (off["effort"], off["effort_source"]))
-        self.assertNotIn("effort_trial", on)
+        self.assertEqual((on["model"], on["model_source"]), (self.OPUS, "default"))
+        self.assertNotIn("model_trial", on)
         self.assertEqual(self.asked, [])
 
-    # -- R7: the CI question ---------------------------------------------------------
+    # -- `0123` R7: the CI question, now asked of every routine impl ---------------------
 
     def test_a_second_impl_asks_next_once_and_records_ci_red(self):
-        self._unit(effort_trial=True)
+        self._unit()
         self._run()
         self.action = "CI is red on #7: tests — back to impl: fix on the branch and push"
         self.reasons = ["ci-red"]
@@ -1293,7 +1297,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self.assertIs(self._starts()[1]["ci_red"], True)
 
     def test_a_second_impl_after_a_review_records_no_red(self):
-        self._unit(effort_trial=True)
+        self._unit()
         self._run()
         self.action = "impl: review round 1 asked for changes"
         self._run()
@@ -1303,7 +1307,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
     def test_next_failing_never_refuses_the_step(self):
         from coscc.units.board import Unavailable
 
-        self._unit(effort_trial=True)
+        self._unit()
         self._run()
         self.next_fails = Unavailable("gh is not logged in")
         self.seen.clear()
@@ -1314,10 +1318,10 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self.assertEqual(len(self.seen), 1)
 
     def test_ci_red_is_recorded_with_only_cos_knowledge_on(self):
-        # `0131` R19: the same field, the effort trial off.
+        # `0131` R19: the same field, on a step the model trial does not take.
         from coscc import knowledge
 
-        self._unit(effort_trial=False, knowledge=True)
+        self._unit(plan=self.SECURITY, knowledge=True)
         self._run()
         self.action = "CI is red on #7: tests — back to impl: fix on the branch and push"
         self.reasons = ["ci-red"]
@@ -1325,11 +1329,11 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         first, second = self._starts()
         self.assertNotIn("ci_red", first)
         self.assertIs(second["ci_red"], True)
-        self.assertNotIn("effort_trial", second)
+        self.assertNotIn("model_trial", second)
         self.assertEqual(second[knowledge.TRIAL_FIELD], {"arm": knowledge.arm(self.made["unit"])})
 
     def test_a_first_impl_asks_nothing(self):
-        self._unit(effort_trial=True)
+        self._unit()
         self._run()
         self.assertEqual(self._starts()[0]["impl_run"], 1)
         self.assertNotIn("ci_red", self._starts()[0])

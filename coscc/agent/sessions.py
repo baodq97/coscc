@@ -410,6 +410,9 @@ class StepHandle:
     session_id: str = ""
     model: str | None = None
     suspended: bool = False
+    # `0139` R17. The model the session's `init` named: what the CLI resolved and will run,
+    # `[1m]` and all (`0139 spike.md ## U2`). `""` until it arrives.
+    init_model: str = ""
 
     async def close(self) -> None:
         self.closed = True
@@ -723,6 +726,19 @@ def _options(
         # `resume_drops_turn` is never set: the CLI refused 3 of 5 cuts made mid-turn with
         # it (`0138 spike.md ## U2`, point 8), and without it took all five.
         options.resume_session_at = resume_at
+        # `0139` R15: the resumed session keeps the system prompt it recorded at its start, and
+        # reads no skill or rule an update changed in between. Only a preset or a custom
+        # prompt carries `snapshot` (`0139 spike.md ## U1`); the file form cannot, so it
+        # becomes an empty custom prompt with the same file appended -- never the file's text
+        # as a value in argv, which is `0088` F1's `E2BIG`.
+        sp = options.system_prompt
+        if isinstance(sp, dict) and sp.get("type") == "file":
+            options.extra_args["append-system-prompt-file"] = sp["path"]
+            options.system_prompt = {"type": "custom", "prompt": "", "snapshot": True}
+        elif isinstance(sp, dict):
+            options.system_prompt = {**sp, "snapshot": True}
+        else:
+            options.system_prompt = {"type": "custom", "prompt": "", "snapshot": True}
     return options
 
 
@@ -1052,6 +1068,9 @@ class Sessions:
                     # `0138`. The id is known here, before the first reply, so an update
                     # that pauses the session now can still name it.
                     said = str((message.data or {}).get("session_id") or "")
+                    if step is not None and (message.data or {}).get("model"):
+                        # Set before `session` is yielded below, so the caller reads it there.
+                        step.init_model = str(message.data["model"])
                     if said and session_id and said != session_id:
                         # R8: a resume that came back as another session is refused.
                         await _begin(_shut(live.client, getattr(live.client, "_transport", None), True))
