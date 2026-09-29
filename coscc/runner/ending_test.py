@@ -32,12 +32,14 @@ from coscc.runner.runner_test import (
     incomplete_reply,
     make_unit,
 )
+from coscc.agent.submit_test import a_head, submits as _submits
 
 
 class AFailedStepIsRecordedAsFailed(unittest.TestCase):
     def test_a_session_that_returns_nothing_writes_no_artifact_and_says_why(self):
         class Silent:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                await _submits(kw)
                 yield ("done", {"session_id": "s-9", "cost": {"input_tokens": 5}})
 
         with tempfile.TemporaryDirectory() as d:
@@ -70,6 +72,7 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Spec: x\n")
                 yield ("chunk", "Status: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-1", "cost": {"output_tokens": 7}})
 
         with tempfile.TemporaryDirectory() as d:
@@ -103,6 +106,7 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
         class RanOut:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Spec: x\nStatus: draft.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-3", "cost": {}, "terminal_reason": "max_turns"})
 
         with tempfile.TemporaryDirectory() as d:
@@ -128,6 +132,7 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
         class Normal:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-4", "cost": {}, "terminal_reason": "completed"})
 
         with tempfile.TemporaryDirectory() as d:
@@ -192,6 +197,7 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
 
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 self.streams += 1
+                await _submits(kw)
                 yield ("done", {})
 
         with tempfile.TemporaryDirectory() as d:
@@ -239,6 +245,7 @@ class AnUnusableReplyIsKeptBesideTheReason(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "Here is the spec you asked for:\n\n")
             yield ("chunk", "# Spec: a problem\n\n## Requirements\n\nR1 — something.\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s-9", "cost": {}})
 
     def test_the_reply_comes_back_with_the_refusal(self):
@@ -267,6 +274,7 @@ class AnUnusableReplyIsKeptBesideTheReason(unittest.TestCase):
     def test_a_step_that_said_nothing_at_all_adds_no_empty_section(self):
         class Silent:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                await _submits(kw)
                 yield ("done", {"session_id": "s-0", "cost": {}})
 
         with tempfile.TemporaryDirectory() as d:
@@ -309,6 +317,7 @@ class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
             yield ("chunk", "PHẦN-GIỮA")
             yield ("tool", "Grep")
             yield ("chunk", AnAnswerInPiecesIsWrittenWhole.TAIL)
+            await _submits(kw)
             yield ("done", {"session_id": "s-85", "terminal_reason": self.terminal, "cost": {}})
 
     def go(self, sessions, existing=None):
@@ -375,6 +384,7 @@ class AFencedAnswerAfterNarrationIsUnwrapped(unittest.TestCase):
             yield ("chunk", "Để tôi đọc lại plan.")
             yield ("tool", "Read")
             yield ("chunk", self.last)
+            await _submits(kw)
             yield ("done", {"session_id": "s-1", "cost": {}})
 
     def go(self, last):
@@ -470,6 +480,7 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
 
         class HitCeiling:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                await _submits(kw)
                 yield ("done", {
                     "session_id": "s-r3", "cost": {"turns": 5, "cost_usd": 0.1},
                     "terminal_reason": "max_turns",
@@ -504,6 +515,7 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
         class Replies:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-ok", "cost": {"turns": 1, "cost_usd": 0.01}})
 
         with tempfile.TemporaryDirectory() as d:
@@ -526,6 +538,7 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 self.seen_prompt = text
                 yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-ok", "cost": {}})
 
         probe = Replies()
@@ -573,6 +586,7 @@ class ASpikeThatTouchesTheWorktreeFails(unittest.TestCase):
                 self.answers["read-tree"] = type(read).__name__
                 touch(tree)
                 yield ("chunk", SPIKE_REPLY)
+                await _submits(kw)
                 yield ("done", {"session_id": "s-spike", "cost": {}})
 
         with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as scratch:
@@ -657,6 +671,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
                     # A Stop that came before the seal, with no cancel behind it.
                     running.stop_requested, running.stopped_by = True, "Lan"
                 yield ("chunk", reply)
+                await _submits(kw)
                 yield ("done", {"session_id": "s-spike", "terminal_reason": terminal,
                                 "cost": {"turns": 81, "cost_usd": 4.5}})
 
@@ -719,6 +734,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
                 (Path(cwd) / "spike.md").write_text(PROGRESS, encoding="utf-8")
                 yield ("chunk", "đang đo ")
                 await release.wait()
+                await _submits(kw)
                 yield ("done", {"session_id": "s", "terminal_reason": "max_turns", "cost": {}})
 
         with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as scratch:
@@ -804,6 +820,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
         class Fake:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Plan: x\nStatus: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {}})
 
         with tempfile.TemporaryDirectory() as d:
@@ -850,6 +867,7 @@ class AStoppedStepEndsStopped(unittest.TestCase):
             yield ("chunk", "thinking\n")
             await self.release.wait()
             yield ("chunk", self.reply)
+            await _submits(kw)
             yield ("done", {"session_id": "s-1", "terminal_reason": "success",
                             "cost": {"turns": 2, "cost_usd": 0.25}})
 
@@ -1010,6 +1028,7 @@ class ADeadStepKeepsItsTurns(unittest.TestCase):
             yield ("session", "s-dead")
             if isinstance(self.then, BaseException):
                 raise self.then
+            await _submits(kw)
             yield ("done", self.then)
 
     def _run(self, then):
@@ -1095,6 +1114,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                 if self.stop is not None:
                     self.stop.stop_requested, self.stop.stopped_by = True, "Lan"
                 yield ("chunk", self.first)
+                await _submits(kw)
                 yield ("done", {"session_id": "s1", "terminal_reason": self.terminal,
                                 "cost": {"turns": 41, "cost_usd": 1.00}})
                 return
@@ -1104,6 +1124,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                 await asyncio.Event().wait()
             head = re.search(r"Reviewed: ([0-9a-f]{40})\. Verdict: incomplete", text).group(1)
             yield ("chunk", self.closing(head) if self.closing else incomplete_reply(head))
+            await _submits(kw)
             yield ("done", {"session_id": "s1", "terminal_reason": self.closing_terminal,
                             "cost": {"turns": 1, "cost_usd": self.closing_cost}}
                    if self.closing_terminal else {"session_id": "s1", "cost": {}})
@@ -1313,6 +1334,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
             self.calls.append({"text": text, "session_id": session_id, "max_turns": max_turns, **kw})
             if len(self.calls) == 1:
                 yield ("chunk", self.first)
+                await _submits(kw, **getattr(self, "obj", {}))
                 yield ("done", {"session_id": self.session, "terminal_reason": self.terminal,
                                 "cost": {"turns": 12, "cost_usd": 2.0}})
                 return
@@ -1324,6 +1346,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
                 await kw["can_use_tool"]("Write", {"file_path": "/w/plan.md"}, None)
                 yield ("tool", "Write")
             yield ("chunk", self.repair)
+            await _submits(kw)
             yield ("done", {"session_id": self.session, "terminal_reason": self.repair_terminal,
                             "cost": {"turns": 1, "cost_usd": 3.1}})
 
@@ -1434,7 +1457,10 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         sessions = self.Repairs()
         sessions.calls.append({"text": "the main reply, before the update"})
         _, [end], _, written, _ = self.go(sessions, resume=self._paused_repair(1.0))
-        [repair] = sessions.calls[1:]
+        # `0136` R2: the object the first process's channel held went with it, so the step
+        # asks for it again on its own session after the repair.
+        [repair, again] = sessions.calls[1:]
+        self.assertIn("without handing back its object", again["text"])
         self.assertEqual((repair["session_id"], repair["resume_at"], repair["text"]), ("s1", "u3", "MSG go on"))
         self.assertEqual(repair["max_turns"], 1)
         self.assertGreater(repair["max_budget_usd"], 0)
@@ -1537,9 +1563,11 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         self.assertIsNone(written)
 
     def test_a_review_repair_turn_asks_for_the_new_round_only(self):
-        head = "b" * 40
+        head = a_head(self, "b" * 40)
         round2 = incomplete_reply(head, verdict="changes-requested", status="changes-requested")
         sessions = self.Repairs(first=round2.split("\n", 1)[1], repair=round2)
+        # `0136` R5: what the round says is its object; the prose above is rendered from it.
+        sessions.obj = {"verdict": "changes-requested"}
         _, [end], _, written, _ = self.go(sessions, stage="review")
         self.assertIn("new round only", sessions.calls[1]["text"])
         review = written.decode("utf-8")
@@ -1622,6 +1650,7 @@ class AnAnswerCutAtItsCeilingIsNotWritten(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             for kind, payload in self.said:
                 yield (kind, payload)
+            await _submits(kw)
             yield ("done", {"session_id": "s-1", "terminal_reason": self.terminal, "cost": {}})
 
     class DraftsThenRunsOut(AReviewThatRunsOutGetsAClosingTurn.Closes):
@@ -1678,6 +1707,7 @@ class ABackgroundRunIsRefusedAndCounted(unittest.TestCase):
             if self.writes is not None:
                 self.writes()
             yield ("chunk", "# Plan: x\nStatus: accepted.\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s-bg", "cost": {}})
 
     def run_step(self, stage, artifact, fake):

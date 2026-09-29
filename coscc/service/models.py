@@ -110,7 +110,7 @@ class ModelsMixin:
         is recorded and refuses nothing."""
         try:
             found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit]))
-            return autopilot.is_ci_red(str(found.get("action") or ""))
+            return autopilot.is_ci_red(found)
         except Exception:  # noqa: BLE001 — R7, recorded as null
             return None
 

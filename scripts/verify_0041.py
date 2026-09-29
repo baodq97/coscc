@@ -387,7 +387,7 @@ async def paid_case(service, repo: Path, proof_repo: str, case: str, stamp: str)
     unit = made["unit"]
     d = unit_dir(str(repo), unit, service.config.data_dir)
     (d / "intent.md").write_text(accepted("Intent", " Type: fix."), encoding="utf-8")
-    (d / "spec.md").write_text("# Spec: proof\nAuthor: verify_0041. Status: skipped.\n", encoding="utf-8")
+    (d / "spec.md").write_text("# Spec: proof\nAuthor: verify_0041. Status: accepted.\n", encoding="utf-8")
     (d / "plan.md").write_text(accepted("Plan", " Intent: intent.md."), encoding="utf-8")
     cut = await service.start_branch(str(repo), unit)
     tree, branch = Path(cut["worktree"]), cut["branch"]

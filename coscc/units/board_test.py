@@ -154,7 +154,8 @@ class QuestionsAreCarriedFromTheScript(unittest.TestCase):
             self.assertEqual([q["by"] for q in u["questions"]], ["", "Jera", ""])
             self.assertEqual(u["answers"], [{
                 "artifact": "intent.md", "n": 2, "question": "Two?", "by": "Jera", "date": "2026-09-25",
-                "via": "precedent", "text": "Không.",
+                # `0136` R15: whose it is, as the app's import classified `Via: precedent.`
+                "via": "precedent", "text": "Không.", "authority": "agent",
             }])
 
     def test_an_older_script_sends_no_answers_and_no_names(self):
@@ -428,7 +429,7 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
 
         async def fake_run(argv, timeout, stdin=None):
             seen["argv"], seen["timeout"] = argv, timeout
-            return 0, "open", ""
+            return 0, '{"ok": true, "lines": ["open"], "reasons": []}', ""
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
             name = self._store_unit(tmp)
@@ -887,7 +888,7 @@ def _store(d: Path, units: dict[str, dict[str, str]], ideas: dict[str, str] | No
     return d
 
 
-_TO_IMPL = {"spec.md": "# S\nStatus: skipped.\n", "plan.md": "# P\nStatus: accepted.\n"}
+_TO_IMPL = {"spec.md": "# S\nStatus: accepted.\n", "plan.md": "# P\nStatus: accepted.\n"}
 
 
 class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):
@@ -898,6 +899,8 @@ class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):
 
         async def fake_run(argv, timeout, stdin=None):
             seen.append((argv, stdin))
+            if "gate" in argv:
+                return 0, '{"ok": true, "lines": ["open"], "reasons": []}', ""
             return 0, '{"stages": [], "units": []}' if "status" in argv else '{"stage": ""}', ""
 
         snapshot = {"workspace": "proj", "workspaces": ["proj"], "units": {}, "ideas": {}}
@@ -941,3 +944,16 @@ class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
             [u] = run(board.read(d))["units"]
             nxt = run(board.next_step(d, "0001_x"))
         self.assertEqual((u["idea"], u["repo"], u["depends_on"], nxt["why"]), ("", "", [], ""))
+
+
+class TheGateHandsOnACleanRebase(unittest.TestCase):
+    """`0136` review round 1, F1: `gate --json`'s `rebased` reaches the app, and nothing else does."""
+
+    def test_only_two_named_commits_are_taken(self):
+        both = {"reviewed": "a" * 40, "head": "b" * 40}
+        self.assertEqual(_board._rebased({"rebased": both}), both)
+        for bad in ({}, {"rebased": None}, {"rebased": {"reviewed": "a"}}, {"rebased": {"reviewed": "", "head": "b"}},
+                    {"rebased": "yes"}):
+            self.assertIsNone(_board._rebased(bad), bad)
+        self.assertEqual(_board.Gate(True, "open", (), both).rebased, both)
+        self.assertIsNone(_board.Gate(True, "open").rebased)

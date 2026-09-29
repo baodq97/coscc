@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import agents, harness
+from coscc.agent import agents, harness, submit
 from coscc.knowledge import STAGES as KNOWLEDGE_STAGES
 from coscc.agent.policy import is_prose_stage
 from coscc.runner.review import (
@@ -954,7 +954,87 @@ def compose_prompt(
             "code fence, no commentary. The first lines must carry the `Status:` line the "
             "rules above describe. Prose in Vietnamese; filenames and headings in English."
         )
+    block = submit_block(stage, artifact, writes_own)
+    if block:
+        parts.append(block)
     return "\n\n---\n\n".join(parts), included, pointed
+
+
+def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
+    """`0136` R2, R4. How a stage hands back its judgement: the object, never the `Status:`
+    line, is what the app reads. `""` for a stage that hands back no stage result. English:
+    an instruction to the model."""
+    if stage == submit.ROUND:
+        return round_block()
+    if stage not in submit.STAGE_RESULT:
+        return ""
+    fields = [
+        f"- `stage`: `{stage}`.",
+        "- `judgement`: `ready` when the file is finished (its header says `Status: accepted`), "
+        "`not-ready` when it is not (`Status: draft`).",
+        "- `questions`: every item under `## Open questions` still waiting on a person, as "
+        "`{n, text}` with the number the file gives it; `[]` when there is none.",
+    ]
+    if stage == "spec":
+        fields.append("- `unmeasured`: every `U<n>` id a `## Concerns` item opens with `[unmeasured]`; `[]` for none.")
+    if stage == "spike":
+        fields.append("- `verdicts`: one `{id, verdict}` per `## U<n>` section, `verdict` being `holds` or `fails`.")
+    if stage == "impl":
+        fields.append(
+            "- `needs_person`: the `F<k>` of every open finding of the last review round that this "
+            "stage cannot close and lists under `## Needs a person`; `[]` for none. Only an open "
+            "finding of the last round may be named."
+        )
+    when = (
+        f"Call it once `{artifact}` is written and final. Writing the file again after that "
+        "makes the object stale, and the app refuses it."
+        if writes_own
+        else f"Call it before you reply; once it answers, reply with `{artifact}` and nothing after it."
+    )
+    return (
+        "# Hand back your judgement\n\n"
+        f"The app does not read `Status:` or `## Open questions` out of `{artifact}`: it takes "
+        f"them from the object you hand it through the `submit` tool (`{submit.NAME}`). "
+        f"{when} The object:\n\n" + "\n".join(fields) + "\n\n"
+        "If `submit` returns an error, the app has checked your object against the unit: "
+        f"{submit.AGAIN} Keep calling it until it is accepted. A step that hands back no object "
+        "ends failed, whatever its file says."
+    )
+
+
+def round_block() -> str:
+    """`0136` R5. How a review hands back its round. English: an instruction to the model."""
+    return (
+        "# Hand back your round\n\n"
+        "The app does not read the verdict, the findings or the screenshots out of `review.md`: "
+        f"it takes them from the object you hand it through the `submit` tool (`{submit.NAME}`), "
+        "and writes the round's `Reviewed:` line, its `### Findings` and its `### Screens` from "
+        "it, with the head this step ran on and the round's number. Call it before you reply; "
+        "once it answers, reply with `review.md` and nothing after it. The object:\n\n"
+        "- `verdict`: `pass`, `changes-requested` or `needs-person`.\n"
+        "- `findings`: every finding of this round, those an earlier round raised carried forward "
+        "with their id, as `{id, state, fixed_in, severity, rule, path, lines, text}`. `state` is "
+        "`open`, `fixed`, `needs-person`, `claim-rejected` or `answered`; `fixed_in` is the commit "
+        "of a `fixed` one and `\"\"` otherwise; `rule` is the `S<n>` of the UI standard it names, "
+        "or `\"\"`; `text` is what the finding says, without its id, label, place or severity.\n"
+        "- `screens`: one `{path, size, address, result}` per screenshot you opened, `size` as "
+        "`1440x900`; `[]` when you opened none.\n\n"
+        "If `submit` returns an error, the app has checked your object against the unit: "
+        f"{submit.AGAIN} Keep calling it until it is accepted. A review that hands back no round "
+        "ends failed, whatever its file says."
+    )
+
+
+def submit_prompt(stage: str, artifact: str, why: str) -> str:
+    """`0136` R2. The repair turn a step gets when its session ended without an accepted
+    object: the tool again, and nothing else."""
+    what, section = ("round", "Hand back your round") if stage == submit.ROUND else ("judgement", "Hand back your judgement")
+    return (
+        f"Your step ended without handing back its object: {why}\n\n"
+        f"Call the `submit` tool now with your {what} of `{artifact}` as it stands, as "
+        f"*{section}* above sets out. Do not change any file and do not reply "
+        f"with the artifact again. {submit.AGAIN}"
+    )
 
 
 # `0080` R1, R3. The file a spike keeps in its `cwd` as it measures, read when its reply is

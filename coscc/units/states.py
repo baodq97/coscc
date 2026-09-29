@@ -217,3 +217,130 @@ def build(raw: Any, source: str | Path = "<memory>") -> Machine:
 def default() -> Machine:
     """The packaged set, read once. Callers that take a `Machine | None` default to this."""
     return load(None)
+
+
+# -- lanes ------------------------------------------------------------------
+#
+# `0136` R1: which stages a lane runs, under what condition, and which guard decides each
+# transition of the three machines. Beside `states.json` and carried in the wheel for the same
+# reason (`coscc/agent/harness.py` `wheel_complaints`).
+LANES_PATH = Path(__file__).resolve().parent / "lanes.json"
+
+# How a stage on a lane's path is entered. `unless-skipped` needs the `skip` guard's decision
+# to be passed over; `if-unmeasured` runs only when the spec named a `U<n>` (R14).
+WHEN = ("always", "unless-skipped", "if-unmeasured")
+
+
+class BadLanes(ValueError):
+    """A lane config this module will not load, naming what is wrong with it."""
+
+
+@dataclass(frozen=True)
+class Lane:
+    name: str
+    path: tuple[tuple[str, str], ...]
+    end: str
+    guards: dict[str, dict[str, str]]
+
+    def guard_for(self, machine: str, transition: str) -> str:
+        return self.guards[machine][transition]
+
+
+@dataclass(frozen=True)
+class Lanes:
+    lanes: dict[str, Lane]
+    ci_poll_seconds: float
+
+    def lane(self, name: str = "full") -> Lane:
+        return self.lanes[name]
+
+
+def load_lanes(path: str | Path | None = None, machine: Machine | None = None) -> Lanes:
+    """Read a lane config. `None` means the packaged one."""
+    source = Path(path) if path is not None else LANES_PATH
+    try:
+        raw = json.loads(source.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise BadLanes(f"could not read the lanes at {source}: {e}") from e
+    except json.JSONDecodeError as e:
+        raise BadLanes(f"{source} is not readable JSON: {e}") from e
+    return build_lanes(raw, source, machine)
+
+
+def build_lanes(raw: Any, source: str | Path = "<memory>", machine: Machine | None = None) -> Lanes:
+    """A `Lanes` from parsed data, refused whole when a guard the machines need is missing.
+
+    Imported here rather than at the top: `guards` is the table this checks against, and the
+    state set has no business knowing it for anything else.
+    """
+    from coscc.units import guards
+
+    machine = machine or default()
+    if not isinstance(raw, dict):
+        raise BadLanes(f"{source}: a lane config is an object, not {type(raw).__name__}")
+    params = raw.get("params")
+    if not isinstance(params, dict):
+        raise BadLanes(f"{source}: 'params' must be an object")
+    poll = params.get("ci_poll_seconds")
+    if isinstance(poll, bool) or not isinstance(poll, (int, float)) or poll <= 0:
+        raise BadLanes(f"{source}: 'params.ci_poll_seconds' must be a positive number of seconds")
+
+    lanes_raw = raw.get("lanes")
+    if not isinstance(lanes_raw, dict) or not lanes_raw:
+        raise BadLanes(f"{source}: 'lanes' must name at least one lane")
+    if "full" not in lanes_raw:
+        raise BadLanes(f"{source}: there is no lane 'full', the one every unit is on")
+
+    lanes: dict[str, Lane] = {}
+    for name, item in lanes_raw.items():
+        where = f"{source}: lane {name!r}"
+        if not isinstance(item, dict):
+            raise BadLanes(f"{where} is not an object")
+        path_raw = item.get("path")
+        if not isinstance(path_raw, list) or not path_raw:
+            raise BadLanes(f"{where} needs a non-empty 'path'")
+        path: list[tuple[str, str]] = []
+        for step in path_raw:
+            stage = str((step or {}).get("stage") or "") if isinstance(step, dict) else ""
+            when = str((step or {}).get("when") or "") if isinstance(step, dict) else ""
+            if machine.stage(stage) is None:
+                raise BadLanes(f"{where}: {stage!r} is no stage of the {machine.name!r} state set")
+            if when not in WHEN:
+                raise BadLanes(f"{where}: stage {stage!r} has 'when' {when!r}, not one of {', '.join(WHEN)}")
+            path.append((stage, when))
+        end = str(item.get("end") or "").strip()
+        if not end:
+            raise BadLanes(f"{where} needs an 'end' state")
+
+        chosen = item.get("guards")
+        if not isinstance(chosen, dict):
+            raise BadLanes(f"{where} needs 'guards', one per transition of each machine")
+        extra = sorted(set(chosen) - set(guards.TRANSITIONS))
+        if extra:
+            raise BadLanes(f"{where}: no machine is called {', '.join(extra)}")
+        picked: dict[str, dict[str, str]] = {}
+        for m, transitions in guards.TRANSITIONS.items():
+            given = chosen.get(m)
+            if not isinstance(given, dict):
+                raise BadLanes(f"{where}: no guards for the {m!r} machine")
+            extra = sorted(set(given) - set(transitions))
+            if extra:
+                raise BadLanes(f"{where}: the {m!r} machine has no transition {', '.join(extra)}")
+            picked[m] = {}
+            for transition, allowed in transitions.items():
+                g = str(given.get(transition) or "")
+                if not g:
+                    raise BadLanes(f"{where}: the {m!r} transition {transition!r} has no guard, and it needs one")
+                if g not in allowed:
+                    raise BadLanes(
+                        f"{where}: {g!r} cannot decide the {m!r} transition {transition!r} "
+                        f"(it may be {', '.join(allowed)})"
+                    )
+                picked[m][transition] = g
+        lanes[name] = Lane(name=name, path=tuple(path), end=end, guards=picked)
+    return Lanes(lanes=lanes, ci_poll_seconds=float(poll))
+
+
+@lru_cache(maxsize=1)
+def default_lanes() -> Lanes:
+    return load_lanes(None)

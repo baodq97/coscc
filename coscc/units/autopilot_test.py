@@ -30,34 +30,47 @@ def unit(questions=()):
     return {"name": "0010_a", "questions": list(questions)}
 
 
-def nxt(stage="", action="", waiting=(), hold=None):
-    return {"stage": stage, "action": action, "waiting": list(waiting), "hold": hold}
+def nxt(stage="", action="", waiting=(), hold=None, reasons=()):
+    return {"stage": stage, "action": action, "waiting": list(waiting), "hold": hold, "reasons": list(reasons)}
 
 
-class TheWordsAreCosMjs(unittest.TestCase):
-    """Plan Risk 3: `next` hands out no `why`, so its words are read. Red when they change."""
+RECORDING = nxt("ship", RECORDING_SHIP, reasons=["recording-ship"])
+MERGING = nxt("ship", MERGING_SHIP)
 
-    def test_each_phrase_is_still_in_cos_mjs(self):
-        text = COS_MJS.read_text(encoding="utf-8")
-        self.assertIn("`" + ap.CI_PENDING + "${pr.number}", text)
-        self.assertIn("`" + ap.CI_RED + "${pr.number}", text)
-        self.assertIn("`" + ap.NEEDS_A_PERSON + " — review used", text)
-        self.assertIn(f"action: '{ap.FINISHED}'", text)
-        self.assertIn("`" + ap.CLOSED + "${s.name} rejected`", text)
-        self.assertIn(f"export const WAITING_ON = '{ap.WAITING_ON}'", text)
-        self.assertIn(": " + ap.RECORDING + "`", text)
 
-    def test_is_recording_ship_reads_the_merged_line_and_not_the_merge_pin(self):
-        self.assertTrue(ap.is_recording_ship(RECORDING_SHIP))
-        self.assertFalse(ap.is_recording_ship(MERGING_SHIP))
-        self.assertFalse(ap.is_recording_ship(""))
+class TheCodesAreRead(unittest.TestCase):
+    """`0136` R11: `next` hands out `reasons`, and the words beside them decide nothing."""
+
+    def test_is_recording_ship_reads_the_code_and_not_the_merged_line(self):
+        self.assertTrue(ap.is_recording_ship(RECORDING))
+        self.assertFalse(ap.is_recording_ship(MERGING))
+        self.assertFalse(ap.is_recording_ship(nxt("ship", RECORDING_SHIP)))
+        self.assertFalse(ap.is_recording_ship({}))
+
+    def test_a_gate_refusal_is_read_by_its_codes(self):
+        class Refused(Exception):
+            reasons = ("missing", "ci-pending")
+
+        self.assertTrue(ap.is_ci_pending(Refused("anything at all")))
+        self.assertFalse(ap.is_ci_pending(Exception("CI has not finished on #7: t — wait, then ask again")))
+
+    def test_a_skip_no_person_decided_stops_for_a_person(self):
+        # `0136` R14: `cos.mjs` names no stage for it, since running the spec again would only
+        # skip again; the stop is `b`, a person's, never `f`'s "no stage it can name".
+        said = nxt("", "spec.md is skipped by agent, not by a person or their delegate — …", reasons=["agent-cannot-skip"])
+        self.assertTrue(ap.needs_a_person(said))
+        self.assertEqual(ap.stop_for(unit(), said, None, False)["kind"], "b")
+
+    def test_the_autopilot_holds_none_of_cos_mjs_words(self):
+        for name in ("CI_PENDING", "CI_RED", "NEEDS_A_PERSON", "FINISHED", "CLOSED", "WAITING_ON", "RECORDING"):
+            self.assertFalse(hasattr(ap, name), name)
 
 
 class AUnitWaitingOnADependency(unittest.TestCase):
     """`0040` R7, plan Risk 6. `next` answers `stage: ""` while `impl` waits on a merge."""
 
     def test_a_unit_waiting_on_a_dependency_is_passed_over_not_stopped_and_no_notice_is_sent(self):
-        said = nxt("", ap.WAITING_ON + "api/0001_backend to merge")
+        said = nxt("", "waiting on api/0001_backend to merge", reasons=["dependency", "waiting-on"])
         # No stop is what keeps a notice from going out: only a stop is recorded and told.
         self.assertIsNone(ap.stop_for(unit(), said, None, False))
         self.assertEqual(ap.reason_for(said, "", None), ("dependency", said["action"]))
@@ -71,8 +84,8 @@ class Stops(unittest.TestCase):
         self.assertIsNone(ap.stop_for(unit(), nxt("spec", "write-spec"), None, False))
 
     def test_finished_rejected_and_held_are_not_stops(self):
-        self.assertIsNone(ap.stop_for(unit(), nxt("", "finished"), None, False))
-        self.assertIsNone(ap.stop_for(unit(), nxt("", "closed — spec rejected"), None, False))
+        self.assertIsNone(ap.stop_for(unit(), nxt("", "finished", reasons=["finished"]), None, False))
+        self.assertIsNone(ap.stop_for(unit(), nxt("", "closed — spec rejected", reasons=["rejected", "closed"]), None, False))
         self.assertIsNone(ap.stop_for(unit(), nxt("", "paused — x", hold={"state": "paused"}), None, False))
 
     def test_a_open_question_lists_each(self):
@@ -89,8 +102,10 @@ class Stops(unittest.TestCase):
     def test_b_waiting_and_rounds_used(self):
         self.assertEqual(ap.stop_for(unit(), nxt("", "answer F2", waiting=["F2"]), None, False)["kind"], "b")
         said = "needs a person — review used 3 of 3 rounds and findings are still open"
-        got = ap.stop_for(unit(), nxt("", said), None, False)
+        got = ap.stop_for(unit(), nxt("", said, reasons=["needs-person"]), None, False)
         self.assertEqual((got["kind"], got["reason"]), ("b", said))
+        # The words alone are no longer read: with no code it is the stop `f`.
+        self.assertEqual(ap.stop_for(unit(), nxt("", said), None, False)["kind"], "f")
 
     def test_c_ship_only_when_allowed(self):
         self.assertEqual(ap.stop_for(unit(), nxt("ship", "write-ship"), None, False)["kind"], "c")
@@ -124,32 +139,32 @@ class Stops(unittest.TestCase):
     def test_e_0126_an_exhausted_ship_is_no_stop_before_a_recording_ship(self):
         ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
         for count in (1, 3):
-            self.assertIsNone(ap.stop_for(unit(), nxt("ship", RECORDING_SHIP), ran_out, True, exhausted=count), count)
+            self.assertIsNone(ap.stop_for(unit(), RECORDING,ran_out, True, exhausted=count), count)
 
     def test_e_0126_an_exhausted_ship_still_stops_before_a_merging_ship(self):
         ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
-        self.assertEqual(ap.stop_for(unit(), nxt("ship", MERGING_SHIP), ran_out, True, exhausted=1),
+        self.assertEqual(ap.stop_for(unit(), MERGING,ran_out, True, exhausted=1),
                          {"kind": "e", "reason": "the last ship step ended exhausted"})
 
     def test_e_0126_a_recording_ship_that_ran_out_stops(self):
         ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
-        self.assertEqual(ap.stop_for(unit(), nxt("ship", RECORDING_SHIP), ran_out, True, exhausted=1, recorded=True),
+        self.assertEqual(ap.stop_for(unit(), RECORDING,ran_out, True, exhausted=1, recorded=True),
                          {"kind": "e", "reason": "the last ship step ended exhausted"})
 
     def test_e_0126_failed_cancelled_and_stopped_ships_stop_before_a_recording_ship(self):
         for outcome in ("failed", "cancelled", "stopped"):
             last = {"kind": "end", "stage": "ship", "outcome": outcome}
-            self.assertEqual(ap.stop_for(unit(), nxt("ship", RECORDING_SHIP), last, True, exhausted=1)["kind"], "e", outcome)
+            self.assertEqual(ap.stop_for(unit(), RECORDING,last, True, exhausted=1)["kind"], "e", outcome)
 
     def test_e_0126_a_recording_ship_still_meets_c(self):
         ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
-        self.assertEqual(ap.stop_for(unit(), nxt("ship", RECORDING_SHIP), ran_out, False, exhausted=1)["kind"], "c")
+        self.assertEqual(ap.stop_for(unit(), RECORDING,ran_out, False, exhausted=1)["kind"], "c")
 
     def test_skips_exhausted_only_for_a_ship_end(self):
-        self.assertFalse(ap.skips_exhausted(nxt("ship", RECORDING_SHIP), {"kind": "end", "stage": "plan", "outcome": "exhausted"}, False))
-        self.assertFalse(ap.skips_exhausted(nxt("ship", RECORDING_SHIP), {"kind": "integration", "stage": "ship", "outcome": "exhausted"}, False))
-        self.assertFalse(ap.skips_exhausted(nxt("ship", RECORDING_SHIP), None, False))
-        self.assertTrue(ap.skips_exhausted(nxt("ship", RECORDING_SHIP), {"kind": "end", "stage": "ship", "outcome": "exhausted"}, False))
+        self.assertFalse(ap.skips_exhausted(RECORDING,{"kind": "end", "stage": "plan", "outcome": "exhausted"}, False))
+        self.assertFalse(ap.skips_exhausted(RECORDING,{"kind": "integration", "stage": "ship", "outcome": "exhausted"}, False))
+        self.assertFalse(ap.skips_exhausted(RECORDING,None, False))
+        self.assertTrue(ap.skips_exhausted(RECORDING,{"kind": "end", "stage": "ship", "outcome": "exhausted"}, False))
 
     def test_e_0120_failed_cancelled_and_stopped_stop_whatever_the_count(self):
         for outcome in ("failed", "cancelled", "stopped"):
@@ -179,6 +194,28 @@ class Stops(unittest.TestCase):
         theirs = {"kind": "integration", "outcome": "refused", "started_by": "person"}
         self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), theirs, True))
 
+    def test_e_a_pr_or_ship_the_machine_failed_or_refused_and_none_once_one_did_its_work(self):
+        """`0136` review round 1, F2: with no `end`, the machine's record is the last word."""
+        refused = {"kind": ap.PR_MACHINE, "stage": "ship", "outcome": "failed", "result": "refused",
+                   "reasons": ["head-moved"], "detail": ""}
+        got = ap.stop_for(unit(), nxt("ship", "x"), refused, True)
+        self.assertEqual(got, {"kind": "e", "reason": "the last ship was refused: head-moved"})
+        failed = {"kind": ap.PR_MACHINE, "stage": "pr", "outcome": "failed", "result": "failed", "detail": "gh down"}
+        self.assertEqual(ap.stop_for(unit(), nxt("pr", "x"), failed, True)["reason"], "the last pr was failed: gh down")
+        done = {"kind": ap.PR_MACHINE, "stage": "pr", "outcome": "done", "result": "opened"}
+        self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), done, True))
+
+    def test_f_a_merge_github_refused_stops_on_what_gh_said(self):
+        """`0136` review round 2, F6: as `0112` R7, so the pass may still integrate a unit the
+        refusal left behind `main` (`0112` R1)."""
+        said = "the head branch is not up to date with the base branch"
+        refused = {"kind": ap.PR_MACHINE, "stage": "ship", "outcome": "failed", "result": "failed",
+                   "detail": said, "merge_refused": True}
+        self.assertEqual(ap.stop_for(unit(), nxt("", "behind"), refused, True),
+                         {"kind": "f", "reason": f"ship was refused: {said}"})
+        failed = {**refused, "merge_refused": False}
+        self.assertEqual(ap.stop_for(unit(), nxt("", "behind"), failed, True)["kind"], "e")
+
     def test_e_screenshots_that_could_not_be_taken_again_and_none_once_they_were(self):
         # `0111`: no retry; a retake that is taken, run by a person, lifts it.
         failed = {"kind": "screens", "stage": "review", "outcome": "failed", "detail": "exited 2"}
@@ -205,7 +242,7 @@ class Stops(unittest.TestCase):
     def test_after_own_integration_runs_impl_once_then_stops(self):
         red = {"state": "red-after-integration"}
         mine = {"kind": "integration", "outcome": "pushed", "mode": "mechanical", "started_by": "autopilot"}
-        fix = nxt("impl", "CI is red on #120: tests — back to impl: fix on the branch and push")
+        fix = nxt("impl", "CI is red on #120: tests — back to impl: fix on the branch and push", reasons=["ci-red"])
         self.assertEqual(ap.after_own_integration(red, mine, [], fix), ("impl", None))
         ran = [{"kind": "start", "stage": "impl", "started_by": "autopilot"}, {"kind": "end", "stage": "impl"}]
         still = ("", {"kind": "e", "reason": ap.STILL_RED})
@@ -223,12 +260,12 @@ class Stops(unittest.TestCase):
         today = ("", {"kind": "e", "reason": "CI is still red after the autopilot's last integration"})
         self.assertEqual(ap.after_own_integration(red, mine, [], nxt("", "finish and accept plan.md")), today)
         # R3 c: past the window, today's stop too, `impl` or not.
-        self.assertEqual(ap.after_own_integration(red, mine, None, nxt("impl", "CI is red on #7: t")), today)
-        self.assertIsNone(ap.after_own_integration({"state": "current"}, mine, None, nxt("impl", "CI is red on #7: t")))
+        self.assertEqual(ap.after_own_integration(red, mine, None, nxt("impl", "CI is red on #7: t", reasons=["ci-red"])), today)
+        self.assertIsNone(ap.after_own_integration({"state": "current"}, mine, None, nxt("impl", "CI is red on #7: t", reasons=["ci-red"])))
 
     def test_after_own_integration_leaves_a_persons_integration_alone(self):
         red = {"state": "red-after-integration"}
-        fix = nxt("impl", "CI is red on #7: t — back to impl")
+        fix = nxt("impl", "CI is red on #7: t — back to impl", reasons=["ci-red"])
         ran = [{"kind": "start", "stage": "impl", "started_by": "autopilot"}]
         theirs = {"kind": "integration", "outcome": "pushed", "started_by": "person"}
         self.assertIsNone(ap.after_own_integration(red, theirs, [], fix))
@@ -241,7 +278,7 @@ class Stops(unittest.TestCase):
     def test_after_own_integration_counts_only_the_autopilots_impl(self):
         red = {"state": "red-after-integration"}
         mine = {"kind": "integration", "outcome": "pushed", "started_by": "autopilot"}
-        fix = nxt("impl", "CI is red on #7: t — back to impl")
+        fix = nxt("impl", "CI is red on #7: t — back to impl", reasons=["ci-red"])
         theirs = [
             {"kind": "start", "stage": "impl", "started_by": "person"},
             {"kind": "start", "stage": "impl"},
@@ -254,7 +291,7 @@ class Stops(unittest.TestCase):
         it counts, and a second that runs out is not forgiven."""
         red = {"state": "red-after-integration"}
         mine = {"kind": "integration", "outcome": "pushed", "started_by": "autopilot"}
-        fix = nxt("impl", "CI is red on #7: t — back to impl")
+        fix = nxt("impl", "CI is red on #7: t — back to impl", reasons=["ci-red"])
         start = {"kind": "start", "stage": "impl", "started_by": "autopilot"}
         out = {"kind": "end", "stage": "impl", "outcome": "exhausted"}
         done = {**out, "outcome": "done"}
@@ -267,12 +304,10 @@ class Stops(unittest.TestCase):
         theirs = [{**start, "started_by": "person"}, out, start, done]
         self.assertEqual(ap.after_own_integration(red, mine, theirs, fix, 1), still)
 
-    def test_is_ci_red_reads_the_words_inside_a_joined_action(self):
-        self.assertTrue(ap.is_ci_red("CI is red on #7: tests — back to impl: fix on the branch and push"))
-        # `onReview` and `rebased` join the gate's reasons with "; " (`cos.mjs` `nextStep`).
-        joined = "the head moved since the passing round; CI is red on #7: tests — back to impl: fix on the branch and push"
-        self.assertTrue(ap.is_ci_red(joined))
-        self.assertFalse(ap.is_ci_red("CI has not finished on #7: t — wait, then ask again"))
+    def test_is_ci_red_reads_the_code_and_not_the_words(self):
+        self.assertTrue(ap.is_ci_red(nxt("impl", "anything", reasons=["changes-requested", "ci-red"])))
+        self.assertFalse(ap.is_ci_red(nxt("impl", "CI is red on #7: tests — back to impl: fix on the branch and push")))
+        self.assertFalse(ap.is_ci_red(nxt("", "x", reasons=["ci-pending"])))
         self.assertFalse(ap.is_ci_red(None))
 
     UNOPENED = {"kind": "end", "stage": "plan", "outcome": "failed",
@@ -306,10 +341,10 @@ class Stops(unittest.TestCase):
         self.assertEqual((got["kind"], got["reason"]), ("f", "finish and accept plan.md"))
 
     def test_ci_pending_is_not_a_stop(self):
-        said = "CI has not finished on #7: test — wait, then ask again"
+        said = nxt("", "CI has not finished on #7: test — wait, then ask again", reasons=["missing", "ci-pending"])
         self.assertTrue(ap.is_ci_pending(said))
-        self.assertIsNone(ap.stop_for(unit(), nxt("", said), None, True))
-        self.assertFalse(ap.is_ci_pending("CI is red on #7"))
+        self.assertIsNone(ap.stop_for(unit(), said, None, True))
+        self.assertFalse(ap.is_ci_pending(nxt("impl", "x", reasons=["ci-red"])))
 
 
 class TheDaysMoney(unittest.TestCase):
@@ -438,6 +473,41 @@ class Scheduling(unittest.TestCase):
         self.assertEqual(got["held"], {"0011_b": ("ship-busy", "0010_a")})
         got = ap.pick([self.c("0011_b", "ship")], [{"unit": "0010_a", "stage": "ship", "files": None}], 4, 100.0)
         self.assertEqual((got["chosen"], got["held"]), ([], {"0011_b": ("ship-busy", "0010_a")}))
+
+    def test_an_open_pr_on_the_same_file_holds_impl_until_it_merges(self):
+        # `0136` R22. While 0010_a's pull request is open, 0011_b's impl waits; once the
+        # PR/CI machine reads it merged, it is no longer in `open_prs` and the next pass picks it.
+        b = self.c("0011_b", "impl", {"a.py"})
+        pr = {"unit": "0010_a", "number": 7, "files": {"a.py", "c.py"}}
+        got = ap.pick([b], [], 4, 100.0, open_prs=[pr])
+        self.assertEqual((got["chosen"], got["held"]), ([], {"0011_b": ("overlap-pr", "#7")}))
+        got = ap.pick([b], [], 4, 100.0, open_prs=[])
+        self.assertEqual([x["unit"] for x in got["chosen"]], ["0011_b"])
+
+    def test_a_unit_with_its_own_open_pr_is_not_held_by_another(self):
+        # Back at impl after `changes-requested`: two open pull requests on one file must not
+        # wait on each other for ever.
+        b = self.c("0011_b", "impl", {"a.py"})
+        prs = [{"unit": "0010_a", "number": 7, "files": {"a.py"}},
+               {"unit": "0011_b", "number": 8, "files": {"a.py"}}]
+        got = ap.pick([b], [], 4, 100.0, open_prs=prs)
+        self.assertEqual([x["unit"] for x in got["chosen"]], ["0011_b"])
+
+    def test_a_pr_whose_files_could_not_be_read_overlaps_every_file(self):
+        got = ap.pick([self.c("0011_b", "impl", {"a.py"})], [], 4, 100.0,
+                      open_prs=[{"unit": "0010_a", "number": 7, "files": None}])
+        self.assertEqual(got["held"], {"0011_b": ("overlap-pr", "#7")})
+
+    def test_an_open_pr_holds_only_impl(self):
+        got = ap.pick([self.c("0011_b", "review", {"a.py"})], [], 4, 100.0,
+                      open_prs=[{"unit": "0010_a", "number": 7, "files": {"a.py"}}])
+        self.assertEqual([x["unit"] for x in got["chosen"]], ["0011_b"])
+
+    def test_overlap_pr_is_a_code_of_the_one_reason_table(self):
+        from coscc.units import guards
+
+        self.assertIn("overlap-pr", ap.REASONS)
+        self.assertIn("overlap-pr", guards.REASONS)
 
     def test_the_cap_holds_back_what_does_not_fit(self):
         got = ap.pick([self.c("0010_a", "impl", {"a"}, 16.0), self.c("0011_b", "review", None, 2.0)], [], 4, 3.0)
@@ -660,15 +730,15 @@ class ReasonsAndPassed(unittest.TestCase):
         self.assertEqual(ap.reason_for(nxt(hold=hold), "", None), ("held", "paused"))
 
     def test_finished(self):
-        self.assertEqual(ap.reason_for(nxt(action=ap.FINISHED), "", None), ("finished", ap.FINISHED))
+        self.assertEqual(ap.reason_for(nxt(action="finished", reasons=["finished"]), "", None), ("finished", "finished"))
 
     def test_closed(self):
-        said = ap.CLOSED + "spec rejected"
-        self.assertEqual(ap.reason_for(nxt(action=said), "", None), ("closed", said))
+        said = "closed — spec rejected"
+        self.assertEqual(ap.reason_for(nxt(action=said, reasons=["rejected", "closed"]), "", None), ("closed", said))
 
     def test_ci(self):
-        said = ap.CI_PENDING + "3: t — wait, then ask again"
-        self.assertEqual(ap.reason_for(nxt(action=said), "", None), ("ci", said))
+        said = "CI has not finished on #3: t — wait, then ask again"
+        self.assertEqual(ap.reason_for(nxt(action=said, reasons=["ci-pending"]), "", None), ("ci", said))
 
     def test_nothing_to_read_it_off_raises(self):
         with self.assertRaises(ValueError):

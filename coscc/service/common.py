@@ -28,6 +28,15 @@ class Invalid(Exception):
     """A request this layer refuses, carrying a reason a caller can show verbatim."""
 
 
+class Refused(Invalid):
+    """`0136` R11: the gate refused a step. `reasons` are its codes (`guards.REASONS`), which
+    the autopilot reads instead of the words."""
+
+    def __init__(self, said: str, reasons: tuple[str, ...] = ()) -> None:
+        super().__init__(said)
+        self.reasons = tuple(reasons)
+
+
 class Updating(Invalid):
     """`0068` R11: refused because the app is in the seconds before it restarts. A 503."""
 

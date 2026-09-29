@@ -34,6 +34,7 @@ from typing import Any
 # which is how a single packaging omission arrived as two unrelated-looking symptoms.
 from coscc.agent import harness
 from coscc.agent.harness import child_env as _child_env
+from coscc.units import guards
 
 # Measured 2026-09-21 on this machine: five runs over the eight units in this repository
 # took 0.05s each, node v24.20.0. Ten seconds is therefore about two hundred times the
@@ -45,6 +46,39 @@ TIMEOUT = 10.0
 
 class Unavailable(Exception):
     """The board cannot be read, carrying a reason a caller can show verbatim."""
+
+
+class Gate(tuple):
+    """`gate`'s answer: `(open, what it said)`, unpacked as it always was, and `reasons`, the
+    codes beside the words (`0136` R11), which the app branches on instead of them.
+    `rebased`, `{reviewed, head}`, only when `ship` opened on a clean rebase (`0067`)."""
+
+    reasons: tuple[str, ...]
+    rebased: dict[str, str] | None
+
+    def __new__(cls, opened: bool, said: str, reasons: tuple[str, ...] = (),
+                rebased: dict[str, str] | None = None) -> "Gate":
+        answer = super().__new__(cls, (opened, said))
+        answer.reasons = tuple(reasons)
+        answer.rebased = rebased
+        return answer
+
+
+def _rebased(data: dict[str, Any]) -> dict[str, str] | None:
+    got = data.get("rebased")
+    if not isinstance(got, dict) or not all(isinstance(got.get(k), str) and got.get(k) for k in ("reviewed", "head")):
+        return None
+    return {"reviewed": got["reviewed"], "head": got["head"]}
+
+
+def _codes(data: dict[str, Any]) -> tuple[str, ...]:
+    """`reasons` of a `gate --json` or `next` answer. A code outside `guards.REASONS` is this
+    app's bug, refused here so that it never reaches a caller that branches on it."""
+    codes = tuple(str(c) for c in data.get("reasons") or ())
+    unknown = [c for c in codes if c not in guards.REASONS]
+    if unknown:
+        raise Unavailable(f"the harness script handed out a reason code the app does not know: {', '.join(unknown)}")
+    return codes
 
 
 def _stage_rows(stages: list[dict[str, Any]], artifacts: dict[str, Any]) -> list[dict[str, Any]]:
@@ -322,8 +356,8 @@ async def gate(
     repo: str | Path | None = None,
     timeout: float = GATE_TIMEOUT,
     state: dict[str, Any] | None = None,
-) -> tuple[bool, str]:
-    """Ask `cos.mjs gate` whether one stage of one unit may proceed.
+) -> Gate:
+    """Ask `cos.mjs gate --json` whether one stage of one unit may proceed.
 
     `repo` is the workspace -- the git checkout the unit's code lives in -- and is passed as
     `--repo`. It is not `units_root`: since `0014` that is the product's store, which holds
@@ -331,9 +365,9 @@ async def gate(
     to read and no pull request to ask about. Without `repo` those two gates stay closed
     and say so; every other stage reads files only and does not care.
 
-    Returns `(open, what it said)`. Exit 0 is open; exit 1 is blocked and carries the
-    reasons; exit 2 is misuse, which is this app's bug and not the unit's, so it is
-    reported with what the script printed rather than translated.
+    Returns `(open, what it said)`, with the codes as `.reasons` (`Gate`). Exit 0 is open;
+    exit 1 is blocked and carries the reasons; exit 2 is misuse, which is this app's bug and
+    not the unit's, so it is reported with what the script printed rather than translated.
 
     **Nothing in this app asked this question until now.** `.claude/CLAUDE.md` invariant 2
     -- *"Ask `cos.mjs gate` before a stage and stop when it exits non-zero"* -- was written
@@ -355,7 +389,7 @@ async def gate(
 
     try:
         source, stdin = _source(state)
-        argv = [str(script), "--root", str(path), *source, "gate", unit, stage]
+        argv = [str(script), "--root", str(path), *source, "gate", unit, stage, "--json"]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
         code, out_text, err_text = await _ask(argv, timeout, stdin)
@@ -366,8 +400,16 @@ async def gate(
     except asyncio.TimeoutError:
         raise Unavailable(f"asking the gate timed out after {timeout:.0f}s") from None
 
+    if code in (0, 1):
+        try:
+            data = json.loads(out_text)
+            lines = [str(line) for line in data["lines"]]
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+            raise Unavailable(f"the harness script did not return JSON: {e}") from e
+        said = "\n".join(lines).strip()
+        return Gate(code == 0, said or f"the gate exited {code} and said nothing", _codes(data), _rebased(data))
     said = (out_text + err_text).strip()
-    return code == 0, said or f"the gate exited {code} and said nothing"
+    return Gate(False, said or f"the gate exited {code} and said nothing")
 
 
 async def next_step(
@@ -430,6 +472,9 @@ async def next_step(
         "rerun": str(data.get("rerun") or ""),
         # `0040` R7. `dependency` only when `impl` waits on a unit not merged; else "".
         "why": str(data.get("why") or ""),
+        # `0136` R11. The codes of what settled the answer; the autopilot reads these, never
+        # `action`.
+        "reasons": list(_codes(data)),
     }
 
 
@@ -561,8 +606,9 @@ def _questions_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """`[{artifact, n, question, by, date, via, text}]`, one per question with an answer in
-    force, in the order of `artifacts`."""
+    """`[{artifact, n, question, by, date, via, text, authority}]`, one per question with an
+    answer in force, in the order of `artifacts`. `authority` is the app's (`0136` R15), as
+    the snapshot handed it to `cos.mjs`; `""` where it gave none."""
     out = []
     for artifact, a in (unit.get("artifacts") or {}).items():
         for q in (a or {}).get("questions") or []:
@@ -573,6 +619,7 @@ def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
                 "artifact": str(artifact), "n": q.get("n"), "question": str(q.get("text") or ""),
                 "by": str(answer.get("by") or ""), "date": str(answer.get("date") or ""),
                 "via": str(answer.get("via") or ""), "text": str(answer.get("text") or ""),
+                "authority": str(answer.get("authority") or ""),
             })
     return out
 
@@ -635,8 +682,18 @@ def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
             "n": r.get("n"), "verdict": r.get("verdict"), "text": r.get("text") or "",
             "findings": len(found),
             "findings_open": sum(1 for f in found if f.get("label") == "open"),
+            # `0136` R6: the ids an impl may claim only a person can close, off the same list.
+            "open_ids": [str(f.get("id")) for f in found if f.get("label") == "open"],
             "dropped": [str(x) for x in r.get("dropped") or []],
             "unfinished": bool(r.get("unfinished")),
+            # `0136`: what `coscc/units/prose_import.py` reads a round only the prose holds
+            # from, once. Copied off `parseReview`'s list, never parsed here.
+            "reviewed": r.get("reviewed"),
+            "found": [
+                {"id": f.get("id"), "label": f.get("label"), "fixed_by": f.get("fixedBy"), "text": f.get("text")}
+                for f in found
+            ],
+            "screens": r.get("screens") if isinstance(r.get("screens"), dict) else None,
         })
     return out
 

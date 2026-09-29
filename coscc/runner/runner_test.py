@@ -40,6 +40,7 @@ from coscc.runner import (
     strip_answers,
     with_answers,
 )
+from coscc.agent.submit_test import a_head, submits as _submits
 
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 UNIT = "0009_a-test-unit"
@@ -100,6 +101,7 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                              tools=None, **kw):
                 self.granted = tuple(tools or ())
                 yield ("chunk", "# Plan: x\nStatus: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-plan", "cost": {}})
 
         sessions = Replies()
@@ -133,6 +135,7 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                              tools=None, **kw):
                 self.granted = tuple(tools or ())
                 yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-spec", "cost": {}})
 
         sessions = Replies()
@@ -203,6 +206,7 @@ class AStepRecordsTheCommitItRanOn(unittest.TestCase):
     class Replies:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s-spec", "cost": {}})
 
     def _start_record(self, d: str, **extra) -> dict:
@@ -265,6 +269,7 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
             self.prompt = text
             self.kw = kw
             yield ("chunk", "# Idea: x\nStatus: accepted.\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s-idea", "cost": {}})
 
     def _run(self, d: str, sessions, journal=None, stage="idea"):
@@ -293,7 +298,12 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
                 tools=replies.kw["tools"], data_dir=d,
             )
         self.assertEqual(replies.kw["tools"], [])
-        self.assertNotIn("can_use_tool", {k for k, v in replies.kw.items() if v is not None})
+        # `0136` spec C4: the gate an `idea` now gets lets `submit` through and nothing else.
+        gate = replies.kw["can_use_tool"]
+        self.assertEqual(list(replies.kw["mcp_servers"]), ["cos"])
+        for tool, allowed in (("mcp__cos__submit", True), ("Read", False), ("Bash", False)):
+            verdict = asyncio.run(gate(tool, {"file_path": d, "command": "ls"}, None))
+            self.assertEqual(type(verdict).__name__ == "PermissionResultAllow", allowed, tool)
         self.assertEqual(options.tools, [])
 
     def test_the_start_row_names_the_instructions_the_session_was_given(self):
@@ -347,6 +357,7 @@ class AStepRecordsTheBaseItRanOn(unittest.TestCase):
     class Replies:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Impl: x\nStatus: accepted.\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s-impl", "cost": {}})
 
     def _start_record(self, d: str, **run_kw) -> dict:
@@ -498,6 +509,7 @@ class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 seen["prompt"] = text
                 yield ("chunk", "# Review: x\nStatus: accepted.\n\n## Round 1\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-r", "cost": {}})
 
         with tempfile.TemporaryDirectory() as d:
@@ -569,6 +581,7 @@ class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
             yield ("chunk", "Now checking the route the proof will use.")
             yield ("tool", "Grep")
             yield ("chunk", "# Plan: a problem\nIntent: intent.md. Status: accepted.\n\n## Body\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s-1", "cost": {"output_tokens": 9}})
 
     def go(self, d):
@@ -652,7 +665,11 @@ class ReviewRoundsAccumulate(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.prompt = text
             yield ("chunk", self.text)
+            await _submits(kw)
             yield ("done", {"session_id": "s", "cost": {}})
+
+    def setUp(self):
+        a_head(self)
 
     def run_review(self, d, reply):
         unit = make_unit(
@@ -769,6 +786,7 @@ class RerunningKeepsTheAnswers(unittest.TestCase):
             yield ("chunk", self.text)
             if self.mid_write:
                 self.mid_write()
+            await _submits(kw)
             yield ("done", {"session_id": "s", "cost": {}})
 
     def unit_dir(self, d, **files):
@@ -895,6 +913,7 @@ class RerunningKeepsTheAnswers(unittest.TestCase):
             self.assertIn("MID-RUN-MARKER-0025", after)
 
     def test_g_review_with_answers_and_a_new_round_keeps_both(self):
+        a_head(self)
         with tempfile.TemporaryDirectory() as d:
             existing = (
                 "# Review: x\nPR: pr.md. Status: changes-requested.\n\n" + self.ROUND1 +
@@ -959,6 +978,7 @@ class AStepWorksInItsUnitsWorktree(unittest.TestCase):
                 ):
                     got = await can_use_tool("Write", {"file_path": target, "content": "x"}, None)
                     self.answers[name] = type(got).__name__
+                await _submits(kw)
                 yield ("done", {"session_id": "s-impl", "cost": {}})
 
         probe = Probe()
@@ -994,6 +1014,7 @@ class AnImplReadsItsSiblings(unittest.TestCase):
                 self.prompt = text
                 for name, (tool, inp) in self.calls.items():
                     self.answers[name] = type(await can_use_tool(tool, inp, None)).__name__
+                await _submits(_)
                 yield ("done", {"session_id": "s-impl", "cost": {}})
 
         probe = Probe()
@@ -1072,6 +1093,7 @@ class PrHasItsOwnTask(unittest.TestCase):
                 (Path(d) / ".cos" / UNIT / f"{stage}.md").write_text(
                     f"# {stage}: x\nStatus: accepted.\n", encoding="utf-8")
                 yield ("chunk", "done")
+                await _submits(_)
                 yield ("done", {"session_id": "s", "cost": {}})
 
         directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
@@ -1098,10 +1120,14 @@ class PrHasItsOwnTask(unittest.TestCase):
         recording = (f"open: ship may proceed for {UNIT} — #95 was merged as abc1234 at "
                      "2026-09-20T00:00:00Z: record it in ship.md; do not merge")
         merging = f"open: ship may proceed for {UNIT} — merge with --match-head-commit abc1234"
-        for stage, said, mode in (("ship", recording, "record"), ("ship", merging, None), ("pr", recording, None)):
+        # `0136` R11: the code decides, so the recording words with no code are a merging ship.
+        record = ("recording-ship",)
+        for stage, said, codes, mode in (("ship", recording, record, "record"), ("ship", merging, (), None),
+                                         ("pr", recording, record, None), ("ship", recording, (), None),
+                                         ("ship", merging, record, "record")):
             with tempfile.TemporaryDirectory() as d:
                 journal = Journal(d, d)
-                self.run_stage(d, stage, journal, gate_said=said)
+                self.run_stage(d, stage, journal, gate_said=said, gate_reasons=codes)
                 start = journal.records(d, kind="start")[-1]
                 self.assertEqual(start.get("ship_mode"), mode, (stage, said))
                 self.assertEqual(mode is not None, "ship_mode" in start, (stage, said))
@@ -1125,6 +1151,7 @@ class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 self.kw = kw
                 yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-m", "cost": {}})
 
         probe = Probe()
@@ -1188,6 +1215,7 @@ class TheRunLogCarriesEffortLabelAndTerminal(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 self.kw = kw
                 yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-e", "cost": {}, "terminal_reason": terminal})
 
         probe = Probe()
@@ -1266,6 +1294,7 @@ class AnImplRunsUnderTheCeilingsOfItsLabel(unittest.TestCase):
                 self.max_turns, self.budget = max_turns, kw.get("max_budget_usd")
                 (directory / "impl.md").write_text("# Impl\nStatus: accepted.\n",
                                                    encoding="utf-8")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-impl", "cost": {}})
 
         probe = Probe()
@@ -1328,6 +1357,7 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
                     f"# {stage}: x\nStatus: accepted.\n", encoding="utf-8"
                 )
                 yield ("chunk", "done")
+            await _submits(kw)
             yield ("done", {"session_id": f"s-{stage}", "cost": {}})
 
     def run_stage(self, d, stage, journal=None):
@@ -1407,6 +1437,7 @@ class TheStepKnowsWhichAgentItIs(unittest.TestCase):
             else:
                 (directory / f"{stage}.md").write_text(body, encoding="utf-8")
                 yield ("chunk", "done")
+            await _submits(kw)
             yield ("done", {"session_id": f"s-{stage}", "cost": {}})
 
     def run_stage(self, d, stage, journal, agent, author="Someone"):
@@ -1560,6 +1591,7 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 seen.append((text, max_turns, kw.get("max_budget_usd")))
                 yield ("chunk", SPIKE_REPLY)
+                await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {}})
 
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as scratch:
@@ -1591,6 +1623,7 @@ class RecordingChangesNothing(unittest.TestCase):
     class Replies:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s-1", "terminal_reason": "success",
                             "cost": {"turns": 2, "cost_usd": 0.25}})
 
@@ -1701,6 +1734,7 @@ class TheStartRecordSaysWhatRanAndWhatWasNamed(unittest.TestCase):
     class Probe:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **_):
             yield ("chunk", "x")
+            await _submits(_)
             yield ("done", {"session_id": "s", "cost": {}})
 
     def start(self, d, stage, app):
@@ -1823,6 +1857,7 @@ class AReviewAfterAnUnfinishedRoundIsHandedIt(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.prompts.append(text)
             yield ("chunk", "# Review: x\nStatus: changes-requested.\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s-review", "cost": {}})
 
     def _run(self, d: str, **run_kw) -> tuple[str, dict]:
@@ -1891,6 +1926,7 @@ class TheScreenshotsTakenAgain(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 seen.append(text)
                 yield ("chunk", "# Review: x\nStatus: changes-requested.\n\n## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s-review", "cost": {}})
 
         with tempfile.TemporaryDirectory() as d:
@@ -2047,6 +2083,7 @@ class AStepAnUpdatePaused(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.calls.append({"text": text, "session_id": session_id, "max_turns": max_turns, **kw})
             yield ("chunk", self.rest)
+            await _submits(kw)
             yield ("done", {"session_id": session_id, "terminal_reason": "completed",
                             "cost": {"turns": 4, "cost_usd": self.cost},
                             "first_call": {"input_tokens": 3, "cache_creation_tokens": 900, "cache_read_tokens": 0}})

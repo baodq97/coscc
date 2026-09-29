@@ -93,7 +93,7 @@ only from here.
 
 | Hazard | File | Read it when |
 |---|---|---|
-| `ship` merges, `pr` does not; `pr`/`ship` reach every repository the login does; the mode grants nothing; the read boundary is not a sandbox; a redirect may write under `/tmp` | `.claude/rules/coscc-policy.md` | editing `coscc/agent/policy.py`, or any grant, tool list or `decide` call |
+| `pr`/`ship` are the app's own `gh` calls, no session, and reach every repository the login does; the mode grants nothing; the read boundary is not a sandbox; a redirect may write under `/tmp` | `.claude/rules/coscc-policy.md` | editing `coscc/agent/policy.py`, or any grant, tool list or `decide` call |
 | the login door, `EXEMPT`, proxies, hashing limits | `.claude/rules/coscc-auth.md` | editing `coscc/web/auth.py`, `coscc/run.py`, or adding any route |
 | scratch `COS_DATA_DIR`, `COSCC_PROTECTED_DB`; what a session loads of `~/.claude/` and the project | `.claude/rules/coscc-sessions.md` | editing `coscc/agent/sessions.py`, `coscc/agent/steps.py`, `coscc/agent/instructions.py`, or adding a rule |
 | a worktree per unit, `switch main`, fetches before a step; names from `main` in `impl`'s prompt | `.claude/rules/coscc-worktrees.md` | editing `coscc/git/worktrees.py`, `gitops.py`, `drift.py`, `fetches.py`, or `run_step`'s preparation |

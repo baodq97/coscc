@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,9 +17,12 @@ from unittest import mock
 from coscc.units import autopilot
 from coscc.agent import precedent
 from coscc.config import Config
+from coscc.github import prmachine, prmachine_test
 from coscc.runlog.journal import Busy, Journal
 from coscc.service import Invalid, Service
+from coscc.service.common import Refused
 from coscc.agent.sessions import Sessions
+from coscc.agent.submit_test import submits as _submits
 
 
 class _Replies:
@@ -40,6 +42,8 @@ class _Replies:
         yield ("chunk", "# Spec: x\n" if self.calls == 1 else "# Plan: x\n")
         await asyncio.wait_for(self.release.wait(), 20)
         yield ("chunk", f"Author: proof. Status: {status}.\n")
+        # `0136` R4: the object is what the app reads; the line above is for a reader.
+        await _submits(kw, judgement="ready" if status == "accepted" else "not-ready")
         yield ("done", {"session_id": f"s{self.calls}", "terminal_reason": "success",
                         "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01}})
 
@@ -209,10 +213,14 @@ class OnTheRealLoop(_Base):
         await self.unit("off-again")
         self.service.set_autopilot(self.ws, "autopilot", True)
         task = self.service._autopilot_tasks[self.key]
+        reader = self.service._pr_readers[self.key]
         self.service.set_autopilot(self.ws, "autopilot", False)
         await asyncio.sleep(0)
         self.assertTrue(task.cancelled() or task.done())
         self.assertNotIn(self.key, self.service._autopilot_tasks)
+        # `0136` R23: and its pull request reader, so no `gh` call is made for it.
+        self.assertTrue(reader.cancelled() or reader.done())
+        self.assertNotIn(self.key, self.service._pr_readers)
 
     async def test_start_up_resumes_a_workspace_left_on(self):
         self.service.set_autopilot(self.ws, "autopilot", True)
@@ -271,7 +279,7 @@ class OnTheRealLoop(_Base):
     async def test_r3_a_rerun_that_keeps_its_answered_question_is_not_run_again(self):
         # The draft the rerun writes still asks question 1, which the kept block answers, so
         # `next` says `rerun` again with no new answer behind it (review.md F2).
-        self.service.sessions = _Intents("\n## Open questions\n\n1. Một?\n")
+        self.service.sessions = _Intents("\n## Open questions\n\n1. Một?\n", questions=((1, "Một?"),))
         unit = await self.unit("kept", "Status: draft.\n\n## Open questions\n\n1. Một?")
         self.listed(unit)
         self.service.set_autopilot(self.ws, "autopilot", True)
@@ -400,19 +408,22 @@ class OnTheRealLoop(_Base):
 class _Intents:
     """A session that rewrites `intent.md` as a draft, with no open questions unless `asks`."""
 
-    def __init__(self, asks: str = ""):
+    def __init__(self, asks: str = "", questions: tuple = ()):
         self.asks = asks
+        # `0136` R4: the questions the object hands back, which the app reads; `asks` is prose.
+        self.questions = [{"n": n, "text": t} for n, t in questions]
 
     async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
         yield ("chunk", "# Intent: x\nAuthor: proof. Type: fix. Status: draft.\n\n## Problem\n\nx\n" + self.asks)
+        await _submits(kw, judgement="not-ready", questions=self.questions)
         yield ("done", {"session_id": "s1", "terminal_reason": "success",
                         "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01}})
 
 
 class _Jera:
     """`0101`. Jera's session: one verdict of `verdict` for `intent.md` question 1, citing
-    `practice` — or, with `verdict` empty, a reply with no JSON. Any other prompt goes to
-    `then`, a step's stand-in."""
+    `practice`, handed back through `submit` (`0136` R8) — or, with `verdict` empty, no
+    object at all. Any other prompt goes to `then`, a step's stand-in."""
 
     def __init__(self, verdict: str, then=None):
         self.verdict, self.then, self.calls = verdict, then, 0
@@ -423,11 +434,12 @@ class _Jera:
                 yield item
             return
         self.calls += 1
-        reply = "no json" if not self.verdict else "```json\n" + json.dumps([{
-            "artifact": "intent.md", "n": 1, "verdict": self.verdict, "category": "other",
-            "text": "Theo thông lệ: một.", "reason": "", "cites": ["practice"],
-        }]) + "\n```"
-        yield ("chunk", reply)
+        yield ("chunk", "Done.")
+        if self.verdict:
+            await _submits(kw, verdicts=[{
+                "artifact": "intent.md", "n": 1, "verdict": self.verdict, "category": "other",
+                "text": "Theo thông lệ: một.", "reason": "", "cites": ["practice"],
+            }])
         yield ("done", {"session_id": f"j{self.calls}", "terminal_reason": "success",
                         "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.02}})
 
@@ -485,9 +497,10 @@ class Scripted(_Base):
         self.service._autopilot_cwd[self.key] = self.ws
         self.addCleanup(self.release.set)
 
-    def add(self, name, stage, action="", plan=None, **unit):
+    def add(self, name, stage, action="", plan=None, reasons=(), **unit):
         self.units[name] = {"name": name, "next": action or f"write-{stage}", "questions": [], **unit}
-        self.nexts[name] = {"stage": stage, "action": action or f"write-{stage}", "waiting": [], "hold": None}
+        self.nexts[name] = {"stage": stage, "action": action or f"write-{stage}", "waiting": [], "hold": None,
+                            "reasons": list(reasons)}
         if plan is not None:
             d = self.service._unit_dir(self.ws, name)
             d.mkdir(parents=True, exist_ok=True)
@@ -624,7 +637,7 @@ class Scripted(_Base):
         `ship` for a head behind `origin/main`, the ref the board reads `behind` from."""
         behind = ("#7 is 2 commit(s) behind origin/main — integrate, then review again; "
                   "a round that passes does not count toward the limit")
-        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again",
+        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", reasons=["ci-pending"],
                  integration={"state": "behind"}, rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
         self.add("0003_c", "", action=behind, integration={"state": "behind"}, rounds=[{"verdict": "pass"}],
                  between_pr_and_ship=True)
@@ -671,13 +684,34 @@ class Scripted(_Base):
         self.assertEqual((logged["unit"], logged["stop"]), ("0001_a", "f"))
         self.assertIn("you do not have permission to merge", logged["reason"])
 
+    async def test_a_merge_github_refused_behind_main_is_integrated_not_stopped(self):
+        """`0136` review round 2, F6: `0112` R1 and R7 through the PR machine. The merge GitHub
+        refused is the unit's last word; behind `main` the pass integrates, and current it
+        stops `f` on what `gh` said."""
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        said = "the head branch is not up to date with the base branch"
+        behind = ("#7 is 2 commit(s) behind origin/main — integrate, then review again; "
+                  "a round that passes does not count toward the limit")
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        for unit, action, state in (("0001_a", behind, "behind"), ("0002_b", "", "current")):
+            self.add(unit, "", action=action, integration={"state": state}, rounds=[{"verdict": "pass"}],
+                     between_pr_and_ship=True)
+            log.append({"kind": autopilot.PR_MACHINE, "workspace": self.key, "unit": unit, "stage": "ship",
+                        "outcome": "failed", "result": "failed", "reasons": [], "detail": said,
+                        "started_by": "autopilot", "merge_refused": True})
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "integrate", "autopilot")])
+        self.assertEqual(self.stops(), {"0002_b": "f"})
+        self.assertIn(said, self.service._autopilot_stops[self.key]["0002_b"]["reason"])
+
     async def test_red_after_its_own_integration_is_not_integrated_again(self):
         """`0124` R1, R3 a: was a stop `e` for `0001_a`, replaced by `intent.md ## Answers`,
         câu 1 and 3 — CI red on its own integration runs the `impl` `next` names, once. A
         person's integration is still integrated again."""
-        red = f"{autopilot.CI_RED}3: tests — back to impl: fix on the branch and push"
+        red = "CI is red on #3: tests — back to impl: fix on the branch and push"
         for unit, action, plan in (("0001_a", red, "- `a/x.py`"), ("0002_b", "", "- `b/y.py`")):
             self.add(unit, "impl", action=action, plan=plan, integration={"state": "red-after-integration"},
+                     reasons=["changes-requested", "ci-red"] if action else [],
                      rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
         log = Journal(self.config.working_dir, self.config.data_dir)
         for unit, by in (("0001_a", "autopilot"), ("0002_b", "person")):
@@ -695,11 +729,12 @@ class Scripted(_Base):
         `b` with `next`'s words, not `e`."""
         head = "feat/open-questions-wait-for-the-originator-even-when-precedent-answers-them"
         action = (
-            f"{autopilot.NEEDS_A_PERSON} — {autopilot.CI_RED}97: branch-name — branch-name checks the branch "
+            "needs a person — CI is red on #97: branch-name — branch-name checks the branch "
             f'name, and no rerun or impl can fix it: "{head}" is not a work branch: '
             "the slug is 71 characters, over the 60 allowed"
         )
         self.add("0001_a", "", action=action, plan="- `a/x.py`", integration={"state": "red-after-integration"},
+                 reasons=["changes-requested", "ci-unfixable", "needs-person"],
                  rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
         Journal(self.config.working_dir, self.config.data_dir).append({
             "kind": "integration", "workspace": self.key, "unit": "0001_a", "stage": "integrate",
@@ -715,8 +750,9 @@ class Scripted(_Base):
         it, and `next` naming `impl` with `cos.mjs`'s words. Returns once that `impl` ended
         `outcome`."""
         self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
-        red = f"{autopilot.CI_RED}120: tests — back to impl: fix on the branch and push"
+        red = "CI is red on #120: tests — back to impl: fix on the branch and push"
         self.add("0001_a", "impl", action=red, plan="- `a/x.py`", integration={"state": "red-after-integration"},
+                 reasons=["ci-red"],
                  rounds=[{"verdict": "pass"}], between_pr_and_ship=True)
         log = Journal(self.config.working_dir, self.config.data_dir)
         log.append({
@@ -812,7 +848,7 @@ class Scripted(_Base):
         self.service.integrate = slow
         need = autopilot.reservation("integrate")
         self.service.set_autopilot(self.ws, "daily_cap_usd", need + autopilot.reservation("spec") / 2)
-        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again",
+        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", reasons=["ci-pending"],
                  integration={"state": "behind"}, rounds=[], between_pr_and_ship=True)
         await self.pass_()
         self.assertNotIn((self.key, "0001_a"), self.service._active)
@@ -851,7 +887,8 @@ class Scripted(_Base):
         self.assertEqual((cap["estimated"], cap["estimated_count"]), (autopilot.estimate("spec"), 1))
 
     async def test_ci_pending_is_quiet(self):
-        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", between_pr_and_ship=True)
+        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", reasons=["ci-pending"],
+                 between_pr_and_ship=True)
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {}))
 
@@ -865,6 +902,20 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"],
                          {"unit": "0001_a", "kind": "f", "reason": "blocked: plan.md is draft"})
+
+    async def test_0136_a_gate_refusal_on_ci_pending_is_quiet_by_its_code_not_its_words(self):
+        words = "blocked: review cannot proceed for 0001_a\n  - CI has not finished on #3: t — wait, then ask again"
+        for error, stops in ((Refused("blocked: the words changed", ("ci-pending",)), {}),
+                             (Invalid(words), {"0001_a": "f"})):
+            async def refused(cwd, unit, stage, started_by="person", error=error):
+                raise error
+                yield  # pragma: no cover
+
+            self.service.run_step = refused
+            self.service._autopilot_stops.pop(self.key, None)
+            self.add("0001_a", "review")
+            await self.pass_()
+            self.assertEqual(self.stops(), stops, error)
 
     async def test_off_loopback_nothing_runs_and_the_board_says_why(self):
         self.service.config = dataclasses.replace(self.config, host="0.0.0.0")
@@ -963,8 +1014,9 @@ class Scripted(_Base):
 
     async def test_r5_every_pass_asks_every_shortlisted_unit(self):
         self.add("0001_a", "spec")
-        self.add("0002_b", "", action=autopilot.FINISHED)
-        self.add("0003_c", "", action="CI has not finished on #3: t — wait, then ask again", between_pr_and_ship=True)
+        self.add("0002_b", "", action="finished", reasons=["finished"])
+        self.add("0003_c", "", action="CI has not finished on #3: t — wait, then ask again", reasons=["ci-pending"],
+                 between_pr_and_ship=True)
         await self.pass_()
         self.assertEqual(self.asked, ["0001_a", "0002_b", "0003_c"])
         await self.pass_()
@@ -1286,7 +1338,7 @@ class Scripted(_Base):
     async def test_0126_r1_an_old_exhausted_ship_starts_a_recording_ship(self):
         self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
         self.shipped("0001_a")
-        self.add("0001_a", "ship", action=self.RECORDING)
+        self.add("0001_a", "ship", action=self.RECORDING, reasons=["recording-ship"])
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([("0001_a", "ship", "autopilot")], {}))
         [pick] = self.picks()
@@ -1304,7 +1356,7 @@ class Scripted(_Base):
     async def test_0126_r3_a_recording_ship_that_ran_out_is_not_run_again(self):
         self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
         self.shipped("0001_a", ship_mode="record")
-        self.add("0001_a", "ship", action=self.RECORDING)
+        self.add("0001_a", "ship", action=self.RECORDING, reasons=["recording-ship"])
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
 
@@ -1394,6 +1446,152 @@ class Scripted(_Base):
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "a"}))
         self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STORE_PAST_CEILING)
         self.assertEqual(self.picks(), [])
+
+    # --- `0136` R22, R23: the pull request reader ----------------------------------
+    #
+    # The loop here is a future that never resolves, so no pass comes on its own: each read
+    # below stands for one tick of `ci_poll_seconds`, and a pass that follows it is one the
+    # read scheduled, well before `POLL_SECONDS`.
+
+    def a_machine(self, gh, files=("coscc/a.py",)):
+        """The service's PR machine over its own database, with `gh`, push and diff faked."""
+        async def push(tree, branch):
+            return None
+
+        async def head(tree):
+            return prmachine_test.HEAD
+
+        async def read_files(tree, head):
+            return list(files)
+
+        machine = prmachine.Machine(self.service._unit_meta().history, self.service._journal(),
+                                    gh=gh, push=push, head=head, files=read_files)
+        self.service._pr_machine = lambda: machine
+        return machine
+
+    async def an_open_pr(self, machine, name):
+        d = self.service._unit_dir(self.ws, name)
+        d.mkdir(parents=True, exist_ok=True)
+        out = await machine.open_pr(prmachine.Unit(self.key, name, d, self.ws, "fix/x", "fix/x", "fix"))
+        self.assertEqual(out.result, "opened")
+
+    def waiting(self, machine, until, reason):
+        """`next` as `cos.mjs` answers it: the scripted stage once `until()`, else nothing."""
+        async def next_step(cwd, unit):
+            self.asked.append(unit)
+            if until():
+                return self.nexts[unit]
+            return {"stage": "", "action": reason, "waiting": [], "hold": None, "reasons": [reason]}
+        self.service.next_step = next_step
+
+    async def test_green_ci_starts_a_pass_before_the_poll(self):
+        gh = prmachine_test.FakeGh(buckets=("pending",))
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        self.add("0001_a", "review")
+        self.waiting(machine, lambda: prmachine.state(machine.history, self.key, "0001_a")["ci"] == "green",
+                     "ci-pending")
+        self.listed()
+        self.assertEqual((await self.service._pr_read(self.key)).moved, [("0001_a", "ci")])
+        await self.settled()
+        self.assertEqual((self.asked, self.launched), (["0001_a"], []), "pending scheduled one pass")
+        gh.buckets = ("pass",)
+        green = await self.service._pr_read(self.key)
+        self.assertEqual(green.moved, [("0001_a", "ci")])
+        await self.until(lambda: self.launched, "the pass the green read scheduled")
+        self.assertEqual(self.launched, [("0001_a", "review", "autopilot")])
+        # Design: the pass's record names the transition that scheduled it, by its row.
+        [row] = [r for r in machine.history.transitions(self.key, "0001_a", "pr.md") if r["guard"] == "ci-at-head"][-1:]
+        [pick] = self.picks()
+        self.assertEqual(pick["woken_by"], [{"unit": "0001_a", "transition": "ci", "id": row["id"]}])
+        # Green at the same head is settled: the next read asks only for the list.
+        got = await self.service._pr_read(self.key)
+        self.assertEqual((got.moved, got.calls), ([], 1))
+
+    async def test_a_merge_frees_a_unit_waiting_on_it(self):
+        gh = prmachine_test.FakeGh(buckets=("pass",))
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        self.add("0002_b", "impl", plan="- `coscc/b.py`")
+        self.waiting(machine, lambda: prmachine.state(machine.history, self.key, "0001_a")["state"] == "merged",
+                     "waiting-on")
+        self.listed("0002_b")
+        await self.pass_()
+        self.assertEqual(self.launched, [])
+        gh.open_prs, gh.state = [], "MERGED"
+        cleaned, gathered = [], []
+
+        async def cleanup(cwd, unit):
+            cleaned.append(unit)
+            return {"removed": True}
+
+        self.service._cleanup = cleanup
+        self.service._gather_soon = lambda cwd, unit, key: gathered.append(unit)
+        self.service.config = dataclasses.replace(self.service.config, knowledge=True)
+        self.assertEqual((await self.service._pr_read(self.key)).moved, [("0001_a", "merged")])
+        await self.until(lambda: self.launched, "the pass the merge scheduled")
+        self.assertEqual(self.launched, [("0002_b", "impl", "autopilot")])
+        self.assertEqual(gh.count("pr", "merge"), 0, "a merge made elsewhere is only recorded")
+        # Review round 1, F3: no `ship` step follows it, so the reader writes what one did.
+        ships = [(r["unit"], r["result"]) for r in self.service._journal().records(kind="ship")]
+        self.assertEqual((ships, cleaned, gathered), ([("0001_a", "shipped")], ["0001_a"], ["0001_a"]))
+
+    async def test_a_merge_the_start_up_reconcile_records_leaves_the_ship_row(self):
+        """Review round 1, F3, at a restart: a `ship` that merged and died before its row."""
+        gh = prmachine_test.FakeGh(buckets=("pass",), crash_after_merge=True)
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        with machine.history.data.write() as conn:
+            conn.execute(
+                "INSERT INTO review_rounds (at, root, workspace, unit, n, run, head, verdict, screens) "
+                "VALUES ('2026-09-29', ?, ?, '0001_a', 1, 'r', ?, 'pass', '[]')",
+                (str(machine.history.working_dir), self.key, prmachine_test.HEAD))
+        d = self.service._unit_dir(self.ws, "0001_a")
+        with self.assertRaises(prmachine_test.Crash):
+            await machine.ship(prmachine.Unit(self.key, "0001_a", d, self.ws, "fix/x", "fix/x", "fix"))
+        cleaned = []
+
+        async def cleanup(cwd, unit):
+            cleaned.append(unit)
+            return {"removed": True}
+
+        self.service._cleanup = cleanup
+        got = await self.service.reconcile_prs()
+        self.assertEqual([o["result"] for o in got], ["recorded"])
+        ships = [(r["unit"], r["result"]) for r in self.service._journal().records(kind="ship")]
+        self.assertEqual((ships, cleaned, gh.count("pr", "merge")), ([("0001_a", "shipped")], ["0001_a"], 1))
+
+    async def test_an_impl_waits_on_an_open_pull_request_the_machine_holds_until_it_merges(self):
+        """R22 over the machine's own rows: the files are the ones the reader read."""
+        gh = prmachine_test.FakeGh(buckets=("pass",))
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        await self.service._pr_read(self.key)
+        await self.settled()
+        self.add("0002_b", "impl", plan="- `coscc/a.py`")
+        self.add("0003_c", "impl", plan="- `coscc/c.py`")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0003_c", "impl", "autopilot")])
+        [pick] = self.picks()
+        self.assertEqual(pick["passed"], [{"unit": "0002_b", "reason": "overlap-pr", "detail": "#7"}])
+        # R22: what the board's card shows, kept from the same pass.
+        self.assertEqual(self.service._autopilot_held[self.key].get("0002_b"), ("overlap-pr", "#7"))
+        gh.open_prs, gh.state = [], "MERGED"
+        await self.service._pr_read(self.key)
+        await self.until(lambda: len(self.launched) == 2, "the pass the merge scheduled")
+        self.assertEqual(self.launched[1], ("0002_b", "impl", "autopilot"))
+        self.assertNotIn("0002_b", self.service._autopilot_held[self.key])
+        self.service.autopilot_stop(self.key)
+        self.assertNotIn(self.key, self.service._autopilot_held)
+
+    async def test_off_the_reader_calls_no_gh(self):
+        gh = prmachine_test.FakeGh()
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        calls = len(gh.calls)
+        self.service.autopilot_stop(self.key)
+        got = await self.service._pr_read(self.key)
+        self.assertEqual((got.calls, len(gh.calls)), (0, calls))
 
 
 class ResumedAtStartUp(unittest.TestCase):

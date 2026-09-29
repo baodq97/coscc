@@ -11,7 +11,7 @@ from coscc.units import hold as hold_rules
 from coscc.web import present
 from coscc.web import studio as s
 from coscc.service import CONSEQUENCE
-from coscc.state import Cell, Question, Round, Run
+from coscc.state import Cell, Move, Question, Round, Run
 from coscc.screens.common import P, _details
 from coscc.screens.chrome import _banners
 from coscc.screens.settings import _settings_row
@@ -73,6 +73,35 @@ def _run_row(run: rx.Var[Run]) -> rx.Component:
     )
 
 
+def _move_row(move: rx.Var[Move]) -> rx.Component:
+    """`0136` R20. One transition: what moved, the guard's label and whose decision it was.
+    The guard's id, the full SHA and the run's id only behind *Details* (S3)."""
+    return rx.vstack(
+        rx.hstack(
+            s.badge(move.artifact, "gray"),
+            rx.text(move.change, size="2", weight="medium"),
+            rx.spacer(),
+            s.badge(move.authority, "gray"),
+            spacing="2", wrap="wrap", align="center", width="100%",
+        ),
+        s.text(move.guard_label, size="1"),
+        s.text(move.at, size="1"),
+        rx.cond(
+            move.guard != "unknown",
+            _details(move.key, "Details",
+                     s.text("guard " + move.guard, size="1", font_family="ui-monospace, monospace"),
+                     rx.cond(move.head != "",
+                             s.text("SHA " + move.head, size="1", overflow_wrap="anywhere",
+                                    font_family="ui-monospace, monospace")),
+                     rx.cond((move.run != "") & (move.run != "unknown"),
+                             s.text("run " + move.run, size="1", overflow_wrap="anywhere",
+                                    font_family="ui-monospace, monospace"))),
+        ),
+        spacing="1", padding="12px 0", width="100%", min_width="0", align="start",
+        border_bottom=f"1px solid {s.LINE}", data_testid="move-row",
+    )
+
+
 def _question_row(q: rx.Var[Question]) -> rx.Component:
     """`0016` R2. One unanswered question and the box its answer goes in."""
     return s.panel(
@@ -83,6 +112,8 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
             rx.spacer(),
             # `0044` R10: whose answer is in force, or that Jera left it to a person.
             rx.cond(q.by_jera, s.badge("Answered by Jera", "iris")),
+            # `0136` R15: whose decision the answer in force is, as the app recorded it.
+            rx.cond(q.authority != "", s.badge(q.authority, "gray")),
             rx.cond(q.needs_person, s.badge("Needs a person", "red")),
             width="100%", align="center",
         ),
@@ -724,6 +755,18 @@ def _detail_dialog() -> rx.Component:
                         rx.foreach(P.runs, _run_row),
                         rx.cond(P.runs.length() == 0,
                                 s.text("No step of this unit has been run from here.")),
+                        # `0136` R20. Every transition, with the guard that decided it.
+                        rx.cond(
+                            P.moves.length() > 0,
+                            rx.vstack(
+                                s.eyebrow("TRANSITIONS"),
+                                s.text("Each change of state, newest first, and the rule that allowed it.",
+                                       size="1"),
+                                rx.foreach(P.moves, _move_row),
+                                spacing="1", width="100%", align="start", margin_top="12px",
+                                id="timeline-moves",
+                            ),
+                        ),
                         spacing="3", padding="26px", width="100%", align="start",
                         id="timeline-body",
                     ),

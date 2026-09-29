@@ -661,20 +661,57 @@ export function parseReview(text) {
       severity: text.match(SEVERITY)?.[1].toLowerCase() ?? null,
     })
   }
-  // `0027` R1: every id an earlier round raised, whatever that round's verdict, in the order
-  // first raised. The round is only read as unfinished, never marked so in the file (R4).
+  return withDropped(rounds.map(({ n, reviewed, verdict, findings, screens, lines }) => ({
+    n, reviewed, verdict, findings, screens, text: lines.join('\n').trimEnd(),
+  })))
+}
+
+// `0027` R1: every id an earlier round raised, whatever that round's verdict, in the order
+// first raised. The round is only read as unfinished, never marked so in the file (R4).
+function withDropped(rounds) {
   const seen = []
   return {
-    rounds: rounds.map(({ n, reviewed, verdict, findings, screens, lines }) => {
-      const listed = new Set(findings.map((f) => f.id))
+    rounds: rounds.map((r) => {
+      const listed = new Set(r.findings.map((f) => f.id))
       const dropped = seen.filter((id) => !listed.has(id))
       for (const id of listed) if (!seen.includes(id)) seen.push(id)
-      return {
-        n, reviewed, verdict, findings, screens, text: lines.join('\n').trimEnd(),
-        dropped, unfinished: verdict === 'changes-requested' && dropped.length > 0,
-      }
+      return { ...r, dropped, unfinished: r.verdict === 'changes-requested' && dropped.length > 0 }
     }),
   }
+}
+
+// `0136` R5. The rounds a review handed back to the app (`rows`, the snapshot's), each in the
+// place of the round of the same number in `parsed`, `parseReview`'s reading of the file. A
+// round only the file holds — one written before `0136`, or the `incomplete` round a closing
+// turn writes — is still read from it. A row's finding carries its severity and `S<n>` as
+// fields; its `text` is the line `write-review` writes, so every reader below sees one shape.
+// `text` of the round is the file's, for a person: what the app posts to the pull request.
+export function reviewFrom(rows, parsed) {
+  const byN = new Map(parsed.rounds.map((r) => [r.n, r]))
+  for (const row of rows) {
+    const shots = row.screens?.shots ?? []
+    byN.set(row.n, {
+      n: row.n,
+      reviewed: row.reviewed || null,
+      verdict: row.verdict,
+      findings: row.findings.map((f) => ({
+        id: f.id,
+        label: f.label,
+        fixedBy: f.label === 'fixed' ? f.fixedIn : null,
+        text: `${f.path ? (f.lines ? `${f.path}:${f.lines}` : f.path) : '(none)'} — ${f.severity} — ${f.rule ? `${f.rule} ` : ''}${f.text}`,
+        severity: f.severity,
+        rule: f.rule || null,
+      })),
+      screens: shots.length
+        ? {
+            taken: row.screens.taken ?? null, standard: row.screens.standard ?? null, by: row.screens.by ?? null,
+            header: null, shots: shots.map(({ path, size, address, result }) => ({ path, size, address, result })),
+          }
+        : null,
+      text: byN.get(row.n)?.text ?? '',
+    })
+  }
+  return withDropped([...byN.values()].sort((a, b) => a.n - b.n).map(({ dropped, unfinished, ...r }) => r))
 }
 
 // `impl.md ## Needs a person` (`0028`): the findings impl says its stage cannot close, one
@@ -837,6 +874,11 @@ export function readUnit(dir, name, { state } = {}) {
       unit.problems.push(`${file} has status "${status}", not one of ${VALID[file].join(', ')}`)
     }
     unit.artifacts[file] = { status, skipReason: file === 'plan.md' ? parseSkipReason(text) : null }
+    // `0136` R14: whose skip it was is the transition the app recorded, never the file.
+    // Attached only to a skip no person decided, as `stale` below, so `status --json` of a
+    // unit a person skipped is what it was.
+    const by = known.artifacts?.[file]?.authority ?? null
+    if (status === 'skipped' && !DECIDERS.includes(by)) unit.artifacts[file].agentSkip = { by }
     // Attached, never reported as a problem: `review.md` files written before rounds
     // existed have none, and the closed units' output must not change (`0015` spec, R7).
     if (file === 'pr.md') {
@@ -848,7 +890,8 @@ export function readUnit(dir, name, { state } = {}) {
       if (title !== null) unit.artifacts[file].title = title
     }
     if (file === 'review.md') {
-      unit.artifacts[file].review = parseReview(text)
+      const rows = known.artifacts?.[file]?.rounds ?? []
+      unit.artifacts[file].review = rows.length ? reviewFrom(rows, parseReview(text)) : parseReview(text)
       // `0028`: the findings a person answered, by id, from `review.md ## Answers`.
       const answers = answersIn(known, file)
       unit.artifacts[file].personAnswers = [...new Set(answers.filter((a) => a.id !== null).map((a) => a.id))]
@@ -858,17 +901,36 @@ export function readUnit(dir, name, { state } = {}) {
       if (more.granted > 0) unit.artifacts[file].roundsGranted = more.granted
       unit.problems.push(...more.problems.map((p) => `review.md: ${p}`))
     }
-    if (file === 'impl.md') unit.artifacts[file].needsPerson = parseNeedsPerson(text)
+    // `0136` R6: the claims an impl run handed back decide; `## Needs a person` is prose, read
+    // only for the reason a person sees beside each id, and for a unit whose impl ran before.
+    if (file === 'impl.md') {
+      const said = parseNeedsPerson(text)
+      const claimed = known.artifacts?.[file]?.result?.needs_person
+      unit.artifacts[file].needsPerson = Array.isArray(claimed)
+        ? claimed.map((id) => ({ id, reason: said.find((c) => c.id === id)?.reason ?? null }))
+        : said
+    }
     // `0039`: attached only when there is something to attach, so that `status --json` of
     // every unit that never used `[unmeasured]` stays what it was, byte for byte (R4).
-    if (file === 'spec.md') {
+    // `0136` R4: a stage result the app received decides a spec's `U<n>` and a spike's
+    // verdicts; the file is read only for a unit whose run handed back none.
+    const result = known.artifacts?.[file]?.result ?? null
+    if (file === 'spec.md' && result) {
+      const ids = [...(result.unmeasured ?? [])]
+      if (ids.length) unit.artifacts[file].unmeasured = { ids, problems: [] }
+    } else if (file === 'spec.md') {
       const unmeasured = parseUnmeasured(text)
       if (unmeasured.ids.length || unmeasured.problems.length) {
         unit.artifacts[file].unmeasured = unmeasured
         unit.problems.push(...unmeasured.problems)
       }
     }
-    if (file === 'spike.md') unit.artifacts[file].spike = parseSpike(text)
+    if (file === 'spike.md') {
+      const parsed = parseSpike(text)
+      unit.artifacts[file].spike = result
+        ? { round: parsed.round, items: Object.fromEntries((result.verdicts ?? []).map((v) => [v.id, { verdict: v.verdict, hasBlock: true }])) }
+        : parsed
+    }
     // `0112` R5: attached only when it says something, as `unmeasured` above, so that
     // `status --json` of every `ship.md` written before it stays what it was.
     if (file === 'ship.md') {
@@ -882,7 +944,10 @@ export function readUnit(dir, name, { state } = {}) {
     if (questions !== null) unit.artifacts[file].questions = questions
   }
   for (const [file, a] of Object.entries(known.artifacts ?? {})) {
-    if (a?.status && !(file in unit.artifacts)) unit.problems.push(`the app records ${file} as ${a.status}, but the file does not exist`)
+    if (!a?.status || file in unit.artifacts) continue
+    // `0136` R14: a skip a person recorded (`coscc skip`) wrote no file, and needs none.
+    if (a.status === 'skipped' && DECIDERS.includes(a.authority)) unit.artifacts[file] = { status: a.status, skipReason: null }
+    else unit.problems.push(`the app records ${file} as ${a.status}, but the file does not exist`)
   }
   for (const u of known.unknowns ?? []) if (u.field === 'ingest') unit.problems.push(`the app could not read this unit after its last step: ${u.reason}`)
 
@@ -1194,9 +1259,14 @@ function linkNeeds(unit) {
   return [...needs, ...waiting.map((d) => `waits on ${d.ref}: ${d.why}`)]
 }
 
-// The words `next` opens its action with while `impl` waits on a dependency. The autopilot
-// reads this prefix (`coscc/units/autopilot.py`), and its test reads it back from here.
+// The words `next` opens its action with while `impl` waits on a dependency. Words for a
+// person: the autopilot reads the code `waiting-on` beside them (`0136` R11).
 export const WAITING_ON = 'waiting on '
+
+// `0136` R11: a reason code `gate` and `next` hand out beside their words. The one table is
+// `coscc/units/guards.py` `REASONS`, and `guards_test.py` reads every `code('…')` and every
+// `why: '…'` here back against it. The autopilot branches on these, never on the words.
+const code = (c) => c
 
 // R7: an answer that would run `impl` while a dependency is not merged runs nothing, and
 // says what it waits on. One whose idea link is broken says so (R9). Every other answer is
@@ -1219,6 +1289,13 @@ const present = (u, f) => f in u.artifacts
 // later stage must not be blocked by it.
 const settled = (s) => s === 'accepted' || s === 'skipped' || s === 'done'
 
+// `0136` R14: spec and plan may be skipped only on the decision of a person or their
+// delegate (`coscc/units/guards.py`, `DECIDERS`). A `skipped` status an agent wrote, or one
+// the app took from a file without knowing whose it was, is no skip: the unit stops on it.
+const DECIDERS = ['person', 'delegated']
+const agentSkip = (u, f) => statusOf(u, f) === 'skipped' && Boolean(u.artifacts[f]?.agentSkip)
+const skippedBy = (u, f) => `${f} is skipped by ${u.artifacts[f]?.agentSkip?.by ?? 'no one the app knows'}, not by a person or their delegate`
+
 // A file that exists but carries no readable status is not the same as a missing file, and
 // saying so is the difference between "write it" and "fix the one line at the top of it".
 const missing = (u, f) => (present(u, f) ? `${f} exists but carries no Status line` : `${f} does not exist`)
@@ -1227,13 +1304,13 @@ const SPIKE = STAGES.find((s) => s.when === 'unmeasured')
 const unmeasuredOf = (u) => u.artifacts['spec.md']?.unmeasured ?? { ids: [], problems: [] }
 
 // Whether stage `s` has to be behind a unit before what follows it (`0039` R4, R5). Every
-// stage but `idea` always does. `spike` does when `spec.md` names a `U<n>`, or `spike.md`
-// already exists — a spec rewritten without its questions still leaves the measurement it
-// was rewritten on — and never when the spec was skipped.
+// stage but `idea` always does. `spike` does when, and only when, `spec.md` names a `U<n>`
+// (`0136` R14): a `spike.md` a spec rewritten without its questions left behind no longer
+// makes it. Never when the spec was skipped.
 export function required(unit, s) {
   if (!s.when) return !s.optional
   if (statusOf(unit, 'spec.md') === 'skipped') return false
-  return unmeasuredOf(unit).ids.length > 0 || present(unit, s.file)
+  return unmeasuredOf(unit).ids.length > 0
 }
 
 // `0039` R7: for every `U<n>` the spec names now, what `spike.md` does not yet show. An id
@@ -1348,6 +1425,11 @@ function decideFiles(unit, limit) {
       return { blocked: true, action: s.hint, stage: s.name, why: 'missing' }
     }
     if (status === 'rejected') return { blocked: false, action: `closed — ${s.name} rejected`, stage: '', why: 'rejected' }
+    // `0136` R14: an agent's skip stops the unit for a person, who records the skip or has
+    // the stage run. `stage` stays `''`: running it again would only skip again.
+    if (agentSkip(unit, s.file)) {
+      return { blocked: true, action: `${skippedBy(unit, s.file)} — a person records the skip (coscc skip), or runs ${s.hint.split(' ')[0]}`, stage: '', why: 'agent-cannot-skip' }
+    }
     // `0054` R5: a stage run again from the board left this artifact stale; its stage runs
     // before anything after it. `nextStep` takes a stale `review` or `ship` down the road
     // a missing one takes.
@@ -2145,7 +2227,13 @@ function rebaseWhy(compared) {
 // `probe` is how `review` and `ship` reach git and gh; `null` means no repository was
 // given, and those two gates stay closed rather than guess. `limit` is the review round
 // limit in force. Every other stage reads files only and ignores both.
-export function checkGate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
+export function checkGate(unit, stage, opts = {}) {
+  const { reasons, ...answer } = gateAnswer(unit, stage, opts)
+  return answer
+}
+
+// `checkGate`, plus `reasons`, the codes `gate --json` hands out (`0136` R11).
+export function gateAnswer(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const { ok, need, said } = evaluate(unit, stage, { probe, limit })
   // `0125` R3: an open `review` after a pass `ship` stays closed on names why, for the one
   // retry to fix. Asked only when the last round passed, so every other gate asks git and gh
@@ -2156,11 +2244,47 @@ export function checkGate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } =
     if (stuck && !stuck.stop) return { ok, need, retry: { n: stuck.last.n, reviewed: stuck.last.reviewed, need: ship.need } }
   }
   // `0116`: `merged` only when `ship` opened on a pull request already merged.
-  if (ok && said.merged) return { ok, need, merged: said.merged }
+  if (ok && said.merged) return { ok, need, merged: said.merged, reasons: [code('recording-ship')] }
+  const reasons = ok ? [] : gateReasons(unit, stage, need, said)
   // `0067` R6: `rebased` only when the gate opened on a clean rebase, so every other answer
   // is what it was.
-  if (!ok || !said.head) return { ok, need }
-  return said.rebased ? { ok, need, head: said.head, rebased: said.rebased } : { ok, need, head: said.head }
+  if (!ok || !said.head) return { ok, need, reasons }
+  return said.rebased ? { ok, need, head: said.head, rebased: said.rebased, reasons } : { ok, need, head: said.head, reasons }
+}
+
+// `0136` R11: the codes of a closed gate, never none. Read off what `evaluate` already
+// decided — the hold, the stages before, the spike, CI, the links — in that order, so the
+// first is the one a person would fix first. `gate-closed` is what closes it with no code
+// of its own (a title, a screenshot, a moved head); its words say which.
+function gateReasons(unit, stage, need, said) {
+  const target = stageOf(stage)
+  if (!target) return [code('unreadable')]
+  if (unit.hold) return [unit.hold.state === 'dropped' ? code('dropped') : code('paused')]
+  const codes = []
+  for (const s of STAGES) {
+    if (s.name === target.name) break
+    if (s.optional || (s.when && !required(unit, s))) continue
+    const status = statusOf(unit, s.file)
+    if (status === null) codes.push(code('missing'))
+    else if (status === 'rejected') codes.push(code('rejected'), code('closed'))
+    else if (agentSkip(unit, s.file)) codes.push(code('agent-cannot-skip'))
+    else if (!settled(status)) codes.push(code('draft'))
+    else if (unit.artifacts[s.file].stale) codes.push(code('stale'))
+  }
+  const at = (name) => STAGES.findIndex((s) => s.name === name)
+  if (at(target.name) > at(SPIKE.name) && spikeNeeds(unit).length) {
+    codes.push(required(unit, SPIKE) && spikeFindings(unit).fails.length ? code('spike-fails') : code('spike-missing'))
+  }
+  if (said.ci === 'pending') codes.push(code('ci-pending'))
+  if (said.ci === 'red') codes.push(code('ci-red'))
+  if (said.ci === 'unfixable') codes.push(code('ci-unfixable'), code('needs-person'))
+  if (target.name === 'impl') {
+    const { needs, waiting } = linksOf(unit)
+    if (waiting.length) codes.push(code('waiting-on'))
+    if (needs.length) codes.push(code('unreadable'))
+  }
+  if (!codes.length && need.length) codes.push(code('gate-closed'))
+  return [...new Set(codes)]
 }
 
 // `checkGate`, plus `said`: what `review` and `ship` learned on the way — the CI verdict,
@@ -2188,7 +2312,9 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     // Only a file that may legitimately be skipped gets told it has that option.
     const canSkip = s.statuses.includes('skipped')
     if (status === null) {
-      need.push(canSkip ? `${missing(unit, s.file)} — write it, or record the skip in it` : missing(unit, s.file))
+      need.push(canSkip ? `${missing(unit, s.file)} — write it, or a person records the skip (coscc skip)` : missing(unit, s.file))
+    } else if (agentSkip(unit, s.file)) {
+      need.push(skippedBy(unit, s.file))
     } else if (!settled(status)) {
       need.push(`${s.file} is "${status}", not accepted${canSkip ? ' or skipped' : ''}`)
     } else if (unit.artifacts[s.file].stale) {
@@ -2218,6 +2344,8 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 
   return { ok: need.length === 0, need, said }
 }
+// `stepOf` wraps `evaluate` under its own name, to note what each gate it asks read.
+const evaluateGate = evaluate
 
 // --- the next stage to run ----------------------------------------------------
 
@@ -2278,13 +2406,46 @@ function passLeftClosed(unit, probe, g) {
 //
 // `0040` R7: every road to `impl` here — a red check sends the work back to it too — waits on
 // the unit's dependencies, and only a wait carries `why`.
+//
 export function nextStep(unit, opts = {}) {
-  return waitOnDependencies(unit, stepOf(unit, opts))
+  const { reasons, ...answer } = nextAnswer(unit, opts)
+  return answer
 }
 
-function stepOf(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
+// `nextStep`, plus `reasons`, the codes of what settled it (`0136` R11), which `next` prints.
+export function nextAnswer(unit, opts = {}) {
+  const seen = {}
+  const answer = waitOnDependencies(unit, stepOf(unit, opts, seen))
+  return { ...answer, reasons: nextReasons(answer, seen) }
+}
+
+// The codes of one `nextStep` answer: a wait on the links, else `decide`'s `why`, what the
+// last gate it asked read of CI, and the two answers `stepOf` makes of its own — a pass
+// left closed twice on one head, and a merge already made.
+function nextReasons(answer, seen) {
+  if (answer.why === 'dependency') return [code('dependency'), code('waiting-on')]
+  if (answer.why) return [answer.why]
+  const codes = seen.why ? [seen.why] : []
+  if (seen.why === 'rejected') codes.push(code('closed'))
+  const ci = seen.said?.ci
+  if (ci === 'pending') codes.push(code('ci-pending'))
+  if (ci === 'red') codes.push(code('ci-red'))
+  if (ci === 'unfixable') codes.push(code('ci-unfixable'), code('needs-person'))
+  if (seen.stop) codes.push(code('needs-person'))
+  if (seen.recorded) codes.push(code('recording-ship'))
+  return [...new Set(codes)]
+}
+
+function stepOf(unit, { probe = null, limit = REVIEW_ROUNDS } = {}, seen = {}) {
   const base = decide(unit, limit)
   const { why, ...next } = base
+  seen.why = why
+  // Every gate asked below goes through here, so `seen.said` is the last one's.
+  const evaluate = (...args) => {
+    const g = evaluateGate(...args)
+    seen.said = g.said
+    return g
+  }
   const none = (action) => ({ blocked: true, action, stage: '' })
   const onReview = (prefix) => {
     const g = evaluate(unit, 'review', { probe, limit })
@@ -2298,7 +2459,9 @@ function stepOf(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   // `0125` R4: a pass left closed goes to one more round, and a second on the same head stops.
   const again = (g) => {
     const stuck = passLeftClosed(unit, probe, g)
-    return stuck?.stop ? none(stuck.stop) : onReview(g.need)
+    if (!stuck?.stop) return onReview(g.need)
+    seen.stop = true
+    return none(stuck.stop)
   }
 
   // `0045` R3: a held unit is answered from the files, before anything reaches for `probe`.
@@ -2309,7 +2472,10 @@ function stepOf(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const due = why === 'missing' || why === 'stale'
   if (due && next.stage === 'review') return onReview(why === 'stale' ? [next.action] : [])
   // `0116` R4: a pull request already merged leaves `ship` its record to write, and no merge.
-  const recorded = (g) => ({ blocked: true, action: `write-ship — ${mergedLine(g.said.merged)}`, stage: 'ship' })
+  const recorded = (g) => {
+    seen.recorded = true
+    return { blocked: true, action: `write-ship — ${mergedLine(g.said.merged)}`, stage: 'ship' }
+  }
 
   if (due && next.stage === 'ship') {
     const g = evaluate(unit, 'ship', { probe, limit })
@@ -2735,13 +2901,13 @@ function cmdNext(unitName, cosDir, repoDir, limit, state) {
   }
   const probe = repoDir ? makeProbe(repoDir) : null
   const unit = readUnit(dir, unitName, { state })
-  const { stage, action, blocked, waiting, dropped, rerun, why } = nextStep(unit, { probe, limit })
+  const { stage, action, blocked, waiting, dropped, rerun, why, reasons } = nextAnswer(unit, { probe, limit })
   // `waiting` only when a person is awaited (`0028`), `dropped` only when the last round left
   // out an earlier finding (`0027`), `hold` only when the unit is held (`0045`), `rerun` only
   // when a draft's questions are all answered (`0106`), `why` only when `impl` waits on a
-  // dependency (`0040`), so every other answer is unchanged.
+  // dependency (`0040`). `reasons` always (`0136` R11): the codes the autopilot reads.
   const hold = unit.hold ? { hold: unit.hold } : {}
-  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...(dropped?.length ? { dropped } : {}), ...hold, ...(rerun ? { rerun } : {}), ...(why === 'dependency' ? { why } : {}) }))
+  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...(dropped?.length ? { dropped } : {}), ...hold, ...(rerun ? { rerun } : {}), ...(why === 'dependency' ? { why } : {}), reasons }))
   return 0
 }
 
@@ -2762,9 +2928,13 @@ export function openLines(stage, unitName, { head = null, rebased = null, retry 
   return lines
 }
 
-function cmdGate(unitName, stage, cosDir, repoDir, limit, state) {
+// `--json` (`0136` R11): the same lines as one JSON object on stdout, `{ok, lines, reasons}`,
+// and the same exit code. The app asks this way, so it reads the codes and not the words.
+// `rebased` is added only when `ship` opened on a clean rebase (`0067` R6): the app's guard
+// `ship-ready` takes it in place of a round of the new head.
+function cmdGate(unitName, stage, cosDir, repoDir, limit, state, json = false) {
   if (!unitName || !stage) {
-    console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}> [--repo <dir>] --state <file|->`)
+    console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}> [--json] [--repo <dir>] --state <file|->`)
     return 2
   }
   const dir = join(cosDir, unitName)
@@ -2773,14 +2943,13 @@ function cmdGate(unitName, stage, cosDir, repoDir, limit, state) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const { ok, need, head, rebased, retry, merged } = checkGate(readUnit(dir, unitName, { state }), stage, { probe, limit })
-  if (ok) {
-    for (const line of openLines(stage, unitName, { head, rebased, retry, merged })) console.log(line)
-    return 0
-  }
-  console.error(`blocked: ${stage} cannot proceed for ${unitName}`)
-  for (const n of need) console.error(`  - ${n}`)
-  return 1
+  const { ok, need, head, rebased, retry, merged, reasons } = gateAnswer(readUnit(dir, unitName, { state }), stage, { probe, limit })
+  const lines = ok
+    ? openLines(stage, unitName, { head, rebased, retry, merged })
+    : [`blocked: ${stage} cannot proceed for ${unitName}`, ...need.map((n) => `  - ${n}`)]
+  if (json) console.log(JSON.stringify(rebased ? { ok, lines, reasons, rebased } : { ok, lines, reasons }))
+  else for (const line of lines) (ok ? console.log : console.error)(line)
+  return ok ? 0 : 1
 }
 
 // --- reading the version out of four files, two formats, no parser ------------
@@ -3172,7 +3341,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 
   const run = {
     status: () => cmdStatus(rest.includes('--json'), cosDir, limit, state),
-    gate: () => cmdGate(rest[0], rest[1], cosDir, repoDir, limit, state),
+    gate: () => {
+      const [unitName, stage] = rest.filter((w) => w !== '--json')
+      return cmdGate(unitName, stage, cosDir, repoDir, limit, state, rest.includes('--json'))
+    },
     next: () => cmdNext(rest[0], cosDir, repoDir, limit, state),
     'new-path': () => cmdNewPath(rest[0], cosDir, reserveFrom),
     'new-idea': () => cmdNewIdea(rest[0], cosDir),

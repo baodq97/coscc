@@ -8,6 +8,7 @@ that would notice its absence.
 
 from __future__ import annotations
 
+import json
 import unittest
 
 from coscc import run
@@ -195,6 +196,104 @@ class TheStateCommand(unittest.TestCase):
                     self.assertRaises(SystemExit) as refused:
                 run.main(["state", "nobody"])
             self.assertEqual(refused.exception.code, 2)
+
+
+class TheSkipCommand(unittest.TestCase):
+    """`0136` R14: a spec is skipped on a person's decision, or their delegate's, and on no
+    agent's. `coscc skip` is how a person records one."""
+
+    UNIT = "0013_open-question"
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        from pathlib import Path
+
+        from coscc import units
+        from coscc.data import Data
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        work, self.data_dir = Path(tmp.name) / "work", Path(tmp.name) / "data"
+        (work / "proj").mkdir(parents=True)
+        self.data = Data(self.data_dir)
+        with self.data.connect() as conn:
+            conn.execute("INSERT INTO workspaces (root, name, added_at) VALUES (?, 'proj', 't')", (str(work),))
+        self.store = units.root(work / "proj", self.data_dir)
+        self.key = units.key(work / "proj")
+        shutil.copytree(Path(__file__).resolve().parent / "units" / "testdata" / "meta_store", self.store)
+        self.env = {"COS_DATA_DIR": str(self.data_dir), "COS_WORKING_DIR": str(work)}
+
+    def coscc(self, *args):
+        import contextlib
+        import io
+        from unittest import mock
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict("os.environ", self.env), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as done:
+            run.main(list(args))
+        return done.exception.code, out.getvalue(), err.getvalue()
+
+    def gate_plan(self):
+        import subprocess
+
+        from coscc.agent import harness
+
+        code, snapshot, _ = self.coscc("state", "proj")
+        self.assertEqual(code, 0)
+        return subprocess.run(
+            ["node", str(harness.script()), "--root", str(self.store), "--state", "-", "gate", self.UNIT, "plan"],
+            input=snapshot, capture_output=True, text=True, env=harness.child_env(),
+        )
+
+    def spec_rows(self):
+        from coscc.units.history import History
+
+        rows = History(self.env["COS_WORKING_DIR"], self.data).transitions(self.key, self.UNIT)
+        return [r for r in rows if r["artifact"] == "spec.md"]
+
+    def test_a_persons_skip_opens_plan_through_the_skip_decision_guard(self):
+        self.assertEqual(self.gate_plan().returncode, 1)
+        code, out, _ = self.coscc("skip", "proj", self.UNIT, "spec", "one", "file,", "no", "schema")
+        self.assertEqual(code, 0)
+        self.assertIn("skipped by person", out)
+        row = self.spec_rows()[-1]
+        self.assertEqual(
+            (row["to_state"], row["guard"], row["authority"], row["actor"]),
+            ("skipped", "skip-decision", "person", "human:terminal"),
+        )
+        self.assertEqual(json.loads(row["inputs"]), {"authority": "person", "reason": "one file, no schema"})
+        gate = self.gate_plan()
+        self.assertEqual(gate.returncode, 0, gate.stderr)
+
+    def test_delegated_says_whose_it_is(self):
+        self.assertEqual(self.coscc("skip", "proj", self.UNIT, "spec", "--delegated", "asked to")[0], 0)
+        self.assertEqual(self.spec_rows()[-1]["authority"], "delegated")
+        self.assertEqual(self.gate_plan().returncode, 0)
+
+    def test_a_skip_no_person_recorded_keeps_plan_shut(self):
+        from coscc.units.history import History
+
+        self.assertEqual(self.coscc("state", "proj")[0], 0)
+        # What the end of a spec step records when its file says `Status: skipped`.
+        History(self.env["COS_WORKING_DIR"], self.data).record_many([{
+            "workspace": self.key, "unit": self.UNIT, "artifact": "spec.md", "to_state": "skipped",
+            "actor": "stage:spec", "session": "s1", "source": "run:spec",
+        }])
+        gate = self.gate_plan()
+        self.assertEqual(gate.returncode, 1)
+        self.assertIn("spec.md is skipped by unknown, not by a person or their delegate", gate.stderr)
+
+    def test_what_it_refuses(self):
+        for args in (
+            ("skip", "proj", self.UNIT, "plan", "why"),  # the machine has no skipped plan
+            ("skip", "proj", self.UNIT, "spec"),  # no reason
+            ("skip", "proj", "0099_nobody", "spec", "why"),
+            ("skip", "nowhere", self.UNIT, "spec", "why"),
+        ):
+            self.assertEqual(self.coscc(*args)[0], 2, args)
+        self.assertEqual(self.spec_rows()[-1]["to_state"], "draft")
 
 
 class TheServerIsHeld(unittest.TestCase):

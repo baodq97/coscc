@@ -6,22 +6,21 @@ paths:
 
 # The grant table: what no test here catches
 
-- **`ship` merges; `pr` does not.** `pr` stops at an open pull request, and its grant refuses
-  the merge by the command's words with flags removed — `gh -R o/r pr merge`, the merge
-  endpoint through `gh api` and `gh alias set` included. An alias defined before the step,
-  or `node -e` spawning `gh`, still walks past (`coscc/agent/policy_test.py`,
-  `test_the_known_limit_of_the_deny_list`). `ship`'s grant holds `git` and `gh` with this
-  machine's login and lands the change on `main` after the `ship` gate opens.
-- **The `pr` and `ship` grants reach further than this repository.** Their capability is
-  this machine's `gh` login, so they reach every repository that login reaches. The page
-  keeps one sentence beside the button saying so (`service.CONSEQUENCE`; 0082 spec ## Answers,
-  câu 5); the full warning string is `policy.py`'s, still
-  in `/api/board` as `warning`, and this bullet is its place in the documentation. Do not
-  remove the sentence.
-- **The mode grants nothing, so the default button hands `pr` and `ship` their full grant.**
-  `pr` pushes and `ship` merges with this machine's `gh` login whatever mode is set. What
-  still stands in front is the gate `run_step` asks and the one sentence beside the button
-  (`0082`); the full warning is behind *What it may use* on the unit.
+- **Since `0136` no board step opens a `pr` or `ship` session.** `run_step` hands both to
+  `coscc/github/prmachine.py`, which pushes the unit's branch, opens its pull request and
+  merges it with this machine's `gh` login, with no model between. What stands in front of a
+  merge is `cos.mjs gate` and then guard `ship-ready`, which reads CI and the last round in
+  `cos.db` at the head its own `gh pr view` found and pins `--match-head-commit` to it. The
+  `pr` and `ship` grants are still in the table, for a terminal session; the `pr` grant
+  refuses the merge by the command's words with flags removed, and an alias defined before
+  the step, or `node -e` spawning `gh`, still walks past (`coscc/agent/policy_test.py`,
+  `test_the_known_limit_of_the_deny_list`).
+- **`pr` and `ship` reach further than this repository.** Their capability is this machine's
+  `gh` login, so they reach every repository that login reaches. The page keeps one sentence
+  beside the button saying so (`service.CONSEQUENCE`; 0082 spec ## Answers, câu 5); the full
+  warning string is `policy.py`'s, still in `/api/board` as `warning`, and this bullet is its
+  place in the documentation. Do not remove the sentence. The mode grants nothing: the
+  default button pushes and merges whatever mode is set.
 - **The read boundary is not a sandbox.** `Read`, `Glob` and `Grep` are held to the unit's
   worktree and its own folder in the store, for every grant. It binds only the stages
   without `Bash`: `impl`, `pr` and `ship` still have `cat` and `head`, and `check_command`

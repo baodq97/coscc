@@ -596,6 +596,7 @@ def _options(
     *,
     data_dir: str,
     resume_at: str | None = None,
+    mcp_servers: dict[str, Any] | None = None,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -635,6 +636,9 @@ def _options(
     replaces the preset's commit guidance, and a session with no preset keeps the argv it
     had. `setting_sources=[]` is untouched, so no settings file is read beside it
     (`0036 spike.md ## U4` measured the argv and the gate with it set).
+
+    `mcp_servers` (`0136` R2) is the app's own in-process servers, `{"cos": <submit>}` for a
+    step that hands back an object. `strict_mcp_config` stays: those are then the only ones.
     """
     # A board step brings its own list from `policy.Grant`; everything else gets the
     # app default, which is empty. `tools=[]` and `tools=None` mean different things to
@@ -662,7 +666,8 @@ def _options(
         # `--setting-sources=` with nothing after it; `0088` `spike.md ## U6` measured the
         # argv, the init and the gate on 0.2.159.
         setting_sources=[],
-        # And no MCP server but the ones declared here, which are none.
+        # And no MCP server but the ones declared here: none, or since `0136` the app's own
+        # `submit` (`mcp_servers` below).
         strict_mcp_config=True,
         # Without this the CLI rewrites the prompt before the model sees it: an `@path`
         # anywhere in it is replaced by that file's contents, and a leading `/word` is
@@ -688,6 +693,8 @@ def _options(
         options.can_use_tool = can_use_tool
     if max_budget_usd:
         options.max_budget_usd = float(max_budget_usd)
+    if mcp_servers:
+        options.mcp_servers = dict(mcp_servers)
     project = instructions.read(cwd).text
     if system_prompt is not None:
         options.system_prompt = dict(system_prompt)
@@ -853,6 +860,7 @@ class Sessions:
         owner: dict[str, Any] | None = None,
         resume_at: str | None = None,
         spent_before: dict[str, float] | None = None,
+        mcp_servers: dict[str, Any] | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -880,6 +888,8 @@ class Sessions:
         session's, since the CLI's own total carries over a resume (`spike.md ## U4`).
         A stream `suspend_all` paused raises `Suspended` and yields no `done`, and one begun
         after it is `Refused`.
+
+        `mcp_servers` goes to `_options` as it is (`0136` R2).
         """
         if self.paused:
             raise Refused(PAUSED)
@@ -893,7 +903,7 @@ class Sessions:
         inner = self._stream(
             cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
             workspace, model, system_prompt, effort, step, settings,
-            flow=flow, resume_at=resume_at, spent_before=spent_before,
+            flow=flow, resume_at=resume_at, spent_before=spent_before, mcp_servers=mcp_servers,
         )
         if step is None:
             turn = flow
@@ -935,6 +945,7 @@ class Sessions:
         self, cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
         workspace, model, system_prompt, effort, step, settings=None,
         *, flow: Any = None, resume_at: str | None = None, spent_before: dict[str, float] | None = None,
+        mcp_servers: dict[str, Any] | None = None,
     ):
         member =workspace if workspace is not None else cwd
         if not self.membership(member):
@@ -974,6 +985,7 @@ class Sessions:
                             settings=settings,
                             data_dir=str(scratch),
                             resume_at=resume_at,
+                            mcp_servers=mcp_servers,
                         )
                     )
                     if step is None:

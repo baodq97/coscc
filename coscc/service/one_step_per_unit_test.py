@@ -24,6 +24,7 @@ from coscc.git import worktrees
 from coscc.web.api import build
 from coscc.config import Config
 from coscc.service import Invalid
+from coscc.agent.submit_test import submits as _submits
 
 N = 10
 
@@ -56,6 +57,7 @@ class _Sessions:
             yield ("chunk", "# Spec: a problem\n")
             await asyncio.wait_for(self.release.wait(), 20)
             yield ("chunk", "Author: proof. Status: accepted.\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s-raced", "terminal_reason": "success",
                             "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01}})
         finally:

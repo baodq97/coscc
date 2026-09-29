@@ -208,6 +208,10 @@ class Service(
     _autopilot_runs: dict[str, dict[str, tuple[str, asyncio.Task]]] = field(default_factory=dict, init=False, repr=False)
     _autopilot_stops: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict, init=False, repr=False)
     _autopilot_pending: set[asyncio.Task] = field(default_factory=set, init=False, repr=False)
+    # `0136` R22. What the last pass held back by unit, `(code, detail)`, for the card to show.
+    _autopilot_held: dict[str, dict[str, tuple[str, str]]] = field(default_factory=dict, init=False, repr=False)
+    # `0136` R23. The reader of each workspace's pull requests, while its autopilot is on.
+    _pr_readers: dict[str, asyncio.Task] = field(default_factory=dict, init=False, repr=False)
     # `0131` R1. The gathers after a ship running now, kept so none is collected mid-run.
     _gathers: set[asyncio.Task] = field(default_factory=set, init=False, repr=False)
 

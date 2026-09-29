@@ -72,6 +72,11 @@ class Grant:
     # `0041` R3: no `git push` may force — `--force`, `-f`, `--force-with-lease`,
     # `--force-if-includes` or a `+` refspec. A plain push stays open.
     push_no_force: bool = False
+    # `0136` R2. Whether the session is handed `submit` (`coscc/agent/submit.py`), the one
+    # tool beyond this grant's list `decide` lets through. It writes nothing and runs nothing,
+    # and is not in `tools`: `--tools` names the built-in set, and an SDK server's tool
+    # reaches the session without it (`0136 spike.md ## U1`).
+    submits: bool = False
 
     @property
     def opens_anything(self) -> bool:
@@ -81,6 +86,8 @@ class Grant:
 # Tools that only read. Safe for a step that has to understand a repository before changing
 # it, and listed separately so the write set is short enough to read in one go.
 READ_TOOLS = ("Read", "Glob", "Grep")
+# `0136`. `coscc/agent/submit.py`'s `NAME`, spelled here so this module imports nothing of it.
+SUBMIT_TOOL = "mcp__cos__submit"
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 EXEC_TOOLS = ("Bash",)
 
@@ -371,7 +378,8 @@ GRANTS: dict[str, Grant] = {
         push_needs_lease=True,
     ),
     # `0074`. Not a stage either: the backlog's *Propose estimates* button, one session per
-    # press. No tools and no commands, like `idea` and `intent`; the app reads the reply.
+    # press. No tools and no commands, like `idea` and `intent`; since `0136` R9 it hands its
+    # estimate back through `submit` (`SUBMITTING_SESSIONS`), and the reply is not read.
     # Ceilings chosen, not measured (`spec.md` C5): nobody has measured a prompt of ~70 units.
     "estimate": Grant(
         max_turns=1,
@@ -379,8 +387,9 @@ GRANTS: dict[str, Grant] = {
         warning=ESTIMATE_WARNING,
     ),
     # `0044`. Jera, not a stage either: *Ask Jera* on a unit's Questions tab, or the autopilot
-    # (`0101` R1), one session each. No tools, no commands, one turn; the app reads the reply
-    # and writes what survives its filter (`coscc/agent/precedent.py`). Since `0101` R5 the
+    # (`0101` R1), one session each. No tools, no commands; since `0136` R8 it hands its
+    # verdicts back through `submit` (`SUBMITTING_SESSIONS`), and the app writes what survives
+    # its filter (`coscc/agent/precedent.py`). Since `0101` R5 the
     # $1.00 here is only the floor: each session runs on `precedent.grant_for_prompt`, whose
     # ceiling grows with the prompt up to `PRECEDENT_MAX_USD`.
     "precedent": Grant(
@@ -436,12 +445,32 @@ def beyond_reading(grant: Grant) -> tuple[str, ...]:
     return tuple(t for t in grant.tools if t not in READ_TOOLS) + tuple(grant.commands)
 
 
+# `0136` R2, R4, R5. The stages whose run hands back an object through `submit`: a stage
+# result, or `review`'s round. `coscc/agent/submit.py` holds the same stages as
+# `STAGE_RESULT` and `ROUND`; `policy_test` pins the two.
+# A set, not the loop's order: that is `cos.mjs`'s alone (`autopilot_test`, `0115` R4).
+SUBMITTING = ("idea", "impl", "intent", "plan", "review", "spec", "spike")
+# The fewest turns such a step gets: `idea` and `intent` had one, and a call to `submit` ends
+# a turn. Chosen, not measured, from `0136 spike.md ## U2`: a refused object was submitted
+# again after one more turn, so four holds a call, a refusal, a second call and the reply.
+SUBMIT_TURNS = 4
+# `0136` R7, R8, R9. The sessions that are no stage and hand back an object through `submit`:
+# Gebo, the estimate and Jera, `coscc/agent/submit.py`'s `SESSIONS`. `knowledge` is not one:
+# its reply drives no transition (`0136` spec, `## Out of scope`).
+SUBMITTING_SESSIONS = ("estimate", "integrate", "precedent")
+
+
 def grant_for(stage: str) -> Grant:
     """The grant for one step. A stage the table does not name is locked, not open.
 
     No mode: `0020` `spec.md` `## Answers`, answer 1 — the tools go with the stage's task.
+    `0136`: a stage in `SUBMITTING` or a session in `SUBMITTING_SESSIONS` gets `submits`, and
+    at least `SUBMIT_TURNS` turns.
     """
-    return GRANTS.get(stage, Grant())
+    grant = GRANTS.get(stage, Grant())
+    if stage not in SUBMITTING + SUBMITTING_SESSIONS:
+        return grant
+    return replace(grant, submits=True, max_turns=max(grant.max_turns, SUBMIT_TURNS))
 
 
 def grant_for_step(stage: str, label: str | None) -> Grant:
@@ -1337,6 +1366,10 @@ def decide(
     units). Writing keeps its roots. `lease` is `(branch, head)`, which a grant with
     `push_needs_lease` binds every `git push` to.
     """
+    if tool == SUBMIT_TOOL and grant.submits:
+        # `0136` spec C4. The one MCP tool a grant lets through, by its exact name: the app's
+        # own in-process server, whose handler writes nothing and runs nothing.
+        return ""
     if tool not in grant.tools:
         # Covers MCP tools by construction: their names are never in a grant.
         return f"this step was not granted {tool}"

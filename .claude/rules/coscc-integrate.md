@@ -8,7 +8,7 @@ paths:
 - **`POST /api/units/integrate` force-pushes under this machine's `gh` login.**
   - On a `behind` unit it runs `gh pr update-branch --rebase` and then moves the unit's
     local branch with `reset --keep`. On a `conflicting` or `red-after-integration` unit it
-    opens Gebo, a paid session (ceilings in the `integrate` grant, `coscc/agent/policy.py:361-365`,
+    opens Gebo, a paid session (ceilings in the `integrate` grant, `coscc/agent/policy.py:370-374`,
     chosen, not measured)
     whose grant allows exactly one push: `--force-with-lease=<branch>:<head at start>` to
     the unit's own branch.

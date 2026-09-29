@@ -19,7 +19,8 @@ from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc import knowledge
 from coscc.agent import agents, harness
-from coscc.github import integrate
+from coscc.agent import submit as submit_mod
+from coscc.github import integrate, prmachine
 from coscc.units import planmap, priorfindings, retake
 from coscc.units.board import Unavailable
 from coscc.data import Data, now as _now
@@ -38,6 +39,7 @@ from coscc.service.common import (
     CONSEQUENCE,
     Invalid,
     OWNER,
+    Refused,
     _younger_than,
     describe_base,
     step_cwd,
@@ -555,12 +557,14 @@ class StepsMixin:
         }
         end: dict[str, Any] = {}
         failure = ""
+        # `0136` R7: what Gebo says needs a person is the object it hands back, not its words.
+        collector = submit_mod.Collector("integrate")
         try:
             async for kind, payload in integrate.run_gebo(
                 self.sessions, tree=str(tree), workspace=cwd, prompt=prompt, grant=grant,
                 read_also=integrate.read_paths(units_root, unit, rel), lease=(branch, head_before), model=model,
                 settings=agents.settings_json(agent) if agent is not None else None,
-                owner=owner, resume=resume,
+                owner=owner, resume=resume, channel=collector,
             ):
                 if kind == "chunk":
                     yield ("chunk", payload)
@@ -584,7 +588,10 @@ class StepsMixin:
             head_now = head_before
             details.append(f"could not read the pull request's head afterwards: {e}")
         reply = str(end.get("reply") or "")
-        outcome = integrate.outcome_of_session(head_before, head_now, reply)
+        needs_person = integrate.needs_person_of(collector.object())
+        outcome = integrate.outcome_of_session(head_before, head_now, needs_person)
+        if outcome == "failed" and not submit_mod.submitted(collector):
+            details.append("no-submission: the session handed back no result through submit")
         if outcome == "pushed":
             # `0052` review round 2, F1: a head that moved is Gebo's push only if Gebo's tree
             # ends on it. A GitHub rebase finishing late, which the lease then refused Gebo's
@@ -625,7 +632,7 @@ class StepsMixin:
         rec = write(integrate.record(
             workspace=key, unit=unit, pr=pr, mode="agent", head_before=head_before, head_after=head_now,
             origin_sha=origin_sha, outcome=outcome, related_=rel, report=reply,
-            needs_person=integrate.parse_needs_person(reply), detail="; ".join(details),
+            needs_person=needs_person, detail="; ".join(details),
             update_branch=refused_update, agent=name, **seen,
         ))
         yield ("done", {"integration": rec})
@@ -681,8 +688,8 @@ class StepsMixin:
         merged. Never raises, like `_cleanup`: a record that cannot be written changes
         nothing about the step.
 
-        R5 says `next`, but `next` hands out no `why` (`autopilot.py`, above `CI_PENDING`):
-        `why` is `decide`'s, read off the files by `cos.mjs status` as `board.read` copies it,
+        R5 says `next`; `why` is `decide`'s, read off the files by `cos.mjs status` as
+        `board.read` copies it, without asking `gh` as `next` would,
         so `ship-refused` can also be a merge whose branch deletion failed (plan Risk 4)."""
         try:
             journal = self._journal()
@@ -725,6 +732,7 @@ class StepsMixin:
             return {
                 "cwd": cwd, "unit": unit, **{k: held[k] for k in ("stage", "action", "blocked")},
                 "waiting": [], "dropped": [], "hold": held["hold"],
+                "reasons": list(held.get("reasons") or []),
             }
         # `0017`. The unit's worktree is the checkout its branch and pull request are read
         # from. None when there is none to open, and `cos.mjs` then keeps `review` and
@@ -751,6 +759,8 @@ class StepsMixin:
             # `0106`. The stage a fully answered draft would run again; only the autopilot
             # reads it.
             "rerun": str(found.get("rerun") or ""),
+            # `0136` R11. The codes the autopilot branches on, copied from `cos.mjs next`.
+            "reasons": list(found.get("reasons") or []),
         }
 
     async def rerun_offers(self, cwd: str, unit: str) -> dict[str, Any]:
@@ -915,13 +925,28 @@ class StepsMixin:
             try:
                 # `work` is the checkout the `review` and `ship` gates read git and the pull
                 # request from (`0015`). The store has no git to read.
-                allowed, said = await board_reader.gate(
+                answer = await board_reader.gate(
                     self._units_root(cwd), unit, stage, repo=work, state=self._snapshot(cwd, [unit])
                 )
             except Unavailable as e:
                 raise Invalid(str(e)) from e
+            allowed, said = answer
+            # `0136` R11: the codes go with the words, so no reader downstream parses these.
+            gate_reasons = tuple(getattr(answer, "reasons", ()))
             if not allowed:
-                raise Invalid(said)
+                raise Refused(said, gate_reasons)
+
+            # `0136` R12, R13. `pr` and `ship` run no session: the PR machine pushes, opens or
+            # merges, and records each move through its guard. The mark is this frame's, as for
+            # any refusal above, and is given back by the `finally` below.
+            # A `pr` run again (`0054`) has its block appended as any rerun, and the note reaches
+            # no prompt: the app writes `pr.md` again from the unit's metadata.
+            if stage in prmachine.STAGES:
+                if rerun:
+                    await self._append_to_answers(self._unit_dir(cwd, unit) / "intent.md", "\n" + rerun_block, "a rerun")
+                yield ("done", await self._mechanical(cwd, key, unit, stage, tree, started_by, again=rerun,
+                                                      rebased=getattr(answer, "rebased", None)))
+                return
 
             if stage == "impl" and tree is not None:
                 # R6. A tree that cannot run its tests turns every `impl` red from the start, so
@@ -955,6 +980,13 @@ class StepsMixin:
                 {"unfinished_round": {"n": last_round["n"], "dropped": list(last_round["dropped"])}}
                 if last_round and last_round.get("unfinished") else {}
             )
+            # `0136` R6. The findings the last round left open, which an `impl` may claim only a
+            # person can close: guard `impl-claim` reads them when its object arrives.
+            if rounds_before:
+                unfinished_kw["rounds_known"] = tuple(sorted(n for n in rounds_before if isinstance(n, int)))
+            if stage in ("impl", "implement") and found.get("rounds"):
+                last = found["rounds"][-1]
+                unfinished_kw.update(open_findings=tuple(last.get("open_ids") or ()), claims_round=last.get("n"))
             # `0004_no-setting-says-which-model-runs-a-stage`. Resolved after the gate, so a
             # refused step reads nothing more. `stage` was checked against the board above.
             # `0033`: with the plan's label, the effort and, for `impl`, which run this is.
@@ -1020,19 +1052,9 @@ class StepsMixin:
                 shortlist = backlog.stamp(journal.records(key, kind="shortlist"), unit)
             except Exception as e:  # noqa: BLE001 — recorded as the reason
                 shortlist = {"rank": None, "of": None, "record": None, "error": str(e) or type(e).__name__}
-            # `0041` R2. The unit's open pull request, for `pr` only, after the gate and before
-            # any money is spent. One `gh pr list`, up to `integrate.GH_TIMEOUT`; a lookup that
-            # fails still starts the step, and its prompt says so.
+            # `0041` R2's lookup was for a `pr` session; since `0136` R12 `pr` has none, and the
+            # PR machine asks `gh pr list` itself.
             pr_note, pr_before = "", None
-            if stage == "pr":
-                if tree is not None:
-                    lookup = await integrate.pr_for_branch(work, tree.get("branch") or "")
-                else:
-                    lookup = {"state": "unknown", "reason": "this workspace is not a git checkout"}
-                # `None` when the lookup could not answer, so `_sync_pr` does not read that as
-                # "no pull request" (`0055` review F2); the `start` record still gets `""`.
-                pr_note = integrate.describe_pr_lookup(lookup)
-                pr_before = None if lookup.get("state") == "unknown" else lookup.get("url", "")
             # `0090` R1-R4. The store, read once, only with the flag on and only for the stages
             # that receive it; off, nothing is read and `Runner.run` is handed no key at all, so
             # its prompt and its `start` record are what they were (R2). A store that cannot be
@@ -1047,12 +1069,12 @@ class StepsMixin:
                 if arm == knowledge.ON and stage in knowledge.STAGES:
                     knowledge_kw.update(await asyncio.to_thread(
                         knowledge.for_step, self.config.data_dir, units.slot(cwd), work))
-            # `0054` R3, R8. After the last refusal that reads nothing more, before any money
-            # is spent. `pr.md`'s `## Answers` is read first: the `pr` session writes that file
-            # itself, so only a comparison afterwards can tell whether the section survived.
-            # `0115` R7: every `impl` step writes `impl.md` itself too, rerun or not.
+            # `0115` R7. After the last refusal that reads nothing more, before any money is
+            # spent: every `impl` step writes `impl.md` itself, so only a comparison afterwards
+            # can tell whether its `## Answers` survived. (`0054` R8 read `pr.md`'s too, while a
+            # `pr` session wrote it.)
             answers_before: bytes | None = None
-            if (rerun and stage == "pr") or stage == "impl":
+            if stage == "impl":
                 try:
                     answers_before = answers_section((directory / row["file"]).read_bytes())
                 except OSError:
@@ -1119,6 +1141,7 @@ class StepsMixin:
                     stages=list(data["stages"]),
                     mode=mode,
                     gate_said=said,
+                    gate_reasons=gate_reasons,
                     cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
                     base=base,
                     base_note=describe_base(base),
@@ -1297,23 +1320,12 @@ class StepsMixin:
                     item = ("done", {**item[1], "base": base})
                     if item[1].get("outcome") != "stopped":
                         item = ("done", {**item[1], **await self._ingest(cwd, unit, item[1], artifact)})
-                    if stage == "ship" and tree is not None and item[1].get("outcome") == "done":
-                        # R10. Only if `cos.mjs` now says `finished` and GitHub says merged;
-                        # otherwise nothing is touched and the board tries again later.
-                        item = ("done", {**item[1], "cleanup": await self._cleanup(cwd, unit)})
                     if rounds_before is not None and item[1].get("outcome") == "done":
                         # After `Runner` has written `review.md` (`runner.py:442`), never
                         # before: the artifact does not wait on GitHub (`0021` R6).
                         item = (
                             "done",
                             {**item[1], "comments": await self._post_new_rounds(cwd, unit, rounds_before)},
-                        )
-                    if stage == "pr" and item[1].get("outcome") != "stopped":
-                        # `0055` R3. After `pr.md` is on disk, like the rounds above; a
-                        # stopped step posts nothing (`0034` R9, `spec.md ## Answers, câu 2`).
-                        item = (
-                            "done",
-                            {**item[1], "pr_sync": await self._sync_pr(cwd, unit, kwargs.get("pr_before"))},
                         )
                     if (
                         answers_before is not None and item[1].get("outcome") == "done"
@@ -1375,11 +1387,116 @@ class StepsMixin:
                     # `done`, and after the mark is given back: the board read it costs holds
                     # neither the reader's `done` nor the unit.
                     await self._after_end(cwd, unit, stage, running.workspace)
-                if ended_done and not going_down and stage == "ship" and self.config.knowledge:
-                    # `0131` R1. Once, in the background: nothing here waits for it.
-                    self._gather_soon(cwd, unit, running.workspace)
             finally:
                 self._finishing.pop(rid, None)
+
+    def _pr_machine(self) -> prmachine.Machine:
+        """`0136`. The PR machine over the same history and run log as every other transition."""
+        meta = self._unit_meta()
+        return prmachine.Machine(meta.history, self._journal() or Journal(meta.root, self.config.data_dir))
+
+    async def _mechanical(
+        self, cwd: str, key: str, unit: str, stage: str, tree: dict[str, Any] | None, started_by: str,
+        again: bool = False, rebased: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """`0136` R12, R13: one `pr` or `ship`, with no session, no `start` and no `end` row;
+        what it did is its transitions and, for `ship`, the `ship` row notices read (`0113`).
+        Returns the `done` item a session's step would have ended with. `rebased` is the
+        `ship` gate's clean-rebase read (`0067`), which guard `ship-ready` takes."""
+        if tree is None:
+            raise Invalid(f"{stage} needs the unit's git worktree, and this workspace is not a git repository")
+        work = Path(tree["path"])
+        try:
+            expected = await asyncio.to_thread(
+                units.branch_name, cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
+            branch = await gitops.current_branch(work)
+        except (CannotCreate, BadUnit, GitError) as e:
+            raise Invalid(str(e)) from e
+        u = prmachine.Unit(key, unit, self._unit_dir(cwd, unit), str(work), branch, expected,
+                           expected.partition("/")[0] or None)
+        machine = self._pr_machine()
+        if stage == "pr":
+            out = await machine.open_pr(u, again=again)
+        else:
+            out = await machine.ship(u, authority="code" if started_by == "autopilot" else "person", rebased=rebased)
+        artifact = prmachine.PR_FILE if stage == "pr" else prmachine.SHIP_FILE
+        done: dict[str, Any] = {
+            "unit": unit, "stage": stage, "outcome": "done" if out.ok else "failed",
+            "artifact": artifact if out.ok else None, "session_id": None, "included": [],
+            "error": out.detail or ", ".join(out.reasons), "cost": {}, "model": None,
+            "model_source": None, "mechanical": out.as_dict(),
+        }
+        if stage == "pr" and out.ok:
+            # `0055` R3, `0122` R4: the title and body the app wrote go onto a pull request it
+            # found open rather than created, and the scope is read once, as after a session.
+            done["pr_sync"] = await self._sync_pr(cwd, unit, out.url if out.result in ("found", "already") else "")
+        refused = False
+        if stage == "ship":
+            merged = out.result in ("merged", "recorded", "already")
+            refused = not merged and prmachine.state(machine.history, key, unit)["state"] == "merge-requested"
+            if merged or refused:
+                cleanup = await self._shipped(cwd, key, unit, "shipped" if merged else "refused")
+                if merged:
+                    done["cleanup"] = cleanup
+        # `0136` review round 1, F2: with no `end`, this is what the autopilot's stop `e` reads
+        # as the unit's last word, so a `pr` or `ship` that failed or was refused stops it for a
+        # person as a failed session did, and one that did its work lifts that stop. Review round
+        # 2, F6: `merge_refused` is a merge GitHub refused after the machine requested it.
+        try:
+            self._journal().append({
+                "kind": autopilot.PR_MACHINE, "workspace": key, "unit": unit, "stage": stage,
+                "outcome": done["outcome"], "result": out.result, "reasons": list(out.reasons),
+                "detail": out.detail, "started_by": started_by, "merge_refused": refused,
+            })
+        except (BadRecord, Busy, AttributeError):
+            pass
+        return done
+
+    async def _shipped(self, cwd: str, key: str, unit: str, result: str) -> dict[str, Any] | None:
+        """The `ship` row notices read (`0113`), and after a merge the cleanup and the gather
+        (`0131` R1, once, in the background). From `_mechanical`, and from the PR reader and the
+        start-up reconcile when they record a merge no `ship` step follows any more (`0136`
+        review round 1, F3). Never raises; the cleanup's answer after a merge, else `None`."""
+        try:
+            self._journal().append({"kind": "ship", "workspace": key, "unit": unit, "stage": "ship", "result": result})
+        except (BadRecord, Busy, AttributeError):
+            pass
+        if result != "shipped":
+            return None
+        cleanup = await self._cleanup(cwd, unit)
+        if self.config.knowledge:
+            self._gather_soon(cwd, unit, key)
+        return cleanup
+
+    async def reconcile_prs(self) -> list[dict[str, Any]]:
+        """`0136` spec Design "Đối soát sau khởi động lại": every unit left at
+        `merge-requested` is read once from GitHub; a merged one is recorded and none is
+        merged. Never raises: a start-up that cannot read goes on as it would have."""
+        try:
+            machine = self._pr_machine()
+            with machine.history.data.connect() as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT workspace, unit FROM transitions WHERE root = ? AND guard = 'ship-ready' "
+                    "AND artifact = ?", (str(machine.history.working_dir), prmachine.SHIP_FILE),
+                ).fetchall()
+            pending = []
+            for r in rows:
+                ws, unit = r["workspace"], r["unit"]
+                if prmachine.state(machine.history, ws, unit)["state"] != "merge-requested":
+                    continue
+                tree = worktrees.path(ws, unit, self.config.data_dir)
+                pending.append(prmachine.Unit(ws, unit, self._unit_dir(ws, unit),
+                                              str(tree if tree.is_dir() else ws), "", "", None))
+            done = []
+            for u in pending:
+                for o in await machine.reconcile([u]):
+                    # F3, as the reader: the journal key is the resolved path, so it is the cwd.
+                    if o.result == "recorded":
+                        await self._shipped(u.workspace, u.workspace, u.name, "shipped")
+                    done.append(o.as_dict())
+            return done
+        except Exception as e:  # noqa: BLE001 — a start-up is never stopped by this
+            return [{"result": "failed", "detail": str(e) or type(e).__name__}]
 
     async def stop_step(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """Stop one running board step (`0034` R2, R5, R6). The route and the page's

@@ -52,7 +52,6 @@ POLL_DELAY = 2.0
 
 _RED = ("fail", "cancel")
 _PR_NUMBER = re.compile(r"\(#(\d+)\)\s*$")
-_NEEDS_PERSON = re.compile(r"^\s*(?:[-*]\s*)?\[needs-person\]\s*(.+?)\s*$")
 
 
 class IntegrateError(Exception):
@@ -358,13 +357,15 @@ def read_paths(units_root: Path, own: str, rel: dict[str, list[dict]]) -> tuple[
     return tuple(paths)
 
 
-def parse_needs_person(reply: str) -> list[str]:
-    """Every `[needs-person] …` line in a reply, the text after the marker."""
+def needs_person_of(submitted: dict[str, Any] | None) -> list[str]:
+    """`0136` R7. What Gebo handed back through `submit` as needing a person, one line each:
+    `<commit>: <why>`, or `<why>` alone when it names no commit. `[]` when it handed back
+    none; its reply is never read for it."""
     out = []
-    for line in (reply or "").splitlines():
-        m = _NEEDS_PERSON.match(line)
-        if m:
-            out.append(m.group(1))
+    for item in (submitted or {}).get("needs_person") or []:
+        commit, why = str(item.get("commit") or "").strip(), str(item.get("why") or "").strip()
+        if why:
+            out.append(f"{commit}: {why}" if commit else why)
     return out
 
 
@@ -454,11 +455,13 @@ def _fetch_of(fetch: dict | None) -> dict | None:
     return {"outcome": fetch.get("outcome"), "age": fetch.get("age")}
 
 
-def outcome_of_session(head_before: str, head_now: str, reply: str) -> str:
-    """What a Gebo session did, read from git and not from what it said (spec, design 4)."""
+def outcome_of_session(head_before: str, head_now: str, needs_person: list[str]) -> str:
+    """What a Gebo session did, in `0136` R7's order: the head on git moved, else the object
+    it handed back names something only a person can settle, else it failed. Its words never
+    decide (spec, design 4)."""
     if head_now and head_now != head_before:
         return "pushed"
-    if parse_needs_person(reply):
+    if needs_person:
         return "needs-person"
     return "failed"
 
@@ -603,8 +606,8 @@ def _completion_section(completion: dict, branch: str, pr_head: str) -> str:
         lines.append(
             f"Compare the two with `git range-diff origin/main {pr_head} {local}`. Push `{local}` "
             "with the one push allowed above only when every difference is context a new base "
-            "brought. When any commit changes in anything else, push nothing and end with one "
-            "`[needs-person]` line naming each such commit."
+            "brought. When any commit changes in anything else, push nothing and hand back through "
+            "`submit` one `needs_person` item naming each such commit."
         )
     lines.append(
         f"Do not rebase, commit or reset: this road pushes `{local}` as it is, on `{branch}`, "
@@ -797,6 +800,7 @@ async def run_gebo(
     settings: str | None = None,
     owner: dict[str, Any] | None = None,
     resume: dict[str, Any] | None = None,
+    channel: Any = None,
 ) -> AsyncIterator[tuple[str, Any]]:
     """One Gebo session, streamed. Not `Runner.run`: that requires an artifact written, and
     Gebo writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`.
@@ -805,7 +809,10 @@ async def run_gebo(
     session has; `None` passes nothing.
 
     `owner` and `resume` are `0138`'s: whose session this is, for a `suspend` row, and such
-    a row to go on from, under what is left of the grant's ceilings (R10)."""
+    a row to go on from, under what is left of the grant's ceilings (R10).
+
+    `channel` (`0136` R7) is the `submit.Collector` Gebo hands its result to; `None` opens
+    none."""
     from coscc.agent.transcript import ceilings_left
     from coscc.runner import CLAUDE_CODE_PRESET, Denials, permission_gate
 
@@ -821,6 +828,10 @@ async def run_gebo(
         kwargs["settings"] = settings
     if owner is not None:
         kwargs["owner"] = owner
+    if channel is not None:
+        from coscc.agent.submit import SERVER
+
+        kwargs["mcp_servers"] = {SERVER: channel.server()}
     turns, budget = grant.max_turns, grant.max_budget_usd or None
     if resume is not None:
         turns, budget, used_up = ceilings_left(grant.max_turns, grant.max_budget_usd, resume)

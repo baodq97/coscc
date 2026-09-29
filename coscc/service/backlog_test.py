@@ -22,6 +22,7 @@ from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import REPO, _service, create_sync
+from coscc.agent.submit_test import submits as _submits
 
 
 class TheUnitHistoryReadPath(unittest.TestCase):
@@ -59,6 +60,19 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         # Not two sources: the last transition's destination *is* the state.
         self.assertEqual(found["state"]["intent.md"], found["transitions"][-1]["to_state"])
         self.assertEqual(found["state"]["intent.md"], "accepted")
+
+    def test_0136_r20_the_timeline_carries_each_transition_with_its_guards_label(self):
+        log = self._log()
+        log.record(REPO, "0001_a-problem", "intent.md", "draft")
+        log.record(REPO, "0001_a-problem", "ship.md", "accepted", guard="merge-read", authority="code",
+                   run="r-1", inputs={"merge_commit": "f" * 40, "number": 7})
+        old, merged = self.service.timeline(REPO, "0001_a-problem")["transitions"]
+        # A row from before `0136` names no guard, and the page says so rather than guessing.
+        self.assertEqual((old["guard"], old["guard_label"], old["head"]), ("unknown", "", ""))
+        self.assertEqual(
+            (merged["guard_label"], merged["authority"], merged["run"], merged["head"], merged["inputs"]["number"]),
+            ("A merge is recorded only from a read that names its merge commit.", "code", "r-1", "f" * 40, 7),
+        )
 
     def test_it_counts_the_edits_after_settling_that_0013_exists_to_count(self):
         log = self._log()
@@ -396,15 +410,18 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
     """`0074`. Three write paths, one paid proposal, one field on `start` — and the board's
     `next` and `blocked` exactly as they were (R15), with no file of the store touched (R16)."""
 
-    GOOD = "```json\n" + json.dumps({"units": [
+    # `0136` R9: the object the session hands back through `submit`.
+    GOOD = {"units": [
         {"unit": "0001_idea-only", "value": 4, "effort": "S", "similar": [], "basis": "bớt can thiệp tay: x",
          "relations": [{"type": "liên quan", "other": "0002_has-intent", "reason": "cùng màn"}]},
-        {"unit": "0002_has-intent", "value": 2, "effort": "M", "similar": [], "basis": "cảm thấy vậy"},
-    ]}) + "\n```"
+        {"unit": "0002_has-intent", "value": 2, "effort": "M", "similar": [], "basis": "cảm thấy vậy",
+         "relations": []},
+    ]}
 
     class Replies:
-        def __init__(self, text, gate=None):
-            self.text, self.gate, self.calls = text, gate, 0
+        def __init__(self, obj, gate=None):
+            self.obj, self.gate, self.calls = obj, gate, 0
+            self.text = "Here is my estimate."
 
         def in_flight(self):
             return []
@@ -414,6 +431,8 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
             if self.gate is not None:
                 await self.gate.wait()
             yield ("chunk", self.text)
+            if self.obj is not None:
+                await _submits(kw, **self.obj)
             yield ("done", {"session_id": "sess-1", "cost": {"cost_usd": 0.12, "turns": 1}})
 
     def setUp(self):
@@ -542,15 +561,19 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.assertEqual(done["written"], 2)  # one estimate, one relation
         self.assertEqual([r["unit"] for r in done["rejected"]], [self.b])
         values = self.journal.records(self.key, kind="estimate-value")
-        self.assertEqual([(v["unit"], v["by"]) for v in values], [(self.a, "agent:sess-1")])
+        self.assertEqual([(v["unit"], v["by"], v["authority"]) for v in values], [(self.a, "agent:sess-1", "agent")])
         ends = [r for r in self.journal.records(self.key, kind="end") if r.get("stage") == "estimate"]
         self.assertEqual((ends[-1]["outcome"], ends[-1]["cost_usd"]), ("done", 0.12))
 
-    def test_r18_a_reply_that_is_not_json_writes_no_estimate(self):
-        self.sessions.text = "value 4, I think"
+    def test_r18_a_session_that_hands_back_no_object_writes_no_estimate(self):
+        """`0136` R9: even when its reply holds the estimate as a JSON block."""
+        import json
+
+        self.sessions.text = "```json\n" + json.dumps(self.GOOD) + "\n```"
+        self.sessions.obj = None
         done = self._propose()[-1][1]["estimate"]
         self.assertEqual(done["outcome"], "failed")
-        self.assertIn("not JSON", done["detail"])
+        self.assertIn("no-submission", done["detail"])
         self.assertEqual(self.journal.records(self.key, kind="estimate-value"), [])
 
     def test_r18_a_second_press_while_one_runs_is_refused_and_spends_nothing(self):
@@ -592,7 +615,7 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
 
     class _Sessions:
         def __init__(self) -> None:
-            self.text, self.gate, self.calls = "", None, 0
+            self.text, self.obj, self.gate, self.calls = "", None, None, 0
 
         def in_flight(self):
             return []
@@ -603,6 +626,8 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
             if self.gate is not None:
                 await self.gate.wait()
             yield ("chunk", self.text)
+            if self.obj is not None:
+                await _submits(kw, **self.obj)
             yield ("done", {"session_id": "s1", "cost": {"cost_usd": 0.02, "turns": 1}})
 
     def setUp(self):
@@ -631,7 +656,8 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
         return made["unit"]
 
     def reply(self, *items: dict) -> None:
-        self.sessions.text = "```json\n" + json.dumps(list(items), ensure_ascii=False) + "\n```"
+        """What Jera hands back through `submit` (`0136` R8)."""
+        self.sessions.obj = {"verdicts": list(items)}
 
     def item(self, n: int, **over) -> dict:
         return {"artifact": "spec.md", "n": n, "verdict": "answer", "category": "other", "text": f"Trả lời {n}.",
@@ -684,6 +710,10 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
             [row] = conn.execute(
                 "SELECT artifact, ref, answered_by, date, via, text FROM unit_answers WHERE via = 'precedent'").fetchall()
         self.assertEqual(tuple(row)[:5], ("spec.md", "1", "Jera", date.today().isoformat(), "precedent"))
+        # `0136` R8: Jera's answer is an agent's, whatever name it carries.
+        with self.service._unit_meta().data.connect() as conn:
+            self.assertEqual([tuple(r) for r in conn.execute("SELECT authority FROM unit_answers WHERE via = 'precedent'")],
+                             [("agent",)])
         self.assertIn(f"Tiền lệ: {self.cite}", row["text"])
         self.assertEqual((done["written"], done["needs_person"]),
                          ([{"artifact": "spec.md", "n": 1}], [{"artifact": "spec.md", "n": 2}]))
@@ -745,9 +775,11 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
                 asyncio.run(self.service.answer(self.cwd, self.asked, "spec.md", 1, "x", name))
         self.assertNotIn(b"### C", self.spec.read_bytes().split(b"## Open questions")[1])
 
-    def test_r13_a_reply_that_is_not_json_writes_nothing_and_keeps_its_tail(self):
+    def test_r13_a_session_that_hands_back_no_object_writes_nothing_and_keeps_its_tail(self):
+        """`0136` R8: its reply's JSON block is words, and writes nothing either."""
         before = self.spec.read_bytes()
-        self.sessions.text = "no json at all, just words"
+        self.sessions.text = 'just words ```json\n[{"artifact":"spec.md","n":1,"verdict":"answer"}]\n```'
+        self.sessions.obj = None
         done = self.ask()
         self.assertEqual((done["outcome"], self.spec.read_bytes()), ("failed", before))
         [end] = self.rows("end")

@@ -1,0 +1,468 @@
+"""The one tool a session hands its object back through: `submit`.
+
+`.cos/0136_transitions-are-decided-by-parsing-prose` R2, R3. Every output of an agent that
+drives a transition reaches the app as an object, not as prose the app parses. The channel is
+an in-process tool registered through an SDK MCP server (`spike.md ## U1`): the SDK checks the
+arguments against the tool's JSON Schema before the handler runs, the handler gets a dict in
+this process before the session's `ResultMessage`, and `can_use_tool` is still asked first.
+
+A `Channel` is bound to one run. Its handler checks what the schema cannot — that the object
+came from the run the app has open, and that the artifacts it judged are still the revision the
+app read (R3 a, b) — keeps the object it accepted, and says why it refused one otherwise. The
+transition itself is applied by the runner through `coscc/units/transitions.py` once the step
+has written its artifact, so a step that fails after submitting leaves no status behind.
+
+The tool writes nothing to disk and runs nothing (spec C4): it is the one thing beyond reading
+a prose stage's grant carries.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import weakref
+from collections.abc import Callable, Mapping
+from pathlib import Path
+from typing import Any
+
+from coscc.units import guards
+
+SERVER = "cos"
+TOOL = "submit"
+# What `can_use_tool` is asked with, and so what `policy.decide` lets through.
+NAME = f"mcp__{SERVER}__{TOOL}"
+
+# `spike.md ## U2`: with this sentence in the error 5/5 sessions submitted again after one more
+# turn; with neither it nor the prompt saying so, 2/5 did.
+AGAIN = "Correct the object and call submit again."
+
+# R4. What a stage's `judgement` puts on its artifact. `rejected` and `done` are a person's, or
+# a later machine's, and no agent chooses them.
+JUDGEMENTS = {"ready": "accepted", "not-ready": "draft"}
+
+# The stages whose run hands back a stage result (R4). `review` hands back a round (R5) and
+# the integrate, precedent and estimate sessions their own objects; a stage in neither opens
+# no channel and ends as it did before.
+# A set, not the loop's order, as `policy.SUBMITTING` is.
+STAGE_RESULT = ("idea", "impl", "intent", "plan", "spec", "spike")
+ROUND = "review"
+
+# R5. What a round's `verdict` puts on `review.md`. `needs-person` keeps it
+# `changes-requested`: the unit is not finished, and `cos.mjs` reads the round's verdict for
+# the wait (`0028`).
+ROUND_STATES = {"pass": "accepted", "changes-requested": "changes-requested", "needs-person": "changes-requested"}
+
+_U = {"type": "string", "pattern": "^U[0-9]+$"}
+_F = {"type": "string", "pattern": "^F[0-9]+$"}
+_QUESTIONS = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {"n": {"type": "integer", "minimum": 1}, "text": {"type": "string", "minLength": 1}},
+        "required": ["n", "text"],
+        "additionalProperties": False,
+    },
+}
+
+
+def stage_result_schema(stage: str) -> dict[str, Any]:
+    """R2's first kind. `unmeasured` belongs to `spec` alone and `verdicts` to `spike`."""
+    properties: dict[str, Any] = {
+        "stage": {"type": "string", "enum": [stage]},
+        "judgement": {"type": "string", "enum": list(JUDGEMENTS)},
+        "questions": _QUESTIONS,
+    }
+    required = ["stage", "judgement", "questions"]
+    if stage == "impl":
+        # R6. The open findings of the last round impl says only a person can close.
+        properties["needs_person"] = {"type": "array", "items": _F}
+        required.append("needs_person")
+    if stage == "spec":
+        properties["unmeasured"] = {"type": "array", "items": _U}
+        required.append("unmeasured")
+    if stage == "spike":
+        properties["verdicts"] = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"id": _U, "verdict": {"type": "string", "enum": ["holds", "fails"]}},
+                "required": ["id", "verdict"],
+                "additionalProperties": False,
+            },
+        }
+        required.append("verdicts")
+    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+
+
+# The labels a finding may carry, `cos.mjs`'s own (`0028`): `open`, `fixed` in a commit, or
+# what the review made of impl's claim or of a person's answer.
+FINDING_STATES = ("open", "fixed", "needs-person", "claim-rejected", "answered")
+
+# The other kinds of R2, whose fields the spec's Design names. Jera's and the estimate's are
+# the fields `precedent.verdicts` and `backlog.parse_proposal` check, which still decide what
+# of each object is written: the schema holds their types, and the app its rules.
+SCHEMAS: dict[str, dict[str, Any]] = {
+    "review-round": {
+        "type": "object",
+        "properties": {
+            "verdict": {"type": "string", "enum": ["pass", "changes-requested", "needs-person"]},
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": _F,
+                        "state": {"type": "string", "enum": list(FINDING_STATES)},
+                        # The commit a `fixed` finding was fixed in; `""` for every other state.
+                        "fixed_in": {"type": "string", "pattern": "^([0-9a-f]{7,40})?$"},
+                        "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+                        "rule": {"type": "string", "pattern": "^(S[0-9]+)?$"},
+                        "path": {"type": "string"},
+                        "lines": {"type": "string"},
+                        "text": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["id", "state", "fixed_in", "severity", "rule", "path", "lines", "text"],
+                    "additionalProperties": False,
+                },
+            },
+            # `0083`: one per screenshot opened. Where they were taken is the app's read of
+            # `.screens/manifest.json`, never the model's.
+            "screens": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "pattern": "\\.png$"},
+                        "size": {"type": "string", "pattern": "^[0-9]+x[0-9]+$"},
+                        "address": {"type": "string", "minLength": 1},
+                        "result": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["path", "size", "address", "result"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["verdict", "findings", "screens"],
+        "additionalProperties": False,
+    },
+    "impl-claim": {
+        "type": "object",
+        "properties": {"needs_person": {"type": "array", "items": _F}},
+        "required": ["needs_person"],
+        "additionalProperties": False,
+    },
+    "integrate-result": {
+        "type": "object",
+        "properties": {
+            "needs_person": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"commit": {"type": "string"}, "why": {"type": "string", "minLength": 1}},
+                    "required": ["commit", "why"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["needs_person"],
+        "additionalProperties": False,
+    },
+    "precedent-verdicts": {
+        "type": "object",
+        "properties": {
+            "verdicts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "artifact": {"type": "string"},
+                        "n": {"type": "integer", "minimum": 1},
+                        "verdict": {"type": "string", "enum": ["answer", "needs-person"]},
+                        "category": {"type": "string"},
+                        "text": {"type": "string"},
+                        "reason": {"type": "string"},
+                        "cites": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["artifact", "n", "verdict", "category", "text", "reason", "cites"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["verdicts"],
+        "additionalProperties": False,
+    },
+    "estimate": {
+        "type": "object",
+        "properties": {
+            "units": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "unit": {"type": "string"},
+                        "value": {"type": "integer"},
+                        "effort": {"type": "string"},
+                        "similar": {"type": "array", "items": {"type": "string"}},
+                        "basis": {"type": "string"},
+                        "relations": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string"},
+                                    "other": {"type": "string"},
+                                    "reason": {"type": "string"},
+                                },
+                                "required": ["type", "other", "reason"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    "required": ["unit", "value", "effort", "similar", "basis", "relations"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["units"],
+        "additionalProperties": False,
+    },
+}
+
+# R7, R8, R9. The sessions that are no stage and hand back an object, each by its grant's
+# name, with the schema it submits against and what its tool says it is for.
+SESSIONS: dict[str, tuple[str, str]] = {
+    "estimate": ("estimate", "Hand the app your estimate of every backlog unit, with the relations you propose."),
+    "integrate": (
+        "integrate-result",
+        "Hand the app the commits only a person can settle, each with why; `[]` when there is none.",
+    ),
+    "precedent": ("precedent-verdicts", "Hand the app your verdict on every question you were asked."),
+}
+
+
+def schema_for(stage: str) -> dict[str, Any] | None:
+    """The schema a run of `stage` submits against, or `None` for a stage with no channel yet."""
+    if stage == ROUND:
+        return SCHEMAS["review-round"]
+    return stage_result_schema(stage) if stage in STAGE_RESULT else None
+
+
+def round_problem(obj: Mapping[str, Any]) -> str:
+    """What a review round says that its schema cannot rule out, `""` when nothing: an id
+    given twice, or a `fixed` with no commit, which `cos.mjs` would read as neither."""
+    ids = [f["id"] for f in obj.get("findings") or ()]
+    twice = sorted({i for i in ids if ids.count(i) > 1})
+    if twice:
+        return f"{', '.join(twice)} is listed more than once."
+    unfixed = [f["id"] for f in obj.get("findings") or () if (f["state"] == "fixed") != bool(f["fixed_in"])]
+    if unfixed:
+        return f"{', '.join(unfixed)}: `fixed_in` names the commit of a `fixed` finding, and is empty for any other state."
+    return ""
+
+
+def revision(directory: str | Path, artifact: str, *, own: bool) -> str:
+    """R3 b. One hash of the unit's artifacts as they are on disk now.
+
+    Every `*.md` of the unit but `artifact`, and `artifact` too when `own` — when the session
+    writes it itself (`impl`). A prose stage's artifact is written from its reply after the
+    session, so what its object judged is the reply and the artifacts it was given, and the
+    last are what this can check. Names and bytes both count, so a file added is a change.
+    """
+    h = hashlib.sha256()
+    base = Path(directory)
+    for path in sorted(base.glob("*.md")):
+        if path.name == artifact and not own:
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        h.update(path.name.encode() + b"\0" + hashlib.sha256(data).digest())
+    return h.hexdigest()
+
+
+def refusal(what: str) -> dict[str, Any]:
+    """An `is_error` result: the facts, then `AGAIN` (`spike.md ## U2`)."""
+    return {"content": [{"type": "text", "text": f"{what} {AGAIN}"}], "is_error": True}
+
+
+# Each channel by the server it made, so `Channel.of` finds it again: a stand-in session in a
+# test calls the handler through it as the SDK would. Weak, so a finished run keeps nothing.
+_CHANNELS: weakref.WeakKeyDictionary[Any, Channel | Collector] = weakref.WeakKeyDictionary()
+
+
+class Channel:
+    """The `submit` of one run. `received` is the last object it accepted, with the inputs its
+    guard read; a later accepted object replaces it, so the model's last word counts.
+    """
+
+    def __init__(
+        self,
+        *,
+        run: str,
+        stage: str,
+        directory: str | Path,
+        artifact: str,
+        own: bool,
+        open_run: Callable[[], str] | None = None,
+        head: str = "",
+        open_findings: tuple[str, ...] = (),
+        claims_round: int | None = None,
+    ):
+        self.run = run
+        self.stage = stage
+        self.directory = Path(directory)
+        self.artifact = artifact
+        self.own = own
+        # Who the app has open for this unit and stage now. By default this very run.
+        self._open_run = open_run or (lambda: run)
+        # R3 c: the head the app read when the run opened, the one a review round is of.
+        self.head = head
+        # R6: the `F<k>` the last round left `open`, as the board read them before the step,
+        # and that round's number: what an impl may claim only a person can close.
+        self.open_findings = tuple(open_findings)
+        self.claims_round = claims_round
+        # What the runner adds once the artifact is written, all of it the app's: a round's
+        # number and where its screenshots were taken.
+        self.extra: dict[str, Any] = {}
+        self.schema = schema_for(stage) or {"type": "object"}
+        self.received: dict[str, Any] | None = None
+        self.refused = 0
+
+    @property
+    def guard_id(self) -> str:
+        return "review-round" if self.stage == ROUND else "stage-result"
+
+    def inputs(self, obj: Mapping[str, Any], revision_then: str) -> dict[str, Any]:
+        """What this channel's guard reads, the app's own hash taken again now beside it."""
+        out: dict[str, Any] = {
+            "run": self.run,
+            "open_run": self._open_run(),
+            "revision": revision_then,
+            "computed_revision": revision(self.directory, self.artifact, own=self.own),
+            "stage": self.stage,
+            "object": dict(obj),
+        }
+        if self.stage == ROUND:
+            out["head"] = self.head
+        if self.stage == "impl":
+            out.update(
+                claims=list(obj.get("needs_person") or ()), open_findings=list(self.open_findings),
+                claims_round=self.claims_round,
+            )
+        return {**out, **self.extra}
+
+    def verdict(self, obj: Mapping[str, Any], revision_then: str) -> guards.Verdict:
+        """This channel's guard, and for impl guard `impl-claim` once it opens (R6)."""
+        inputs = self.inputs(obj, revision_then)
+        verdict = guards.guard(self.guard_id).check(inputs)
+        if verdict.open and self.stage == "impl":
+            return guards.guard("impl-claim").check(inputs)
+        return verdict
+
+    async def handle(self, args: dict[str, Any]) -> dict[str, Any]:
+        """The handler. The schema has passed by the time this runs (`spike.md ## U1`)."""
+        obj = dict(args or {})
+        if self.stage == ROUND:
+            problem = round_problem(obj)
+            if problem:
+                self.refused += 1
+                return refusal(problem)
+        elif obj.get("stage") != self.stage:
+            self.refused += 1
+            return refusal(f"this run is {self.stage}; the object names {obj.get('stage')!r}.")
+        taken = revision(self.directory, self.artifact, own=self.own)
+        if self.own and not (self.directory / self.artifact).exists():
+            self.refused += 1
+            return refusal(f"{self.artifact} is not written yet; write it first, then submit what it says.")
+        verdict = self.verdict(obj, taken)
+        if not verdict.open:
+            self.refused += 1
+            if "not-open-finding" in verdict.reasons:
+                return refusal(
+                    "guard impl-claim refused: `needs_person` may name only a finding the last review "
+                    f"round left open, and those are: {', '.join(self.open_findings) or 'none'}."
+                )
+            return refusal(
+                f"guard {self.guard_id} refused: {', '.join(verdict.reasons)} "
+                "(this run is not the one open for the unit, or its artifacts changed while it ran)."
+            )
+        self.received = {"object": obj, "revision": taken}
+        said = obj["verdict"] if self.stage == ROUND else obj["judgement"]
+        return {"content": [{"type": "text", "text": f"received: {self.artifact} {said}"}]}
+
+    def description(self) -> str:
+        if self.stage == ROUND:
+            return (
+                "Hand the app your review round: its verdict, every finding with its state, and "
+                "every screenshot you opened. The app writes the round's verdict line, its "
+                "### Findings and its ### Screens in review.md from this object. If it returns "
+                f"an error, the app has checked your object against the unit: {AGAIN}"
+            )
+        return (
+            f"Hand the app your judgement of {self.artifact}: whether it is ready, its open "
+            "questions" + (", the U<n> ids under ## Concerns" if self.stage == "spec" else "")
+            + (", and a verdict per U<n>" if self.stage == "spike" else "")
+            + (", and the open findings only a person can close" if self.stage == "impl" else "")
+            + ". Call it once the artifact is final. If it returns an error, the app has checked "
+            f"your object against the unit: {AGAIN}"
+        )
+
+    def server(self) -> Any:
+        """The SDK MCP server carrying this channel's one tool, for `mcp_servers`."""
+        return _serve(self)
+
+    @staticmethod
+    def of(config: Mapping[str, Any]) -> Channel | Collector | None:
+        """The channel whose `server()` gave `config`, if it is still alive."""
+        instance = config.get("instance") if isinstance(config, Mapping) else None
+        return _CHANNELS.get(instance) if instance is not None else None
+
+
+class Collector:
+    """The `submit` of a session that is no stage: Gebo, Jera, an estimate (R7, R8, R9).
+
+    It has no artifact to hash and no unit run to match, so it checks the schema alone — the
+    SDK does that — and keeps the last object handed in. What of it is written is still the
+    caller's to decide, as it was of the JSON these sessions used to reply with; what is gone
+    is reading that JSON, or a `[needs-person]` line, out of the reply (R2).
+    """
+
+    def __init__(self, kind: str):
+        self.kind = self.stage = kind
+        name, self._what = SESSIONS[kind]
+        self.schema = SCHEMAS[name]
+        self.received: dict[str, Any] | None = None
+
+    def object(self) -> dict[str, Any] | None:
+        return self.received["object"] if self.received is not None else None
+
+    async def handle(self, args: dict[str, Any]) -> dict[str, Any]:
+        self.received = {"object": dict(args or {})}
+        return {"content": [{"type": "text", "text": f"received: {self.kind}"}]}
+
+    def description(self) -> str:
+        return (
+            f"{self._what} Call it once, when you are done; a later call replaces the earlier "
+            f"object. If it returns an error, the object did not fit its schema: {AGAIN}"
+        )
+
+    def server(self) -> Any:
+        return _serve(self)
+
+
+# R2. The guard that decides whether a session that is no stage ends `done`: it handed back an
+# object. Its id goes on that session's `end` row.
+RUN_SUBMITTED = "run-submitted"
+
+
+def submitted(collector: Collector) -> bool:
+    """Whether guard `run-submitted` opens on what `collector` received."""
+    return guards.guard(RUN_SUBMITTED).check({"submitted": collector.object() is not None}).open
+
+
+def _serve(channel: Channel | Collector) -> Any:
+    from claude_agent_sdk import create_sdk_mcp_server, tool
+
+    config = create_sdk_mcp_server(SERVER, "1.0.0", [tool(TOOL, channel.description(), channel.schema)(channel.handle)])
+    _CHANNELS[config["instance"]] = channel
+    return config

@@ -6,10 +6,12 @@ paths:
 # Reading the board: the gates and the run button
 
 - **The `review` and `ship` gates call `gh` and `git` in the workspace.** `board.gate`
-  passes `--repo` and waits `GATE_TIMEOUT` (`coscc/units/board.py:315`, chosen). `child_env`
+  passes `--repo` and waits `GATE_TIMEOUT` (`coscc/units/board.py:349`, chosen). `child_env`
   carries `PATH`, `HOME` and `COS_REVIEW_ROUNDS` only, so a machine logged in through
   `GH_TOKEN` alone sees the `review` gate closed with gh's own error. Offline, `review`
   cannot start.
+- **Code branches on `reasons`, never on the words** (`0136` R11). `gate --json` and `next`
+  hand out codes from `guards.REASONS`, and one outside it raises `Unavailable`.
 - **The run button offers the stage `cos.mjs next` names, even one that already has an
   artifact.** The fix → review-again loop is driven from the board: after a review asks
   for changes it offers `impl`, then `review` once a fix is on the pull request and CI is
