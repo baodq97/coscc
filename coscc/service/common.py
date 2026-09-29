@@ -3,10 +3,14 @@ request is refused with, and the words and states the board shows beside a unit.
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from coscc.agent import steps as steps_mod
+from coscc.data import now as _now
 from coscc.git import gitops
 
 
@@ -31,6 +35,59 @@ class Refused(Invalid):
     def __init__(self, said: str, reasons: tuple[str, ...] = ()) -> None:
         super().__init__(said)
         self.reasons = tuple(reasons)
+
+
+class Holds:
+    """What holds each unit now, and what the board lists as running. This process only.
+
+    `marks`: the step, integration, hold or review round being allowed on a unit, by
+    `(journal key, unit)`, each taken before its first `await` and checked-and-marked with no
+    `await` between, so nothing on the event loop can come between the look and the write.
+    `running`: what the board shows, by an id private to this process; display only, `marks`
+    does the refusing. `finishing`: a step's `_after_end`, run after its `running` entry and
+    mark are gone; not shown on the board, but an Apply's settle waits for it.
+    """
+
+    def __init__(self) -> None:
+        self.marks: dict[tuple[str, str], steps_mod.Mark] = {}
+        self.running: dict[str, dict[str, Any]] = {}
+        self.finishing: dict[str, tuple[dict[str, Any], asyncio.Task]] = {}
+
+    def busy(self, key: str, unit: str) -> str:
+        """What holds this unit, in the one sentence every refusal carries, or `""`."""
+        mark = self.marks.get((key, unit))
+        return steps_mod.describe(unit, mark) if mark is not None else ""
+
+    def take(self, key: str, unit: str, kind: str, stage: str = "") -> steps_mod.Mark:
+        said = self.busy(key, unit)
+        if said:
+            raise Invalid(said)
+        mark = steps_mod.Mark(kind, stage, "preparing" if kind == "step" else "")
+        self.marks[(key, unit)] = mark
+        return mark
+
+    def release(self, key: str, unit: str, mark: steps_mod.Mark) -> None:
+        """Only this mark: a refused or late caller never frees a unit someone else holds."""
+        if self.marks.get((key, unit)) is mark:
+            del self.marks[(key, unit)]
+
+    def mark_running(self, key: str, unit: str, stage: str, kind: str) -> str:
+        """Put one entry in `running` and return its id, for the `finally` to pop.
+
+        `started` is stamped by the same clock `Journal.append` uses, so it reads like an
+        `at`. `turns` and `cost_usd` stay `None` while the session runs.
+        """
+        rid = uuid.uuid4().hex
+        self.running[rid] = {
+            "workspace": key,
+            "unit": unit,
+            "stage": stage,
+            "started": _now(),
+            "kind": kind,
+            "turns": None,
+            "cost_usd": None,
+        }
+        return rid
 
 
 class Updating(Invalid):

@@ -1,7 +1,7 @@
 """The board steps running right now, one per unit at most.
 
 In memory, this process only: a restart forgets every row. Nothing here decides whether a
-step may run (`cos.mjs gate`); a `Mark` in `Service._active` keeps a second step, hold or
+step may run (`cos.mjs gate`); a `Mark` in `Service.holds.marks` keeps a second step, hold or
 integration off a unit, and this registry is what *Stop* and the Board's list read, and it
 records who asked for a stop.
 """
@@ -31,9 +31,9 @@ class Finishing(ValueError):
     """The step has begun writing its artifact; stopping now would leave half of one."""
 
 
-@dataclass(eq=False)  # identity, not value: `Service._release` removes this one and no other
+@dataclass(eq=False)  # identity, not value: `Holds.release` removes this one and no other
 class Mark:
-    """What holds a unit in `Service._active`: a step, an integration, a hold or a review round
+    """What holds a unit in `Service.holds.marks`: a step, an integration, a hold or a review round
     being allowed.
 
     `phase` is a step's only: `preparing` until the registry lists it, `running` after.

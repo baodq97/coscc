@@ -17,7 +17,7 @@ from tests.units.test_submit import submits as _submits
 
 
 class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
-    """One `_running` entry per step, gone however the step ends."""
+    """One `holds.running` entry per step, gone however the step ends."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -30,7 +30,7 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
 
         class Looks:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-                test.seen.append(list(test.service._running.values()))
+                test.seen.append(list(test.service.holds.running.values()))
                 yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
                 await _submits(kw)
                 yield ("done", {"session_id": "sess-51", "cost": {}})
@@ -89,13 +89,13 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
         )
         self.assertIsNone(entry["turns"])
         self.assertIsNone(entry["cost_usd"])
-        self.assertEqual(self.service._running, {})
+        self.assertEqual(self.service.holds.running, {})
 
     def test_none_after_a_run_error(self):
         from coscc.runner import RunError
 
         async def fails(*a, **kw):
-            self.seen.append(list(self.service._running.values()))
+            self.seen.append(list(self.service.holds.running.values()))
             raise RunError("stand-in")
             yield  # pragma: no cover
 
@@ -103,26 +103,26 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
             with self.assertRaises(Invalid):
                 self._run("spec")
         self.assertEqual(len(self.seen[0]), 1)
-        self.assertEqual(self.service._running, {})
+        self.assertEqual(self.service.holds.running, {})
 
     def test_none_after_the_caller_goes_away_mid_step(self):
         self._run("spec", stop_after=1)
         self.assertEqual(len(self.seen[0]), 1)
-        self.assertEqual(self.service._running, {})
+        self.assertEqual(self.service.holds.running, {})
 
     def test_a_step_the_gate_refuses_leaves_none(self):
         with self.assertRaises(Invalid):
             self._run("ship")
-        self.assertEqual(self.service._running, {})
+        self.assertEqual(self.service.holds.running, {})
 
     def test_a_step_refused_as_busy_leaves_none_and_keeps_the_other(self):
         key = self.service.ws.key(str(self.repo))
-        self.service._take(key, self.unit, "step", "spec")
-        self.service._running["other"] = {"workspace": key, "unit": self.unit}
+        self.service.holds.take(key, self.unit, "step", "spec")
+        self.service.holds.running["other"] = {"workspace": key, "unit": self.unit}
         with self.assertRaises(Invalid) as caught:
             self._run("spec")
         self.assertIn("a spec step is being prepared", str(caught.exception))
-        self.assertEqual(list(self.service._running), ["other"])
+        self.assertEqual(list(self.service.holds.running), ["other"])
 
 
 class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
@@ -147,7 +147,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
         self.journal = self.service.ws.journal()
 
     def test_an_entry_and_its_own_start_show_only_as_running(self):
-        self.service._mark_running(self.key, "0009_x", "impl", "step")
+        self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
         self.journal.started(self.key, "0009_x", "impl", "manual")
         got = self.service.running(self.cwd)
         [row] = got["running"]["0009_x"]
@@ -176,7 +176,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
     def test_an_override_reaches_the_running_line(self):
         # The running line reads the one lookup, overrides included.
         self.service.set_agent("impl", {"name": "Builder", "glyph": "ᛒ"})
-        self.service._mark_running(self.key, "0009_x", "impl", "step")
+        self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
         [row] = self.service.running(self.cwd)["running"]["0009_x"]
         self.assertEqual(row["agent"], {"glyph": "ᛒ", "name": "Builder"})
 
@@ -210,7 +210,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
 
     def test_two_workspaces_do_not_mix(self):
         other_key = self.service.ws.key(str(self.other))
-        self.service._mark_running(other_key, "0009_x", "spec", "step")
+        self.service.holds.mark_running(other_key, "0009_x", "spec", "step")
         self.journal.started(other_key, "0010_y", "spec", "manual")
         self.assertEqual(self.service.running(self.cwd), {"running": {}, "unknown_end": {}})
         got = self.service.running(str(self.other))
@@ -218,8 +218,8 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
         self.assertEqual(list(got["unknown_end"]), ["0010_y"])
 
     def test_gebo_is_named_and_a_rebase_is_not(self):
-        self.service._mark_running(self.key, "0009_x", "integrate", "gebo")
-        self.service._mark_running(self.key, "0010_y", "integrate", "rebase")
+        self.service.holds.mark_running(self.key, "0009_x", "integrate", "gebo")
+        self.service.holds.mark_running(self.key, "0010_y", "integrate", "rebase")
         got = self.service.running(self.cwd)["running"]
         self.assertEqual(got["0009_x"][0]["agent"], {"glyph": "ᚷ", "name": "Gebo"})
         self.assertIsNone(got["0010_y"][0]["agent"])
@@ -233,7 +233,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
         from coscc.runlog.journal import Journal
         from coscc.data import Busy
 
-        self.service._mark_running(self.key, "0009_x", "impl", "step")
+        self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
         with mock.patch.object(Journal, "open_starts", side_effect=Busy("locked")):
             got = self.service.running(self.cwd)
         self.assertEqual(got["note"], "locked")
@@ -269,9 +269,9 @@ class TheGuide(unittest.TestCase):
             return self.service._guide_block(self.key)
 
     def test_guide_lists_running_steps(self):
-        self.service._mark_running(self.key, "0009_x", "impl", "step")
-        self.service._mark_running(self.key, "0010_y", "spec", "step")
-        self.service._mark_running("/elsewhere", "0011_z", "spec", "step")
+        self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
+        self.service.holds.mark_running(self.key, "0010_y", "spec", "step")
+        self.service.holds.mark_running("/elsewhere", "0011_z", "spec", "step")
         got = self.block()["running"]
         self.assertEqual(
             [(r["unit"], r["stage"], r["agent"]) for r in got],
@@ -300,6 +300,6 @@ class TheGuide(unittest.TestCase):
         self.assertEqual((by["cap"]["screen"], by["shortlist"]["screen"]), ("settings", "backlog"))
 
     def test_guide_says_only_that_the_autopilot_is_off_when_it_is(self):
-        self.service._mark_running(self.key, "0009_x", "impl", "step")
+        self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
         self.assertEqual(self.service._guide_block(self.key), {"on": False})
         self.assertEqual(asyncio.run(self.service.board(self.cwd))["guide"], {"on": False})

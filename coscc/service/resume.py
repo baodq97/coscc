@@ -162,7 +162,7 @@ class ResumeMixin:
                 # so that row says what happened. Nothing awaits from here to the claim.
                 key, unit = str(owner.get("workspace") or ""), str(owner.get("unit") or "")
                 held = self.steps.get(key, unit)
-                problem = self._busy(key, unit) or (
+                problem = self.holds.busy(key, unit) or (
                     steps_mod.describe(
                         unit, steps_mod.Mark("step", held.stage, "running", held.started_at)
                     )
@@ -226,7 +226,7 @@ class ResumeMixin:
             self._refuse_while_updating()
         except Invalid as e:
             return str(e)
-        held = self._active.get((key, "")) if kind == "estimate" else None
+        held = self.holds.marks.get((key, "")) if kind == "estimate" else None
         if held is not None:
             return f"a proposal for this workspace is already running since {held.started_at}; wait for it to end"
         return ""
@@ -275,21 +275,21 @@ class ResumeMixin:
         unit, stage, artifact = str(owner["unit"]), str(owner["stage"]), str(owner["artifact"])
         journal = self.ws.journal()
         directory = self.ws.unit_dir(cwd, unit)
-        mark = self._take(key, unit, "step", stage)
+        mark = self.holds.take(key, unit, "step", stage)
         try:
             running = self.steps.claim(key, unit, stage, started_at=mark.started_at)
         except steps_mod.Busy as e:
-            self._release(key, unit, mark)
+            self.holds.release(key, unit, mark)
             raise Invalid(str(e)) from e
         mark.phase = "running"
-        rid = self._mark_running(key, unit, stage, "step")
+        rid = self.holds.mark_running(key, unit, stage, "step")
         run = uuid.uuid4().hex
         recorder = events.Recorder(
             run, Data(self.config.data_dir), str(journal.working_dir), key, unit, stage
         )
         running.run, running.handle.recorder = run, recorder
         self._recorders[run] = recorder
-        self._running[rid]["run"] = run
+        self.holds.running[rid]["run"] = run
         rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
         end_fields = None
         if rounds is not None:
@@ -359,8 +359,8 @@ class ResumeMixin:
         claimed now; the returned coroutine runs the session and what follows it."""
         owner = record["owner"]
         key, cwd, unit = str(owner["workspace"]), str(owner["workspace_dir"]), str(owner["unit"])
-        mark = self._take(key, unit, "integrate")
-        rid = self._mark_running(key, unit, "integrate", "gebo")
+        mark = self.holds.take(key, unit, "integrate")
+        rid = self.holds.mark_running(key, unit, "integrate", "gebo")
         journal = self.ws.journal()
 
         def write(rec: dict[str, Any]) -> dict[str, Any]:
@@ -393,8 +393,8 @@ class ResumeMixin:
                 ):
                     pass
             finally:
-                self._release(key, unit, mark)
-                self._running.pop(rid, None)
+                self.holds.release(key, unit, mark)
+                self.holds.running.pop(rid, None)
                 self.updater.job_ended()
                 self._autopilot_nudge(key)
 

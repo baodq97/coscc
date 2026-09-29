@@ -306,7 +306,7 @@ class TakingUpAfterAnUpdate(_Base):
         # The `resume` row says what happened, not what was about to.
         steps_seen = self.taken()
         self.paused()
-        self.service._take(self.key, self.unit, "integrate")
+        self.service.holds.take(self.key, self.unit, "integrate")
         [said] = self.up()
         self.assertEqual(steps_seen, [])
         self.assertEqual(said["result"], "failed")
@@ -582,7 +582,7 @@ class APausedOwnerEndsNothing(_Base):
                 with self.assertRaises(Suspended):
                     asyncio.run(run())
                 self.assertEqual([e for e in self.ends() if e.get("stage") == name], [])
-                self.assertEqual(self.service._active, {})
+                self.assertEqual(self.service.holds.marks, {})
 
 
 if __name__ == "__main__":

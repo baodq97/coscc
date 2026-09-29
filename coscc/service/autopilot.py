@@ -154,7 +154,7 @@ class AutopilotMixin:
     def _autopilot_running(self, key: str) -> list[dict[str, Any]]:
         """What runs in this workspace now, by unit, a person's steps included."""
         out: dict[str, dict[str, Any]] = {}
-        for (k, unit), mark in self._active.items():
+        for (k, unit), mark in self.holds.marks.items():
             if k == key:
                 out[unit] = {
                     "unit": unit,
@@ -179,7 +179,7 @@ class AutopilotMixin:
         spent = autopilot.spent_today(records, now)
         active = {
             (k, unit): "integrate" if mark.kind == "integrate" else mark.stage
-            for (k, unit), mark in self._active.items()
+            for (k, unit), mark in self.holds.marks.items()
         }
         # A launch holds no mark until `run_step` or `integrate` takes one (`integrate` only after its
         # fetch and `gh` reads) and is counted from the moment it was chosen.
@@ -588,7 +588,7 @@ class AutopilotMixin:
             log.exception("the autopilot could not run %s of %s", stage, unit)
             said = str(e)
             # A gate's refusal carries its codes (`Refused`); anything else has none.
-            if not autopilot.is_ci_pending(e) and not self._busy(key, unit):
+            if not autopilot.is_ci_pending(e) and not self.holds.busy(key, unit):
                 self._autopilot_set_stops(
                     key, {unit: {"unit": unit, "kind": "f", "reason": said}}, {unit}
                 )

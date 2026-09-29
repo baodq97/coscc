@@ -132,7 +132,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 
         async def busy():
             return (
-                self.service._active
+                self.service.holds.marks
                 or any(
                     not t.done()
                     for _, t in (self.service._autopilot_runs.get(self.key) or {}).values()
@@ -423,7 +423,7 @@ class OnTheRealLoop(_Base):
         # The step writes `impl.md` with its own tools, so a block appended now could be written
         # over and nothing would say so.
         unit, d, before = await self.impl_asks("impl-busy")
-        mark = self.service._take(self.key, unit, "step", "impl")
+        mark = self.service.holds.take(self.key, unit, "step", "impl")
         mark.phase = "running"
         with self.assertRaisesRegex(
             Invalid, r"^impl\.md cannot be answered while the impl step that writes it is running"
@@ -433,7 +433,7 @@ class OnTheRealLoop(_Base):
         self.assertEqual(self.answers(), [])
         # Another artifact of the same unit is not the step's to write.
         await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
-        self.service._release(self.key, unit, mark)
+        self.service.holds.release(self.key, unit, mark)
         await self.service.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
         self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md", "impl.md"])
 
@@ -441,11 +441,11 @@ class OnTheRealLoop(_Base):
         # A prose stage's artifact is written by the app, which reads `## Answers` on disk as it
         # writes, so an answer given meanwhile is kept.
         unit, d, before = await self.impl_asks("intent-busy")
-        mark = self.service._take(self.key, unit, "step", "intent")
+        mark = self.service.holds.take(self.key, unit, "step", "intent")
         try:
             await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
         finally:
-            self.service._release(self.key, unit, mark)
+            self.service.holds.release(self.key, unit, mark)
         self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md"])
 
 
@@ -495,7 +495,7 @@ class Scripted(_Base):
 
         def fake(kind):
             async def go(cwd, unit, stage="integrate", started_by="person"):
-                mark = self.service._take(
+                mark = self.service.holds.take(
                     self.key, unit, "integrate" if kind == "integrate" else "step", stage
                 )
                 self.launched.append((unit, stage, started_by))
@@ -504,7 +504,7 @@ class Scripted(_Base):
                     await self.release.wait()
                     yield ("done", {"outcome": "done"})
                 finally:
-                    self.service._release(self.key, unit, mark)
+                    self.service.holds.release(self.key, unit, mark)
 
             return go
 
@@ -1018,7 +1018,7 @@ class Scripted(_Base):
             between_pr_and_ship=True,
         )
         await self.pass_()
-        self.assertNotIn((self.key, "0001_a"), self.service._active)
+        self.assertNotIn((self.key, "0001_a"), self.service.holds.marks)
         self.assertEqual(self.service._autopilot_cap([], 100.0)["running"], need)
         self.add("0002_b", "spec")
         self.listed()

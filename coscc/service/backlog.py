@@ -196,7 +196,7 @@ class BacklogMixin:
         """One paid session proposes estimates and relations for the whole backlog.
 
         Refused before anything is spent while another proposal of this workspace runs: the
-        unit `""` in `_active`, which no real unit is called. Streams like `integrate`.
+        unit `""` in `holds.marks`, which no real unit is called. Streams like `integrate`.
         Writes `start`/`end` (stage `estimate`, unit `""`) so Activity counts the money, one
         `estimate` record, and each valid part of the reply through `append_checked`. A
         session over a ceiling, or one that handed back no object through `submit`, writes
@@ -210,14 +210,14 @@ class BacklogMixin:
                 "no working folder is set, so a proposal cannot be recorded — set COS_WORKING_DIR"
             )
         key = self.ws.key(cwd)
-        held = self._active.get((key, ""))
+        held = self.holds.marks.get((key, ""))
         if held is not None:
             raise Invalid(
                 f"a proposal for this workspace is already running since {held.started_at}; wait for it to end"
             )
         mark = steps_mod.Mark("estimate", "estimate", "")
-        self._active[(key, "")] = mark
-        rid = self._mark_running(key, "", "estimate", "estimate")
+        self.holds.marks[(key, "")] = mark
+        rid = self.holds.mark_running(key, "", "estimate", "estimate")
         started = ended = False
         try:
             try:
@@ -433,9 +433,9 @@ class BacklogMixin:
                     )
                 except BadRecord, Busy:
                     pass
-            if self._active.get((key, "")) is mark:
-                del self._active[(key, "")]
-            self._running.pop(rid, None)
+            if self.holds.marks.get((key, "")) is mark:
+                del self.holds.marks[(key, "")]
+            self.holds.running.pop(rid, None)
             self.updater.job_ended()
 
     async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:

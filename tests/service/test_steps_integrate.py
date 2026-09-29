@@ -313,7 +313,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual([e["outcome"] for e in ends], ["failed"])
 
     def test_a_step_is_refused_while_the_unit_is_being_integrated(self):
-        """`run_step` asks `_active`, and does not clear Gebo's mark.
+        """`run_step` asks `holds.marks`, and does not clear Gebo's mark.
 
         It asks before its first `await`, and the refusal is `steps.describe`'s."""
         said = {}
@@ -324,13 +324,13 @@ class GeboThroughTheService(unittest.TestCase):
                     pass
             except Invalid as e:
                 said["step"] = str(e)
-            said["still_marked"] = (self.key, self.unit) in self.service._active
+            said["still_marked"] = (self.key, self.unit) in self.service.holds.marks
             return "[needs-person] stand-in"
 
         self.integrate_with(act)
         self.assertIn("being integrated", said.get("step", ""))
         self.assertTrue(said["still_marked"])
-        self.assertNotIn((self.key, self.unit), self.service._active)
+        self.assertNotIn((self.key, self.unit), self.service.holds.marks)
 
     def test_gebo_is_running_under_its_name_while_it_works_and_not_after(self):
         seen = {}
@@ -343,7 +343,7 @@ class GeboThroughTheService(unittest.TestCase):
         [row] = seen["running"][self.unit]
         self.assertEqual((row["kind"], row["stage"]), ("gebo", "integrate"))
         self.assertEqual(row["agent"], {"glyph": "ᚷ", "name": "Gebo"})
-        self.assertEqual(self.service._running, {})
+        self.assertEqual(self.service.holds.running, {})
 
     def test_gebo_is_on_the_running_list_and_refuses_a_stop(self):
         """The list a restart reads names the integration, and Stop says what holds the unit rather
@@ -391,7 +391,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(rec["update_branch"]["code"], 1)
         [row] = seen["running"][self.unit]
         self.assertEqual((row["kind"], row["agent"]), ("rebase", None))
-        self.assertEqual(self.service._running, {})
+        self.assertEqual(self.service.holds.running, {})
 
     def mergeable_gh(self, update_branch):
         """`self._gh` with the list saying MERGEABLE — the conflict shows only on rebasing — and
@@ -551,18 +551,18 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual([e["outcome"] for e in ends], ["failed"])
 
     def test_a_refused_integration_leaves_no_entry(self):
-        self.service._take(self.key, self.unit, "step", "spec").phase = "running"
+        self.service.holds.take(self.key, self.unit, "step", "spec").phase = "running"
         with self.assertRaises(Invalid):
             self.integrate_with(self._no_act)
-        self.assertEqual(self.service._running, {})
+        self.assertEqual(self.service.holds.running, {})
 
     def test_an_integration_is_refused_while_a_step_runs(self):
         """The mark a step holds refuses Gebo, and opens no session."""
-        self.service._take(self.key, self.unit, "step", "spec").phase = "running"
+        self.service.holds.take(self.key, self.unit, "step", "spec").phase = "running"
         with self.assertRaises(Invalid) as caught:
             self.integrate_with(self._no_act)
         self.assertIn("a spec step is running", str(caught.exception))
-        self.assertIn((self.key, self.unit), self.service._active)
+        self.assertIn((self.key, self.unit), self.service.holds.marks)
         self.assertEqual(self.records("start"), [])
 
 

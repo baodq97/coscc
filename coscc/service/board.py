@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -19,12 +18,11 @@ from coscc.units import board as board_reader
 from coscc.git import gitops
 from coscc.github import integrate
 from coscc.units.board import Unavailable
-from coscc.data import Data, now as _now
+from coscc.data import Data
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import last_runs, timelines_of, totals_of
 from coscc.data import Busy
 from coscc.agent.policy import grant_for
-from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit
@@ -89,26 +87,6 @@ def answerable(unit: dict[str, Any]) -> bool:
 
 class BoardMixin:
     # -- board --------------------------------------------------------------
-
-    # Check-and-mark with no `await` in any of these, so nothing on the event loop
-    # can come between the look and the write.
-    def _busy(self, key: str, unit: str) -> str:
-        """What holds this unit, in the one sentence every refusal carries, or `""`."""
-        mark = self._active.get((key, unit))
-        return steps_mod.describe(unit, mark) if mark is not None else ""
-
-    def _take(self, key: str, unit: str, kind: str, stage: str = "") -> steps_mod.Mark:
-        said = self._busy(key, unit)
-        if said:
-            raise Invalid(said)
-        mark = steps_mod.Mark(kind, stage, "preparing" if kind == "step" else "")
-        self._active[(key, unit)] = mark
-        return mark
-
-    def _release(self, key: str, unit: str, mark: steps_mod.Mark) -> None:
-        """Only this mark: a refused or late caller never frees a unit someone else holds."""
-        if self._active.get((key, unit)) is mark:
-            del self._active[(key, unit)]
 
     def _app_identity(self) -> dict[str, str]:
         """The running build's version and commit, for a step's `start` row.
@@ -328,28 +306,10 @@ class BoardMixin:
 
         return prs
 
-    def _mark_running(self, key: str, unit: str, stage: str, kind: str) -> str:
-        """Put one entry in `_running` and return its id, for the `finally` to pop.
-
-        `started` is stamped by the same clock `Journal.append` uses, so it reads like an
-        `at`. `turns` and `cost_usd` stay `None` while the session runs.
-        """
-        rid = uuid.uuid4().hex
-        self._running[rid] = {
-            "workspace": key,
-            "unit": unit,
-            "stage": stage,
-            "started": _now(),
-            "kind": kind,
-            "turns": None,
-            "cost_usd": None,
-        }
-        return rid
-
     def _running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         """`running`'s `running`, from memory alone: what `_guide_block` reads too."""
         running: dict[str, list[dict[str, Any]]] = {}
-        for entry in self._running.values():
+        for entry in self.holds.running.values():
             if entry["workspace"] != key:
                 continue
             kind = entry["kind"]
@@ -372,11 +332,11 @@ class BoardMixin:
     def running(self, cwd: str) -> dict[str, Any]:
         """What has an agent working in this workspace now, and what ended unseen.
 
-        `running` is `_running` for this workspace, one element per entry, by unit.
+        `running` is `holds.running` for this workspace, one element per entry, by unit.
         `unknown_end` is every `start` the run log holds without an `end` that no entry
         accounts for: the unit has nothing running here, no later `start` of the unit
         retired it, and it is younger than `UNKNOWN_END_FOR`. Matched by
-        unit, not by session: `_active` allows one per unit per process, so a unit with an
+        unit, not by session: `holds.marks` allows one per unit per process, so a unit with an
         entry has no other `start` open in this process — only one another process wrote,
         and that one is shown as ended.
 
