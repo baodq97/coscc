@@ -7,7 +7,7 @@ from reflex.style import set_color_mode
 
 from coscc.agent import models
 from coscc.web import studio as s
-from coscc.state import AgentRow, DecisionRow, GrantRow, ImportRow, Knob, ModelRow, NameRow
+from coscc.state import AgentRow, DecisionRow, GrantRow, ImportRow, Knob, ModelRow
 from coscc.screens.common import P, _MONO, _RUNIC, _details, _table
 from coscc.screens.board import _update_panel
 
@@ -230,11 +230,11 @@ def _decision_field(label: str, control: rx.Component) -> rx.Component:
 
 
 def _decisions_panel() -> rx.Component:
-    """The person's decisions and delegations, which Jera reads as theirs. No name is asked: what is typed here is recorded as the person's."""
+    """The person's decisions and delegations. No name is asked: what is typed here is recorded as the person's."""
     form = P.decision_form
     return s.panel(
         s.section_head("Decisions", rx.icon("stamp", size=18, color=s.MUTED)),
-        s.text("Jera reads each decision in force as yours.", size="1"),
+        s.text("An agent may answer under a delegation in force; its answers are recorded as delegated.", size="1"),
         _table(["Id", "Kind", "Text", "Source", "Workspace", "From", "Until", "State", ""],
                P.decision_rows, _decision_row, "No decision has been added yet.", margin_top="10px"),
         rx.flex(
@@ -250,7 +250,7 @@ def _decisions_panel() -> rx.Component:
             rx.cond(
                 form["kind"] == "delegation",
                 rx.fragment(
-                    _decision_field("Agent", rx.select(["Leif", "Jera"], value=form["agent"],
+                    _decision_field("Agent", rx.select(["Leif"], value=form["agent"],
                                                        on_change=lambda v: P.edit_decision("agent", v), size="1",
                                                        aria_label="Agent", id="decision-agent")),
                     _decision_field("Covers", rx.input(value=form["covers"],
@@ -269,30 +269,6 @@ def _decisions_panel() -> rx.Component:
                  margin_top="8px", id="decision-source"),
         rx.button("Add", on_click=P.add_decision, size="1", margin_top="8px", id="add-decision"),
         id="decisions-panel",
-    )
-
-
-def _name_row(row: rx.Var[NameRow]) -> rx.Component:
-    return rx.table.row(
-        rx.table.cell(rx.text(row.name, size="1")),
-        rx.table.cell(rx.text(row.count.to_string(), size="1")),
-        rx.table.cell(rx.switch(checked=row.mine, on_change=lambda v: P.set_name_mine(row.name, v),
-                                aria_label="This was me: " + row.name, size="1")),
-        data_testid="name-row",
-    )
-
-
-def _names_panel() -> rx.Component:
-    """Who answered as the person before the app stopped asking; off by default."""
-    return s.panel(
-        s.section_head("Names in answers", rx.icon("user-check", size=18, color=s.MUTED)),
-        s.text("Turn on the names that were you, and Jera reads their answers as yours.", size="1"),
-        rx.foreach(P.name_problems,
-                   lambda p: rx.callout(p, icon="circle_alert", color_scheme="red",
-                                        variant="surface", size="1", margin_top="8px")),
-        _table(["Answered by", "Answers", "This was me"], P.name_rows, _name_row,
-               "No answer carries a name other than owner or an agent's.", margin_top="10px"),
-        id="names-panel",
     )
 
 
@@ -387,36 +363,7 @@ def _settings() -> rx.Component:
             columns=rx.breakpoints(initial="1", lg="2"), gap="16px", width="100%",
             align_items="start",
         ),
-        # What Jera may cite besides earlier answers, one paragraph per entry.
-        s.panel(
-            s.section_head("Decision preferences", rx.icon("scroll-text", size=18, color=s.MUTED)),
-            s.text("Jera reads this word for word as precedent, so keep company names out of it.",
-                   size="1"),
-            rx.text_area(
-                value=P.decision_preferences, on_change=P.edit_decision_preferences,
-                placeholder="One preference per paragraph.", aria_label="Decision preferences",
-                rows="5", width="100%", margin_top="10px", id="decision-preferences",
-            ),
-            rx.button("Save", on_click=P.save_decision_preferences, size="1", margin_top="8px",
-                      id="save-decision-preferences"),
-            id="preferences-panel",
-        ),
-        # What Jera's prompt says about deciding; empty is the app's default.
-        s.panel(
-            s.section_head("Decision rules", rx.icon("list-checks", size=18, color=s.MUTED)),
-            s.text("Questions of product direction, security, significant spend or outside "
-                   "actions always go to you, whatever these rules say.", size="1"),
-            rx.text_area(
-                value=P.decision_rules, on_change=P.edit_decision_rules,
-                placeholder="Leave empty to use the default rules.", aria_label="Decision rules",
-                rows="5", width="100%", margin_top="10px", id="decision-rules",
-            ),
-            rx.button("Save", on_click=P.save_decision_rules, size="1", margin_top="8px",
-                      id="save-decision-rules"),
-            id="decision-rules-panel",
-        ),
         _decisions_panel(),
-        _names_panel(),
         _import_panel(),
         s.panel(
             s.section_head("What a board step may do",

@@ -13,7 +13,7 @@ from coscc.runlog import spend
 from coscc.data import Data
 from coscc.runlog.journal import COST_FIELDS, COST_USD, Busy, add_cost, zero_cost
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, grant_for_step
-from coscc.agent import labels, precedent
+from coscc.agent import labels
 from coscc.service.common import Invalid, STAGE_FILES, consequence
 
 
@@ -187,9 +187,7 @@ class ActivityMixin:
                     "command_list": list(grant.commands),
                     "max_turns": grant.max_turns,
                     "max_budget_usd": grant.max_budget_usd,
-                    # Jera's ceiling follows its prompt, so its row says the range; the grant's own figure is only the floor.
-                    "budget": (f"${precedent.PRECEDENT_FLOOR_USD:.2f}–${precedent.PRECEDENT_MAX_USD:.2f}"
-                               if name == "precedent" else f"${grant.max_budget_usd:.2f}"),
+                    "budget": f"${grant.max_budget_usd:.2f}",
                     "app_writes_artifact": grant.app_writes_artifact,
                     "warning": grant.warning,
                     "consequence": consequence(name),
@@ -240,10 +238,7 @@ class ActivityMixin:
 
     # Which preferences the page may keep: an open key/value store reachable from a request
     # is a place to put anything, so only the keys the Settings screen remembers are writable.
-    # `decision_preferences` is the text Jera reads as precedent, word for word;
-    # `decision_rules` is what Jera's prompt says about deciding, empty being the default.
-    PREFERENCES = {"density": "comfortable", "screen": "overview", "board_view": "Board",
-                   "decision_preferences": "", "decision_rules": ""}
+    PREFERENCES = {"density": "comfortable", "screen": "overview", "board_view": "Board"}
 
     def preferences(self) -> dict[str, Any]:
         data = Data(self.config.data_dir)

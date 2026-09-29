@@ -286,13 +286,9 @@ OUTCOME_INTENT = (
 
 
 class ADelegatedAnswer(unittest.TestCase):
-    """`0137` R1, R10: what the route writes, the board reads back and `decided_by` labels."""
+    """What the route writes, and the authority the board reads back."""
 
     def test_a_block_written_with_delegation_reads_back_as_delegated(self):
-        from coscc import units
-        from coscc.agent import precedent
-        from coscc.data import Data
-
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             cwd = str(root / "work" / "proj")
@@ -308,10 +304,7 @@ class ADelegatedAnswer(unittest.TestCase):
             asyncio.run(service.answer(cwd, made["unit"], "intent.md", 1, "Có.", "Leif (CoS)", added))
             asyncio.run(service.answer(cwd, made["unit"], "intent.md", 2, "Không.", "Leif (CoS)"))
             [u] = asyncio.run(service.board(cwd))["units"]
-            decisions = Data(config.data_dir).decisions()
-            got = {a["n"]: precedent.decided_by(a, units.slot(cwd), decisions, [], service.agent_names())
-                   for a in u["answers"]}
-            self.assertEqual(got, {1: "delegated", 2: "inferred"})
+            self.assertEqual({a["n"]: a["authority"] for a in u["answers"]}, {1: "delegated", 2: "person"})
 
 
 class RecordingAnOutcome(unittest.TestCase):

@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -230,7 +229,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
 
 
 class TheGuide(unittest.TestCase):
-    """`0101` R10. `_guide_block` on memory and the run-log rows the board read."""
+    """`0101` R10. `_guide_block` on memory."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -246,15 +245,15 @@ class TheGuide(unittest.TestCase):
 
     def block(self) -> dict:
         with mock.patch.object(self.service, "_autopilot_values", return_value={"autopilot": True}):
-            return self.service._guide_block(self.key, self.journal.records(self.key))
+            return self.service._guide_block(self.key)
 
-    def test_guide_lists_running_steps_and_jera_sessions(self):
+    def test_guide_lists_running_steps(self):
         self.service._mark_running(self.key, "0009_x", "impl", "step")
-        self.service._mark_running(self.key, "0010_y", "precedent", "precedent")
+        self.service._mark_running(self.key, "0010_y", "spec", "step")
         self.service._mark_running("/elsewhere", "0011_z", "spec", "step")
         got = self.block()["running"]
         self.assertEqual([(r["unit"], r["stage"], r["agent"]) for r in got],
-                         [("0009_x", "impl", "Uruz"), ("0010_y", "precedent", "Jera")])
+                         [("0009_x", "impl", "Uruz"), ("0010_y", "spec", "Kenaz")])
         self.assertTrue(all(r["started"] for r in got))
 
     def test_guide_turns_every_stop_but_full_into_one_thing_to_do(self):
@@ -270,20 +269,7 @@ class TheGuide(unittest.TestCase):
                          ("0001_u", "unit", "questions", "why a"))
         self.assertEqual((by["cap"]["screen"], by["shortlist"]["screen"]), ("settings", "backlog"))
 
-    def test_guide_shows_at_most_ten_jera_answers_from_the_last_seven_days(self):
-        now = datetime.now(timezone.utc)
-        for n in range(12):
-            self.journal.append({"kind": "precedent", "workspace": self.key, "unit": "0009_x", "artifact": "spec.md",
-                                 "n": n + 1, "verdict": "answer", "written": True,
-                                 "at": (now - timedelta(hours=n)).isoformat()})
-        for over in ({"at": (now - timedelta(days=8)).isoformat()}, {"verdict": "needs-person", "written": False}):
-            self.journal.append({"kind": "precedent", "workspace": self.key, "unit": "0010_y", "artifact": "spec.md",
-                                 "n": 1, "verdict": "answer", "written": True, "at": now.isoformat(), **over})
-        got = self.block()["decided"]
-        self.assertEqual([(r["unit"], r["n"]) for r in got], [("0009_x", n) for n in range(1, 11)])
-        self.assertEqual({r["tab"] for r in got}, {"questions"})
-
     def test_guide_says_only_that_the_autopilot_is_off_when_it_is(self):
         self.service._mark_running(self.key, "0009_x", "impl", "step")
-        self.assertEqual(self.service._guide_block(self.key, []), {"on": False})
+        self.assertEqual(self.service._guide_block(self.key), {"on": False})
         self.assertEqual(asyncio.run(self.service.board(self.cwd))["guide"], {"on": False})

@@ -10,7 +10,6 @@
     "impl:novel": {"model": "claude-opus-5-5[1m]", "effort": "high"},
     "review": {"model": "claude-opus-5-5[1m]", "effort": "medium"},
     "review:novel": {"model": "claude-opus-5-5[1m]", "effort": "high"},
-    "estimate": {"model": "claude-opus-5-5[1m]", "effort": "medium"},
-    "precedent": {"model": "claude-opus-5-5[1m]", "effort": "medium"}
+    "estimate": {"model": "claude-opus-5-5[1m]", "effort": "medium"}
   }
 }

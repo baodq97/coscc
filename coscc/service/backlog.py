@@ -1,4 +1,4 @@
-"""The backlog: estimates, relations, the shortlist, precedent, starting a unit's branch,
+"""The backlog: estimates, relations, the shortlist, starting a unit's branch,
 and a unit's history. A mixin with no fields."""
 
 from __future__ import annotations
@@ -7,11 +7,10 @@ import json
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from coscc.units import autopilot, backlog, guards
+from coscc.units import backlog, guards
 from coscc.units import board as board_reader
 from coscc.git import fetches, gitops
 from coscc.units import hold as hold_rules
-from coscc.agent import precedent as precedent_mod
 from coscc.agent import submit as submit_mod
 from coscc.agent.submit import RUN_SUBMITTED, submitted
 from coscc.units.board import Unavailable
@@ -291,190 +290,6 @@ class BacklogMixin:
                 del self._active[(key, "")]
             self._running.pop(rid, None)
             self.updater.job_ended()
-
-    def _precedent_prompt(
-        self, data_units: list[dict[str, Any]], found: dict[str, Any], unit: str,
-        only: list[dict[str, Any]] | None = None, *, cwd: str = "",
-    ) -> tuple[list[dict[str, Any]], list[dict[str, str]], str]:
-        """`(questions, store, prompt)` for Jera on `found`, the one place its prompt is built:
-        `precedent` runs it and the autopilot's pass prices it.
-
-        `only`: the questions to ask, `[{artifact, n}]`; every one Jera may be given when
-        `None`. The rules are Settings' `decision_rules`, or `DEFAULT_RULES` while it is empty.
-        Pure but for reading the preferences.
-
-        Each entry says who decided it, from the person's decisions and the names marked
-        "This was me" on Settings, and the agents' names. `cwd` is the workspace `data_units`
-        were read from; a decision scoped to another is not in force.
-        """
-        questions = precedent_mod.asked(found)
-        if only is not None:
-            wanted = {(str(q["artifact"]), q["n"]) for q in only}
-            questions = [q for q in questions if (q["artifact"], q["n"]) in wanted]
-        prefs = self.preferences()
-        store = precedent_mod.entries(
-            data_units, str(prefs.get("decision_preferences") or ""), {unit}, **self._who_context(cwd),
-        )
-        rules = str(prefs.get("decision_rules") or "").strip() or precedent_mod.DEFAULT_RULES
-        return questions, store, precedent_mod.build_prompt(questions, store, rules)
-
-    async def precedent(
-        self, cwd: str, unit: str, started_by: str = "person", resume: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Jera answers this unit's open questions from precedent: one paid session.
-
-        Started by a person's press (*Ask Jera*), which asks every open question, or by the
-        autopilot's pass (`started_by` `autopilot`), which asks only those `autopilot.unasked`
-        names. Holds the unit like a step (`_take`), so Jera, a step, an integration and a
-        hold of one unit exclude each other in this process; a terminal session is not excluded.
-
-        Its ceiling is its prompt's (`precedent.grant_for_prompt`); past `PRECEDENT_MAX_USD`
-        it is refused before a `start` is written.
-
-        Writes a `start` and an `end` (stage `precedent`, the unit's own), the `start` with who
-        started it, its ceiling and the questions it `asked`; one `precedent` row per question,
-        and each `answer` that survives `precedent.verdicts` through `_append_answers` as
-        `Jera`, `Via: precedent`, `actor = agent:Jera`. A `needs-person` verdict writes no byte
-        of any artifact. A reply that cannot be read writes nothing either, and its tail is
-        kept in the `end` row. When it is over, the autopilot is woken.
-        """
-        self._workspace_or_refuse(cwd)
-        self._refuse_while_updating()
-        journal = self._journal()
-        if journal is None:
-            raise Invalid("no working folder is set, so nothing Jera says can be recorded — set COS_WORKING_DIR")
-        key = self._journal_key(cwd)
-        mark = self._take(key, unit, "precedent", "precedent")
-        rid = self._mark_running(key, unit, "precedent", "precedent")
-# Taken up again, the `start` is already written, so whatever refuses it from here ends it.
-        started, ended = resume is not None, False
-        try:
-            try:
-                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
-            except Unavailable as e:
-                raise Invalid(str(e)) from e
-            found = next((u for u in data["units"] if u["name"] == unit), None)
-            if found is None:
-                raise Invalid(f"no such work unit in this workspace: {unit}")
-            only = None
-            asked_before = ((resume or {}).get("owner") or {}).get("asked")
-            if asked_before is not None:
-# The questions the paused session was given, which its own `start` names, so
-# `autopilot.unasked` would not count every one of them asked already.
-                only = [{"artifact": a, "n": n} for a, n in asked_before]
-            elif started_by == "autopilot":
-                try:
-                    only = autopilot.unasked(found, journal.records(key, unit, kinds=("start", "end", "precedent")), key)
-                except Busy as e:
-                    raise Invalid(str(e)) from e
-            questions, store, prompt = self._precedent_prompt(data["units"], found, unit, only, cwd=cwd)
-            if not questions:
-                raise Invalid(f"{unit} has no open question Jera may answer"
-                              + (" that it was not asked already" if only is not None else ""))
-            grant = precedent_mod.grant_for_prompt(grant_for("precedent"), prompt)
-            if grant.max_budget_usd > precedent_mod.PRECEDENT_MAX_USD:
-                raise Invalid(
-                    f"the precedent store is past a Jera session's ceiling: this prompt would need "
-                    f"{grant.max_budget_usd:.2f} USD, and one session may cost "
-                    f"{precedent_mod.PRECEDENT_MAX_USD:.2f}"
-                )
-            defaults, _ = models.load_defaults()
-            model, model_source, effort, effort_source = models.resolve(
-                models.PRECEDENT, None, self._model_overrides()[0], self._effort_overrides()[0], defaults,
-                self.config.model,
-            )
-            start_at = ((resume or {}).get("owner") or {}).get("start_at")
-            if resume is None:
-                try:
-                    start_at = journal.started(
-                        key, unit, "precedent", "manual", started_by=started_by,
-                        prompt_chars=len(prompt), granted=[], max_turns=grant.max_turns,
-                        max_budget_usd=grant.max_budget_usd, model=model, model_source=model_source,
-                        effort=effort, effort_source=effort_source, questions=len(questions),
-                        entries=len(store), asked=[[q["artifact"], q["n"]] for q in questions]).get("at")
-                    started = True
-                except (BadRecord, Busy):
-                    pass
-# Jera's verdicts are the object it hands back, never its reply's words.
-            collector = submit_mod.Collector("precedent")
-            try:
-                reply, end, failure = await precedent_mod.ask(
-                    self.sessions, cwd, prompt, grant, model, effort,
-                    owner={"kind": "precedent", "workspace": key, "workspace_dir": cwd, "unit": unit,
-                           "stage": "precedent", "start_at": start_at, "started_by": started_by,
-                           "asked": [[q["artifact"], q["n"]] for q in questions]},
-                    resume=resume, channel=collector,
-                )
-            except Suspended:
-# An update paused Jera and wrote its `suspend` row; no `end` here.
-                ended = True
-                raise
-            cost = end.get("cost") or {}
-            session = end.get("session_id", "")
-# A Jera that handed back no object ends `failed`, whatever it replied.
-            if not failure and not submitted(collector):
-                failure = precedent_mod.NO_OBJECT
-            found_v = {"failed": failure or None, "verdicts": [], "ignored": []}
-            who = {e["id"]: e["who"] for e in store}
-            if not failure:
-                found_v = precedent_mod.verdicts(collector.object(), questions, who)
-            if found_v["failed"]:
-                try:
-# The tail is chosen at 2000 characters.
-                    journal.finished(key, unit, "precedent", "failed", session_id=session,
-                                     detail=f"{found_v['failed']}; the reply ended: {reply[-2000:]}",
-                                     guard=RUN_SUBMITTED, **cost)
-                    ended = True
-                except (BadRecord, Busy):
-                    pass
-                return {"unit": unit, "outcome": "failed", "detail": found_v["failed"], "written": [],
-                        "needs_person": [], "skipped": [], "ignored": [], "cost_usd": cost.get("cost_usd")}
-
-            answers = [v for v in found_v["verdicts"] if v["verdict"] == precedent_mod.ANSWER]
-            done = await self._append_answers(
-                cwd, unit, [(v["artifact"], v["n"], precedent_mod.block_text(v)) for v in answers],
-                precedent_mod.AGENT, precedent_mod.VIA, precedent_mod.ACTOR, "precedent",
-            ) if answers else {"written": [], "skipped": []}
-            skipped = {(s["artifact"], s["question"]): s["reason"] for s in done["skipped"]}
-            for v in found_v["verdicts"]:
-                at = (v["artifact"], v["n"])
-                row = {"kind": "precedent", "workspace": key, "unit": unit, "artifact": v["artifact"],
-                       "n": v["n"], "verdict": v["verdict"], "category": v["category"], "text": v["text"],
-                       "reason": v["reason"], "cites": v["cites"], "session_id": session,
-                       "written": v["verdict"] == precedent_mod.ANSWER and at not in skipped,
-# Who decided each cite as Jera was given it, not as it reads later.
-                       "cite_who": {c: precedent_mod.PRACTICE if c == precedent_mod.PRACTICE
-                                    else who.get(c, "unknown") for c in v["cites"]}}
-                if at in skipped:
-                    row.update(verdict="skipped", reason=skipped[at])
-                try:
-                    journal.append(row)
-                except (BadRecord, Busy):
-                    pass
-            try:
-                journal.finished(key, unit, "precedent", "done", session_id=session, guard=RUN_SUBMITTED, **cost)
-                ended = True
-            except (BadRecord, Busy):
-                pass
-            return {
-                "unit": unit, "outcome": "done", "detail": None,
-                "written": [{"artifact": w["artifact"], "n": w["question"]} for w in done["written"]],
-                "needs_person": [{"artifact": v["artifact"], "n": v["n"]} for v in found_v["verdicts"]
-                                 if v["verdict"] == precedent_mod.PERSON],
-                "skipped": [{"artifact": a, "n": n, "reason": r} for (a, n), r in skipped.items()],
-                "ignored": found_v["ignored"], "cost_usd": cost.get("cost_usd"),
-            }
-        finally:
-            if started and not ended:
-                try:
-                    journal.finished(key, unit, "precedent", "cancelled", detail="Jera ended before its reply was read")
-                except (BadRecord, Busy):
-                    pass
-            self._release(key, unit, mark)
-            self._running.pop(rid, None)
-            self.updater.job_ended()
-# What Jera wrote may let the unit move on; nothing happens while off.
-            self._autopilot_nudge(key)
 
     async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:
         """Cut this unit's branch in the workspace and switch to it.

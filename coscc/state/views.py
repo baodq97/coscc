@@ -141,17 +141,6 @@ class Question:
     # What the row shows as its name: the number for a numbered question, `F<n>` for a
     # review finding the last round confirmed needs a person (`number` is 0 for those).
     label: str = ""
-    # All decided by `Service.board`. `by_jera`: the answer in force is Jera's, which
-    # `said` this and cites `cites`. `needs_person`: Jera's last run said a person must
-    # answer it, with its `proposal` and `reason`.
-    by_jera: bool = False
-    cites: list[str] = dataclasses.field(default_factory=list)
-    said: str = ""
-    needs_person: bool = False
-    proposal: str = ""
-    reason: str = ""
-    # Whose decision the answer in force is, in words (`AUTHORITY_LABEL`); `""` while unanswered.
-    authority: str = ""
 
 
 @dataclasses.dataclass
@@ -958,7 +947,7 @@ AUTOPILOT_STOP_LABEL = {
 @dataclasses.dataclass
 class GuideItem:
     """One line of the board's guide, copied from `Service._guide_block`: a unit,
-    what it is (a stage and its agent, a thing to do, or a question Jera answered), a line
+    what it is (a stage and its agent, or a thing to do), a line
     below it, and where the link goes (`""` for none)."""
 
     unit: str = ""
@@ -1065,15 +1054,6 @@ class DecisionRow:
     withdrawn: str = ""
     state: str = ""
     in_force: bool = False
-
-
-@dataclasses.dataclass
-class NameRow:
-    """One name found in `Answered by:`, as `Service.answer_names` returned it."""
-
-    name: str = ""
-    count: int = 0
-    mine: bool = False
 
 
 @dataclasses.dataclass
@@ -1220,14 +1200,6 @@ def _questions(unit: dict) -> tuple[int, list[Question]]:
             answered=bool(q.get("answered")),
             counted=bool(q.get("counted")),
             label=str(q["n"]),
-            by_jera=bool(q.get("by_jera")),
-            cites=[str(c) for c in q.get("cites") or []],
-            said=str(q.get("said") or ""),
-            needs_person=bool(q.get("needs_person")),
-            proposal=str(q.get("proposal") or ""),
-            reason=str(q.get("reason") or ""),
-            authority=(AUTHORITY_LABEL.get(str(q.get("authority") or ""), NO_AUTHORITY)
-                       if q.get("answered") else ""),
         )
         for q in unit.get("questions") or []
     ] + [

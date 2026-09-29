@@ -154,16 +154,6 @@ ESTIMATE_WARNING = (
     "can rewrite any estimate, relation or the shortlist under any name they type."
 )
 
-# Said wherever *Ask Jera* is explained in full; the page keeps one sentence
-# (`service.CONSEQUENCE["precedent"]`).
-PRECEDENT_WARNING = (
-    "Asking Jera opens one paid session (1 turn, a ceiling from $1.00 to $3.00, set by the "
-    "length of its prompt) on the model of the Settings row `precedent`. What it answers is an "
-    "agent's inference from precedent or from a best practice it names, and every later stage "
-    "reads it as decided. Whoever holds the password or a live session can press it, and the "
-    "autopilot opens it with nobody pressing anything."
-)
-
 # Only stages that appear here get anything. The rest (`idea`, `intent`, any stage invented
 # later) falls through to `Grant()`. Keyed by stage alone.
 GRANTS: dict[str, Grant] = {
@@ -253,16 +243,6 @@ GRANTS: dict[str, Grant] = {
         max_budget_usd=2.0,
         warning=ESTIMATE_WARNING,
     ),
-    # Jera, not a stage either: *Ask Jera* on a unit's Questions tab, or the autopilot, one
-    # session each. No tools, no commands; it hands its verdicts back through `submit`
-    # (`SUBMITTING_SESSIONS`) and the app writes what survives its filter
-    # (`coscc/agent/precedent.py`). The $1.00 here is only the floor: each session runs on
-    # `precedent.grant_for_prompt`, whose ceiling grows with the prompt up to `PRECEDENT_MAX_USD`.
-    "precedent": Grant(
-        max_turns=1,
-        max_budget_usd=1.0,
-        warning=PRECEDENT_WARNING,
-    ),
 }
 
 # The ceilings a step gets when its plan's label is `novel` (`coscc/agent/labels.py`), as
@@ -296,9 +276,9 @@ SUBMITTING = ("idea", "impl", "intent", "plan", "review", "spec", "spike")
 # submitted again after one more turn, so four holds a call, a refusal, a second call and the
 # reply. Chosen, not measured.
 SUBMIT_TURNS = 4
-# The sessions that are no stage and hand back an object through `submit`: Gebo, the estimate
-# and Jera, `coscc/agent/submit.py`'s `SESSIONS`.
-SUBMITTING_SESSIONS = ("estimate", "integrate", "precedent")
+# The sessions that are no stage and hand back an object through `submit`: Gebo and the
+# estimate, `coscc/agent/submit.py`'s `SESSIONS`.
+SUBMITTING_SESSIONS = ("estimate", "integrate")
 
 
 def grant_for(stage: str) -> Grant:

@@ -21,7 +21,7 @@ from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import harness, precedent
+from coscc.agent import harness
 from coscc.data import Data, now
 from coscc.units.history import History
 from coscc.units.states import Machine
@@ -70,14 +70,19 @@ def _no_status(artifact: str, raw: str | None, machine: Machine) -> str:
     return machine.refuse(artifact, raw) or f'status "{raw}" is not one the app records'
 
 
+# The last line of an answer written under a delegation, `Theo ủy quyền: D<n>`.
+DELEGATION = "Theo ủy quyền:"
+
+
 def authority_of(via: str | None, text: str | None) -> str:
     """The authority of an answer read from a file, which does not say whose it was.
 
-    Jera's (`Via: precedent.`) is `agent`; one opening with `precedent.DELEGATION` is `delegated`;
-    any other is `person`. Read only on an import."""
-    if via == precedent.VIA:
+    An answer an earlier version wrote from precedent (`Via: precedent.`) is `agent`; one with
+    a line opening with `DELEGATION` is `delegated`; any other is `person`. Read only on an
+    import, and by the once-per-store classification of rows an older import left unknown."""
+    if via == "precedent":
         return "agent"
-    if any(line.startswith(precedent.DELEGATION) for line in (text or "").splitlines()):
+    if any(line.startswith(DELEGATION) for line in (text or "").splitlines()):
         return "delegated"
     return "person"
 

@@ -1,5 +1,5 @@
-"""`0136` R17. The eight places `docs/architecture/fsm.md` §6 names where an agent's free text
-became a machine decision, one class each, `Place1` to `Place8`, carrying the words of its
+"""`0136` R17. The seven places `docs/architecture/fsm.md` §6 names where an agent's free text
+became a machine decision, one class each, `Place1` to `Place7`, carrying the words of its
 item. Each asserts two things: the transition went through the guard named for it, and where
 the prose of an artifact says the opposite of the structured state, the structured state wins.
 
@@ -313,8 +313,8 @@ class Place4(unittest.TestCase):
         self.assertEqual((rec["outcome"], rec["needs_person"]), ("needs-person", ["A keeps x, B drops x"]))
 
 
-class _Jera(unittest.TestCase):
-    """A unit with two open questions, a finished one whose answer is precedent, and Jera."""
+class _Asked(unittest.TestCase):
+    """A unit with two open questions, and sessions that hand back one object."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -327,23 +327,15 @@ class _Jera(unittest.TestCase):
         )
         self.service = Service(self.config, _Nobody())
         intent = "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n"
-        earlier = create_sync(self.service, str(self.repo), "earlier", "x")
-        (Path(earlier["path"]) / "intent.md").write_text(intent, encoding="utf-8")
-        (Path(earlier["path"]) / "spec.md").write_text(
-            "# Spec: e\nIntent: intent.md. Author: t. Status: accepted.\n\n## Open questions\n\n1. Nhánh?\n",
-            encoding="utf-8")
-        self.cite = f"{earlier['unit']}/spec.md#Câu 1"
         made = create_sync(self.service, str(self.repo), "asked", "x")
         self.unit = made["unit"]
         (Path(made["path"]) / "intent.md").write_text(intent, encoding="utf-8")
         (Path(made["path"]) / "spec.md").write_text(
             "# Spec: a\nIntent: intent.md. Author: t. Status: draft.\n\n## Open questions\n\n1. Nhánh mới?\n2. Tiền?\n",
             encoding="utf-8")
-        # After every file is written: the first read imports them all once (`0135`).
-        asyncio.run(self.service.answer(str(self.repo), earlier["unit"], "spec.md", 1, "Từ Type.", ""))
 
     def _stream(self, reply: str, obj: dict | None):
-        class Jera:
+        class Session:
             def in_flight(self):
                 return []
 
@@ -353,16 +345,7 @@ class _Jera(unittest.TestCase):
                     await submits(kw, **obj)
                 yield ("done", {"session_id": "s1", "cost": {"cost_usd": 0.02, "turns": 1}})
 
-        self.service.sessions = Jera()
-
-    def _verdict(self, n: int, **over) -> dict:
-        return {"artifact": "spec.md", "n": n, "verdict": "answer", "category": "other", "text": f"Trả lời {n}.",
-                "reason": "", "cites": [self.cite], **over}
-
-    def _answers(self) -> list[tuple]:
-        with self.service._unit_meta().data.connect() as conn:
-            return [tuple(r) for r in conn.execute(
-                "SELECT ref, answered_by, via, authority FROM unit_answers WHERE unit = ? ORDER BY id", (self.unit,))]
+        self.service.sessions = Session()
 
     def _end(self, stage: str, unit: str) -> dict:
         from coscc.runlog.journal import Journal
@@ -372,44 +355,8 @@ class _Jera(unittest.TestCase):
         return [r for r in journal.records(key, unit, kind="end") if r.get("stage") == stage][-1]
 
 
-class Place5(_Jera):
-    """§6, 5: "Jera's JSON becomes `### Câu N` answers." Now Jera hands its verdicts back
-    through `submit`, guard `run-submitted` ends the run, and every answer it writes carries
-    `authority: agent` (R8)."""
-
-    def test_the_answers_are_the_objects_and_an_agents(self):
-        prose = "```json\n" + json.dumps([self._verdict(1), self._verdict(2)]) + "\n```"
-        self._stream(prose, {"verdicts": [self._verdict(1), self._verdict(2, verdict="needs-person", reason="r")]})
-        done = asyncio.run(self.service.precedent(str(self.repo), self.unit))
-        self.assertEqual(done["outcome"], "done")
-        self.assertEqual(self._answers(), [("1", "Jera", "precedent", "agent")])
-        self.assertEqual(self._end("precedent", self.unit)["guard"], guards.guard("run-submitted").id)
-
-    def test_a_json_block_in_the_reply_with_no_object_writes_nothing(self):
-        prose = "```json\n" + json.dumps([self._verdict(1), self._verdict(2)]) + "\n```"
-        self._stream(prose, None)
-        done = asyncio.run(self.service.precedent(str(self.repo), self.unit))
-        self.assertEqual(done["outcome"], "failed")
-        self.assertIn("no-submission", done["detail"])
-        self.assertEqual(self._answers(), [])
-        end = self._end("precedent", self.unit)
-        self.assertEqual((end["outcome"], end["guard"]), ("failed", "run-submitted"))
-
-    def test_no_guard_takes_jeras_answer_for_a_persons(self):
-        """R8, R14: guard `skip-decision` reads `authority`, and Jera's never opens it."""
-        self._stream("", {"verdicts": [self._verdict(1), self._verdict(2)]})
-        asyncio.run(self.service.precedent(str(self.repo), self.unit))
-        authorities = {a for _, _, _, a in self._answers()}
-        self.assertEqual(authorities, {"agent"})
-        for a in authorities:
-            self.assertFalse(guards.guard("skip-decision").check({"authority": a}).open)
-        # A person's answer, by the same road, is a person's.
-        asyncio.run(self.service.answer(str(self.repo), self.unit, "spec.md", 1, "Của tôi.", "Jera's friend"))
-        self.assertEqual(self._answers()[-1][3], "person")
-
-
-class Place6(_Jera):
-    """§6, 6: "The estimate's JSON becomes backlog rows." Now the estimate is the object the
+class Place5(_Asked):
+    """§6, 5: "The estimate's JSON becomes backlog rows." Now the estimate is the object the
     session hands back through `submit`, guard `run-submitted` ends the run, and every row it
     writes carries `authority: agent` (R9)."""
 
@@ -447,8 +394,8 @@ class Place6(_Jera):
         self.assertEqual(self._rows(), [])
 
 
-class Place7(_PrFixture):
-    """§6, 7: "The reviewed sha and the merge pin are copied by the model out of prompt prose."
+class Place6(_PrFixture):
+    """§6, 6: "The reviewed sha and the merge pin are copied by the model out of prompt prose."
     Now `ship` is the PR machine's (R13): guard `ship-ready` reads the head the app recorded
     when the review run opened (R3 c) and the head its own `gh pr view` found, and the merge is
     pinned to that read (R10). Here `review.md` and `ship.md` name other commits."""
@@ -484,8 +431,8 @@ class Place7(_PrFixture):
         self.assertEqual([c for c in gh.calls if c[:2] == ["pr", "merge"]], [])
 
 
-class Place8(unittest.TestCase):
-    """§6, 8: "The autopilot matches English substrings of `cos.mjs`'s messages." Now `next`
+class Place7(unittest.TestCase):
+    """§6, 7: "The autopilot matches English substrings of `cos.mjs`'s messages." Now `next`
     and the gate hand out codes from `guards.REASONS` beside their words, and the autopilot
     branches on the codes (R11). Here `cos.mjs` rewords a reason, and the autopilot still
     reads the unit as it did."""
@@ -531,15 +478,15 @@ class Place8(unittest.TestCase):
         self._read_as(nxt, "finished")
 
 
-class TheEightPlacesAreAllHere(unittest.TestCase):
+class TheSevenPlacesAreAllHere(unittest.TestCase):
     """R17: one case per place of `docs/architecture/fsm.md` §6, each carrying its number and
-    its words, and no ninth."""
+    its words, and no eighth."""
 
     def test_there_is_one_class_per_place_and_each_quotes_its_place(self):
         places = sorted(n for n, v in globals().items() if n.startswith("Place") and isinstance(v, type))
-        self.assertEqual(places, [f"Place{n}" for n in range(1, 9)])
+        self.assertEqual(places, [f"Place{n}" for n in range(1, 8)])
         fsm = (Path(__file__).resolve().parents[2] / "docs" / "architecture" / "fsm.md").read_text(encoding="utf-8")
-        for n in range(1, 9):
+        for n in range(1, 8):
             doc = globals()[f"Place{n}"].__doc__ or ""
             with self.subTest(place=n):
                 self.assertTrue(doc.startswith(f"§6, {n}: "), doc[:40])

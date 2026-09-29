@@ -1,15 +1,12 @@
 """What the board's guide says, with no I/O: every function here is pure.
 
-Three lists for a person: what runs now, what waits for them and where to do it, and what
-Jera decided for them lately. `Service._guide_block` hands in what it already read.
+Two lists for a person: what runs now, and what waits for them and where to do it.
+`Service._guide_block` hands in what it already read.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
-
-from coscc.agent import precedent
 
 # What one stop asks of a person: `(do, screen, tab)`, `tab` one of `coscc/web/place.py` `TABS`.
 # Every stop kind of `autopilot.STOP_KINDS` but `full`, which only waits for a free place.
@@ -24,21 +21,10 @@ TODO: dict[str, tuple[str, str, str]] = {
     "cap": ("Raise the daily cap, or wait for tomorrow.", "settings", ""),
     "shortlist": ("Put units on the shortlist.", "backlog", ""),
 }
-# At most this many of Jera's answers, from this many days back.
-DECIDED_MAX = 10
-DECIDED_DAYS = 7
-
-
-def _moment(at: Any) -> datetime | None:
-    try:
-        moment = datetime.fromisoformat(str(at or "").replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 def running(entries: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
-    """Every step, integration and Jera session running now, `[{unit, stage, agent,
+    """Every step and integration running now, `[{unit, stage, agent,
     started}]`, oldest first. `entries` is `Service.running`'s `running`: by unit, each with
     its `agent` (`coscc/agent/agents.py`), `None` for a rebase."""
     out = [
@@ -64,20 +50,3 @@ def needs_you(stops: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
         out.append({"unit": unit, "kind": kind, "do": do, "reason": str(stop.get("reason") or ""),
                     "screen": screen, "tab": tab})
     return out
-
-
-def decided(records: Iterable[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
-    """Jera's answers that were written, `DECIDED_DAYS` back from `now`, newest first and at
-    most `DECIDED_MAX`: `[{unit, artifact, n, at, tab}]`."""
-    oldest = now - timedelta(days=DECIDED_DAYS)
-    found = []
-    for r in records:
-        if r.get("kind") != "precedent" or r.get("written") is not True or r.get("verdict") != precedent.ANSWER:
-            continue
-        moment = _moment(r.get("at"))
-        if moment is None or moment < oldest:
-            continue
-        found.append((moment, {"unit": str(r.get("unit") or ""), "artifact": str(r.get("artifact") or ""),
-                               "n": r.get("n"), "at": str(r.get("at") or ""), "tab": "questions"}))
-    found.sort(key=lambda x: x[0], reverse=True)
-    return [row for _, row in found[:DECIDED_MAX]]

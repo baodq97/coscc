@@ -18,12 +18,11 @@ from coscc.units import hold as hold_rules
 from coscc.units import more_rounds as more_rounds_rules
 from coscc.agent import agents, policy
 from coscc.github import prcomment, prscope, prsync
-from coscc.agent import precedent as precedent_mod
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
 from coscc.data import Data
-from coscc.units.meta import MetaError, UnitMeta
+from coscc.units.meta import DELEGATION, MetaError, UnitMeta
 from coscc.runlog.journal import BadRecord, Busy, Journal
 from coscc.agent import submit
 from coscc.units import transitions
@@ -34,13 +33,36 @@ from coscc.units import BadUnit, CannotCreate, ideas
 from coscc.data import Data
 from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
 
-# The kinds of a decision, the longest text one may carry (chosen, not measured), the
-# preference holding the names marked "This was me", and the artifacts whose answers those
-# names are gathered from.
+# The kinds of a decision, the longest text one may carry (chosen, not measured), and the
+# agent a delegation may name: Leif answers in the person's place from outside the app.
 DECISION_KINDS = ("decision", "delegation")
 DECISION_TEXT_MAX = 2000
-NAMES_MINE = "answer_names_mine"
-NAMES_FROM = ("intent.md", "spec.md")
+DELEGATES = ("Leif",)
+
+
+def decision_id(d: Any) -> str:
+    return f"D{d.get('id')}"
+
+
+def in_force(d: Any, day: str, workspace: str) -> bool:
+    """Decision `d` holds on `day` (ISO) in `workspace` (a slot): from its first day,
+    to its last if it has one, before the day it was withdrawn, and in its workspace or all."""
+    day = str(day or "")
+    start, until = str(d.get("from_day") or ""), str(d.get("until_day") or "")
+    gone, where = str(d.get("withdrawn") or ""), str(d.get("workspace") or "")
+    return (bool(day) and bool(start) and start <= day and (not until or day <= until)
+            and (not gone or day < gone) and (not where or where == workspace))
+
+
+def opens_with(by: Any, names: Any) -> bool:
+    """`by` opens with one of `names`, case aside, and the name ends there or at a character
+    that is not a letter: `Leif (CoS)` does, `Leifson` does not."""
+    b = str(by or "").strip().casefold()
+    for n in names:
+        n = str(n or "").strip().casefold()
+        if n and b.startswith(n) and (len(b) == len(n) or not b[len(n)].isalpha()):
+            return True
+    return False
 
 
 class AnswersMixin:
@@ -401,9 +423,6 @@ class AnswersMixin:
         """
         self._workspace_or_refuse(cwd)
         name = str(answered_by or "").strip() or OWNER
-        # Jera's name marks the road a block came by, not who typed it, so a person may not take it.
-        if precedent_mod.is_jera(name):
-            raise Invalid(f"{precedent_mod.AGENT} is the agent that answers from precedent; answer under another name")
         done = await self._append_answers(
             cwd, unit, [(artifact, question, answer)], name, "product", f"human:{name}", "answer",
             delegation=str(delegation or "").strip(),
@@ -430,25 +449,17 @@ class AnswersMixin:
         source: str,
         delegation: str = "",
     ) -> dict[str, Any]:
-        """The one place that records an answer: a person's through `answer`, Jera's through
-        `precedent`. `items` is `[(artifact, question, text)]`, all checked and written under
-        one hold of `_answer_lock` and one board read.
+        """The one place that records an answer: `items` is `[(artifact, question, text)]`, all
+        checked and written under one hold of `_answer_lock` and one board read. A refusal
+        raises. Returns `{written: [{artifact, question}], date}`.
 
-        A person's refusal raises. With `via == "precedent"` every item is judged alone and
-        a refused one is `skipped` with its reason: `review.md` and any `F<n>`, and a
-        question already answered because a person got there while Jera ran.
-        Returns `{written: [{artifact, question}], skipped: [{artifact, question, reason}],
-        date}`.
-
-        Each row says whose answer it is by the road it came, never by the name typed:
-        Jera's `agent`, one under a delegation `delegated`, any other `person`.
+        Each row says whose answer it is by the road it came, never by the name typed: one
+        under a delegation `delegated`, any other `person`.
         """
-        jera = via == precedent_mod.VIA
-        authority = "agent" if jera else "delegated" if delegation else "person"
+        authority = "delegated" if delegation else "person"
         name = answered_by
         today = date.today().isoformat()
         written: list[dict[str, Any]] = []
-        skipped: list[dict[str, Any]] = []
         async with self._answer_lock:
             try:
                 data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
@@ -460,25 +471,13 @@ class AnswersMixin:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
             texts: list[str] = []
             for artifact, question, answer in items:
-                try:
-                    number, finding, text = self._append_one(
-                        cwd, unit, found, artifact, question, str(answer or "").strip("\n"), name, via,
-                        today, jera, delegation,
-                    )
-                except Invalid as e:
-                    if not jera:
-                        raise
-                    skipped.append({"artifact": artifact, "question": question, "reason": str(e)})
-                    continue
+                number, finding, text = self._append_one(
+                    cwd, unit, found, artifact, question, str(answer or "").strip("\n"), name, via,
+                    today, delegation,
+                )
                 written.append({"artifact": artifact, "question": finding or number})
                 texts.append(text)
-            try:
-                self._record_answers(cwd, unit, found, written, texts, name, today, via, authority)
-            except Invalid as e:
-                if not jera:
-                    raise
-                skipped += [{**w, "reason": str(e)} for w in written]
-                written = []
+            self._record_answers(cwd, unit, found, written, texts, name, today, via, authority)
 
         # The store is not a git repository, so provenance is a row in `outputs`. Never
         # raises: the answer is recorded, and failing now would say it was not.
@@ -498,7 +497,7 @@ class AnswersMixin:
                 except (OSError, BadTransition, Busy):
                     pass
 
-        return {"written": written, "skipped": skipped, "date": today}
+        return {"written": written, "date": today}
 
     def _record_answers(
         self, cwd: str, unit: str, found: dict[str, Any], written: list[dict[str, Any]], texts: list[str],
@@ -552,17 +551,10 @@ class AnswersMixin:
 
     def _append_one(
         self, cwd: str, unit: str, found: dict[str, Any], artifact: str, question: Any, text: str,
-        name: str, via: str, today: str, jera: bool, delegation: str = "",
+        name: str, via: str, today: str, delegation: str = "",
     ) -> tuple[int | str, str, str]:
         """Check one answer against the board read `found`. Raises `Invalid`; returns
         `(number, finding, text)`, the text as its row keeps it. `_record_answers` writes it."""
-        if jera:
-            # Decided by the name of the file and the shape of the heading, never by what the session said.
-            if artifact == "review.md" or re.fullmatch(r"F\d+", str(question).strip()):
-                raise Invalid(f"{precedent_mod.AGENT} never answers in review.md or a finding")
-            if any(q.get("artifact") == artifact and q.get("n") == question and q.get("answered")
-                   for q in found.get("questions") or []):
-                raise Invalid(f"{artifact} question {question} was answered while {precedent_mod.AGENT} ran")
         # A finding the last review round confirmed needs a person is answered by its id,
         # `F<n>`, into `review.md`, and only while `cos.mjs` lists it in `personFindings`.
         finding = str(question).strip() if isinstance(question, str) else ""
@@ -616,7 +608,7 @@ class AnswersMixin:
                 )
         if delegation:
             # Last of the refusals, before the row is written.
-            text = f"{text}\n\n{precedent_mod.DELEGATION} {self._delegation_or_refuse(cwd, name, delegation, today)}"
+            text = f"{text}\n\n{DELEGATION} {self._delegation_or_refuse(cwd, name, delegation, today)}"
         return number, finding, text.strip()
 
     def _delegation_or_refuse(self, cwd: str, name: str, delegation: str, today: str) -> str:
@@ -629,36 +621,23 @@ class AnswersMixin:
             rows = Data(self.config.data_dir).decisions()
         except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
             raise Invalid(f"the decisions could not be read, so nothing was written: {e}") from e
-        d = next((d for d in rows if precedent_mod.decision_id(d) == cited), None)
+        d = next((d for d in rows if decision_id(d) == cited), None)
         if d is None:
             raise Invalid(f"there is no decision {cited}")
         if d["kind"] != "delegation":
             raise Invalid(f"{cited} is a decision, not a delegation")
         if d["workspace"] and d["workspace"] != units.slot(cwd):
             raise Invalid(f"{cited} does not cover this workspace")
-        if not precedent_mod.in_force(d, today, units.slot(cwd)):
+        if not in_force(d, today, units.slot(cwd)):
             raise Invalid(f"{cited} is not in force today")
-        if not precedent_mod.opens_with(name, [d["agent"]]):
+        if not opens_with(name, [d["agent"]]):
             raise Invalid(f"{cited} delegates to {d['agent']}, and this answer is under {name}")
         return cited
 
-    # -- the person's decisions and names ------------------------
+    # -- the person's decisions ------------------------
     #
     # Called only by the Settings screen's handlers (`coscc/state/answers.py`). No route
     # reaches these: over HTTP an agent could make "the person's decision" itself.
-
-    def _who_context(self, cwd: str) -> dict[str, Any]:
-        """What `precedent.entries` needs to say who decided each entry."""
-        data = Data(self.config.data_dir)
-        return {"workspace": units.slot(cwd) if cwd else "", "decisions": data.decisions(),
-                "mine": sorted(self._names_mine(data)), "agents": self.agent_names(),
-                "today": date.today().isoformat()}
-
-    @staticmethod
-    def _names_mine(data: Data) -> set[str]:
-        """The names marked "This was me", casefolded; a hand-broken value is none."""
-        stored = data.pref(NAMES_MINE, [])
-        return {str(n).casefold() for n in stored} if isinstance(stored, list) else set()
 
     def decisions_table(self) -> dict[str, Any]:
         """Every decision, withdrawn and expired included, each with its `state` and its
@@ -680,7 +659,7 @@ class AnswersMixin:
                 state = "not yet"
             else:
                 state = "in force"
-            out.append({**d, "id": precedent_mod.decision_id(d), "state": state,
+            out.append({**d, "id": decision_id(d), "state": state,
                         "workspace_name": names.get(d["workspace"], "a removed workspace")
                         if d["workspace"] else "All workspaces"})
         return {"rows": out, "workspaces": sorted(dict.fromkeys(names.values()))}
@@ -717,8 +696,8 @@ class AnswersMixin:
             if not slot:
                 raise Invalid("Choose all workspaces or one of the app's workspaces.")
         if kind == "delegation":
-            if agent not in precedent_mod.AGENTS_ALWAYS:
-                raise Invalid(f"Choose {' or '.join(precedent_mod.AGENTS_ALWAYS)} for a delegation.")
+            if agent not in DELEGATES:
+                raise Invalid(f"Choose {' or '.join(DELEGATES)} for a delegation.")
             if not covers:
                 raise Invalid("Say which questions the delegation covers.")
             if "\n" in covers or "\r" in covers:
@@ -749,60 +728,6 @@ class AnswersMixin:
         except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
             raise Invalid(f"{cited} could not be withdrawn: {e}") from e
         return {"withdrawn": cited, **self.decisions_table()}
-
-    async def answer_names(self) -> dict[str, Any]:
-        """Every name in `Answered by:` of an answer in force in `intent.md` or `spec.md`, in
-        every workspace, less `owner` and every agent's name; each with how many answers carry
-        it and whether it is marked "This was me". An unreadable workspace is a `problems` line."""
-        agent_names = self.agent_names()
-        mine = self._names_mine(Data(self.config.data_dir))
-        found: dict[str, dict[str, Any]] = {}
-        problems: list[str] = []
-        peers = self._peer_table()[0]
-        for w in self.workspaces()["workspaces"]:
-            if w.get("missing"):
-                continue
-            try:
-                data = await board_reader.read(
-                    self._units_root(w["path"]), state=self._snapshot(w["path"], peers=peers)
-                )
-            except (Unavailable, Invalid) as e:
-                problems.append(f"{w['name']} could not be read: {e}")
-                continue
-            for u in data["units"]:
-                for a in u.get("answers") or []:
-                    by = str(a.get("by") or "").strip()
-                    if a.get("artifact") not in NAMES_FROM or not by:
-                        continue
-                    key = by.casefold()
-                    if key == OWNER or precedent_mod.is_agent_name(by, agent_names):
-                        continue
-                    row = found.setdefault(key, {"name": by, "count": 0, "mine": key in mine})
-                    row["count"] += 1
-        rows = sorted(found.values(), key=lambda r: (-r["count"], r["name"].casefold()))
-        return {"rows": rows, "problems": problems}
-
-    def set_name_mine(self, name: Any, on: bool) -> dict[str, Any]:
-        """Mark one name as the person's, or unmark it. Stored casefolded under `NAMES_MINE`,
-        which `PREFERENCES` does not list, so `set_preference` cannot write it."""
-        shown = str(name or "").strip()
-        if not shown or "\n" in shown or "\r" in shown:
-            raise Invalid("Name one name, on one line.")
-        if shown.casefold() == OWNER:
-            raise Invalid("owner already counts as you.")
-        if precedent_mod.is_agent_name(shown, self.agent_names()):
-            raise Invalid(f"{shown} is an agent's name, so it cannot be yours.")
-        key = shown.casefold()
-
-        def change(current: Any) -> list[str]:
-            have = {str(n) for n in current} if isinstance(current, list) else set()
-            return sorted(have | {key}) if on else sorted(have - {key})
-
-        try:
-            Data(self.config.data_dir).update_pref(NAMES_MINE, change, [])
-        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
-            raise Invalid(f"The name could not be saved: {e}") from e
-        return {"name": shown, "mine": bool(on)}
 
     async def record_outcome(
         self,

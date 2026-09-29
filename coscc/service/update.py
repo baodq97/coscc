@@ -89,7 +89,7 @@ class UpdateMixin:
 
     def _update_waited(self) -> list[dict[str, Any]]:
         """What an Apply waits for: a mechanical integration and a screenshot retake.
-        Gebo sessions, steps, estimates, Jera and chat are paused by `suspend_sessions`; what of
+        Gebo sessions, steps, estimates and chat are paused by `suspend_sessions`; what of
         them had no session open gets `settle_after_suspend`'s bounded wait."""
         jobs: list[dict[str, Any]] = []
         for entry in self._running.values():

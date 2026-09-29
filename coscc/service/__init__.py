@@ -51,7 +51,6 @@ from coscc.service.common import (
 from coscc.service.board import (
     UNKNOWN_END_FOR,
     _attach_comment_state,
-    _attach_precedent,
     answerable,
     BoardMixin,
 )

@@ -15,7 +15,6 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.units import autopilot
-from coscc.agent import precedent
 from coscc.config import Config
 from coscc.github import prmachine, prmachine_test
 from coscc.runlog.journal import Busy, Journal
@@ -84,15 +83,9 @@ class _Base(unittest.IsolatedAsyncioTestCase):
                 "SELECT artifact, ref, answered_by, via, text FROM unit_answers WHERE unit = ? ORDER BY id", (unit,))]
 
     def starts(self) -> list[dict]:
-        """The steps' `start`s. Since `0101` R1 the autopilot asks Jera before it stops on an
-        open question; its lines are no step (`autopilot.NOT_STEPS`) and are read apart."""
+        """The steps' `start`s."""
         return [r for r in Journal(self.config.working_dir, self.config.data_dir).records(kind="start")
                 if autopilot.is_step(r)]
-
-    def jera(self) -> list[dict]:
-        """Every `autopilot-pick`, `start` and `end` of Jera, in the order written."""
-        return [r for r in Journal(self.config.working_dir, self.config.data_dir).records(
-            kinds=("autopilot-pick", "start", "end")) if r.get("stage") == autopilot.JERA]
 
     def listed(self, *names: str) -> None:
         """`0104`: a `shortlist` record, written straight to the run log. The autopilot follows
@@ -263,8 +256,7 @@ class OnTheRealLoop(_Base):
         await self.settled()
         self.assertEqual([(s["stage"], s["started_by"]) for s in self.starts()], [("intent", "autopilot")])
         picks = Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-pick")
-        # `0101` R1: Jera was asked first; this stand-in's reply held no JSON, so a person answered.
-        self.assertEqual([(p["unit"], p["stage"]) for p in picks], [(unit, "precedent"), (unit, "intent")])
+        self.assertEqual([(p["unit"], p["stage"]) for p in picks], [(unit, "intent")])
         [answer] = self.answers()
         self.assertEqual((answer["completes"], answer["autopilot"], answer["shortlisted"]), (True, True, True))
         # The rerun kept the answer — a row since `0135` — and the draft it wrote asks nothing,
@@ -294,59 +286,17 @@ class OnTheRealLoop(_Base):
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
         self.assertEqual((stop["unit"], stop["kind"], stop["reason"]), (unit, "f", "finish and accept intent.md"))
 
-    # --- `0101`, Jera before a person --------------------------------------------
-
-    async def test_an_open_question_is_asked_of_jera_after_a_pick(self):
-        """R1: `autopilot-pick` → `start` (`started_by: autopilot`) → `end`, then the stop `a`."""
-        self.service.sessions = _Jera(verdict="needs-person")
-        unit = await self.unit("asks-jera", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
+    async def test_an_open_question_stops_the_unit_and_opens_no_session(self):
+        """The stop `a` is what a person sees; nothing answers for them."""
+        self.service.sessions = _Intents()
+        unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
         self.listed(unit)
         self.service.set_autopilot(self.ws, "autopilot", True)
-        await self.until(lambda: any(r["kind"] == "end" for r in self.jera()), "Jera's end")
         await self.settled()
-        self.assertEqual([(r["kind"], r["unit"], r.get("started_by")) for r in self.jera()], [
-            ("autopilot-pick", unit, None), ("start", unit, "autopilot"), ("end", unit, None),
-        ])
-        start = self.jera()[1]
-        self.assertEqual(start["asked"], [["intent.md", 1]])
-        self.assertEqual(start["max_budget_usd"], 1.0)
         self.assertEqual(self.starts(), [])
+        self.assertEqual(Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-pick"), [])
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
-        self.assertEqual((stop["unit"], stop["kind"], stop["reason"]),
-                         (unit, "a", "1 question waits for you: intent.md question 1"))
-
-    async def test_a_second_pass_on_the_same_questions_opens_no_jera_session(self):
-        """R2, a reply that could not be read included: its questions were asked all the same."""
-        for sessions in (_Jera(verdict="needs-person"), _Jera(verdict="")):
-            self.service.sessions = sessions
-            unit = await self.unit(f"once-{sessions.verdict or 'unread'}", "Status: accepted.\n\n## Open questions\n\n1. Một?")
-            self.listed(unit)
-            self.service.set_autopilot(self.ws, "autopilot", True)
-            await self.until(lambda: sessions.calls, "Jera's session")
-            await self.settled()
-            await self.service._autopilot_pass(self.key)
-            await self.settled()
-            self.assertEqual(sessions.calls, 1)
-            self.service.set_autopilot(self.ws, "autopilot", False)
-        self.assertEqual([r["outcome"] for r in self.jera() if r["kind"] == "end"], ["done", "failed"])
-
-    async def test_after_jera_answers_every_question_of_a_draft_the_next_pass_runs_it_again(self):
-        """R4: Jera's answer is an `answer` of `intent`, so `0106`'s run again follows it, in
-        the pass Jera's end wakes."""
-        self.service.sessions = _Jera(verdict="answer", then=_Intents())
-        unit = await self.unit("jera-rerun", "Status: draft.\n\n## Open questions\n\n1. Một?")
-        self.listed(unit)
-        self.service.set_autopilot(self.ws, "autopilot", True)
-        await self.until(lambda: self.starts(), "the rerun's start")
-        await self.settled()
-        self.assertEqual([(s["stage"], s["started_by"]) for s in self.starts()], [("intent", "autopilot")])
-        picks = Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-pick")
-        self.assertEqual([(p["unit"], p["stage"]) for p in picks], [(unit, "precedent"), (unit, "intent")])
-        [answer] = self.answers()
-        self.assertEqual((answer["via"], answer["completes"]), ("precedent", True))
-        [(artifact, ref, by, via, text)] = self.rows(unit)
-        self.assertEqual((artifact, ref, by, via), ("intent.md", "1", "Jera", "precedent"))
-        self.assertIn("Tiền lệ: practice", text)
+        self.assertEqual((stop["unit"], stop["kind"]), (unit, "a"))
 
     # --- `0115`, a draft impl asks a person ---------------------------------------
 
@@ -420,30 +370,6 @@ class _Intents:
                         "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01}})
 
 
-class _Jera:
-    """`0101`. Jera's session: one verdict of `verdict` for `intent.md` question 1, citing
-    `practice`, handed back through `submit` (`0136` R8) — or, with `verdict` empty, no
-    object at all. Any other prompt goes to `then`, a step's stand-in."""
-
-    def __init__(self, verdict: str, then=None):
-        self.verdict, self.then, self.calls = verdict, then, 0
-
-    async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-        if not text.startswith("You are Jera"):
-            async for item in self.then.stream(cwd, text, session_id, max_turns, **kw):
-                yield item
-            return
-        self.calls += 1
-        yield ("chunk", "Done.")
-        if self.verdict:
-            await _submits(kw, verdicts=[{
-                "artifact": "intent.md", "n": 1, "verdict": self.verdict, "category": "other",
-                "text": "Theo thông lệ: một.", "reason": "", "cites": ["practice"],
-            }])
-        yield ("done", {"session_id": f"j{self.calls}", "terminal_reason": "success",
-                        "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.02}})
-
-
 class Scripted(_Base):
     """The board, `next` and the step itself replaced, so each rule is set up on its own."""
 
@@ -475,18 +401,8 @@ class Scripted(_Base):
                     self.service._release(self.key, unit, mark)
             return go
 
-        async def jera(cwd, unit, started_by="person"):
-            mark = self.service._take(self.key, unit, "precedent", "precedent")
-            self.launched.append((unit, "precedent", started_by))
-            try:
-                await self.release.wait()
-            finally:
-                self.service._release(self.key, unit, mark)
-            return {}
-
         self.service.board = board
         self.service.next_step = next_step
-        self.service.precedent = jera
         self.service.run_step = fake("step")
         self.service.integrate = lambda cwd, unit, started_by="person": fake("integrate")(cwd, unit, started_by=started_by)
         self.service._autopilot_cwd[self.key] = self.ws
@@ -601,9 +517,9 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [])
         self.assertEqual(self.stops(), {"0001_a": "b", "0002_b": "d"})
 
-    async def test_e_reads_past_what_jera_wrote_on_the_unit(self):
-        """`0044`: a `precedent` line is no step. A done one does not lift a failed step's stop,
-        and a failed one stops nothing."""
+    async def test_e_reads_past_what_an_earlier_version_wrote_on_the_unit(self):
+        """`0044`: a `precedent` line, from an earlier version, is no step. A done one does not
+        lift a failed step's stop, and a failed one stops nothing."""
         journal = Journal(self.config.working_dir, self.config.data_dir)
         self.add("0001_a", "spec")
         journal.finished(self.key, "0001_a", "spec", "failed")
@@ -1366,7 +1282,7 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "plan", "autopilot")])
         self.assertNotIn("past_exhausted", self.picks()[0])
 
-    # --- `0101`, Jera as a candidate ----------------------------------------------
+    # --- an open question waits for a person -------------------------------------
 
     def asks(self, name, stage="spec", n=1):
         """A unit whose `intent.md` has `n` open questions, and `next` naming `stage`."""
@@ -1377,75 +1293,23 @@ class Scripted(_Base):
                        for k in range(1, n + 1)],
         )
 
-    def restart(self):
-        """`set_autopilot` starts the loop again; each test asks for its own pass."""
+    async def test_the_stop_names_each_question_that_waits(self):
+        self.asks("0001_a", n=2)
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops(), self.picks()), ([], {"0001_a": "a"}, []))
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+                         "open questions: intent.md question 1, intent.md question 2")
+
+    async def test_a_unit_that_waits_for_a_person_takes_no_place_under_max_parallel(self):
+        self.service.set_autopilot(self.ws, "max_parallel", 1)
         self.service.autopilot_stop(self.key)
         self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
         self.service._autopilot_cwd[self.key] = self.ws
-
-    def jera_asked(self, unit, *ns):
-        Journal(self.config.working_dir, self.config.data_dir).started(
-            self.key, unit, "precedent", "manual", started_by="autopilot", max_budget_usd=1.0,
-            asked=[["intent.md", n] for n in ns])
-        Journal(self.config.working_dir, self.config.data_dir).finished(self.key, unit, "precedent", "failed")
-
-    async def test_0101_r1_a_unit_with_an_unasked_question_is_a_jera_candidate(self):
-        self.asks("0001_a")
-        await self.pass_()
-        self.assertEqual(self.launched, [("0001_a", "precedent", "autopilot")])
-        [pick] = self.picks()
-        self.assertEqual((pick["unit"], pick["stage"]), ("0001_a", "precedent"))
-        self.assertEqual(self.stops(), {})
-
-    async def test_the_stop_names_how_many_questions_wait_for_you(self):
-        """R2: every open question was asked, so the stop `a` is back, with its count."""
-        self.asks("0001_a", n=2)
-        self.jera_asked("0001_a", 1, 2)
-        await self.pass_()
-        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "a"}))
-        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"],
-                         "2 questions wait for you: intent.md question 1, intent.md question 2")
-        self.jera_asked("0001_a", 1)
-        self.units["0001_a"]["questions"].append(
-            {"artifact": "intent.md", "n": 3, "text": "q3?", "answered": False, "counted": True})
-        await self.pass_()
-        self.assertEqual(self.launched, [("0001_a", "precedent", "autopilot")], "question 3 was never asked")
-
-    async def test_jera_is_held_back_by_the_daily_cap_at_its_ceiling(self):
-        """R3, C13: held at the ceiling of the prompt the pass built, not at the $3.00 cap."""
-        self.service.set_preference("decision_preferences", "x" * 178000)
-        self.asks("0001_a")
-        _, _, prompt = self.service._precedent_prompt([self.units["0001_a"]], self.units["0001_a"], "0001_a")
-        need = precedent.ceiling(len(prompt))
-        self.assertTrue(1.0 < need < precedent.PRECEDENT_MAX_USD, need)
-        self.service.set_autopilot(self.ws, "daily_cap_usd", need - 0.01)
-        self.restart()
-        await self.pass_()
-        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "cap"}))
-        self.assertIn(f"precedent {need:.2f}", self.service._autopilot_stops[self.key]["0001_a"]["reason"])
-        self.service.set_autopilot(self.ws, "daily_cap_usd", need)
-        self.restart()
-        await self.pass_()
-        self.assertEqual(self.launched, [("0001_a", "precedent", "autopilot")])
-
-    async def test_jera_takes_a_place_under_max_parallel(self):
-        self.service.set_autopilot(self.ws, "max_parallel", 1)
-        self.restart()
         self.asks("0001_a")
         self.add("0002_b", "spec")
         await self.pass_()
-        self.assertEqual(self.launched, [("0001_a", "precedent", "autopilot")])
-        await self.pass_()
-        self.assertEqual(len(self.launched), 1, "Jera still runs, so nothing else may")
-
-    async def test_a_store_past_the_ceiling_is_a_stop_a_and_opens_nothing(self):
-        """R5 point 3."""
-        self.service.set_preference("decision_preferences", "x" * 400000)
-        self.asks("0001_a")
-        await self.pass_()
-        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "a"}))
-        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STORE_PAST_CEILING)
-        self.assertEqual(self.picks(), [])
+        self.assertEqual(self.launched, [("0002_b", "spec", "autopilot")])
+        self.assertEqual(self.stops(), {"0001_a": "a"})
 
     # --- `0136` R22, R23: the pull request reader ----------------------------------
     #

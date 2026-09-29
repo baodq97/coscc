@@ -29,7 +29,6 @@ class TheTableIsTheOneTheSpecChose(unittest.TestCase):
             "impl": ("ᚢ", "Uruz"),
             "review": ("ᛏ", "Tiwaz"),
             "integrate": ("ᚷ", "Gebo"),
-            "precedent": ("ᛃ", "Jera"),
         }
         defaults, problems = agents.load_defaults()
         self.assertEqual(problems, [])
@@ -41,7 +40,7 @@ class TheTableIsTheOneTheSpecChose(unittest.TestCase):
         self.assertEqual(agent_for("review")["meaning"], "Tyr: justice and judgement")
         self.assertEqual(agent_for("review")["role"], "Judges the change and never edits code.")
         # Spec C5, and R1 for the two rows `0051` added.
-        for key in ("integrate", "spike", "precedent"):
+        for key in ("integrate", "spike"):
             self.assertEqual((agent_for(key)["meaning"], agent_for(key)["role"]), ("", ""), key)
         # `0139` R12: Ansuz and Othala went with the `pr` and `ship` sessions.
         for key in ("pr", "ship"):
@@ -105,7 +104,7 @@ class OverridesComeFirst(unittest.TestCase):
     def test_the_table_lists_every_row_and_an_override_for_no_agent(self):
         found = agents.table({"deploy": {"name": "Nobody"}})
         self.assertEqual([r["key"] for r in found["rows"]][:3], ["idea", "intent", "spec"])
-        self.assertEqual(len(found["rows"]), 9)
+        self.assertEqual(len(found["rows"]), 8)
         self.assertEqual(found["problems"], ["agent:deploy: no agent called 'deploy', ignored"])
 
 

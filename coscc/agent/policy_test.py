@@ -74,9 +74,9 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
         for name in ("mcp__cos__other", "mcp__other__submit", "submit"):
             self.assertIn("not granted", decide(grant_for("spec"), name, {}, "/tmp/ws"), name)
 
-    def test_gebo_jera_and_the_estimate_gain_submit_and_nothing_else(self):
-        """`0136` R7, R8, R9: the sessions that are no stage, each with its old grant but
-        `submits` and at least `SUBMIT_TURNS` turns."""
+    def test_gebo_and_the_estimate_gain_submit_and_nothing_else(self):
+        """The sessions that are no stage, each with its old grant but `submits` and at least
+        `SUBMIT_TURNS` turns."""
         from coscc.agent import submit
 
         self.assertEqual(set(policy.SUBMITTING_SESSIONS), set(submit.SESSIONS))
@@ -148,10 +148,9 @@ class OneGrantPerStage(unittest.TestCase):
         }
         # `integrate` since `0035`: not a stage, and pinned in `GeboPushesOnlyWithTheLease`.
         # `spike` since `0039`: pinned in `SpikeWritesOnlyItsScratch`.
-        # `precedent` since `0044`: pinned in `TheJeraGrantOpensNothing`.
         self.assertEqual(
             set(policy.GRANTS),
-            set(expected) | {"spec", "integrate", "spike", "estimate", "precedent"},
+            set(expected) | {"spec", "integrate", "spike", "estimate"},
         )
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
@@ -369,20 +368,6 @@ class TheEstimateGrantOpensNothing(unittest.TestCase):
         g = grant_for("estimate")
         self.assertFalse(g.opens_anything)
         self.assertEqual((g.max_turns, g.max_budget_usd), (policy.SUBMIT_TURNS, 2.0))
-        self.assertIn("paid session", g.warning)
-        self.assertIn("password", g.warning)
-
-
-class TheJeraGrantOpensNothing(unittest.TestCase):
-    """`0044` R13: Jera starts from the locked position — no tool, no command, $1.00. One turn
-    until `0136` R8 handed it `submit` and `SUBMIT_TURNS`."""
-
-    def test_the_grant(self):
-        g = grant_for("precedent")
-        self.assertEqual((g.tools, g.commands), ((), ()))
-        self.assertEqual(policy.beyond_reading(g), ())
-        self.assertFalse(g.opens_anything)
-        self.assertEqual((g.max_turns, g.max_budget_usd), (policy.SUBMIT_TURNS, 1.0))
         self.assertIn("paid session", g.warning)
         self.assertIn("password", g.warning)
 

@@ -254,8 +254,7 @@ def build(config: Config | None = None) -> FastAPI:
         it to offer `review` again, and the `ship` gate counts an `[answered]` finding as closed.
 
         An optional `delegation: "D<n>"` writes the answer as one an agent gave under a
-        delegation entered on Settings, which Jera reads as the person's (`delegated`). What
-        it `covers` is not checked.
+        delegation entered on Settings (`delegated`). What it `covers` is not checked.
         """
         try:
             body = await request.json()
@@ -273,23 +272,6 @@ def build(config: Config | None = None) -> FastAPI:
                 str(body.get("answered_by") or ""),
                 str(body.get("delegation") or ""),
             )
-        except Invalid as e:
-            return _bad(str(e))
-
-    @api.post("/api/units/precedent")
-    async def ask_jera(request: Request) -> Any:
-        """**Opens one paid session**: Jera answers a unit's open questions from precedent,
-        `{cwd, unit}`. The answer is appended under `## Answers` as `Answered by: Jera` and
-        every later stage reads it as decided. Returns a summary, not a stream;
-        `/api/board/running` shows the run. A second press on the same unit while one runs is a 400.
-        """
-        body = await _object(request)
-        if isinstance(body, JSONResponse):
-            return body
-        try:
-            return await service.precedent(str(body.get("cwd") or ""), str(body.get("unit") or ""))
-        except Updating as e:
-            return _bad(str(e), 503)
         except Invalid as e:
             return _bad(str(e))
 

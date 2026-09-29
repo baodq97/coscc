@@ -140,7 +140,7 @@ whether a newer build is ready:
 
 *Apply* waits until no mechanical integration or screenshot retake of
 this process is running, and none of those can start once it is pressed. Every other agent
-session — a step, Gebo, an estimate, Jera, a chat turn — keeps running through the trial;
+session — a step, Gebo, an estimate, a chat turn — keeps running through the trial;
 then each is paused, and whatever command it was running is killed with its children. When
 the app is back, each goes on in the same session, told which commands were cut. That needs
 its transcript under `~/.claude/projects`: delete that directory while an update is under

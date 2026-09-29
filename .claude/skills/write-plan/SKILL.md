@@ -18,8 +18,7 @@ the gate are in the prompt; hand the plan back as the prompt says instead of `Ex
 
 `intent.md`, `spec.md`, `spike.md` and their answers: read each once (from the board they are
 in the prompt). A spec question with a block under `## Answers` is decided: plan to it, cite
-it as `spec.md ## Answers, câu N`. `Answered by: Jera` is an agent's inference: cite it as such.
-Do not check the spec again.
+it as `spec.md ## Answers, câu N`. Do not check the spec again.
 
 ## Reading the tree
 

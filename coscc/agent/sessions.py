@@ -771,7 +771,7 @@ class Sessions:
         Without one, chat needs `_live`.
 
         `owner` says whose session this is (`kind`: `step`, `opening`, `closing`, `integrate`,
-        `estimate`, `precedent`, `chat`, and what that owner needs to take it up again) and is
+        `estimate`, `chat`, and what that owner needs to take it up again) and is
         what `suspend_all` writes into a `suspend` row. `resume_at` goes on from a safe point of
         `session_id` (`_options`). `spent_before` is what the session cost before this client:
         `{}` makes `done.cost` the whole session's, since the CLI's total carries over a resume.

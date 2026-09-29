@@ -81,20 +81,14 @@ class ThePage(unittest.TestCase):
                      "Whoever holds the"):
             self.assertNotIn(gone, self.page)
 
-    def test_0044_the_questions_tab_says_whose_answer_and_asks_no_name(self):
-        """`0044` R10, S7, S8: the labels, the sentence beside *Ask Jera*, and the button hidden
-        behind `jera_can_ask` rather than greyed."""
-        from coscc.service import CONSEQUENCE
-
+    def test_the_questions_tab_asks_no_name_and_no_agent_answers_for_the_person(self):
         tab = _render(screens._questions_tab())
-        for said in ("Ask Jera", "ask-jera", CONSEQUENCE["precedent"], "Answered by Jera",
-                     "Needs a person", "Jera's proposal", "Precedent", "jera_can_ask",
-                     "Jera's answer", "jera-said"):
-            self.assertIn(said, tab)
-        self.assertIn("Send this answer", tab, "a person can still answer over Jera")
+        self.assertIn("Send this answer", tab)
+        for gone in ("Ask Jera", "ask-jera", "Answered by Jera", "Jera's proposal", "use-proposal-", "jera-said"):
+            self.assertNotIn(gone, tab)
         settings = _render(screens._settings())
-        for said in ("Decision preferences", "decision-preferences", "company names"):
-            self.assertIn(said, settings)
+        for gone in ("Decision preferences", "decision-preferences", "decision-rules-panel", "names-panel"):
+            self.assertNotIn(gone, settings)
 
     def test_r12_needs_review_is_gone(self):
         self.assertNotIn("Needs review", self.page)
@@ -124,28 +118,17 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("COS_", _render(screens._guide_panel()))
 
     def test_board_carries_the_guide_panel_in_place_of_the_strip(self):
-        """`0101` R10: three lists, the cap line kept, one sentence and Settings when off."""
+        """`0101` R10: two lists, the cap line kept, one sentence and Settings when off."""
         board = _render(screens._board())
         self.assertIn("guide-panel", board)
         self.assertNotIn("autopilot-strip", board)
         panel = _render(screens._guide_panel())
-        for said in ("RUNNING", "NEEDS YOU", "DECIDED FOR YOU", "guide-running", "guide-needs-you",
-                     "guide-decided", "autopilot_cap", "Autopilot is on", "settings_href",
+        for said in ("RUNNING", "NEEDS YOU", "guide-running", "guide-needs-you",
+                     "autopilot_cap", "Autopilot is on", "settings_href",
                      "The autopilot is off, so nothing starts on its own."):
             self.assertIn(said, panel)
-        self.assertEqual(panel.count('"name": "\\"ul\\""'), 3, "each list is a list (S5)")
+        self.assertEqual(panel.count('"name": "\\"ul\\""'), 2, "each list is a list (S5)")
         self.assertNotIn("Leif", panel)
-
-    def test_0101_the_proposal_button_and_the_rules_box(self):
-        """`0101` R8, R9: the button fills the box and sends nothing; the rules box says which
-        questions no rule removes (S1, S2)."""
-        tab = _render(screens._questions_tab())
-        self.assertIn("Use this proposal", tab)
-        self.assertIn("use-proposal-", tab)
-        settings = _render(screens._settings())
-        for said in ("decision-rules-panel", "Decision rules", "Leave empty to use the default rules.",
-                     "always go to you"):
-            self.assertIn(said, settings)
 
     def test_0133_the_dialog_overview_carries_every_field_the_card_let_go(self):
         """`0133` R7: every field a card showed before `0133` is read by the dialog's header or
@@ -214,7 +197,7 @@ class ThePage(unittest.TestCase):
         closed until opened."""
         panel = _render(screens._guide_panel())
         # Review F2: one item is "1 needs you", not "1 need you".
-        for said in ("guide-lists", " need you ", " needs you ", "details", "guide-needs-you"):
+        for said in ("guide-lists", " need you", " needs you", "details", "guide-needs-you"):
             self.assertIn(said, panel)
         self.assertNotIn("open:", panel.replace('\\"', '"'))
 
@@ -230,20 +213,20 @@ class ThePage(unittest.TestCase):
             self.assertIn(said, settings)
         self.assertNotIn("COS_", _render(screens.settings._agent_row(screens.P.agent_rows[0])))
 
-    def test_settings_has_the_decisions_and_names_panels(self):
-        """`0137` R5, R6; S7: the form asks no name; S8: *Withdraw* only on a decision in force."""
+    def test_settings_has_the_decisions_panel(self):
+        """`0137` R5; S7: the form asks no name; S8: *Withdraw* only on a decision in force."""
         from coscc.screens import settings as page
 
         settings = _render(screens._settings())
-        for said in ("decisions-panel", "names-panel", "add-decision", "decision-text", "decision-source",
-                     "decision-until", "decision-workspace", "This was me", "Withdraw",
+        for said in ("decisions-panel", "add-decision", "decision-text", "decision-source",
+                     "decision-until", "decision-workspace", "Withdraw",
                      "No decision has been added yet."):
             self.assertIn(said, settings)
         form = _render(page._decisions_panel())
         self.assertNotRegex(form, r"(?i)your name|answered.by|decided.by")
         row = _render(page._decision_row(screens.P.decision_rows[0]))
         self.assertIn("in_force", row.split("Withdraw")[0])
-        self.assertNotIn("COS_", _render(page._names_panel()) + form)
+        self.assertNotIn("COS_", form)
 
     def test_settings_has_the_import_report_as_a_table(self):
         """`0135` R4; S5: one row per field, with a sentence when there is none; S3: no path."""

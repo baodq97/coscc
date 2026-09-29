@@ -138,15 +138,11 @@ class TakingUpAfterAnUpdate(_Base):
             return
             yield
 
-        async def precedent(cwd, unit, started_by="person", resume=None):
-            got["precedent"].append(resume)
-
         async def chat(cwd, record):
             got["chat"].append(record)
 
         with mock.patch.object(self.service, "resume_integration", lambda r: integration(r)), \
                 mock.patch.object(self.service, "propose_estimates", estimates), \
-                mock.patch.object(self.service, "precedent", precedent), \
                 mock.patch.object(self.service, "_resume_chat", chat):
             for kind in resume_mod.KINDS:
                 self.paused(kind)
@@ -154,7 +150,7 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual(sorted(s["kind"] for s in said), sorted(resume_mod.KINDS))
         self.assertEqual({s["result"] for s in said}, {"resumed"})
         self.assertEqual([r["owner"]["kind"] for r in steps_seen], list(resume_mod.STEP_KINDS))
-        for kind in ("integrate", "estimate", "precedent", "chat"):
+        for kind in ("integrate", "estimate", "chat"):
             [record] = got[kind]
             self.assertEqual(record["owner"]["kind"], kind)
         # What each owner is handed: the pieces before the safe point and the R7 message.
@@ -248,18 +244,14 @@ class TakingUpAfterAnUpdate(_Base):
         [end] = self.ends()
         self.assertEqual(end["outcome"], "failed")
 
-    def test_what_an_estimate_jera_or_chat_refuses_is_asked_before_the_resume_row(self):
-        # Review round 2, F7: F4's rule for the three kinds its fix did not cover. None of the
-        # owners is reached, and the `resume` row says `failed` with the owner's own reason.
+    def test_what_an_estimate_or_chat_refuses_is_asked_before_the_resume_row(self):
+        # None of the owners is reached, and the `resume` row says `failed` with the owner's own reason.
         reached: list[str] = []
 
         async def estimates(cwd, resume=None):
             reached.append("estimate")
             return
             yield
-
-        async def precedent(cwd, unit, started_by="person", resume=None):
-            reached.append("precedent")
 
         async def chat(cwd, record):
             reached.append("chat")
@@ -269,34 +261,28 @@ class TakingUpAfterAnUpdate(_Base):
             "an update is being applied": lambda: mock.patch.object(self.service.updater, "window", True),
         }
         with mock.patch.object(self.service, "propose_estimates", estimates), \
-                mock.patch.object(self.service, "precedent", precedent), \
                 mock.patch.object(self.service, "_resume_chat", chat):
             for why, refusal in cases.items():
                 with self.subTest(why), refusal():
-                    for kind in ("estimate", "precedent", "chat"):
+                    for kind in ("estimate", "chat"):
                         self.paused(kind)
                     said = self.up()
                     self.assertEqual([(s["kind"], s["result"]) for s in said],
-                                     [("estimate", "failed"), ("precedent", "failed"), ("chat", "failed")])
+                                     [("estimate", "failed"), ("chat", "failed")])
             self.assertEqual(reached, [])
             rows = self.journal.records(self.key, kind="resume")
             self.assertEqual({r["result"] for r in rows}, {"failed"})
             self.assertTrue(all(r["detail"] for r in rows))
-            # An estimate and Jera had a `start`; each ends `failed`. A chat turn had none.
-            self.assertEqual(sorted(e["stage"] for e in self.ends()), ["estimate", "estimate", "precedent", "precedent"])
+            # An estimate had a `start`; each ends `failed`. A chat turn had none.
+            self.assertEqual(sorted(e["stage"] for e in self.ends()), ["estimate", "estimate"])
 
-    def test_a_unit_jera_would_find_held_writes_a_failed_resume_row(self):
-        reached: list[str] = []
-
-        async def precedent(cwd, unit, started_by="person", resume=None):
-            reached.append(unit)
-
+    def test_a_session_of_a_kind_no_owner_takes_up_ends_failed(self):
         self.paused("precedent")
-        self.service._take(self.key, self.unit, "step", "plan")
-        with mock.patch.object(self.service, "precedent", precedent):
-            [said] = self.up()
-        self.assertEqual((reached, said["result"]), ([], "failed"))
-        self.assertIn(self.unit, said["detail"])
+        [said] = self.up()
+        self.assertEqual((said["kind"], said["result"]), ("precedent", "failed"))
+        self.assertIn("no owner takes up", said["detail"])
+        [end] = self.ends()
+        self.assertEqual((end["stage"], end["outcome"]), ("precedent", "failed"))
 
     def test_taking_up_again_lets_sessions_open_once_more(self):
         # Review round 2, F6: `suspend_all` closed `Sessions` to new streams; after a failed
@@ -448,12 +434,12 @@ class TakingUpAfterAnUpdate(_Base):
 
 
 class APausedOwnerEndsNothing(_Base):
-    """`0138` plan step 6: Gebo, an estimate and Jera re-raise `Suspended` before any branch
+    """`0138` plan step 6: Gebo and an estimate re-raise `Suspended` before any branch
     that writes their `end`."""
 
     ASKED = "# Spec: a\nIntent: intent.md. Author: t. Status: draft.\n\n## Open questions\n\n1. Nhánh mới?\n"
 
-    def test_a_suspended_gebo_estimate_or_precedent_writes_no_end(self):
+    def test_a_suspended_gebo_or_estimate_writes_no_end(self):
         async def stream(cwd, text, session_id=None, **kw):
             yield ("chunk", "working")
             raise Suspended("paused for an update")
@@ -476,59 +462,12 @@ class APausedOwnerEndsNothing(_Base):
             async for _ in self.service.propose_estimates(self.cwd):
                 pass
 
-        for name, run in (("integrate", gebo), ("estimate", estimate),
-                          ("precedent", lambda: self.service.precedent(self.cwd, self.unit))):
+        for name, run in (("integrate", gebo), ("estimate", estimate)):
             with self.subTest(owner=name):
                 with self.assertRaises(Suspended):
                     asyncio.run(run())
                 self.assertEqual([e for e in self.ends() if e.get("stage") == name], [])
                 self.assertEqual(self.service._active, {})
-
-
-class JeraTakenUpAgain(_Base):
-    """Review round 3, F8. Jera the autopilot started asks only what it was not asked, and
-    its own `start` names every question it was given: taken up again, it goes on with those."""
-
-    def test_jera_the_autopilot_started_goes_on_with_the_questions_it_was_given(self):
-        unit_dir = self.service._unit_dir(self.cwd, self.unit)
-        (unit_dir / "intent.md").write_text(
-            "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n", encoding="utf-8")
-        (unit_dir / "spec.md").write_text(APausedOwnerEndsNothing.ASKED, encoding="utf-8")
-        calls: list[dict] = []
-
-        async def stream(cwd, text, session_id=None, **kw):
-            calls.append({"cwd": cwd, "text": text, "session_id": session_id, **kw})
-            if len(calls) == 1:
-                raise Suspended("paused for an update")
-            await _submits(kw)
-            yield ("done", {"session_id": SID, "cost": {"cost_usd": 0.1}, "terminal_reason": "success"})
-
-        self.service.sessions.stream = stream  # type: ignore[method-assign]
-        with self.assertRaises(Suspended):
-            asyncio.run(self.service.precedent(self.cwd, self.unit, "autopilot"))
-        owner = calls[0]["owner"]
-        self.assertEqual((owner["started_by"], owner["asked"]), ("autopilot", [["spec.md", 1]]))
-        path = transcript.path_for(calls[0]["cwd"], SID)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_transcript(), encoding="utf-8")
-        self.journal.suspended(
-            self.key, self.unit, "precedent", by="an", owner=owner, cwd=calls[0]["cwd"], session_id=SID,
-            model="m", start_at=owner["start_at"], boundary=4, safe_uuid="u2", dropped=[], api_calls=0,
-            spent_usd=0.1,
-        )
-
-        async def go():
-            said = await self.service.resume_after_update()
-            done = await asyncio.gather(*list(resume_mod._TASKS), return_exceptions=True)
-            return said, done
-
-        said, done = asyncio.run(go())
-        self.assertEqual([(s["kind"], s["result"]) for s in said], [("precedent", "resumed")])
-        [result] = done
-        self.assertNotIsInstance(result, Exception)
-        self.assertEqual((calls[1]["session_id"], calls[1]["resume_at"]), (SID, "u2"))
-        [end] = [e for e in self.ends() if e.get("stage") == "precedent"]
-        self.assertNotIn("not asked already", str(end.get("detail") or ""))
 
 
 if __name__ == "__main__":

@@ -13,7 +13,6 @@ later a rewrite.
 `intent.md`, the answers, and any prior `spec.md` or `spike.md` are in the prompt. Do not
 re-read or re-verify them. A question with a block under `## Answers` is decided: cite it as
 `<artifact> ## Answers, câu N`, quote the person, never re-ask, never write into that section.
-`Answered by: Jera` is an agent's inference from precedent: cite it as such.
 
 Gate: from the board it was asked (the prompt says so); at a terminal run
 `node .claude/scripts/cos.mjs gate <NNNN_slug> spec` first and stop on non-zero.

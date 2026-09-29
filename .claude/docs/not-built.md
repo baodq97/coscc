@@ -145,33 +145,6 @@ Read this before adding a route, a button or a grant, and before copying this ha
   someone typed); an agent's estimate says `agent:<session>`, and a
   person's estimate wins over an agent's whichever came later. *Propose estimates* opens one paid session under the grant
   `estimate`. Each board step's `start` row records where its unit stood in the shortlist.
-- **An answer from precedent is not a person's, and the autopilot starts it unpressed.**
-  Since `0044` *Ask Jera* on a unit's Questions tab (`POST /api/units/precedent`) opens one
-  paid session under the grant `precedent` — no tool but `submit` — that answers the unit's
-  open questions from the Settings text *Decision preferences*, the answers already given in
-  the same workspace and, since `0101`, the rules in Settings' *Decision rules* (the app's
-  default while that box is empty). An answer that cites only that store, or `practice` on a
-  question of category `other`, in none of the four categories that need a person
-  (`product-direction`, `security-or-permissions`, `significant-spend`, `external-action`;
-  no rule removes one), is appended as `Answered by: Jera. … Via: precedent.`; everything
-  else is a `needs-person` row in the run log and writes nothing. `practice` is a best
-  practice Jera names in its answer: it has no source anyone can check (`0101` C2). It opens
-  no gate — `cos.mjs` reads Jera's block exactly as a person's — but every later stage reads
-  it as decided, and the prompt only says it is an agent's. Which category a question falls
-  in is Jera's word. Whoever holds the password or a live session can press it, and a person
-  cannot answer under the name `Jera`.
-  Since `0101` the autopilot opens it too, with nobody pressing anything: a unit on the
-  shortlist that would stop on an open question is picked for Jera first (an
-  `autopilot-pick` of `precedent`, then a `start` with `started_by: autopilot`). Each
-  question is asked once — until the stage that writes its artifact runs again — and a
-  session that failed, was cancelled or ran out counts its questions as asked, so they go
-  to a person. The session holds a place under `max_parallel` and is counted against the
-  day's cap at its ceiling. The ceiling is set by the prompt's length, from $1.00 to $3.00
-  (`precedent.ceiling`); past $3.00 no session opens, from a press or a pass, and the unit
-  stops on its questions. When Jera ends, the autopilot is woken: an answer that clears the
-  unit's last open question lets it start the stage after it, or run a `draft` again
-  (`0106`), at once. Jera's own `start` and `end` rows are no step to the autopilot
-  (`autopilot.NOT_STEPS`).
 - **Watching a step is not an approval, and it changes nothing.** Since `0073` a board step
   records every event of its session — each message, tool call and result, thought,
   refusal, turn, the cost at the end and the outcome — and the board shows them live to any

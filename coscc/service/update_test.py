@@ -38,12 +38,11 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         self.s.check_send(self.tmp.name, "hi")
 
     async def test_apply_waits_only_for_a_mechanical_integration_or_a_retake(self):
-        # `0138` R2, R3, C10: a step, an estimate, Jera and a chat turn are paused, not waited for.
+        # `0138` R2, R3, C10: a step, an estimate and a chat turn are paused, not waited for.
         self.s.steps.claim("/w", "0001_a", "impl")
         self.s._mark_running("/w", "0002_b", "integrate", "rebase")
         self.s._mark_running("/w", "0003_c", "impl", "step")
         self.s._mark_running("/w", "", "estimate", "estimate")
-        self.s._mark_running("/w", "0004_d", "precedent", "precedent")
         self.s.sessions._begin_turn("/w", "sid")
         self.s._retakes["r"] = {"workspace": "/w", "unit": "0005_e", "started": "t"}
         waited = sorted((j["stage"], j["unit"]) for j in self.s._update_waited())
