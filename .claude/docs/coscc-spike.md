@@ -28,6 +28,6 @@ Read this before changing the `spike` grant, `service.run_step`'s scratch direct
   half-measured question now reaches the unit where it used to be lost with the reply.
   Every spike `end` row carries `spike_md`: `reply`, `progress`, `none`, `unusable`,
   `withheld` (a Stop, a changed worktree) or `unchecked` (git could not read the worktree,
-  so nothing was written — a failure to `verify_0080 --measure`, not a Stop). The ceilings are 80 turns / $8.0 (`policy.py`, chosen, not measured), so one
+  so nothing was written, not a Stop). The ceilings are 80 turns / $8.0 (`policy.py`, chosen, not measured), so one
   press can spend twice what it did before, and `SPIKE_ROUNDS` does not count presses that
   hit the ceiling.

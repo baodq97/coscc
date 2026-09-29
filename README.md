@@ -71,8 +71,7 @@ Build and serve with the same `COS_HOST`/`COS_PORT` if changing the default addr
 `coscc` refuses to start if the build it finds was made for a different one.
 
 ```sh
-uv run python scripts/verify_0003.py   # the page renders, and the check can fail
-uv run python scripts/verify_0006.py   # five flows on real data, and a restart
+npm run e2e   # the board in a browser, on temporary workspaces
 ```
 
-Both need a browser and a free `COS_PORT`; stop the app first.
+It needs a browser and a free `COS_PORT`; stop the app first.

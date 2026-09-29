@@ -8,30 +8,40 @@ description: Write the intent.md that opens a new unit of work in this repositor
 An intent states a problem and one outcome that could come back false. Everything downstream
 is authorized by it.
 
-## What you are given (trust it)
+## Where it runs
 
-The originator's input, the idea if any, and the answers to earlier questions are in the
-prompt. A question with a block under `## Answers` is decided: do not ask it again, cite it
-as `<artifact> ## Answers, câu N`, quote the person's words, never write into that section.
+In a session with the originator, in this checkout: an interview, not a form. It ends when
+they say it is done or every section below can be written without guessing. Nothing is
+edited but `intent.md`. From the board the input and earlier answers are in the prompt: ask
+through `questions` as the prompt says, and never re-ask a question that has a block under
+`## Answers` (cite it as `<artifact> ## Answers, câu N`).
 
-## Steps
+## The interview
 
-1. Ask what the input leaves open (scope, users, constraints, success); never close a gap
-   by assuming.
-2. `node .claude/scripts/cos.mjs new-path <slug>` allocates the directory; slug is
-   lowercase-hyphenated, names the problem, never composed by hand.
-3. Write `intent.md` there. No solution design: the spec decides how.
-4. `node .claude/scripts/cos.mjs unit-branch <NNNN_slug>` prints the branch name; cut it
-   before the first commit.
+1. Let them describe it in their own words first.
+2. Before each round, look: `Grep`/`Read` the code the problem names, `git log` for what was
+   tried, the idea or incident they point at. Read only what the next question needs.
+3. Ask at most three questions a round, each with what you found and your recommended answer.
+   Dig where the answer is thin:
+   - What cannot be done today, and what shows it (a number, a log, a unit)? Why now?
+   - Who is affected, and what does it cost them?
+   - What would be observably true when this is done, measured how, by when?
+   - What must not change? What is out of scope?
+4. Never close a gap by assuming; a gap they leave open goes under `## Open questions`.
 
-`Type` is one of `feat fix docs refactor test chore perf build ci revert` and `unit-branch`
-refuses any other.
+## Write it
+
+`node .claude/scripts/cos.mjs new-path <slug>` allocates the directory (slug lowercase-hyphenated,
+names the problem). Write `intent.md` there, at most 2 KB, in their words where they decided
+something. No solution design: the spec decides how. `Type` is one of
+`feat fix docs refactor test chore perf build ci revert`.
 
 ````markdown
 # Intent: <title>
 Author: <name>. Type: <type>. Status: accepted.
 
 ## Problem
+<what cannot be done today, the evidence, and why it matters now>
 
 ## Proposed outcome
 <one falsifiable outcome, with a number and a date (YYYY-MM-DD)>
@@ -40,13 +50,15 @@ Author: <name>. Type: <type>. Status: accepted.
 
 ## Constraints
 
+## Out of scope
+
 ## Open questions
 ````
 
 - Exactly one outcome; two outcomes are two intents. A figure with no source is cut.
 - Under `## Open questions` a real question is an item `N. ` at column 0 whose first
-  paragraph holds a `?`; the same go into `questions` of `submit`. Anything else is a plain
-  sentence, never an item. Keep the heading when none is left.
+  paragraph holds a `?`; from the board the same go into `questions` of `submit`. Anything
+  else is a plain sentence, never an item. Keep the heading when none is left.
 - `Status: accepted` records your judgement, not approval; `draft` if something is missing.
 
 **A fix the originator showed you.** Only for `Type: fix`, and only when they gave all three,
