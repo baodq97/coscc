@@ -10,8 +10,8 @@ from typing import Any
 
 import jsonschema
 
-from coscc.agent import submit
-from coscc.agent.submit import AGAIN, Channel
+from coscc.units import submit
+from coscc.units.submit import AGAIN, Channel
 
 
 def _filled(channel: Channel | submit.Collector, fields: dict[str, Any]) -> dict[str, Any]:

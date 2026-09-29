@@ -14,14 +14,15 @@ from unittest import mock
 from coscc import units
 from coscc.agent import modeltrial
 from coscc.github import prscope
-from coscc.git import fetches, worktrees
+from coscc.git import fetches
+from coscc.units import worktrees
 from coscc.config import Config
 from coscc.units import autopilot
 from coscc.service.common import Invalid, describe_base, step_cwd
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import create_sync
-from coscc.agent.submit_test import submits as _submits
+from coscc.units.submit_test import submits as _submits
 
 
 class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
@@ -1709,7 +1710,7 @@ class APrStepIsMechanical(unittest.TestCase):
     Replies = NoSession
 
     class Gh:
-        """`integrate._gh` and `prcomment._gh`, in memory."""
+        """`integrate._gh` and `gh.run`, in memory."""
 
         def __init__(self, rows: list[dict] | None):
             self.rows = rows
@@ -1734,7 +1735,7 @@ class APrStepIsMechanical(unittest.TestCase):
 
     def _run_pr(self, gh: Gh) -> tuple[dict, str]:
         from coscc.units import board as board_reader
-        from coscc.github import integrate, prcomment
+        from coscc.github import integrate
         from coscc.runlog.journal import Journal
 
         unit = self._typed_unit()
@@ -1750,7 +1751,7 @@ class APrStepIsMechanical(unittest.TestCase):
         with (
             mock.patch.object(board_reader, "gate", open_gate),
             mock.patch.object(integrate, "_gh", gh),
-            mock.patch.object(prcomment, "_gh", gh),
+            mock.patch("coscc.git.gh.run", gh),
         ):
             items = asyncio.run(go())
         self.assertEqual([k for k, _ in items], ["done"])
@@ -1853,7 +1854,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                     await step.close()
 
     class Gh:
-        """Both `integrate._gh` and `prcomment._gh`: one pull request, in memory."""
+        """Both `integrate._gh` and `gh.run`: one pull request, in memory."""
 
         def __init__(
             self,
@@ -1916,7 +1917,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         `text` -- reaches `_sync_pr` only by calling it as the step does, with the lookup the
         step makes. `via_step` runs the step itself."""
         from coscc.units import board as board_reader
-        from coscc.github import integrate, prcomment
+        from coscc.github import integrate
 
         unit = self._typed_unit()
         self._git("branch", "fix/a-problem")
@@ -1956,7 +1957,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         with (
             mock.patch.object(board_reader, "gate", open_gate),
             mock.patch.object(integrate, "_gh", gh),
-            mock.patch.object(prcomment, "_gh", gh),
+            mock.patch("coscc.git.gh.run", gh),
         ):
             out = asyncio.run(go())
         rows = self.service._journal().records(

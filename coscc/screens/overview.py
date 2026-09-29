@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc.web import studio as s
+from coscc.screens import studio as s
 from coscc.state import Workspace
 from coscc.state.views import Activity
 from coscc.screens.common import P, _details

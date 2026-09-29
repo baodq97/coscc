@@ -31,7 +31,7 @@ from coscc.runner.runner_test import (
     incomplete_reply,
     make_unit,
 )
-from coscc.agent.submit_test import a_head, submits as _submits
+from coscc.units.submit_test import a_head, submits as _submits
 
 
 class AFailedStepIsRecordedAsFailed(unittest.TestCase):

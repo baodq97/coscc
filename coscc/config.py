@@ -1,7 +1,7 @@
 """The one place configuration is read; nothing else in `coscc/` may read the environment.
 
 Defaults are the safe posture: each capability is off. `host` is the exception (`0.0.0.0`):
-the master password in `coscc/web/auth.py` stands in front, and `coscc/run.py` warns at
+the master password in `coscc/auth.py` stands in front, and `coscc/run.py` warns at
 startup whenever the address is not loopback.
 """
 

@@ -5,7 +5,7 @@ the running service.
 
 It began as `fragmented-product-experience`'s prototype — the same layout, spacing and words — and `0006` replaced
 the invented data underneath it with the real thing and deleted the page that came before.
-`coscc/web/studio.py`, the presentation primitives, did not change in that swap, which is
+`coscc/screens/studio.py`, the presentation primitives, did not change in that swap, which is
 the clearest statement of what `fragmented-product-experience` actually settled: the look.
 
 ```sh

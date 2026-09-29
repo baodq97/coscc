@@ -1,11 +1,11 @@
 ---
 paths:
   - "coscc/screens/__init__.py"
-  - "coscc/web/studio.py"
-  - "coscc/web/ui.py"
+  - "coscc/screens/studio.py"
+  - "coscc/ui.py"
   - "coscc/state/__init__.py"
   - "coscc/coscc.py"
-  - "coscc/web/auth.py"
+  - "coscc/auth.py"
   - "coscc/service/__init__.py"
   - "coscc/units/backlog.py"
   - "coscc/update/updater.py"
@@ -18,6 +18,8 @@ paths:
   - "coscc/screens/dialogs.py"
   - "coscc/screens/idea.py"
   - "coscc/state/ideas.py"
+  - "coscc/state/place.py"
+  - "coscc/state/present.py"
   - "coscc/service/ideas.py"
   - "coscc/screens/overview.py"
   - "coscc/screens/sessions.py"

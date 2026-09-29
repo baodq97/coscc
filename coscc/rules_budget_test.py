@@ -34,7 +34,7 @@ HOT = {
     "coscc/runner/__init__.py",
     "coscc/state/__init__.py",
     "coscc/screens/__init__.py",
-    "coscc/web/api.py",
+    "coscc/api.py",
 }
 
 DOC_REF = re.compile(r"\.claude/docs/[\w./-]+\.md")

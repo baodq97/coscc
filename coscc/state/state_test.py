@@ -14,7 +14,7 @@ import ast
 import re
 import unittest
 
-from coscc.web import present
+from coscc.state import present
 from pathlib import Path
 from coscc.screens.board import _unit_card
 from coscc.state.views import Round
@@ -1152,10 +1152,10 @@ class ADroppedUnitsDialogOffersNothingThatWrites(unittest.TestCase):
 
 
 class TheRoutesAreTheNavigation(unittest.TestCase):
-    """`coscc/web/place.py` may not import the state, so its screen list is a copy."""
+    """`coscc/state/place.py` may not import the state, so its screen list is a copy."""
 
     def test_screens_match(self):
-        from coscc.web import place
+        from coscc.state import place
         from coscc.state.views import NAVIGATION
 
         self.assertEqual(place.SCREENS, tuple(key for key, _, _ in NAVIGATION))

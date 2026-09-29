@@ -37,14 +37,6 @@ RESULT_LABEL = {
 # person; the API still takes any word.
 MEASURER_LABEL = {"agent": "Agent", "owner": "You"}
 
-OUTCOME_LABEL = {
-    "met": "met",
-    "missed": "missed",
-    "unmeasurable": "could not be measured",
-    "due": "due, not measured",
-    "pending": "not due yet",
-}
-
 
 def _parse(value) -> datetime | None:
     if value is None or value == "":

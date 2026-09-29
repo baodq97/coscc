@@ -5,7 +5,7 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.runlog import spend
-from coscc.web import studio as s
+from coscc.screens import studio as s
 from coscc.state import AnomalyRow, Message, SpendRow, TokenRow, WasteRow
 from coscc.screens.common import P, _MONO, _details, _mono, _table
 from coscc.screens.chrome import _event_row, _metrics

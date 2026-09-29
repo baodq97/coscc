@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc.web import studio as s
+from coscc.screens import studio as s
 
 # Every name is imported back so `coscc.screens.<name>` still resolves; a patch reaches only the module that looks it up.
 from coscc.screens.common import P

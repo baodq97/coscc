@@ -8,7 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import agents, harness, submit
+from coscc.agent import agents, harness
+from coscc.units import submit
 from coscc.agent.policy import is_prose_stage
 from coscc.runner.review import (
     INCOMPLETE_SECTIONS,

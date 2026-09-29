@@ -1,6 +1,6 @@
 ---
 paths:
-  - "coscc/git/worktrees.py"
+  - "coscc/units/worktrees.py"
   - "coscc/git/gitops.py"
   - "coscc/git/drift.py"
   - "coscc/git/fetches.py"

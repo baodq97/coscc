@@ -22,7 +22,7 @@ Read this before adding words to a screen, or removing the one sentence a screen
   stage's status on a card comes from its artifact's `Status:` line, never from the run
   log; the columns sort cards by stage and a badge says the state. Paths, full shas, UUIDs, variable names and
   the update logs' tails are on the page only inside a *Details* the person opens
-  (`coscc/web/studio.py`, `details`).
+  (`coscc/screens/studio.py`, `details`).
 - **The sentences that stay are the warnings.** Run (spends quota), `pr` and `ship` (this
   machine's `gh` login), Drop (closes the pull request), *Propose estimates* (a paid
   session) and Integrate each keep one sentence beside the

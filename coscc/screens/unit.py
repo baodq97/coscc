@@ -5,8 +5,8 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.units import hold as hold_rules
-from coscc.web import present
-from coscc.web import studio as s
+from coscc.state import present
+from coscc.screens import studio as s
 from coscc.service.common import CONSEQUENCE
 from coscc.state import Cell, Move, Question, Run
 from coscc.state.views import Round

@@ -48,7 +48,7 @@ class Grant:
     # when the step began, and name the unit's own branch. The lease is per run, so it reaches
     # `decide` as `lease`, not through the grant.
     push_needs_lease: bool = False
-    # Whether the session is handed `submit` (`coscc/agent/submit.py`), the one tool beyond this
+    # Whether the session is handed `submit` (`coscc/units/submit.py`), the one tool beyond this
     # grant's list `decide` lets through. It writes nothing and runs nothing, and is not in
     # `tools`: `--tools` names the built-in set, and an SDK server's tool reaches the session anyway.
     submits: bool = False
@@ -60,7 +60,7 @@ class Grant:
 
 # Tools that only read, listed separately so the write set is short.
 READ_TOOLS = ("Read", "Glob", "Grep")
-# `coscc/agent/submit.py`'s `NAME`, spelled here so this module imports nothing of it.
+# `coscc/units/submit.py`'s `NAME`, spelled here so this module imports nothing of it.
 SUBMIT_TOOL = "mcp__cos__submit"
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 EXEC_TOOLS = ("Bash",)
@@ -302,7 +302,7 @@ def beyond_reading(grant: Grant) -> tuple[str, ...]:
 
 
 # The stages whose run hands back an object through `submit`: a stage result, or `review`'s
-# round. `coscc/agent/submit.py` holds the same stages as `STAGE_RESULT` and `ROUND`;
+# round. `coscc/units/submit.py` holds the same stages as `STAGE_RESULT` and `ROUND`;
 # `policy_test` pins the two. A set, not the loop's order: that is `cos.mjs`'s alone.
 SUBMITTING = ("idea", "impl", "intent", "plan", "review", "spec", "spike")
 # The fewest turns such a step gets: a call to `submit` ends a turn, and a refused object is
@@ -310,7 +310,7 @@ SUBMITTING = ("idea", "impl", "intent", "plan", "review", "spec", "spike")
 # reply. Chosen, not measured.
 SUBMIT_TURNS = 4
 # The sessions that are no stage and hand back an object through `submit`: Gebo and the
-# estimate, `coscc/agent/submit.py`'s `SESSIONS`.
+# estimate, `coscc/units/submit.py`'s `SESSIONS`.
 SUBMITTING_SESSIONS = ("estimate", "integrate")
 
 

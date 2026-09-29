@@ -20,10 +20,10 @@ import asyncio
 
 import coscc
 from coscc import config, units
-from coscc.github import prcomment
-from coscc.git import fetches, gitops
+from coscc.agent import harness
+from coscc.git import fetches, gh, gitops
 from coscc.data import Data
-from coscc.web.frontend import WEB_WORKDIR_VAR
+from coscc.frontend import WEB_WORKDIR_VAR
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 
@@ -322,25 +322,6 @@ def commands(tree: Path) -> list[list[str]]:
     return out
 
 
-def _outside(entry: str, roots: list[Path]) -> bool:
-    try:
-        p = Path(entry).resolve()
-    except OSError, ValueError:
-        return False
-    return not any(p == r or r in p.parents for r in roots)
-
-
-def clean_path(workspace: str | os.PathLike[str] | None) -> str:
-    """`PATH` without any entry under the workspace or the installed package, whose `.venv/bin`
-    would run the workspace's code instead of the tree's.
-    """
-    roots = [_package_dir()]
-    if workspace:
-        roots.append(Path(units.key(workspace)))
-    parts = [e for e in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep) if e]
-    return os.pathsep.join(e for e in parts if _outside(e, roots))
-
-
 def prepare_env(
     tree: Path,
     workspace: str | os.PathLike[str] | None,
@@ -357,7 +338,7 @@ def prepare_env(
     the names below is one; nothing filters. `worktrees_test.py` asserts this.
     """
     return {
-        "PATH": clean_path(workspace),
+        "PATH": harness.clean_path(workspace),
         "HOME": os.environ.get("HOME", "/tmp"),
         "LC_ALL": "C.UTF-8",
         "VIRTUAL_ENV": str(tree / ".venv"),
@@ -435,15 +416,13 @@ def describe_failure(result: dict[str, Any]) -> str:
 
 # # --- removing ----------------------------------------------------------------
 
-GhRun = Callable[[list[str], str, str | None], Awaitable[tuple[int, str, str]]]
-
 
 async def remove_if_finished(
     workspace: str | os.PathLike[str],
     unit: str,
     board_unit: dict[str, Any],
     data_dir: str | os.PathLike[str] | None = None,
-    gh: GhRun | None = None,
+    run: gh.Run | None = None,
 ) -> dict[str, Any]:
     """Remove a finished unit's worktree and its local branch. Never raises.
 
@@ -456,7 +435,7 @@ async def remove_if_finished(
 
     Returns `{removed, reason}`.
     """
-    gh = gh or prcomment._gh
+    run = run or gh.run
     try:
         if str(board_unit.get("next") or "") != "finished":
             return {"removed": False, "reason": "not finished"}
@@ -465,20 +444,20 @@ async def remove_if_finished(
             return {"removed": False, "reason": "no worktree"}
         tree = Path(found["path"])
         pr_url = str((board_unit.get("pr") or {}).get("url") or "")
-        if not prcomment.PR_URL_RE.fullmatch(pr_url):
+        if not gh.PR_URL_RE.fullmatch(pr_url):
             return {"removed": False, "reason": "no pull request url"}
         # Before `gh`: `board()` calls this on every read, and a dirty tree would otherwise cost a
         # network call each time.
         if not await gitops.is_clean(tree):
             return {"removed": False, "reason": "worktree has uncommitted changes"}
-        said = await prcomment._call(
-            gh, ["pr", "view", pr_url, "--json", "state,headRefOid"], str(tree), None
+        said = await gh.call(
+            run, ["pr", "view", pr_url, "--json", "state,headRefOid"], str(tree), None
         )
         if isinstance(said, str):
             return {"removed": False, "reason": said}
         code, out, err = said
         if code != 0:
-            return {"removed": False, "reason": prcomment._said(code, out, err)}
+            return {"removed": False, "reason": gh.said(code, out, err)}
         view = json.loads(out or "{}")
         if view.get("state") != "MERGED":
             return {"removed": False, "reason": f"pull request is {view.get('state')}"}

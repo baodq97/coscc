@@ -43,7 +43,7 @@ MARKER = _BACKEND / "stateful_pages.json"
 BUNDLED_LIBRARIES = _BACKEND / "bundled_libraries.json"
 
 # Where the release puts the bundle inside the wheel: the package root, one up from `web/`.
-PACKAGE_WEB = Path(__file__).resolve().parents[1] / "_web"
+PACKAGE_WEB = Path(__file__).resolve().parent / "_web"
 
 # Only the authority of an absolute URL is replaced and the scheme is kept: the chunk holds
 # both `http://` and `ws://` forms, and swapping one for the other would break the socket.

@@ -19,7 +19,7 @@ from coscc.config import Config
 from coscc.service import Service
 from coscc.service import resume as resume_mod
 from coscc.service.service_test import create_sync
-from coscc.agent.submit_test import submits as _submits
+from coscc.units.submit_test import submits as _submits
 
 SID = "5f1c2d3e-0000-4000-8000-000000000001"
 DROPPED = [{"name": "Bash", "input": "sleep 60"}]

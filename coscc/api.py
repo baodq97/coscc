@@ -5,7 +5,7 @@ in-process with `httpx.ASGITransport` and no frontend or Node. Nothing here read
 environment, returns configuration or runs anything the caller names, and nothing decides:
 every route translates a request into a `Service` call and the result back into JSON.
 
-Reflex reserves `/ping/`, `/_event` and `/_upload`; the guard in `coscc/web/auth.py` serves
+Reflex reserves `/ping/`, `/_event` and `/_upload`; the guard in `coscc/auth.py` serves
 `/login`, `/setup` and `/logout`. Nothing here may use them. Every route sits behind that
 guard: without a live session only `GET /api/health` gets through. One password, one user:
 whoever holds it or a session cookie can call every route below. A name a body carries

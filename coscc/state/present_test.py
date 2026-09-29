@@ -5,9 +5,9 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from coscc.web import present
+from coscc.state import present
 from coscc.units import backlog
-from coscc.service.common import OUTCOME_RESULTS
+from coscc.service.common import OUTCOME_LABEL, OUTCOME_RESULTS
 
 NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
 
@@ -101,17 +101,12 @@ class Labels(unittest.TestCase):
         for label in present.MEASURER_LABEL.values():
             self.assertTrue(label.isascii(), label)
 
-    def test_every_outcome_kind_has_an_english_label(self):
-        self.assertEqual(
-            set(present.OUTCOME_LABEL), {"met", "missed", "unmeasurable", "due", "pending"}
-        )
-
     def test_no_label_carries_a_vietnamese_letter(self):
         for table in (
             present.RELATION_LABEL,
             present.RELATION_LABEL_IN,
             present.RESULT_LABEL,
-            present.OUTCOME_LABEL,
+            OUTCOME_LABEL,
         ):
             for label in table.values():
                 self.assertTrue(label.isascii(), label)

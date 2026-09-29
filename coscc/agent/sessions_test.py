@@ -15,7 +15,7 @@ from unittest import mock
 import claude_agent_sdk as sdk
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
-from coscc.web import frontend
+from coscc import frontend
 from coscc.agent import sessions
 from coscc.config import PROTECTED_DB_VAR, Config
 from coscc.data import Data
@@ -216,7 +216,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
 
     def test_the_apps_own_submit_server_is_the_only_one_a_step_gets(self):
         """The server the runner hands in, and strict config kept beside it."""
-        from coscc.agent.submit import Channel
+        from coscc.units.submit import Channel
 
         server = Channel(
             run="r1", stage="spec", directory="/nonexistent", artifact="spec.md", own=False

@@ -9,7 +9,7 @@ import dataclasses
 import sys
 
 from coscc.runlog import events as events_mod
-from coscc.web import present
+from coscc.state import place, present
 from coscc.runlog import spend
 from coscc.runlog.journal import COST_USD, TOKEN_FIELDS
 from coscc.service.common import reason_beside
@@ -273,16 +273,12 @@ class ChildRow:
 
 def _unit_href(ref: str, home: str) -> str:
     """The `/unit` address of `<ws>/NNNN_<slug>`, or of `NNNN_<slug>` in `home`."""
-    from coscc.web import place
-
     ws, _, unit = ref.rpartition("/")
     return place.href(place.Place("unit", ws or home, unit))
 
 
 def _idea_href(ref: str, home: str) -> str:
     """The `/idea` address of `<ws>/ideas/NNNN_<slug>.md`, or of `ideas/…` in `home`."""
-    from coscc.web import place
-
     ws, sep, file = ref.rpartition("/ideas/")
     if not sep:
         ws, file = "", ref.removeprefix("ideas/")
@@ -304,8 +300,6 @@ def link_fields(u: dict, home: str) -> dict:
 
 def idea_rows(data: dict, home: str) -> list[IdeaRow]:
     """The ideas `status --json` read in this workspace's store, one row each."""
-    from coscc.web import place
-
     return [
         IdeaRow(
             id=str(i.get("id") or ""),

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc.web import present
-from coscc.web import studio as s
+from coscc.state import present
+from coscc.screens import studio as s
 from coscc.state.views import BacklogRow
 from coscc.screens.common import P, _MONO
 

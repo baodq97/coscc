@@ -19,6 +19,7 @@ from coscc.agent import steps as steps_mod
 from coscc.data import Data
 from coscc.runlog import events
 from coscc.runlog.journal import BadRecord
+from coscc.runner import Runner
 from coscc.data import Busy
 from coscc.service.common import Invalid
 from coscc.service.sessions import CHAT_TURNS
@@ -269,8 +270,6 @@ class ResumeMixin:
         """A board step, as `run_step` hands one to `_drive`: the unit claimed, a new
         recorder and `run`, and `Runner.run` with the row instead of a prompt. Synchronous up
         to the task, so the unit is held when this returns."""
-        from coscc.runner import Runner
-
         owner = record["owner"]
         key, cwd = str(owner["workspace"]), str(owner["workspace_dir"])
         unit, stage, artifact = str(owner["unit"]), str(owner["stage"]), str(owner["artifact"])

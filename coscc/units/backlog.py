@@ -13,7 +13,7 @@ import math
 import re
 from typing import Any, Iterable
 
-from coscc.agent.submit import AGAIN as SUBMIT_AGAIN
+from coscc.units.submit import AGAIN as SUBMIT_AGAIN
 from coscc.runlog import journal
 from coscc.units.hold import _line_problem
 

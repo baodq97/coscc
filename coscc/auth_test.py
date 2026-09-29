@@ -1,8 +1,8 @@
-"""Tests for the login guard, `coscc/web/auth.py`.
+"""Tests for the login guard, `coscc/auth.py`.
 
 Driven over raw ASGI, scope by scope, so an HTTP request and a websocket handshake go
 through the same door the same way and a test can see whether the app behind it was ever
-reached. The app behind it is the real FastAPI surface, `coscc.web.api.build`, on a temporary
+reached. The app behind it is the real FastAPI surface, `coscc.api.build`, on a temporary
 data root; the parts Reflex mounts are stood in for by `REFLEX_PATHS`, because composing
 them needs a built bundle and `npm test` never builds. The guard decides before the inner
 app sees anything, so what the inner app is does not change the count;
@@ -28,8 +28,9 @@ from urllib.parse import urlencode
 from argon2.exceptions import VerifyMismatchError
 from starlette.routing import Route
 
-from coscc.web import auth, place
-from coscc.web.api import build
+from coscc import auth
+from coscc.state import place
+from coscc.api import build
 from coscc.config import Config
 from coscc.data import Data
 
@@ -637,7 +638,7 @@ class HashConcurrency(Door):
 
 
 class Rechecks:
-    """Stands in for the name `asyncio` inside `coscc.web.auth`: every attribute is the real one but
+    """Stands in for the name `asyncio` inside `coscc.auth`: every attribute is the real one but
     `sleep`, where the socket watcher parks until a test lets it take one look. A sleep of any other
     length is recorded and fails the test."""
 

@@ -19,11 +19,11 @@ from unittest import mock
 import httpx
 
 from coscc.units import board as board_reader
-from coscc.git import worktrees
-from coscc.web.api import build
+from coscc.units import worktrees
+from coscc.api import build
 from coscc.config import Config
 from coscc.service.common import Invalid
-from coscc.agent.submit_test import submits as _submits
+from coscc.units.submit_test import submits as _submits
 
 N = 10
 

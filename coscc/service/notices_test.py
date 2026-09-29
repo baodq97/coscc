@@ -14,8 +14,8 @@ import time
 import unittest
 from pathlib import Path
 
-from coscc.web import auth
-from coscc.runlog import notices
+from coscc import auth
+from coscc.service import notices
 from coscc.config import Config
 from coscc.runlog.journal import BELL, Journal
 from coscc.service import Service

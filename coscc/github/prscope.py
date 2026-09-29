@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from coscc.github import prcomment
+from coscc.git import gh
 
 FIELDS = "changedFiles,additions,deletions,files"
 COUNTS = ("files", "additions", "deletions")
@@ -77,21 +77,21 @@ def compare(scope: Any, got: Any) -> dict[str, Any]:
     }
 
 
-async def read(url: str, scope: Any, cwd: str, run: prcomment.Run | None = None) -> dict[str, Any]:
+async def read(url: str, scope: Any, cwd: str, run: gh.Run | None = None) -> dict[str, Any]:
     """Ask `gh` for the pull request's counts and compare. Never raises.
 
-    `run` defaults to `prcomment._gh`, looked up at call time; the timeout is `prcomment.TIMEOUT`.
+    `run` defaults to `gh.run`, looked up at call time; the timeout is `gh.TIMEOUT`.
     """
     try:
-        run = run or prcomment._gh
-        if not url or not prcomment.PR_URL_RE.match(url):
+        run = run or gh.run
+        if not url or not gh.PR_URL_RE.match(url):
             return {"verdict": "unread", "detail": f"not a pull request URL: {url!r}"}
-        got = await prcomment._call(run, argv(url), cwd, None)
+        got = await gh.call(run, argv(url), cwd, None)
         if isinstance(got, str):
             return {"verdict": "unread", "detail": got}
         code, out, err = got
         if code != 0:
-            return {"verdict": "unread", "detail": prcomment._said(code, out, err)}
+            return {"verdict": "unread", "detail": gh.said(code, out, err)}
         try:
             data = json.loads(out)
         except (json.JSONDecodeError, ValueError) as e:

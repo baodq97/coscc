@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from coscc.units import autopilot, guide
-from coscc.web.place import TABS
+from coscc.state.place import TABS
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 

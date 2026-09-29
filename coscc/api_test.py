@@ -17,7 +17,7 @@ import claude_agent_sdk as sdk
 import httpx
 
 from coscc import update
-from coscc.web.api import build
+from coscc.api import build
 from coscc.config import Config
 
 
@@ -349,7 +349,7 @@ class NoHandWrittenMarkup(unittest.TestCase):
     GENERATED = "_web"
 
     def test_the_app_ships_no_hand_written_html_or_css(self):
-        repo = Path(__file__).resolve().parents[2]
+        repo = Path(__file__).resolve().parents[1]
         found = [
             p.relative_to(repo)
             for p in list(repo.glob("coscc/**/*.html")) + list(repo.glob("coscc/**/*.css"))
@@ -524,7 +524,7 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(one["events"][0]["input"], {"n": 0})
 
     async def test_refusals_are_400(self):
-        from coscc.web import auth
+        from coscc import auth
 
         for params in (
             {"run": "r-ended", "limit": "many"},
@@ -591,7 +591,7 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await client.get("/api/notices/follow")).status_code, 400)
 
     async def test_the_notice_route_is_behind_the_login(self):
-        from coscc.web import auth
+        from coscc import auth
 
         paths = {r.path for r in self.app.routes}
         self.assertIn("/api/notices/follow", paths)
@@ -604,8 +604,8 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
         import io
         import time
 
-        from coscc.web import auth
-        from coscc.runlog import notices
+        from coscc import auth
+        from coscc.service import notices
         from coscc.data import Data
         from coscc.runlog.journal import Journal
 
@@ -1350,9 +1350,7 @@ class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
             self.comments.append({"body": stdin, "url": f"{self.PR_URL}#c1"})
             return 0, f"{self.PR_URL}#c1\n", ""
 
-        from coscc.github import prcomment
-
-        patcher = mock.patch.object(prcomment, "_gh", gh)
+        patcher = mock.patch("coscc.git.gh.run", gh)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -2076,7 +2074,7 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         self,
     ):
         from coscc import units
-        from coscc.web import place
+        from coscc.state import place
 
         idea = (
             await self.post(

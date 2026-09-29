@@ -6,7 +6,7 @@ import reflex as rx
 from reflex.style import set_color_mode
 
 from coscc.agent import models
-from coscc.web import studio as s
+from coscc.screens import studio as s
 from coscc.state import AgentRow, GrantRow, ImportRow, Knob, ModelRow
 from coscc.state.views import DecisionRow
 from coscc.screens.common import P, _MONO, _RUNIC, _details, _table

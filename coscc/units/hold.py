@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from coscc import units
-from coscc.github import prcomment
-from coscc.git import gitops, worktrees
+from coscc.git import gh, gitops
+from coscc.units import worktrees
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 
@@ -95,16 +95,16 @@ def _effect(effect: str, result: str, detail: str) -> dict[str, str]:
     return {"effect": effect, "result": result, "detail": detail}
 
 
-async def close_pr(root: str, branch: str, gh: prcomment.Run | None = None) -> dict[str, str]:
+async def close_pr(root: str, branch: str, run: gh.Run | None = None) -> dict[str, str]:
     """Close the open pull request whose head is `branch`, and no other.
 
     Fixed argv: no `--delete-branch`, no flag from a caller.
     """
-    gh = gh or prcomment._gh
+    run = run or gh.run
     if not branch:
         return _effect("close-pr", "skipped", "the unit has no branch")
-    listed = await prcomment._call(
-        gh,
+    listed = await gh.call(
+        run,
         [
             "pr",
             "list",
@@ -122,7 +122,7 @@ async def close_pr(root: str, branch: str, gh: prcomment.Run | None = None) -> d
         return _effect("close-pr", "failed", listed)
     code, out, err = listed
     if code != 0:
-        return _effect("close-pr", "failed", prcomment._said(code, out, err))
+        return _effect("close-pr", "failed", gh.said(code, out, err))
     try:
         rows = json.loads(out or "[]")
     except ValueError as e:
@@ -133,10 +133,10 @@ async def close_pr(root: str, branch: str, gh: prcomment.Run | None = None) -> d
     closed: list[str] = []
     for row in mine:
         number = str(int(row.get("number") or 0))
-        said = await prcomment._call(gh, ["pr", "close", number], root, None)
+        said = await gh.call(run, ["pr", "close", number], root, None)
         if not isinstance(said, str):
             code, out, err = said
-            said = prcomment._said(code, out, err) if code != 0 else ""
+            said = gh.said(code, out, err) if code != 0 else ""
         if said:
             # No retry: the person cleaning up by hand needs to know which were already closed.
             already = f"closed {', '.join(closed)}; " if closed else ""

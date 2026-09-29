@@ -13,7 +13,7 @@ from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import create_sync
-from coscc.agent.submit_test import submits as _submits
+from coscc.units.submit_test import submits as _submits
 
 
 class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
