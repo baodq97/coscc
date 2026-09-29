@@ -15,13 +15,16 @@ import zipfile
 from pathlib import Path
 
 import coscc
-from coscc.web import frontend
-from coscc.units import states
+from coscc import frontend
 from coscc.agent import agents, models
 
 # The package root, `coscc/`: the wheel holds `_harness/` there, and the checkout's `.claude/`
 # sits beside it.
 _HERE = Path(coscc.__file__).resolve().parent
+
+# The unit state set and its lanes, inside the package so a wheel carries them.
+STATES_PATH = _HERE / "units" / "states.json"
+LANES_PATH = _HERE / "units" / "lanes.json"
 
 # Where the release puts the harness inside the wheel.
 PACKAGE_HARNESS = _HERE / "_harness"
@@ -59,6 +62,25 @@ def child_env() -> dict[str, str]:
     if rounds:
         env["COS_REVIEW_ROUNDS"] = rounds
     return env
+
+
+def _outside(entry: str, roots: list[Path]) -> bool:
+    try:
+        p = Path(entry).resolve()
+    except OSError, ValueError:
+        return False
+    return not any(p == r or r in p.parents for r in roots)
+
+
+def clean_path(workspace: str | os.PathLike[str] | None) -> str:
+    """`PATH` without any entry under the workspace or the installed package, whose `.venv/bin`
+    would run the workspace's code instead of the tree's.
+    """
+    roots = [_HERE]
+    if workspace:
+        roots.append(Path(workspace).expanduser().resolve())
+    parts = [e for e in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep) if e]
+    return os.pathsep.join(e for e in parts if _outside(e, roots))
 
 
 def is_packaged() -> bool:
@@ -127,7 +149,7 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     marker = _posix(_WEB, frontend.MARKER)
     cos = _posix(_HARNESS, _SCRIPTS, SCRIPT_NAME)
     skills_prefix = _posix(_HARNESS, _SKILLS) + "/"
-    state_set = _posix(states.DEFAULT_PATH.relative_to(_HERE))
+    state_set = _posix(STATES_PATH.relative_to(_HERE))
 
     out = []
     if index not in names:
@@ -142,7 +164,7 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     if state_set not in names:
         out.append(f"no {state_set} — no transition could be read or written")
     # Without it no guard is chosen for any transition.
-    lanes = _posix(states.LANES_PATH.relative_to(_HERE))
+    lanes = _posix(LANES_PATH.relative_to(_HERE))
     if lanes not in names:
         out.append(f"no {lanes} — no transition could be guarded")
     # Without it every stage falls back to `COS_MODEL`, and nothing fails.

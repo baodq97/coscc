@@ -21,7 +21,7 @@ from coscc.service import Service
 from coscc.service.common import Invalid
 from coscc.service.common import Refused
 from coscc.agent.sessions import Sessions
-from coscc.agent.submit_test import submits as _submits
+from coscc.units.submit_test import submits as _submits
 
 
 class _Replies:

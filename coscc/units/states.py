@@ -14,8 +14,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-# The packaged default; a wheel has to carry the rules it runs on (`wheel_complaints`).
-DEFAULT_PATH = Path(__file__).resolve().parent / "states.json"
+from coscc.agent import harness
+from coscc.units import guards
 
 
 class BadMachine(ValueError):
@@ -97,7 +97,7 @@ def load(path: str | Path | None = None) -> Machine:
 
     Every failure is a `BadMachine` naming the file, never a half-loaded set.
     """
-    source = Path(path) if path is not None else DEFAULT_PATH
+    source = Path(path) if path is not None else harness.STATES_PATH
     try:
         raw = json.loads(source.read_text(encoding="utf-8"))
     except OSError as e:
@@ -182,7 +182,6 @@ def default() -> Machine:
 
 # -- lanes: which stages a lane runs, under what condition, and which guard decides each
 # transition of the three machines. Carried in the wheel beside `states.json`.
-LANES_PATH = Path(__file__).resolve().parent / "lanes.json"
 
 # How a stage on a lane's path is entered. `unless-skipped` needs the `skip` guard's decision
 # to be passed over; `if-unmeasured` runs only when the spec named a `U<n>`.
@@ -215,7 +214,7 @@ class Lanes:
 
 def load_lanes(path: str | Path | None = None, machine: Machine | None = None) -> Lanes:
     """Read a lane config. `None` means the packaged one."""
-    source = Path(path) if path is not None else LANES_PATH
+    source = Path(path) if path is not None else harness.LANES_PATH
     try:
         raw = json.loads(source.read_text(encoding="utf-8"))
     except OSError as e:
@@ -226,12 +225,7 @@ def load_lanes(path: str | Path | None = None, machine: Machine | None = None) -
 
 
 def build_lanes(raw: Any, source: str | Path = "<memory>", machine: Machine | None = None) -> Lanes:
-    """A `Lanes` from parsed data, refused whole when a guard the machines need is missing.
-
-    `guards` is imported here, not at the top, because the state set knows it for nothing else.
-    """
-    from coscc.units import guards
-
+    """A `Lanes` from parsed data, refused whole when a guard the machines need is missing."""
     machine = machine or default()
     if not isinstance(raw, dict):
         raise BadLanes(f"{source}: a lane config is an object, not {type(raw).__name__}")

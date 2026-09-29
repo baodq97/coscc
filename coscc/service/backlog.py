@@ -11,8 +11,8 @@ from coscc.units import backlog, guards
 from coscc.units import board as board_reader
 from coscc.git import fetches, gitops
 from coscc.units import hold as hold_rules
-from coscc.agent import submit as submit_mod
-from coscc.agent.submit import RUN_SUBMITTED, submitted
+from coscc.units import submit as submit_mod
+from coscc.units.submit import RUN_SUBMITTED, submitted
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import History, settled_edits
@@ -26,7 +26,7 @@ from coscc.agent.sessions import StepHandle, Suspended
 from coscc.agent import steps as steps_mod
 from coscc.service.resume import nothing, resume_kwargs
 from coscc import units
-from coscc.git import worktrees
+from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, OWNER
 

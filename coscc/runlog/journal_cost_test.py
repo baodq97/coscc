@@ -22,7 +22,7 @@ from coscc.runlog.journal import Journal
 
 @dataclass
 class FakeResult:
-    """Only the fields `_cumulative` reads. The SDK's own class needs a dozen more."""
+    """Only the fields `cumulative` reads. The SDK's own class needs a dozen more."""
 
     total_cost_usd: float = 0.0
     model_usage: dict[str, Any] = field(default_factory=dict)
@@ -49,15 +49,15 @@ TURN_2 = FakeResult(total_cost_usd=0.036336, model_usage=usage(1173, 21, 5512, 2
 
 class CumulativeIsReadAsCumulative(unittest.TestCase):
     def test_the_second_reading_is_the_session_not_the_turn(self):
-        first = sessions._cumulative(TURN_1)
-        second = sessions._cumulative(TURN_2)
+        first = sessions.cumulative(TURN_1)
+        second = sessions.cumulative(TURN_2)
         self.assertEqual(first["cache_read_tokens"], 1608)
         self.assertEqual(second["cache_read_tokens"], 5512)
         self.assertGreater(second["cost_usd"], first["cost_usd"])
 
     def test_a_turns_own_cost_is_the_difference(self):
-        first = sessions._cumulative(TURN_1)
-        second = sessions._cumulative(TURN_2)
+        first = sessions.cumulative(TURN_1)
+        second = sessions.cumulative(TURN_2)
         turn_2 = {k: second[k] - first[k] for k in second}
         self.assertEqual(turn_2["cache_read_tokens"], 3904)
         self.assertEqual(turn_2["cache_creation_tokens"], 1739)
@@ -70,8 +70,8 @@ class CumulativeIsReadAsCumulative(unittest.TestCase):
         5512 — 29% too high, and nothing about the figure would have looked odd.
         """
         naive = (
-            sessions._cumulative(TURN_1)["cache_read_tokens"]
-            + sessions._cumulative(TURN_2)["cache_read_tokens"]
+            sessions.cumulative(TURN_1)["cache_read_tokens"]
+            + sessions.cumulative(TURN_2)["cache_read_tokens"]
         )
         self.assertEqual(naive, 7120)
         self.assertNotEqual(naive, 5512)
@@ -83,12 +83,12 @@ class CumulativeIsReadAsCumulative(unittest.TestCase):
                 "b": {"inputTokens": 5, "outputTokens": 2},
             }
         )
-        got = sessions._cumulative(two)
+        got = sessions.cumulative(two)
         self.assertEqual(got["input_tokens"], 15)
         self.assertEqual(got["output_tokens"], 3)
 
     def test_a_result_with_no_usage_at_all_is_zero_rather_than_a_crash(self):
-        got = sessions._cumulative(FakeResult())
+        got = sessions.cumulative(FakeResult())
         self.assertEqual(got["input_tokens"], 0)
         self.assertEqual(got["cost_usd"], 0.0)
 
@@ -98,7 +98,7 @@ class TheDeltasSumBackToTheSessionTotal(unittest.TestCase):
         spent: dict[str, float] = {}
         turns = []
         for result in (TURN_1, TURN_2):
-            total = sessions._cumulative(result)
+            total = sessions.cumulative(result)
             turns.append({k: total[k] - spent.get(k, 0.0) for k in total})
             spent = total
 

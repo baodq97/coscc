@@ -6,8 +6,8 @@ import itertools
 import unittest
 from urllib.parse import urlsplit
 
-from coscc.web import place
-from coscc.web.place import Place
+from coscc.state import place
+from coscc.state.place import Place
 
 
 def _read(address: str) -> Place:

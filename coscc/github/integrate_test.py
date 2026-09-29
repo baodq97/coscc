@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.github import integrate as ig
-from coscc.agent.submit_test import submits as _submits
+from coscc.units.submit_test import submits as _submits
 
 HEAD = "a" * 40
 NEW = "b" * 40
@@ -925,7 +925,7 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
                 await _submits(kw, needs_person=[{"commit": "", "why": "A vs B"}])
                 yield ("done", {"session_id": "s", "cost": {"usd": 0.1}})
 
-        from coscc.agent import submit
+        from coscc.units import submit
 
         collector = submit.Collector("integrate")
 

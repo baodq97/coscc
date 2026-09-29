@@ -32,8 +32,8 @@ from claude_agent_sdk import (
 )
 
 from coscc import config as cfg
-from coscc.web import frontend
-from coscc.agent import instructions, transcript
+from coscc import frontend
+from coscc.agent import harness, instructions, transcript
 from coscc.config import Config
 from coscc.data import Data
 
@@ -64,12 +64,10 @@ def child_env(
     `cos.db`; both are required. `bash` is true when the session holds `Bash`; it then also
     gets `FOREGROUND_ENV`.
     """
-    from coscc.git import worktrees  # here, not at the top: worktrees imports prcomment
-
     env = {
         frontend.WEB_WORKDIR_VAR: str(Path(cwd) / ".web"),
         "VIRTUAL_ENV": str(Path(cwd) / ".venv"),
-        "PATH": worktrees.clean_path(workspace),
+        "PATH": harness.clean_path(workspace),
     }
     # This app's settings describe this app, not the workspace. Empty reads as unset to
     # `coscc/config.py` `from_env` and to `cos.mjs` for `COS_REVIEW_ROUNDS`.
@@ -257,7 +255,7 @@ class Live:
     client: ClaudeSDKClient
     session_id: str
     cwd: str
-    # What this session had cost as of the last turn. See `_cumulative`.
+    # What this session had cost as of the last turn. See `cumulative`.
     spent: dict[str, float] = field(default_factory=dict)
     # The chat's own `COS_DATA_DIR`. It lives as long as the client and is removed on close.
     scratch: Path | None = None
@@ -473,7 +471,7 @@ _USAGE_KEYS = {
 }
 
 
-def _cumulative(message: Any) -> dict[str, float]:
+def cumulative(message: Any) -> dict[str, float]:
     """Everything this *session* has spent so far, summed over models.
 
     `model_usage` is cumulative, not per-turn (each reading is the session to date), so adding
@@ -1036,7 +1034,7 @@ class Sessions:
                         told_session = True
                         yield ("session", resolved)
                     # The one message carrying what this cost.
-                    total = _cumulative(message)
+                    total = cumulative(message)
                     used = sorted(str(k) for k in (getattr(message, "model_usage", None) or {}))
                     turn = {k: total[k] - live.spent.get(k, 0.0) for k in total}
                     live.spent = total

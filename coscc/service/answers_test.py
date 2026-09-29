@@ -16,7 +16,7 @@ from coscc.service.common import STAGE_FILES, Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import create_sync
-from coscc.agent.submit_test import a_head, finding, submits as _submits
+from coscc.units.submit_test import a_head, finding, submits as _submits
 
 
 REVIEW_ONE = (
@@ -32,7 +32,7 @@ PR_URL = "https://github.com/o/r/pull/7"
 
 
 class FakeGh:
-    """Stands in for `prcomment._gh`: records argv, keeps the PR's comments in memory."""
+    """Stands in for `gh.run`: records argv, keeps the PR's comments in memory."""
 
     def __init__(self, fail: bool = False):
         self.fail = fail
@@ -101,14 +101,12 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.unit = self.made["unit"]
 
     def _post(self, gh, n):
-        from coscc.github import prcomment
 
-        with mock.patch.object(prcomment, "_gh", gh):
+        with mock.patch("coscc.git.gh.run", gh):
             return asyncio.run(self.service.post_review_comment(str(self.repo), self.unit, n))
 
     def _run_review(self, gh):
         from coscc.units import board as board_reader
-        from coscc.github import prcomment
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, "open: review may proceed"
@@ -121,7 +119,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
         with (
             mock.patch.object(board_reader, "gate", open_gate),
-            mock.patch.object(prcomment, "_gh", gh),
+            mock.patch("coscc.git.gh.run", gh),
         ):
             return asyncio.run(go())
 
@@ -192,7 +190,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertIn("Bad credentials", done["comments"][0]["reason"])
 
     def test_another_stage_never_calls_gh(self):
-        from coscc.github import prcomment
 
         class Spec:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
@@ -210,7 +207,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
             async for _ in self.service.run_step(str(self.repo), self.unit, "spec"):
                 pass
 
-        with mock.patch.object(prcomment, "_gh", gh):
+        with mock.patch("coscc.git.gh.run", gh):
             asyncio.run(go())
         self.assertEqual(gh.calls, [])
 
@@ -236,7 +233,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertEqual(len(gh.posts()), 1)
 
     def test_two_presses_at_once_still_make_one_comment(self):
-        from coscc.github import prcomment
 
         gh = FakeGh()
 
@@ -246,7 +242,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
                 self.service.post_review_comment(str(self.repo), self.unit, 1),
             )
 
-        with mock.patch.object(prcomment, "_gh", gh):
+        with mock.patch("coscc.git.gh.run", gh):
             got = asyncio.run(both())
         self.assertEqual(sorted(r["state"] for r in got), ["already", "posted"])
         self.assertEqual(len(gh.posts()), 1)

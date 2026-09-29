@@ -6,7 +6,7 @@ it is unsupported. The compiled frontend is mounted into the ASGI app that serve
 
 A checkout refuses a bundle that disagrees with the source (build with `uv run coscc-build`,
 which leaves a fingerprint). A packaged install cannot rebuild, so the address baked into
-the bundle is rewritten to the one being served (`coscc/web/frontend.py`).
+the bundle is rewritten to the one being served (`coscc/frontend.py`).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 # Imports nothing from Reflex, so it cannot disturb the ordering the environment variables need.
-from coscc.web import frontend
+from coscc import frontend
 
 # Standard library only.
 from coscc import update

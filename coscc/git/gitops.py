@@ -313,7 +313,7 @@ async def create_branch(path: Path, name: str, base: str, timeout: float = BRANC
 # # --- worktrees ---------------------------------------------------------------
 # #
 # # One working tree per unit, so cutting one unit's branch cannot take another's away. Paths
-# # come from `coscc/git/worktrees.py` and refs passed `_SHA_RE` or `_BRANCH_RE`, so no request
+# # come from `coscc/units/worktrees.py` and refs passed `_SHA_RE` or `_BRANCH_RE`, so no request
 # # text reaches `git`.
 
 WORKTREE_TIMEOUT = 60.0  # WORKTREE_TIMEOUT = 60.0  # seconds; `worktree add` checks a tree out.

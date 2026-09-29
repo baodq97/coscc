@@ -30,7 +30,7 @@ from coscc.units.meta import MetaError, UnitMeta
 from coscc.agent.policy import grant_for
 from coscc.agent import steps as steps_mod
 from coscc import units
-from coscc.git import worktrees
+from coscc.units import worktrees
 from coscc.units import BadUnit
 from coscc.service.store import valid_name
 from coscc.service.common import (

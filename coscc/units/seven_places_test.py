@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.agent.submit_test import a_head, finding, submits
+from coscc.units.submit_test import a_head, finding, submits
 from coscc.agent import harness
 from coscc.github.prmachine_test import HEAD, FakeGh, run
 from coscc.github.prmachine_test import Fixture as _PrFixture

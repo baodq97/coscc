@@ -17,8 +17,8 @@ import dataclasses
 import reflex as rx
 from reflex_base.event.context import EventContext
 
-from coscc.web import place, present
-from coscc.web.api import build
+from coscc.state import place, present
+from coscc.api import build
 from coscc.service.common import COLLAPSED_STATES
 from coscc.service.common import FOLDED_STATES
 from coscc.service.common import Invalid

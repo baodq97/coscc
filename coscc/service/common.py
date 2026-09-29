@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from coscc.git import gitops
-from coscc.web import present
 
 
 # The eight stage names, in stage order. Repeated here because the board read is async and
@@ -130,7 +129,7 @@ def outcome_label(
         "invalid": int(outcome.get("invalid") or 0),
         "form": bool(finished),
         # What the page shows. `text` and `kind` stay as they were for the API.
-        "label": present.OUTCOME_LABEL[kind],
+        "label": OUTCOME_LABEL[kind],
         "hint_label": MISSED_HINT_LABEL if kind == "missed" else "",
     }
 
@@ -141,6 +140,14 @@ OWNER = "owner"
 
 # `MISSED_HINT` in the page's language; the stored word is unchanged.
 MISSED_HINT_LABEL = "Consider dropping or redoing it."
+# Each outcome kind as the page says it.
+OUTCOME_LABEL = {
+    "met": "met",
+    "missed": "missed",
+    "unmeasurable": "could not be measured",
+    "due": "due, not measured",
+    "pending": "not due yet",
+}
 
 # The one sentence the page keeps beside each action whose effect costs money or leaves this
 # machine. The full warnings stay in `policy.py`, the API and `.claude/rules/coscc-app.md`.

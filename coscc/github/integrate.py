@@ -27,6 +27,11 @@ from typing import Any, AsyncIterator
 
 from coscc.agent import agents
 from coscc.agent.harness import child_env
+from coscc.agent.transcript import ceilings_left
+from coscc.runner import check_started_by
+from coscc.runner.attempt import CLAUDE_CODE_PRESET, Denials, permission_gate
+from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
+from coscc.units.submit import SERVER
 
 STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown")
 # The three states with something to integrate. `current` carries a button too; a press on it
@@ -34,12 +39,7 @@ STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown"
 BUTTON_STATES = ("behind", "conflicting", "red-after-integration")
 GEBO_STATES = ("conflicting", "red-after-integration")
 OUTCOMES = ("pushed", "needs-person", "refused", "failed")
-# Who started a step or an integration: the autopilot, or a request to a route (a person on
-# the board, `curl`, or an agent at a terminal, which the app cannot tell apart). Kept here, the
-# module with no imports of its own, so `runner.py` can share it.
-STARTED_BY = ("person", "autopilot")
-
-# Seconds. Chosen, not measured; the same as `board.GATE_TIMEOUT` and `prcomment.TIMEOUT`.
+# Seconds. Chosen, not measured; the same as `board.GATE_TIMEOUT` and `gh.TIMEOUT`.
 GH_TIMEOUT = 30.0
 # How long the app waits for GitHub's rebase to show as a new head. Chosen, not measured.
 POLL_TRIES = 5
@@ -51,13 +51,6 @@ _PR_NUMBER = re.compile(r"\(#(\d+)\)\s*$")
 
 class IntegrateError(Exception):
     """A `gh` call that failed, carrying `gh`'s own words."""
-
-
-def check_started_by(value: str) -> str:
-    """`value` when it is one of `STARTED_BY`; `ValueError` otherwise."""
-    if value not in STARTED_BY:
-        raise ValueError(f"started_by must be one of {', '.join(STARTED_BY)}, got {value!r}")
-    return value
 
 
 def needs_checks(pr_row: dict | str, last_record: dict | None) -> bool:
@@ -552,8 +545,6 @@ def build_prompt(
         f"The only push allowed: `git push --force-with-lease={branch}:{head_before} origin {branch}`."
     )
     # The `integrate` grant always holds `Bash`.
-    from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
-
     parts.append(f"\n{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
     if refused_update is not None:
         parts.append("\n# The mechanical rebase was refused\n")
@@ -637,7 +628,7 @@ def _completion_section(completion: dict, branch: str, pr_head: str) -> str:
 
 
 async def _gh(argv: list[str], cwd: str) -> tuple[int, str, str]:
-    """One `gh` call, as `prcomment._gh` makes it: exit code and both streams."""
+    """One `gh` call, as `gh.run` makes it: exit code and both streams."""
     try:
         proc = await asyncio.create_subprocess_exec(
             "gh",
@@ -852,9 +843,6 @@ async def run_gebo(
 
     `channel` is the `submit.Collector` Gebo hands its result to; `None` opens none.
     """
-    from coscc.agent.transcript import ceilings_left
-    from coscc.runner import CLAUDE_CODE_PRESET, Denials, permission_gate
-
     denials = Denials()
     reply = ""
     end: dict[str, Any] = {}
@@ -868,8 +856,6 @@ async def run_gebo(
     if owner is not None:
         kwargs["owner"] = owner
     if channel is not None:
-        from coscc.agent.submit import SERVER
-
         kwargs["mcp_servers"] = {SERVER: channel.server()}
     turns, budget = grant.max_turns, grant.max_budget_usd or None
     if resume is not None:

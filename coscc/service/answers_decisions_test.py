@@ -108,7 +108,7 @@ class NoRouteReachesThem(unittest.TestCase):
     def test_no_route_writes_decisions(self):
         import httpx
 
-        from coscc.web.api import build
+        from coscc.api import build
 
         called: list[str] = []
         # Every public method of `Service` is a stub for this test, so a route posted an

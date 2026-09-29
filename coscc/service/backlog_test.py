@@ -13,13 +13,14 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import units
-from coscc.git import gitops, worktrees
+from coscc.git import gitops
+from coscc.units import worktrees
 from coscc.config import Config
 from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import REPO, _service, create_sync
-from coscc.agent.submit_test import submits as _submits
+from coscc.units.submit_test import submits as _submits
 
 
 class TheUnitHistoryReadPath(unittest.TestCase):

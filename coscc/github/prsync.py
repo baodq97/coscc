@@ -8,7 +8,7 @@ It overwrites: a description edited on GitHub is replaced and the old text is ke
 When both already match, nothing is written.
 
 `--title=<title>` is one argv so a title starting with `-` is not read as a flag; the URL is
-checked against `prcomment.PR_URL_RE` first.
+checked against `gh.PR_URL_RE` first.
 
 `sync` never raises: a failure comes back as `Result("failed", reason=...)`.
 """
@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from coscc.github import prcomment
+from coscc.git import gh
 
 
 @dataclass(frozen=True)
@@ -45,23 +45,23 @@ async def sync(
     title: str | None,
     body: str,
     cwd: str,
-    run: prcomment.Run | None = None,
+    run: gh.Run | None = None,
 ) -> Result:
     """Put `title` and `body` on the pull request at `url` unless they are there. Never raises.
 
-    `title` None leaves the GitHub title as it is. `run` defaults to `prcomment._gh`, looked up at
-    call time; the timeout is `prcomment.TIMEOUT` per call.
+    `title` None leaves the GitHub title as it is. `run` defaults to `gh.run`, looked up at
+    call time; the timeout is `gh.TIMEOUT` per call.
     """
-    run = run or prcomment._gh
-    if not url or not prcomment.PR_URL_RE.match(url):
+    run = run or gh.run
+    if not url or not gh.PR_URL_RE.match(url):
         return Result("failed", reason=f"not a pull request URL: {url!r}")
 
-    got = await prcomment._call(run, ["pr", "view", url, "--json", "title,body"], cwd, None)
+    got = await gh.call(run, ["pr", "view", url, "--json", "title,body"], cwd, None)
     if isinstance(got, str):
         return Result("failed", reason=got)
     code, out, err = got
     if code != 0:
-        return Result("failed", reason=prcomment._said(code, out, err))
+        return Result("failed", reason=gh.said(code, out, err))
     try:
         now = json.loads(out)
         now_title, now_body = str(now.get("title") or ""), str(now.get("body") or "")
@@ -70,10 +70,10 @@ async def sync(
     if same(now_body, body) and (title is None or same(now_title, title)):
         return Result("already")
 
-    got = await prcomment._call(run, edit_argv(url, title), cwd, body)
+    got = await gh.call(run, edit_argv(url, title), cwd, body)
     if isinstance(got, str):
         return Result("failed", reason=got)
     code, out, err = got
     if code != 0:
-        return Result("failed", reason=prcomment._said(code, out, err))
+        return Result("failed", reason=gh.said(code, out, err))
     return Result("updated")

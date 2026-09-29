@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from coscc.github import integrate, release
-from coscc.git import gitops, worktrees
+from coscc.git import gitops
+from coscc.units import worktrees
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord, Journal
 from coscc.data import Busy

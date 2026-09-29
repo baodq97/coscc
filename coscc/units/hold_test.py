@@ -16,14 +16,13 @@ from unittest import mock
 
 from coscc.units import hold
 from coscc.agent import steps
-from coscc.github import prcomment
-from coscc.git import worktrees
+from coscc.units import worktrees
 from coscc.config import Config
 from coscc.data import Data
 from coscc.runlog.journal import Journal
 from coscc.service import Service
 from coscc.service.common import Invalid
-from coscc.agent.submit_test import submits as _submits
+from coscc.units.submit_test import submits as _submits
 
 SLUG = "proof-of-hold"
 # What `Service` hands `hold.refusal` while a spec step runs on the unit.
@@ -52,7 +51,7 @@ def git(cwd: Path, *args: str, check: bool = True) -> str:
 
 
 class FakeGh:
-    """Stands in for `prcomment._gh`: records argv, answers `pr list` from `prs`."""
+    """Stands in for `gh.run`: records argv, answers `pr list` from `prs`."""
 
     def __init__(self, prs: list[dict] | None = None, fail: str = ""):
         self.prs = (
@@ -299,7 +298,7 @@ class Repo(unittest.TestCase):
         self.tree = Path(asyncio.run(self.service._worktree(self.cwd, self.unit))["path"])
         self.key = self.service._journal_key(self.cwd)
         self.gh = FakeGh()
-        gh_patch = mock.patch.object(prcomment, "_gh", self.gh)
+        gh_patch = mock.patch("coscc.git.gh.run", self.gh)
         gh_patch.start()
         self.addCleanup(gh_patch.stop)
 

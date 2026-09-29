@@ -69,7 +69,7 @@ class WhatCountsAsCurrent(unittest.TestCase):
         In a checkout the bundle hardcodes the backend address and stays that way, so a
         build aimed at another port renders a page that never connects. The message has
         to name both numbers or the reader cannot tell which one to change. A packaged
-        install never gets here -- `coscc/web/frontend.py` rewrites the address instead.
+        install never gets here -- `coscc/frontend.py` rewrites the address instead.
         """
         build.write_marker(self.built, self.config, root=self.root)
         state, msg = build.check(Config(host="127.0.0.1", port=8792), self.built, root=self.root)
@@ -125,8 +125,8 @@ class WhatTheFingerprintCovers(unittest.TestCase):
             set(build._SOURCES),
             {
                 "coscc/coscc.py",
-                "coscc/web/ui.py",
-                "coscc/web/studio.py",
+                "coscc/ui.py",
+                "coscc/screens/studio.py",
                 "coscc/screens/__init__.py",
                 "coscc/state/__init__.py",
                 "rxconfig.py",

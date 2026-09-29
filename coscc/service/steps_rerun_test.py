@@ -18,7 +18,7 @@ from coscc.units.meta_test import WithSnapshot
 
 board_reader = WithSnapshot(_board)
 from coscc.github import integrate
-from coscc.git import worktrees
+from coscc.units import worktrees
 from coscc.config import Config
 from coscc.runner import RunError
 from coscc.service import Service

@@ -6,6 +6,7 @@ import unittest
 from datetime import date
 
 from coscc.service.common import (
+    OUTCOME_LABEL,
     STATE_COLOR,
     STATE_LABEL,
     attention_reason,
@@ -35,6 +36,9 @@ class TheOutcomeLabel(unittest.TestCase):
             **over,
         }
         return outcome_label(outcome, self.TODAY, finished=finished)
+
+    def test_every_outcome_kind_has_an_english_label(self):
+        self.assertEqual(set(OUTCOME_LABEL), {"met", "missed", "unmeasurable", "due", "pending"})
 
     def test_met_missed_and_unmeasurable_whatever_the_deadline(self):
         for deadline in ("2026-10-07", "2026-10-31", None):

@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from coscc import update
-from coscc.web import auth, frontend
+from coscc import auth, frontend
 from coscc.agent import harness
 from coscc.git import fetches
 from coscc.data import Data

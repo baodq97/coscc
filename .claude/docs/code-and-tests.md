@@ -24,9 +24,36 @@ uv run pytest coscc/<pkg>/<module>_test.py      # while working: the file you ch
   `review round 2`) in a comment, a docstring or a function or class name, tests included.
 - `coscc/citations_test.py`: every `NAME` `path:N` under `.claude/` points at its name. A
   change that moves lines fixes the citations in the same commit.
+- `coscc/layers_test.py`: no import goes up a layer (below).
 
 Fix the code, not the check. A rule is switched off only in `pyproject.toml`, with its reason. A
 `# noqa` or `# ty: ignore` names its rule and says why on the same line.
+
+## Layers
+
+`LAYERS` in `coscc/layers_test.py`, from the top:
+
+```
+coscc.py, run.py        the page app, the command line
+screens/                components
+state/                  what the page shows (place, present)
+api.py                  the JSON API
+service/                every decision the page and the API ask for
+github/, update/        pull requests, integration, release; updating the app
+runner/                 one step of one unit
+units/                  units, their states and guards, worktrees, the submit tool
+git/, runlog/           the git and gh commands; the run log
+agent/                  sessions, grants, the harness
+auth.py, build.py, frontend.py, ui.py
+data.py
+config.py
+```
+
+- A module imports its own package and anything lower, never a package above or beside it.
+  An import inside a function counts: it hides a cycle, it does not remove one.
+- When a lower module needs something from above, move the thing down to where both can
+  reach it, or move the module up. Never import late to get round it.
+- A new package or root module gets a line in `LAYERS`, or the test fails.
 
 ## Imports
 
@@ -44,12 +71,14 @@ Fix the code, not the check. A rule is switched off only in `pyproject.toml`, wi
   test of a module.
 - **Tests that span modules.**
   - Tests that check the whole repository sit in `coscc/`: `comments_test.py`,
-    `citations_test.py`, `rules_budget_test.py`, `repository_test.py`.
+    `citations_test.py`, `layers_test.py`, `rules_budget_test.py`, `repository_test.py`.
   - A test that spans one package's modules is named for what it checks
     (`units/seven_places_test.py`).
 - **Classes.** A test class subclasses `unittest.TestCase`, and its name is a sentence with no
   `Test` prefix (`OverridesComeFirst`). pytest collects `TestCase` subclasses only by type, so
   a plain class named that way is skipped without a word.
+- **Wrappers.** A thin wrapper around a command (`git/gh.py`) gets no test of its own. Its
+  callers take a fake (`gh.Run`), and their tests check the decisions.
 - **Names.** A test method's name says the behaviour
   (`test_a_second_press_while_one_runs_is_refused`), never the unit or requirement that asked
   for it.

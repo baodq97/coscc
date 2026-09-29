@@ -22,8 +22,8 @@ MARKER = ".coscc-build.json"
 # Relative to the repo root.
 _SOURCES = (
     "coscc/coscc.py",
-    "coscc/web/ui.py",
-    "coscc/web/studio.py",
+    "coscc/ui.py",
+    "coscc/screens/studio.py",
     "coscc/screens/__init__.py",
     "coscc/state/__init__.py",
     # `build_test` fails when one is missing.
@@ -46,6 +46,8 @@ _SOURCES = (
     "coscc/state/rerun.py",
     "coscc/state/ideas.py",
     "coscc/state/release.py",
+    "coscc/state/place.py",
+    "coscc/state/present.py",
     "rxconfig.py",
 )
 

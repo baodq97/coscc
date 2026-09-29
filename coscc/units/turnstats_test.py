@@ -1,4 +1,4 @@
-"""`coscc/runlog/turnstats.py`, on a `cos.db` and a unit store in a temporary directory."""
+"""`coscc/units/turnstats.py`, on a `cos.db` and a unit store in a temporary directory."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import config, units
-from coscc.runlog import turnstats
+from coscc.units import turnstats
 from coscc.data import Data
 
 

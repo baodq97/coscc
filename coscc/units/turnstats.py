@@ -4,7 +4,7 @@ Reads `cos.db` and the unit store and prints one JSON object: turns, cost and ti
 step, the share of shipped units that ran `impl` twice or more, and the `changes-requested`
 rounds per shipped unit. With `--outcome` it also says whether the target holds.
 
-    uv run python -m coscc.runlog.turnstats --workspace <path> [--since T] [--until T] [--outcome]
+    uv run python -m coscc.units.turnstats --workspace <path> [--since T] [--until T] [--outcome]
         [--files PATH... [--first N]]
 
 `--files` adds `touched_*` fields: the `impl` steps that aimed a `Read` or `Grep` at one of
@@ -316,7 +316,7 @@ def outcome(fields: dict[str, Any]) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m coscc.runlog.turnstats", description=__doc__.split("\n\n")[0]
+        prog="python -m coscc.units.turnstats", description=__doc__.split("\n\n")[0]
     )
     parser.add_argument("--workspace", required=True, help="the repository the steps ran for")
     parser.add_argument("--since", help="first start time counted, as the run log writes it")

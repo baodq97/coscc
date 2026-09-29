@@ -22,10 +22,9 @@ from typing import Any, AsyncIterator
 import claude_agent_sdk as sdk
 
 from coscc.agent import agents, instructions, modeltrial, steps, transcript
-from coscc.github.integrate import check_started_by
 from coscc.agent import sessions as sessions_mod
 from coscc.runlog.journal import Journal
-from coscc.agent import submit as submit_mod
+from coscc.units import submit as submit_mod
 from coscc.agent.policy import (
     AGENT_TOOL,
     SUBAGENTS,
@@ -38,8 +37,6 @@ from coscc.units import guards
 from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
 
-# # These live in modules of their own and are imported back so `coscc.runner.<name>` still
-# # resolves; a patch reaches only the module that looks it up.
 from coscc.runner.prompt import _read, compose_prompt, submit_prompt, PROGRESS_FILE
 from coscc.runner.review import (
     _round_number,
@@ -71,6 +68,18 @@ from coscc.runner.attempt import (
     describe_tree_change,
     _write_artifact,
 )
+
+# Who started a step or an integration: the autopilot, or a request to a route (a person on
+# the board, `curl`, or an agent at a terminal, which the app cannot tell apart).
+STARTED_BY = ("person", "autopilot")
+
+
+def check_started_by(value: str) -> str:
+    """`value` when it is one of `STARTED_BY`; `ValueError` otherwise."""
+    if value not in STARTED_BY:
+        raise ValueError(f"started_by must be one of {', '.join(STARTED_BY)}, got {value!r}")
+    return value
+
 
 # # How many agent sessions one step starts. `Runner.run` makes exactly one `stream` call, so
 # # this describes the code below rather than being a setting; Settings shows it per stage.
@@ -766,7 +775,7 @@ class Runner:
                     # its own. Dropping all text before the last call lost the head of any artifact written in
                     # pieces; `_write_artifact` drops what comes before the artifact's last title line instead.
                     #
-                    # Not forwarded: `coscc/web/api.py` treats every kind that is not `chunk` as the terminal
+                    # Not forwarded: `coscc/api.py` treats every kind that is not `chunk` as the terminal
                     # `done` row, so a third kind would arrive at the client as a malformed `done`.
                     pieces.append("")
                     if payload == submit_mod.NAME:

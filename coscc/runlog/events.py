@@ -33,7 +33,10 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
-from coscc.runlog.journal import TOKEN_FIELDS
+from coscc.agent.sessions import cumulative
+from coscc.data import Data
+from coscc.data import now as iso_now
+from coscc.runlog.journal import TOKEN_FIELDS, Journal
 
 # Characters a text field keeps, and an `input` keeps once it is JSON. Chosen, not measured.
 FIELD_MAX = 64_000
@@ -106,9 +109,7 @@ def _cut(event: dict[str, Any]) -> dict[str, Any]:
 
 def _result_fields(message: Any) -> dict[str, Any]:
     """`result`: turns, cost, the four token fields `journal.TOKEN_FIELDS` adds, time."""
-    from coscc.agent.sessions import _cumulative  # the one reading of `model_usage`
-
-    total = _cumulative(message)
+    total = cumulative(message)
     return {
         "num_turns": int(getattr(message, "num_turns", 0) or 0),
         "cost_usd": getattr(message, "total_cost_usd", None),
@@ -467,8 +468,6 @@ async def purge(
     `keep_bytes`. Index rows stay, with `purged_at`. One `events-purge` row in the run log when
     anything went, and only when there is a run log.
     """
-    from coscc.data import now as iso_now
-
     at = now_ms() if now is None else int(now)
     older_than = at - keep_days * 24 * 3600 * 1000
     runs, freed = await asyncio.to_thread(data.step_events_purge, older_than, keep_bytes, iso_now())
@@ -484,9 +483,6 @@ def purge_on_start(config: Any) -> tuple[int, int]:
     """What `coscc/run.py` calls before the server is built: a `Data` and a `Journal` built from
     `config` the way `Service` builds them, nothing else of the app.
     """
-    from coscc.data import Data
-    from coscc.runlog.journal import Journal
-
     data = Data(config.data_dir)
     journal = Journal(config.working_dir, data) if config.working_dir else None
     return asyncio.run(purge(data, journal))

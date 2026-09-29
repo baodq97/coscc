@@ -38,9 +38,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx  # noqa: E402
 
-from coscc.web import auth
+from coscc import auth
 from coscc.data import Data  # noqa: E402
-from coscc.runlog import notices  # noqa: E402
+from coscc.service import notices  # noqa: E402
 from coscc.config import from_env  # noqa: E402
 from coscc.runlog.journal import Journal  # noqa: E402
 from coscc.units.meta import UnitMeta  # noqa: E402

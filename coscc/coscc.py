@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc import screens
-from coscc.web import place, ui
-from coscc.state import API, StudioState
+from coscc import screens, ui
+from coscc.auth import Guard
+from coscc.data import Data
+from coscc.state import API, StudioState, place
 
 # The theme lives in `rxconfig.py` (`App(theme=...)` is deprecated).
 app = rx.App(api_transformer=API, style=ui.GLOBAL_STYLE)
@@ -32,7 +33,4 @@ def served():
 
     It wraps `app()` because that position sees every scope, CORS preflight included.
     """
-    from coscc.web.auth import Guard
-    from coscc.data import Data
-
     return Guard(app(), Data(API.state.config.data_dir))

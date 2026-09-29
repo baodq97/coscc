@@ -53,7 +53,7 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
     nothing and runs nothing."""
 
     def test_every_prose_stage_holding_a_result_gains_submit_and_nothing_else(self):
-        from coscc.agent import submit
+        from coscc.units import submit
 
         self.assertEqual(set(policy.SUBMITTING), {*submit.STAGE_RESULT, submit.ROUND})
         self.assertEqual(policy.SUBMIT_TOOL, submit.NAME)
@@ -79,7 +79,7 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
     def test_gebo_and_the_estimate_gain_submit_and_nothing_else(self):
         """The sessions that are no stage, each with its old grant but `submits` and at least
         `SUBMIT_TURNS` turns."""
-        from coscc.agent import submit
+        from coscc.units import submit
 
         self.assertEqual(set(policy.SUBMITTING_SESSIONS), set(submit.SESSIONS))
         for kind in policy.SUBMITTING_SESSIONS:
@@ -92,7 +92,7 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
     def test_the_tool_touches_no_disk_and_runs_nothing(self):
         import ast
 
-        from coscc.agent import submit
+        from coscc.units import submit
 
         tree = ast.parse(Path(submit.__file__).read_text(encoding="utf-8"))
         imported = {

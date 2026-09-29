@@ -13,7 +13,8 @@ import unittest
 import reflex as rx
 
 from coscc import screens
-from coscc.web import present
+from coscc.state import present
+from coscc.service.common import OUTCOME_LABEL
 from coscc.screens.board import _guide_panel
 from coscc.screens.board import _unit_card
 from coscc.screens.overview import _empty_board
@@ -72,7 +73,7 @@ class ThePage(unittest.TestCase):
     def test_the_label_tables_are_english(self):
         for table in (
             present.RELATION_LABEL,
-            present.OUTCOME_LABEL,
+            OUTCOME_LABEL,
             present.RESULT_LABEL,
             present.MEASURER_LABEL,
         ):

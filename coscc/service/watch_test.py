@@ -12,7 +12,7 @@ from coscc.config import Config
 from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.service.service_test import create_sync
-from coscc.agent.submit_test import submits as _submits
+from coscc.units.submit_test import submits as _submits
 
 
 class AStepCanBeWatched(unittest.TestCase):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc.web import studio as s
+from coscc.screens import studio as s
 from coscc.service.common import CONSEQUENCE
 from coscc.state import Card, GuideItem
 from coscc.screens.common import P, _MONO, _RUNIC, _details

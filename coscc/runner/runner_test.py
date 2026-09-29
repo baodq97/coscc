@@ -23,7 +23,7 @@ from coscc.runner import RunError, Runner, compose_prompt
 from coscc.runner.prompt import answers_section
 from coscc.runner.prompt import build_prompt
 from coscc.runner.prompt import skill_for
-from coscc.agent.submit_test import a_head, submits as _submits
+from coscc.units.submit_test import a_head, submits as _submits
 
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 SESSION_STAGES = [s for s in STAGES if s not in ("pr", "ship")]
@@ -658,7 +658,7 @@ class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
             self.assertIn("Reading the board reader and the page handlers.", chunks)
 
     def test_the_tool_signal_is_not_forwarded_as_a_row_of_its_own(self):
-        """`coscc/web/api.py` reads every kind that is not `chunk` as the terminal `done`."""
+        """`coscc/api.py` reads every kind that is not `chunk` as the terminal `done`."""
         with tempfile.TemporaryDirectory() as d:
             items, _ = self.go(d)
             self.assertEqual([k for k, _ in items if k not in ("chunk", "done")], [])

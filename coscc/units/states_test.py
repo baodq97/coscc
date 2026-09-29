@@ -19,6 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from coscc.agent import harness
 from coscc.units import states
 from coscc.units.states import BadMachine
 
@@ -90,9 +91,9 @@ class TheDefaultIsTheSetInUseToday(unittest.TestCase):
     def test_the_definition_lives_inside_the_package_so_a_wheel_can_carry_it(self):
         # `coscc/agent/harness.py` had to learn this lesson at the cost of a unit. A default
         # sitting outside `coscc/` is a default a wheel does not ship.
-        self.assertTrue(states.DEFAULT_PATH.is_file(), states.DEFAULT_PATH)
+        self.assertTrue(harness.STATES_PATH.is_file(), harness.STATES_PATH)
         package = Path(__file__).resolve().parents[1]
-        self.assertEqual(states.DEFAULT_PATH.parent, package / "units")
+        self.assertEqual(harness.STATES_PATH.parent, package / "units")
         self.assertEqual(package.name, "coscc")
 
 
@@ -181,7 +182,7 @@ class ALaneThatWouldDisableAGuardIsRefused(unittest.TestCase):
     """The config chooses a guard for each transition and cannot leave one out."""
 
     def packaged(self) -> dict:
-        return json.loads(states.LANES_PATH.read_text(encoding="utf-8"))
+        return json.loads(harness.LANES_PATH.read_text(encoding="utf-8"))
 
     def _bad(self, raw) -> str:
         with self.assertRaises(states.BadLanes) as caught:

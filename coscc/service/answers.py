@@ -13,7 +13,7 @@ from typing import Any
 
 from coscc.units import autopilot, backlog
 from coscc.units import board as board_reader
-from coscc.git import gitops
+from coscc.git import gh, gitops
 from coscc.units import hold as hold_rules
 from coscc.units import more_rounds as more_rounds_rules
 from coscc.agent import agents, policy
@@ -25,11 +25,11 @@ from coscc.data import Data
 from coscc.units.meta import DELEGATION, MetaError, UnitMeta
 from coscc.runlog.journal import BadRecord, Journal
 from coscc.data import Busy
-from coscc.agent import submit
+from coscc.units import submit
 from coscc.units import transitions
 from coscc.agent import steps as steps_mod
 from coscc import units
-from coscc.git import worktrees
+from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
 from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
 
@@ -187,7 +187,7 @@ class AnswersMixin:
                     "skipped",
                     f"pr.md is {text.get('status') or 'without a status'}, not accepted",
                 )
-            elif not url or not prcomment.PR_URL_RE.match(url):
+            elif not url or not gh.PR_URL_RE.match(url):
                 outcome, detail = "skipped", f"pr.md names no pull request URL: {url!r}"
             else:
                 where = str(Path(cwd).expanduser().resolve())

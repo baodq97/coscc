@@ -10,7 +10,7 @@ import reflex as rx
 
 from coscc.service.common import Invalid
 from coscc.state.views import ChildRow, IdeaRow, child_rows, idea_rows
-from coscc.web import place
+from coscc.state import place
 
 # The first item of *Depends on*: a select cannot hold an empty value, so a chosen
 # dependency could not otherwise be taken back.

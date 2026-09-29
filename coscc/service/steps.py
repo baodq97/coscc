@@ -17,7 +17,7 @@ from coscc.units import board as board_reader
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc.agent import agents, harness, modeltrial
-from coscc.agent import submit as submit_mod
+from coscc.units import submit as submit_mod
 from coscc.github import integrate, prmachine
 from coscc.units import planmap, retake
 from coscc.units.board import Unavailable
@@ -26,13 +26,13 @@ from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord, Journal
 from coscc.data import Busy
 from coscc.agent.policy import grant_for
-from coscc.runner import RunError, Runner
+from coscc.runner import RunError, Runner, check_started_by
 from coscc.runner.prompt import answers_section
 from coscc.runner.attempt import describe_attempt
 from coscc.agent import steps as steps_mod
 from coscc.agent.sessions import Suspended
 from coscc import units
-from coscc.git import worktrees
+from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service.common import (
     BRANCH_REMOTE,
@@ -308,7 +308,7 @@ class StepsMixin:
         every state.
         """
         try:
-            integrate.check_started_by(started_by)
+            check_started_by(started_by)
         except ValueError as e:
             raise Invalid(str(e)) from e
         self._workspace_or_refuse(cwd)
@@ -1081,7 +1081,7 @@ class StepsMixin:
         `RERUN_NOTE_MAX`; an empty note is not refused.
         """
         try:
-            integrate.check_started_by(started_by)
+            check_started_by(started_by)
         except ValueError as e:
             raise Invalid(str(e)) from e
         self._workspace_or_refuse(cwd)

@@ -28,7 +28,7 @@ Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.
 checkout** the bundle hardcodes its own address, so none can move to a spare port without a
 bundle built for it: stop the app first, or build for another port, and never run two of
 them at the same time. A wheel installed by `install.sh` behaves the other
-way — `coscc/web/frontend.py` rewrites the address at startup, because a packaged install has
+way — `coscc/frontend.py` rewrites the address at startup, because a packaged install has
 no Node to rebuild with. Both sentences are true; which one applies depends on which of the
 two shapes you are looking at, and `coscc/run.py` is where they part.
 

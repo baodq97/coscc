@@ -15,7 +15,8 @@ from unittest import mock
 
 import coscc
 from coscc import units
-from coscc.git import fetches, worktrees
+from coscc.git import fetches
+from coscc.units import worktrees
 from coscc.config import PROTECTED_DB_VAR
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit
@@ -490,7 +491,7 @@ class Removing(Repo):
     def remove(self, unit=None, gh=None):
         return asyncio.run(
             worktrees.remove_if_finished(
-                self.repo, "0001_a", unit or self.unit, self.data, gh=gh or self.gh()
+                self.repo, "0001_a", unit or self.unit, self.data, run=gh or self.gh()
             )
         )
 

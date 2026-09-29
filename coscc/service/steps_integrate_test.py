@@ -23,7 +23,7 @@ from coscc.git import fetches
 from coscc.config import Config
 from coscc.service import Service
 from coscc.service.common import Invalid
-from coscc.agent.submit_test import submits as _submits
+from coscc.units.submit_test import submits as _submits
 from coscc.service.steps import CI_REFRESH
 
 SLUG = "proof-of-gebo"
