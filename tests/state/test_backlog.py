@@ -164,7 +164,7 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
                     studio.cwd = studio._read_cwd = "/a"
                     studio.screen = "sessions"
                     studio._loaded_sid = "s1"
-                await arrive("/sessions?ws=b", settle=0.05)
+                await arrive("/sessions?ws=b")
                 async with manager.modify_state(_key(token)) as root:
                     studio = await root.get_state(page.StudioState)
                     return [(u.id, u.shortlist_rank) for u in studio.cards], list(

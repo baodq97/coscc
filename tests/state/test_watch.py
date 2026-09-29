@@ -63,7 +63,6 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
             async with processor:
                 await _somewhere(manager, token)
                 await fire("open_watch", run="r", title="0009_x · impl", unit="0009_x")
-                await asyncio.sleep(0.3)
                 studio = await _studio(manager, token)
                 seqs = [e.seq for e in studio.watch_events]
                 bodies = max(len(e.body) for e in studio.watch_events)

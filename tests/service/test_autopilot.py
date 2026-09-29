@@ -129,12 +129,19 @@ class _Base(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.01)
         self.fail(f"timed out waiting for {what}")
 
+    async def stopped(self) -> None:
+        """The loop's first pass has found a stop, and everything it started has ended."""
+        await self.until(lambda: self.service.autopilot.stops.get(self.key), "a stop")
+        await self.settled()
+
     async def settled(self) -> None:
         """Every pass, launch and step the autopilot started has ended."""
 
         async def busy():
             return (
                 self.service.holds.marks
+                or self.service.holds.running
+                or self.service.holds.finishing
                 or any(
                     not t.done()
                     for _, t in (self.service.autopilot.runs.get(self.key) or {}).values()
@@ -145,9 +152,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 
         for _ in range(3000):
             if not await busy():
-                await asyncio.sleep(0.05)
-                if not await busy():
-                    return
+                return
             await asyncio.sleep(0.01)
         self.fail("the autopilot did not settle")
 
@@ -190,7 +195,7 @@ class OnTheRealLoop(_Base):
         unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
         self.listed(unit)
         self.service.autopilot.set_setting(self.ws, "autopilot", True)
-        await self.settled()
+        await self.stopped()
         self.assertEqual(self.starts(), [])
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
         self.assertEqual((stop["unit"], stop["kind"]), (unit, "a"))
@@ -222,7 +227,7 @@ class OnTheRealLoop(_Base):
         )
         self.listed(unit)
         self.service.autopilot.set_setting(self.ws, "autopilot", True)
-        await self.settled()
+        await self.stopped()
         self.assertEqual(self.starts(), [])
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
         self.assertEqual(stop["kind"], "e")
@@ -233,7 +238,7 @@ class OnTheRealLoop(_Base):
         self.listed(unit)
         self.service.autopilot.set_setting(self.ws, "daily_cap_usd", 1.0)
         self.service.autopilot.set_setting(self.ws, "autopilot", True)
-        await self.settled()
+        await self.stopped()
         self.assertEqual(self.starts(), [])
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
         self.assertEqual((stop["unit"], stop["kind"]), (unit, "cap"))
@@ -309,7 +314,7 @@ class OnTheRealLoop(_Base):
         unit = await self.unit("rerun", "Status: draft.\n\n## Open questions\n\n1. Một?")
         self.listed(unit)
         self.service.autopilot.set_setting(self.ws, "autopilot", True)
-        await self.settled()
+        await self.stopped()
         self.assertEqual(self.starts(), [])
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
         self.assertEqual(stop["kind"], "a")
@@ -371,7 +376,7 @@ class OnTheRealLoop(_Base):
         unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
         self.listed(unit)
         self.service.autopilot.set_setting(self.ws, "autopilot", True)
-        await self.settled()
+        await self.stopped()
         self.assertEqual(self.starts(), [])
         self.assertEqual(
             Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-pick"),
@@ -484,6 +489,8 @@ class Scripted(_Base):
         self.units: dict[str, dict] = {}
         self.nexts: dict[str, dict] = {}
         self.launched: list[tuple[str, str, str]] = []
+        # The launch tasks that reached the step's stand-in.
+        self.began: set[asyncio.Task] = set()
         self.asked: list[str] = []
         self.shortlisted = False
         self.release = asyncio.Event()
@@ -501,6 +508,7 @@ class Scripted(_Base):
                     self.key, unit, "integrate" if kind == "integrate" else "step", stage
                 )
                 self.launched.append((unit, stage, started_by))
+                self.began.add(asyncio.current_task())
                 try:
                     yield ("chunk", "x")
                     await self.release.wait()
@@ -554,7 +562,17 @@ class Scripted(_Base):
         if not self.shortlisted:
             self.listed()
         await self.service.autopilot.run_pass(self.key)
-        await asyncio.sleep(0.05)
+        await self.started()
+
+    async def started(self):
+        """Every launch of the last pass has started its step, or ended without one."""
+        await self.until(
+            lambda: all(
+                t in self.began or t.done()
+                for _, t in (self.service.autopilot.runs.get(self.key) or {}).values()
+            ),
+            "the launches to start",
+        )
 
     def picks(self) -> list[dict]:
         return Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-pick")
@@ -610,7 +628,7 @@ class Scripted(_Base):
         self.service.autopilot.set_setting(self.ws, "autopilot", False)
         go_on.set()
         await passing
-        await asyncio.sleep(0.05)
+        await self.started()
         self.assertEqual((self.launched, self.stops()), ([], {}))
 
     async def test_turned_off_before_a_launch_runs_starts_nothing(self):
@@ -618,7 +636,7 @@ class Scripted(_Base):
         self.listed()
         await self.service.autopilot.run_pass(self.key)
         self.service.autopilot.set_setting(self.ws, "autopilot", False)
-        await asyncio.sleep(0.05)
+        await self.started()
         self.assertEqual(self.launched, [])
 
     async def test_one_ship_at_a_time_and_only_when_allowed(self):
@@ -1002,6 +1020,7 @@ class Scripted(_Base):
 
         async def slow(cwd, unit, started_by="person"):
             # `integrate` fetches and asks `gh` before it takes its mark.
+            self.began.add(asyncio.current_task())
             await reading.wait()
             yield ("done", {})
 
@@ -1127,11 +1146,11 @@ class Scripted(_Base):
         self.add("0001_a", "spec")
         for _ in range(2):
             await self.service.autopilot.run_pass(self.key)
-            await asyncio.sleep(0.05)
+            await self.started()
         self.assertEqual(self.logged(), [("", "shortlist")])
         self.listed()
         await self.service.autopilot.run_pass(self.key)
-        await asyncio.sleep(0.05)
+        await self.started()
         self.assertEqual(self.logged(), [("", "shortlist"), ("", "")])
         [row] = [
             r
@@ -1190,14 +1209,14 @@ class Scripted(_Base):
     async def test_no_shortlist_starts_nothing_and_says_so(self):
         self.add("0001_a", "spec")
         await self.service.autopilot.run_pass(self.key)
-        await asyncio.sleep(0.05)
+        await self.started()
         self.assertEqual((self.launched, self.asked, self.stops()), ([], [], {"": "shortlist"}))
         self.assertEqual(
             self.service.autopilot.stops[self.key][""]["reason"], autopilot.NO_SHORTLIST
         )
         self.listed()
         await self.service.autopilot.run_pass(self.key)
-        await asyncio.sleep(0.05)
+        await self.started()
         self.assertEqual((self.launched, self.stops()), ([("0001_a", "spec", "autopilot")], {}))
 
     async def test_an_empty_shortlist_is_none(self):

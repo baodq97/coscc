@@ -219,7 +219,11 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         s = self.follow(beat=60)
         await self.lines(s, 1)
         task = asyncio.ensure_future(s.__anext__())
-        await asyncio.sleep(0.05)
+        # The stream has hung its ticket on the bell and waits.
+        for _ in range(500):
+            if len(BELL) == before + 1:
+                break
+            await asyncio.sleep(0.01)
         self.assertEqual(len(BELL), before + 1)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
