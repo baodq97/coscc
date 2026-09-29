@@ -395,12 +395,13 @@ class StepsMixin:
 
         lock = self._integrate_locks.setdefault(key, asyncio.Lock())
         async with lock:
-            busy = self._busy(key, unit)
+            busy = self.holds.busy(key, unit)
             cut = None
             if not busy and tree is not None:
                 try:
                     here = any(
-                        e["workspace"] == key and e["unit"] == unit for e in self._running.values()
+                        e["workspace"] == key and e["unit"] == unit
+                        for e in self.holds.running.values()
                     )
                     cut = integrate.cut_integration(journal.records(key, unit=unit), unit, here)
                 except Busy:
@@ -502,12 +503,12 @@ class StepsMixin:
                 # An Apply waits for a mechanical integration, so none begins once
                 # one is pressed.
                 self._refuse_mechanical_while_updating()
-            mark = self._take(key, unit, "integrate")
+            mark = self.holds.take(key, unit, "integrate")
             # Commits never pushed go to Gebo whatever the state.
             completing = how in integrate.COMPLETION
             # Gebo shows as running under its agent name; a mechanical rebase has no agent and
             # shows as rebasing. The same condition as below.
-            rid = self._mark_running(
+            rid = self.holds.mark_running(
                 key, unit, "integrate", "rebase" if state == "behind" and not completing else "gebo"
             )
         try:
@@ -529,7 +530,7 @@ class StepsMixin:
                     yield ("done", {"integration": rec})
                     return
                 # GitHub refused the rebase, and the press agreed to Gebo for that. The board shows Gebo from here on, not a rebase.
-                self._running[rid]["kind"] = "gebo"
+                self.holds.running[rid]["kind"] = "gebo"
                 # An update waits for a mechanical integration, and a Gebo session is
                 # paused instead, so one waiting on this can go ahead.
                 self.updater.job_ended()
@@ -554,8 +555,8 @@ class StepsMixin:
             ):
                 yield item
         finally:
-            self._release(key, unit, mark)
-            self._running.pop(rid, None)
+            self.holds.release(key, unit, mark)
+            self.holds.running.pop(rid, None)
             self.updater.job_ended()
             self._autopilot_nudge(key)
 
@@ -1111,7 +1112,7 @@ class StepsMixin:
         # to return, on every road out: a refusal, an exception, or a cancel when the client
         # goes away.
         key = self.ws.key(cwd)
-        mark = self._take(key, unit, "step", stage)
+        mark = self.holds.take(key, unit, "step", stage)
         handed = False
         running: steps_mod.Running | None = None
         rid: str | None = None
@@ -1410,7 +1411,7 @@ class StepsMixin:
             # after it however it ends -- in `_drive`, so a client that drops the stream does
             # not decide when.
             scratch = units.spike_dir(cwd, unit, self.config.data_dir) if stage == "spike" else None
-            rid = self._mark_running(key, unit, stage, "step")
+            rid = self.holds.mark_running(key, unit, stage, "step")
             queue: asyncio.Queue = asyncio.Queue()
             running.listeners.add(queue)
             # The step's `run` and recorder, from here to the task with no `await`
@@ -1427,7 +1428,7 @@ class StepsMixin:
             running.run = run
             running.handle.recorder = recorder
             self._recorders[run] = recorder
-            self._running[rid]["run"] = run
+            self.holds.running[rid]["run"] = run
             running.task = asyncio.create_task(
                 self._drive(
                     running,
@@ -1499,12 +1500,12 @@ class StepsMixin:
             handed = True
         finally:
             if not handed:
-                # Past `claim`, the listing and the `_running` entry
+                # Past `claim`, the listing and the `holds.running` entry
                 # are this frame's to return too, or `/api/board/steps` keeps a step that
                 # never started and the next request gets past the mark to `claim` again.
-                self._release(key, unit, mark)
+                self.holds.release(key, unit, mark)
                 if rid is not None:
-                    self._running.pop(rid, None)
+                    self.holds.running.pop(rid, None)
                 if running is not None:
                     self.steps.release(running)
                     self.updater.job_ended()
@@ -1592,10 +1593,10 @@ class StepsMixin:
         That `finally` is the only thing that frees the mark once the step is handed over, so
         a mark still held when the task is done means the body never ran: give back what it
         would have, and tell the reader instead of leaving it waiting."""
-        if self._active.get((running.workspace, running.unit)) is not mark:
+        if self.holds.marks.get((running.workspace, running.unit)) is not mark:
             return
-        self._release(running.workspace, running.unit, mark)
-        self._running.pop(rid, None)
+        self.holds.release(running.workspace, running.unit, mark)
+        self.holds.running.pop(rid, None)
         # Never started, so it wrote nothing and has nothing to say.
         self._recorders.pop(running.run, None)
         self.steps.release(running)
@@ -1714,13 +1715,13 @@ class StepsMixin:
                         ),
                     )
                 )
-            self._release(running.workspace, running.unit, mark)
-            entry = self._running.pop(rid, None)
+            self.holds.release(running.workspace, running.unit, mark)
+            entry = self.holds.running.pop(rid, None)
             task = asyncio.current_task()
             if entry is not None and task is not None:
                 # Off the board from here, and until this task
                 # ends -- its recorder, `_after_end` -- an Apply's settle still waits for it.
-                self._finishing[rid] = (entry, task)
+                self.holds.finishing[rid] = (entry, task)
             try:
                 if scratch is not None and not suspended:
                     shutil.rmtree(scratch, ignore_errors=True)
@@ -1745,7 +1746,7 @@ class StepsMixin:
                     # neither the reader's `done` nor the unit.
                     await self._after_end(cwd, unit, stage, running.workspace)
             finally:
-                self._finishing.pop(rid, None)
+                self.holds.finishing.pop(rid, None)
 
     def _pr_machine(self) -> prmachine.Machine:
         """The PR machine over the same history and run log as every other transition."""
@@ -1924,7 +1925,7 @@ class StepsMixin:
         step cancelled before its first turn."""
         # An integration is listed beside the steps but has no Stop; say what
         # holds the unit rather than that nothing runs.
-        mark = self._active.get((key, unit))
+        mark = self.holds.marks.get((key, unit))
         if mark is not None and mark.kind == "integrate":
             raise Invalid(steps_mod.describe(unit, mark))
         try:
@@ -1939,7 +1940,7 @@ class StepsMixin:
     def running_steps(self, cwd: str) -> list[dict[str, Any]]:
         """The board steps running now in this workspace. This process only.
 
-        Also every integration, from its `_running` entry to the `finally` that
+        Also every integration, from its `holds.running` entry to the `finally` that
         pops it, with `kind: "integration"` and no `run`; a step is `kind: "step"`. A restart
         that asks this sees an integration it would cut."""
         self.ws.check(cwd)
@@ -1954,7 +1955,7 @@ class StepsMixin:
                 "run": None,
                 "kind": "integration",
             }
-            for e in self._running.values()
+            for e in self.holds.running.values()
             if e["workspace"] == key and e["stage"] == "integrate"
         ]
         return sorted(rows, key=lambda r: r["started_at"])

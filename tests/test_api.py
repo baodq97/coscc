@@ -467,14 +467,14 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def test_an_integration_is_on_the_running_list_until_it_ends(self):
         key = self.service.ws.key("/tmp")
-        rid = self.service._mark_running(key, "0001_a", "integrate", "gebo")
+        rid = self.service.holds.mark_running(key, "0001_a", "integrate", "gebo")
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual(
             (row["unit"], row["stage"], row["stopping"], row["run"], row["kind"]),
             ("0001_a", "integrate", False, None, "integration"),
         )
-        self.assertEqual(row["started_at"], self.service._running[rid]["started"])
-        self.service._running.pop(rid)
+        self.assertEqual(row["started_at"], self.service.holds.running[rid]["started"])
+        self.service.holds.running.pop(rid)
         self.assertEqual(
             (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), []
         )
@@ -1546,7 +1546,7 @@ class WhatIsRunningOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_both_keys_and_no_session_id_prompt_or_path(self):
         service = self.app.state.service
         key = service.ws.key(self.cwd)
-        service._mark_running(key, self.unit, "impl", "step")
+        service.holds.mark_running(key, self.unit, "impl", "step")
         service.ws.journal().started(
             key,
             "0099_other",

@@ -435,17 +435,17 @@ class HoldThroughTheService(Repo):
         self.assertEqual(len(self.records()), 1)
 
     def test_a_running_step_refuses_and_keeps_its_mark(self):
-        mark = self.service._take(self.key, self.unit, "step", "spec")
+        mark = self.service.holds.take(self.key, self.unit, "step", "spec")
         mark.phase = "running"
         before = self.intent()
         with self.assertRaises(Invalid) as said:
             self.move("paused")
         self.assertIn("its Stop button on the Board (0034)", str(said.exception))
         self.assertEqual(self.intent(), before)
-        self.assertIs(self.service._active.get((self.key, self.unit)), mark)
-        self.service._release(self.key, self.unit, mark)
+        self.assertIs(self.service.holds.marks.get((self.key, self.unit)), mark)
+        self.service.holds.release(self.key, self.unit, mark)
         self.move("paused")
-        self.assertEqual(self.service._active, {})
+        self.assertEqual(self.service.holds.marks, {})
 
     def test_a_section_after_answers_no_longer_refuses_a_hold(self):
         # It is a row now, and the file is not read for it.

@@ -701,8 +701,8 @@ class AnswersMixin:
             raise Invalid("no line of an answer may start with #")
         # A stage outside the prose ones writes its artifact with its own tools whenever it
         # likes, so the questions may be renumbered while it runs. Checked with no `await`
-        # before the write, like `_take`.
-        mark = self._active.get((self.ws.key(cwd), unit))
+        # before the write, like `Holds.take`.
+        mark = self.holds.marks.get((self.ws.key(cwd), unit))
         if mark is not None and mark.kind == "step" and not policy.is_prose_stage(mark.stage):
             row = next((r for r in found.get("stages") or [] if r.get("stage") == mark.stage), None)
             if row is not None and row.get("file") == artifact:
@@ -1037,8 +1037,8 @@ class AnswersMixin:
         # No `await` between the check and the take: the same mark `run_step` and
         # `integrate` take, so neither starts while this writes. When the unit is already
         # held, the board is still read, so a move refused for another reason says that one.
-        held = self._active.get((key, unit))
-        mark = self._take(key, unit, "hold") if held is None else None
+        held = self.holds.marks.get((key, unit))
+        mark = self.holds.take(key, unit, "hold") if held is None else None
         try:
             try:
                 data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
@@ -1091,7 +1091,7 @@ class AnswersMixin:
                 raise Invalid("the hold was not recorded" + (f" ({done})" if done else "")) from e
         finally:
             if mark is not None:
-                self._release(key, unit, mark)
+                self.holds.release(key, unit, mark)
         return {
             "unit": unit,
             "from": from_,
@@ -1118,8 +1118,8 @@ class AnswersMixin:
         directory = self.ws.unit_dir(cwd, unit)
         key = self.ws.key(cwd)
         # No `await` between the check and the take, as in `hold`.
-        held = self._active.get((key, unit))
-        mark = self._take(key, unit, "more-rounds") if held is None else None
+        held = self.holds.marks.get((key, unit))
+        mark = self.holds.take(key, unit, "more-rounds") if held is None else None
         try:
             try:
                 data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
@@ -1137,5 +1137,5 @@ class AnswersMixin:
             )
         finally:
             if mark is not None:
-                self._release(key, unit, mark)
+                self.holds.release(key, unit, mark)
         return {"unit": unit, "by": by, "date": today, "rounds": 1}

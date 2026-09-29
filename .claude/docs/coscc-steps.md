@@ -59,7 +59,7 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
   reading the run log's `start` and `end` rows each time — the cost of that on a large
   run log, and against `busy_timeout` with ten sessions appending, is unmeasured; a busy
   read comes back as a `note`, not an error. What is running is kept in one process's
-  memory (`Service._running`), like `_active` and `pull`: a step another copy of the app
+  memory (`Service.holds.running`), like `holds.marks` and `pull`: a step another copy of the app
   runs on the same working folder shows here as `ended, unknown` while it is still going,
   and a person may read that as dead and press run again. An `ended, unknown` row stops
   showing when the unit's next `start` is written or after 24 hours; nothing writes an

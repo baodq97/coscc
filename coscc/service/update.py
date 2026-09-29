@@ -96,7 +96,7 @@ class UpdateMixin:
         Gebo sessions, steps, estimates and chat are paused by `suspend_sessions`; what of
         them had no session open gets `settle_after_suspend`'s bounded wait."""
         jobs: list[dict[str, Any]] = []
-        for entry in self._running.values():
+        for entry in self.holds.running.values():
             if entry["stage"] == "integrate" and entry.get("kind") != "gebo":
                 jobs.append(
                     {
@@ -154,15 +154,15 @@ class UpdateMixin:
         the PR or syncing `pr.md` after its `end`, or a Gebo reading the PR's head after its
         session, had none. Each gets `within` seconds to finish (no new session may open
         meanwhile) and what still runs is returned, for the updater to name in a `cut` row
-        before `shutdown` cancels it. A step past its `_running` entry, writing its `questions`
+        before `shutdown` cancels it. A step past its `holds.running` entry, writing its `questions`
         or `ship` record, counts as `after-end` until its task ends.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + within
-        while (self._running or self._finishing) and loop.time() < deadline:
+        while (self.holds.running or self.holds.finishing) and loop.time() < deadline:
             await asyncio.sleep(SETTLE_POLL)
-        left = list(self._running.values())
-        left += [{**entry, "kind": "after-end"} for entry, _task in self._finishing.values()]
+        left = list(self.holds.running.values())
+        left += [{**entry, "kind": "after-end"} for entry, _task in self.holds.finishing.values()]
         return [
             {k: entry.get(k) for k in ("kind", "workspace", "unit", "stage", "started")}
             for entry in left
@@ -206,7 +206,9 @@ class UpdateMixin:
             t.cancel()
         tasks = [r.task for r in self.steps.all() if r.task is not None and not r.task.done()]
         # A step's task past `steps.release`, still in its `_after_end`.
-        tasks += [t for _entry, t in self._finishing.values() if not t.done() and t not in tasks]
+        tasks += [
+            t for _entry, t in self.holds.finishing.values() if not t.done() and t not in tasks
+        ]
         for t in tasks:
             t.cancel()
         if tasks:

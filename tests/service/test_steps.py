@@ -653,25 +653,25 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
             _, payload = self._run()[-1]
         self.assertEqual(payload["outcome"], "done")
         self.assertEqual([r["kind"] for r in self.records()][-2:], ["end", "transition"])
-        self.assertEqual(self.service._active, {})
+        self.assertEqual(self.service.holds.marks, {})
 
     async def _ended(self, after_end) -> asyncio.Task:
         """A step run to its `done` with `after_end` as its `_after_end`, returned once its
-        task is past `_running` and in `_finishing`."""
+        task is past `holds.running` and in `holds.finishing`."""
         self.service._after_end = after_end
         stream = self.service.run_step(str(self.repo), self.unit, "spec")
         await stream.__anext__()
         task = self.service.steps.get(self.key, self.unit).task
         [_ async for _ in stream]
         for _ in range(500):
-            if self.service._finishing:
+            if self.service.holds.finishing:
                 break
             await asyncio.sleep(0.01)
-        self.assertEqual(self.service._running, {})
+        self.assertEqual(self.service.holds.running, {})
         return task
 
     def test_an_apply_waits_for_the_after_end_of_a_step_that_just_ended(self):
-        # `_drive` gives back the unit and its `_running` entry before `_after_end`; the settle
+        # `_drive` gives back the unit and its `holds.running` entry before `_after_end`; the settle
         # still waits, and the `questions` row is written.
         real = self.service._after_end
 
@@ -695,7 +695,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.assertEqual(
             [r["kind"] for r in self.records()][-3:], ["end", "transition", "questions"]
         )
-        self.assertEqual(self.service._finishing, {})
+        self.assertEqual(self.service.holds.finishing, {})
 
     def test_an_after_end_that_outlives_the_settle_is_named_and_cancelled(self):
         async def go():
@@ -712,7 +712,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
             [(j["kind"], j["unit"], j["stage"]) for j in left], [("after-end", self.unit, "spec")]
         )
         self.assertTrue(task.cancelled())
-        self.assertEqual(self.service._finishing, {})
+        self.assertEqual(self.service.holds.finishing, {})
 
 
 class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
@@ -2713,7 +2713,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         self.assertIn("exited 2", rec["detail"])
         self.assertIn("already in use", rec["detail"])
         # The mark is given back, and nothing was appended to the unit.
-        self.assertEqual(self.service._active, {})
+        self.assertEqual(self.service.holds.marks, {})
         self.assertEqual({p.name: p.read_bytes() for p in self.dir.iterdir()}, files)
         # One sentence, and no commit, path or log line in it (S1, S3).
         self.assertNotIn("/", said)

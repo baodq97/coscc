@@ -25,6 +25,7 @@ from coscc.service.agents import (
     AgentsMixin,
 )
 from coscc.service.workspaces import Workspaces
+from coscc.service.common import Holds
 from coscc.service.watch import (
     WatchMixin,
 )
@@ -90,23 +91,10 @@ class Service(
     _retakes: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     # Per workspace, created on first use.
     _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
-    # `(journal key, unit)` for every step, integration or hold holding its unit now, each
-    # with a `Mark` (what, since when) taken before the step's first `await` (`_take`); plus
-    # one lock per workspace held across an integration's check-and-mark.
-    _active: dict[tuple[str, str], steps_mod.Mark] = field(
-        default_factory=dict, init=False, repr=False
-    )
+    # One lock per workspace held across an integration's check-and-mark.
     _integrate_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     # Journal keys with a release press running now, checked and marked with no `await` between.
     _releasing: set[str] = field(default_factory=set, init=False, repr=False)
-    # What is running now, for the board to show, by an id private to this process.
-    # Display only: `_active` still does the refusing.
-    _running: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
-    # A step's `_after_end`, run after its `_running` entry and mark are gone. Not shown on
-    # the board; an Apply's settle waits for it and `shutdown` cancels it.
-    _finishing: dict[str, tuple[dict[str, Any], asyncio.Task]] = field(
-        default_factory=dict, init=False, repr=False
-    )
     # By `(journal key, unit)`: the last answer of `integrate.required_checks`,
     # `{head, checks | error, at}`, and the one background ask running for it. Never waited
     # on by a board read.
@@ -145,6 +133,8 @@ class Service(
     def __post_init__(self) -> None:
         # Which workspaces there are, and where each keeps its units.
         self.ws = Workspaces(self.config, self.sessions)
+        # What holds each unit now, and what the board lists as running.
+        self.holds = Holds()
         # One question, asked in two places. See `Sessions.membership`.
         self.sessions.membership = self.ws.is_member
         # Told of every step, integration and chat turn that ends.

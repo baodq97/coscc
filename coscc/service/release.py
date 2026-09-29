@@ -241,7 +241,7 @@ class ReleaseMixin:
             except BadRecord, Busy:
                 return rec
 
-        # Check-and-mark with no `await` between, as `_take` does.
+        # Check-and-mark with no `await` between, as `Holds.take` does.
         if key in self._releasing:
             reason = release.refusal(
                 active=True,

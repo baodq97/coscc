@@ -257,7 +257,7 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         refused = await self.post_run("plan")
         self.assertEqual(refused.status_code, 400)
         self.assertNotIn("is busy:", refused.json()["error"])
-        self.assertEqual(self.service._active, {})
+        self.assertEqual(self.service.holds.marks, {})
         self.fake.release.set()
         self.assertEqual((await self.post_run("spec")).status_code, 200)
 
@@ -293,7 +293,7 @@ class TheMarkIsAlwaysReturned(_OneUnit):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-        self.assertEqual(self.service._active, {})
+        self.assertEqual(self.service.holds.marks, {})
         self.assertEqual(await self.listed(), [])
 
     async def test_after_an_exception_before_the_step_starts(self):
@@ -304,10 +304,10 @@ class TheMarkIsAlwaysReturned(_OneUnit):
             with self.assertRaises(RuntimeError):
                 async for _ in self.service.run_step(self.ws, self.unit, "spec"):
                     pass
-        self.assertEqual(self.service._active, {})
+        self.assertEqual(self.service.holds.marks, {})
 
     async def test_after_an_exception_between_the_listing_and_the_hand_over(self):
-        """Past `claim`, the listing and the `_running` entry go back too."""
+        """Past `claim`, the listing and the `holds.running` entry go back too."""
 
         def broken(base):
             raise RuntimeError("stand-in: describing the base broke")
@@ -316,8 +316,8 @@ class TheMarkIsAlwaysReturned(_OneUnit):
             with self.assertRaises(RuntimeError):
                 async for _ in self.service.run_step(self.ws, self.unit, "spec"):
                     pass
-        self.assertEqual(self.service._active, {})
-        self.assertEqual(self.service._running, {})
+        self.assertEqual(self.service.holds.marks, {})
+        self.assertEqual(self.service.holds.running, {})
         self.assertEqual(await self.listed(), [])
         task = await self.one_running()
         self.fake.release.set()
@@ -350,8 +350,8 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         self.assertEqual(len(stops), 1)
         self.assertEqual((await stops[0])["stopped_by"], "Proof person")
         self.assertIn("before it began", str(said.exception))
-        self.assertEqual(self.service._active, {})
-        self.assertEqual(self.service._running, {})
+        self.assertEqual(self.service.holds.marks, {})
+        self.assertEqual(self.service.holds.running, {})
         self.assertEqual(await self.listed(), [])
         self.assertEqual(self.records("start"), [])
         task = await self.one_running()
@@ -365,13 +365,13 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         )
         self.assertEqual(stop.status_code, 200, stop.text)
         await task
-        self.assertEqual(self.service._active, {})
+        self.assertEqual(self.service.holds.marks, {})
         self.assertNotIn("is busy:", (await self.post_run("plan")).text)
 
         task = await self.one_running()
         self.fake.release.set()
         self.assertEqual((await task).status_code, 200)
-        self.assertEqual(self.service._active, {})
+        self.assertEqual(self.service.holds.marks, {})
         self.assertNotIn("is busy:", (await self.post_run("plan")).text)
 
 
@@ -383,12 +383,12 @@ class WhatElseHoldsTheUnit(_OneUnit):
             ("integrate", "it is being integrated since "),
         ):
             with self.subTest(kind=kind):
-                mark = self.service._take(self.key, self.unit, kind)
+                mark = self.service.holds.take(self.key, self.unit, kind)
                 refused = await self.post_run("spec")
                 self.assertEqual(refused.status_code, 400)
                 self.assertIn(said + mark.started_at, refused.json()["error"])
-                self.assertIs(self.service._active.get((self.key, self.unit)), mark)
-                self.service._release(self.key, self.unit, mark)
+                self.assertIs(self.service.holds.marks.get((self.key, self.unit)), mark)
+                self.service.holds.release(self.key, self.unit, mark)
         self.assertEqual(self.calls["gate"], 0)
 
 
