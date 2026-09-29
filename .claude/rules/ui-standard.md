@@ -54,18 +54,9 @@ paths:
 
 # The UI standard
 
-What a screen of this app may show, and how. It is read by the `impl` that changes a screen
-and by the `review` that looks at one; `write-spec`, `write-impl` and `write-review` point
-here by path and rule id and never restate a rule. The `paths:` list above is the whole list
-of files that count as the app's screens: Claude Code loads this file when a session touches
-one of them, and `.claude/scripts/cos.mjs` reads the same list to tell a UI unit from any
-other. There is no second copy of it.
-
-Style references: GitHub and Linear. Where a rule below leaves a choice open, do what they
-do.
-
-These rules come from the words of 0083 intent ## Answers, câu 2, not from
-screenshots: the five screenshots that answer mentions were never committed (spec C5).
+What a screen of this app may show. The `paths:` list above is the whole list of files that count
+as screens: `.claude/scripts/cos.mjs` reads it to tell a UI unit from any other. Style
+references: GitHub and Linear.
 
 ## Rules
 
@@ -75,7 +66,7 @@ A violation looks like: a card or banner carrying a paragraph, or two sentences 
 would do.
 
 **S2. No lists of limits and risks on the screen.** Those belong in documentation
-(`.claude/CLAUDE.md`, the rules files), not in front of the person using the tool.
+(the rules files), not in front of the person using the tool.
 A violation looks like: a panel explaining what the feature does not protect against, who
 else could press the button, or which proof has not been run.
 
@@ -96,7 +87,7 @@ paragraph where a list of findings belongs.
 
 **S6. The app's own text is English.** Labels, buttons and messages the app writes are in
 English. The content of an artifact shown on the screen (the Vietnamese prose under `.cos/`)
-is data, not the app's text, and does not count (0083 spec ## Answers, câu 1).
+is data, not the app's text, and does not count.
 A violation looks like: a button reading "Đăng xuất" or "Áp dụng ngay", or an English
 screen with a Vietnamese error message.
 
@@ -104,8 +95,7 @@ screen with a Vietnamese error message.
 who is there.
 A violation looks like: a "Your name" field beside *Send this answer*, *Stop* or *Pause*.
 The app writes the fixed word `owner` into those fields (`Answered by:`, `stopped_by`, the
-backlog's, hold's and update's `by`) when a request names nobody (0082 spec ## Answers,
-câu 1). `owner` is not an identity: it says
+backlog's, hold's and update's `by`) when a request names nobody. `owner` is not an identity: it says
 someone held the password or a live session, not who.
 
 **S8. A disabled button says why, or is hidden.** A control that cannot be used either
@@ -114,16 +104,11 @@ A violation looks like: a greyed *Run* with no sentence saying what it waits for
 
 ## How it is checked
 
-- **Who takes the screenshots.** The `impl` of a unit that changes a file listed above,
-  with `uv run python scripts/capture_screens.py <address>...`, after its last commit that
-  touches such a file. It writes PNGs and a `manifest.json` into `.screens/`, which git
-  ignores. Also the app (`0111`), before a `review` step, when the branch's head was
-  rewritten after `impl` took them: the same command, with the addresses `impl` chose.
-- **Who looks.** The `review` agent, by opening each PNG with `Read`. It is an agent looking
-  at screenshots, not a person, and its `### Screens` section says so.
-- **What the gate reads.** The `ship` gate reads the round object the review
-  run handed back through `submit`: its `screens`, each image's path, size, address and
-  result, and whether the `taken` the app read from `.screens/manifest.json` is still
-  current. It never reads the images, nor the `### Screens` the app renders into `review.md`
-  from that object. A finding whose `rule` is an `S<n>` always blocks, even when rated `low`.
-  A round with no object (a terminal's) is read from its words.
+- `impl` of a unit that changes a listed file runs
+  `uv run python scripts/capture_screens.py <address>...` after its last such commit; it writes
+  PNGs and `manifest.json` into `.screens/` (git-ignored). The app retakes them before `review`
+  when the head was rewritten after.
+- `review` opens each PNG with `Read`; its `### Screens` section says an agent looked.
+- The `ship` gate reads the round's `screens` object (path, size, address, result, and whether
+  `taken` is current), never the images. A finding whose `rule` is an `S<n>` always blocks, even
+  rated `low`.

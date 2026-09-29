@@ -218,9 +218,9 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
         opus, sonnet = "claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]"
         expected = {
             "idea": row(opus, "medium"), "intent": row(opus, "medium"),
-            "spec": row(opus, "high"), "spike": row(opus, "high"), "plan": row(opus, "high"),
+            "spec": row(opus, "medium"), "spike": row(opus, "medium"), "plan": row(opus, "medium"),
             "impl": row(sonnet, "medium"), "impl:novel": row(opus, "high"),
-            "review": row(opus, "high"), "review:novel": row(opus, "xhigh"),
+            "review": row(opus, "medium"), "review:novel": row(opus, "high"),
             # `0074`: chosen, not measured — the same row as `idea` and `intent`.
             "estimate": row(opus, "medium"),
             # `0044`: chosen, not measured — copied from `estimate`.

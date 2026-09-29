@@ -5,51 +5,27 @@ description: Write the intent.md that opens a new unit of work in this repositor
 
 # Write an intent
 
-An intent states a problem and one outcome that could come back false. Everything
-downstream is authorized by it, which is why it is written before them and never backwards
-from them: an intent derived from a design it was meant to judge can no longer kill it.
+An intent states a problem and one outcome that could come back false. Everything downstream
+is authorized by it.
 
-## Output
+## What you are given (trust it)
 
-One file, `intent.md`, in the directory the script names:
+The originator's input, the idea if any, and the answers to earlier questions are in the
+prompt. A question with a block under `## Answers` is decided: do not ask it again, cite it
+as `<artifact> ## Answers, câu N`, quote the person's words, never write into that section.
 
-```
-node .claude/scripts/cos.mjs new-path <slug>
-```
+## Steps
 
-It allocates the number and rejects a malformed slug. Use the path it prints; do not
-compose one yourself and do not guess the number.
+1. Ask what the input leaves open (scope, users, constraints, success); never close a gap
+   by assuming.
+2. `node .claude/scripts/cos.mjs new-path <slug>` allocates the directory; slug is
+   lowercase-hyphenated, names the problem, never composed by hand.
+3. Write `intent.md` there. No solution design: the spec decides how.
+4. `node .claude/scripts/cos.mjs unit-branch <NNNN_slug>` prints the branch name; cut it
+   before the first commit.
 
-Choosing the slug is still yours: lowercase, hyphenated, naming the problem rather than the
-solution, and fixed from now on. The directory holds nothing else until the intent is
-accepted.
-
-`Status` is one of `draft`, `accepted` or `rejected`. Write `accepted` once the file meets
-`## Done when` below; write `draft` and say what is missing if it does not.
-
-`Type` is what kind of work this is, and it decides the branch the work happens on:
-
-```
-feat  fix  docs  refactor  test  chore  perf  build  ci  revert
-```
-
-The set is closed. Pick the one that names the change a reader would see, not the effort
-it took. Then take the branch name from the script rather than typing it:
-
-```
-node .claude/scripts/cos.mjs unit-branch <NNNN_slug>
-```
-
-It reads the `Type` you just wrote, joins it to the slug, and prints `<type>/<slug>`. That
-is the whole point of the field: a branch composed by hand drifts from the unit it belongs
-to on the second try.
-
-It reads that `Type` from the app's snapshot of the unit, not from the file, and exits 2
-with `No such work unit` while `intent.md` is missing — so it cannot answer until the file
-has been written. Write the file, then ask
-for the name, then cut the branch, and commit nothing before that branch exists.
-
-## Template
+`Type` is one of `feat fix docs refactor test chore perf build ci revert` and `unit-branch`
+refuses any other.
 
 ````markdown
 # Intent: <title>
@@ -58,6 +34,7 @@ Author: <name>. Type: <type>. Status: accepted.
 ## Problem
 
 ## Proposed outcome
+<one falsifiable outcome, with a number and a date (YYYY-MM-DD)>
 
 ## Affected users and systems
 
@@ -66,58 +43,12 @@ Author: <name>. Type: <type>. Status: accepted.
 ## Open questions
 ````
 
-## Hand back your judgement
-
-The app does not read `Status:` or `## Open questions` out of the file to decide anything (`0136`). A step started from the board holds a `submit` tool: call it with `stage`, `judgement` (`ready` for `accepted`, `not-ready` for `draft`) and `questions` (`{n, text}` per open question). Call it before your reply, and end the reply with the file. If `submit` returns an error, the app has checked your object against the unit: correct the object and call `submit` again until it is accepted. A step that hands back no object ends failed. At a terminal there is no such tool; the `Status:` line is then all there is.
-
-## Invariants
-
-1. The originator states the problem in their own words first. Do not draft from a summary.
-2. Interrogate before writing: scope, users, constraints, what success looks like. Ask;
-   never close a gap by assuming.
-3. Exactly one falsifiable outcome, carrying a number and a date, that could come back
-   false. Two outcomes means two intents; split before writing.
-4. Every figure names its source or is marked unverifiable. A figure with no source is cut,
-   not softened.
-5. Cite only a file committed in this repository, by path and line range.
-6. No solution design. Problem, outcome, constraints, open questions. The spec decides how.
-7. `Type` is one of the ten, and it is not decoration: `unit-branch` refuses a type it does
-   not know, so a wrong one stops the branch from being named at all.
-8. Accept it and commit it. `accepted` means you judged it finished, not that the originator
-   approved it — they still have to read it, and nothing in the repository makes them.
-9. Interrogation comes first. You accept your own file, and no other step checks for a thin
-   intent: the questions in invariant 2 are the only check there is — ask them before
-   writing, not after.
-10. A question with a block under `## Answers` in the artifact that holds it, as your
-    prompt shows it, has been decided. Do not ask it again. Cite it as
-    `<artifact> ## Answers, câu N`. The words of an answer are a person's, not yours: quote
-    them, and do not restate them as your own finding. The app keeps answers
-    in its database and puts them in the prompt; the file on disk may not carry them. Never
-    write into that section yourself.
-11. Under `## Open questions`, each question is an item `N. ` at column 0 whose first
-    paragraph holds a `?`, and the same questions go into the `questions` you submit — from
-    the board those are what stop the autopilot. At a terminal `cos.mjs` counts nothing else:
-    a bullet, or a numbered line with no `?`, is read as a note. So a real question always
-    carries its `?`. A note — no question is left open, how the answers were used, the
-    originator should reread this — is a plain sentence there or goes in another section,
-    never an item. When nothing is left open, keep the heading.
+- Exactly one outcome; two outcomes are two intents. A figure with no source is cut.
+- Under `## Open questions` a real question is an item `N. ` at column 0 whose first
+  paragraph holds a `?`; the same go into `questions` of `submit`. Anything else is a plain
+  sentence, never an item. Keep the heading when none is left.
+- `Status: accepted` records your judgement, not approval; `draft` if something is missing.
 
 ## Done when
 
-Someone who was not in the conversation can state the problem from the file alone, and can
-tell whether the outcome was met without asking anyone.
-
-## Next
-
-`write-spec`, once this file is accepted and committed.
-
-You may run it yourself. Nothing separates the two stages, so the separation has to come
-from you: finish the intent, commit it, and re-read it before writing a spec against it.
-Never run `write-spec` on a `draft` — a file you have not judged finished cannot authorize
-the thing after it.
-
-## Limit
-
-The script allocates the number and validates the slug, so those two cannot go wrong
-silently. Everything else here is advisory: nothing forces a session to run it, and no
-check reads the prose it writes.
+Someone outside the conversation can state the problem and tell whether the outcome was met.

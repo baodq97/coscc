@@ -26,8 +26,8 @@ SCOPED_HEADING = "## Scoped rules"
 
 # Instructions to the model, so English (`.claude/CLAUDE.md`, *Invariants*).
 SCOPED_LINE = (
-    "- {path} (paths: {patterns}): read this file with Read before reading, editing or "
-    "reviewing a file matching one of these patterns."
+    "- {path} (paths: {patterns}): read this file with Read before editing a file "
+    "matching one of these patterns."
 )
 
 UNREADABLE = " (unreadable)"

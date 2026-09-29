@@ -144,7 +144,7 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self._run("spec")
         start = self._start()
         self.assertEqual((start["label_declared"], start["label"], start["label_source"]), (None, None, None))
-        self.assertEqual((start["effort"], start["effort_source"]), ("high", "default"))
+        self.assertEqual((start["effort"], start["effort_source"]), ("medium", "default"))
         self.assertNotIn("impl_run", start)
 
     def test_an_effort_override_of_max_is_taken_and_logged(self):

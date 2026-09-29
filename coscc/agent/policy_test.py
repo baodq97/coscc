@@ -140,7 +140,7 @@ class OneGrantPerStage(unittest.TestCase):
         rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS
         expected = {
             # `0136`: `submits` on the stages that hand back a stage result.
-            "impl": Grant(tools=rw, commands=policy.IMPL_COMMANDS, max_turns=120,
+            "impl": Grant(tools=rw + (policy.AGENT_TOOL,), commands=policy.IMPL_COMMANDS, max_turns=120,
                           max_budget_usd=8.0, app_writes_artifact=False, submits=True),
             "plan": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
             # `0085` R1; `0136` R5: the round comes back through `submit`.
@@ -165,6 +165,32 @@ class OneGrantPerStage(unittest.TestCase):
                 self.assertNotIn(stage, policy.GRANTS)
                 self.assertEqual(grant_for(stage), Grant())
                 self.assertEqual(grant_for_step(stage, "novel"), Grant())
+
+
+class OnlyImplStartsHelpers(unittest.TestCase):
+    def test_impl_holds_the_agent_tool_and_no_other_grant_does(self):
+        self.assertIn(policy.AGENT_TOOL, IMPL.tools)
+        for stage, grant in policy.GRANTS.items():
+            if stage != "impl":
+                with self.subTest(stage=stage):
+                    self.assertNotIn(policy.AGENT_TOOL, grant.tools)
+
+    def test_a_helper_holds_no_tool_impl_does_not(self):
+        for name, spec in policy.SUBAGENTS.items():
+            with self.subTest(helper=name):
+                self.assertTrue(set(spec["tools"]) <= set(IMPL.tools))
+                self.assertNotIn(policy.AGENT_TOOL, spec["tools"])
+        self.assertEqual(policy.SUBAGENTS["scout"]["tools"], list(READ_TOOLS))
+        self.assertEqual(policy.SUBAGENTS["tester"]["tools"], list(policy.EXEC_TOOLS))
+
+    def test_only_a_named_helper_may_be_started(self):
+        self.assertEqual(decide(IMPL, policy.AGENT_TOOL, {"subagent_type": "tester"}, "/tmp"), "")
+        for other in ("general-purpose", "Explore", None):
+            with self.subTest(subagent_type=other):
+                self.assertIn(
+                    "only these helpers", decide(IMPL, policy.AGENT_TOOL, {"subagent_type": other}, "/tmp")
+                )
+        self.assertIn("was not granted", decide(grant_for("review"), policy.AGENT_TOOL, {"subagent_type": "scout"}, "/tmp"))
 
 
 class AToolNobodyGrantedIsRefused(unittest.TestCase):
@@ -1035,7 +1061,7 @@ class TheLabelDecidesImplsCeilings(unittest.TestCase):
 
     def test_a_routine_or_unlabelled_impl_is_unchanged(self):
         """R2: the grant `0020` R6 pins, written out again."""
-        rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS
+        rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS + (policy.AGENT_TOOL,)
         written = Grant(tools=rw, commands=policy.IMPL_COMMANDS, max_turns=120,
                         max_budget_usd=8.0, app_writes_artifact=False, submits=True)
         for label in ("routine", None):

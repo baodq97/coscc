@@ -5,68 +5,37 @@ description: Write the spike.md that measures the questions an accepted spec mar
 
 # Write a spike
 
-Signed ᛈ Perthro. A spike answers the questions the spec could not, by running something,
-so that `plan` orders work on measurements rather than on guesses and `impl` never spends
-its turns finding out whether the foundation stands.
+Signed ᛈ Perthro. Answer each `U<n>` the spec could not, by running something. Measure only:
+build nothing to keep, never edit the spec.
 
-It only measures. It builds nothing the unit will keep, and it never edits the spec — a
-question that does not hold sends the unit back to `spec`, which rewrites itself on what
-this file measured.
+## What you are given (trust it)
 
-## Before writing
+`spec.md` and any previous `spike.md` are in the prompt; every `U<n>` under its `## Concerns`
+is one question to answer. Do not re-read them.
 
-```
-node .claude/scripts/cos.mjs gate <NNNN_slug> spike
-```
-
-Exit 0 means proceed. The gate is open only when `spec.md` is accepted and carries at
-least one `[unmeasured] U<n>` item (or a `spike.md` already exists). A spec with none
-never runs this stage.
-
-Read `spec.md`. Every `U<n>` under its `## Concerns` is one question this file must answer.
-An id this spike measured before that the spec no longer carries is not asked again.
+Gate: from the board it was asked (the prompt says so); at a terminal run
+`node .claude/scripts/cos.mjs gate <NNNN_slug> spike` first and stop on non-zero.
 
 ## Where the probe code goes
 
-Outside the checkout, always. On the board the step's working directory is a throwaway
-directory the app deletes when the step ends, and the unit's worktree is read-only; if its
-`HEAD` or `git status --porcelain` changed, the step fails and no `spike.md` is written.
-At a terminal, make one: `mktemp -d`, and work there.
-
-Never run `git`. Never write into the worktree, into `.cos/`, or into the unit's store.
+Outside the checkout: on the board your working directory is a throwaway; at a terminal
+`mktemp -d`. Never run `git`, never write into the worktree, `.cos/` or the unit's store; if
+the worktree's `HEAD` or `git status --porcelain` changed, the step fails.
 
 ## The progress file
 
-A spike can run out of turns or budget before its last reply. It keeps what it has measured
-in a file as it goes (`0080`), so that nothing measured is lost with the reply.
+Keeps what you measured if the step runs out of turns or budget.
 
-1. Your first `Write`, before any probe, creates `spike.md` in your working directory,
-   with the whole header — `Spec: spec.md. Author: ᛈ Perthro. Round: <N>. Status:
-   accepted.` — and one `## U<n>` for every `U<n>` the spec carries.
-2. A question not yet measured holds prose only: what was run, what is still missing. No
-   line under it starts with `Verdict:`.
-3. The moment a `U<n>` is measured, write its `Verdict:` line and its fenced block into the
-   file, before you start the next one. Never write `Verdict: holds.` for a question you
-   have measured only in part.
-4. Your final reply is still the whole file, as `## Output` says.
-5. On a rerun, the previous spike is in your prompt. A `## U<n>` there that is complete —
-   `Verdict: holds.` and a fenced block — is copied verbatim into your first `Write` and
-   not measured again. Measure only the `U<n>` that `cos.mjs` reports missing. `Round:`
-   follows invariant 4.
-
-On the board this file is the app's fallback: when the step ends without a usable final
-reply — a ceiling, a reply with no `Status:` line, a session that broke — the app writes
-the unit's `spike.md` from it. It does not when a person pressed *Stop* or the worktree
-changed. `Status: accepted` on a file still missing a `U<n>` does not open `plan`:
-`cos.mjs` reads each `U<n>`, closes `plan` on the missing ones and offers `spike` again.
-
-At a terminal no app stands behind this file: nothing reads it, and the unit gets only the
-`spike.md` you write there yourself.
+1. Your first `Write`, before any probe, creates `spike.md` in your working directory with the
+   whole header and one `## U<n>` per `U<n>` the spec carries.
+2. An unmeasured question holds prose only, no line starting `Verdict:`.
+3. The moment a `U<n>` is measured, write its `Verdict:` line and fenced block, before the next.
+   Never write `Verdict: holds.` for a partial measurement.
+4. On a rerun, a previous `## U<n>` that is complete (`Verdict: holds.` plus a fenced block) is
+   copied verbatim and not measured again; measure only the `U<n>` `cos.mjs` reports missing.
+5. If the step ends with no usable reply, the app writes `spike.md` from this file.
 
 ## Output
-
-One file, `spike.md`, in the unit's directory. On the board the app writes it from your
-reply, or from your progress file when the reply cannot be used (*The progress file*).
 
 ````markdown
 # Spike: <title>
@@ -74,52 +43,28 @@ Spec: spec.md. Author: ᛈ Perthro. Round: <N>. Status: accepted.
 
 ## U1
 
-<What was asked, what was run, and what it shows.>
+<what was asked, what was run, what it shows>
 
 Verdict: holds.
 
 ```
 $ <the command, exactly as run>
-<what it printed, verbatim — trimmed only at a marked cut>
+<what it printed, verbatim; trimmed only at a marked cut>
 ```
-
-## U2
-
-...
 ````
 
-## Hand back your judgement
+## Lines `cos.mjs` reads
 
-The app does not read `Status:` or `## Open questions` out of the file to decide anything (`0136`). A step started from the board holds a `submit` tool: call it with `stage`, `judgement` (`ready` for `accepted`, `not-ready` for `draft`) and `questions` (`{n, text}` per open question). `verdicts` holds one `{id, verdict}` per `## U<n>`. Call it before your reply, and end the reply with the file. If `submit` returns an error, the app has checked your object against the unit: correct the object and call `submit` again until it is accepted. A step that hands back no object ends failed. At a terminal there is no such tool; the `Status:` line is then all there is.
-
-## Invariants
-
-1. One `## U<n>` for every `U<n>` the spec carries now, headed exactly so.
-2. Each carries one line `Verdict: holds.` or `Verdict: fails.` — nothing else on it —
-   and at least one fenced block holding a command that was run and what it printed. A
-   verdict with no block is not a measurement: at a terminal the gate reads it as missing,
-   and from the board, where the gate reads the `verdicts` you submit, the block is the only
-   evidence a reader has, so never submit `holds` for a `U<n>` without one.
-3. `holds` means the spec's assumption stood when measured. `fails` means it did not, and
-   the plan must not be written on it. A measurement that could not be taken is not
-   `holds`: say why, and write `fails`.
-4. `Round:` is 1 the first time. When the `spike.md` before this one had a `fails`, it is
-   that round plus one. `cos.mjs` stops the loop for a person when a question still fails
-   at round 2 (`SPIKE_ROUNDS`); writing 1 every time would hide that, so do not.
-5. Every figure names the command that printed it. Cut a figure that has no source.
-6. Never edit `spec.md`, and never answer a question the spec did not ask.
+- One `## U<n>` per id the spec carries now, headed exactly so; `verdicts` of `submit` holds
+  one `{id, verdict}` for each.
+- Each has a line `Verdict: holds.` or `Verdict: fails.` and at least one fenced block with a
+  command that was run and what it printed. No block means missing. `holds`: the assumption
+  stood. `fails`: it did not, or could not be measured (say why).
+- `Round:` is 1, or the previous spike's round plus one when it had a `fails`; it stops the
+  loop for a person at a second failing round.
+- Every figure names the command that printed it; never answer a question the spec did not ask.
 
 ## Done when
 
-A planner can cite `spike.md ## U<n>` for every step that rests on a question the spec
-could not answer, and a reader can rerun each block and get the same result.
-
-## Next
-
-All `holds`: `write-plan`, which cites `spike.md ## U<n>`. Any `fails`: `write-spec`
-again, which drops that id and every requirement resting on it.
-
-## Limit
-
-The gate reads the form — a heading, a verdict, a block — not whether the block measured
-the question. That stays judgement, and no script checks it.
+A planner can cite `spike.md ## U<n>` for every step resting on a question, and each block reruns
+to the same result.

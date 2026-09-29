@@ -587,7 +587,7 @@ class TheReviewSeesWhatWasMeasured(unittest.TestCase):
     """`0015` round 2: a finding stayed open because `impl.md` never reached the review."""
 
     def test_impl_md_is_named_in_the_review_prompt(self):
-        # `0094` R14: by its absolute path, for the review to `Read`; no longer carried.
+        # The review carries `impl.md` whole, and names the other artifacts by path.
         with tempfile.TemporaryDirectory() as d:
             directory = make_unit(
                 Path(d),
@@ -598,10 +598,10 @@ class TheReviewSeesWhatWasMeasured(unittest.TestCase):
             prompt, included, pointed = compose_prompt(
                 d, directory, UNIT, "review", STAGES, "review.md"
             )
-            self.assertNotIn("MEASURED-MARKER", prompt)
-            self.assertIn(f"- {directory.resolve() / 'impl.md'}\n", prompt)
-            self.assertIn("impl.md", pointed)
-            self.assertNotIn("impl.md", included)
+            self.assertIn("MEASURED-MARKER", prompt)
+            self.assertIn(f"- {directory.resolve() / 'impl.md'} (above)\n", prompt)
+            self.assertNotIn("impl.md", pointed)
+            self.assertIn("impl.md", included)
 
 
 class ShipIsNotToldItIsInARepository(unittest.TestCase):
@@ -715,8 +715,8 @@ class ThePointingStagesNameTheirFiles(unittest.TestCase):
         "impl": (["plan.md", "review-findings"],
                  ["idea.md", "intent.md", "spec.md", "spike.md", "impl.md", "pr.md", "review.md", "ship.md"]),
         # `pr` and `ship` left with their sessions (`0139` R12).
-        "review": (["review-findings"], ["idea.md", "intent.md", "spec.md", "spike.md", "plan.md",
-                                         "impl.md", "pr.md", "review.md", "ship.md"]),
+        "review": (["impl.md", "review-findings"], ["idea.md", "intent.md", "spec.md", "spike.md", "plan.md",
+                                                    "pr.md", "review.md", "ship.md"]),
     }
 
     def build(self, d, stage):
@@ -749,7 +749,10 @@ class ThePointingStagesNameTheirFiles(unittest.TestCase):
                 _, (prompt, _, _) = self.build(d, stage)
                 self.assertNotIn("A-INTENT", prompt)
                 self.assertNotIn("ROUND-ONE-F1", prompt)
-                self.assertNotIn("IMPL-BODY", prompt)
+                if stage != "review":  # the review carries `impl.md` whole
+                    self.assertNotIn("IMPL-BODY", prompt)
+                else:
+                    self.assertIn("IMPL-BODY", prompt)
 
     def test_review_is_still_told_not_to_copy_the_rounds(self):
         with tempfile.TemporaryDirectory() as d:
