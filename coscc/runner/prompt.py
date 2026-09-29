@@ -265,15 +265,6 @@ KNOWLEDGE_ADVICE_IMPL = (
     "do not write a `## Concerns` section."
 )
 
-# # The heading and the same words after every section `priorfindings` built, for `impl` only.
-PRIOR_FINDINGS_HEADING = "# What earlier reviews said about these files"
-PRIOR_FINDINGS_ADVICE = (
-    "Each line above is a finding an earlier unit's review raised on a file this plan's "
-    "`## Files that change` names, prefixed with that unit and round. Before you push the "
-    "branch, check whether your change repeats any of them. They are not requirements and do "
-    "not change the plan."
-)
-
 # # Two headings, and the same words after each, for `impl` only. The commands advice is prose
 # # about `policy.check_command`, and `runner_test.TheCommandsAStepMayRun` asks that function
 # # each thing it says is refused.
@@ -443,7 +434,6 @@ def compose_prompt(
     knowledge: str = "",
     rerun: bool = False,
     rerun_note: str = "",
-    prior_findings: str = "",
     plan_map: str = "",
     commands: tuple[str, ...] = (),
     unfinished_round: dict[str, Any] | None = None,
@@ -463,8 +453,7 @@ def compose_prompt(
     `agent` is the stage's resolved row of the agent table; its section opens the prompt.
     `idea_note` is the shared idea a unit was opened from (`intent` only); `siblings_note` the
     sibling checkouts `impl` may read (`impl` only). `rerun` is true only for a stage a person
-    ran again from the board, with `rerun_note` their note. `prior_findings` is what
-    `priorfindings.for_step` built (`impl` only). `plan_map` is what `planmap.for_step` built and
+    ran again from the board, with `rerun_note` their note. `plan_map` is what `planmap.for_step` built and
     `commands` the words of the step's grant (`impl` only). `unfinished_round` is
     `{"n", "dropped"}` of a last round `cos.mjs` read as unfinished (`review` only).
     `runs_commands` is true when the step's grant holds `Bash`. `unit_meta` is the unit's entry
@@ -622,13 +611,6 @@ def compose_prompt(
     if runs_commands:
         parts.append(f"{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
         parts.append(f"{HARNESS_HEADING}\n\n{harness_advice(directory, state_file)}")
-
-    # The finding lines earlier reviews raised on the files this plan changes, already chosen and
-    # capped (`priorfindings.select`); this only places it, before the review that sent this
-    # unit back.
-    if prior_findings and stage in ("impl", "implement"):
-        included.append("prior-findings")
-        parts.append(f"{PRIOR_FINDINGS_HEADING}\n\n{prior_findings}\n\n{PRIOR_FINDINGS_ADVICE}")
 
     # A prose stage re-run against an artifact that already carries `## Answers` must see a
     # person's decision, or it may ask the same question again. `review` gets the same block
@@ -810,11 +792,14 @@ def compose_prompt(
             name = f"{s}.md"
             if not (directory / name).is_file():
                 continue
+            # The plan is enough to implement from; what it cites, it cites by section.
+            if stage in ("impl", "implement") and s in ("intent", "spec", "spike"):
+                continue
             above = name in included
             if not above:
                 pointed.append(name)
             lines.append(f"- {directory.resolve() / name}" + (" (above)" if above else ""))
-        if lines:
+        if pointed:
             parts.append("# The unit's files\n\n" + "\n".join(lines) + "\n\n" + UNIT_FILES_ADVICE)
 
     # Only when one of the files this prompt carries or names holds a block Jera wrote.

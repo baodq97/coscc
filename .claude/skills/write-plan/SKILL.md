@@ -40,8 +40,9 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
 <what breaks and what would show it, by blast radius>
 
 ## Proof
-<`npm test` with tests named for the behaviour, or `npm run e2e` with a named case, or a
-one-time measurement `impl.md` records, and the result that counts as passing>
+<`npm test` with tests named for the behaviour, or `npm run e2e` with a named case, and the
+result that counts as passing. A baseline or outcome to measure is not impl's work: name it
+under `## Risks`; the app or Leif measures it>
 ````
 
 ## Lines the app and `cos.mjs` read

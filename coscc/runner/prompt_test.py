@@ -57,7 +57,7 @@ class AnAgentsAnswerIsSaidToBeOne(unittest.TestCase):
         self.assertNotIn("- spec.md ### Câu 2", prompt, "a person's block is not listed")
 
     def test_it_is_said_when_the_prompt_only_names_the_file(self):
-        prompt = self.prompt("Jera", "precedent", "impl")
+        prompt = self.prompt("Jera", "precedent", "review")
         self.assertIn("- spec.md ### Câu 1", prompt)
         self.assertIn("not by the person who started this work", prompt)
 
@@ -126,7 +126,7 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
 
     def test_impl_without_a_plan_carries_nothing_and_names_what_there_is(self):
         # `0094` R14: `impl` carries `plan.md` alone; with none, it reaches back to nothing and
-        # names `intent.md` and `spec.md` by path instead.
+        # names no `intent.md` or `spec.md` either: the plan is what it implements from.
         with tempfile.TemporaryDirectory() as d:
             make_unit(
                 Path(d),
@@ -136,7 +136,7 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
             prompt, included, pointed = compose_prompt(
                 d, Path(d) / '.cos' / UNIT, UNIT, "impl", STAGES, "impl.md")
             self.assertEqual(included, [])
-            self.assertEqual(pointed, ["intent.md", "spec.md"])
+            self.assertEqual(pointed, [])
             self.assertNotIn("SPEC-IS-NEAREST", prompt)
 
     def test_the_first_stage_has_nothing_before_it_and_says_so(self):
@@ -713,7 +713,7 @@ class ThePointingStagesNameTheirFiles(unittest.TestCase):
     WANT = {
         # stage: (included artifacts, pointed)
         "impl": (["plan.md", "review-findings"],
-                 ["idea.md", "intent.md", "spec.md", "spike.md", "impl.md", "pr.md", "review.md", "ship.md"]),
+                 ["idea.md", "impl.md", "pr.md", "review.md", "ship.md"]),
         # `pr` and `ship` left with their sessions (`0139` R12).
         "review": (["impl.md", "review-findings"], ["idea.md", "intent.md", "spec.md", "spike.md", "plan.md",
                                                     "pr.md", "review.md", "ship.md"]),
@@ -784,7 +784,7 @@ class EveryPathAPromptNamesCanBeRead(unittest.TestCase):
                 self.assertTrue(pointed)
                 block = prompt.split("# The unit's files\n\n")[1].split("\n\n")[0]
                 paths = [line[2:].removesuffix(" (above)") for line in block.splitlines()]
-                self.assertEqual(len(paths), 9)
+                self.assertEqual(len(paths), 6 if stage == "impl" else 9)
                 cwd = str(directory) if stage == "ship" else str(tree)
                 for p in paths:
                     self.assertEqual(
@@ -958,55 +958,6 @@ class WhatEarlierUnitsMeasured(unittest.TestCase):
                     self.assertIn("knowledge", included)
 
 
-class WhatEarlierReviewsSaid(unittest.TestCase):
-    """`0110` plan step 3. `service.run_step` builds the section; this module places it for
-    `impl` only, and every other stage's prompt is what it was, byte for byte (R9)."""
-
-    SECTION = "- 0054 Round 1 F3 [open] coscc/service/__init__.py:1842 — medium — PRIOR-MARKER"
-
-    unit = WhatEarlierUnitsMeasured.unit
-    ANSWERS = WhatEarlierUnitsMeasured.ANSWERS
-    rules = staticmethod(WhatEarlierUnitsMeasured.rules)
-
-    def test_no_stage_but_impl_carries_it_even_when_handed_it(self):
-        from coscc.runner import prompt as runner_prompt
-
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
-            directory = self.unit(d)
-            for stage in [s for s in SESSION_STAGES if s != "impl"]:
-                with self.subTest(stage=stage):
-                    args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
-                    self.assertEqual(compose_prompt(*args, prior_findings=self.SECTION), compose_prompt(*args))
-            args = (d, directory, UNIT, "implement", STAGES, "implement.md")
-            self.assertIn("PRIOR-MARKER", compose_prompt(*args, prior_findings=self.SECTION)[0])
-
-    def test_nothing_handed_is_the_impl_prompt_byte_for_byte(self):
-        from coscc.runner import PRIOR_FINDINGS_HEADING
-
-        with tempfile.TemporaryDirectory() as d:
-            directory = self.unit(d)
-            args = (d, directory, UNIT, "impl", STAGES, "impl.md")
-            without = compose_prompt(*args)
-            self.assertEqual(compose_prompt(*args, prior_findings=""), without)
-            # `write-impl` names the section in its prose (R8); the heading is not there.
-            self.assertNotIn(PRIOR_FINDINGS_HEADING, without[0])
-            self.assertNotIn("prior-findings", without[1])
-
-    def test_impl_carries_it_once_after_the_plan_and_before_the_review_that_sent_it_back(self):
-        from coscc.runner import PRIOR_FINDINGS_ADVICE, PRIOR_FINDINGS_HEADING
-
-        with tempfile.TemporaryDirectory() as d:
-            directory = self.unit(d)
-            prompt, included, _ = compose_prompt(
-                d, directory, UNIT, "impl", STAGES, "impl.md", prior_findings=self.SECTION)
-            self.assertEqual(prompt.count(PRIOR_FINDINGS_HEADING), 1)
-            here = prompt.index(PRIOR_FINDINGS_HEADING)
-            self.assertLess(prompt.index("# The plan it follows"), here)
-            self.assertLess(here, prompt.index("# The review that sent this back"))
-            self.assertIn(f"{PRIOR_FINDINGS_HEADING}\n\n{self.SECTION}\n\n{PRIOR_FINDINGS_ADVICE}", prompt)
-            self.assertIn("prior-findings", included)
-
-
 class ThePlanMapAndTheCommands(unittest.TestCase):
     """`0096` plan step 3. `service.run_step` builds the map and `Runner.run` hands on the
     grant's words; this module places both for `impl` only, and every other stage's prompt is
@@ -1047,20 +998,20 @@ class ThePlanMapAndTheCommands(unittest.TestCase):
             self.assertNotIn("plan-map", without[1])
             self.assertNotIn("commands", without[1])
 
-    def test_impl_carries_each_once_after_the_plan_and_before_the_earlier_reviews(self):
+    def test_impl_carries_each_once_after_the_plan_and_before_the_review_that_sent_it_back(self):
         from coscc.runner import (
-            COMMANDS_ADVICE, COMMANDS_HEADING, PLAN_MAP_ADVICE, PLAN_MAP_HEADING, PRIOR_FINDINGS_HEADING,
+            COMMANDS_ADVICE, COMMANDS_HEADING, PLAN_MAP_ADVICE, PLAN_MAP_HEADING,
         )
 
         with tempfile.TemporaryDirectory() as d:
             directory = self.unit(d)
             prompt, included, _ = compose_prompt(
                 d, directory, UNIT, "impl", STAGES, "impl.md",
-                plan_map=self.MAP, commands=self.WORDS, prior_findings=WhatEarlierReviewsSaid.SECTION)
+                plan_map=self.MAP, commands=self.WORDS)
             for heading in (PLAN_MAP_HEADING, COMMANDS_HEADING):
                 self.assertEqual(prompt.count(heading), 1)
                 self.assertLess(prompt.index("# The plan it follows"), prompt.index(heading))
-                self.assertLess(prompt.index(heading), prompt.index(PRIOR_FINDINGS_HEADING))
+                self.assertLess(prompt.index(heading), prompt.index("# The review that sent this back"))
             self.assertIn(f"{PLAN_MAP_HEADING}\n\n{self.MAP}\n\n{PLAN_MAP_ADVICE}", prompt)
             self.assertIn(f"{COMMANDS_HEADING}\n\n`git`, `npm`, `COMMAND-MARKER`\n\n{COMMANDS_ADVICE}", prompt)
             self.assertIn("plan-map", included)
