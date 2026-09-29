@@ -533,6 +533,14 @@ def compose_prompt(
             parts.append(f"# The {earlier} it follows\n\n{text}")
             break
 
+    # A fix in the fast lane has no plan: its intent carries the reproduction and the expected
+    # and actual result, and is what impl builds from.
+    if stage in ("impl", "implement") and "plan.md" not in included:
+        text = embedded("intent.md")
+        if text:
+            included.append("intent.md")
+            parts.append(f"# The intent it follows\n\n{text}")
+
     # Right after the stage before: a child unit has no `idea.md`, and the idea it shares stands
     # where that would have.
     if idea_note and stage == "intent":

@@ -124,9 +124,8 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
             _, included = build_prompt(d, Path(d) / '.cos' / UNIT, UNIT, "plan", STAGES, "plan.md")
             self.assertEqual(included, ["intent.md", "spec.md"])
 
-    def test_impl_without_a_plan_carries_nothing_and_names_what_there_is(self):
-        # `0094` R14: `impl` carries `plan.md` alone; with none, it reaches back to nothing and
-        # names no `intent.md` or `spec.md` either: the plan is what it implements from.
+    def test_impl_without_a_plan_carries_its_intent_and_nothing_else(self):
+        # A fix in the fast lane has no plan: impl builds from the intent, and names no spec.
         with tempfile.TemporaryDirectory() as d:
             make_unit(
                 Path(d),
@@ -135,8 +134,9 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
             )
             prompt, included, pointed = compose_prompt(
                 d, Path(d) / '.cos' / UNIT, UNIT, "impl", STAGES, "impl.md")
-            self.assertEqual(included, [])
+            self.assertEqual(included, ["intent.md"])
             self.assertEqual(pointed, [])
+            self.assertIn("# The intent it follows\n\nStatus: accepted.\nINTENT", prompt)
             self.assertNotIn("SPEC-IS-NEAREST", prompt)
 
     def test_the_first_stage_has_nothing_before_it_and_says_so(self):
