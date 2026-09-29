@@ -830,6 +830,19 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.asked(), 1, "a fresh answer for this head is not asked again")
 
+    async def test_the_board_reads_ci_from_the_row_not_memory(self):
+        # `0139` R8.
+        from coscc.github import prmachine
+
+        self.checks = [{"name": "tests", "bucket": "fail"}]
+        await self.read()
+        await self.settle()
+        self.assertEqual(self.service._ci, {}, "an answer is not held in memory")
+        held = prmachine.ci_held(self.service._unit_meta().history, self.service._journal_key(self.cwd), PR, self.head)
+        self.assertEqual(held["ci"], "red")
+        u = await self.read()
+        self.assertEqual((u["state"]["state"], u["state"]["ci"]["red"]), ("error", ["tests"]))
+
     async def test_a_new_head_or_an_old_answer_is_asked_again(self):
         """(e)"""
         self.checks = [{"name": "tests", "bucket": "pass"}]

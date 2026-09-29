@@ -18,6 +18,7 @@ NAME = "0007_a-problem"
 BRANCH = "feat/a-problem"
 HEAD = "a" * 40
 MERGE = "m" * 40
+PR_NUMBER = 7
 
 
 class Crash(BaseException):
@@ -301,6 +302,25 @@ class TheReaderRecordsWhatChanged(Fixture):
         self.assertEqual([(r["to_state"], r["authority"], json.loads(r["inputs"])["ci"]) for r in rows],
                          [("accepted", "code", "pending"), ("accepted", "code", "green")])
         self.assertEqual(self.file_reads, [HEAD], "the files are read once for a head")
+
+    def test_ci_is_written_only_through_ci_at_head(self):
+        # `0139` R8: opening writes the row and no answer; the reader's `ci` transition and the
+        # board's `record_ci` write it, each beside a `ci-at-head` row.
+        gh = FakeGh(buckets=("pending",))
+        m = self.reader(gh)
+        self.assertIsNone(prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD))
+        self.read(m)
+        held = prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD)
+        self.assertEqual((held["head"], held["ci"]), (HEAD, "pending"))
+        self.assertTrue(m.record_ci(self.unit(), PR_NUMBER, HEAD, [{"name": "t", "bucket": "fail"}]))
+        held = prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD)
+        self.assertEqual((held["ci"], held["checks"]), ("red", [{"name": "t", "bucket": "fail"}]))
+        self.assertEqual(prmachine.state(self.history, WS, NAME)["ci"], "red")
+        rows = [json.loads(r["inputs"])["ci"] for r in self.rows("pr.md") if r["guard"] == "ci-at-head"]
+        self.assertEqual(rows, ["pending", "red"])
+        # The same answer again is no transition; only when it was read moves.
+        self.assertTrue(m.record_ci(self.unit(), PR_NUMBER, HEAD, [{"name": "t", "bucket": "fail"}]))
+        self.assertEqual(len([r for r in self.rows("pr.md") if r["guard"] == "ci-at-head"]), 2)
 
     def test_a_new_head_is_read_again_with_its_files(self):
         gh = FakeGh(buckets=("pass",))
