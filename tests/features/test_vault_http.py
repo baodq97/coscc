@@ -7,12 +7,15 @@ of every route is read for them in all five forms.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import unittest
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
 from coscc import auth, screens, vault
+from coscc.agent import policy
 from coscc.features import vault as feature
 from tests.features import test_vault as base
 
@@ -65,7 +68,8 @@ class ThePage(Http):
         self.assertEqual((r.status_code, r.headers["content-type"][:9]), (200, "text/html"))
         html = r.text
         self.assertIn('<form method="post" action="/api/vault/secrets"', html)
-        self.assertIn('type="password"', html)
+        self.assertIn('<textarea name="value"', html)
+        self.assertNotIn('type="password"', html)
         self.assertNotIn("handleSubmit", html)
         self.assertNotIn("onsubmit", html.lower())
         for name in ("ws:db", "global:tok", "global:other", "the database", "a shared token"):
@@ -191,6 +195,31 @@ class TheOneRouteAValueGoesInBy(Http):
         made = self.store.get("ws:tiny", self.key)
         assert made is not None
         self.assertEqual((made.broker, made.modes), (True, ("ssh",)))
+
+    async def test_a_one_line_value_loses_the_line_break_typed_after_it(self):
+        await self.form(name="tok2", value="one-line-token\r\n")
+        self.assertEqual(self.store.open("ws:tok2", self.key), b"one-line-token")
+
+    @unittest.skipUnless(
+        all(shutil.which(p) for p in ("ssh-keygen", "ssh-agent", "ssh-add")), "needs OpenSSH"
+    )
+    async def test_a_key_pasted_in_the_box_reaches_ssh_add_whole(self):
+        path = self.root / "id"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(path)],
+            check=True,
+            capture_output=True,
+        )
+        key = path.read_bytes()
+        # How a browser sends a textarea: every line break as CRLF.
+        await self.form(name="deploy", value=key.decode().replace("\n", "\r\n"), broker="1")
+        self.assertEqual(self.store.open("ws:deploy", self.key), key)
+        self.store.set_policy("ws:deploy", self.key, ("impl",), ("ssh",))
+        facts = self.facts(commands=(*policy.IMPL_COMMANDS, "ssh-add"))
+        args = {"command": "ssh-add -l", "uses": [{"name": "ws:deploy", "mode": "ssh"}]}
+        got = await self.call(facts, "vault_exec", args)
+        self.assertEqual(got["exit_code"], 0, got)
+        self.assertIn("ED25519", got["stdout"])
 
     async def test_a_bad_name_goes_back_to_the_page_with_the_reason_and_makes_nothing(self):
         r = await self.form(name="Bad Name!", value="v-value-1234")

@@ -319,6 +319,7 @@ th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px
 label { display: inline-block; margin-right: 10px; }
 .tag { font-size: 12px; border: 1px solid #8886; border-radius: 6px; padding: 0 6px; }
 form.row { display: grid; gap: 6px; max-width: 420px; }
+textarea { font-family: monospace; -webkit-text-security: disc; }
 """
 
 _PAGE_JS = """
@@ -375,14 +376,23 @@ def _checks(name: str, options: Sequence[str], on: Sequence[str], disabled: bool
     )
 
 
+def _value_box(label: str = "") -> str:
+    """A `<textarea>`, not a password input: a browser strips every line break out of the value
+    of that, and a private key is many lines. Nothing is offered to a spell checker."""
+    said = f' aria-label="{_e(label)}"' if label else ""
+    return (
+        '<textarea name="value" rows="3" required autocomplete="off" spellcheck="false" '
+        f'autocapitalize="off" autocorrect="off"{said}></textarea>'
+    )
+
+
 def _replace_form(cwd: str, s: vault.Secret) -> str:
     return (
         '<form method="post" action="/api/vault/secrets" class="row">'
         f'<input type="hidden" name="cwd" value="{_e(cwd)}">'
         f'<input type="hidden" name="tier" value="{_e(s.tier)}">'
         f'<input type="hidden" name="name" value="{_e(s.name)}">'
-        '<input type="password" name="value" autocomplete="new-password" required '
-        f'aria-label="New value of {_e(s.name)}">'
+        f"{_value_box(f'New value of {s.name}')}"
         '<button type="submit">Replace value</button></form>'
     )
 
@@ -431,8 +441,7 @@ def _create_form(cwd: str) -> str:
         f"<div>Used by {_checks('stage', vault.VAULT_STAGES, ('impl',))}</div>"
         f"<div>Passed as {_checks('mode', vault.MODES, ('env', 'file'))}</div>"
         '<label><input type="checkbox" name="broker" value="1"> Broker: passed as ssh only</label>'
-        '<label>Value <input type="password" name="value" autocomplete="new-password" '
-        "required></label>"
+        f"<label>Value {_value_box()}</label>"
         '<button type="submit">Save</button></form>'
     )
 
@@ -535,6 +544,14 @@ def _texts(raw: Any) -> tuple[str, ...]:
 
 def _one(form: dict[str, list[str]], field: str) -> str:
     return form.get(field, [""])[0]
+
+
+def _pasted(text: str) -> bytes:
+    """The value as it was pasted: a browser sends a `<textarea>`'s line breaks as CRLF, and a
+    line break pressed after a one-line value is not part of it. A value of several lines, a key,
+    ends with one."""
+    text = text.replace("\r\n", "\n").rstrip("\n")
+    return (text + "\n" if "\n" in text else text).encode()
 
 
 def _back(cwd: str, **fields: str) -> Response:
@@ -699,7 +716,7 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
         form = parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True)
         cwd = _one(form, "cwd")
         key = door.key_of(cwd)
-        value = _one(form, "value").encode()
+        value = _pasted(_one(form, "value"))
         if not value:
             raise Invalid("a secret needs a value")
         try:

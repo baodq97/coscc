@@ -7,9 +7,11 @@ package `coscc/vault/`'s; the file has the tables' statements through `vault.TAB
 ## What it does
 
 - A person keeps a secret on `/vault`, in one workspace (`ws:<name>`) or for any workspace it is
-  granted to (`global:<name>`). The value goes in through a native HTML form (a password box, no
+  granted to (`global:<name>`). The value goes in through a native HTML form (a `<textarea>`, no
   Reflex state, no websocket) and one POST, `/api/vault/secrets`, which answers `303` back to the
-  page. It is written encrypted with `age` and no route gives it back.
+  page. A password box would not do: a browser strips its line breaks, and a key is many lines.
+  The route turns the textarea's CRLF back into LF and drops trailing line breaks; a value of
+  several lines keeps one. It is written encrypted with `age` and no route gives it back.
 - An agent in `impl` or `spike` runs one command with a secret passed in, through `vault_exec`.
   The output is filtered of the value in the forms `coscc/vault/` lists before the model sees it.
 - Every create, replace, delete, grant, revoke and policy change writes one `kind: "vault"` line
