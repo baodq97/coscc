@@ -173,6 +173,21 @@ class SendMessageStaysInTheStep(unittest.TestCase):
                     _pre(ledger, "SendMessage", {"to": to, "message": "x"}, "a1"),
                 )
 
+    def test_a_task_that_is_no_helper_and_a_start_with_no_id_are_neither_peers_nor_addresses(self):
+        told = Told()
+        ledger = Helpers(told)
+        _system(ledger, {"subtype": "task_started", "task_id": "b1", "tool_use_id": "toolu_b1", "description": "npm test", "task_type": "local_bash"})  # fmt: skip
+        _ask(ledger, "SubagentStart", {"hook_event_name": "SubagentStart", "agent_type": "worker"})  # fmt: skip
+        for to in ("b1", ""):
+            with self.subTest(to=to):
+                self.assertIn(
+                    "SendMessage goes only to",
+                    _pre(ledger, "SendMessage", {"to": to, "message": "x"}, "a1"),
+                )
+        self.assertEqual(ledger.listing(), "no helper has started in this step")
+        ledger.close()
+        self.assertEqual(told.events, [])
+
 
 class TheLedgerFollowsEachHelper(unittest.TestCase):
     def test_a_start_and_an_end_with_tokens_for_each_worker_and_peers_counts_them(self):

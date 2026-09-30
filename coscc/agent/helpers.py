@@ -122,6 +122,11 @@ class Helpers:
     def _of(self, agent_id: str) -> Helper:
         return self.seen.setdefault(agent_id, Helper(agent_id))
 
+    def helpers(self) -> list[Helper]:
+        """The entries that are helpers: a kind came with `SubagentStart` or `task_started`.
+        Any other task the stream names is kept out of `peers` and of who may be messaged."""
+        return [h for h in self.seen.values() if h.kind]
+
     def _tell(self, kind: str, fields: Told) -> None:
         if self.tell is None:
             return
@@ -135,7 +140,7 @@ class Helpers:
         return {"agent_id": h.id, "helper": h.kind, "step": h.step}
 
     def _started(self, h: Helper, force: bool = False) -> None:
-        if h.told_start or h.started_ms is None or (not h.step and not force):
+        if h.told_start or not h.kind or h.started_ms is None or (not h.step and not force):
             return
         h.told_start = True
         self._tell("worker_start", {**self._fields(h), "at_ms": h.started_ms})
@@ -171,7 +176,7 @@ class Helpers:
             return f"ListAgents lists sessions outside this step; call {PEERS_TOOL}"
         if tool_name == SEND_MESSAGE:
             to = tool_input.get("to")
-            if to != MAIN and to not in self.seen:
+            if to != MAIN and to not in {h.id for h in self.helpers()}:
                 return (
                     f'SendMessage goes only to "{MAIN}" or to a helper {PEERS_TOOL} lists: {to!r}'
                 )
@@ -199,7 +204,9 @@ class Helpers:
     async def subagent_start(
         self, hook_input: Any, _tool_use_id: str | None, _context: Any
     ) -> SyncHookJSONOutput:
-        h = self._of(str(hook_input.get("agent_id") or ""))
+        if not hook_input.get("agent_id"):
+            return {}
+        h = self._of(str(hook_input["agent_id"]))
         h.kind = h.kind or str(hook_input.get("agent_type") or "")
         h.started_ms = _now_ms()
         self._started(h)
@@ -208,7 +215,9 @@ class Helpers:
     async def subagent_stop(
         self, hook_input: Any, _tool_use_id: str | None, _context: Any
     ) -> SyncHookJSONOutput:
-        h = self._of(str(hook_input.get("agent_id") or ""))
+        if not hook_input.get("agent_id"):
+            return {}
+        h = self._of(str(hook_input["agent_id"]))
         h.ended_ms = _now_ms()
         self._ended(h)
         return {}
@@ -235,7 +244,7 @@ class Helpers:
 
     def close(self) -> None:
         """Tells what the run never finished telling: a helper whose end or usage never came."""
-        for h in self.seen.values():
+        for h in self.helpers():
             if h.started_ms is not None or h.step:
                 self._ended(h, force=True)
 
@@ -243,7 +252,7 @@ class Helpers:
         lines = [
             f"{h.id} · {h.step or '(no step named)'} · "
             + ("done" if h.ended_ms is not None or h.told_end else "running")
-            for h in self.seen.values()
+            for h in self.helpers()
         ]
         return "\n".join(lines) or "no helper has started in this step"
 
