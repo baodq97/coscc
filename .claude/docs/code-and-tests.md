@@ -29,9 +29,13 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
     `no-matching-overload` and `invalid-return-type`.
   - Elsewhere every rule is on: a value that may be `None` is checked before it is read or
     passed on, and a finding is fixed, never silenced with `cast` or `# ty: ignore`.
-- `tests/test_comments.py`: no unit or requirement id (`0088`, `R3`, `spec.md C7`,
-  `review round 2`) in a comment, a docstring or a function or class name, in `coscc/` or
-  `tests/`.
+- `tests/test_comments.py`: no unit or requirement id (a unit number, a `spec.md` requirement,
+  a review round) in a comment, a docstring, a function or class name, or a string under
+  `coscc/` (the SQL schema comments), nor in a markdown line under `.claude/` or
+  `coscc/features/`. The failure names file, line and id: say why, not which unit. Not read:
+  `old-units.md`, `.claude/scripts/testdata`, `.claude/worktrees`, strings under `tests/`
+  (fixture data); a named exception covers the `CLAUDE.md` pointer to `old-units.md` and the
+  finding, spike and fixture-unit formats in the skills and the UI rule.
 - `tests/test_citations.py`: every `NAME` `path:N` under `.claude/` points at its name. A
   change that moves lines fixes the citations in the same commit.
 - `tests/test_layers.py`: no import goes up a layer (below).
