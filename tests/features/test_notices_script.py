@@ -9,7 +9,7 @@ from coscc import screens
 from coscc.features import notices
 
 # The script's last statements, so a render that cut it short is not counted as carrying it.
-_NOTICE_TAIL = "setInterval(refresh, 60000);\n  connect();\n})();"
+_NOTICE_TAIL = "return cursor(); }});\n})();"
 
 
 class TheNoticeScript(unittest.TestCase):

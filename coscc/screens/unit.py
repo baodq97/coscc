@@ -785,6 +785,8 @@ def _detail_dialog() -> rx.Component:
                             margin_top="12px",
                         ),
                         _unit_badges(),
+                        # Empty: a feature's line about the open unit renders here.
+                        rx.box(id="slot-unit"),
                         rx.flex(
                             rx.foreach(P.current_unit.cells, _cell_chip),
                             gap="14px",
