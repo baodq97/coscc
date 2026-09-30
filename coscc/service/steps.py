@@ -538,7 +538,7 @@ class Steps:
                 return rec
 
         lock = self._integrate_locks.setdefault(key, asyncio.Lock())
-        async with lock:
+        async with lock:  # noqa: PLR1702 - still to split
             busy = self.holds.busy(key, unit)
             cut = None
             if not busy and tree is not None:

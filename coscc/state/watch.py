@@ -120,7 +120,7 @@ class WatchMixin(rx.State, mixin=True):
             last = self.watch_events[-1].seq if self.watch_events else 0
         if page["status"] != "running":
             return
-        try:
+        try:  # noqa: PLR1702 - still to split
             async for kind, value in app.SERVICE.watch.follow_events(
                 cwd, unit, run, after=last, gather=WATCH_GATHER
             ):

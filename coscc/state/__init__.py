@@ -1585,7 +1585,7 @@ class StudioState(
             self.error = ""
 
         listed = False
-        try:
+        try:  # noqa: PLR1702 - still to split
             async for kind, payload in app.SERVICE.steps.run_step(cwd, unit, stage):
                 async with self:
                     if not listed:

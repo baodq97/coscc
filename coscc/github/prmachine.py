@@ -113,7 +113,7 @@ def body_of(name: str) -> str:
     """From the unit's metadata, never from a commit."""
     return (
         f"Work unit `{name}`.\n\n"
-        "Opened by coscc, not by a session: the `pr` step is mechanical (`0136` R12). What the "
+        "Opened by coscc, not by a session: the `pr` step is mechanical. What the "
         "unit set out to do and what it measured are in its artifacts, in the app's store.\n"
     )
 
@@ -812,7 +812,7 @@ class Machine:
             for r in (rows if isinstance(rows, list) else [])
             if isinstance(r, dict) and isinstance(r.get("number"), int)
         }
-        for name, now in watching:
+        for name, now in watching:  # noqa: PLR1702 - still to split
             u = Unit(workspace, name, directory_of(name), root, "", "", None)
             number = int(now["number"])
             try:

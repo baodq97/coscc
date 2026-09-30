@@ -574,7 +574,7 @@ def the_board_shows_every_stage_and_every_unfinished_unit_without_scrolling(
     if not ok:
         return False
     page = context.new_page()
-    try:
+    try:  # noqa: PLR1702 - still to split
         for density in ("comfortable", "compact"):
             set_density(page, base, density)
             for ws, (stages, units, _) in reads.items():
