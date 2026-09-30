@@ -18,7 +18,11 @@ class TheShellCarriesTheKit(unittest.TestCase):
         kit_at = shell.index(marker)
         for f in features.FEATURES:
             for js in f.scripts:
-                self.assertLess(kit_at, shell.index(js.strip().splitlines()[1].strip()))
+                # The page holds each script as a string literal, and the dump escapes it again.
+                twice = json.dumps(
+                    json.dumps(js.strip(), ensure_ascii=False)[1:-1], ensure_ascii=False
+                )
+                self.assertLess(kit_at, shell.index(twice[1:-1]), f"{f.name}'s script")
 
     def test_both_slots_are_in_the_page(self):
         shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
