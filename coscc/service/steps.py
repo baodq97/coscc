@@ -8,6 +8,7 @@ import json
 import logging
 import shutil
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -26,7 +27,7 @@ from coscc.data import Data, now as _now
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord, Journal
 from coscc.data import Busy
-from coscc.agent.policy import grant_for
+from coscc.agent.policy import grant_for, protected_paths
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner, check_started_by
 from coscc.runner.prompt import answers_section
@@ -848,7 +849,13 @@ class Steps:
         # The `integrate` row, read once for the prompt, the records and
         # the session's commit attribution.
         agent = self.agents.agent("integrate")
-        grant = grant_for("integrate")
+        # Gebo runs no `Runner`, so its grant takes the protected paths here.
+        grant = replace(
+            grant_for("integrate"),
+            protected=protected_paths(
+                str(Data(self.config.data_dir).root), self.config.config_home, self.config.home
+            ),
+        )
         name = agent["name"] if agent is not None else ""
         start_at = was.get("start_at")
         if resume is None:

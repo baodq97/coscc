@@ -1440,3 +1440,58 @@ class AHelperRunsGitOnlyToRead(unittest.TestCase):
             decide(IMPL, "Bash", {"command": "git commit -m x"}, "/tmp"),
             self.bash("git commit -m x", None),
         )
+
+
+class TheSecretsAreOutOfEveryCommandsReach(unittest.TestCase):
+    """K1 of 0069: a word pointing into the vault's store or `~/.config/coscc/` is refused at
+    every stage, whatever the grant's commands."""
+
+    PROTECTED = policy.protected_paths("/srv/cos", "/home/u/.config", "/home/u")
+
+    def test_both_paths_are_refused_at_every_stage_that_runs_commands(self):
+        lines = (
+            "cat /srv/cos/vault/a.age",
+            "ls /srv/cos/vault",
+            "cat ~/.config/coscc/vault.key",
+            "cat $HOME/.config/coscc/env",
+            "grep -r x /home/u/.config/coscc",
+            "git log --output=/srv/cos/vault/x",
+            "cat < /srv/cos/./vault/a.age",
+        )
+        for stage in (*policy.GRANTS, "impl"):
+            grant = replace(grant_for(stage), commands=("cat", "ls", "grep", "git"))
+            grant = replace(grant, protected=self.PROTECTED)
+            for line in lines:
+                with self.subTest(stage=stage, line=line):
+                    self.assertIn("the app's secrets", check_command(grant, line))
+
+    def test_a_neighbour_of_a_protected_path_is_not_refused(self):
+        grant = replace(IMPL, protected=self.PROTECTED)
+        for line in ("ls /srv/cos/vaults", "cat /home/u/.config/cosccx/a", "ls /srv/cos"):
+            with self.subTest(line=line):
+                self.assertEqual(check_command(grant, line), "")
+
+    def test_allow_does_not_widen_it(self):
+        grant = policy.with_lists(replace(IMPL, protected=self.PROTECTED), ("curl",), ())
+        self.assertIn("the app's secrets", check_command(grant, "curl file:///srv/cos/vault/a"))
+
+
+class AWorkspacesListsChangeOnlyImplsCommands(unittest.TestCase):
+    """K2 of 0069: `allow` adds, `block` takes out and wins; nothing else of the grant moves."""
+
+    def test_allow_adds_and_block_wins(self):
+        grant = policy.with_lists(IMPL, ("curl", "psql", "git"), ("psql", "rm", "npm"))
+        self.assertIn("curl", grant.commands)
+        self.assertNotIn("psql", grant.commands)
+        self.assertNotIn("npm", grant.commands)
+        self.assertEqual(grant.commands.count("git"), 1)
+        self.assertEqual(replace(grant, commands=IMPL.commands), IMPL)
+
+    def test_empty_lists_keep_impls_commands(self):
+        self.assertEqual(policy.with_lists(IMPL, (), ()), IMPL)
+
+    def test_the_pref_is_read_per_workspace_and_a_path_is_no_name(self):
+        stored = {"/w": {"allow": ["curl", "/usr/bin/nc", "x" * 65, 3], "block": ["rm"]}}
+        self.assertEqual(policy.lists_of(stored, "/w"), (("curl",), ("rm",)))
+        self.assertEqual(policy.lists_of(stored, "/other"), ((), ()))
+        self.assertEqual(policy.lists_of("junk", "/w"), ((), ()))
