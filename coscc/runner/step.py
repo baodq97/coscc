@@ -17,11 +17,13 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
+from coscc import hooks as hooks_mod
 from coscc.agent import agents, instructions, modeltrial, steps, transcript
 from coscc.agent import sessions as sessions_mod
 from coscc.runlog.journal import Journal, Outcome
@@ -1253,12 +1255,57 @@ async def _end_extra(end_fields: Any, unit: str, stage: str) -> dict[str, Any]:
 class Runner:
     """Runs one step. Owns no state beyond what it was handed."""
 
-    def __init__(self, sessions: Sessions, journal: Journal | None, app: dict | None = None):
+    def __init__(
+        self,
+        sessions: Sessions,
+        journal: Journal | None,
+        app: dict | None = None,
+        hooks: hooks_mod.Hooks = hooks_mod.Hooks(),
+    ):
         self.sessions = sessions
+        self.hooks = hooks
         self.journal = journal
         # `{"version", "commit"}` of the app running this step, from `update.identity`; `None` leaves
         # `start` without them.
         self.app = app
+
+    def _with_tools(
+        self,
+        grant: Grant,
+        channel: submit_mod.Channel | None,
+        recorder: Any,
+        *,
+        workspace: str,
+        journal_key: str,
+        unit: str,
+        stage: str,
+        cwd: str,
+        watch: str | None,
+        directory: Path,
+        resumed: bool,
+    ) -> tuple[Grant, dict[str, Any]]:
+        """The grant with the MCP names features' tools add, and the `mcp_servers` argument holding
+        `submit` (when there is a channel) and one server per tool, each made from this run's facts."""
+        servers: dict[str, Any] = (
+            {submit_mod.SERVER: channel.server()} if channel is not None else {}
+        )
+        tools = self.hooks.for_step(stage, workspace).tools
+        if tools:
+            facts = hooks_mod.facts(
+                workspace=workspace,
+                workspace_key=journal_key,
+                unit=unit,
+                stage=stage,
+                run=str(recorder.run) if recorder is not None else uuid.uuid4().hex,
+                cwd=cwd,
+                watch=watch,
+                directory=directory,
+                commands=grant.commands,
+                resumed=resumed,
+            )
+            grant = replace(grant, mcp=hooks_mod.granted(tools))
+            servers.update({t.server: t.make(facts) for t in tools})
+        return grant, ({"mcp_servers": servers} if servers else {})
 
     async def run(
         self,
@@ -1393,8 +1440,18 @@ class Runner:
         channel = _channel_for(
             grant, recorder, stage, directory, artifact, head, open_findings, claims_round
         )
-        servers = (
-            {"mcp_servers": {submit_mod.SERVER: channel.server()}} if channel is not None else {}
+        grant, servers = self._with_tools(
+            grant,
+            channel,
+            recorder,
+            workspace=workspace,
+            journal_key=journal_key,
+            unit=unit,
+            stage=stage,
+            cwd=cwd,
+            watch=watch,
+            directory=directory,
+            resumed=resume is not None,
         )
         start_at = self._write_start(
             was.get("start_at"),
@@ -1700,6 +1757,7 @@ class Runner:
                 else {}
             ),
             granted=list(grant.tools),
+            mcp=list(grant.mcp),
             max_turns=grant.max_turns,
             head=head,
             model=model,
@@ -1793,7 +1851,7 @@ class Runner:
             # held tools with no gate in front of them.
             can_use_tool=(
                 permission_gate(grant, cwd, denials, *gate_args)
-                if grant.opens_anything or channel is not None
+                if grant.opens_anything or channel is not None or grant.mcp
                 else None
             ),
             tools=list(grant.tools),
