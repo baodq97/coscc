@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,9 +17,9 @@ from coscc import screens
 from coscc.data import Data
 from coscc import features
 from coscc.hooks import Block, Guard, Parts, Tool
-from coscc.plugin import Ctx, Plugin, hooks_of
+from coscc.plugin import Ctx, Plugin, create_tables, ctx_of, hooks_of
 from coscc.api import build
-from coscc.config import Config
+from coscc.config import PROTECTED_DB_VAR, Config
 
 
 class Setup(unittest.IsolatedAsyncioTestCase):
@@ -55,20 +56,30 @@ class TakingTheLineOutRemovesTheFeature(Setup):
         self.assertIn("__coscc_notices", json.dumps(screens.index().render(), default=str))
 
 
-class ATableIsCreatedAtBuild(Setup):
+def table_exists(config: Config, name: str) -> bool:
+    with Data(config.data_dir).connect() as conn:
+        row = conn.execute("SELECT name FROM sqlite_master WHERE name = ?", (name,)).fetchone()
+    return row is not None
+
+
+def start(api) -> None:
+    """What `coscc.py`'s startup task does."""
+    create_tables(ctx_of(api.state.service), api.state.tables)
+
+
+class ATableIsCreatedAtStartup(Setup):
     def fake(self, *tables: str) -> Plugin:
         return Plugin("fake", lambda _ctx: [], tables=tables)
 
-    def test_a_feature_table_exists_after_build_and_a_second_build_is_harmless(self):
+    def test_build_opens_no_database_and_startup_makes_the_table_twice_harmlessly(self):
         fake = self.fake("CREATE TABLE IF NOT EXISTS fake_things (id INTEGER PRIMARY KEY)")
+        db = str((Path(self.config.data_dir) / "cos.db").resolve())
         with mock.patch("coscc.features.FEATURES", (fake,)):
-            build(self.config)
-            build(self.config)
-        with Data(self.config.data_dir).connect() as conn:
-            row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE name = 'fake_things'"
-            ).fetchone()
-        self.assertIsNotNone(row)
+            with mock.patch.dict(os.environ, {PROTECTED_DB_VAR: db}):
+                api = build(self.config)
+            start(api)
+            start(api)
+        self.assertTrue(table_exists(self.config, "fake_things"))
 
     def test_a_statement_that_is_not_a_create_table_raises_at_build(self):
         for bad in ("DROP TABLE prefs", "CREATE TABLE t (a INTEGER)", "SELECT 1"):
@@ -171,9 +182,8 @@ class AFeatureHandsTheAgentItsParts(Setup):
                 )
                 self.assertEqual(off.status_code, 200)
                 self.assertEqual(hooks.for_step("impl", str(self.ws)), Parts())
-        with Data(self.config.data_dir).connect() as conn:
-            row = conn.execute("SELECT name FROM sqlite_master WHERE name='fake_things'").fetchone()
-        self.assertIsNotNone(row)
+                start(api)
+        self.assertTrue(table_exists(self.config, "fake_things"))
 
     async def test_with_no_features_none_of_it_remains(self):
         with mock.patch("coscc.features.FEATURES", ()):

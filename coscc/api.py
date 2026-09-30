@@ -541,12 +541,15 @@ def build(config: Config | None = None) -> FastAPI:
     # Read now, so a test can patch `features.FEATURES`.
     ctx = plugin.ctx_of(service)
     service.steps.hooks = plugin.hooks_of(features.FEATURES, ctx)
-    plugin.create_tables(ctx, features.FEATURES)
+    # Checked now, created when the app starts (`coscc.py`): building the page imports this
+    # module in processes that may not open the database.
+    tables = plugin.tables_of(features.FEATURES)
     routes = [*router.routes, *(r for f in features.FEATURES for r in f.routes(ctx))]
     api = FastAPI(title="coscc", lifespan=lifespan, routes=routes)
     api.state.config = config
     api.state.sessions = sessions
     api.state.service = service
+    api.state.tables = tables
     api.add_exception_handler(Invalid, _refused)
 
     # No route for `/` and no static mount: `/` has to fall through to Reflex's compiled-frontend
