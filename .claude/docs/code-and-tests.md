@@ -18,6 +18,9 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
   - `ARG`: an argument is read. A callback that must take one it ignores names it `_x`.
     Tests are exempt (a fake takes what it stands in for).
   - `PIE794`: a class defines a field once.
+  - Refuse first: check the failing case and return, raise or continue, so the main path runs
+    unindented; `RET505`–`RET508` and `PLR1702` (4 nested blocks) hold it, and
+    `# noqa: PLR1702 - still to split` marks a function that waits.
 - `ruff format --check`: one format, line length 100. Never format by hand.
 - `ty check`: types, on `coscc/` and `scripts/`, not on `tests/` (running them checks them).
   - Off only in Reflex code, `coscc/screens/`, `coscc/state/` and `coscc/coscc.py`, where `Var`

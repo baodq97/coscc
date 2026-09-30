@@ -187,7 +187,7 @@ class Notices:
         else:
             last = after
         said = loop.time()
-        while True:
+        while True:  # noqa: PLR1702 - still to split
             ticket = BELL.arm()
             try:
                 while True:

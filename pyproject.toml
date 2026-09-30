@@ -51,13 +51,19 @@ line-length = 100
 # `C901`, `PLR0915`: a function stays small; its `noqa` marks one still to split, and `RUF100`
 # drops the mark once it is. `ARG`: an argument is read, or named `_x` for a caller's signature.
 # `PIE794`: a class defines a field once.
-select = ["F", "BLE", "S110", "S112", "RUF100", "C901", "PLR0915", "ARG", "PIE794"]
+# `RET505`-`RET508`, `PLR1702`: refuse first, so the main path runs unindented; `PLR1702` is a
+# preview rule, so only the rules named in `select` turn on (`explicit-preview-rules`).
+select = ["F", "BLE", "S110", "S112", "RUF100", "C901", "PLR0915", "ARG", "PIE794",
+  "RET505", "RET506", "RET507", "RET508", "PLR1702"]
+preview = true
+explicit-preview-rules = true
 
 [tool.ruff.lint.mccabe]
 max-complexity = 20
 
 [tool.ruff.lint.pylint]
 max-statements = 60
+max-nested-blocks = 4
 
 [tool.ruff.lint.per-file-ignores]
 # A fake takes the arguments of what it stands in for.
