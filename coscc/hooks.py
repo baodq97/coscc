@@ -1,4 +1,4 @@
-"""What a feature hands the agent's steps: tools, and (later) guards and prompt blocks.
+"""What a feature hands the agent's steps: tools, guards and prompt blocks.
 
 The kernel builds one `Facts` per run and asks each part what it makes of it. A feature never
 writes a granted tool name: `granted` derives `mcp__<server>__<name>`, and `Grant` refuses any
