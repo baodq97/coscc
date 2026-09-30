@@ -272,6 +272,11 @@ class StudioState(
     ap_max_parallel: str = ""
     ap_cap: str = ""
     ap_refused: str = ""
+    # One workspace's `allow` and `block` for `impl`, saved and as typed (space-separated).
+    impl_allow: list[str] = []
+    impl_block: list[str] = []
+    impl_allow_text: str = ""
+    impl_block_text: str = ""
     model_target: str = ""
     model_text: str = ""
     saving_model: bool = False
@@ -549,6 +554,21 @@ class StudioState(
         self._show_models(await app.SERVICE.models.stage_models())
         self._show_agents(app.SERVICE.agents.agent_table())
         self._load_autopilot()
+        self._load_command_lists()
+
+    def _show_command_lists(self, data: dict) -> None:
+        self.impl_allow = [str(n) for n in data.get("allow") or []]
+        self.impl_block = [str(n) for n in data.get("block") or []]
+        self.impl_allow_text = " ".join(self.impl_allow)
+        self.impl_block_text = " ".join(self.impl_block)
+
+    def _load_command_lists(self) -> None:
+        if not self.cwd:
+            return
+        try:
+            self._show_command_lists(app.SERVICE.ws.command_lists(app.SERVICE.ws.check(self.cwd)))
+        except Invalid:
+            return
 
     def _show_autopilot_block(self, block: dict) -> None:
         """Copied from the board; nothing here decides whether to stop."""
@@ -1385,6 +1405,28 @@ class StudioState(
     @rx.event
     def save_ap_cap(self):
         self._change_autopilot("daily_cap_usd", _number(self.ap_cap, float))
+
+    @rx.event
+    def edit_impl_allow(self, value: str):
+        self.impl_allow_text = value
+
+    @rx.event
+    def edit_impl_block(self, value: str):
+        self.impl_block_text = value
+
+    @rx.event
+    def save_command_lists(self):
+        """Whether a name is a command's is `Workspaces.set_command_lists`'s call."""
+        try:
+            self._show_command_lists(
+                app.SERVICE.ws.set_command_lists(
+                    self.cwd, self.impl_allow_text.split(), self.impl_block_text.split()
+                )
+            )
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        self.notice = "Saved; the next impl step here runs with these commands."
 
     def _change_autopilot(self, name: str, value) -> None:
         try:

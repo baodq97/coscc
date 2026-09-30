@@ -297,6 +297,41 @@ def _autopilot_settings() -> rx.Component:
     )
 
 
+def _command_list_field(label: str, value, on_change, field_id: str) -> rx.Component:
+    return rx.input(
+        value=value,
+        on_change=on_change,
+        placeholder="e.g. curl psql",
+        size="1",
+        width="220px",
+        aria_label=label,
+        id=field_id,
+    )
+
+
+def _command_lists() -> rx.Component:
+    """What `impl` runs in this workspace beyond, or short of, its own commands."""
+    return s.panel(
+        s.section_head("Commands impl may run here", rx.icon("terminal", size=18, color=s.MUTED)),
+        _settings_row(
+            "Allow",
+            "Added to impl's commands in this workspace.",
+            _command_list_field("Allow", P.impl_allow_text, P.edit_impl_allow, "impl-allow"),
+        ),
+        _settings_row(
+            "Block",
+            "Taken out, even when allowed.",
+            _command_list_field("Block", P.impl_block_text, P.edit_impl_block, "impl-block"),
+        ),
+        _name_list("Allowed", P.impl_allow),
+        _name_list("Blocked", P.impl_block),
+        rx.button(
+            "Save", on_click=P.save_command_lists, size="1", margin_top="8px", id="save-impl-lists"
+        ),
+        id="impl-lists-panel",
+    )
+
+
 def _decision_row(row: rx.Var[DecisionRow]) -> rx.Component:
     """One decision, its days for a reader, its workspace by name."""
     return rx.table.row(
@@ -608,6 +643,7 @@ def _settings() -> rx.Component:
             rx.foreach(P.grants, _grant_row),
             id="grants-panel",
         ),
+        rx.cond(P.has_workspace, _command_lists(), rx.fragment()),
         # Who each stage's session is told it is.
         s.panel(
             s.section_head("Agents", rx.icon("users", size=18, color=s.MUTED)),

@@ -31,11 +31,17 @@ from coscc.runlog.journal import Journal, Outcome
 from coscc.units import submit as submit_mod
 from coscc.agent.policy import (
     AGENT_TOOL,
+    GRANTS_PREF,
+    LISTED_STAGE,
     Grant,
     beyond_reading,
     grant_for_step,
     is_prose_stage,
+    lists_of,
+    protected_paths,
+    with_lists,
 )
+from coscc.data import Data
 from coscc.units import guards
 from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
@@ -1286,6 +1292,21 @@ class Runner:
         # `start` without them.
         self.app = app
 
+    def _configured(self, grant: Grant, stage: str, journal_key: str) -> Grant:
+        """`grant` with this machine's protected paths and, for `impl`, the workspace's `allow`
+        and `block` from `cos.db`, before `Facts.commands` is read from it. A stand-in `Sessions`
+        with no config (a test's) leaves the grant as it is."""
+        config = getattr(self.sessions, "config", None)
+        if config is None:
+            return grant
+        data = Data(config.data_dir)
+        grant = replace(
+            grant, protected=protected_paths(str(data.root), config.config_home, config.home)
+        )
+        if stage != LISTED_STAGE:
+            return grant
+        return with_lists(grant, *lists_of(data.pref(GRANTS_PREF, {}), journal_key))
+
     def _features(
         self,
         grant: Grant,
@@ -1444,7 +1465,9 @@ class Runner:
         reply again from those pieces and takes up that one turn. `owner_extra` is what `Service`
         adds to the owner a `suspend` row carries.
         """
-        grant = _admitted(started_by, stage, label, directory, workspace, unit)
+        grant = self._configured(
+            _admitted(started_by, stage, label, directory, workspace, unit), stage, journal_key
+        )
         directory = Path(directory)
         cwd = cwd or workspace
         was = dict((resume or {}).get("owner") or {})

@@ -57,6 +57,9 @@ class Grant:
     # Full names of MCP tools a feature's server holds, derived by `coscc/hooks.py`. Not in `tools`
     # (`--tools` names the built-in set) and not in `opens_anything`.
     mcp: tuple[str, ...] = ()
+    # Paths no word of a command may point into (`protected_paths`), whatever `commands` holds.
+    # Empty in the table: the runner fills it from the data root when a step runs.
+    protected: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in self.mcp:
@@ -377,6 +380,63 @@ def grant_for_step(stage: str, label: str | None) -> Grant:
 
 def is_prose_stage(stage: str) -> bool:
     return stage in PROSE_STAGES
+
+
+# The one stage a workspace's `allow` and `block` change, and the pref holding them:
+# `{workspace key: {"allow": [...], "block": [...]}}`, written by `coscc/service/workspaces.py`.
+LISTED_STAGE = "impl"
+GRANTS_PREF = "grants.impl"
+# What `allow` and `block` may name: a command, never a path. Chosen, not measured.
+COMMAND_NAME = re.compile(r"[A-Za-z0-9._+-]{1,64}")
+
+
+def lists_of(stored: object, key: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """`(allow, block)` of one workspace in the pref; a name `COMMAND_NAME` refuses is dropped."""
+    entry = stored.get(key) if isinstance(stored, dict) else None
+    if not isinstance(entry, dict):
+        return (), ()
+
+    def names(field: str) -> tuple[str, ...]:
+        raw = entry.get(field)
+        if not isinstance(raw, list):
+            return ()
+        return tuple(
+            dict.fromkeys(n for n in raw if isinstance(n, str) and COMMAND_NAME.fullmatch(n))
+        )
+
+    return names("allow"), names("block")
+
+
+def with_lists(grant: Grant, allow: tuple[str, ...], block: tuple[str, ...]) -> Grant:
+    """`grant` with `allow` added to its commands and `block` taken out; `block` wins. Only
+    `commands` changes: `denied`, `protected` and every other rule of `check_command` stay."""
+    merged = dict.fromkeys((*grant.commands, *allow))
+    return replace(grant, commands=tuple(c for c in merged if c not in block))
+
+
+def protected_paths(data_root: str, config_home: str, home: str = "") -> tuple[str, ...]:
+    """The vault's store, `<data root>/vault`, and the app's own config, `<config home>/coscc`
+    (`env`, `vault.key`), as a command word may spell them: as given, symlinks resolved, and
+    below `home` with `~`, `$HOME` or `${HOME}` in front. An empty `config_home` protects the
+    store alone.
+
+    The kernel keeps this list, not the feature, so `Bash` is held to it with the vault off too.
+    """
+    import os
+    from pathlib import Path
+
+    dirs = [os.path.join(data_root, "vault")]
+    if config_home:
+        dirs.append(os.path.join(config_home, "coscc"))
+    top = os.path.normpath(home) if home else ""
+    out: list[str] = []
+    for d in dirs:
+        for p in (os.path.normpath(d), str(Path(d).resolve())):
+            out.append(p)
+            if top and p.startswith(top + "/"):
+                rel = p[len(top) + 1 :]
+                out += [f"~/{rel}", f"$HOME/{rel}", f"${{HOME}}/{rel}"]
+    return tuple(dict.fromkeys(out))
 
 
 # --- deciding one call -------------------------------------------------------
@@ -1030,10 +1090,60 @@ def check_command(
             if reason:
                 return reason
     for simple in parsed.commands:
+        reason = _protected_refused(grant, simple)
+        if reason:
+            return reason
+    for simple in parsed.commands:
         reason = _check_simple(grant, simple, lease)
         if reason:
             return reason
     return ""
+
+
+def _protected_refused(grant: Grant, simple: _Simple) -> str:
+    """Why a word or redirect target of `simple` points into one of `grant.protected`, or "".
+
+    Read on the text, so `--key=/…/vault.key` counts, and a glob that could expand into one
+    (`~/.config/cos*/vault.key`, `/srv/*/vault`) is refused too. A relative path, a variable
+    holding the path, a brace expansion or a program that builds the path is not seen.
+    """
+    import os
+
+    for word in (*simple.words, *(r.target for r in simple.redirects)):
+        for text in {word, os.path.normpath(word)} if word else ():
+            for p in grant.protected:
+                if re.search(re.escape(p) + r"(?:/|$)", text) or _glob_reaches(text, p):
+                    return f"this step may not touch {p}: it holds the app's secrets"
+    return ""
+
+
+def _glob_reaches(text: str, protected: str) -> bool:
+    """Whether a word with `*`, `?` or `[` in it could expand into `protected`: its path, from
+    the word's start or after an `=`, matches `protected` part by part."""
+    import fnmatch
+
+    if not any(c in text for c in "*?["):
+        return False
+    want = protected.split("/")
+    for path in (text, text.partition("=")[2]):
+        parts = path.split("/")
+        if len(parts) >= len(want) and all(map(fnmatch.fnmatchcase, want, parts)):
+            return True
+    return False
+
+
+def programs_of(command: str) -> tuple[str, ...]:
+    """The program each simple command of the line runs, read as `check_command` reads it: the
+    first word after any `NAME=value`, its directory dropped. `()` for a line it cannot read."""
+    parsed = _read(command or "")
+    if isinstance(parsed, _Unreadable):
+        return ()
+    out = []
+    for simple in parsed.commands:
+        words = [w for w in simple.words if not _ASSIGNMENT.match(w)]
+        if words:
+            out.append(words[0].rsplit("/", 1)[-1])
+    return tuple(out)
 
 
 def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) -> str:

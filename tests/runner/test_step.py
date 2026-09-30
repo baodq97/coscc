@@ -1369,6 +1369,77 @@ class AnImplRunsUnderTheCeilingsOfItsLabel(unittest.TestCase):
                 self.assertEqual(start["max_turns"], probe.max_turns)
 
 
+class AWorkspacesListsReachTheImplGrant(unittest.TestCase):
+    """`allow` and `block` from `cos.db` are in `Facts.commands` and the gate of an `impl`; the
+    protected paths are refused at every stage that runs commands."""
+
+    def run_stage(self, d, stage, stored):
+        from coscc.config import Config
+        from coscc.data import Data
+        from coscc.hooks import Block
+
+        seen = {}
+
+        class Probe:
+            config = Config(data_dir=str(Path(d) / "data"), config_home=str(Path(d) / "cfg"))
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                gate = kw["can_use_tool"]
+                for line in ("curl -s x", "rm x", f"cat {Path(d) / 'data' / 'vault'}/a.age"):
+                    said = await gate("Bash", {"command": line}, None)
+                    seen[line] = getattr(said, "message", "")
+                (directory / f"{stage}.md").write_text("# X\nStatus: accepted.\n", encoding="utf-8")
+                await _submits(kw)
+                yield ("done", {"session_id": "s", "cost": {}})
+
+        def render(facts: Facts) -> str:
+            seen["commands"] = facts.commands
+            return ""
+
+        Data(Probe.config.data_dir).set_pref(policy.GRANTS_PREF, stored)
+        directory = make_unit(
+            Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP"
+        )
+        hooks = Hooks(parts=(("probe", Parts(blocks=(Block("probe", render),))),))
+        r = Runner(sessions=Probe(), journal=None, hooks=hooks)
+
+        async def go():
+            async for _ in r.run(
+                workspace=d,
+                directory=directory,
+                journal_key=d,
+                unit=UNIT,
+                stage=stage,
+                artifact=f"{stage}.md",
+                stages=STAGES,
+                mode="autonomous",
+            ):
+                pass
+
+        asyncio.run(go())
+        return seen
+
+    def test_impl_runs_with_the_workspaces_lists_and_block_wins(self):
+        with tempfile.TemporaryDirectory() as d:
+            seen = self.run_stage(d, "impl", {d: {"allow": ["curl", "rm"], "block": ["rm", "git"]}})
+        self.assertIn("curl", seen["commands"])
+        self.assertNotIn("rm", seen["commands"])
+        self.assertNotIn("git", seen["commands"])
+        self.assertEqual(seen["curl -s x"], "")
+        self.assertIn("may not run 'rm'", seen["rm x"])
+
+    def test_the_vault_is_refused_to_a_command_even_when_allowed(self):
+        with tempfile.TemporaryDirectory() as d:
+            seen = self.run_stage(d, "impl", {d: {"allow": ["cat"], "block": []}})
+        refused = [v for k, v in seen.items() if k.startswith("cat ")]
+        self.assertIn("the app's secrets", refused[0])
+
+    def test_another_workspaces_lists_change_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            seen = self.run_stage(d, "impl", {"/elsewhere": {"allow": ["curl"], "block": []}})
+        self.assertEqual(seen["commands"], grant_for("impl").commands)
+
+
 class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
     """A step holding any tool is handed Claude Code's preset system prompt; a step holding
     none is handed nothing, exactly as before. The preset must not widen the grant: the

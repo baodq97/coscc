@@ -150,9 +150,11 @@ def _answer_and_stop(args: list[str]) -> None:
         raise SystemExit(_state(args[1]))
     if args[0] == "skip":
         raise SystemExit(_skip(args[1:]))
+    if args[0] == "vault-measure":
+        raise SystemExit(_vault_measure(args[1:]))
     print(
         f"coscc: unrecognised argument {args[0]!r}\n"
-        "usage: coscc [--version | reset-password | state <workspace> | skip <workspace> <unit> spec [--delegated] <reason>]\n"
+        "usage: coscc [--version | reset-password | state <workspace> | skip <workspace> <unit> spec [--delegated] <reason> | vault-measure <workspace> [--since ISO] [--until ISO]]\n"
         "everything else is configuration, and it is read from the environment "
         "(COS_HOST, COS_PORT, COS_WORKING_DIR, ...) -- see docs/install.md",
         file=sys.stderr,
@@ -303,6 +305,167 @@ def _skip(args: list[str]) -> int:
         return 1
     print(f"coscc: {unit} spec.md skipped by {authority} — {reason}")
     return 0
+
+
+VAULT_MEASURE_USAGE = "usage: coscc vault-measure <workspace> [--since ISO] [--until ISO]"
+
+# The outcome the vault was built for: this many secrets used, through this many programs, and
+# not one value found anywhere it must not be. Chosen with the owner, not measured.
+MEASURE_SECRETS = 10
+MEASURE_TOOLS = 3
+
+# Bounds one GET route, so a stream that never ends does not hold the measure.
+ROUTE_WAIT = 10.0
+
+
+def measure_passes(secrets: int, tools: int, hits: int) -> bool:
+    return secrets >= MEASURE_SECRETS and tools >= MEASURE_TOOLS and hits == 0
+
+
+def _route_bodies(config, cwd: str) -> list[tuple[str, bytes]]:
+    """The body of every GET route of the board and its features, each called in this process with
+    `cwd` as the query. A route that needs a path parameter, or that does not answer in
+    `ROUTE_WAIT` seconds, is left out."""
+    import asyncio
+
+    import httpx
+
+    from coscc import api, plugin
+
+    app = api.build(config)
+    plugin.create_tables(plugin.ctx_of(app.state.service), app.state.tables)
+    paths = sorted(
+        {
+            path
+            for r in app.routes
+            if "GET" in (getattr(r, "methods", None) or ())
+            and "{" not in (path := str(getattr(r, "path", "")))
+        }
+    )
+
+    async def fetch() -> list[tuple[str, bytes]]:
+        out = []
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            for path in paths:
+                try:
+                    got = await asyncio.wait_for(client.get(path, params={"cwd": cwd}), ROUTE_WAIT)
+                except TimeoutError, httpx.HTTPError:
+                    continue
+                out.append((f"GET {path}", got.content))
+        return out
+
+    return asyncio.run(fetch())
+
+
+def _measure_sources(config, journal, key: str, units_seen: list[str]):
+    """Everything a value could be found in, for the steps of `units_seen`: their transcripts, run
+    log, artifacts, commits and pull request, then the routes."""
+    from coscc import units, vault
+    from coscc.units import worktrees
+
+    sources: list[tuple[str, bytes]] = []
+    for unit in units_seen:
+        try:
+            directory = units.unit_dir(key, unit, config.data_dir)
+            tree = str(worktrees.path(key, unit, config.data_dir))
+        except units.BadUnit:
+            continue
+        found = vault.unit_sources(journal, key, unit, directory, tree, pull_request=True)
+        sources += [(f"{unit}/{where}", body) for where, body in found]
+    return sources + _route_bodies(config, key)
+
+
+def _vault_measure(args: list[str]) -> int:
+    """Decrypt a workspace's secrets, look for them in everything the steps in a window wrote and
+    every GET route, and count the secrets and programs the run log shows in use (refused uses do
+    not count). It writes the result, by names only, under `<data root>/measurements/` and passes
+    with `measure_passes`.
+
+    A step is in the window when a run-log line of it is; a bound is an ISO date or time, compared
+    as far as it goes.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from coscc import vault
+    from coscc.config import from_env
+    from coscc.data import Data
+    from coscc.runlog.journal import Journal
+
+    bounds: dict[str, str] = {"--since": "", "--until": ""}
+    rest: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] in bounds and i + 1 < len(args):
+            bounds[args[i]] = args[i + 1]
+            i += 2
+            continue
+        rest.append(args[i])
+        i += 1
+    if len(rest) != 1:
+        print(f"coscc: {VAULT_MEASURE_USAGE}", file=sys.stderr)
+        return 2
+    since, until = bounds.get("--since", ""), bounds.get("--until", "")
+
+    config = from_env()
+    if not config.working_dir:
+        print("coscc: vault-measure needs COS_WORKING_DIR", file=sys.stderr)
+        return 2
+    data = Data(config.data_dir)
+    _, key = _workspace(config, data, rest[0])
+    if key is None:
+        return 2
+    journal = Journal(config.working_dir, data)
+    records = [
+        r
+        for r in journal.records(key)
+        if str(r.get("at", ""))[: len(since)] >= since
+        and (not until or str(r.get("at", ""))[: len(until)] <= until)
+    ]
+    uses = [
+        r
+        for r in records
+        if r.get("kind") == "vault"
+        and r.get("action") == "use"
+        and not r.get("codes")
+        and not r.get("refused")
+    ]
+    names = sorted({n for r in uses for n in r.get("names", [])})
+    tools = sorted({p for r in uses for p in r.get("programs", [])})
+    try:
+        values = vault.Store(data, config.config_home, config.home).values_for(key)
+    except vault.BadSecret as e:
+        print(f"coscc: the secrets could not be read: {e}", file=sys.stderr)
+        return 1
+    seen = sorted({str(r["unit"]) for r in records if r.get("unit")})
+    sources = _measure_sources(config, journal, key, seen)
+    hits = vault.scan(values, sources)
+    ok = measure_passes(len(names), len(tools), len(hits))
+
+    now = datetime.now(timezone.utc)
+    result = {
+        "workspace": rest[0],
+        "at": now.isoformat(timespec="seconds"),
+        "since": since,
+        "until": until,
+        "secrets_used": names,
+        "tools_used": tools,
+        "secrets_visible": sorted(values),
+        "sources_read": len(sources),
+        "hits": [{"name": h.name, "where": h.where, "form": h.form} for h in hits],
+        "pass": ok,
+    }
+    out = data.root / "measurements"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"vault-{now.strftime('%Y%m%dT%H%M%SZ')}.json"
+    path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    print(
+        f"coscc: vault-measure {rest[0]}: {len(names)} secrets used, {len(tools)} tools, "
+        f"{len(hits)} hits in {len(sources)} sources: {'pass' if ok else 'fail'}"
+    )
+    print(f"coscc: written {path}")
+    return 0 if ok else 1
 
 
 def banner(config) -> list[str]:
