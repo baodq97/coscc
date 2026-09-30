@@ -12,7 +12,6 @@ ends in `PLUGIN`: the route, and the script that shows the notices on the page.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from typing import Any, Literal, get_args
@@ -23,7 +22,7 @@ from starlette.routing import BaseRoute
 
 from coscc.auth import WS_RECHECK
 from coscc.data import Busy
-from coscc.plugin import Ctx, Plugin
+from coscc.plugin import Ctx, Plugin, line
 from coscc.runlog.journal import BELL
 from coscc.service.common import Invalid
 from coscc.units import autopilot
@@ -362,10 +361,6 @@ _NOTICE_JS = """
 """
 
 
-def _line(obj: dict[str, Any]) -> bytes:
-    return json.dumps(obj).encode() + b"\n"
-
-
 def routes(ctx: Ctx) -> Sequence[BaseRoute]:
     notices = Notices(ctx)
     router = APIRouter()
@@ -389,8 +384,8 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
 
         async def lines() -> AsyncIterator[bytes]:
             try:
-                async for line in stream:
-                    yield _line(line)
+                async for item in stream:
+                    yield line(item)
             finally:
                 await stream.aclose()
 

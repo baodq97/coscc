@@ -96,11 +96,17 @@ config.py
     Drop the underscore, or keep the name in the one module that uses it.
   - Data: each table has one owner module (`OWNERS`) and only it runs SQL on it (`FOREIGN_SQL`).
     Add a function to the owner and call that.
-  - Types: a public function does not take or return `dict[str, Any]` beyond `DICT_ANY_CEILING`.
-    Type the new one with a dataclass, a `TypedDict` or a `Literal`.
+  - Types: a public function does not take or return `dict[str, Any]` unless `DICT_ANY` lists it as
+    `module:qualname` (`coscc.service.steps:Steps.run_step`). Type the new one with a dataclass, a
+    `TypedDict` or a `Literal`; delete an entry that is gone. A move across modules replaces the
+    entry by hand.
+  - A table a feature creates (`Plugin.tables`) is owned by that feature's module with no edit to
+    `OWNERS`, which keeps the tables of `coscc/data.py`.
 
 - A feature is a plug-in: `coscc/features/<name>.py` ends in one `PLUGIN` (`coscc/plugin.py`) and gets
-  the running app only through a `Ctx`. Add it as its file plus one line in `FEATURES`
+  the running app only through a `Ctx` (`journal`, `workspace_key`, `enabled`, `bus`, `data`). Its
+  `tables` are `CREATE TABLE IF NOT EXISTS` statements run once at build (anything else raises); it
+  reads a request with `plugin.body` and streams with `plugin.line` and `plugin.ndjson`. Add it as its file plus one line in `FEATURES`
   (`coscc/features/__init__.py`); delete that line and its route and page script are gone.
   A workspace turns it off with `POST /api/features {cwd, name, on}`, no code change. Three
   rules in `tests/test_layers.py`: a feature imports only `coscc.plugin`, `coscc.bus`,

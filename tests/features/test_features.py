@@ -11,6 +11,8 @@ from unittest import mock
 import httpx
 
 from coscc import screens
+from coscc.data import Data
+from coscc.plugin import Plugin
 from coscc.api import build
 from coscc.config import Config
 
@@ -47,6 +49,28 @@ class TakingTheLineOutRemovesTheFeature(Setup):
         async with self.client() as client:
             self.assertEqual((await client.get("/api/notices/follow")).status_code, 200)
         self.assertIn("__coscc_notices", json.dumps(screens.index().render(), default=str))
+
+
+class ATableIsCreatedAtBuild(Setup):
+    def fake(self, *tables: str) -> Plugin:
+        return Plugin("fake", lambda _ctx: [], tables=tables)
+
+    def test_a_feature_table_exists_after_build_and_a_second_build_is_harmless(self):
+        fake = self.fake("CREATE TABLE IF NOT EXISTS fake_things (id INTEGER PRIMARY KEY)")
+        with mock.patch("coscc.features.FEATURES", (fake,)):
+            build(self.config)
+            build(self.config)
+        with Data(self.config.data_dir).connect() as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'fake_things'"
+            ).fetchone()
+        self.assertIsNotNone(row)
+
+    def test_a_statement_that_is_not_a_create_table_raises_at_build(self):
+        for bad in ("DROP TABLE prefs", "CREATE TABLE t (a INTEGER)", "SELECT 1"):
+            with mock.patch("coscc.features.FEATURES", (self.fake(bad),)):
+                with self.assertRaises(ValueError):
+                    build(self.config)
 
 
 class TurningAFeatureOffForAWorkspace(Setup):
