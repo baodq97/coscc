@@ -382,7 +382,12 @@ class Resume:
             self.steps.drive(
                 running,
                 mark,
-                Runner(self.sessions, journal, app=self.steps.app_identity()),
+                Runner(
+                    self.sessions,
+                    journal,
+                    app=self.steps.app_identity(),
+                    hooks=self.steps.hooks,
+                ),
                 cwd,
                 unit,
                 stage,

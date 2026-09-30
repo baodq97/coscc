@@ -30,6 +30,7 @@ LAYERS = (
     ("service",),
     ("github", "update"),
     ("runner",),
+    ("hooks",),
     ("units",),
     ("git", "runlog"),
     ("agent",),

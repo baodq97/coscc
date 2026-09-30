@@ -1325,3 +1325,54 @@ class ABackgroundCommandIsRefused(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 self.assertEqual(check_command(IMPL, command), "")
+
+
+class AFeaturesMcpToolIsAllowedByItsExactNameAndNothingElse(unittest.TestCase):
+    PING = "mcp__fake__ping"
+
+    def _decide(self, grant, tool):
+        return decide(grant, tool, {}, "/w", ())
+
+    def test_the_granted_name_is_allowed_and_only_that(self):
+        grant = Grant(mcp=(self.PING,))
+        self.assertEqual(self._decide(grant, self.PING), "")
+        for tool in ("mcp__fake__other", "mcp__fake__ping2", "mcp__other__ping", "Bash", "Read"):
+            self.assertNotEqual(self._decide(grant, tool), "", tool)
+
+    def test_it_does_not_grant_submit(self):
+        self.assertNotEqual(self._decide(Grant(mcp=(self.PING,)), policy.SUBMIT_TOOL), "")
+        self.assertEqual(
+            self._decide(Grant(mcp=(self.PING,), submits=True), policy.SUBMIT_TOOL), ""
+        )
+
+    def test_a_plain_grant_denies_every_mcp_name(self):
+        for tool in (self.PING, "mcp__fake__other", policy.SUBMIT_TOOL, "mcp__x__y"):
+            self.assertNotEqual(self._decide(Grant(), tool), "", tool)
+            if tool != policy.SUBMIT_TOOL:
+                self.assertNotEqual(self._decide(IMPL, tool), "", tool)
+
+    def test_mcp_is_neither_a_tool_nor_a_reason_to_open(self):
+        grant = Grant(mcp=(self.PING,))
+        self.assertEqual(grant.tools, ())
+        self.assertFalse(grant.opens_anything)
+
+    def test_a_name_that_is_not_a_features_tool_never_enters_mcp(self):
+        for bad in (
+            "Bash",
+            "mcp__cos__submit",
+            "mcp__cos__other",
+            "mcp__x__A",
+            "mcp__X__a",
+            "mcp__x__",
+            "mcp____a",
+            "mcp__x__a b",
+            "xmcp__x__a",
+            "mcp__x__a\n",
+            "",
+        ):
+            with self.subTest(name=bad), self.assertRaises(ValueError):
+                Grant(mcp=(bad,))
+
+    def test_replace_revalidates(self):
+        with self.assertRaises(ValueError):
+            replace(Grant(), mcp=("Bash",))

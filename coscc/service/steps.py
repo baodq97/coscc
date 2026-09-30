@@ -17,6 +17,7 @@ from coscc.units import board as board_reader
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc.agent import agents, harness, modeltrial
+from coscc.hooks import Hooks
 from coscc.units import submit as submit_mod
 from coscc.github import integrate, prmachine
 from coscc.units import planmap, retake
@@ -218,6 +219,7 @@ class Steps:
         self.ideas = ideas
         self.answers = answers
         self.bus = bus
+        self.hooks = Hooks()
         # Held across one retake of a unit's screenshots, app-wide: every capture binds
         # `127.0.0.1:18783`, so two at once fail. A capture a session runs does not take it.
         self._screens_lock = asyncio.Lock()
@@ -1335,7 +1337,7 @@ class Steps:
             )
 
             # Launch.
-            runner = Runner(self.sessions, journal, app=self.app_identity())
+            runner = Runner(self.sessions, journal, app=self.app_identity(), hooks=self.hooks)
             # The registry is what the page lists and what a Stop finds; the mark
             # taken above is what everything else asks. The same start time for both, and no
             # `await` between the listing and the phase.
