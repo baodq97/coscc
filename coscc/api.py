@@ -541,6 +541,7 @@ def build(config: Config | None = None) -> FastAPI:
     # The routes themselves, not `include_router`, which keeps them behind one entry of `routes`.
     # Read now, so a test can patch `features.FEATURES`.
     ctx = plugin.ctx_of(service)
+    service.steps.hooks = plugin.hooks_of(features.FEATURES, ctx)
     plugin.create_tables(ctx, features.FEATURES)
     routes = [*router.routes, *(r for f in features.FEATURES for r in f.routes(ctx))]
     api = FastAPI(title="coscc", lifespan=lifespan, routes=routes)
