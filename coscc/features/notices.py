@@ -231,30 +231,20 @@ class Notices:
 
 # The colours are the Radix variables of `screens/studio.py`'s roles: INK gray 12, MUTED gray 11,
 # SURFACE gray 2, LINE gray 5. A feature may not import `screens`, so they are written out.
-# One `fetch` of `/api/notices/follow` per tab, read a line at a time outside Reflex, so no
-# hydration or route change touches the stack appended to `document.body`. 40 s with no byte
-# (a `beat` comes every 15 s) aborts it; it reconnects after 1 s, doubling to 30 s, with
-# `after` = the cursor. The cursor moves only once the notice's node is in the DOM, and
-# never down; a `head` line sets it. A 401 goes to the login page and does not reconnect.
+# One stream of `/api/notices/follow` per tab, over the page kit (`plugin.KIT_JS`) and outside
+# Reflex, so no hydration or route change touches the stack appended to `document.body`. The
+# cursor moves only once the notice's node is in the DOM, and never down; a `head` line sets it.
 _NOTICE_JS = """
 (function () {
   if (window.__coscc_notices) return;
   window.__coscc_notices = true;
   window.__coscc_notice_opens = 0;
-  var KEY = "coscc_notice_after", DEAD = 40000, SHOWN = 5, wait = 1000, stack = null, more = null;
+  var KEY = "coscc_notice_after", SHOWN = 5, stack = null, more = null;
+  var ago = window.coscc.ago;
   function cursor() { var v = localStorage.getItem(KEY); return v === null ? null : +v; }
   function advance(id) {
     var cur = cursor();
     if (cur === null || id > cur) localStorage.setItem(KEY, String(id));
-  }
-  function ago(at) {
-    var t = Date.parse(at);
-    if (isNaN(t)) return "";
-    var s = Math.max(0, (Date.now() - t) / 1000);
-    if (s < 60) return "just now";
-    if (s < 3600) return Math.floor(s / 60) + " min ago";
-    if (s < 86400) return Math.floor(s / 3600) + " h ago";
-    return new Date(t).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
   }
   function box() {
     if (!stack) {
@@ -317,46 +307,11 @@ _NOTICE_JS = """
     s.insertBefore(el, s.firstChild);
     layout();
   }
-  function connect() {
-    var after = cursor();
-    var ctl = new AbortController(), timer = null, out = false;
-    function arm() { clearTimeout(timer); timer = setTimeout(function () { ctl.abort(); }, DEAD); }
-    window.__coscc_notice_opens += 1;
-    arm();
-    fetch("/api/notices/follow" + (after === null ? "" : "?after=" + after),
-          {cache: "no-store", credentials: "same-origin", signal: ctl.signal}).then(function (r) {
-      if (r.status === 401) { out = true; window.location.replace("/login"); return; }
-      if (!r.ok || !r.body) throw new Error(String(r.status));
-      wait = 1000;
-      var reader = r.body.getReader(), dec = new TextDecoder(), buf = "";
-      function pump() {
-        return reader.read().then(function (res) {
-          if (res.done) throw new Error("ended");
-          arm();
-          buf += dec.decode(res.value, {stream: true});
-          var i;
-          while ((i = buf.indexOf("\\n")) >= 0) {
-            var line = buf.slice(0, i);
-            buf = buf.slice(i + 1);
-            if (!line) continue;
-            var m = JSON.parse(line);
-            if (m.type === "head") localStorage.setItem(KEY, String(m.id));
-            else if (m.type === "notice") { show(m); advance(m.id); }
-          }
-          return pump();
-        });
-      }
-      return pump();
-    }).catch(function () {}).then(function () {
-      clearTimeout(timer);
-      if (out) return;
-      var w = wait;
-      wait = Math.min(wait * 2, 30000);
-      setTimeout(connect, w);
-    });
-  }
-  setInterval(refresh, 60000);
-  connect();
+  window.coscc.every(60000, refresh);
+  window.coscc.stream("/api/notices/follow", function (m) {
+    if (m.type === "head") localStorage.setItem(KEY, String(m.id));
+    else if (m.type === "notice") { show(m); advance(m.id); }
+  }, {after: function () { window.__coscc_notice_opens += 1; return cursor(); }});
 })();
 """
 

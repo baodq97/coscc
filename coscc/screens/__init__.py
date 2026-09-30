@@ -8,6 +8,7 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc import features
+from coscc.plugin import KIT_JS
 from coscc.screens import studio as s
 
 # Every name is imported back so `coscc.screens.<name>` still resolves; a patch reaches only the module that looks it up.
@@ -93,7 +94,8 @@ def index() -> rx.Component:
         _watch_dialog(),
         rx.script(_RECONNECT_JS),
         rx.script(_WATCH_JS),
-        # Each feature's page script, outside Reflex's state and socket; read now so a test can patch the list.
+        # The page kit once, then each feature's page script, outside Reflex's state and socket; read now so a test can patch the list.
+        rx.script(KIT_JS),
         *[rx.script(js) for f in features.FEATURES for js in f.scripts],
         # No `on_mount`: it runs again on every path change. The first read is `StudioState.arrive`, every route's `on_load`.
         id="studio-shell",
