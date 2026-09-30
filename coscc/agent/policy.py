@@ -297,7 +297,7 @@ def beyond_reading(grant: Grant) -> tuple[str, ...]:
 
     A prose stage's artifact is written by **the app** from the reply. A step holding write
     tools could write its own artifact behind the app's back, and one holding commands is not
-    a prose stage at all; reading is neither. The guard in `coscc/runner/__init__.py` asks
+    a prose stage at all; reading is neither. The guard in `coscc/runner/step.py` asks
     this rather than whether the grant is empty ("no tools" is not "no capability").
     """
     return tuple(t for t in grant.tools if t not in READ_TOOLS) + tuple(grant.commands)

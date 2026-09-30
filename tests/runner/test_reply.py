@@ -1,4 +1,4 @@
-"""Tests for `coscc/runner/reply.py`, split from `tests/runner/test_runner.py`.
+"""Tests for `coscc/runner/reply.py`, split from `tests/runner/test_step.py`.
 
 A reply is checked before it becomes a file: its `Status:` line, its opening and its
 fences."""

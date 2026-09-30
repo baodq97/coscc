@@ -25,7 +25,7 @@ from coscc.agent import steps
 from coscc.runlog import events, recovery
 from coscc.data import Data
 from coscc.runlog.journal import Journal, last_runs, timelines_of, totals_of
-from coscc.runner import Runner
+from coscc.runner.step import Runner
 from coscc.state import _cell_label, _usd
 from tests.units.test_submit import submits as _submits
 

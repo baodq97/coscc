@@ -13,7 +13,7 @@ from coscc.data import Data
 from coscc.runlog.journal import Journal
 from coscc.agent import labels, models, modeltrial
 from coscc.github import prmachine
-from coscc.runner import SESSIONS_PER_STEP
+from coscc.runner.step import SESSIONS_PER_STEP
 from coscc.service.common import Invalid, log_setting
 
 from coscc.config import Config

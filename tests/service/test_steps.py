@@ -998,7 +998,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
         # The transcript is faked via the runner's own read function, so this does not depend on a
         # real session store.
         with mock.patch(
-            "coscc.runner.sessions_mod.transcript_excerpt",
+            "coscc.runner.step.sessions_mod.transcript_excerpt",
             return_value=("CANARY-0019-EXCERPT", 999),
         ):
             self._run("spec")
@@ -2289,7 +2289,7 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
 
     def kwargs_of(self, service: Service, stage: str) -> dict:
         from coscc.units import board as board_reader
-        from coscc.runner import RunError
+        from coscc.runner.reply import RunError
 
         seen = self.seen
 
@@ -2617,7 +2617,7 @@ class _AReviewStep:
     def step(self, answer: dict, result: dict | None):
         from coscc.units import board as board_reader
         from coscc.units import retake
-        from coscc.runner import RunError
+        from coscc.runner.reply import RunError
 
         seen, taken = self.seen, self.taken
 

@@ -17,7 +17,7 @@ from coscc.agent import steps as steps_mod
 from coscc.data import Data
 from coscc.runlog import events
 from coscc.runlog.journal import BadRecord
-from coscc.runner import Runner
+from coscc.runner.step import Runner
 from coscc.data import Busy
 from coscc.service.update import refuse_while_updating
 from coscc.service.common import Invalid

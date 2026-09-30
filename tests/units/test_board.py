@@ -243,9 +243,9 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
             )
 
     def test_the_script_and_the_runner_cut_rounds_at_the_same_place(self):
-        """`coscc/runner/__init__.py` `_rounds` is an older second reading of round edges; until it
+        """`coscc/runner/step.py` `_rounds` is an older second reading of round edges; until it
         goes, the text posted and the text preserved must match."""
-        from coscc.runner import _rounds
+        from coscc.runner.review import _rounds
 
         text = REVIEW_TWO_ROUNDS + "\n## Answers\n\n### Câu 1\nnot a round\n"
         with tempfile.TemporaryDirectory() as d:

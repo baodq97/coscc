@@ -4,7 +4,7 @@ Two properties carry the weight here.
 
 Nothing here creates a session. What the guards do before a process is spawned is exactly what is
 worth testing cheaply. The prompt's own tests are in `tests/runner/test_prompt.py`, and how a step
-ends is in `tests/runner/test_runner_ending.py`."""
+ends is in `tests/runner/test_step_ending.py`."""
 
 from __future__ import annotations
 
@@ -19,7 +19,9 @@ from unittest import mock
 from coscc.agent import harness, modeltrial, policy
 from coscc.runlog.journal import Journal
 from coscc.agent.policy import decide, grant_for
-from coscc.runner import RunError, Runner, compose_prompt
+from coscc.runner.prompt import compose_prompt
+from coscc.runner.reply import RunError
+from coscc.runner.step import Runner
 from coscc.runner.prompt import answers_section
 from coscc.runner.prompt import build_prompt
 from coscc.runner.prompt import skill_for
@@ -334,7 +336,7 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
     def test_the_prompt_is_build_prompts_own_byte_for_byte(self):
         # The runner hands on exactly what `build_prompt` made from the arguments it was given, and
         # the project's block goes to the system prompt, not here.
-        from coscc import runner as runner_mod
+        from coscc.runner import step as runner_mod
 
         replies = self.Replies()
         built: list[str] = []
@@ -1809,7 +1811,7 @@ class RecordingChangesNothing(unittest.TestCase):
         self.assertGreater(broken[3][1]["events_lost"], 0)
 
     def test_every_refusal_reaches_the_listener_and_the_record_keeps_five(self):
-        from coscc.runner import Denials
+        from coscc.runner.attempt import Denials
 
         heard = []
         denials = Denials()

@@ -925,7 +925,7 @@ class Run:
     color: str = "gray"
     # Why it ended this way, empty when it ended well. A run that says `failed` and nothing
     # else sends the only person who can fix it to the database -- and for a prose stage
-    # this is where the reply it was paid for comes back (`coscc/runner/__init__.py`, `_with_reply`).
+    # this is where the reply it was paid for comes back (`coscc/runner/step.py`, `_with_reply`).
     detail: str = ""
     # The step's `run`, empty for a row without one.
     run: str = ""

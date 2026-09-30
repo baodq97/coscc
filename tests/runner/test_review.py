@@ -1,4 +1,4 @@
-"""Tests for `coscc/runner/review.py`, split from `tests/runner/test_runner.py`.
+"""Tests for `coscc/runner/review.py`, split from `tests/runner/test_step.py`.
 
 A round merged into `review.md` keeps the rounds before it, and a closing round is
 checked before it is written."""
@@ -8,7 +8,7 @@ from __future__ import annotations
 import unittest
 
 from coscc.runner.review import merge_review, render_round, replace_new_rounds
-from tests.runner.test_runner import REVIEW_R1, _REVIEW_TWO_ROUNDS, incomplete_reply
+from tests.runner.test_step import REVIEW_R1, _REVIEW_TWO_ROUNDS, incomplete_reply
 
 
 class ARoundIsWrittenFromItsObject(unittest.TestCase):
@@ -180,7 +180,7 @@ class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
     HEAD = "b" * 40
 
     def problem(self, reply, existing=REVIEW_R1):
-        from coscc.runner import closing_round_problem
+        from coscc.runner.review import closing_round_problem
 
         return closing_round_problem(existing, reply, self.HEAD)
 

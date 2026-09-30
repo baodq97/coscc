@@ -436,7 +436,7 @@ class TakingUpAfterAnUpdate(_Base):
 
     def test_a_refused_resume_ends_failed_without_a_new_session(self):
         # The CLI refusing the id, or `Sessions` finding another in `init`, is the end.
-        from coscc.runner import Runner
+        from coscc.runner.step import Runner
 
         class Refuses:
             calls: list[dict] = []
@@ -492,7 +492,7 @@ class TakingUpAfterAnUpdate(_Base):
 
         self.paused()
         with (
-            mock.patch("coscc.runner.Runner", Waits),
+            mock.patch("coscc.runner.step.Runner", Waits),
             mock.patch.object(self.service.autopilot, "resume", autopilot_resume),
         ):
             self.up()

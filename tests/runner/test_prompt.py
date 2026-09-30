@@ -1,4 +1,4 @@
-"""Tests for `coscc/runner/prompt.py`, split from `tests/runner/test_runner.py`.
+"""Tests for `coscc/runner/prompt.py`, split from `tests/runner/test_step.py`.
 
 The prompt has to contain the stage before it, and each section the app adds reaches only the stages
 it is for."""
@@ -20,7 +20,7 @@ from coscc.runner.prompt import (
     strip_answers,
     with_answers,
 )
-from tests.runner.test_runner import (
+from tests.runner.test_step import (
     REVIEW_R1,
     SESSION_STAGES,
     STAGES,
@@ -685,7 +685,7 @@ def _golden_prompt(stage: str) -> str:
 class TheStagesThatReadWholeInputsKeepTheirPrompt(unittest.TestCase):
     """`idea`, `intent`, `spec`, `spike` and `plan` read whole inputs, so their prompt stays the
     same byte for byte. The digests were taken from `_golden_prompt` on `fc409f3`, before
-    `coscc/runner/__init__.py` changed. A later unit that changes one of these prompts on
+    `coscc/runner/step.py` changed. A later unit that changes one of these prompts on
     purpose takes the new digest and says so.
 
     Since the answers are rows in `cos.db`, `_ANSWERS_ADVICE` does not say the app writes them
@@ -944,7 +944,7 @@ class ThePlanMapAndTheCommands(unittest.TestCase):
     """`service.steps.run_step` builds the map and `Runner.run` hands on the grant's words; this module
     places both for `impl` only, and every other stage's prompt is what it was, byte for byte."""
 
-    MAP = "- `coscc/runner/__init__.py` — 2000 lines\n  - 307 def compose_prompt MAP-MARKER"
+    MAP = "- `coscc/runner/step.py` — 2000 lines\n  - 307 def compose_prompt MAP-MARKER"
     WORDS = ("git", "npm", "COMMAND-MARKER")
 
     ANSWERS = "\n\n## Open questions\n\n1. a?\n\n## Answers\n\n### Câu 1\nAnswered by: o. Date: 2026-09-26. Via: product.\n\nyes\n"

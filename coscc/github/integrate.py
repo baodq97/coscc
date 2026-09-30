@@ -27,7 +27,7 @@ from typing import Any, AsyncIterator, Literal, get_args
 from coscc.agent import agents
 from coscc.agent.transcript import ceilings_left
 from coscc.git import gh
-from coscc.runner import check_started_by
+from coscc.runner.step import check_started_by
 from coscc.runner.attempt import CLAUDE_CODE_PRESET, Denials, permission_gate
 from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
 from coscc.units.submit import SERVER

@@ -21,7 +21,7 @@ from coscc.runlog.journal import BadRecord, Journal, timelines_of, totals_of
 from coscc.data import Busy
 from coscc.agent.policy import grant_for
 from coscc.agent import models
-from coscc.runner import Denials, permission_gate
+from coscc.runner.attempt import Denials, permission_gate
 from coscc.runner.reply import CEILING_MARKERS
 from coscc.agent.sessions import StepHandle, Suspended
 from coscc.agent import steps as steps_mod
