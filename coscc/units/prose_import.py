@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, get_args
 
 from coscc.data import Data
 from coscc.units.meta import UnitMeta
+from coscc.units.submit import Verdict
 
 SOURCE = "prose-import"
-VERDICTS = ("pass", "changes-requested", "needs-person")
 LABELS = ("open", "fixed", "needs-person", "claim-rejected", "answered")
 
 # `cos.mjs` `SEVERITY`, whole: the location is one token.
@@ -54,7 +54,7 @@ def finding_of(f: Mapping[str, Any]) -> dict[str, Any] | None:
 
 def round_of(r: Mapping[str, Any], heads: Mapping[str, str]) -> dict[str, Any] | None:
     """What `UnitMeta.record_round` takes, from one round `_rounds_of` carried; `heads` maps a prose SHA to the full one."""
-    if r.get("verdict") not in VERDICTS or not isinstance(r.get("n"), int):
+    if r.get("verdict") not in get_args(Verdict) or not isinstance(r.get("n"), int):
         return None
     findings: list[dict[str, Any]] = []
     for f in r.get("found") or []:

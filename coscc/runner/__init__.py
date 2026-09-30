@@ -24,7 +24,7 @@ import claude_agent_sdk as sdk
 
 from coscc.agent import agents, instructions, modeltrial, steps, transcript
 from coscc.agent import sessions as sessions_mod
-from coscc.runlog.journal import Journal
+from coscc.runlog.journal import Journal, Outcome
 from coscc.units import submit as submit_mod
 from coscc.agent.policy import (
     AGENT_TOOL,
@@ -705,7 +705,7 @@ def _judged(
     terminal: str,
     unit: str,
     stage: str,
-) -> tuple[str, str, dict[str, str] | None, OpeningError | None] | None:
+) -> tuple[Outcome, str, dict[str, str] | None, OpeningError | None] | None:
     """How a step that raised ends: `(outcome, detail, error, unopened)`; `None` when the app is
     going down or an update paused the session, and the caller lets `e` through with no `end`.
 
@@ -1005,12 +1005,12 @@ async def _repair_submit(
     turn_spent: bool,
     running: steps.Running | None,
     cost: dict[str, Any],
-    outcome: str,
+    outcome: Outcome,
     error: dict[str, str] | None,
     detail: str,
     unit: str,
 ) -> tuple[
-    str,
+    Outcome,
     dict[str, str] | None,
     str,
     dict[str, Any] | None,
@@ -1084,10 +1084,10 @@ def _write_round(
     rounds_before: set[int] | None,
     rounds_known: tuple[int, ...],
     unit: str,
-    outcome: str,
+    outcome: Outcome,
     error: dict[str, str] | None,
     detail: str,
-) -> tuple[str, dict[str, str] | None, str]:
+) -> tuple[Outcome, dict[str, str] | None, str]:
     """The round the review handed back, written into `review.md` by the app: its number, the head
     the app read, the verdict, the findings and the screenshots. `(outcome, error, detail)`, the
     step failed if it could not be."""
@@ -1124,7 +1124,7 @@ def _write_round(
 
 
 async def _close_recorder(
-    recorder: Any, outcome: str, detail: str, unit: str, stage: str
+    recorder: Any, outcome: Outcome, detail: str, unit: str, stage: str
 ) -> tuple[dict[str, Any], int | None, str]:
     """`(run_fields, stored, stored_from)`: the recorder closed, everything on disk, before the
     attempt record, so the turns it counts go into both."""
@@ -1147,7 +1147,7 @@ async def _close_recorder(
     return run_fields, stored, stored_from
 
 
-def _unwritten(mark: str | None, applies: bool, outcome: str) -> str | None:
+def _unwritten(mark: str | None, applies: bool, outcome: Outcome) -> str | None:
     """`mark` as it was, or for one nothing wrote (`None`) where it applies: `withheld` for a Stop,
     else `none`."""
     if not applies or mark is not None:
@@ -1156,7 +1156,7 @@ def _unwritten(mark: str | None, applies: bool, outcome: str) -> str | None:
 
 
 def _cost_fields(
-    cost: dict[str, Any], counted: bool, outcome: str, stored: int | None, stored_from: str
+    cost: dict[str, Any], counted: bool, outcome: Outcome, stored: int | None, stored_from: str
 ) -> dict[str, Any]:
     """A step that did not finish counts its turns from its events, and keeps the CLI's own count,
     when one came, as `cli_turns`. With no `ResultMessage` there is no `cost_usd` at all, never
@@ -1206,7 +1206,7 @@ async def _attempt(
     stage: str,
     cwd: str,
     session_id: str,
-    outcome: str,
+    outcome: Outcome,
     terminal: str,
     error: dict[str, str] | None,
     cost: dict[str, Any],
@@ -1845,11 +1845,11 @@ class Runner:
         review_md: str | None,
         unopened: OpeningError | None,
         segment_done: dict[str, Any] | None,
-        outcome: str,
+        outcome: Outcome,
         detail: str,
         error: dict[str, str] | None,
         cost: dict[str, Any],
-    ) -> tuple[str, str, dict[str, Any], str | None]:
+    ) -> tuple[Outcome, str, dict[str, Any], str | None]:
         """The end of a step, whatever ended it: the turns that repair a reply, the attempt record and
         the `end` row. `(outcome, detail, cost, stopped_by)`.
 

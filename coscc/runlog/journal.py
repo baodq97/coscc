@@ -28,7 +28,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Literal, get_args
 
 from coscc.data import BUSY_TIMEOUT, Data, now as _now
 
@@ -47,7 +47,8 @@ MODES = ("manual", "autonomous")
 # How a run ended. `cancelled` and `exhausted` exist so that "no end record" keeps meaning one
 # thing: the app stopped while the step was still running. `stopped` is a person pressing Stop
 # and carries `stopped_by`, the name they typed. `cancelled` is written by nothing.
-OUTCOMES = ("done", "failed", "exhausted", "cancelled", "stopped")
+Outcome = Literal["done", "failed", "exhausted", "cancelled", "stopped"]
+OUTCOMES: tuple[Outcome, ...] = get_args(Outcome)
 
 # The fields a caller may report about what a turn cost. Anything else in a record is carried
 # through untouched; these are the ones `totals` adds up.
@@ -330,7 +331,7 @@ class Journal:
         return True
 
     def finished(
-        self, workspace: str, unit: str, stage: str, outcome: str, **extra: Any
+        self, workspace: str, unit: str, stage: str, outcome: Outcome, **extra: Any
     ) -> dict[str, Any]:
         if outcome not in OUTCOMES:
             raise BadRecord(f"outcome must be one of {', '.join(OUTCOMES)}, got {outcome!r}")

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal, get_args
 
 from coscc.units.submit import AGAIN as SUBMIT_AGAIN
 from coscc.runlog import journal
@@ -30,7 +30,8 @@ TERCILE_MIN = 6
 SIMILAR_MAX = 3
 # Word for word; `check_estimate` matches an agent's basis on these.
 VALUE_GOALS = ("bớt can thiệp tay", "bớt chi phí", "nỗi đau đã gặp thật")
-KINDS = ("estimate-value", "relation", "shortlist", "estimate")
+Kind = Literal["estimate-value", "relation", "shortlist", "estimate"]
+KINDS: tuple[Kind, ...] = get_args(Kind)
 AGENT_PREFIX = "agent:"
 
 

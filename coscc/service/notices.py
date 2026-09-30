@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal, get_args
 
 from coscc.auth import WS_RECHECK
 from coscc.data import Busy
@@ -24,7 +24,8 @@ from coscc.units import autopilot
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
 SOURCE_KINDS = ("autopilot-stop", "questions", "end", "ship")
 # The five kinds, in order.
-KINDS = ("autopilot-stop", "questions", "step-ended", "ship-refused", "shipped")
+Kind = Literal["autopilot-stop", "questions", "step-ended", "ship-refused", "shipped"]
+KINDS: tuple[Kind, ...] = get_args(Kind)
 # Seconds between two `beat` lines of a quiet stream. Chosen, not measured.
 BEAT_SECONDS = 15.0
 # Seconds one stream lasts before it ends and its listener reconnects with `after`.

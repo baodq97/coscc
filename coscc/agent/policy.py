@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
+from typing import Literal, get_args
 
 from coscc.agent.labels import NOVEL
 
 # Stages whose artifact is prose. The app writes these from the text the session returns, so
 # the session needs no ability to write. `ship` is not one: it runs `gh pr merge`.
-PROSE_STAGES = ("idea", "intent", "spec", "plan", "review")
+ProseStage = Literal["idea", "intent", "spec", "plan", "review"]
+PROSE_STAGES: tuple[ProseStage, ...] = get_args(ProseStage)
 
 
 @dataclass(frozen=True)

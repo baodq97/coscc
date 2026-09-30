@@ -12,7 +12,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Literal, Sequence, get_args
 
 from coscc.units import states
 from coscc.data import BUSY_TIMEOUT, Data, now as _now
@@ -23,16 +23,18 @@ UNKNOWN = "unknown"
 
 # A deliverable is the unit's own artifact; a code change is a file in somebody's repository.
 # One table so "how many altogether" is one query.
-DELIVERABLE = "deliverable"
-CODE = "code"
-KINDS = (DELIVERABLE, CODE)
+Kind = Literal["deliverable", "code"]
+KINDS: tuple[Kind, ...] = get_args(Kind)
+DELIVERABLE: Kind = "deliverable"
+CODE: Kind = "code"
 
 LOCK_TIMEOUT = BUSY_TIMEOUT
 
 # Whose decision a transition is. `person` and `delegated` are the originator and the one they
 # delegated to; `agent` is what a model inferred and never counts as either; `code` is a guard
 # reading git, `gh` or the database. An older row says `UNKNOWN`.
-AUTHORITIES = ("person", "delegated", "agent", "code")
+Authority = Literal["person", "delegated", "agent", "code"]
+AUTHORITIES: tuple[Authority, ...] = get_args(Authority)
 
 _TRANSITION_COLUMNS = (
     "at",
@@ -349,7 +351,7 @@ class History:
         workspace: str,
         unit: str,
         stage: str,
-        kind: str,
+        kind: Kind,
         path: str,
         *,
         actor: str = UNKNOWN,
@@ -406,7 +408,7 @@ class History:
         self, workspace: str, unit: str | None = None, timeout: float | None = None
     ) -> dict[str, int]:
         """How many files, by kind and altogether."""
-        counts = {kind: 0 for kind in KINDS}
+        counts: dict[str, int] = {kind: 0 for kind in KINDS}
         rows = self.outputs(workspace, unit, timeout=timeout)
         for row in rows:
             counts[row["kind"]] = counts.get(row["kind"], 0) + 1

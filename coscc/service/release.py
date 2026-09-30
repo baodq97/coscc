@@ -245,7 +245,7 @@ class Release:
         version = str(version or "").strip()
         ctx: dict[str, Any] = {}
 
-        def write(outcome: str, **fields: Any) -> dict[str, Any]:
+        def write(outcome: release.Outcome, **fields: Any) -> dict[str, Any]:
             rec = release.record(
                 workspace=key, phase=phase, version=version, outcome=outcome, **{**ctx, **fields}
             )

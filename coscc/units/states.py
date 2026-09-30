@@ -12,10 +12,14 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 from coscc.agent import harness
 from coscc.units import guards
+
+
+StageName = Literal["idea", "impl", "intent", "plan", "pr", "review", "ship", "spec", "spike"]
+STAGE_NAMES: tuple[StageName, ...] = get_args(StageName)
 
 
 class BadMachine(ValueError):

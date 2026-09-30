@@ -24,7 +24,7 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 from coscc.data import now as _now
 from coscc.git import gh, gitops
@@ -36,7 +36,8 @@ PR_FILE = "pr.md"
 SHIP_FILE = "ship.md"
 MACHINE = "pr"
 # The stages the board runs through this module rather than a session.
-STAGES = ("pr", "ship")
+Stage = Literal["pr", "ship"]
+STAGES: tuple[Stage, ...] = get_args(Stage)
 # What `state` answers. `none` is a unit whose pull request the app never opened: `ship` then
 # finds it by its branch.
 STATES = ("none", "open", "merge-requested", "merged", "closed")
