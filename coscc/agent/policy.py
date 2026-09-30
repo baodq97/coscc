@@ -548,10 +548,10 @@ class _Reader:
                 j = self.skip(self.i + 1)
                 if self.char(j) == "(":
                     # `<(…)` and `>(…)`: a process whose output is a path. Part of a word.
-                    if word is None:
-                        word = _Word(self.i)
+                    current = word if word is not None else _Word(self.i)
+                    word = current
                     self.subs.append((c + "(", self.at(self.i)))
-                    word.expanded = True
+                    current.expanded = True
                     self.i = j + 1
                     self.commands(opened=self.i - 2)
                     continue
@@ -591,9 +591,9 @@ class _Reader:
             else:
                 # `(` and `)` anywhere else are kept as text: bash refuses the line as a
                 # syntax error, so nothing runs, and the words around them are still read.
-                if word is None:
-                    word = _Word(self.i)
-                self.part(word)
+                current = word if word is not None else _Word(self.i)
+                word = current
+                self.part(current)
         if opened is not None:
             raise _Stop(f"an unclosed {s[opened : opened + 2]}", self.at(opened))
         end_command(self.n)

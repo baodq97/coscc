@@ -19,13 +19,12 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
     Tests are exempt (a fake takes what it stands in for).
 - `ruff format --check`: one format, line length 100. Never format by hand.
 - `ty check`: types, on `coscc/` and `scripts/`, not on `tests/` (running them checks them).
-  - Off everywhere: `invalid-argument-type`, `invalid-assignment` and `not-subscriptable`.
-    Reflex `Var` fields make them report false findings.
-  - Also off in `coscc/screens/` and `coscc/state/` (Reflex): `unresolved-attribute`,
-    `unsupported-operator`, `deprecated`, `no-matching-overload` and `invalid-return-type`.
-    Elsewhere a value that may be `None` is checked before its attribute is read.
-  - What stays on catches a name that does not import, a call with wrong arguments and an
-    `await` on what cannot be awaited.
+  - Off only in Reflex code, `coscc/screens/`, `coscc/state/` and `coscc/coscc.py`, where `Var`
+    fields make them report false findings: `invalid-argument-type`, `invalid-assignment`,
+    `not-subscriptable`, `unresolved-attribute`, `unsupported-operator`, `deprecated`,
+    `no-matching-overload` and `invalid-return-type`.
+  - Elsewhere every rule is on: a value that may be `None` is checked before it is read or
+    passed on, and a finding is fixed, never silenced with `cast` or `# ty: ignore`.
 - `tests/test_comments.py`: no unit or requirement id (`0088`, `R3`, `spec.md C7`,
   `review round 2`) in a comment, a docstring or a function or class name, in `coscc/` or
   `tests/`.

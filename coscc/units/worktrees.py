@@ -179,7 +179,7 @@ async def ensure(
     if found is not None and (found["branch"] or not wanted):
         return {"path": str(where), "branch": found["branch"], "created": False, "switched": False}
 
-    if found is not None:
+    if found is not None and branch:
         # A detached tree made before the unit had a branch. Fetch inside the tree first (a separate
         # directory from the workspace); only after that succeeds or finds nothing to move does
         # `_step_aside` touch the workspace.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import shutil
@@ -281,7 +282,7 @@ class Steps:
                 if isinstance(prs, list)
                 else None
             )
-            if row is None:
+            if row is None or number is None:
                 continue
             slot, head = (key, u["name"]), str(row.get("headRefOid") or "")
             held = self._held_ci(key, u["name"], int(number), head)
@@ -373,7 +374,7 @@ class Steps:
             pr_row: dict[str, Any] | str = prs
         else:
             match = next((r for r in prs if r.get("number") == number), None)
-            if match is None:
+            if match is None or number is None:
                 return None
             pr_row = match
         origin_sha = ""
@@ -391,7 +392,7 @@ class Steps:
             except GitError as e:
                 missing = str(e)
         checks: list[dict[str, Any]] | str | None = None
-        if integrate.needs_checks(pr_row, last_record):
+        if number is not None and integrate.needs_checks(pr_row, last_record):
             try:
                 checks = await integrate.required_checks(str(root), int(number))
             except integrate.IntegrateError as e:
@@ -546,16 +547,17 @@ class Steps:
                     cut = integrate.cut_integration(journal.records(key, unit=unit), unit, here)
                 except Busy:
                     cut = None
-                try:
-                    if cut is not None and await gitops.rebase_in_progress(tree):
-                        await gitops.abort_rebase(tree)
+                if cut is not None:
+                    try:
+                        if await gitops.rebase_in_progress(tree):
+                            await gitops.abort_rebase(tree)
+                            before.append(
+                                f"an integration cut at {cut['at']} left a rebase in progress; the app aborted it"
+                            )
+                    except GitError as e:
                         before.append(
-                            f"an integration cut at {cut['at']} left a rebase in progress; the app aborted it"
+                            f"could not abort the rebase an integration cut at {cut['at']} left: {e}"
                         )
-                except GitError as e:
-                    before.append(
-                        f"could not abort the rebase an integration cut at {cut['at']} left: {e}"
-                    )
             clean = on_branch = None
             local_head = ""
             if tree is not None:
@@ -567,7 +569,8 @@ class Steps:
                     clean = on_branch = None
             how, how_said = "", ""
             if (
-                clean is True
+                tree is not None
+                and clean is True
                 and on_branch is True
                 and pr_head
                 and local_head
@@ -653,6 +656,7 @@ class Steps:
             )
         try:
             assert tree is not None
+            assert pr is not None
             refused_update = None
             if state == "behind" and not completing:
                 rec, refused_update = await self._integrate_mechanical(
@@ -718,19 +722,23 @@ class Steps:
         yet, stay `failed`: there is no exit code to go on, and GitHub may still be
         rebasing, which a Gebo session would race.
         """
-        base = dict(
+        record = functools.partial(
+            integrate.record,
             workspace=key,
             unit=unit,
             pr=pr,
             mode="mechanical",
             head_before=head_before,
             origin_sha=origin_sha,
-            **seen,
+            fetch=seen["fetch"],
+            merge_state=seen["merge_state"],
+            started_by=seen["started_by"],
+            completion=seen["completion"],
         )
         try:
             code, said = await integrate.update_branch(str(tree), pr)
         except integrate.IntegrateError as e:
-            return integrate.record(**base, head_after="", outcome="failed", detail=str(e)), None
+            return record(head_after="", outcome="failed", detail=str(e)), None
         if code != 0:
             refused = {"code": code, "said": said or "gh refused"}
             # A non-zero exit does not rule out that GitHub took the command.
@@ -744,15 +752,14 @@ class Steps:
             if head_after == head_before:
                 return None, refused
             if not head_after:
-                return integrate.record(
-                    **base,
+                return record(
                     head_after="",
                     outcome="failed",
                     update_branch=refused,
                     detail=f"gh pr update-branch exited {code}, and the pull request's head could not be "
                     f"read to rule out a rebase on GitHub's side, so no session was opened: {unread}",
                 ), None
-            base["update_branch"] = refused
+            record = functools.partial(record, update_branch=refused)
             said = f"gh pr update-branch exited {code}, but the pull request's head moved; no session was opened"
         else:
             head_after = head_before
@@ -766,8 +773,7 @@ class Steps:
                 if attempt + 1 < integrate.POLL_TRIES:
                     await asyncio.sleep(integrate.POLL_DELAY)
         if not head_after or head_after == head_before:
-            return integrate.record(
-                **base,
+            return record(
                 head_after="",
                 outcome="failed",
                 detail="GitHub accepted the command but the head has not changed yet",
@@ -778,18 +784,16 @@ class Steps:
         except GitError as e:
             # The push happened on GitHub's side either way; the local tree is behind it.
             detail = f"pushed on GitHub, but the local branch was not moved: {e}"
-        return integrate.record(
-            **base, head_after=head_after, outcome="pushed", detail=detail
-        ), None
+        return record(head_after=head_after, outcome="pushed", detail=detail), None
 
     async def integrate_gebo(  # noqa: PLR0915 - still to split
         self,
         cwd: str,
         key: str,
         unit: str,
-        directory: Path,
-        data: dict[str, Any],
-        info: dict[str, Any],
+        directory: Path | None,
+        data: dict[str, Any] | None,
+        info: dict[str, Any] | None,
         pr: int,
         tree: Path,
         branch: str,
@@ -818,7 +822,7 @@ class Steps:
         rel = (
             was.get("rel") or {}
             if resume is not None
-            else await self._related(root, unit, data, head_before, origin_sha)
+            else await self._related(root, unit, data or {}, head_before, origin_sha)
         )
         units_root = self.ws.units_root(cwd)
         # The `integrate` row, read once for the prompt, the records and
@@ -828,6 +832,8 @@ class Steps:
         name = agent["name"] if agent is not None else ""
         start_at = was.get("start_at")
         if resume is None:
+            assert directory is not None
+            assert info is not None
             # By path; Gebo reads what it needs of them (`integrate.read_paths`).
             own = {}
             for artifact in ("intent.md", "spec.md", "plan.md", "impl.md"):

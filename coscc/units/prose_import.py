@@ -56,9 +56,12 @@ def round_of(r: Mapping[str, Any], heads: Mapping[str, str]) -> dict[str, Any] |
     """What `UnitMeta.record_round` takes, from one round `_rounds_of` carried; `heads` maps a prose SHA to the full one."""
     if r.get("verdict") not in VERDICTS or not isinstance(r.get("n"), int):
         return None
-    findings = [finding_of(f) for f in r.get("found") or []]
-    if any(f is None for f in findings):
-        return None
+    findings: list[dict[str, Any]] = []
+    for f in r.get("found") or []:
+        item = finding_of(f)
+        if item is None:
+            return None
+        findings.append(item)
     # A round naming one finding twice cannot be one row per finding.
     if len({f["id"] for f in findings}) != len(findings):
         return None
