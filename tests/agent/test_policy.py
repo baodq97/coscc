@@ -1490,6 +1490,13 @@ class AWorkspacesListsChangeOnlyImplsCommands(unittest.TestCase):
     def test_empty_lists_keep_impls_commands(self):
         self.assertEqual(policy.with_lists(IMPL, (), ()), IMPL)
 
+    def test_programs_are_read_as_check_command_reads_them(self):
+        self.assertEqual(
+            policy.programs_of("A=1 /usr/bin/psql -c 'x; y' | grep z && echo ok"),
+            ("psql", "grep", "echo"),
+        )
+        self.assertEqual(policy.programs_of("echo 'unclosed"), ())
+
     def test_the_pref_is_read_per_workspace_and_a_path_is_no_name(self):
         stored = {"/w": {"allow": ["curl", "/usr/bin/nc", "x" * 65, 3], "block": ["rm"]}}
         self.assertEqual(policy.lists_of(stored, "/w"), (("curl",), ("rm",)))

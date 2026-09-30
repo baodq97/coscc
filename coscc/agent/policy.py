@@ -1116,6 +1116,20 @@ def _protected_refused(grant: Grant, simple: _Simple) -> str:
     return ""
 
 
+def programs_of(command: str) -> tuple[str, ...]:
+    """The program each simple command of the line runs, read as `check_command` reads it: the
+    first word after any `NAME=value`, its directory dropped. `()` for a line it cannot read."""
+    parsed = _read(command or "")
+    if isinstance(parsed, _Unreadable):
+        return ()
+    out = []
+    for simple in parsed.commands:
+        words = [w for w in simple.words if not _ASSIGNMENT.match(w)]
+        if words:
+            out.append(words[0].rsplit("/", 1)[-1])
+    return tuple(out)
+
+
 def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) -> str:
     """ "" if one simple command may run, else why not."""
     all_words = list(simple.words)
