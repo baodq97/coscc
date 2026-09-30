@@ -32,7 +32,7 @@ on their words.
   the kernel's extension points; a need none serves is a kernel change, planned first
   (`.claude/docs/code-and-tests.md`).
 - Code little and simple; split a file only when needed.
-- Unit paths come from `new-path`. Cut unsourced figures.
+- Unit paths come from `new-path`. Cite committed files as path:lines; cut unsourced figures.
 
 ## Architecture
 
