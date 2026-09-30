@@ -247,6 +247,7 @@ def _leaks(ctx: Ctx, get: Callable[[], vault.Store], facts: Facts) -> str | None
     if journal is None:
         return "the run log cannot be read, so the work cannot be scanned"
     values = store.values_for(facts.workspace_key)
+    unread: list[str] = []
     sources = vault.unit_sources(
         journal,
         facts.workspace_key,
@@ -254,6 +255,7 @@ def _leaks(ctx: Ctx, get: Callable[[], vault.Store], facts: Facts) -> str | None
         facts.directory,
         facts.tree,
         pull_request=facts.stage == "ship",
+        unread=unread,
     )
     hits = vault.scan(values, sources)
     base = {"kind": "vault-leak", "workspace": facts.workspace_key, "unit": facts.unit}
@@ -263,6 +265,8 @@ def _leaks(ctx: Ctx, get: Callable[[], vault.Store], facts: Facts) -> str | None
     if hits:
         names = ", ".join(sorted({h.name for h in hits}))
         return f"the value of {names} appears in this unit's work; remove it, then try again"
+    if unread:
+        return f"the unit's {' and '.join(unread)} could not be read, so the work was not scanned"
     # A clean scan of a unit held before says so, so the page stops naming it.
     before = journal.records(facts.workspace_key, facts.unit, kind="vault-leak")
     if before and not before[-1].get("clear"):

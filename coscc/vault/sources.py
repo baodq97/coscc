@@ -1,5 +1,6 @@
 """What a unit has written that could carry a value out: its transcripts, run log, artifacts,
-commits and pull request. A source that cannot be read is left out, never an error."""
+commits and pull request. A source that cannot be read is left out, never an error; the commits
+and the pull request are named to a caller that asks."""
 
 from __future__ import annotations
 
@@ -82,12 +83,20 @@ def unit_sources(
     tree: str,
     base: str = "main",
     pull_request: bool = False,
+    unread: list[str] | None = None,
 ) -> list[tuple[str, bytes]]:
     """`(where, bytes)` for the transcripts of the unit's runs, its run-log lines, the files under
     `directory`, `git log -p <base>..HEAD` in `tree` and, with `pull_request`, the pull request's
-    body and comments read through `gh`. Blocks for as long as `git` and `gh` take."""
+    body and comments read through `gh`. Blocks for as long as `git` and `gh` take.
+
+    `commits` and `pull-request`, when `git` or `gh` failed or timed out, are appended to
+    `unread`, so a caller that must not pass an unscanned unit can say so."""
     out = _journal(journal, workspace, unit) + _artifacts(directory)
-    out += _commits(tree, base)
+    wanted = [("commits", _commits(tree, base))]
     if pull_request:
-        out += _pull_request(tree)
+        wanted.append(("pull-request", _pull_request(tree)))
+    for where, found in wanted:
+        out += found
+        if not found and unread is not None:
+            unread.append(where)
     return out

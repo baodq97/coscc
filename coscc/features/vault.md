@@ -20,7 +20,8 @@ package `coscc/vault/`'s; the file has the tables' statements through `vault.TAB
 - Before `pr`, `ship` and an integration begin, the guard `vault-leak` scans the unit's
   transcripts, run-log lines, artifacts and commits (for `ship`, the pull request too) for the
   values of the workspace's secrets. A hit writes one `kind: "vault-leak"` line with the name,
-  the place and the form, and holds the step with `feature-refused`.
+  the place and the form, and holds the step with `feature-refused`. Commits `git log` could not
+  read, or a pull request `gh` could not, hold it too: an unscanned unit does not pass.
 
 ## The routes
 

@@ -101,10 +101,27 @@ class WhereAUnitMayHaveLeftAValue(unittest.TestCase):
         self.assertEqual(called.call_args.args[0][:3], ["gh", "pr", "view"])
 
     def test_a_source_that_cannot_be_read_is_left_out_and_never_raised(self):
+        unread: list[str] = []
         gone = unit_sources(
-            None, WS, UNIT, self.root / "nowhere", str(self.root / "no-tree"), pull_request=True
+            None,
+            WS,
+            UNIT,
+            self.root / "nowhere",
+            str(self.root / "no-tree"),
+            pull_request=True,
+            unread=unread,
         )
-        self.assertEqual(gone, [])
+        self.assertEqual((gone, unread), ([], ["commits", "pull-request"]))
+
+    def test_commits_read_with_none_new_are_not_unread(self):
+        unread: list[str] = []
+        with mock.patch.object(sources, "_pull_request", return_value=[("pull-request", b"{}")]):
+            found = dict(
+                unit_sources(
+                    None, WS, UNIT, self.directory, str(self.tree), pull_request=True, unread=unread
+                )
+            )
+        self.assertEqual((found["commits"], unread), (b"", []))
 
 
 if __name__ == "__main__":

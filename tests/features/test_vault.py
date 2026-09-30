@@ -331,6 +331,15 @@ class GeneratingASecret(Bed):
 
 
 class TheGuardHoldsWhatCarriesAValueOut(Bed):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        # No test has a pull request: `ship` reads this one instead of asking `gh`.
+        pr = mock.patch.object(
+            vault.sources, "_pull_request", return_value=[("pull-request", b"{}")]
+        )
+        pr.start()
+        self.addCleanup(pr.stop)
+
     def leak(self, text: bytes):
         self.facts()
         (self.root / "unit" / "pr.md").write_bytes(text)
@@ -424,6 +433,16 @@ class TheGuardHoldsWhatCarriesAValueOut(Bed):
         self.assertTrue(said.startswith("vault-leak: "), said)
         self.assertIn("ws:db", said)
         self.assert_clean(("said", said))
+
+    def test_commits_or_a_pull_request_that_cannot_be_read_hold_the_step(self):
+        self.facts()
+        words = feature._leaks(self.ctx, lambda: self.store, self.facts("pr"))
+        self.assertIn("commits could not be read", words or "")
+        self.tree()
+        with mock.patch.object(vault.sources, "_pull_request", return_value=[]):
+            words = feature._leaks(self.ctx, lambda: self.store, self.facts("ship"))
+        self.assertIn("pull-request could not be read", words or "")
+        self.assertIsNone(feature._leaks(self.ctx, lambda: self.store, self.facts("ship")))
 
     def test_a_run_log_that_cannot_be_read_holds_the_step(self):
         ctx = plugin.Ctx(
