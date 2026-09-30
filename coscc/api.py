@@ -464,7 +464,6 @@ async def get_features(request: Request) -> Any:
     service = _service(request)
     cwd = service.ws.check(_cwd(request))
     ctx = plugin.ctx_of(service)
-    plugin.create_tables(ctx, features.FEATURES)
     return {f.name: ctx.enabled(f.name, cwd) for f in features.FEATURES}
 
 
