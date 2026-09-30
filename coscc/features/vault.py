@@ -9,6 +9,7 @@ filter, scan and runner are `coscc/vault/`'s; what this is not is in `coscc/feat
 from __future__ import annotations
 
 import asyncio
+import functools
 import html
 import json
 import uuid
@@ -53,14 +54,7 @@ def make_store(ctx: Ctx) -> vault.Store:
 
 def _lazy(ctx: Ctx, store_of: StoreOf | None) -> Callable[[], vault.Store]:
     """The store, built when first asked: a build of the app opens no database."""
-    held: list[vault.Store] = []
-
-    def get() -> vault.Store:
-        if not held:
-            held.append((store_of or make_store)(ctx))
-        return held[0]
-
-    return get
+    return functools.cache(lambda: (store_of or make_store)(ctx))
 
 
 def _named(raw: str, tier: str = "ws") -> str:
@@ -380,14 +374,11 @@ def _checks(name: str, options: Sequence[str], on: Sequence[str], disabled: bool
     )
 
 
-def _value_box(label: str = "") -> str:
-    """A `<textarea>`, not a password input: a browser strips every line break out of the value
-    of that, and a private key is many lines. Nothing is offered to a spell checker."""
-    said = f' aria-label="{_e(label)}"' if label else ""
-    return (
-        '<textarea name="value" rows="3" required autocomplete="off" spellcheck="false" '
-        f'autocapitalize="off" autocorrect="off"{said}></textarea>'
-    )
+# Not a password input: a browser strips the line breaks out of one, and a key is many lines.
+_VALUE_BOX = (
+    '<textarea name="value" rows="3" required autocomplete="off" spellcheck="false" '
+    'autocapitalize="off" autocorrect="off"{}></textarea>'
+)
 
 
 def _replace_form(cwd: str, s: vault.Secret) -> str:
@@ -396,8 +387,8 @@ def _replace_form(cwd: str, s: vault.Secret) -> str:
         f'<input type="hidden" name="cwd" value="{_e(cwd)}">'
         f'<input type="hidden" name="tier" value="{_e(s.tier)}">'
         f'<input type="hidden" name="name" value="{_e(s.name)}">'
-        f"{_value_box(f'New value of {s.name}')}"
-        '<button type="submit">Replace value</button></form>'
+        + _VALUE_BOX.format(f' aria-label="New value of {_e(s.name)}"')
+        + '<button type="submit">Replace value</button></form>'
     )
 
 
@@ -445,7 +436,7 @@ def _create_form(cwd: str) -> str:
         f"<div>Used by {_checks('stage', vault.VAULT_STAGES, ('impl',))}</div>"
         f"<div>Passed as {_checks('mode', vault.MODES, ('env', 'file'))}</div>"
         '<label><input type="checkbox" name="broker" value="1"> Broker: passed as ssh only</label>'
-        f"<label>Value {_value_box()}</label>"
+        f"<label>Value {_VALUE_BOX.format('')}</label>"
         '<button type="submit">Save</button></form>'
     )
 
@@ -551,9 +542,8 @@ def _one(form: dict[str, list[str]], field: str) -> str:
 
 
 def _pasted(text: str) -> bytes:
-    """The value as it was pasted: a browser sends a `<textarea>`'s line breaks as CRLF, and a
-    line break pressed after a one-line value is not part of it. A value of several lines, a key,
-    ends with one."""
+    """The value as pasted: a `<textarea>` sends CRLF, and a line break typed after a one-line
+    value is not part of it. A value of several lines, a key, ends with one."""
     text = text.replace("\r\n", "\n").rstrip("\n")
     return (text + "\n" if "\n" in text else text).encode()
 
@@ -807,10 +797,4 @@ _JS = """
 })();
 """
 
-PLUGIN = Plugin(
-    "vault",
-    routes=routes,
-    scripts=(_JS,),
-    tables=vault.TABLES,
-    agent=agent,
-)
+PLUGIN = Plugin("vault", routes=routes, scripts=(_JS,), tables=vault.TABLES, agent=agent)
