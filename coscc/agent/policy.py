@@ -78,10 +78,19 @@ MCP_NAME = re.compile(r"mcp__([a-z][a-z0-9-]*)__[a-z][a-z0-9_]*")
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 EXEC_TOOLS = ("Bash",)
 # Hands work to one of `SUBAGENTS` inside the same session. Every tool call a helper makes
-# reaches the same `decide` and grant as the session's own, and its spend is in the session's cost.
+# reaches the same `decide` and grant as the session's own, with its `agent_id`, and its spend
+# is in the session's cost. `Agent` itself never reaches `decide` (it is not asked about in the
+# `default` mode): `coscc/agent/helpers.py`'s hook holds it.
 AGENT_TOOL = "Agent"
+# The SDK's own message between the agents of one session; the same hook holds where it goes.
+SEND_MESSAGE = "SendMessage"
+# The kernel's own tool listing the helpers of the run, on `submit`'s server.
+PEERS_TOOL = "mcp__cos__peers"
+# The only `git` subcommands a helper may run: only the leading session commits.
+HELPER_GIT = ("status", "diff", "log", "show", "blame")
 # Named helpers with a bounded report, so big reads and test output stay out of the main
-# context. `sessions._options` turns each into an `AgentDefinition`.
+# context. `sessions._options` turns each into an `AgentDefinition`. A helper gets only the
+# built-in tools its session's grant holds, so the grant carrying `Agent` lists `worker`'s.
 SUBAGENTS = {
     "scout": {
         "description": "Maps where things are in the named files. Read-only.",
@@ -91,6 +100,20 @@ SUBAGENTS = {
             'lines. Write "unsure" beside anything you did not confirm. Never edit.'
         ),
         "tools": list(READ_TOOLS),
+        "model": "sonnet",
+    },
+    "worker": {
+        "description": (
+            "Does one step of the plan's ## Parallelization: edits only that step's paths, runs "
+            "only its tests, never commits."
+        ),
+        "prompt": (
+            "You are given one step of the plan: its name, its paths and what to report. Edit "
+            "only those paths and run only the tests of that step; the leading session runs the "
+            "plan's verification. Run git only to read (status, diff, log, show, blame): the "
+            "leading session commits."
+        ),
+        "tools": list(READ_TOOLS + ("Write", "Edit") + EXEC_TOOLS + (SEND_MESSAGE, PEERS_TOOL)),
         "model": "sonnet",
     },
 }
@@ -209,7 +232,7 @@ GRANTS: dict[str, Grant] = {
     # and the budget goes with it: at the measured $0.047/turn a 120-turn step lands near $5.6,
     # so a $5 cap would only move the same premature stop to the other ceiling.
     "impl": Grant(
-        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS + (AGENT_TOOL,),
+        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS + (AGENT_TOOL, SEND_MESSAGE),
         commands=IMPL_COMMANDS,
         max_turns=120,
         max_budget_usd=8.0,
@@ -1195,11 +1218,15 @@ def decide(
     unit_dir: str | None = None,
     read_also: tuple[str, ...] = (),
     lease: tuple[str, str] | None = None,
+    agent_id: str | None = None,
 ) -> str:
     """ "" if this call may proceed, else the reason it may not.
 
     Checked in this order on purpose: the tool has to be granted at all before anything about
     its arguments matters.
+
+    `agent_id` is the CLI's, never the session's: set when one of `SUBAGENTS` made the call. A
+    helper runs `git` only as `HELPER_GIT`, on top of every other check.
 
     **`unit_dir` widens the write boundary by exactly one directory.** Every artifact lives in
     the product's own store, outside the workspace, so a step that writes its own artifact
@@ -1225,6 +1252,9 @@ def decide(
         # tools, and `Grant` refuses any entry that is not `mcp__<server>__<name>` or that names
         # the `cos` server: a built-in tool or `submit` can never enter it.
         return ""
+    if tool == PEERS_TOOL and AGENT_TOOL in grant.tools:
+        # The app's own list of this run's helpers: it reads nothing else and writes nothing.
+        return ""
     if tool not in grant.tools:
         # Covers MCP tools by construction: their names are never in a grant.
         return f"this step was not granted {tool}"
@@ -1242,8 +1272,11 @@ def decide(
         from pathlib import Path
 
         unit = Path(unit_dir).name if unit_dir else ""
-        reason = check_command(grant, str(tool_input.get("command", "")), lease, unit) or _git_into(
-            str(tool_input.get("command", "")), workspace, read_also
+        command = str(tool_input.get("command", ""))
+        reason = (
+            check_command(grant, command, lease, unit)
+            or _git_into(command, workspace, read_also)
+            or _helper_git(command, agent_id)
         )
         if reason:
             return reason
@@ -1284,6 +1317,35 @@ def decide(
                 return f"reading outside the workspace is not allowed: {tool_input.get('pattern')}"
             if not _inside(raw, roots, roots[0]):
                 return f"reading outside the workspace is not allowed: {raw}"
+    return ""
+
+
+def _helper_git(command: str, agent_id: str | None) -> str:
+    """Why a helper's `git` is refused, or "": its subcommand must be one of `HELPER_GIT`. The
+    leading session's call (`agent_id` `None`) is never refused here.
+
+    Read on the words `_words` leaves, so `git -C . commit` reads as `git commit`. A tripwire like
+    the rest: `git diff --output=<file>` still writes.
+    """
+    if agent_id is None:
+        return ""
+    parsed = _read(command)
+    if isinstance(parsed, _Unreadable):
+        # `check_command` has refused it already.
+        return ""
+    for simple in parsed.commands:
+        words = list(simple.words)
+        k = 0
+        while k < len(words) - 1 and _ASSIGNMENT.match(words[k]):
+            k += 1
+        if not words or words[k].rsplit("/", 1)[-1] != "git":
+            continue
+        sub = _words("git", words[k + 1 :])[1:2]
+        if not sub or sub[0] not in HELPER_GIT:
+            return (
+                f"a helper runs git only to read ({', '.join(HELPER_GIT)}): "
+                "only the leading session commits"
+            )
     return ""
 
 

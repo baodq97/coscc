@@ -80,11 +80,21 @@ def permission_gate(
     """The callback the SDK asks before every tool call.
 
     Separate from the tool list on purpose: the list does not cover every source of
-    capability. `read_also` and `lease` are passed to `decide` unchanged.
+    capability. `read_also` and `lease` are passed to `decide` unchanged, and so is the context's
+    `agent_id`, which the CLI sets on a helper's call.
     """
 
-    async def can_use_tool(tool: str, tool_input: dict, _context: Any):
-        reason = decide(grant, tool, tool_input or {}, workspace, unit_dir, read_also, lease)
+    async def can_use_tool(tool: str, tool_input: dict, context: Any):
+        reason = decide(
+            grant,
+            tool,
+            tool_input or {},
+            workspace,
+            unit_dir,
+            read_also,
+            lease,
+            getattr(context, "agent_id", None),
+        )
         if reason:
             denials.record(tool, reason, tool_input)
             return sdk.PermissionResultDeny(message=reason)

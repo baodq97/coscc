@@ -34,11 +34,12 @@ from claude_agent_sdk import (
     TextBlock,
     ToolUseBlock,
 )
-from claude_agent_sdk.types import SystemPromptPreset
+from claude_agent_sdk.types import HookEvent, HookMatcher, SystemPromptPreset
 
 from coscc import config as cfg
 from coscc import frontend
 from coscc.agent import harness, instructions, transcript
+from coscc.agent.helpers import Helpers
 from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.data import Data
@@ -533,6 +534,7 @@ def _options(
     resume_at: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
     agents: dict[str, dict[str, Any]] | None = None,
+    hooks: dict[HookEvent, list[HookMatcher]] | None = None,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -561,6 +563,8 @@ def _options(
 
     `mcp_servers` is the app's own in-process servers, `{"cos": <submit>}` for a step that
     hands back an object; `strict_mcp_config` stays, so those are the only ones.
+
+    `hooks` is the app's own in-process callbacks (`Helpers.hooks`), never a settings file's.
     """
     # A board step brings its own list from `policy.Grant`; everything else gets the app
     # default, empty. `tools=[]` and `tools=None` differ for the SDK, so test `is None`. Read
@@ -614,6 +618,8 @@ def _options(
     if agents:
         # `policy.SUBAGENTS`: helpers inside this session, held by its own `can_use_tool`.
         options.agents = {name: AgentDefinition(**spec) for name, spec in agents.items()}
+    if hooks:
+        options.hooks = dict(hooks)
     project = instructions.read(cwd).text
     if system_prompt is not None:
         options.system_prompt = system_prompt.copy()
@@ -760,6 +766,7 @@ class Sessions:
         spent_before: dict[str, float] | None = None,
         mcp_servers: dict[str, Any] | None = None,
         agents: dict[str, dict[str, Any]] | None = None,
+        helpers: Helpers | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -781,7 +788,8 @@ class Sessions:
         `session_id` (`_options`). `spent_before` is what the session cost before this client:
         `{}` makes `done.cost` the whole session's, since the CLI's total carries over a resume.
         A stream `suspend_all` paused raises `Suspended` and yields no `done`; one begun after
-        it is `Refused`. `mcp_servers` goes to `_options` as it is.
+        it is `Refused`. `mcp_servers` goes to `_options` as it is. `helpers` is the run's ledger of
+        helpers: its hooks go to `_options` and every `task_*` system message to it.
         """
         if self.paused:
             raise Refused(PAUSED)
@@ -812,6 +820,7 @@ class Sessions:
             spent_before=spent_before,
             mcp_servers=mcp_servers,
             agents=agents,
+            helpers=helpers,
         )
         if isinstance(flow, dict):  # noqa: PLR1702 - still to split
             turn = flow
@@ -869,6 +878,7 @@ class Sessions:
         spent_before: dict[str, float] | None = None,
         mcp_servers: dict[str, Any] | None = None,
         agents: dict[str, dict[str, Any]] | None = None,
+        helpers: Helpers | None = None,
     ):
         member = workspace if workspace is not None else cwd
         if not self.membership(member):
@@ -913,6 +923,7 @@ class Sessions:
                             resume_at=resume_at,
                             mcp_servers=mcp_servers,
                             agents=agents,
+                            hooks=helpers.hooks() if helpers is not None else None,
                         )
                     )
                     if step is None:
@@ -976,6 +987,11 @@ class Sessions:
                         step.recorder.message(message)
                     except Exception:
                         log.exception("the recorder failed on a message")
+                if helpers is not None and isinstance(message, sdk.SystemMessage):
+                    try:
+                        helpers.system(message)
+                    except Exception:
+                        log.exception("the helpers' ledger failed on a message")
                 if isinstance(message, sdk.SystemMessage) and message.subtype == "init":
                     # The id is known here, before the first reply, so an update that pauses the
                     # session now can still name it.
