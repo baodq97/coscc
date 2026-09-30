@@ -1,10 +1,9 @@
 # Settings and the backlog
 
-Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST /api/backlog/*` or `coscc/units/backlog.py`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST /api/backlog/*` or `coscc/units/backlog.py`. Moved here whole from `.claude/rules/coscc-app.md`.
 
 - **`POST /api/settings/models` decides what every step spends, for whoever holds the
-  password.** Since
-  the store's `0004_no-setting-says-which-model-runs-a-stage` each stage, and chat, runs
+  password.** Each stage, and chat, runs
   on the model Settings names: an override in the `prefs` table (`model:<name>`), else
   `coscc/agent/models.json`, else `COS_MODEL`. Anyone holding the password can move `review` to
   a weak model or every stage to a dear one, `0.0.0.0` by default. The trace is a
@@ -12,36 +11,32 @@ Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST
   workspace's Activity) and the `override` badge on Settings. A model id is not checked
   when saved; a wrong one fails the stage's next step with the CLI's error. A person who
   had `COS_MODEL` set before this lost it for every stage: it now answers only chat.
-  Since `0033` every row also has an effort (`effort:<name>`, `POST /api/settings/efforts`,
+  Every row also has an effort (`effort:<name>`, `POST /api/settings/efforts`,
   the same `setting` trace), and each stage after `plan` has a `<stage>:novel` row used when
   the plan's label is `novel`: declared, forced by a file in `coscc/agent/labels.py`
-  `SECURITY_SURFACE`, missing (every plan written before `0033`), or escalated because an
+  `SECURITY_SURFACE`, missing (every plan written before labels existed), or escalated because an
   earlier `impl` of the unit stopped at `max_turns`. So a routine `impl` that runs out of
-  turns reruns on the dearer row with nobody pressing anything different. Since `0062`
-  that rerun, and every `impl` labelled `novel` — a `missing` plan written before `0033`
+  turns reruns on the dearer row with nobody pressing anything different. That rerun, and every `impl` labelled `novel` — a `missing` plan
   included — also gets 250 turns / $16.0 instead of 120 / $8.0 (`policy.NOVEL_CEILINGS`,
   shown on Settings as `impl:novel`), so one press can spend twice as much. `max` is refused
   from `models.json` and taken from an override, so anyone holding the password can set it.
   The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
-- **`POST /api/settings/agents` renames any agent, for whoever holds the password.** Since
-  `0036`, `{key, name?, glyph?, meaning?, role?}` sets fields of an `agent:<key>` row in
+- **`POST /api/settings/agents` renames any agent, for whoever holds the password.** `{key, name?, glyph?, meaning?, role?}` sets fields of an `agent:<key>` row in
   `prefs` over `coscc/agent/agents.json`; `""` clears one field, `{key}` alone the row. The
   name goes into every prompt's `# Who you are`, the `Author:` a session writes, the
   `Co-authored-by:` trailer of a preset session's commits and the review comment's first line;
   a change applies from the next step. A wrong field is a 400 and nothing is written; every
-  change is a `setting` record with `old` and `new`. A name opens and closes nothing (spec
-  C6), and a mid-unit rename leaves one unit under two names (C2).
-- **Settings does not show the model a routine `impl` runs on.** Since `0139`, a unit whose
+  change is a `setting` record with `old` and `new`. A name opens and closes nothing and a mid-unit rename leaves one unit under two names.
+- **Settings does not show the model a routine `impl` runs on.** A unit whose
   name hashes to the `opus-5-5` arm (`coscc/agent/modeltrial.py`) runs a routine `impl`
   on `claude-opus-5-5[1m]`, and the `sonnet-5-5` arm on `claude-sonnet-5-5[1m]`, both at the
   `impl` row's effort, between `COS_MODEL` and `models.json`; the `impl` row still reads its
   default, because `models.table` never passes the trial's model. Only that step's `start`
   says so, as `model_source: trial` beside `model_trial: {arm, requested, model}`, `model`
   being what the session's `init` named or `never-started`. A `model:impl` override or
-  `COS_MODEL` wins, and the arm is recorded all the same. `COS_EFFORT_TRIAL` (`0123`) is no
+  `COS_MODEL` wins, and the arm is recorded all the same. `COS_EFFORT_TRIAL` is no
   longer read.
-- **`POST /api/settings/autopilot` lets the app start steps, and ship, on its own.** Since
-  `0043`, `{cwd, name, value}` sets one of four, in `prefs`: `autopilot:<key>` and
+- **`POST /api/settings/autopilot` lets the app start steps, and ship, on its own.** `{cwd, name, value}` sets one of four, in `prefs`: `autopilot:<key>` and
   `autopilot_may_ship:<key>` (booleans, off), `max_parallel:<key>` (a whole number ≥ 1, 4),
   keyed by the workspace's resolved path, and `autopilot_daily_cap_usd` (a number above 0,
   50) for the whole app. A wrong value is a 400 and nothing is written; every change is a
@@ -51,9 +46,9 @@ Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST
   live session can turn it on, raise the cap, or let the autopilot merge to `main` under
   this machine's `gh` login. The cap counts every `end` of the machine's day in every
   workspace, a person's too; a step running is counted at the largest `max_budget_usd` its
-  stage can have, and since `0105` so is an `end` with no `cost_usd` — at the grant table's
+  stage can have, and so is an `end` with no `cost_usd` — at the grant table's
   largest when its stage has none. It holds only the autopilot: a press is never held.
-  Since `0104` it starts only units on the workspace's last `shortlist`
+  It starts only units on the workspace's last `shortlist`
   (`POST /api/backlog/shortlist`), highest first, and asks nothing else: **with no shortlist it starts nothing at all**, a unit already half
   way through included, and the board shows one *No shortlist* stop instead. Each pass, and
   the 5-minute one with nobody looking, costs one board read (a `gh pr list` when a unit
@@ -63,9 +58,9 @@ Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST
   `autopilot-stop` row each time a unit's stop changes, and an `autopilot-pick` row before
   each start, naming the shortlist it followed and why every unit above was passed over.
 - **`POST /api/backlog/*` writes the backlog's order, and `propose` opens a paid session, for
-  whoever holds the password.** Since `0074`. `estimate`, `relation` and `shortlist` each
+  whoever holds the password.** `estimate`, `relation` and `shortlist` each
   append one run-log row (`estimate-value`, `relation`, `shortlist`) with `by` — `owner` from
-  the board since `0082`, or a name the request carried; a
+  the board, or a name the request carried; a
   person's name may not start with `agent:`, but a hand-edited row in `cos.db` can, and the
   board then takes it for an agent's (`plan.md` Risk 9). `propose` opens one session on the
   model of the Settings row `estimate` — no tools, 1 turn, $2.0, all chosen, and nobody has
@@ -73,7 +68,7 @@ Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST
   `stage: "estimate"`, one `estimate` row, and each valid part of the reply. A second press in
   the same workspace is refused, in this process only (`holds.marks`). *Apply* waits for it
   like an integration. No gate, no `next` and no run button reads any of it; every board
-  step's `start` row carries `shortlist` (R14). A step
+  step's `start` row carries `shortlist`. A step
   started at a terminal has none, so the outcome's measurement cannot see it (`spec.md ##
   Answers, câu 3`). The password is what stands in front; `COS_HOST=127.0.0.1` still narrows
   who can try it.

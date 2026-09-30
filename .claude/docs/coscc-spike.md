@@ -1,8 +1,8 @@
 # The spike step
 
-Read this before changing the `spike` grant, `service.run_step`'s scratch directory, or `runner`'s progress-file write. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing the `spike` grant, `service.run_step`'s scratch directory, or `runner`'s progress-file write. Moved here whole from `.claude/rules/coscc-app.md`.
 
-- **`spike` runs arbitrary code, and nothing is a sandbox.** Since `0039` a spec that marks
+- **`spike` runs arbitrary code, and nothing is a sandbox.** A spec that marks
   a concern `[unmeasured] U<n>` sends its unit to a `spike` step holding `Bash` with
   `python`, `node`, `npm` and `uv` (`impl`'s commands without `git`,
   `policy.SPIKE_COMMANDS`), run under this process's user. Its `cwd` is
@@ -16,7 +16,7 @@ Read this before changing the `spike` grant, `service.run_step`'s scratch direct
   not in `status`. A client that drops the stream leaves the scratch until the generator
   is collected or the next spike clears it. The `spec ↔ spike` loop stops for a person at
   `Round: 2` (`cos.mjs` `SPIKE_ROUNDS`), and `Round:` is the agent's own word: a spike
-  that writes `Round: 1` every time loops until the money runs out. Since `0080` the step
+  that writes `Round: 1` every time loops until the money runs out. The step
   keeps a progress file, `spike.md` in its `cwd` (`write-spike`, *The progress file*), and
   when its reply is not an artifact — a turn or budget ceiling, no `Status:` line, a session
   that broke — `Runner.run` writes the unit's `spike.md` from that file through the same

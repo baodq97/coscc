@@ -1,11 +1,11 @@
 # One idea, several units, several repositories
 
 Read this before writing an `intent.md` that carries `Idea:`, `Repo:` or `Depends on:`, or
-before changing how `cos.mjs` reads them. Added by `0040`, which merged `0003`'s design into it.
+before changing how `cos.mjs` reads them.
 
 ## The files
 
-An idea is one file, `.cos/ideas/NNNN_<slug>.md`, numbered on its own from `0001` by
+An idea is one file, `.cos/ideas/NNNN_<slug>.md`, numbered on its own sequence by
 `cos.mjs new-idea <slug>`, which prints the path and creates nothing. It lives in the store of
 the workspace it was started in, its home. Its text is in that file and nowhere else.
 
@@ -43,7 +43,7 @@ attaches `idea`, `repo` and `dependsOn` to a unit only when its header carries t
 - a unit: `<ws>/NNNN_<slug>`, or `NNNN_<slug>` in the same store.
 - an idea: `<ws>/ideas/NNNN_<slug>.md`, or `ideas/NNNN_<slug>.md` in the same store.
 
-`<ws>` resolves through the snapshot `--state` carries (`0135`): the app names every
+`<ws>` resolves through the snapshot `--state` carries: the app names every
 workspace in it, leaving out a name two workspaces share. Another workspace's units are read
 only to resolve a reference that names them; they are never listed, and their own links are
 not followed. With no workspace of that name, the unit's own `Repo:` is its own store.
@@ -56,10 +56,9 @@ A broken link — no idea file, no such workspace, a unit the idea does not list
 `impl` stays shut while any `Depends on:` unit is not merged, and `next` answers
 `stage: ""`, `why: "dependency"`, `action: "waiting on <ref> to merge"`. Merged means the
 PR machine recorded that unit's `merged` (guard `merge-read`), or, for a unit the machine never
-moved, that its `ship.md` was accepted by the `0135` import or a `ship` session before `0139`
+moved, that its `ship.md` was accepted by the import or a `ship` session before the merge was recorded
 (`coscc/units/meta.py` `UnitMeta.snapshot`). An `accepted` `ship.md` read any other way is not
-a merge. Neither `gh` nor `git` is asked: `0040` `spike.md ## U1` could not measure
-`gh pr view` run from another repository's checkout.
+a merge. Neither `gh` nor `git` is asked: `gh pr view` run from another repository's checkout.
 
 `impl` also stays shut when `Idea:` cannot be read, or when the idea's line for the unit and
 the header disagree on `Depends on:`. The rule cannot rest on one copy an agent wrote; the
