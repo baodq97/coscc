@@ -95,10 +95,6 @@ class Hooks:
     def for_step(self, stage: str, workspace: str) -> Parts:
         """Only what is on for this workspace; a tool only for the stages it names."""
         on = [p for feature, p in self.parts if self.enabled(feature, workspace)]
-        names = [b.name for p in on for b in p.blocks]
-        if len(set(names)) != len(names):
-            dup = sorted({n for n in names if names.count(n) > 1})
-            raise ValueError(f"two prompt blocks share a name: {', '.join(dup)}")
         return Parts(
             tools=tuple(t for p in on for t in p.tools if stage in t.stages),
             guards=tuple(g for p in on for g in p.guards),

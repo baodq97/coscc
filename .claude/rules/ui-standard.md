@@ -112,3 +112,26 @@ A violation looks like: a greyed *Run* with no sentence saying what it waits for
 - The `ship` gate reads the round's `screens` object (path, size, address, result, and whether
   `taken` is current), never the images. A finding whose `rule` is an `S<n>` always blocks, even
   rated `low`.
+
+## What each stage does on a UI unit
+
+A UI unit changes a file listed under `paths:`.
+
+- `spec` lists in `## Design` each screen (at most six) as an app address, with the `S<n>` rules
+  that apply, on fixture workspace `proj` and its fixture units; it says when a screen has no
+  address.
+- `impl`, with a clean tree after its last UI commit, captures the spec's addresses (at most
+  six), reads every PNG against `S1`-`S8`, fixes, commits and captures again, so the manifest's
+  `head` is the last UI commit. `## Screens` records the command, its exit code, the `head`,
+  each image path, and the reason for every manifest `hit` left; an unexplained hit is a `high`
+  finding. If the last line says the `.web` rebuild failed, run the command it prints before
+  any browser proof.
+- `review` reads `.screens/manifest.json` and every PNG in it, and adds `### Screens`: first
+  line exactly `Taken at: <manifest head>. Standard: .claude/rules/ui-standard.md. Looked at by:
+  <agent session>, from screenshots.`, then `- <path>.png — <W>×<H> — <address> — <what you
+  saw>` per image. A violation is a finding whose first word after its severity is the rule id.
+  `high` and `changes-requested`: no manifest or image, a `head` older than the last UI commit,
+  `dirty: true`, an unexplained `hits` entry. When the prompt says the app took the screenshots
+  again, a hit counts as explained if `impl.md ## Screens` explains one with the same address,
+  size and kind. If the manifest `head` is not an ancestor of HEAD, capture its addresses first.
+  Screens not reachable go under `### What was not reviewed`.

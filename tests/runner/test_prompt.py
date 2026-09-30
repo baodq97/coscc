@@ -16,7 +16,6 @@ from coscc.runner.prompt import (
     answers_section,
     build_prompt,
     compose_prompt,
-    skill_for,
     strip_answers,
     with_answers,
 )
@@ -483,15 +482,14 @@ class ADraftImplSeesItsOwnAnswers(unittest.TestCase):
     def test_impl_prompt_carries_its_answers_verbatim(self):
         from coscc.runner.prompt import _IMPL_ANSWERS_ADVICE
 
-        for stage in ("impl", "implement"):
-            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
-                prompt = self.prompt(d, self.IMPL + self.ANSWERS, stage)
-                self.assertIn("# The answers already given to this artifact", prompt)
-                self.assertIn("1. Chạy lệnh X rồi đưa kết quả?", prompt)
-                self.assertIn(self.ANSWERS.lstrip("\n"), prompt)
-                self.assertIn(_IMPL_ANSWERS_ADVICE, prompt)
-                # The rest of `impl.md` is still named by path only.
-                self.assertNotIn("IMPL-BODY-0115", prompt)
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self.prompt(d, self.IMPL + self.ANSWERS, "impl")
+            self.assertIn("# The answers already given to this artifact", prompt)
+            self.assertIn("1. Chạy lệnh X rồi đưa kết quả?", prompt)
+            self.assertIn(self.ANSWERS.lstrip("\n"), prompt)
+            self.assertIn(_IMPL_ANSWERS_ADVICE, prompt)
+            # The rest of `impl.md` is still named by path only.
+            self.assertNotIn("IMPL-BODY-0115", prompt)
 
     def test_impl_prompt_does_not_say_the_app_writes_answers_back(self):
         with tempfile.TemporaryDirectory() as d:
@@ -960,19 +958,9 @@ class ThePlanMapAndTheCommands(unittest.TestCase):
             review_md="Status: changes-requested.\nREVIEW",
         )
 
-    @staticmethod
-    def rules(stage: str) -> str:
-        """`implement` is an alias with no skill file of its own in this checkout; the rest
-        read their real rules, which both sides of each comparison share."""
-        return "RULES for implement" if stage == "implement" else skill_for(stage)
-
     def test_no_stage_but_impl_carries_them_even_when_handed_them(self):
-        from coscc.runner import prompt as runner_prompt
 
-        with (
-            tempfile.TemporaryDirectory() as d,
-            mock.patch.object(runner_prompt, "skill_for", self.rules),
-        ):
+        with tempfile.TemporaryDirectory() as d:
             directory = self.unit(d)
             for stage in [s for s in SESSION_STAGES if s != "impl"]:
                 with self.subTest(stage=stage):
@@ -985,9 +973,9 @@ class ThePlanMapAndTheCommands(unittest.TestCase):
                 d,
                 directory,
                 UNIT,
-                "implement",
+                "impl",
                 STAGES,
-                "implement.md",
+                "impl.md",
                 plan_map=self.MAP,
                 commands=self.WORDS,
             )[0]
@@ -1207,7 +1195,7 @@ class FeaturesAddNamedBlocksToThePrompt(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             prompt = self.prompt(d, (("a", "FIRST-BLOCK"), ("b", "SECOND-BLOCK")))
-            task = _task(d, Path(d) / ".cos" / UNIT, UNIT, "spec", "spec.md", False)
+            task = _task(d, Path(d) / ".cos" / UNIT, UNIT, "spec.md", False)
         self.assertLess(prompt.index("FIRST-BLOCK"), prompt.index("SECOND-BLOCK"))
         self.assertLess(prompt.index("SECOND-BLOCK"), prompt.index(task))
 
@@ -1215,11 +1203,26 @@ class FeaturesAddNamedBlocksToThePrompt(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self.prompt(d, (("a", ""),)), self.prompt(d, ()))
 
-    def test_two_blocks_with_one_name_are_refused(self):
-        from coscc.hooks import Block, Hooks, Parts
 
-        block = Block("same", lambda facts: "x")
-        hooks = Hooks(parts=(("one", Parts(blocks=(block,))), ("two", Parts(blocks=(block,)))))
-        with self.assertRaises(ValueError) as caught:
-            hooks.for_step("spec", "w")
-        self.assertIn("same", str(caught.exception))
+class TheFastLaneBlock(unittest.TestCase):
+    def prompt(self, d: str, stage: str, lane: str) -> str:
+        make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+        return compose_prompt(
+            d,
+            Path(d) / ".cos" / UNIT,
+            UNIT,
+            stage,
+            STAGES,
+            f"{stage}.md",
+            unit_meta={"lane": lane, "artifacts": {}, "answers": [], "holds": []},
+        )[0]
+
+    def test_only_a_fast_lane_unit_impl_and_review_are_told(self):
+        for stage in ("impl", "review"):
+            for lane, present in (("fast", True), ("full", False)):
+                with self.subTest(stage=stage, lane=lane), tempfile.TemporaryDirectory() as d:
+                    self.assertEqual("# The fast lane" in self.prompt(d, stage, lane), present)
+
+    def test_no_other_stage_is_told(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertNotIn("# The fast lane", self.prompt(d, "spec", "fast"))

@@ -25,7 +25,7 @@ POLL_SECONDS = 300.0
 OPEN_FOR = timedelta(hours=24)
 
 # The stages that write code, and so may not run beside another whose files overlap.
-CODE_STAGES = ("impl", "implement", "integrate")
+CODE_STAGES = ("impl", "integrate")
 
 # Run-log lines under a stage that is none of the loop's (an earlier version wrote its answering
 # session here); none of them is the unit's last step, a start, or a failed step.
@@ -497,7 +497,7 @@ def pick(
         if crossing is not None:
             held[c["unit"]] = ("overlap", crossing["unit"])
             continue
-        if c["stage"] in ("impl", "implement") and c["unit"] not in with_pr:
+        if c["stage"] == "impl" and c["unit"] not in with_pr:
             blocking = next(
                 (
                     p
