@@ -1,13 +1,19 @@
-"""Comments, docstrings and names say why the code is so, never which unit or requirement made it.
+"""Comments, docstrings, names, strings and the markdown say why something is so, never which unit
+or requirement made it.
 
 An id or a history note is read again on every turn of every session that opens the file, and
-new code copies the comments around it. No file under `coscc/` or `tests/` carries one."""
+new code copies the text around it. No file under `coscc/` or `tests/` carries one, in a comment,
+a docstring, a name or any string constant (the SQL schema comments are strings), and neither
+does a markdown file under `.claude/` or `coscc/features/`. Every string constant is read, not
+only SQL comment lines: outside the schema it raised no false match. Strings under `tests/` are
+fixture data (a unit directory name), so only `coscc/` strings are read."""
 
 from __future__ import annotations
 
 import ast
 import io
 import re
+import tempfile
 import tokenize
 import unittest
 from pathlib import Path
@@ -26,6 +32,22 @@ NAME = re.compile(
     r"(?:^|_)(?:0[0-3]\d\d|[rcuf][1-9]\d?[a-z]?)(?=_|$)|0[0-3]\d\d|(?<=[a-z])[RCUF][1-9]\d?(?=[A-Z]|$)"
 )
 
+FIX = "say why, not which unit: drop the id, or the sentence if it only names the unit"
+
+# Markdown that keeps ids on purpose. `old-units.md` is about the old units themselves and
+# `.claude/scripts/testdata` is fixture data for the parsers. Ids that are a format or a
+# fixture, not a unit: the finding id `F<k>` and the spike id `U<n>` that the skills and the UI
+# rule define, and the fixture units a spec is told to name. The one line in `CLAUDE.md` is the
+# pointer to `old-units.md`.
+SKIPPED = ("worktrees", "testdata")
+ALLOWED = {
+    ".claude/CLAUDE.md": re.compile(r"`0010"),
+    ".claude/rules/ui-standard.md": re.compile(r"F\d"),
+    ".claude/skills/write-review/SKILL.md": re.compile(r"F\d"),
+    ".claude/skills/write-spike/SKILL.md": re.compile(r"U\d"),
+    ".claude/skills/write-spec/SKILL.md": re.compile(r"U\d|0\d\d\d_"),
+}
+
 
 def _texts(source: str):
     for token in tokenize.generate_tokens(io.StringIO(source).readline):
@@ -43,18 +65,53 @@ def _texts(source: str):
             yield body[0].lineno, body[0].value.value
 
 
+def _strings(source: str):
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            for offset, line in enumerate(node.value.splitlines()):
+                yield node.lineno + offset, line
+
+
 def _names(source: str):
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             yield node.lineno, node.name
 
 
-def ids(path: Path) -> list[str]:
+def ids(path: Path, where: str | None = None) -> list[str]:
     source = path.read_text(encoding="utf-8")
-    where = path.relative_to(REPO)
+    where = where or str(path.relative_to(REPO))
+    found = {
+        (line, m.group(0))
+        for line, text in [
+            *_texts(source),
+            *(_strings(source) if where.startswith("coscc/") else []),
+        ]
+        for m in ID.finditer(text)
+    }
+    return [f"{where}:{line}: {hit}" for line, hit in sorted(found)] + [
+        f"{where}:{line}: {name}" for line, name in _names(source) if NAME.search(name)
+    ]
+
+
+def md_ids(path: Path, where: str | None = None) -> list[str]:
+    where = where or str(path.relative_to(REPO))
+    allowed = ALLOWED.get(where)
     return [
-        f"{where}:{line}: {m.group(0)}" for line, text in _texts(source) for m in ID.finditer(text)
-    ] + [f"{where}:{line}: {name}" for line, name in _names(source) if NAME.search(name)]
+        f"{where}:{n}: {m.group(0)}"
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        for m in ID.finditer(line)
+        if not (allowed and allowed.search(m.group(0)))
+    ]
+
+
+def _markdown() -> list[Path]:
+    files = [*(REPO / ".claude").rglob("*.md"), *(REPO / "coscc" / "features").glob("*.md")]
+    return sorted(
+        p
+        for p in files
+        if p.name != "old-units.md" and not set(SKIPPED) & set(p.relative_to(REPO).parts)
+    )
 
 
 def _files() -> list[Path]:
@@ -79,9 +136,33 @@ class NoFileCarriesAnId(unittest.TestCase):
 
     def test_every_file_carries_none(self):
         found = [hit for path in _files() for hit in ids(path)]
-        self.assertFalse(
-            found, "say why in the present tense, without the id:\n" + "\n".join(found)
-        )
+        self.assertFalse(found, FIX + ":\n" + "\n".join(found))
+
+    def test_no_markdown_carries_one(self):
+        found = [hit for path in _markdown() for hit in md_ids(path)]
+        self.assertFalse(found, FIX + ":\n" + "\n".join(found))
+
+    def test_a_planted_string_fails_with_the_fix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "planted.py"
+            path.write_text('SQL = """-- `0013` R1: the record\nCREATE TABLE t (a)"""\n')
+            found = ids(path, "coscc/planted.py")
+        self.assertCountEqual(["coscc/planted.py:1: `0013", "coscc/planted.py:1: R1"], found)
+        self.assertIn("which unit", FIX)
+
+    def test_a_planted_markdown_line_fails_with_the_fix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "planted.md"
+            path.write_text("fine\nSince `0068` it updates itself.\n")
+            found = md_ids(path, "planted.md")
+        self.assertEqual(["planted.md:2: `0068"], found)
+
+    def test_the_named_exceptions_hold_only_their_own_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.md"
+            path.write_text("the pointer `0010`, but also `0068`\n")
+            found = md_ids(path, ".claude/CLAUDE.md")
+        self.assertEqual([".claude/CLAUDE.md:1: `0068"], found)
 
 
 if __name__ == "__main__":

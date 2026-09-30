@@ -33,7 +33,7 @@ paths:
   - "coscc/service/board.py"
   - "coscc/service/common.py"
   - "coscc/service/models.py"
-  - "coscc/service/notices.py"
+  - "coscc/features/*.py"
   - "coscc/service/sessions.py"
   - "coscc/service/steps.py"
   - "coscc/service/update.py"

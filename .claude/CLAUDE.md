@@ -5,9 +5,9 @@ A local AI-native SDLC harness. `cos.mjs` decides every gate; each stage's rules
 ## Commands
 
 ```
-npm test                                  # lint (ruff, ty), then every test
-uv run ruff format && uv run ruff check --fix   # before a commit
-uv sync                                   # after a fresh clone
+npm test        # lint, then every test
+uv run ruff format && uv run ruff check --fix  # before commit
+uv sync         # after a fresh clone
 node .claude/scripts/cos.mjs <command>:
   status [--json] · gate <unit> <stage> [--json]   # 0 open, 1 blocked with reasons, 2 misuse
   next <unit> · new-path <slug> · new-idea <slug> · unit-branch <unit>
@@ -29,8 +29,9 @@ Branch on `reasons` codes (`coscc/units/guards.py`), never on their words.
   `vX.Y.Z`, `vX.Y.Z-rc.N`. Never compose one by hand: `unit-branch`, `check-branch`, `check-tag`.
 - One branch and one PR per change, squashed, rebased onto `main` (never merge `main` in).
 - No unit or requirement ids in comments, docstrings, names or rules (`tests/test_comments.py`).
-- Import downwards, from the defining module (`tests/test_layers.py`); `tests/` mirrors
-  `coscc/` (`.claude/docs/code-and-tests.md`).
+- Import downwards, from the defining module; `tests/` mirrors `coscc/`. A feature is
+  `coscc/features/<name>.py` + a line in `FEATURES`, using the app only via `Ctx`
+  (`.claude/docs/code-and-tests.md`).
 - Code little and simple; split a file only when needed.
 - Take unit paths from `new-path`. Cite committed files by path and lines. Cut unsourced
   figures.

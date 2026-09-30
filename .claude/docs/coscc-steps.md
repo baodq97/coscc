@@ -1,20 +1,20 @@
 # Board steps: what they record, stop and share
 
-Read this before changing `Backlog.timeline`, `POST /api/board/stop`, `GET /api/board/running`, `Steps.run_step`, `coscc/agent/steps.py` or `runner.describe_attempt`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `Backlog.timeline`, `POST /api/board/stop`, `GET /api/board/running`, `Steps.run_step`, `coscc/agent/steps.py` or `runner.describe_attempt`. Moved here whole from `.claude/rules/coscc-app.md`.
 
 - **A unit's timeline (`Backlog.timeline`) returns what a failed paid step replied.** A step whose reply
-  could not be used (`0014`) keeps the last `REPLY_KEPT` characters of it, 2000
+  could not be used keeps the last `REPLY_KEPT` characters of it, 2000
   (`coscc/runner/reply.py:41`), and
   that text reaches the board as `detail`, for whoever holds the password or a live
   session.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
-  still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
+  still see past each other for sessions.
 - **A failed step's transcript tail is stored in `cos.db` and put into the next prompt.**
-  Since `0019` a stage that ends without `done` — a ceiling hit, an exception, a reply with
+  A stage that ends without `done` — a ceiling hit, an exception, a reply with
   no `Status:` line — has `Runner.run` capture the tree (`HEAD`, branch, the commits since
   the trunk, `git status --porcelain`) and the last `runner.ATTEMPT_EXCERPT` (8000, chosen;
-  measured 2026-09-24 as too short to hold `0032`'s own measurements, which sat 87656 and
-  101788 characters from the end — the unit's `impl.md` says why it was left) characters of what the session's own
+  measured 2026-09-24 as too short to hold measurements that sat 87656 and
+  101788 characters from the end) characters of what the session's own
   turns produced, and append it to the run log as one `kind: "attempt"` row, read back only
   by `journal.failed_attempts` and placed in the *next* run's prompt
   (`runner.describe_attempt`), never in an artifact. Nothing returns it — `Backlog.timeline`,
@@ -23,36 +23,35 @@ Read this before changing `Backlog.timeline`, `POST /api/board/stop`, `GET /api/
   and a tool's own output can carry a token or a local path. Capturing is best-effort:
   `Runner.run`'s `finally` swallows every exception around it, so a step's outcome and its
   `end` record never depend on the capture succeeding.
-- **`POST /api/board/stop` ends anyone's step.** Since
-  `0034`. It closes the step's CLI client and cancels the step's task; a CLI still running
+- **`POST /api/board/stop` ends anyone's step.** It closes the step's CLI client and cancels the step's task; a CLI still running
   `sessions.DISCONNECT_TIMEOUT` (5s, chosen) after the close began gets SIGTERM from the
   app, and SIGKILL `KILL_AFTER` (3s, chosen) later — through the SDK's private
   `_transport._process`, so an SDK that renames it loses this silently; the step ends `stopped`, writes no artifact and records no
   transition, and whatever it already committed or pushed stays. `stopped_by` is `owner`
-  from the board since `0082` (or a name the request carried), not an identity, and the
+  from the board (or a name the request carried), not an identity, and the
   trace is that one `end` record. A Stop whose
   cancel reaches the step's task before its first turn leaves no trace at all: the runner
   never ran, so there is neither `start` nor `end`, and only the Stop's own reply names
-  `stopped_by` (`Steps.never_driven`, since `0050`). A step that
+  `stopped_by` (`Steps.never_driven`). A step that
   has begun writing its artifact refuses the stop. A step stopped before its session
   reported a cost records `cost_unknown` and no cost at all, so Activity reads it as free.
   Stopping a `pr` or `ship` midway can leave a pushed branch or a merged pull request with
   no `pr.md` or an unremoved worktree. Whoever holds the password or a live session can
   press it.
-- **Units run their steps at the same time.** Since `0034` each board step is its own
+- **Units run their steps at the same time.** Each board step is its own
   task, one per unit (a second is refused before it spends anything) and any number of
   units at once; a reader that goes away no longer ends the step, and every step's CLI
-  process is closed when it ends. Since `0048` a fetch of the same clone waits for one
+  process is closed when it ends. A fetch of the same clone waits for one
   already running; the rest of two steps' `git` in one workspace — `switch main` among it —
   can still collide on a lock, and nothing here serialises it (unmeasured). The list
   of running steps is in memory: a restart forgets it, and a step cut off by a restart has
-  no `end` record. Since `0050` a unit is held from before `run_step`'s first board read:
+  no `end` record. A unit is held from before `run_step`'s first board read:
   a second request for any stage of it is refused before it runs `cos.mjs`, `git` or `gh`,
   with a reason naming the stage, the phase (`preparing` or `running`) and when it began
   (`steps.describe`). Still one process only: a second copy of the app, a chat or a
   terminal is not seen.
 - **`GET /api/board/running` tells anyone holding the password which units have a paid
-  session open, and since when.** Since `0051` every card on the Board shows the step or
+  session open, and since when.** Every card on the Board shows the step or
   integration running on it (stage, agent name, start time), or `ended, unknown` for a
   `start` in the run log with no `end`. It is near
   real time: each tab on the Board asks every 5s (`RUNNING_POLL`, chosen, not measured),
@@ -64,24 +63,22 @@ Read this before changing `Backlog.timeline`, `POST /api/board/stop`, `GET /api/
   and a person may read that as dead and press run again. An `ended, unknown` row stops
   showing when the unit's next `start` is written or after 24 hours; nothing writes an
   `end` for it. A step started at a terminal has no entry either. The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
-- **A review that hits its ceiling spends one more turn, past its budget.** Since `0085`,
-  `Runner.run` reopens an exhausted `review` whose reply could not be written, on the same
+- **A review that hits its ceiling spends one more turn, past its budget.** `Runner.run` reopens an exhausted `review` whose reply could not be written, on the same
   session with no tools and `max_turns=1` (`runner._closing_turn`), before `end` is
   written. The step is sealed first, so a Stop is refused for up to `CLOSING_TIMEOUT`
   (180 s, chosen). `max_budget_usd` does not bound that turn: the CLI compares the whole
-  session's cost after the turn ran (0085 spike ## U2), and one after a
+  session's cost after the turn ran, and one after a
   13-turn session cost $0.57 on its own. `end` carries it as `closing.cost_usd`, and
   `cost_usd` is the session's whole total. The turn runs under a handle with no recorder,
   so the watch pane never shows it. Whatever it writes is the session's own words, as an
   `incomplete` round of `review.md`; when it writes nothing, the paths the run's
   `tool_use` events name go into the next review's prompt (`journal.failed_attempts`),
   never into the file.
-- **A prose reply without its opening spends one more turn, past its budget.** Since `0127`,
-  a prose step that ends `failed` because its reply lacked its title or its `Status:` line
+- **A prose reply without its opening spends one more turn, past its budget.** A prose step that ends `failed` because its reply lacked its title or its `Status:` line
   (`OpeningError`) is reopened once on the same session, with no tools and `max_turns=1`
   (`runner._opening_turn`), and asked for the artifact again. A Stop is refused for up to
   `OPENING_TIMEOUT` (180 s). `max_budget_usd` does not bound the turn: one that rewrote a
-  26,535-character plan cost about $1.1 (0127 spike ## U1), and a turn that ends at a
+  26,535-character plan cost about $1.1, and a turn that ends at a
   ceiling, `max_turns` or the budget, writes nothing even when its reply is whole: the
   money is spent and the step stays `failed`. `end` carries `opening`
   (`repaired`, `none` or `withheld`) and the turn's cost as `closing`. When the turn's

@@ -324,12 +324,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--data-root", default=DEFAULT_DIR, help=f"where cos.db is (default {DEFAULT_DIR})"
     )
-    parser.add_argument("--outcome", action="store_true", help="then say whether spec.md R7 holds")
+    parser.add_argument("--outcome", action="store_true", help="then say whether the outcome holds")
     parser.add_argument(
         "--files",
         nargs="+",
         metavar="PATH",
-        help="paths from the repository's root; adds the touched_* fields (0095 R9)",
+        help="paths from the repository's root; adds the touched_* fields",
     )
     parser.add_argument(
         "--first", type=int, default=20, help="touched steps the touched_* means are over"

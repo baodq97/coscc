@@ -813,7 +813,7 @@ class Sessions:
             mcp_servers=mcp_servers,
             agents=agents,
         )
-        if isinstance(flow, dict):
+        if isinstance(flow, dict):  # noqa: PLR1702 - still to split
             turn = flow
             try:
                 async with aclosing(inner):
@@ -884,7 +884,7 @@ class Sessions:
         # A chat's data root this call made and `_live` does not own yet: removed here if the
         # call ends before the session is kept. A step's is `stream`'s to remove.
         made: Path | None = None
-        try:
+        try:  # noqa: PLR1702 - still to split
             async with self._lock:
                 live = self._live.get(session_id) if session_id and step is None else None
                 if live is None:
@@ -991,7 +991,7 @@ class Sessions:
                         self._live.pop(session_id, None)
                         raise Refused(
                             f"resume returned {said} instead of {session_id} — "
-                            "this is the fork branch spec.md C7 warns about"
+                            "a resume that forks the session instead of continuing it"
                         )
                     if said:
                         resolved = said
@@ -1055,7 +1055,7 @@ class Sessions:
                 _drop(live.scratch)
                 raise Refused(
                     f"resume returned {resolved} instead of {session_id} — "
-                    "this is the fork branch spec.md C7 warns about"
+                    "a resume that forks the session instead of continuing it"
                 )
 
             live.session_id = resolved

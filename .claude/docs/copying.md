@@ -1,21 +1,21 @@
 # Copying this harness into another repository
 
-Read this before copying `.claude/` into another repository. Moved here from `.claude/CLAUDE.md` (`0094`).
+Read this before copying `.claude/` into another repository. Moved here from `.claude/CLAUDE.md`.
 
 **What enforces this does not travel with the harness.** Copying `.claude/` brings the
 grammars, the commands and their tests. It does not bring `.github/workflows/`, which sits
 outside `.claude/`, and it cannot bring the GitHub ruleset, which is a setting rather than a
-file — and the ruleset is the only thing here that actually stops a push. Since `0015` the
+file — and the ruleset is the only thing here that actually stops a push. The
 `review` and `ship` gates also need `git` and a logged-in `gh`, and the `review` gate reads
 the pull request's **required** checks: a repository with no CI and no required check has
 a `review` gate that never opens.
 
-**The loop needs the coscc app and its database (`0135`).** `cos.mjs status`, `gate`,
+**The loop needs the coscc app and its database.** `cos.mjs status`, `gate`,
 `next`, `rerun`, `unit-branch` and `pr-text` decide on the snapshot `--state` hands them, which
 `uv run coscc state <workspace>` prints from `cos.db`; without it they exit 2. An artifact
 written at a terminal reaches that database only when a step of the app next ends on its unit.
 
-**`pr` and `ship` are the app's (`0136`).** From the board neither runs a session: the app's
+**`pr` and `ship` are the app's.** From the board neither runs a session: the app's
 PR machine (`coscc/github/prmachine.py`) pushes the branch, opens the pull request, reads its
 CI while the autopilot is on, and merges pinned to the head its own guard read. A repository
 used only at a terminal has none of that: a person runs `gh pr create` and `gh pr merge`, as

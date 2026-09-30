@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Screenshots of the app as built from this checkout, for a unit that changes a screen.
 
-`0083_ui-work-ships-without-anyone-looking-at-the-screen` R4 and R5. The `impl` of a unit
+The `impl` of a unit
 that changes a file `.claude/rules/ui-standard.md` lists runs this after its last commit
 touching such a file; the `review` of that unit opens every PNG it wrote with `Read`.
 
@@ -15,7 +15,7 @@ last run there are removed first and nothing else; a `<out>` that holds files bu
 uncommitted changes: the screens must be `head`'s. Beside
 them `<out>/manifest.json` records `head` (this checkout's `HEAD`, 40 hex), `dirty` (the
 tree changed while it ran), the time, the addresses, the sizes, every shot, and `hits`: every place the visible text of a
-page matched one of the six patterns of `S3` and `S4` that can be measured (`scan`).
+page matched one of the six patterns of the UI standard that can be measured (`scan`).
 A hit is reported, never an exit code.
 
 The app runs on a temporary data root with one workspace, `proj`, a clone of a bare
@@ -26,39 +26,38 @@ directory, and five units in it, always the same, so a spec can name its address
     0003_awaiting-ship     every artifact up to a passing review.md; pr.md names
                            github.com/o/r/pull/1
     0004_finished          plan.md: done; its intent has a `## Proposed outcome` whose
-                           deadline (2026-09-20) has passed and two open questions
-                           (`0082` R19); one `plan` run of it, ended, in the run log
-                           (`0089` R16), so `/`, `/activity` and its Timeline show a time
+                           deadline (2026-09-20) has passed and two open questions;
+                           one `plan` run of it, ended, in the run log, so `/`, `/activity` and its Timeline show a time
     0005_unfinished-review every artifact up to a review.md whose round 2 asked for
-                           changes and left out F1 of round 1 (`0027`); pr.md names
+                           changes and left out F1 of round 1; pr.md names
                            github.com/o/r/pull/2
 
-After them `make_idea_fixture` makes `0006_frontend-calls-api` (`0040`), and since `0135`
+After them `make_idea_fixture` makes `0006_frontend-calls-api`, and
 `0007_unread-status` has a spec whose status no stage writes, so `/settings` lists it in
 its import report. Every file is written by hand, then goes into `cos.db` through the
 import and an ingest (`ingest_fixture`), since the board reads a unit from there.
 
-The run log holds, since `0092`, a `spec` run that ended `done` for $0.52 and an `impl` run
+The run log holds a `spec` run that ended `done` for $0.52 and an `impl` run
 that ended `failed` after 109 turns with no known cost on `0002_open-question`, and an
-`impl` run on `0004_finished` that ended `failed` with neither; since `0093` also two
+`impl` run on `0004_finished` that ended `failed` with neither; also two
 `impl` runs and one `integrate` opened by a conflict on `0002_open-question` ($16.32 in all,
 over the $15 budget, one `impl` at four times the median tokens per turn) and three `impl`
 runs on `0004_finished` (`seed_runs`), so every anomaly `/cost` knows has a row, and one chat conversation in a temporary `CLAUDE_CONFIG_DIR`, titled `Backlog screen
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
 visible text as `<address slug>-<W>x<H>.txt`.
 
-Since `0046` `proj` holds this checkout's `cos.mjs`, a `pyproject.toml` at `0.1.0` tagged
+`proj` holds this checkout's `cos.mjs`, a `pyproject.toml` at `0.1.0` tagged
 `v0.1.0`, then a `feat` and a `build(deps)` commit of no unit (`seed_release`), so `/board`
 shows its *Release* panel ready with `0.2.0` proposed.
 
-Since `0104` the autopilot is on for `proj` and the run log holds no `shortlist`, so `/board`
+The autopilot is on for `proj` and the run log holds no `shortlist`, so `/board`
 shows its strip with one *No shortlist* stop and it starts nothing. **Add a shortlist to the
 fixture and the app under the camera starts real steps**, sessions that spend quota.
 
 For example `/board`, `/settings`, or `/unit?ws=proj&id=0002_open-question&tab=questions`
 (`tab` is one of `coscc/state/place.py`'s `TABS`, lowercase; any other value opens `overview`).
 The fixture's paths live under `/tmp/`, so a screen that shows the workspace's path today
-hits `S3` on every run; say so rather than hide it.
+hits the standard on every run; say so rather than hide it.
 
 A page is taken full length, except one with a dialog open: the dialog scrolls inside
 itself over a fixed backdrop, so a full-page image would cut it at the viewport and show
@@ -66,12 +65,12 @@ the page behind it instead. That one is taken as the viewport shows it, and what
 dialog holds below its fold is not in the image (`full_page` in the manifest says which).
 
 It logs in by writing a password hash and one session into that root before the app
-starts (as `scripts/verify_0071.py` does), puts a `gh` first on `PATH` that answers
+starts, puts a `gh` first on `PATH` that answers
 `pr list` with `[]` and refuses the rest, and drops blank `__REFLEX_*` as
-`verify_0070 --browser` does. No session, no quota, no network.
+the same way. No session, no quota, no network.
 
 **It overwrites `<repo>/.web`.** `coscc.run` always serves `<repo>/.web`, so the bundle
-built for this port replaces the one the checkout had (`.cos/0083_*/spike.md ## U2`). When
+built for this port replaces the one the checkout had. When
 that one was current for this environment's `COS_HOST`/`COS_PORT` before the run, it is
 built again at the end (about 26 s, measured there) and a line says so; a failed rebuild
 prints the command to run and does not change the exit code.
@@ -125,12 +124,12 @@ from scripts.proof_harness import (
 )
 
 HOST, PORT = "127.0.0.1", 18783  # chosen: a port no other proof here uses
-SIZES = ((1440, 900), (390, 844))  # the two `verify_0056` and `verify_0071` measured
-MAX_ADDRESSES = 6  # 6 × 2 sizes = 12 images, spec R4's ceiling (chosen, not measured)
+SIZES = ((1440, 900), (390, 844))  # the two sizes measured before
+MAX_ADDRESSES = 6  # 6 × 2 sizes = 12 images, the ceiling (chosen, not measured)
 PAGE_TIMEOUT_MS = 20_000
 SETTLE_MS = 1_500  # for the socket to fill the page after `#studio-shell` shows
 
-# `spec.md` R5: what `S3` and `S4` forbid that a pattern can find in visible text.
+# What the standard forbids that a pattern can find in visible text.
 PATTERNS = (
     ("sha", re.compile(r"\b[0-9a-f]{40}\b")),
     (
@@ -169,7 +168,7 @@ FIXTURE = {
         "review.md": "# Review: awaiting ship\nAuthor: capture_screens. Status: accepted.\n"
         + ROUND.format(sha="a" * 40),
     },
-    # `0082` R19: a deadline already past, so the card carries an outcome badge, and two
+    # A deadline already past, so the card carries an outcome badge, and two
     # questions nobody answered, so the Questions tab has something to show read-only.
     "finished": {
         "intent.md": INTENT.format(title="finished", problem="Một unit đã xong.")
@@ -178,7 +177,7 @@ FIXTURE = {
         "spec.md": "# Spec: finished\nAuthor: capture_screens. Status: accepted.\n",
         "plan.md": "# Plan: finished\nAuthor: capture_screens. Status: done.\n",
     },
-    # `0027` review F1: a last round that does not count, so the unit's dialog lists the id
+    # A last round that does not count, so the unit's dialog lists the id
     # it left out.
     "unfinished-review": {
         "intent.md": INTENT.format(
@@ -201,8 +200,8 @@ FIXTURE = {
 FAKE_GH = '#!/bin/sh\nif [ "$1" = pr ] && [ "$2" = list ]; then echo \'[]\'; exit 0; fi\nexit 1\n'
 
 
-# `0082` R19: one conversation with a title and a markdown reply, written where the SDK
-# reads its sessions (`.cos/0082_*/spike.md ## U2`). No session is opened, no quota spent.
+# One conversation with a title and a markdown reply, written where the SDK
+# reads its sessions (no session is opened, no quota spent).
 CHAT_TITLE = "Backlog screen plan"
 CHAT = (
     ("user", "Can the backlog be a table?"),
@@ -219,7 +218,7 @@ CHAT = (
 
 
 def seed_release(proj: Path) -> None:
-    """`0046`: one release behind, so the board's *Release* panel is `ready`. Pushed, so
+    """One release behind, so the board's *Release* panel is `ready`. Pushed, so
     `origin/main` and the tag are what a board read counts from."""
     from scripts.proof_harness import git
 
@@ -326,7 +325,7 @@ def make_fixture(api: httpx.Client, proj: Path) -> None:
 
 
 def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
-    """`0040`. `proj/ideas/0001_one-feature.md`, `api/0001_backend-adds-api` opened from it, and
+    """`proj/ideas/0001_one-feature.md`, `api/0001_backend-adds-api` opened from it, and
     `proj/0006_frontend-calls-api`, whose `impl` waits on the api unit: it has no `ship.md`."""
     idea = api.post(
         "/api/ideas",
@@ -362,7 +361,7 @@ def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
 
 
 def make_unread_fixture(api: httpx.Client, proj: Path) -> None:
-    """`0135` R4. `proj/0007_unread-status`, whose `spec.md` carries a status no stage writes,
+    """`proj/0007_unread-status`, whose `spec.md` carries a status no stage writes,
     so the import report on `/settings` has a row. Made after `make_idea_fixture`, so the
     numbers a spec names stay where they were."""
     made = api.post(
@@ -381,7 +380,7 @@ def make_unread_fixture(api: httpx.Client, proj: Path) -> None:
 
 
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
-    """`0089` R16: one ended `plan` run of `0004_finished` in the running app's run log, keyed
+    """One ended `plan` run of `0004_finished` in the running app's run log, keyed
     as `Service._journal_key` keys it. `at` is when it is written, so the page reads "just now"."""
     import uuid
 
@@ -393,7 +392,7 @@ def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
 
 
 def seed_transitions(work: Path, data_dir: Path, proj: Path) -> None:
-    """`0136` R20: rows a guard decided, so the Timeline tab shows guard labels and whose
+    """Rows a guard decided, so the Timeline tab shows guard labels and whose
     decision each was. Each sets the state its artifact already holds, so no lane moves:
     `0003_awaiting-ship`'s round and a CI read at its head, `0004_finished`'s plan result."""
     from coscc.units.history import History
@@ -439,7 +438,7 @@ def seed_transitions(work: Path, data_dir: Path, proj: Path) -> None:
 
 
 def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
-    """`0092` spec Design, *Screens*: a run whose cost is unknown on two units and one whose
+    """A run whose cost is unknown on two units and one whose
     cost is known, written where the app reads its run log, under the key it reads by."""
     from coscc.data import Data
     from coscc.runlog.journal import Journal
@@ -460,9 +459,9 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     )
     journal.started(key, "0004_finished", "impl", "autonomous")
     journal.finished(key, "0004_finished", "impl", "failed", cost_unknown=True)
-    # `0093` plan step 9 (spec C8): enough that each of R10's four anomalies has a row on
+    # Enough that each of the four anomalies has a row on
     # `/cost` — `0002` over $15, `impl` run too often on both units, one `impl` step at four
-    # times the median tokens per turn — and an `integrate` opened by a conflict (R8).
+    # times the median tokens per turn — and an `integrate` opened by a conflict.
     for turns, usd, tokens in ((20, 6.00, 800_000), (30, 9.00, 300_000)):
         journal.started(key, "0002_open-question", "impl", "autonomous")
         journal.finished(
@@ -512,7 +511,7 @@ def shoot(
         full = page.locator("[role=dialog]").count() == 0
         page.screenshot(path=str(path), full_page=full)
         text = page.inner_text("body")
-        # `0082`: the visible text beside the image, so a proof can count what the page says.
+        # The visible text beside the image, so a proof can count what the page says.
         path.with_suffix(".txt").write_text(text, encoding="utf-8")
         return path, page.url, text, full
     finally:
@@ -544,7 +543,7 @@ def run(argv: list[str]) -> int:
     if refused:
         print(refused, file=sys.stderr)
         return EXIT_ENV
-    # Review round 1, F2: a screen taken from uncommitted work may not be the one the pull
+    # A screen taken from uncommitted work may not be the one the pull
     # request carries, and `head` would still name the last commit.
     dirty = git_out("status", "--porcelain").rstrip("\n")
     if dirty:
@@ -601,7 +600,7 @@ def run(argv: list[str]) -> int:
 def out_refused(out: Path) -> str | None:
     """Why `out` may not be written into, or `None`. Only a directory this command wrote —
     one holding `manifest.json` — or an empty or missing one is: `--out .` must not reach
-    the checkout (review round 1, F1)."""
+    the checkout ."""
     if out.exists() and not out.is_dir():
         return f"{out} is a file, not a directory"
     if out.is_dir() and any(out.iterdir()) and not (out / "manifest.json").is_file():
@@ -635,7 +634,7 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
 
     shots, hits = [], []
     started = time.monotonic()
-    try:
+    try:  # noqa: PLR1702 - still to split
         proj = make_repo(work, outside)
         seed_release(proj)
         token = seed_session(data_dir)
@@ -661,7 +660,7 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                 except RuntimeError as e:
                     print(str(e), file=sys.stderr)
                     return EXIT_BROKEN
-                # `0104`: the autopilot on, and no shortlist, so it starts nothing and says so.
+                # The autopilot on, and no shortlist, so it starts nothing and says so.
                 on = api.post(
                     "/api/settings/autopilot",
                     json={"cwd": str(proj), "name": "autopilot", "value": True},

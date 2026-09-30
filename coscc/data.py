@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS migrations (
     key TEXT PRIMARY KEY,
     at  TEXT NOT NULL
 )""",
-    """-- `spec.md` R6. `name` is one path segment and there is deliberately **no column for a
+    """-- `name` is one path segment and there is deliberately **no column for a
 -- workspace path**. The path is rebuilt from `root` on every read, so a hand-edited
 -- database has nowhere to put `/etc`.
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -85,21 +85,21 @@ CREATE TABLE IF NOT EXISTS runs (
 )""",
     """-- Oldest-first within a scope is every read this table has, and `id` is monotonic where
 -- `at` is only second-resolution. The index is shaped after the query, not after a
--- measurement -- `spec.md` open question 2 says so plainly.
+-- measurement.
 CREATE INDEX IF NOT EXISTS runs_scope ON runs (root, workspace, unit, id)""",
-    """-- Appearance and the other things the Settings screen remembers (`spec.md` R14). Machine
--- wide rather than per browser; `spec.md` C6 records why that is right here and would be
+    """-- Appearance and the other things the Settings screen remembers. Machine
+-- wide rather than per browser; that is right here and would be
 -- wrong with two users.
 CREATE TABLE IF NOT EXISTS prefs (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 )""",
-    """-- `.cos/0013_board-cannot-say-what-happened` R1: **the transition is the record, and
+    """-- **The transition is the record, and
 -- "where is this unit now" is a query over this table.** There is deliberately no column
 -- anywhere holding a current state. A design with both would have two truths, and the one
 -- edited by hand would be the other one.
 --
--- R3 decides the columns: a transition that cannot say who or which session must say so
+-- The columns follow from this: a transition that cannot say who or which session must say so
 -- in a value, not by leaving a column empty. So every column is NOT NULL with no default,
 -- which pushes the decision onto the writer -- `coscc/units/history.py` substitutes its
 -- `UNKNOWN` and nothing here can quietly accept a blank. `intent.md` exists because
@@ -108,9 +108,9 @@ CREATE TABLE IF NOT EXISTS prefs (
 --
 -- `machine` names the state set the row was written under. Without it, a database written
 -- under one configuration and read under another compares states that never meant the
--- same thing, and `spec.md` C5 says that failure runs rather than stops.
+-- same thing, and that failure runs rather than stops.
 --
--- `guard`, `authority`, `run` and `inputs` are added by `_COLUMNS` (`0136` R15).
+-- `guard`, `authority`, `run` and `inputs` are added by `_COLUMNS`.
 CREATE TABLE IF NOT EXISTS transitions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     at         TEXT NOT NULL,
@@ -130,16 +130,16 @@ CREATE TABLE IF NOT EXISTS transitions (
     """-- Oldest-first within a unit is every read this table has; `id` is monotonic where `at`
 -- is only second-resolution, the same reasoning as `runs_scope`.
 CREATE INDEX IF NOT EXISTS transitions_scope ON transitions (root, workspace, unit, id)""",
-    """-- What makes an import re-runnable instead of doubling (`spec.md` open question 4).
+    """-- What makes an import re-runnable instead of doubling.
 -- The key is the writer's: the git import derives one per commit and artifact, so running
 -- it twice inserts nothing the second time. It is **partial** so that live transitions,
 -- which pass no key, are never deduplicated -- two identical moves a minute apart are two
 -- events, and an append-only log that silently dropped the second would be lying by
--- omission. Empty string rather than NULL keeps R3's "no implicit blanks" true of every
+-- omission. Empty string rather than NULL keeps "no implicit blanks" true of every
 -- column in the table.
 CREATE UNIQUE INDEX IF NOT EXISTS transitions_once
     ON transitions (once_key) WHERE once_key <> ''""",
-    """-- R5: "how many files did this produce, and where". One table with a `kind` column
+    """-- "How many files did this produce, and where". One table with a `kind` column
 -- rather than two tables, because every "how many in total" question would otherwise have
 -- to union them at the call site, and one of the call sites would forget.
 --
@@ -164,7 +164,7 @@ CREATE TABLE IF NOT EXISTS outputs (
     """CREATE INDEX IF NOT EXISTS outputs_scope ON outputs (root, workspace, unit, id)""",
     """CREATE UNIQUE INDEX IF NOT EXISTS outputs_once
     ON outputs (once_key) WHERE once_key <> ''""",
-    """-- `0070` R5: the master password, as an argon2id hash and nothing else. One row at
+    """-- The master password, as an argon2id hash and nothing else. One row at
 -- most, which the CHECK makes a property of the table rather than of every writer. Not a
 -- `prefs` row: `prefs()` returns every row, and a Settings route that read widely would
 -- hand the hash out. Times here are epoch seconds, unlike the ISO text elsewhere, because
@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS auth (
     password_hash TEXT NOT NULL,
     set_at        INTEGER NOT NULL
 )""",
-    """-- `0070` R6: one row per live login. Only the SHA-256 of the cookie's value is kept, so
+    """-- One row per live login. Only the SHA-256 of the cookie's value is kept, so
 -- a copy of this file is not a copy of anyone's session.
 CREATE TABLE IF NOT EXISTS auth_sessions (
     token_sha256 TEXT PRIMARY KEY,
@@ -182,8 +182,8 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     last_used_at INTEGER NOT NULL,
     expires_at   INTEGER NOT NULL
 )""",
-    """-- `0073` R6: one row per board step's `run`, written when its recorder starts and kept
--- after its events are purged (R14). Times are epoch milliseconds, the unit of an event's
+    """-- One row per board step's `run`, written when its recorder starts and kept
+-- after its events are purged. Times are epoch milliseconds, the unit of an event's
 -- `at`. `ended_at` stays NULL for a step the app went down under: `ended-unknown`.
 -- `events` and `bytes` count what was stored, `lost` what never was.
 CREATE TABLE IF NOT EXISTS step_runs (
@@ -200,9 +200,9 @@ CREATE TABLE IF NOT EXISTS step_runs (
     purged_at  TEXT
 )""",
     """CREATE INDEX IF NOT EXISTS step_runs_scope ON step_runs (root, workspace, unit, started_at)""",
-    """-- `0073` R2, R6: every event of a `run`, whole, as the JSON the recorder composed. Not
+    """-- Every event of a `run`, whole, as the JSON the recorder composed. Not
 -- rows of `runs`: the board folds every row of that table on every read, and the run log
--- is append-only where R14 has to delete (spec Design 2).
+-- is append-only where a purge has to delete.
 CREATE TABLE IF NOT EXISTS step_events (
     run   TEXT NOT NULL,
     seq   INTEGER NOT NULL,
@@ -212,7 +212,7 @@ CREATE TABLE IF NOT EXISTS step_events (
     bytes INTEGER NOT NULL,
     PRIMARY KEY (run, seq)
 )""",
-    """-- `0137` R4: a decision the person made, or a delegation to one agent, typed on the
+    """-- A decision the person made, or a delegation to one agent, typed on the
 -- Settings screen and never over HTTP. `AUTOINCREMENT` so `D<n>` is never reused, even once
 -- the last row is gone. Days are ISO dates; `''` is "none": every workspace, no end, not
 -- withdrawn. A row is never deleted: withdrawing it writes `withdrawn` once.
@@ -229,11 +229,11 @@ CREATE TABLE IF NOT EXISTS decisions (
     withdrawn  TEXT NOT NULL,
     created_at TEXT NOT NULL
 )""",
-    """-- `0135` R1, R2: one row per directory under a store's `.cos/`, whatever its name --
+    """-- One row per directory under a store's `.cos/`, whatever its name --
 -- `number` and `slug` are NULL for one that does not match NNNN_<slug>. `type` is the
 -- word `intent.md` declares, or `unknown` until one is read. `lane` is `full` for every
--- unit and nothing reads it to decide (spec R2). Status is not here: it is the fold over
--- `transitions`, as `0013` R1 has it.
+-- unit and nothing reads it to decide. Status is not here: it is the fold over
+-- `transitions`.
 CREATE TABLE IF NOT EXISTS unit_meta (
     root        TEXT NOT NULL,
     workspace   TEXT NOT NULL,
@@ -260,7 +260,7 @@ CREATE TABLE IF NOT EXISTS unit_links (
     """-- One row per file under `.cos/ideas/`: `read` is what `cos.mjs meta` read of it, as
 -- JSON (`{title, status, units, problems}`), replaced whole on the next read. Not a column
 -- per field: an idea has no transitions, and a `status` column here would be the current
--- state `0013` R1 keeps out of every table (`tests/units/test_history.py`).
+-- state the transitions keep out of every table (`tests/units/test_history.py`).
 CREATE TABLE IF NOT EXISTS idea_meta (
     root      TEXT NOT NULL,
     workspace TEXT NOT NULL,
@@ -279,7 +279,7 @@ CREATE TABLE IF NOT EXISTS unit_questions (
     text      TEXT NOT NULL
 )""",
     """CREATE INDEX IF NOT EXISTS unit_questions_scope ON unit_questions (root, workspace, unit)""",
-    """-- `0135` R8: a person's answer, to a question (`ref` its number) or to a review finding
+    """-- A person's answer, to a question (`ref` its number) or to a review finding
 -- (`ref` `F<k>`). Appended and never edited; the last for a `ref` is the one in force.
 -- `once_key` is what makes the import re-runnable, as `transitions_once`.
 CREATE TABLE IF NOT EXISTS unit_answers (
@@ -298,7 +298,7 @@ CREATE TABLE IF NOT EXISTS unit_answers (
     """CREATE INDEX IF NOT EXISTS unit_answers_scope ON unit_answers (root, workspace, unit, id)""",
     """CREATE UNIQUE INDEX IF NOT EXISTS unit_answers_once
     ON unit_answers (once_key) WHERE once_key <> ''""",
-    """-- `0135` R8: a hold decision, the `move` to `paused`, `dropped` or `active`. Appended; the
+    """-- A hold decision, the `move` to `paused`, `dropped` or `active`. Appended; the
 -- hold in force is the fold `cos.mjs` makes over the rows by `HOLD_MOVES`.
 CREATE TABLE IF NOT EXISTS unit_holds (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -315,9 +315,9 @@ CREATE TABLE IF NOT EXISTS unit_holds (
     """CREATE INDEX IF NOT EXISTS unit_holds_scope ON unit_holds (root, workspace, unit, id)""",
     """CREATE UNIQUE INDEX IF NOT EXISTS unit_holds_once
     ON unit_holds (once_key) WHERE once_key <> ''""",
-    """-- `0135` R3: a field that could not be read, and why. `raw` is the word read, when there
--- was one (a status outside the artifact's set). `field` `ingest` is an ingest that failed
--- (R7); the board shows it, `/settings` does not.
+    """-- A field that could not be read, and why. `raw` is the word read, when there
+-- was one (a status outside the artifact's set). `field` `ingest` is an ingest that failed;
+-- the board shows it, `/settings` does not.
 CREATE TABLE IF NOT EXISTS unit_unknowns (
     root      TEXT NOT NULL,
     workspace TEXT NOT NULL,
@@ -329,7 +329,7 @@ CREATE TABLE IF NOT EXISTS unit_unknowns (
     at        TEXT NOT NULL
 )""",
     """CREATE INDEX IF NOT EXISTS unit_unknowns_scope ON unit_unknowns (root, workspace, unit)""",
-    """-- `0135` R7: the text of each artifact as last read, by its SHA-256, so an ingest reads
+    """-- The text of each artifact as last read, by its SHA-256, so an ingest reads
 -- only what changed. `questions` is 1 when it had a `## Open questions` section.
 CREATE TABLE IF NOT EXISTS unit_seen (
     root      TEXT NOT NULL,
@@ -340,10 +340,10 @@ CREATE TABLE IF NOT EXISTS unit_seen (
     questions INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (root, workspace, unit, artifact)
 )""",
-    """-- `0136` R2, R4: a stage's result as the `submit` tool received it. `object` is the whole
+    """-- A stage's result as the `submit` tool received it. `object` is the whole
 -- object as JSON; `judgement` is beside it so a guard can narrow without parsing. `revision`
--- is the SHA-256 the app took of the artifact when the object arrived (R3 b). Where the
--- artifact stands is still the fold over `transitions`, never a column here (`0013` R1).
+-- is the SHA-256 the app took of the artifact when the object arrived. Where the
+-- artifact stands is still the fold over `transitions`, never a column here.
 CREATE TABLE IF NOT EXISTS stage_results (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     at        TEXT NOT NULL,
@@ -357,8 +357,8 @@ CREATE TABLE IF NOT EXISTS stage_results (
     object    TEXT NOT NULL
 )""",
     """CREATE INDEX IF NOT EXISTS stage_results_scope ON stage_results (root, workspace, unit, id)""",
-    """-- `0136` R5: one review round. `head` is the SHA the app recorded when the run opened, never
--- one the model wrote (R3 c); `screens` is the JSON list of images the round looked at.
+    """-- One review round. `head` is the SHA the app recorded when the run opened, never
+-- one the model wrote; `screens` is the JSON list of images the round looked at.
 CREATE TABLE IF NOT EXISTS review_rounds (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     at        TEXT NOT NULL,
@@ -372,7 +372,7 @@ CREATE TABLE IF NOT EXISTS review_rounds (
     screens   TEXT NOT NULL DEFAULT '[]'
 )""",
     """CREATE UNIQUE INDEX IF NOT EXISTS review_rounds_n ON review_rounds (root, workspace, unit, n)""",
-    """-- `0136` R5: the findings of one round. `finding` is `F<k>`; `open` is 1 while the finding
+    """-- The findings of one round. `finding` is `F<k>`; `open` is 1 while the finding
 -- is `[open]`, and `label` the word the round gave it (`open`, `fixed`, `needs-person`,
 -- `claim-rejected`, `answered`), what a reader of that one round sees, not a status that
 -- moves (`tests/units/test_history.py`). `rule` is `S<n>` or ''.
@@ -389,7 +389,7 @@ CREATE TABLE IF NOT EXISTS review_findings (
     text     TEXT NOT NULL,
     PRIMARY KEY (round, finding)
 )""",
-    """-- `0136` R6: a finding `impl` claims only a person can close, by its round and id. The guard
+    """-- A finding `impl` claims only a person can close, by its round and id. The guard
 -- checks each against the open findings of the last round before a row is written.
 CREATE TABLE IF NOT EXISTS impl_claims (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -402,11 +402,11 @@ CREATE TABLE IF NOT EXISTS impl_claims (
     finding   TEXT NOT NULL
 )""",
     """CREATE INDEX IF NOT EXISTS impl_claims_scope ON impl_claims (root, workspace, unit, id)""",
-    """-- `0136` R10, R22: what one read of a pull request found at one head -- the files its diff
+    """-- What one read of a pull request found at one head -- the files its diff
 -- names from the merge-base with `origin/main` (JSON, or NULL when they could not be read,
--- which R22 counts as every file) and, once merged, the merge commit. Where the pull request
+-- which counts as every file) and, once merged, the merge commit. Where the pull request
 -- stands (`open`, `merge-requested`, `merged`, `closed`) and its CI are transitions of the
--- PR/CI machine, folded like any other (`0013` R1).
+-- PR/CI machine, folded like any other.
 CREATE TABLE IF NOT EXISTS pull_requests (
     root         TEXT NOT NULL,
     workspace    TEXT NOT NULL,

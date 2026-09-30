@@ -18,6 +18,9 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
   - `ARG`: an argument is read. A callback that must take one it ignores names it `_x`.
     Tests are exempt (a fake takes what it stands in for).
   - `PIE794`: a class defines a field once.
+  - Refuse first: check the failing case and return, raise or continue, so the main path runs
+    unindented; `RET505`–`RET508` and `PLR1702` (4 nested blocks) hold it, and
+    `# noqa: PLR1702 - still to split` marks a function that waits.
 - `ruff format --check`: one format, line length 100. Never format by hand.
 - `ty check`: types, on `coscc/` and `scripts/`, not on `tests/` (running them checks them).
   - Off only in Reflex code, `coscc/screens/`, `coscc/state/` and `coscc/coscc.py`, where `Var`
@@ -26,12 +29,17 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
     `no-matching-overload` and `invalid-return-type`.
   - Elsewhere every rule is on: a value that may be `None` is checked before it is read or
     passed on, and a finding is fixed, never silenced with `cast` or `# ty: ignore`.
-- `tests/test_comments.py`: no unit or requirement id (`0088`, `R3`, `spec.md C7`,
-  `review round 2`) in a comment, a docstring or a function or class name, in `coscc/` or
-  `tests/`.
+- `tests/test_comments.py`: no unit or requirement id (a unit number, a `spec.md` requirement,
+  a review round) in a comment, a docstring, a function or class name, or a string under
+  `coscc/` (the SQL schema comments), nor in a markdown line under `.claude/` or
+  `coscc/features/`. The failure names file, line and id: say why, not which unit. Not read:
+  `old-units.md`, `.claude/scripts/testdata`, `.claude/worktrees`, strings under `tests/`
+  (fixture data); a named exception covers the `CLAUDE.md` pointer to `old-units.md` and the
+  finding, spike and fixture-unit formats in the skills and the UI rule.
 - `tests/test_citations.py`: every `NAME` `path:N` under `.claude/` points at its name. A
   change that moves lines fixes the citations in the same commit.
 - `tests/test_layers.py`: no import goes up a layer (below).
+- `tests/test_boundaries.py`: no private name, foreign table SQL or new `dict[str, Any]` (below).
 
 Fix the code, not the check. A rule is switched off only in `pyproject.toml`, with its reason. A
 `# noqa` or `# ty: ignore` names its rule and says why on the same line.
@@ -63,6 +71,7 @@ coscc.py, run.py        the page app, the command line
 screens/                components
 state/                  what the page shows (place, present)
 api.py                  the JSON API
+features/, plugin.py    features that plug in (below), and their door
 service/                every decision the page and the API ask for
 github/, update/        pull requests, integration, release; updating the app
 runner/                 one step of one unit
@@ -81,6 +90,23 @@ config.py
 - When a lower module needs something from above, move the thing down to where both can
   reach it, or move the module up. Never import late to get round it.
 - A new package or root module gets a line in `LAYERS`, or the test fails.
+- `tests/test_boundaries.py`: modules talk through three channels, and each has a ratchet whose
+  list of today's findings only shrinks.
+  - Calls: a name with a leading underscore is not imported from another module (`PRIVATE_IMPORTS`).
+    Drop the underscore, or keep the name in the one module that uses it.
+  - Data: each table has one owner module (`OWNERS`) and only it runs SQL on it (`FOREIGN_SQL`).
+    Add a function to the owner and call that.
+  - Types: a public function does not take or return `dict[str, Any]` beyond `DICT_ANY_CEILING`.
+    Type the new one with a dataclass, a `TypedDict` or a `Literal`.
+
+- A feature is a plug-in: `coscc/features/<name>.py` ends in one `PLUGIN` (`coscc/plugin.py`) and gets
+  the running app only through a `Ctx`. Add it as its file plus one line in `FEATURES`
+  (`coscc/features/__init__.py`); delete that line and its route and page script are gone.
+  A workspace turns it off with `POST /api/features {cwd, name, on}`, no code change. Three
+  rules in `tests/test_layers.py`: a feature imports only `coscc.plugin`, `coscc.bus`,
+  `coscc.service.common` and packages below `service` (never another feature); only `api.py` and
+  `screens/__init__.py` import `coscc.features`, as `from coscc import features`; a feature is at
+  most 3 files of 800 lines each.
 
 ## Imports
 
