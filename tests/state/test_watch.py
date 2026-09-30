@@ -49,8 +49,10 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
                 yield ("events", [stored[n] for n in batch])
 
         stack = contextlib.ExitStack()
-        stack.enter_context(mock.patch.object(page.SERVICE.watch, "events_page", events_page))
-        stack.enter_context(mock.patch.object(page.SERVICE.watch, "follow_events", follow_events))
+        stack.enter_context(mock.patch.object(page.app.SERVICE.watch, "events_page", events_page))
+        stack.enter_context(
+            mock.patch.object(page.app.SERVICE.watch, "follow_events", follow_events)
+        )
         return stack
 
     def test_following_keeps_the_last_window_and_an_opened_event_stays_apart(self):

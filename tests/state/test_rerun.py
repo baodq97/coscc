@@ -39,14 +39,14 @@ class TheRerunHoldsNoCopyOfTheRule(unittest.TestCase):
             for name, fn in self.methods.items()
             for node in ast.walk(fn)
             if isinstance(node, ast.Call)
-            and ast.unparse(node.func) == "SERVICE.steps.run_step"
+            and ast.unparse(node.func) == "app.SERVICE.steps.run_step"
             and any(k.arg == "rerun" for k in node.keywords)
         }
         self.assertEqual(callers, {"run_rerun"})
         call = next(
             n
             for n in ast.walk(self.methods["run_rerun"])
-            if isinstance(n, ast.Call) and ast.unparse(n.func) == "SERVICE.steps.run_step"
+            if isinstance(n, ast.Call) and ast.unparse(n.func) == "app.SERVICE.steps.run_step"
         )
         self.assertEqual(
             ast.unparse(next(k.value for k in call.keywords if k.arg == "rerun")), "True"
@@ -55,7 +55,7 @@ class TheRerunHoldsNoCopyOfTheRule(unittest.TestCase):
     def test_run_rerun_runs_in_the_background_and_asks_again_after(self):
         fn = self.methods["run_rerun"]
         self.assertIn("rx.event(background=True)", [ast.unparse(d) for d in fn.decorator_list])
-        self.assertIn("return StudioState.load_next", ast.unparse(fn))
+        self.assertIn("return self.__class__.load_next", ast.unparse(fn))
 
     def test_the_choosing_handlers_call_no_service(self):
         for name in ("set_rerun_stage", "set_rerun_note", "ask_rerun", "cancel_rerun"):

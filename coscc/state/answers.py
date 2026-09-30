@@ -1,7 +1,7 @@
 """What a person writes into a unit from the page: answers, outcomes, review rounds
 posted, integration, holds and review rounds allowed.
 
-Handlers import `SERVICE` in their bodies: this module cannot import `coscc.state` at the top.
+Handlers call `app.SERVICE`.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import reflex as rx
 
-from coscc.state import present
+from coscc.state import app, present
 from coscc.service.common import Invalid
 from coscc.state.views import DecisionRow, _key_label
 
@@ -82,10 +82,8 @@ class AnswersMixin(rx.State, mixin=True):
         ]
 
     def _load_decisions(self) -> None:
-        from coscc.state import SERVICE
-
         try:
-            self._show_decisions(SERVICE.answers.decisions_table())
+            self._show_decisions(app.SERVICE.answers.decisions_table())
         except Invalid as e:
             self._fail(e)
 
@@ -97,13 +95,11 @@ class AnswersMixin(rx.State, mixin=True):
     @rx.event
     def add_decision(self):
         """Whether the form may be saved is `Answers.add_decision`'s call."""
-        from coscc.state import SERVICE
-
         form = dict(self.decision_form)
         if form.get("workspace") == DECISION_FORM["workspace"]:
             form["workspace"] = ""
         try:
-            done = SERVICE.answers.add_decision(form)
+            done = app.SERVICE.answers.add_decision(form)
         except Invalid as e:
             self.notice = str(e)
             return
@@ -113,10 +109,8 @@ class AnswersMixin(rx.State, mixin=True):
 
     @rx.event
     def withdraw_decision(self, decision_id: str):
-        from coscc.state import SERVICE
-
         try:
-            self._show_decisions(SERVICE.answers.withdraw_decision(decision_id))
+            self._show_decisions(app.SERVICE.answers.withdraw_decision(decision_id))
         except Invalid as e:
             self.notice = str(e)
             return
@@ -131,8 +125,6 @@ class AnswersMixin(rx.State, mixin=True):
         finds the box empty and gets a reason; that branch leaves `notice` alone so the
         first press's "Answered ..." survives.
         """
-        from coscc.state import SERVICE
-
         self.error = ""
         if key != self.answer_target or not self.answer_text.strip():
             self.error = (
@@ -149,7 +141,7 @@ class AnswersMixin(rx.State, mixin=True):
         self.answering_key = key
         yield
         try:
-            done = await SERVICE.answers.answer(
+            done = await app.SERVICE.answers.answer(
                 self.cwd, self.unit_id, artifact, number, self.answer_text, ""
             )
         except Invalid as e:
@@ -205,8 +197,6 @@ class AnswersMixin(rx.State, mixin=True):
     async def record_outcome(self):
         """Record the open unit's outcome. A label missing from the tables goes as it is, for
         the service to refuse."""
-        from coscc.state import SERVICE
-
         result = {v: k for k, v in present.RESULT_LABEL.items()}.get(
             self.outcome_result, self.outcome_result
         )
@@ -215,7 +205,7 @@ class AnswersMixin(rx.State, mixin=True):
         )
         self.recording_outcome = True
         try:
-            done = await SERVICE.answers.record_outcome(
+            done = await app.SERVICE.answers.record_outcome(
                 self.cwd,
                 self.unit_id,
                 result,
@@ -245,14 +235,12 @@ class AnswersMixin(rx.State, mixin=True):
         The `yield` after raising `posting_round` sends it to the browser: without it the
         flag is set and cleared inside one delta and the button never locks for the up to
         60s `gh` may take."""
-        from coscc.state import SERVICE
-
         if self.posting_round != 0:
             return
         self.posting_round = int(number)
         yield
         try:
-            done = await SERVICE.answers.post_review_comment(self.cwd, self.unit_id, number)
+            done = await app.SERVICE.answers.post_review_comment(self.cwd, self.unit_id, number)
         except Invalid as e:
             self.notice = str(e)
             return
@@ -273,15 +261,13 @@ class AnswersMixin(rx.State, mixin=True):
     async def integrate(self):
         """Integrate the open unit; whether it may, and which road, is `Steps.integrate`'s.
         The `yield` sends `integrating` to the browser."""
-        from coscc.state import SERVICE
-
         if self.integrating:
             return
         self.integrating = True
         yield
         done: dict = {}
         try:
-            async for kind, payload in SERVICE.steps.integrate(self.cwd, self.unit_id):
+            async for kind, payload in app.SERVICE.steps.integrate(self.cwd, self.unit_id):
                 if kind == "done":
                     done = payload.get("integration") or {}
         except Invalid as e:
@@ -319,14 +305,12 @@ class AnswersMixin(rx.State, mixin=True):
     async def set_hold(self, to: str):
         """Pause, drop or resume the open unit; `Answers.hold` decides. Starts nothing: the
         run button still waits for a person."""
-        from coscc.state import SERVICE, StudioState
-
         if self.holding:
             return
         self.holding = True
         yield
         try:
-            done = await SERVICE.answers.hold(self.cwd, self.unit_id, to, self.hold_reason, "")
+            done = await app.SERVICE.answers.hold(self.cwd, self.unit_id, to, self.hold_reason, "")
         except Invalid as e:
             self.notice = f"Not changed: {e}"
             return
@@ -344,20 +328,18 @@ class AnswersMixin(rx.State, mixin=True):
         )
         await self._load_board()
         self._load_activity()
-        yield StudioState.load_next
+        yield self.__class__.load_next
 
     @rx.event
     async def allow_more_rounds(self):
         """Allow the open unit one more review round; `Answers.more_rounds` decides. Starts
         nothing: the run button still waits for a person."""
-        from coscc.state import SERVICE, StudioState
-
         if self.granting_round:
             return
         self.granting_round = True
         yield
         try:
-            done = await SERVICE.answers.more_rounds(self.cwd, self.unit_id, "")
+            done = await app.SERVICE.answers.more_rounds(self.cwd, self.unit_id, "")
         except Invalid as e:
             self.notice = f"Not changed: {e}"
             return
@@ -365,4 +347,4 @@ class AnswersMixin(rx.State, mixin=True):
             self.granting_round = False
         self.notice = f"{done['unit']}: one more review round allowed. Nothing was started."
         await self._load_board()
-        yield StudioState.load_next
+        yield self.__class__.load_next

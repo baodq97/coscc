@@ -18,8 +18,7 @@ import logging
 import reflex as rx
 from reflex_base.event.context import EventContext
 
-from coscc.state import place, present
-from coscc.api import build
+from coscc.state import app, place, present
 from coscc.service.common import COLLAPSED_STATES
 from coscc.service.common import FOLDED_STATES
 from coscc.service.common import Invalid
@@ -117,9 +116,6 @@ from coscc.state.ideas import (
 from coscc.state.release import ReleaseMixin
 
 log = logging.getLogger(__name__)
-
-API = build()
-SERVICE = API.state.service
 
 
 class StudioState(
@@ -476,7 +472,7 @@ class StudioState(
     # -- loading -------------------------------------------------------------
 
     def _load_settings(self) -> None:
-        data = SERVICE.activity.settings()
+        data = app.SERVICE.activity.settings()
         self.working_dir = data.get("working_dir") or ""
         self.data_dir = data.get("data_dir") or ""
         self.host_port = f"{data.get('host')}:{data.get('port')}"
@@ -550,8 +546,8 @@ class StudioState(
         self.agent_problems = [str(p) for p in data.get("problems") or []]
 
     async def _load_models(self) -> None:
-        self._show_models(await SERVICE.models.stage_models())
-        self._show_agents(SERVICE.agents.agent_table())
+        self._show_models(await app.SERVICE.models.stage_models())
+        self._show_agents(app.SERVICE.agents.agent_table())
         self._load_autopilot()
 
     def _show_autopilot_block(self, block: dict) -> None:
@@ -623,12 +619,12 @@ class StudioState(
         if not self.cwd:
             return
         try:
-            self._show_autopilot(SERVICE.autopilot.settings(self.cwd))
+            self._show_autopilot(app.SERVICE.autopilot.settings(self.cwd))
         except Invalid:
             return
 
     def _load_workspaces(self) -> None:
-        data = SERVICE.ws.all()
+        data = app.SERVICE.ws.all()
         self.working_dir = data.get("working_dir") or ""
         rows = data.get("workspaces") or []
         self.workspaces = [
@@ -667,7 +663,7 @@ class StudioState(
                         "run": r.get("run") or "",
                     }
                 )
-                for r in SERVICE.steps.running_steps(self.cwd)
+                for r in app.SERVICE.steps.running_steps(self.cwd)
             ]
         except Invalid:
             self.running_steps = []
@@ -687,13 +683,13 @@ class StudioState(
         if not self.cwd:
             return
         try:
-            self.branch = (await SERVICE.backlog.branch_here(self.cwd))["branch"]
+            self.branch = (await app.SERVICE.backlog.branch_here(self.cwd))["branch"]
         except Invalid:
             # A workspace that is not a git checkout still has a board. Saying nothing is
             # right here: there is no branch to show, and that is not an error to report.
             self.branch = ""
         try:
-            data = await SERVICE.board(self.cwd)
+            data = await app.SERVICE.board(self.cwd)
         except Invalid as e:
             self.board_note = str(e)
             return
@@ -822,7 +818,7 @@ class StudioState(
             self.session_id = ""
             return
         try:
-            data = SERVICE.chat.sessions_for(self.cwd, limit=40)
+            data = app.SERVICE.chat.sessions_for(self.cwd, limit=40)
         except Invalid as e:
             self._fail(e)
             return
@@ -848,7 +844,7 @@ class StudioState(
             self.messages, self._history = [], []
             return
         try:
-            data = SERVICE.chat.history(self.cwd, self.session_id)
+            data = app.SERVICE.chat.history(self.cwd, self.session_id)
         except Invalid as e:
             self._fail(e)
             return
@@ -892,7 +888,7 @@ class StudioState(
         try:
             # One read for both halves of this screen; `activity` and `usage` on their own
             # would each scan and parse the identical rows.
-            feed = SERVICE.activity.activity_and_usage(self.cwd, limit=40)
+            feed = app.SERVICE.activity.activity_and_usage(self.cwd, limit=40)
         except Invalid as e:
             self._fail(e)
             return
@@ -954,7 +950,7 @@ class StudioState(
             return
         rounds = {key: [r.verdict for r in u.rounds] for key, u in self.get_value("_full").items()}
         try:
-            data = SERVICE.activity.cost(self.cwd, rounds)
+            data = app.SERVICE.activity.cost(self.cwd, rounds)
         except Invalid as e:
             self._fail(e)
             return
@@ -982,7 +978,7 @@ class StudioState(
         if not (self.cwd and self.unit_id):
             return
         try:
-            data = SERVICE.activity.unit_cost(self.cwd, self.unit_id)
+            data = app.SERVICE.activity.unit_cost(self.cwd, self.unit_id)
         except Invalid as e:
             self._fail(e)
             return
@@ -994,7 +990,7 @@ class StudioState(
         if not (self.cwd and self.unit_id):
             return
         try:
-            data = SERVICE.backlog.timeline(self.cwd, self.unit_id)
+            data = app.SERVICE.backlog.timeline(self.cwd, self.unit_id)
         except Invalid as e:
             self._fail(e)
             return
@@ -1032,7 +1028,7 @@ class StudioState(
         if not stage:
             return
         try:
-            data = SERVICE.activity.artifact(self.cwd, self.unit_id, stage)
+            data = app.SERVICE.activity.artifact(self.cwd, self.unit_id, stage)
         except Invalid as e:
             self._fail(e)
             return
@@ -1046,7 +1042,7 @@ class StudioState(
         """The first half of what a page's first arrival reads: enough to pick a workspace."""
         try:
             self._load_settings()
-            prefs = SERVICE.activity.preferences()
+            prefs = app.SERVICE.activity.preferences()
             self.density = str(prefs.get("density") or "comfortable")
             self.board_view = str(prefs.get("board_view") or "Board")
             self._load_workspaces()
@@ -1163,7 +1159,7 @@ class StudioState(
             # The last read answered for the workspace just left; a unit of the same name
             # here must not show its session.
             try:
-                self._running_read = SERVICE.boards.running(cwd)
+                self._running_read = app.SERVICE.boards.running(cwd)
             except Invalid:
                 self._running_read = {}
             yield
@@ -1187,7 +1183,7 @@ class StudioState(
         self._set_current()
         # A unit is read after whatever the arrival read: a pasted link or a reload at
         # `/unit` would otherwise open a dialog with no timeline or artifact. None of it
-        # calls `SERVICE.board`.
+        # calls `app.SERVICE.board`.
         if unit and (moved_unit or moved_ws or first):
             self._load_unit(forget=not first)
             self._asked = ""
@@ -1258,7 +1254,7 @@ class StudioState(
                     if self.screen != "board" or not self.cwd:
                         return
                     try:
-                        read = SERVICE.boards.running(self.cwd)
+                        read = app.SERVICE.boards.running(self.cwd)
                     except Invalid:
                         read = {}
                     self._apply_running(read)
@@ -1321,7 +1317,7 @@ class StudioState(
     async def _change_model(self, name: str, model: str | None) -> None:
         self.saving_model = True
         try:
-            self._show_models(await SERVICE.models.set_stage_model(name, model))
+            self._show_models(await app.SERVICE.models.set_stage_model(name, model))
         except Invalid as e:
             self.notice = str(e)
             return
@@ -1359,7 +1355,7 @@ class StudioState(
 
     def _change_agent(self, key: str, fields: dict) -> None:
         try:
-            self._show_agents(SERVICE.agents.set_agent(key, fields))
+            self._show_agents(app.SERVICE.agents.set_agent(key, fields))
         except Invalid as e:
             self.notice = str(e)
             return
@@ -1392,7 +1388,7 @@ class StudioState(
 
     def _change_autopilot(self, name: str, value) -> None:
         try:
-            self._show_autopilot(SERVICE.autopilot.set_setting(self.cwd, name, value))
+            self._show_autopilot(app.SERVICE.autopilot.set_setting(self.cwd, name, value))
         except Invalid as e:
             self.notice = str(e)
             self._load_autopilot()
@@ -1412,7 +1408,7 @@ class StudioState(
     async def _change_effort(self, name: str, effort: str | None) -> None:
         self.saving_model = True
         try:
-            self._show_models(await SERVICE.models.set_stage_effort(name, effort))
+            self._show_models(await app.SERVICE.models.set_stage_effort(name, effort))
         except Invalid as e:
             self.notice = str(e)
             return
@@ -1426,7 +1422,7 @@ class StudioState(
 
     def _remember(self, key: str, value: str) -> None:
         try:
-            SERVICE.activity.set_preference(key, value)
+            app.SERVICE.activity.set_preference(key, value)
         except Invalid as e:
             self._fail(e)
 
@@ -1483,7 +1479,7 @@ class StudioState(
         dropped: list[str] = []
         try:
             stage, said = _run_target(
-                found := await _asking(SERVICE.steps.next_step, cwd, unit, join)
+                found := await _asking(app.SERVICE.steps.next_step, cwd, unit, join)
             )
             waiting = _run_waiting(found)
             dropped = _run_dropped(found)
@@ -1491,7 +1487,7 @@ class StudioState(
             stage, said = "", str(e)
         # Files only, after `next` has answered; a refusal offers nothing.
         try:
-            offers = list((await SERVICE.steps.rerun_offers(cwd, unit)).get("offers") or [])
+            offers = list((await app.SERVICE.steps.rerun_offers(cwd, unit)).get("offers") or [])
         except Invalid:
             offers = []
         later = {str(o.get("stage") or ""): [str(x) for x in o.get("later") or []] for o in offers}
@@ -1546,7 +1542,7 @@ class StudioState(
         handler sees the `stopped` outcome."""
         self.error = ""
         try:
-            done = await SERVICE.steps.stop_step(self.cwd, unit, "")
+            done = await app.SERVICE.steps.stop_step(self.cwd, unit, "")
             self.notice = f"Stopping {done['unit']} {done['stage']} (by {done['stopped_by']})."
         except Invalid as e:
             self._fail(e)
@@ -1562,7 +1558,7 @@ class StudioState(
             self.notice = "There is no next step to set a mode on."
             return
         try:
-            await SERVICE.steps.set_mode(self.cwd, self.unit_id, stage, value)
+            await app.SERVICE.steps.set_mode(self.cwd, self.unit_id, stage, value)
         except Invalid as e:
             self._fail(e)
             return
@@ -1590,7 +1586,7 @@ class StudioState(
 
         listed = False
         try:
-            async for kind, payload in SERVICE.steps.run_step(cwd, unit, stage):
+            async for kind, payload in app.SERVICE.steps.run_step(cwd, unit, stage):
                 async with self:
                     if not listed:
                         # The step is in the service's list from its first item on.
@@ -1679,8 +1675,10 @@ class StudioState(
         ]
         yield
         try:
-            SERVICE.chat.check_send(self.cwd, text)
-            async for kind, payload in SERVICE.chat.stream(self.cwd, text, self.session_id or None):
+            app.SERVICE.chat.check_send(self.cwd, text)
+            async for kind, payload in app.SERVICE.chat.stream(
+                self.cwd, text, self.session_id or None
+            ):
                 if kind == "chunk":
                     self.messages[-1].text += payload
                     self.messages = list(self.messages)

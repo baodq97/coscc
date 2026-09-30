@@ -76,6 +76,8 @@ config.py
 
 - A module imports its own package and anything lower, never a package above or beside it.
   An import inside a function counts: it hides a cycle, it does not remove one.
+- No import cycle among a package's modules either. An `if TYPE_CHECKING:` import does not
+  count; an import inside a function does.
 - When a lower module needs something from above, move the thing down to where both can
   reach it, or move the module up. Never import late to get round it.
 - A new package or root module gets a line in `LAYERS`, or the test fails.

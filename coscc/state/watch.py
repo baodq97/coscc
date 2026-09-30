@@ -1,6 +1,6 @@
 """Watching a running step: the window of its events, paging and following them.
 
-Handlers import `SERVICE` in their bodies: this module cannot import `coscc.state` at the top.
+Handlers call `app.SERVICE`.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ import reflex as rx
 
 from coscc.runlog import events as events_mod
 from coscc.service.common import Invalid
+from coscc.state import app
 from coscc.state.views import (
     NO_RUN_NOTE,
     WATCH_GATHER,
@@ -51,10 +52,8 @@ class WatchMixin(rx.State, mixin=True):
         self.watch_open_seq, self.watch_open_text = 0, ""
 
     def _watch_page(self, before: int | None = None) -> dict | None:
-        from coscc.state import SERVICE
-
         try:
-            return SERVICE.watch.events_page(
+            return app.SERVICE.watch.events_page(
                 self.cwd, self.watch_unit, self.watch_run, before=before
             )
         except Invalid as e:
@@ -86,14 +85,12 @@ class WatchMixin(rx.State, mixin=True):
     @rx.event
     def open_watch(self, run: str, title: str, unit: str = ""):
         """Open the pane on one step's `run`; a row with no `run` shows `NO_RUN_NOTE`."""
-        from coscc.state import StudioState
-
         self._watch_reset(run, title or run, unit or self.unit_id)
         if not run:
             self.watch_run = "-"
             self.watch_note = NO_RUN_NOTE
             return
-        return StudioState.watch_follow
+        return self.__class__.watch_follow
 
     @rx.event
     def close_watch(self):
@@ -108,8 +105,6 @@ class WatchMixin(rx.State, mixin=True):
     async def watch_follow(self):
         """The last page, then every new event of a running step, gathered up to `WATCH_GATHER`
         seconds. Following from the page's last `seq` is safe: the recorder holds every event."""
-        from coscc.state import SERVICE, StudioState
-
         async with self:
             token, run = self._watch_token, self.watch_run
             page = self._watch_page()
@@ -126,7 +121,7 @@ class WatchMixin(rx.State, mixin=True):
         if page["status"] != "running":
             return
         try:
-            async for kind, value in SERVICE.watch.follow_events(
+            async for kind, value in app.SERVICE.watch.follow_events(
                 cwd, unit, run, after=last, gather=WATCH_GATHER
             ):
                 async with self:
@@ -138,7 +133,7 @@ class WatchMixin(rx.State, mixin=True):
                             self.watch_status = "ended"
                     elif kind == "cut":
                         # Fell `SUB_LIMIT` behind: start again from the last page.
-                        return StudioState.watch_follow
+                        return self.__class__.watch_follow
                     else:
                         self.watch_status = str(value.get("status") or "")
                         self.watch_note = _watch_note(value)
@@ -179,10 +174,8 @@ class WatchMixin(rx.State, mixin=True):
     @rx.event
     def watch_expand(self, seq: int):
         """One event whole, as stored, in a var of its own."""
-        from coscc.state import SERVICE
-
         try:
-            page = SERVICE.watch.events_page(
+            page = app.SERVICE.watch.events_page(
                 self.cwd, self.watch_unit, self.watch_run, seq=int(seq)
             )
         except Invalid as e:

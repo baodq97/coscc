@@ -1,14 +1,14 @@
 """The backlog, and starting a unit: estimates, relations, the shortlist, a new unit and its
 branch.
 
-Handlers import `SERVICE` in their bodies: this module cannot import `coscc.state` at the top.
+Handlers call `app.SERVICE`.
 """
 
 from __future__ import annotations
 
 import reflex as rx
 
-from coscc.state import present
+from coscc.state import app, present
 from coscc.service.common import Invalid
 from coscc.state.views import BacklogRow, tree_line
 
@@ -122,20 +122,16 @@ class BacklogMixin(rx.State, mixin=True):
 
     @rx.event
     async def save_shortlist(self):
-        from coscc.state import SERVICE
-
         await self._backlog_write(
-            SERVICE.backlog.record_shortlist(
+            app.SERVICE.backlog.record_shortlist(
                 self.cwd, list(self.shortlist_draft), self.shortlist_reason, ""
             )
         )
 
     @rx.event
     async def save_estimate(self):
-        from coscc.state import SERVICE
-
         await self._backlog_write(
-            SERVICE.backlog.record_estimate(
+            app.SERVICE.backlog.record_estimate(
                 self.cwd,
                 self.est_unit.strip(),
                 self.est_value.strip(),
@@ -147,10 +143,8 @@ class BacklogMixin(rx.State, mixin=True):
 
     @rx.event
     async def save_relation(self):
-        from coscc.state import SERVICE
-
         await self._backlog_write(
-            SERVICE.backlog.record_relation(
+            app.SERVICE.backlog.record_relation(
                 self.cwd,
                 self.rel_unit.strip(),
                 self.rel_other.strip(),
@@ -164,15 +158,13 @@ class BacklogMixin(rx.State, mixin=True):
     @rx.event
     async def propose_estimates(self):
         """Opens one paid session; the warning above the button says so."""
-        from coscc.state import SERVICE
-
         if self.proposing:
             return
         self.proposing = True
         yield
         done: dict = {}
         try:
-            async for kind, payload in SERVICE.backlog.propose_estimates(self.cwd):
+            async for kind, payload in app.SERVICE.backlog.propose_estimates(self.cwd):
                 if kind == "done":
                     done = payload.get("estimate") or {}
         except Invalid as e:
@@ -198,8 +190,6 @@ class BacklogMixin(rx.State, mixin=True):
     @rx.event
     async def create_unit(self):
         """Start a work unit from the page. The slug grammar and number come back from `cos.mjs`."""
-        from coscc.state import SERVICE
-
         slug = self.new_slug.strip()
         if not slug:
             self.notice = "Give the work a short name, like `board-cannot-say-what-happened`."
@@ -210,7 +200,7 @@ class BacklogMixin(rx.State, mixin=True):
             return
         self.starting = True
         try:
-            made = await SERVICE.answers.create_unit(self.cwd, slug, self.new_brief)
+            made = await app.SERVICE.answers.create_unit(self.cwd, slug, self.new_brief)
         except Invalid as e:
             self.notice = str(e)
             return
@@ -224,12 +214,10 @@ class BacklogMixin(rx.State, mixin=True):
     async def start_branch(self):
         """Cut the open unit's branch in the workspace: the one control here that writes to
         somebody else's git (`coscc/git/gitops.py` lists what that may be)."""
-        from coscc.state import SERVICE
-
         if not self.unit_id:
             return
         try:
-            cut = await SERVICE.backlog.start_branch(self.cwd, self.unit_id)
+            cut = await app.SERVICE.backlog.start_branch(self.cwd, self.unit_id)
         except Invalid as e:
             self.notice = str(e)
             return

@@ -136,7 +136,7 @@ class PostingARoundLocksTheButtonWhileItRuns(unittest.TestCase):
             for n in state.body
             if isinstance(n, ast.AsyncFunctionDef) and n.name == "post_review_comment"
         ]
-        # A mixin's handler imports `SERVICE` in its body first; an import does nothing.
+        # A mixin reads `app.SERVICE` when a handler runs.
         first = next(
             s
             for s in handler.body
@@ -402,7 +402,7 @@ class OneLoopPerTab(unittest.TestCase):
         with (
             mock.patch.object(page, "RUNNING_POLL", 0.1),
             mock.patch.object(page, "_POLLING", Loops()),
-            mock.patch.object(page.SERVICE.boards, "running", running),
+            mock.patch.object(page.app.SERVICE.boards, "running", running),
         ):
             alive, began = asyncio.run(go())
         self.assertTrue(alive)
@@ -445,7 +445,7 @@ class OneLoopPerTab(unittest.TestCase):
             mock.patch.object(page, "GONE_AFTER", 4),
             mock.patch.object(page, "_tab_gone", gone),
             mock.patch.object(
-                page.SERVICE.boards, "running", lambda cwd: {"running": {}, "unknown_end": {}}
+                page.app.SERVICE.boards, "running", lambda cwd: {"running": {}, "unknown_end": {}}
             ),
         ):
             self.assertTrue(asyncio.run(go()))
@@ -522,14 +522,14 @@ class ChangingWorkspaceForgetsTheOldRead(unittest.TestCase):
                     return [(u.id, len(u.live)) for u in studio.cards]
 
         with (
-            mock.patch.object(page.SERVICE.boards, "running", lambda cwd: running_in[cwd]),
-            mock.patch.object(page.SERVICE.backlog, "branch_here", branch_here),
-            mock.patch.object(page.SERVICE, "board", read_board),
+            mock.patch.object(page.app.SERVICE.boards, "running", lambda cwd: running_in[cwd]),
+            mock.patch.object(page.app.SERVICE.backlog, "branch_here", branch_here),
+            mock.patch.object(page.app.SERVICE, "board", read_board),
             mock.patch.object(
-                page.SERVICE.chat, "sessions_for", lambda cwd, limit: {"sessions": []}
+                page.app.SERVICE.chat, "sessions_for", lambda cwd, limit: {"sessions": []}
             ),
             mock.patch.object(
-                page.SERVICE.activity,
+                page.app.SERVICE.activity,
                 "activity_and_usage",
                 mock.Mock(side_effect=page.Invalid("not here")),
             ),
@@ -573,7 +573,7 @@ class AnIntegrationIsListedWithTheSteps(unittest.TestCase):
             async with manager.modify_state(_key(token)) as root:
                 studio = await root.get_state(page.StudioState)
                 studio.cwd = "/w"
-                with mock.patch.object(page.SERVICE.steps, "running_steps", lambda cwd: listed):
+                with mock.patch.object(page.app.SERVICE.steps, "running_steps", lambda cwd: listed):
                     studio._load_running()
                 return [(r.unit, r.kind, r.run) for r in studio.running_steps]
 
@@ -776,10 +776,10 @@ class _Page:
             "steps.next_step": mock.AsyncMock(side_effect=page.Invalid("not asked in this test")),
         }.items():
             part, _, method = name.rpartition(".")
-            owner = getattr(page.SERVICE, part) if part else page.SERVICE
+            owner = getattr(page.app.SERVICE, part) if part else page.app.SERVICE
             stack.enter_context(mock.patch.object(owner, method, value))
         stack.enter_context(
-            mock.patch.object(page.SERVICE.ws, "all", counted("workspaces", workspaces))
+            mock.patch.object(page.app.SERVICE.ws, "all", counted("workspaces", workspaces))
         )
         stack.enter_context(mock.patch.object(page.rx, "redirect", redirect))
         stack.enter_context(mock.patch.object(page, "RUNNING_POLL", 0.05))
@@ -1001,7 +1001,7 @@ class AnArrivalReadsOnce(unittest.TestCase):
                     await _loop_ended(token)
                     return got
 
-            with fake.patches(), mock.patch.object(page.SERVICE, "board", board):
+            with fake.patches(), mock.patch.object(page.app.SERVICE, "board", board):
                 return asyncio.run(go())
 
         self.assertEqual(walk("/unit?ws=a&id=0009_x"), (["/a", "/b", "/a"], 1, "0009_x", False))
@@ -1029,7 +1029,7 @@ class AnArrivalReadsOnce(unittest.TestCase):
 
             manager, processor, _ = _processor(token)
             arrive = _arrival(manager, processor, token)
-            with mock.patch.object(page.SERVICE.steps, "next_step", next_step):
+            with mock.patch.object(page.app.SERVICE.steps, "next_step", next_step):
                 async with processor:
                     await arrive("/unit?ws=a&id=0009_x", "s1")
                     await arrive("/unit?ws=a&id=0009_x&tab=timeline", "s1")
@@ -1392,7 +1392,7 @@ def _sample_read(token: str, then=None, fake: _Page | None = None):
             await _loop_ended(token)
             return full, cards, more
 
-    with fake.patches(), mock.patch.object(page.SERVICE.boards, "running", lambda cwd: _LIVE):
+    with fake.patches(), mock.patch.object(page.app.SERVICE.boards, "running", lambda cwd: _LIVE):
         return asyncio.run(go())
 
 
@@ -1753,7 +1753,7 @@ class ALongMessageIsCutAndOpensWhole(unittest.TestCase):
                 opened = [(m.text, m.cut) for m in studio.messages]
             return cut, opened
 
-        with mock.patch.object(page.SERVICE.chat, "history", lambda cwd, sid: read):
+        with mock.patch.object(page.app.SERVICE.chat, "history", lambda cwd, sid: read):
             cut, opened = asyncio.run(go())
         self.assertEqual(cut[0], ("ngắn", 0))
         self.assertEqual(cut[1], (long[: page.MESSAGE_CUT], len(long) - page.MESSAGE_CUT))
@@ -1808,14 +1808,14 @@ class ALongMessageIsCutAndOpensWhole(unittest.TestCase):
 
         with (
             mock.patch.multiple(
-                page.SERVICE.chat,
+                page.app.SERVICE.chat,
                 history=lambda cwd, sid: next(reads),
                 check_send=lambda cwd, text: None,
                 stream=stream,
                 sessions_for=lambda cwd, limit: {"sessions": [{"session_id": "s"}]},
             ),
             mock.patch.object(
-                page.SERVICE.activity,
+                page.app.SERVICE.activity,
                 "activity_and_usage",
                 lambda cwd, limit: {"events": [], "total": {}},
             ),
@@ -1986,7 +1986,7 @@ class CostRowsAreCopiedAndLabelled(unittest.TestCase):
             _fail=lambda e: None,
         )
         with mock.patch.object(
-            state, "SERVICE", SimpleNamespace(activity=SimpleNamespace(cost=cost))
+            state.app, "SERVICE", SimpleNamespace(activity=SimpleNamespace(cost=cost))
         ):
             state.StudioState._load_cost(page)
         self.assertEqual(seen["rounds"], {"0001_a": ["changes-requested"]})
@@ -2079,7 +2079,7 @@ class TimesReadForAReader(unittest.TestCase):
         service = SimpleNamespace(
             activity=SimpleNamespace(activity_and_usage=lambda cwd, limit: feed)
         )
-        with mock.patch.object(state, "SERVICE", service):
+        with mock.patch.object(state.app, "SERVICE", service):
             state.StudioState._load_activity(page)
         [event] = page.events
         self.assertTrue(event.time)
@@ -2115,7 +2115,7 @@ class TimesReadForAReader(unittest.TestCase):
         service = SimpleNamespace(
             backlog=SimpleNamespace(timeline=lambda cwd, unit: {"runs": runs})
         )
-        with mock.patch.object(state, "SERVICE", service):
+        with mock.patch.object(state.app, "SERVICE", service):
             state.StudioState._load_timeline(page)
         done, running = page.runs
         for field in (done.started, done.ended, running.started):
@@ -2173,7 +2173,7 @@ class ADependencyChosenOnAnIdeaCanBeTakenBack(unittest.TestCase):
             "units": [{"ref": r, "unit": r.split("/")[1], "repo": r.split("/")[0]} for r in refs],
         }
         service = mock.Mock(**{"ideas.idea": mock.AsyncMock(return_value=said)})
-        with mock.patch("coscc.state.SERVICE", service):
+        with mock.patch("coscc.state.app.SERVICE", service):
             asyncio.run(IdeasMixin._load_idea(page, "0001_x"))
 
     def test_the_select_offers_no_dependency_and_choosing_it_clears_the_field(self):
