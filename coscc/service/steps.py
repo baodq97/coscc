@@ -647,6 +647,22 @@ class Steps:
                     )
                 )
                 raise Invalid(reason)
+            refusal = self.feature_refusal(
+                facts_of(
+                    workspace=cwd,
+                    workspace_key=key,
+                    unit=unit,
+                    stage="integrate",
+                    run="",
+                    cwd=str(tree or root),
+                    watch=None,
+                    directory=directory,
+                    commands=(),
+                    resumed=False,
+                )
+            )
+            if refusal:
+                raise Refused(refusal, ("feature-refused",))
             if state == "behind" and how not in integrate.COMPLETION:
                 # An Apply waits for a mechanical integration, so none begins once
                 # one is pressed.
