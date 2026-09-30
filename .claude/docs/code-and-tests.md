@@ -32,6 +32,7 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
 - `tests/test_citations.py`: every `NAME` `path:N` under `.claude/` points at its name. A
   change that moves lines fixes the citations in the same commit.
 - `tests/test_layers.py`: no import goes up a layer (below).
+- `tests/test_boundaries.py`: no private name, foreign table SQL or new `dict[str, Any]` (below).
 
 Fix the code, not the check. A rule is switched off only in `pyproject.toml`, with its reason. A
 `# noqa` or `# ty: ignore` names its rule and says why on the same line.
@@ -81,6 +82,14 @@ config.py
 - When a lower module needs something from above, move the thing down to where both can
   reach it, or move the module up. Never import late to get round it.
 - A new package or root module gets a line in `LAYERS`, or the test fails.
+- `tests/test_boundaries.py`: modules talk through three channels, and each has a ratchet whose
+  list of today's findings only shrinks.
+  - Calls: a name with a leading underscore is not imported from another module (`PRIVATE_IMPORTS`).
+    Drop the underscore, or keep the name in the one module that uses it.
+  - Data: each table has one owner module (`OWNERS`) and only it runs SQL on it (`FOREIGN_SQL`).
+    Add a function to the owner and call that.
+  - Types: a public function does not take or return `dict[str, Any]` beyond `DICT_ANY_CEILING`.
+    Type the new one with a dataclass, a `TypedDict` or a `Literal`.
 
 ## Imports
 
