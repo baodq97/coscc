@@ -174,16 +174,22 @@ async def ndjson(stream: AsyncIterator[tuple[str, Any]], what: str) -> Streaming
     return StreamingResponse(lines(), media_type="application/x-ndjson")
 
 
-def create_tables(ctx: Ctx, features: Sequence[Plugin]) -> None:
-    """Run every feature's `tables` once; a statement that is not `CREATE TABLE IF NOT EXISTS` is refused."""
+def tables_of(features: Sequence[Plugin]) -> tuple[str, ...]:
+    """Every feature's `tables`; a statement that is not `CREATE TABLE IF NOT EXISTS` is refused."""
     for f in features:
         for statement in f.tables:
             if not CREATE_TABLE.match(statement):
                 raise ValueError(f"{f.name}: a table is a CREATE TABLE IF NOT EXISTS statement")
+    return tuple(statement for f in features for statement in f.tables)
+
+
+def create_tables(ctx: Ctx, tables: Sequence[str]) -> None:
+    """Run the statements once the app starts; with none, the database is not opened."""
+    if not tables:
+        return
     with ctx.data.write() as conn:
-        for f in features:
-            for statement in f.tables:
-                conn.execute(statement)
+        for statement in tables:
+            conn.execute(statement)
 
 
 def hooks_of(features: Sequence[Plugin], ctx: Ctx) -> Hooks:

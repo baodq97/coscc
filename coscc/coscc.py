@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc import screens, ui
+from coscc import plugin, screens, ui
 from coscc.auth import Guard
 from coscc.data import Data
 from coscc.state import StudioState, place
@@ -27,6 +27,14 @@ async def resume_after_update() -> None:
 
 
 app.register_lifespan_task(resume_after_update)
+
+
+async def create_feature_tables() -> None:
+    """Every feature's tables, made when the app starts and never when the page is built."""
+    plugin.create_tables(plugin.ctx_of(API.state.service), API.state.tables)
+
+
+app.register_lifespan_task(create_feature_tables)
 
 
 def served():
