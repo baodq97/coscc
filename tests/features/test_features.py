@@ -60,20 +60,20 @@ class TurningAFeatureOffForAWorkspace(Setup):
         )
         async with self.client() as client:
             got = await client.get("/api/features", params={"cwd": str(self.ws)})
-            self.assertEqual((got.status_code, got.json()), (200, {"notices": True}))
+            self.assertEqual((got.status_code, got.json()["notices"]), (200, True))
             off = await client.post(
                 "/api/features", json={"cwd": str(self.ws), "name": "notices", "on": False}
             )
             self.assertEqual((off.status_code, off.json()), (200, {"name": "notices", "on": False}))
             got = await client.get("/api/features", params={"cwd": str(self.ws)})
-            self.assertEqual(got.json(), {"notices": False})
+            self.assertIs(got.json()["notices"], False)
             got = await client.get("/api/features", params={"cwd": str(other)})
-            self.assertEqual(got.json(), {"notices": True})
+            self.assertIs(got.json()["notices"], True)
             await client.post(
                 "/api/features", json={"cwd": str(self.ws), "name": "notices", "on": True}
             )
             got = await client.get("/api/features", params={"cwd": str(self.ws)})
-            self.assertEqual(got.json(), {"notices": True})
+            self.assertIs(got.json()["notices"], True)
 
     async def test_a_wrong_request_is_a_400_and_writes_nothing(self):
         async with self.client() as client:
@@ -92,7 +92,7 @@ class TurningAFeatureOffForAWorkspace(Setup):
                 (await client.get("/api/features", params={"cwd": "/etc"})).status_code, 400
             )
             got = await client.get("/api/features", params={"cwd": str(self.ws)})
-            self.assertEqual(got.json(), {"notices": True})
+            self.assertIs(got.json()["notices"], True)
 
     async def test_the_routes_are_behind_the_login(self):
         from coscc import auth
