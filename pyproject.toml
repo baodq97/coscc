@@ -50,7 +50,8 @@ line-length = 100
 # `BLE`, `S110`, `S112`: a blind `except` logs its traceback, or says in a `noqa` why not.
 # `C901`, `PLR0915`: a function stays small; its `noqa` marks one still to split, and `RUF100`
 # drops the mark once it is. `ARG`: an argument is read, or named `_x` for a caller's signature.
-select = ["F", "BLE", "S110", "S112", "RUF100", "C901", "PLR0915", "ARG"]
+# `PIE794`: a class defines a field once.
+select = ["F", "BLE", "S110", "S112", "RUF100", "C901", "PLR0915", "ARG", "PIE794"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 20

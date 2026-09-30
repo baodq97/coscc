@@ -32,7 +32,6 @@ class AStepCanBeWatched(unittest.TestCase):
 
         class Reports:
             bus = Bus()
-            bus = Bus()
 
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 recorder = kw["step"].recorder

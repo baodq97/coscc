@@ -67,8 +67,6 @@ class StandIn:
 
     bus = Bus()
 
-    bus = Bus()
-
     def __init__(self, act, said: list[dict] | None = None):
         self.act = act
         self.said = said

@@ -31,7 +31,6 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
 
         class Looks:
             bus = Bus()
-            bus = Bus()
 
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 test.seen.append(list(test.service.holds.running.values()))

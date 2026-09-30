@@ -21,7 +21,6 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
 
     class Probe:
         bus = Bus()
-        bus = Bus()
 
         def __init__(self):
             self.models = []

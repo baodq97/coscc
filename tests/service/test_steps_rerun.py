@@ -80,7 +80,6 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
 
         class StandIn:
             bus = Bus()
-            bus = Bus()
 
             def __init__(self, *a, **k):
                 pass

@@ -45,8 +45,6 @@ class Fixture(unittest.TestCase):
 
             bus = Bus()
 
-            bus = Bus()
-
         return Service(
             Config(
                 workspaces=workspaces, working_dir=str(self.root), data_dir=str(self.root / "data")

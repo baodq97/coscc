@@ -66,8 +66,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
         bus = Bus()
 
-        bus = Bus()
-
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", REVIEW_ONE + ROUND_TWO)
             # The round's object, which `review.md` is written from.

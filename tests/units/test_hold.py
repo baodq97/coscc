@@ -334,8 +334,6 @@ class NoSession:
 
     bus = Bus()
 
-    bus = Bus()
-
     def __init__(self):
         self.membership = None
         self.opened = 0
