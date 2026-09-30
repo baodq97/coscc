@@ -35,8 +35,6 @@ class _Nobody:
 
     bus = Bus()
 
-    bus = Bus()
-
     async def stream(self, *a, **kw):
         raise AssertionError("no session was expected")
         yield
@@ -66,7 +64,6 @@ class Place1(unittest.TestCase):
 
     def _spec(self, says: str, judgement: str) -> dict:
         class Replies:
-            bus = Bus()
             bus = Bus()
 
             async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
@@ -120,7 +117,6 @@ class Place1(unittest.TestCase):
         """The `U<n>` of the stage result, carried to `cos.mjs` in the snapshot."""
 
         class Replies:
-            bus = Bus()
             bus = Bus()
 
             async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
@@ -213,7 +209,6 @@ class _Review(unittest.TestCase):
         directory = self.dir
 
         class Replies:
-            bus = Bus()
             bus = Bus()
 
             async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):

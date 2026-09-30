@@ -37,7 +37,6 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
 
     class Replies:
         bus = Bus()
-        bus = Bus()
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
@@ -281,7 +280,6 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
 
     class Replies:
         bus = Bus()
-        bus = Bus()
 
         def __init__(self):
             self.reply = ""
@@ -420,7 +418,6 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
     class Replies:
         bus = Bus()
-        bus = Bus()
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
@@ -529,7 +526,6 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
     def test_a_failed_step_records_nothing(self):
         class Empty:
             bus = Bus()
-            bus = Bus()
 
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 await _submits(kw)
@@ -564,7 +560,6 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
     def replies(self, text: str, outcome: dict | None = None, **fields):
         class Replies:
-            bus = Bus()
             bus = Bus()
 
             async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
@@ -748,7 +743,6 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
 
     class Waits:
         bus = Bus()
-        bus = Bus()
 
         def __init__(self):
             self.release: dict[str, asyncio.Event] = {}
@@ -910,7 +904,6 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
 class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
     class Empty:
         bus = Bus()
-        bus = Bus()
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("session", "sess-fail")
@@ -947,7 +940,6 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
 
         class Probe:
             bus = Bus()
-            bus = Bus()
 
             def __init__(self):
                 self.seen = ""
@@ -967,7 +959,6 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
     def test_a_run_after_done_carries_no_attempt_section(self):
         class Replies:
             bus = Bus()
-            bus = Bus()
 
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
@@ -978,7 +969,6 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
         self._run("spec")
 
         class Probe:
-            bus = Bus()
             bus = Bus()
 
             def __init__(self):
@@ -1043,8 +1033,6 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
 
     class NeverCalled:
         """A session layer that fails the test if a refused step reaches it."""
-
-        bus = Bus()
 
         bus = Bus()
 
@@ -1159,7 +1147,6 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.terminal = None
 
     class Impl:
-        bus = Bus()
         bus = Bus()
 
         def __init__(self, test):
@@ -1603,7 +1590,6 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
 
     class Probe:
         bus = Bus()
-        bus = Bus()
 
         def __init__(self, fail: bool = False):
             self.fail = fail
@@ -1626,8 +1612,6 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
 
     class RunsOut:
         """Keeps its progress file in `cwd`, then stops at the turn ceiling."""
-
-        bus = Bus()
 
         bus = Bus()
 
@@ -1763,7 +1747,6 @@ class APrStepIsMechanical(unittest.TestCase):
 
     class NoSession:
         bus = Bus()
-        bus = Bus()
 
         async def stream(self, *a, **kw):
             raise AssertionError("a pr step opened a session")
@@ -1897,8 +1880,6 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
     class Replies:
         """A session that writes `pr.md` itself; with `hold`, it then waits to be stopped."""
-
-        bus = Bus()
 
         bus = Bus()
 
@@ -2314,7 +2295,6 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
 
         class StandIn:
             bus = Bus()
-            bus = Bus()
 
             def __init__(self, *a, **kw):
                 pass
@@ -2408,7 +2388,6 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
 
         class StandIn:
             bus = Bus()
-            bus = Bus()
 
             def __init__(self, *a, **kw):
                 pass
@@ -2494,7 +2473,6 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         from coscc.units import board as board_reader
 
         class StandIn:
-            bus = Bus()
             bus = Bus()
 
             def __init__(self, *a, **kw):
@@ -2644,7 +2622,6 @@ class _AReviewStep:
         seen, taken = self.seen, self.taken
 
         class StandIn:
-            bus = Bus()
             bus = Bus()
 
             def __init__(self, *a, **kw):

@@ -476,7 +476,6 @@ class TakingUpAfterAnUpdate(_Base):
 
         class Waits:
             bus = Bus()
-            bus = Bus()
 
             def __init__(self, *a, **kw):
                 pass

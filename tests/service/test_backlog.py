@@ -480,7 +480,6 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
 
     class Replies:
         bus = Bus()
-        bus = Bus()
 
         def __init__(self, obj, gate=None):
             self.obj, self.gate, self.calls = obj, gate, 0
