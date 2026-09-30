@@ -3,9 +3,50 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from tests.service.test_service import _service
+from coscc.agent.sessions import Sessions
+from coscc.config import Config
+from coscc.service import Service
+from coscc.service.common import Invalid
+from coscc.units import states
+from tests.service.test_service import _service, create_sync
+
+
+class EveryStageArtifactOpens(unittest.TestCase):
+    """The unit's detail opens each artifact the harness names, `spike.md` among them (`0141`)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.cwd = str(root / "work" / "proj")
+        Path(self.cwd).mkdir(parents=True)
+        config = Config(
+            workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
+        self.service = Service(config, Sessions(config))
+        made = create_sync(self.service, self.cwd, "a-problem", "x")
+        self.unit, self.dir = made["unit"], Path(made["path"])
+
+    def test_spike_md_is_shown(self):
+        (self.dir / "spike.md").write_text("# Spike: x\nStatus: accepted.\n", encoding="utf-8")
+        got = self.service.activity.artifact(self.cwd, self.unit, "spike")
+        self.assertEqual((got["file"], got["exists"]), ("spike.md", True))
+        self.assertIn("# Spike: x", got["text"])
+
+    def test_every_stage_of_the_state_set_opens(self):
+        for stage in states.default().stages:
+            (self.dir / stage.artifact).write_text(f"# {stage.name}\n", encoding="utf-8")
+            got = self.service.activity.artifact(self.cwd, self.unit, stage.name)
+            self.assertEqual(got["text"], f"# {stage.name}\n", stage.name)
+
+    def test_a_name_that_is_no_stage_is_still_refused(self):
+        with self.assertRaises(Invalid) as e:
+            self.service.activity.artifact(self.cwd, self.unit, "deploy")
+        self.assertEqual(str(e.exception), "no such stage: deploy")
 
 
 class UsageCountsWhatItCouldNotAdd(unittest.TestCase):
