@@ -255,6 +255,16 @@ class CaptureKeepsTheOutputAndNeverReturnsIt(unittest.TestCase):
         )
         self.assertNotIn("made-up-value-42", self.rig.everything_logged())
 
+    def test_what_it_keeps_is_masked_in_stderr_too(self):
+        grant = Grant(commands=(*GRANT.commands, "tee"))
+        done = self.rig.run(
+            "echo made-up-value-42 | tee /dev/stderr", capture="ws:made", grant=grant
+        )
+        self.assertEqual(done.captured, len("made-up-value-42"))
+        self.assertNotIn("made-up-value-42", done.stderr)
+        self.assertIn("[secret:ws:made]", done.stderr)
+        self.assertEqual(done.masked, {"ws:made": 2})
+
     def test_a_failed_or_empty_command_stores_nothing(self):
         failed = self.rig.run("echo abc; false", capture="ws:a")
         empty = self.rig.run("printf ''", capture="ws:b")

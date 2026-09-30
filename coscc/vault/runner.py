@@ -337,6 +337,9 @@ def run(
     if capture and code == 0:
         kept, note = _capture(store, journal, capture, workspace, actor, out)
     captured = len(kept)
+    if kept:
+        # Read before the command ran, `values` lacks what it printed; stderr may hold it too.
+        values = {**values, capture: kept}
     shown_out, in_out = mask(values, out)
     shown_err, in_err = mask(values, err)
     masked = dict(Counter(in_out) + Counter(in_err))
