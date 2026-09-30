@@ -17,8 +17,10 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 from starlette.routing import BaseRoute
 
+from coscc.agent.policy import is_prose_stage
 from coscc.bus import Bus
 from coscc.data import Data
+from coscc.hooks import Hooks, Parts
 from coscc.runlog.journal import Journal
 from coscc.service import Service
 from coscc.service.common import Invalid
@@ -48,6 +50,8 @@ class Plugin:
     scripts: tuple[str, ...] = ()
     # `CREATE TABLE IF NOT EXISTS ...` statements, run once at build through `Data.write()`.
     tables: tuple[str, ...] = ()
+    # What the feature hands the agent's steps, called once at build like `routes`.
+    agent: Callable[[Ctx], Parts] | None = None
 
 
 async def body(request: Request) -> dict[str, Any]:
@@ -101,6 +105,41 @@ def create_tables(ctx: Ctx, features: Sequence[Plugin]) -> None:
         for f in features:
             for statement in f.tables:
                 conn.execute(statement)
+
+
+def hooks_of(features: Sequence[Plugin], ctx: Ctx) -> Hooks:
+    """Every feature's agent parts, tagged with its name; a clash or a tool on a prose stage is
+    a `ValueError` naming the feature."""
+    parts: list[tuple[str, Parts]] = []
+    servers: dict[str, str] = {}
+    names: dict[str, dict[str, str]] = {"guard": {}, "block": {}}
+    for f in features:
+        if f.agent is None:
+            continue
+        made = f.agent(ctx)
+        for tool in made.tools:
+            if tool.server in servers:
+                raise ValueError(
+                    f"{f.name}: the MCP server {tool.server!r} is also {servers[tool.server]}'s; "
+                    "rename it"
+                )
+            servers[tool.server] = f.name
+            prose = sorted(s for s in tool.stages if is_prose_stage(s))
+            if prose:
+                raise ValueError(
+                    f"{f.name}: the tool {tool.server!r} names prose stages "
+                    f"({', '.join(prose)}); a prose stage cannot carry a tool, so drop them"
+                )
+        for kind, named in (("guard", made.guards), ("block", made.blocks)):
+            for part in named:
+                if part.name in names[kind]:
+                    raise ValueError(
+                        f"{f.name}: the {kind} {part.name!r} is also {names[kind][part.name]}'s; "
+                        "rename it"
+                    )
+                names[kind][part.name] = f.name
+        parts.append((f.name, made))
+    return Hooks(parts=tuple(parts), enabled=ctx.enabled)
 
 
 def _off(data: Data) -> dict[str, list[str]]:
