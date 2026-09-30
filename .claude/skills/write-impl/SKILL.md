@@ -17,7 +17,7 @@ first and stop on non-zero.
 
 ## Reading the tree
 
-- The line map says where things are: `Read` only the range you edit, batch independent reads.
+- The line map says where things are: `Read` only the range you edit; batch independent reads in one turn.
 - For "where is X" across big files, ask `scout` (the `Agent` tool): it returns a `path:line`
   map. Trust it; re-read only what it marks "unsure".
 - Open `intent.md`, `spec.md` or `spike.md` only where the plan cites a section.

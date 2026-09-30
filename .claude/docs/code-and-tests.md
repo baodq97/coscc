@@ -36,7 +36,7 @@ test; it reaches the app only through `Ctx` (`coscc/plugin.py`). Copy `notices`.
 extension point serves is a kernel change, planned first.
 
 - Extension points: `routes`, `scripts`, `tables`, `agent` giving `Parts` of `Tool`, `Guard`
-  (`check(Facts)` returns words to deny, or `None`) and `Block` (`render(Facts)` adds prompt
+  (`check(Facts)` returns words to deny, or `None`; asked before every step and integration) and `Block` (`render(Facts)` adds prompt
   text); slots `slot-topbar` and `slot-unit`.
 - Building blocks: `plugin.body/line/ndjson`, `Ctx`, `window.coscc.api/stream/every/ago/slot`.
 
