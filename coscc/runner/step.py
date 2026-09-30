@@ -17,11 +17,13 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
+from coscc import hooks as hooks_mod
 from coscc.agent import agents, instructions, modeltrial, steps, transcript
 from coscc.agent import sessions as sessions_mod
 from coscc.runlog.journal import Journal, Outcome
@@ -392,6 +394,7 @@ async def _compose(
     was: dict[str, Any],
     watch: str | None,
     *,
+    blocks: tuple[tuple[str, str], ...],
     gate_said: str,
     base_note: str,
     last_attempt: str,
@@ -435,7 +438,7 @@ async def _compose(
         rerun=rerun,
         rerun_note=rerun_note,
         plan_map=plan_map,
-        commands=grant.commands if stage in ("impl", "implement") else (),
+        commands=grant.commands if stage == "impl" else (),
         unfinished_round=unfinished_round,
         idea_note=idea_note,
         siblings_note=siblings_note,
@@ -443,6 +446,7 @@ async def _compose(
         agent=agent,
         unit_meta=meta,
         state_file=state_file,
+        blocks=blocks,
     )
     return head, prompt, included, pointed
 
@@ -1253,12 +1257,77 @@ async def _end_extra(end_fields: Any, unit: str, stage: str) -> dict[str, Any]:
 class Runner:
     """Runs one step. Owns no state beyond what it was handed."""
 
-    def __init__(self, sessions: Sessions, journal: Journal | None, app: dict | None = None):
+    def __init__(
+        self,
+        sessions: Sessions,
+        journal: Journal | None,
+        app: dict | None = None,
+        hooks: hooks_mod.Hooks = hooks_mod.Hooks(),
+    ):
         self.sessions = sessions
+        self.hooks = hooks
         self.journal = journal
         # `{"version", "commit"}` of the app running this step, from `update.identity`; `None` leaves
         # `start` without them.
         self.app = app
+
+    def _features(
+        self,
+        grant: Grant,
+        running: Any,
+        *,
+        workspace: str,
+        journal_key: str,
+        unit: str,
+        stage: str,
+        cwd: str,
+        watch: str | None,
+        directory: Path,
+        resumed: bool,
+    ) -> tuple[Any, hooks_mod.Facts, tuple[tuple[str, str], ...]]:
+        """The step's recorder, when `Steps.run_step` gave it one (its `run` goes into `start` and
+        `end`, and it is closed, everything on disk, before `end` is written); this run as the
+        features see it; and the prompt blocks they add. A step taken up again composes no prompt,
+        so it has none."""
+        recorder = getattr(running.handle, "recorder", None) if running is not None else None
+        facts = hooks_mod.facts(
+            workspace=workspace,
+            workspace_key=journal_key,
+            unit=unit,
+            stage=stage,
+            run=str(recorder.run) if recorder is not None else uuid.uuid4().hex,
+            cwd=cwd,
+            watch=watch,
+            directory=directory,
+            commands=grant.commands,
+            resumed=resumed,
+        )
+        return recorder, facts, () if resumed else self._blocks(facts)
+
+    def _with_tools(
+        self,
+        grant: Grant,
+        channel: submit_mod.Channel | None,
+        facts: hooks_mod.Facts,
+    ) -> tuple[Grant, dict[str, Any]]:
+        """The grant with the MCP names features' tools add, and the `mcp_servers` argument holding
+        `submit` (when there is a channel) and one server per tool, each made from this run's facts."""
+        servers: dict[str, Any] = (
+            {submit_mod.SERVER: channel.server()} if channel is not None else {}
+        )
+        tools = self.hooks.for_step(facts.stage, facts.workspace).tools
+        if tools:
+            grant = replace(grant, mcp=hooks_mod.granted(tools))
+            servers.update({t.server: t.make(facts) for t in tools})
+        return grant, ({"mcp_servers": servers} if servers else {})
+
+    def _blocks(self, facts: hooks_mod.Facts) -> tuple[tuple[str, str], ...]:
+        """The prompt blocks features add to this run, in order, those with words only."""
+        rendered = (
+            (b.name, b.render(facts))
+            for b in self.hooks.for_step(facts.stage, facts.workspace).blocks
+        )
+        return tuple((name, text) for name, text in rendered if text)
 
     async def run(
         self,
@@ -1359,6 +1428,18 @@ class Runner:
         cwd = cwd or workspace
         was = dict((resume or {}).get("owner") or {})
         turn_kind = str(was.get("kind") or "step") if resume is not None else ""
+        recorder, facts, blocks = self._features(
+            grant,
+            running,
+            workspace=workspace,
+            journal_key=journal_key,
+            unit=unit,
+            stage=stage,
+            cwd=cwd,
+            watch=watch,
+            directory=directory,
+            resumed=resume is not None,
+        )
         head, prompt, included, pointed = await _compose(
             cwd,
             directory,
@@ -1370,6 +1451,7 @@ class Runner:
             resume,
             was,
             watch,
+            blocks=blocks,
             gate_said=gate_said,
             base_note=base_note,
             last_attempt=last_attempt,
@@ -1387,15 +1469,10 @@ class Runner:
             state_file=state_file,
         )
         kw = _session_kw(workspace, cwd, model, effort, grant, agent)
-        # The step's recorder, when `Steps.run_step` gave it one: its `run` goes into `start` and
-        # `end`, and it is closed, everything on disk, before `end` is written.
-        recorder = getattr(running.handle, "recorder", None) if running is not None else None
         channel = _channel_for(
             grant, recorder, stage, directory, artifact, head, open_findings, claims_round
         )
-        servers = (
-            {"mcp_servers": {submit_mod.SERVER: channel.server()}} if channel is not None else {}
-        )
+        grant, servers = self._with_tools(grant, channel, facts)
         start_at = self._write_start(
             was.get("start_at"),
             resume,
@@ -1428,6 +1505,7 @@ class Runner:
             rerun=rerun,
             rerun_note=rerun_note,
             agent=agent,
+            blocks=[name for name, _ in blocks],
         )
         owner = _owner(
             journal_key,
@@ -1670,6 +1748,7 @@ class Runner:
         rerun: bool,
         rerun_note: str,
         agent: dict[str, Any] | None,
+        blocks: list[str],
     ) -> Any:
         """The step's `start` record, and its `at`; `start_at` as it was for a step taken up again or
         with no journal."""
@@ -1700,6 +1779,8 @@ class Runner:
                 else {}
             ),
             granted=list(grant.tools),
+            mcp=list(grant.mcp),
+            blocks=blocks,
             max_turns=grant.max_turns,
             head=head,
             model=model,
@@ -1793,7 +1874,7 @@ class Runner:
             # held tools with no gate in front of them.
             can_use_tool=(
                 permission_gate(grant, cwd, denials, *gate_args)
-                if grant.opens_anything or channel is not None
+                if grant.opens_anything or channel is not None or grant.mcp
                 else None
             ),
             tools=list(grant.tools),

@@ -3,7 +3,8 @@
 The channels are calls (public names, typed), events (`coscc/bus.py`) and data (one module owns
 each table and runs its SQL). Each rule below is a ratchet over `coscc/`: today's findings are
 listed in a literal, a new finding fails, and a listed finding that is gone fails too, so the
-lists only shrink. `tests/` is not checked. Each check takes parsed trees, so a test can feed it
+lists only shrink. `DICT_ANY` is keyed by `module:qualname`: a function that moves across modules is
+an explicit replacement of its entry, and one that moves inside its module keeps it. `tests/` is not checked. Each check takes parsed trees, so a test can feed it
 a planted case.
 """
 
@@ -168,8 +169,313 @@ FOREIGN_SQL: set[tuple[str, str]] = {
     ("coscc.units.turnstats", "transitions"),
 }
 
-DICT_ANY_CEILING = 301
+DICT_ANY: set[str] = {
+    "coscc.agent.agents:address",
+    "coscc.agent.agents:agent_for",
+    "coscc.agent.agents:identity_section",
+    "coscc.agent.agents:label",
+    "coscc.agent.agents:of_record",
+    "coscc.agent.agents:resolve",
+    "coscc.agent.agents:settings_json",
+    "coscc.agent.agents:table",
+    "coscc.agent.labels:label_for",
+    "coscc.agent.models:table",
+    "coscc.agent.sessions:Sessions.send",
+    "coscc.agent.sessions:Sessions.stream",
+    "coscc.agent.sessions:Sessions.suspend_all",
+    "coscc.agent.sessions:history",
+    "coscc.agent.sessions:list_for_directory",
+    "coscc.agent.transcript:ceilings_left",
+    "coscc.agent.transcript:cut",
+    "coscc.data:Data.decisions",
+    "coscc.data:Data.prefs",
+    "coscc.data:Data.step_event",
+    "coscc.data:Data.step_events_add",
+    "coscc.data:Data.step_events_page",
+    "coscc.data:Data.step_run",
+    "coscc.data:Data.step_runs_open",
+    "coscc.data:Data.step_tool_uses",
+    "coscc.features.notices:Notices.follow_notices",
+    "coscc.features.notices:notice_of",
+    "coscc.git.drift:compute",
+    "coscc.git.drift:describe",
+    "coscc.git.drift:plan_head",
+    "coscc.git.fetches:Fetches.fetch",
+    "coscc.git.fetches:fetch",
+    "coscc.github.integrate:build_prompt",
+    "coscc.github.integrate:classify",
+    "coscc.github.integrate:describe_for_review",
+    "coscc.github.integrate:needs_person_of",
+    "coscc.github.integrate:record",
+    "coscc.github.integrate:run_gebo",
+    "coscc.github.prmachine:Machine.open_of",
+    "coscc.github.prmachine:Machine.view",
+    "coscc.github.prmachine:Outcome.as_dict",
+    "coscc.github.prmachine:ci_held",
+    "coscc.github.prmachine:last_round",
+    "coscc.github.prmachine:open_prs",
+    "coscc.github.prmachine:state",
+    "coscc.github.prmachine:watched",
+    "coscc.github.prscope:compare",
+    "coscc.github.prscope:read",
+    "coscc.github.release:classify",
+    "coscc.github.release:record",
+    "coscc.plugin:body",
+    "coscc.plugin:line",
+    "coscc.runlog.events:Recorder.subscribe",
+    "coscc.runlog.events:collapse",
+    "coscc.runlog.events:full_text",
+    "coscc.runlog.journal:Journal.append",
+    "coscc.runlog.journal:Journal.append_checked",
+    "coscc.runlog.journal:Journal.append_with",
+    "coscc.runlog.journal:Journal.attempted",
+    "coscc.runlog.journal:Journal.failed_attempts",
+    "coscc.runlog.journal:Journal.finished",
+    "coscc.runlog.journal:Journal.notice_rows",
+    "coscc.runlog.journal:Journal.open_starts",
+    "coscc.runlog.journal:Journal.records",
+    "coscc.runlog.journal:Journal.resumed",
+    "coscc.runlog.journal:Journal.set_mode",
+    "coscc.runlog.journal:Journal.started",
+    "coscc.runlog.journal:Journal.suspended",
+    "coscc.runlog.journal:Journal.timeline",
+    "coscc.runlog.journal:Journal.timelines",
+    "coscc.runlog.journal:Journal.unresumed",
+    "coscc.runlog.journal:add_cost",
+    "coscc.runlog.journal:last_runs",
+    "coscc.runlog.journal:timelines_of",
+    "coscc.runlog.journal:totals_of",
+    "coscc.runlog.journal:zero_cost",
+    "coscc.runlog.spend:_anomalies.row",
+    "coscc.runlog.spend:model",
+    "coscc.runner.attempt:describe_attempt",
+    "coscc.runner.attempt:snapshot",
+    "coscc.runner.prompt:_row_blocks.block",
+    "coscc.runner.prompt:answers_for",
+    "coscc.runner.prompt:compose_prompt",
+    "coscc.runner.prompt:with_rows",
+    "coscc.runner.review:finding_line",
+    "coscc.runner.review:render_round",
+    "coscc.runner.step:Runner.run",
+    "coscc.service.activity:Activity.activity",
+    "coscc.service.activity:Activity.activity_and_usage",
+    "coscc.service.activity:Activity.artifact",
+    "coscc.service.activity:Activity.cost",
+    "coscc.service.activity:Activity.preferences",
+    "coscc.service.activity:Activity.set_preference",
+    "coscc.service.activity:Activity.settings",
+    "coscc.service.activity:Activity.unit_cost",
+    "coscc.service.activity:Activity.usage",
+    "coscc.service.agents:Agents.agent",
+    "coscc.service.agents:Agents.agent_table",
+    "coscc.service.agents:Agents.set_agent",
+    "coscc.service.answers:Answers.add_decision",
+    "coscc.service.answers:Answers.answer",
+    "coscc.service.answers:Answers.create_unit",
+    "coscc.service.answers:Answers.decisions_table",
+    "coscc.service.answers:Answers.hold",
+    "coscc.service.answers:Answers.ingest",
+    "coscc.service.answers:Answers.more_rounds",
+    "coscc.service.answers:Answers.post_new_rounds",
+    "coscc.service.answers:Answers.post_review_comment",
+    "coscc.service.answers:Answers.record_outcome",
+    "coscc.service.answers:Answers.sync_pr",
+    "coscc.service.answers:Answers.withdraw_decision",
+    "coscc.service.answers:Answers.worktree",
+    "coscc.service.autopilot:Autopilot.cap",
+    "coscc.service.autopilot:Autopilot.guide_block",
+    "coscc.service.autopilot:Autopilot.nudge",
+    "coscc.service.autopilot:Autopilot.run_pass",
+    "coscc.service.autopilot:Autopilot.set_setting",
+    "coscc.service.autopilot:Autopilot.settings",
+    "coscc.service.autopilot:Autopilot.show",
+    "coscc.service.autopilot:autopilot_values",
+    "coscc.service.backlog:Backlog._append_checked.refuse",
+    "coscc.service.backlog:Backlog.branch_here",
+    "coscc.service.backlog:Backlog.propose_estimates",
+    "coscc.service.backlog:Backlog.record_estimate",
+    "coscc.service.backlog:Backlog.record_relation",
+    "coscc.service.backlog:Backlog.record_shortlist",
+    "coscc.service.backlog:Backlog.start_branch",
+    "coscc.service.backlog:Backlog.timeline",
+    "coscc.service.backlog:Backlog.unit_history",
+    "coscc.service.backlog:Backlog.units_with_history",
+    "coscc.service.board:Board.read",
+    "coscc.service.board:Board.running",
+    "coscc.service.board:Board.running_here",
+    "coscc.service.board:answerable",
+    "coscc.service.board:waits_for",
+    "coscc.service.common:attention_reason",
+    "coscc.service.common:describe_base",
+    "coscc.service.common:open_prs_once.prs",
+    "coscc.service.common:outcome_label",
+    "coscc.service.common:shown_state",
+    "coscc.service.common:unit_state",
+    "coscc.service.ideas:Ideas.create_idea",
+    "coscc.service.ideas:Ideas.idea",
+    "coscc.service.ideas:Ideas.idea_link",
+    "coscc.service.models:Models.findings_added",
+    "coscc.service.models:Models.set_stage_effort",
+    "coscc.service.models:Models.set_stage_model",
+    "coscc.service.models:Models.stage_config",
+    "coscc.service.models:Models.stage_models",
+    "coscc.service.release:Release._release_press.write",
+    "coscc.service.release:Release.attach_release",
+    "coscc.service.resume:Resume.resume_after_update",
+    "coscc.service.resume:Resume.resume_chat",
+    "coscc.service.resume:Resume.resume_integration",
+    "coscc.service.resume:Resume.resume_integration.write",
+    "coscc.service.resume:Resume.resume_step",
+    "coscc.service.resume:Resume.resume_step.end_fields",
+    "coscc.service.resume:check",
+    "coscc.service.resume:moved_on",
+    "coscc.service.resume:resume_kwargs",
+    "coscc.service.resume:resume_message",
+    "coscc.service.sessions:Chat.history",
+    "coscc.service.sessions:Chat.sessions_for",
+    "coscc.service.sessions:Chat.stream",
+    "coscc.service.steps:Steps._end_fields.answers_kept",
+    "coscc.service.steps:Steps._end_fields.findings_added",
+    "coscc.service.steps:Steps.attach_integration",
+    "coscc.service.steps:Steps.cleanup",
+    "coscc.service.steps:Steps.drive",
+    "coscc.service.steps:Steps.integrate.write",
+    "coscc.service.steps:Steps.integrate_gebo",
+    "coscc.service.steps:Steps.mechanical",
+    "coscc.service.steps:Steps.next_step",
+    "coscc.service.steps:Steps.reconcile_prs",
+    "coscc.service.steps:Steps.rerun_offers",
+    "coscc.service.steps:Steps.running_steps",
+    "coscc.service.steps:Steps.set_mode",
+    "coscc.service.steps:Steps.shipped",
+    "coscc.service.steps:Steps.stop_running",
+    "coscc.service.steps:Steps.stop_step",
+    "coscc.service.steps:integration_since_review",
+    "coscc.service.update:update_words",
+    "coscc.service.watch:Watch.events_page",
+    "coscc.service.workspaces:Workspaces.add",
+    "coscc.service.workspaces:Workspaces.all",
+    "coscc.service.workspaces:Workspaces.meta_of",
+    "coscc.service.workspaces:Workspaces.pull",
+    "coscc.service.workspaces:Workspaces.remove",
+    "coscc.service.workspaces:Workspaces.set_label",
+    "coscc.service.workspaces:Workspaces.snapshot",
+    "coscc.service:Service.board",
+    "coscc.service:Service.settle_after_suspend",
+    "coscc.service:Service.suspend_sessions",
+    "coscc.service:Service.update_apply",
+    "coscc.service:Service.update_build_local",
+    "coscc.service:Service.update_cancel",
+    "coscc.service:Service.update_status",
+    "coscc.units.autopilot:after_own_integration",
+    "coscc.units.autopilot:answer_completes",
+    "coscc.units.autopilot:answered_since_start",
+    "coscc.units.autopilot:exhausted_of",
+    "coscc.units.autopilot:is_step",
+    "coscc.units.autopilot:measure",
+    "coscc.units.autopilot:measure.blank",
+    "coscc.units.autopilot:open_questions",
+    "coscc.units.autopilot:open_starts",
+    "coscc.units.autopilot:pick",
+    "coscc.units.autopilot:reason_for",
+    "coscc.units.autopilot:reruns_of",
+    "coscc.units.autopilot:reserved",
+    "coscc.units.autopilot:since_integration",
+    "coscc.units.autopilot:skips_exhausted",
+    "coscc.units.autopilot:spent_on",
+    "coscc.units.autopilot:spent_today",
+    "coscc.units.autopilot:started_by",
+    "coscc.units.autopilot:stop_for",
+    "coscc.units.autopilot:unopened_of",
+    "coscc.units.backfill:run",
+    "coscc.units.backfill:scan",
+    "coscc.units.backlog:build_prompt",
+    "coscc.units.backlog:check_relation",
+    "coscc.units.backlog:check_shortlist",
+    "coscc.units.backlog:computed_order",
+    "coscc.units.backlog:effort_from",
+    "coscc.units.backlog:estimates_of",
+    "coscc.units.backlog:fold",
+    "coscc.units.backlog:in_backlog",
+    "coscc.units.backlog:measured",
+    "coscc.units.backlog:parse_proposal",
+    "coscc.units.backlog:relations_of",
+    "coscc.units.backlog:shortlist_of",
+    "coscc.units.backlog:stamp",
+    "coscc.units.backlog:undetermined",
+    "coscc.units.board:gate",
+    "coscc.units.board:next_step",
+    "coscc.units.board:pr_text",
+    "coscc.units.board:read",
+    "coscc.units.board:rerun",
+    "coscc.units.board:screens",
+    "coscc.units.guide:needs_you",
+    "coscc.units.guide:running",
+    "coscc.units.history:History.add_output",
+    "coscc.units.history:History.outputs",
+    "coscc.units.history:History.record",
+    "coscc.units.history:History.record_in",
+    "coscc.units.history:History.record_many",
+    "coscc.units.history:History.sessions_of",
+    "coscc.units.history:History.transitions",
+    "coscc.units.history:settled_edits",
+    "coscc.units.hold:record",
+    "coscc.units.hold:refusal",
+    "coscc.units.ideas:create_idea",
+    "coscc.units.ideas:read_units",
+    "coscc.units.meta:UnitMeta.import_store",
+    "coscc.units.meta:UnitMeta.ingest",
+    "coscc.units.meta:UnitMeta.snapshot",
+    "coscc.units.meta:UnitMeta.snapshot.artifact",
+    "coscc.units.meta:UnitMeta.snapshot.entry",
+    "coscc.units.meta:UnitMeta.unknowns",
+    "coscc.units.meta:read",
+    "coscc.units.more_rounds:refusal",
+    "coscc.units.planmap:for_step",
+    "coscc.units.planmap:select",
+    "coscc.units.prose_import:finding_of",
+    "coscc.units.prose_import:round_of",
+    "coscc.units.retake:describe_for_review",
+    "coscc.units.retake:judge",
+    "coscc.units.retake:read_manifest",
+    "coscc.units.retake:record",
+    "coscc.units.retake:take",
+    "coscc.units.submit:Channel.handle",
+    "coscc.units.submit:Channel.inputs",
+    "coscc.units.submit:Collector.handle",
+    "coscc.units.submit:Collector.object",
+    "coscc.units.submit:refusal",
+    "coscc.units.submit:schema_for",
+    "coscc.units.submit:stage_result_schema",
+    "coscc.units.turnstats:event_fields",
+    "coscc.units.turnstats:file_fields",
+    "coscc.units.turnstats:measure",
+    "coscc.units.turnstats:outcome",
+    "coscc.units.turnstats:pairs",
+    "coscc.units.turnstats:quality_fields",
+    "coscc.units.turnstats:step_fields",
+    "coscc.units.worktrees:describe_failure",
+    "coscc.units.worktrees:ensure",
+    "coscc.units.worktrees:prepare",
+    "coscc.units.worktrees:read_prepare",
+    "coscc.units.worktrees:refresh_base",
+    "coscc.units.worktrees:remove_if_finished",
+    "coscc.units:branch_name",
+    "coscc.units:create",
+    "coscc.update.updater:Updater.apply",
+    "coscc.update.updater:Updater.build_local",
+    "coscc.update.updater:Updater.cancel",
+    "coscc.update.updater:Updater.me",
+    "coscc.update.updater:Updater.status",
+    "coscc.update.updater:Updater.waited",
+    "coscc.update:fetch_into",
+    "coscc.update:identity",
+    "coscc.update:read_json",
+    "coscc.update:verified_wheel",
+    "coscc.update:write_json",
+}
 
+CREATE = re.compile(r"CREATE TABLE IF NOT EXISTS\s+(\w+)", re.IGNORECASE)
 SQL_USE = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+(\w+)", re.IGNORECASE)
 # A string is a statement only when a line of it opens with an upper-case DML keyword, so
 # prose such as "open one from Workspaces." names no table.
@@ -237,10 +543,22 @@ def _sql_strings(tree: ast.AST):
             yield n.value
 
 
-def table_names(tree: ast.AST) -> set[str]:
-    found = set()
-    for s in _sql_strings(tree):
-        found.update(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)", s, re.IGNORECASE))
+def feature_owners(trees: dict[str, ast.AST]) -> dict[str, str]:
+    """Each table a module under `coscc/features/` creates, owned by that module."""
+    return {
+        name: _dotted(path)
+        for path, tree in trees.items()
+        if path.startswith("coscc/features/")
+        for s in _sql_strings(tree)
+        for name in CREATE.findall(s)
+    }
+
+
+def table_names(trees: dict[str, ast.AST]) -> set[str]:
+    """Tables created in `coscc/data.py` and in the modules under `coscc/features/`."""
+    found = set(feature_owners(trees))
+    for s in _sql_strings(trees["coscc/data.py"]):
+        found.update(CREATE.findall(s))
     return found
 
 
@@ -282,31 +600,44 @@ def table_problems(
     return out
 
 
-def dict_any_count(trees: dict[str, ast.AST]) -> int:
-    """Public functions and methods with `dict[str, Any]` in a parameter or the return type."""
-    n = 0
-    for tree in trees.values():
-        for f in ast.walk(tree):
-            if not isinstance(f, ast.FunctionDef | ast.AsyncFunctionDef) or f.name.startswith("_"):
-                continue
-            args = f.args
-            notes = [a.annotation for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]]
-            notes += [args.vararg and args.vararg.annotation, args.kwarg and args.kwarg.annotation]
-            notes.append(f.returns)
-            if any(a is not None and "dict[str, Any]" in ast.unparse(a) for a in notes):
-                n += 1
-    return n
+def dict_any_keys(trees: dict[str, ast.AST]) -> set[str]:
+    """`module:qualname` of each public function or method with `dict[str, Any]` in a parameter
+    or the return type; the qualname includes the enclosing classes and functions."""
+    found: set[str] = set()
+
+    def visit(node: ast.AST, module: str, scope: tuple[str, ...]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                visit(child, module, (*scope, child.name))
+            elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                if not child.name.startswith("_") and _takes_dict_any(child):
+                    found.add(f"{module}:{'.'.join((*scope, child.name))}")
+                visit(child, module, (*scope, child.name))
+            else:
+                visit(child, module, scope)
+
+    for path, tree in trees.items():
+        visit(tree, _dotted(path), ())
+    return found
 
 
-def dict_any_problem(count: int, ceiling: int) -> str | None:
-    if count > ceiling:
-        return (
-            f"{count} public functions take or return dict[str, Any], above the ceiling {ceiling}: "
-            f"type the new one with a dataclass, a TypedDict or a Literal."
-        )
-    if count < ceiling:
-        return f"lower DICT_ANY_CEILING to {count}"
-    return None
+def _takes_dict_any(f: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    args = f.args
+    notes = [a.annotation for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]]
+    notes += [args.vararg and args.vararg.annotation, args.kwarg and args.kwarg.annotation]
+    notes.append(f.returns)
+    return any(a is not None and "dict[str, Any]" in ast.unparse(a) for a in notes)
+
+
+def dict_any_problems(found: set[str], listed: set[str]) -> list[str]:
+    out = [
+        f"{key} takes or returns dict[str, Any]: type it: a dataclass, a TypedDict or a Literal."
+        for key in sorted(found - listed)
+    ]
+    out += [
+        f"DICT_ANY lists {key}, which is gone: delete that entry." for key in sorted(listed - found)
+    ]
+    return out
 
 
 def _parse(**sources: str) -> dict[str, ast.AST]:
@@ -344,8 +675,8 @@ class EveryTableHasOneOwner(unittest.TestCase):
 
     def test_every_table_has_an_owner_and_no_new_foreign_sql(self):
         trees = _trees()
-        tables = table_names(trees["coscc/data.py"])
-        self.assertEqual(table_problems(trees, tables, OWNERS, FOREIGN_SQL), [])
+        owners = OWNERS | feature_owners(trees)
+        self.assertEqual(table_problems(trees, table_names(trees), owners, FOREIGN_SQL), [])
 
     def test_a_planted_foreign_statement_says_the_fix(self):
         trees = _parse(
@@ -357,6 +688,25 @@ class EveryTableHasOneOwner(unittest.TestCase):
             [
                 "coscc/a.py runs SQL on `t`, which coscc/b.py owns. Add a function to "
                 "coscc/b.py that does it, and call that."
+            ],
+        )
+
+    def test_a_feature_table_is_owned_by_its_module_and_foreign_sql_names_the_owner(self):
+        trees = {
+            "coscc/data.py": ast.parse("pass\n"),
+            "coscc/features/x.py": ast.parse(
+                'PLUGIN = Plugin(tables=("CREATE TABLE IF NOT EXISTS t (a INTEGER)",))\n'
+            ),
+            "coscc/other.py": ast.parse('q = "SELECT a FROM t"\n'),
+        }
+        owners = feature_owners(trees)
+        self.assertEqual(owners, {"t": "coscc.features.x"})
+        self.assertEqual(table_names(trees), {"t"})
+        self.assertEqual(
+            table_problems(trees, {"t"}, owners, set()),
+            [
+                "coscc/other.py runs SQL on `t`, which coscc/features/x.py owns. Add a function "
+                "to coscc/features/x.py that does it, and call that."
             ],
         )
 
@@ -376,8 +726,8 @@ class EveryTableHasOneOwner(unittest.TestCase):
 class CallsAreTyped(unittest.TestCase):
     """Public functions do not take or return a bare `dict[str, Any]`."""
 
-    def test_the_count_matches_the_ceiling(self):
-        self.assertIsNone(dict_any_problem(dict_any_count(_trees()), DICT_ANY_CEILING))
+    def test_no_new_dict_any_and_no_stale_entry(self):
+        self.assertEqual(dict_any_problems(dict_any_keys(_trees()), DICT_ANY), [])
 
     def test_a_planted_public_function_counts_but_a_private_one_does_not(self):
         src = (
@@ -386,15 +736,27 @@ class CallsAreTyped(unittest.TestCase):
             "def _c(x: dict[str, Any]): ...\n"
             "def d(x: dict[str, int]): ...\n"
         )
-        self.assertEqual(dict_any_count(_parse(a=src)), 2)
+        self.assertEqual(dict_any_keys(_parse(m=src)), {"coscc.m:a", "coscc.m:b"})
 
-    def test_above_and_below_the_ceiling_say_the_fix(self):
-        self.assertEqual(
-            dict_any_problem(3, 2),
-            "3 public functions take or return dict[str, Any], above the ceiling 2: type the new "
-            "one with a dataclass, a TypedDict or a Literal.",
+    def test_a_new_method_of_the_same_name_fails_and_a_stale_entry_says_to_delete_it(self):
+        src = (
+            "class A:\n    def read(self) -> dict[str, Any]: ...\n"
+            "class B:\n    def read(self) -> dict[str, Any]: ...\n"
         )
-        self.assertEqual(dict_any_problem(1, 2), "lower DICT_ANY_CEILING to 1")
+        found = dict_any_keys(_parse(m=src))
+        self.assertEqual(found, {"coscc.m:A.read", "coscc.m:B.read"})
+        (msg,) = dict_any_problems(found, {"coscc.m:A.read"})
+        self.assertEqual(
+            msg,
+            "coscc.m:B.read takes or returns dict[str, Any]: type it: a dataclass, a TypedDict "
+            "or a Literal.",
+        )
+        (msg,) = dict_any_problems(set(), {"coscc.m:A.read"})
+        self.assertIn("delete that entry", msg)
+
+    def test_the_qualname_includes_enclosing_functions(self):
+        src = "def f():\n    def g() -> dict[str, Any]: ...\n"
+        self.assertEqual(dict_any_keys(_parse(m=src)), {"coscc.m:f.g"})
 
 
 if __name__ == "__main__":

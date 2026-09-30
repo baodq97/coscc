@@ -20,9 +20,7 @@
     },
     "spike": {
       "glyph": "ᛈ",
-      "name": "Perthro",
-      "meaning": "",
-      "role": ""
+      "name": "Perthro"
     },
     "plan": {
       "glyph": "ᚱ",
@@ -44,9 +42,7 @@
     },
     "integrate": {
       "glyph": "ᚷ",
-      "name": "Gebo",
-      "meaning": "",
-      "role": ""
+      "name": "Gebo"
     }
   }
 }

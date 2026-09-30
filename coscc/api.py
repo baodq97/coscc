@@ -23,13 +23,12 @@ update is under way (`Updating`), or 409 when this install cannot be updated (`N
 
 from __future__ import annotations
 
-import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from coscc import features, plugin
 from coscc.config import Config, from_env
@@ -38,47 +37,6 @@ from coscc.service.common import Invalid, NotUpdatable, Updating
 from coscc.agent.sessions import Sessions
 
 log = logging.getLogger(__name__)
-
-
-async def _body(request: Request) -> dict[str, Any]:
-    """The request's JSON object; anything else is the caller's mistake."""
-    try:
-        body = await request.json()
-    except json.JSONDecodeError, ValueError:
-        body = None
-    if not isinstance(body, dict):
-        raise Invalid("send a JSON object")
-    return body
-
-
-def _line(obj: dict[str, Any]) -> bytes:
-    return json.dumps(obj).encode() + b"\n"
-
-
-async def _ndjson(stream: AsyncIterator[tuple[str, Any]], what: str) -> StreamingResponse:
-    """`(kind, payload)` items as NDJSON: a `chunk` line per text, then one `done`.
-
-    The first item is pulled here, so a refusal before any output is still a status code; a
-    failure after it arrives as an `error` line, and the caller must read to the last line.
-    """
-    try:
-        first = await anext(stream)
-    except StopAsyncIteration:
-        raise Invalid(f"{what} produced nothing") from None
-
-    def out(kind: str, payload: Any) -> bytes:
-        return _line({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
-
-    async def lines() -> AsyncIterator[bytes]:
-        try:
-            yield out(*first)
-            async for kind, payload in stream:
-                yield out(kind, payload)
-        except Exception as e:
-            log.exception("the stream of %s failed", what)
-            yield _line({"type": "error", "error": f"{type(e).__name__}: {e}"})
-
-    return StreamingResponse(lines(), media_type="application/x-ndjson")
 
 
 async def _refused(_: Request, e: Exception) -> JSONResponse:
@@ -113,7 +71,7 @@ async def add_workspace(request: Request) -> Any:
 
     The working folder comes from the environment only; a body naming one is ignored.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).ws.add(
         str(body.get("name", "")),
         label=str(body.get("label", "") or ""),
@@ -139,7 +97,7 @@ async def set_stage_model(request: Request) -> Any:
     It decides what every step spends: whoever holds the password or a session can move
     any stage's model. The trace is a `setting` record in the run log.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).models.set_stage_model(body.get("name"), body.get("model"))
 
 
@@ -149,7 +107,7 @@ async def set_stage_effort(request: Request) -> Any:
 
     Same exposure and trace as the model route; `max` is accepted only here.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).models.set_stage_effort(body.get("name"), body.get("effort"))
 
 
@@ -166,7 +124,7 @@ async def set_agent(request: Request) -> Any:
 
     Whoever holds the password or a session can rename any agent. The trace is a `setting` record.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return _service(request).agents.set_agent(
         body.get("key"), {k: v for k, v in body.items() if k != "key"}
     )
@@ -186,7 +144,7 @@ async def set_autopilot(request: Request) -> Any:
     let it ship to `main` under this machine's `gh` login. Turning it on is refused while
     the app listens beyond loopback. The trace is a `setting` record.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return _service(request).autopilot.set_setting(
         str(body.get("cwd", "")), body.get("name"), body.get("value")
     )
@@ -196,7 +154,7 @@ async def set_autopilot(request: Request) -> Any:
 async def create_unit(request: Request) -> Any:
     """Start a work unit. `brief` is the originator's own words and becomes the unit's
     `idea.md`, which the intent step reads."""
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).answers.create_unit(
         str(body.get("cwd") or ""),
         str(body.get("slug") or ""),
@@ -210,7 +168,7 @@ async def create_unit(request: Request) -> Any:
 @router.post("/api/ideas")
 async def create_idea(request: Request) -> Any:
     """Start an idea several units share, in the store of `cwd`. Writes only into the app's own store."""
-    body = await _body(request)
+    body = await plugin.body(request)
     return _service(request).ideas.create_idea(
         str(body.get("cwd") or ""),
         str(body.get("slug") or ""),
@@ -233,7 +191,7 @@ async def answer_question(request: Request) -> Any:
     An optional `delegation: "D<n>"` writes the answer as one an agent gave under a
     delegation entered on Settings (`delegated`). What it `covers` is not checked.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).answers.answer(
         str(body.get("cwd") or ""),
         str(body.get("unit") or ""),
@@ -254,7 +212,7 @@ async def record_outcome(request: Request) -> Any:
     a session can record `đạt`**, under any name. No gate reads the block; the board
     shows it as the ground for keeping or dropping a unit.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).answers.record_outcome(
         *(
             str(body.get(k) or "")
@@ -282,7 +240,7 @@ async def hold_unit(request: Request) -> Any:
     closes the unit's open pull request **with this machine's `gh` login** and removes its
     worktree. It starts nothing, a resume included.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).answers.hold(
         *(str(body.get(k) or "") for k in ("cwd", "unit", "to", "reason", "by"))
     )
@@ -297,7 +255,7 @@ async def more_rounds(request: Request) -> Any:
     or a session can open a paid review round**; the route starts nothing itself, but
     with the autopilot on its next sweep will.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).answers.more_rounds(
         *(str(body.get(k) or "") for k in ("cwd", "unit", "by"))
     )
@@ -309,7 +267,7 @@ async def backlog_estimate(request: Request) -> Any:
 
     A new `estimate-value` row in the run log; no file is written and no gate reads it.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).backlog.record_estimate(
         str(body.get("cwd") or ""),
         str(body.get("unit") or ""),
@@ -323,7 +281,7 @@ async def backlog_estimate(request: Request) -> Any:
 @router.post("/api/backlog/relation")
 async def backlog_relation(request: Request) -> Any:
     """Add or remove one relation: `{cwd, unit, other, type, op, reason, by}`. A `relation` row in the run log, nothing else."""
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).backlog.record_relation(
         *(str(body.get(k) or "") for k in ("cwd", "unit", "other", "type", "op", "reason", "by"))
     )
@@ -336,7 +294,7 @@ async def backlog_shortlist(request: Request) -> Any:
     A `shortlist` row in the run log; every later board step's `start` row reads it.
     Nothing runs because of it, and no gate or `next` reads it.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).backlog.record_shortlist(
         str(body.get("cwd") or ""),
         body.get("units"),
@@ -350,8 +308,8 @@ async def backlog_propose(request: Request) -> Any:
     """**Opens one paid session** proposing estimates: `{cwd}`. Streams NDJSON like
     `/api/board/run`. A second press while one runs is a 400.
     """
-    body = await _body(request)
-    return await _ndjson(
+    body = await plugin.body(request)
+    return await plugin.ndjson(
         _service(request).backlog.propose_estimates(str(body.get("cwd") or "")), "the proposal"
     )
 
@@ -365,7 +323,7 @@ async def post_review_comment(request: Request) -> Any:
     choose the words. A round already on the pull request comes back `already`. A failure
     is a 200 with `state: failed` and gh's reason, because the request was valid.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).answers.post_review_comment(
         str(body.get("cwd") or ""), str(body.get("unit") or ""), body.get("round")
     )
@@ -378,7 +336,7 @@ async def start_branch(request: Request) -> Any:
     The only route that writes to somebody else's git; `coscc/git/gitops.py` lists what
     that may be, because this runs with the app's own authority, not a session's policy.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).backlog.start_branch(
         str(body.get("cwd") or ""), str(body.get("unit") or "")
     )
@@ -412,7 +370,7 @@ async def get_next(request: Request) -> Any:
 @router.post("/api/board/mode")
 async def set_board_mode(request: Request) -> Any:
     """The only thing the board writes, and it writes it to the journal."""
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).steps.set_mode(
         *(str(body.get(k, "")) for k in ("cwd", "unit", "stage", "mode"))
     )
@@ -425,14 +383,14 @@ async def run_step(request: Request) -> Any:
     Anything decidable before output is a status code; a refusal after streaming starts
     arrives as an `error` line.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     # `rerun` only when the body says `true` itself.
     rerun = body.get("rerun") is True
     extra = {"rerun": True, "note": str(body.get("note") or "")} if rerun else {}
     stream = _service(request).steps.run_step(
         str(body.get("cwd", "")), str(body.get("unit", "")), str(body.get("stage", "")), **extra
     )
-    return await _ndjson(stream, "the step")
+    return await plugin.ndjson(stream, "the step")
 
 
 @router.post("/api/board/stop")
@@ -443,7 +401,7 @@ async def stop_step(request: Request) -> Any:
     record's `stopped_by` says (nothing when the cancel lands before the first turn) and
     is a claim, not an identity. It opens no gate and starts nothing.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     return await _service(request).steps.stop_step(
         *(str(body.get(k, "")) for k in ("cwd", "unit", "by"))
     )
@@ -465,9 +423,9 @@ async def integrate_unit(request: Request) -> Any:
     Whoever holds the password or a session can make this machine's `gh` login rebase a
     unit's pull request, or open a paid Gebo session. A refusal is a 400 before anything changes.
     """
-    body = await _body(request)
+    body = await plugin.body(request)
     stream = _service(request).steps.integrate(str(body.get("cwd", "")), str(body.get("unit", "")))
-    return await _ndjson(stream, "the integration")
+    return await plugin.ndjson(stream, "the integration")
 
 
 @router.post("/api/release/prepare")
@@ -477,11 +435,11 @@ async def release_prepare(request: Request) -> Any:
     Whoever holds the password or a session can make this machine's `gh` login commit,
     push a branch and open a pull request. A refusal is a 400 before anything changes;
     every press leaves one `release` record."""
-    body = await _body(request)
+    body = await plugin.body(request)
     stream = _service(request).release.release_prepare(
         str(body.get("cwd", "")), str(body.get("version", ""))
     )
-    return await _ndjson(stream, "the release")
+    return await plugin.ndjson(stream, "the release")
 
 
 @router.post("/api/release/publish")
@@ -492,11 +450,11 @@ async def release_publish(request: Request) -> Any:
     Whoever holds the password or a session can make this machine's `gh` login merge into
     `main` and push a tag no ruleset protects. A refusal is a 400 before anything changes;
     every press leaves one `release` record."""
-    body = await _body(request)
+    body = await plugin.body(request)
     stream = _service(request).release.release_publish(
         str(body.get("cwd", "")), str(body.get("version", ""))
     )
-    return await _ndjson(stream, "the release")
+    return await plugin.ndjson(stream, "the release")
 
 
 @router.get("/api/features")
@@ -514,7 +472,7 @@ async def set_feature(request: Request) -> Any:
     """`{cwd, name, on}` turns one feature on or off for one workspace; a feature or workspace
     not known, or an `on` that is not a boolean, is a 400. It changes the pref `features.off`
     and nothing else. Whoever holds the password or a session can silence a workspace's notices."""
-    body = await _body(request)
+    body = await plugin.body(request)
     on = body.get("on")
     if not isinstance(on, bool):
         raise Invalid("on must be true or false")
@@ -538,7 +496,7 @@ async def set_feature(request: Request) -> Any:
 
 
 async def _update_body(request: Request) -> dict[str, str]:
-    body = await _body(request)
+    body = await plugin.body(request)
     return {k: str(body.get(k, "") or "") for k in ("channel", "by")}
 
 
@@ -582,6 +540,8 @@ def build(config: Config | None = None) -> FastAPI:
     # The routes themselves, not `include_router`, which keeps them behind one entry of `routes`.
     # Read now, so a test can patch `features.FEATURES`.
     ctx = plugin.ctx_of(service)
+    service.steps.hooks = plugin.hooks_of(features.FEATURES, ctx)
+    plugin.create_tables(ctx, features.FEATURES)
     routes = [*router.routes, *(r for f in features.FEATURES for r in f.routes(ctx))]
     api = FastAPI(title="coscc", lifespan=lifespan, routes=routes)
     api.state.config = config

@@ -536,6 +536,40 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual(on_tree, [])
 
 
+class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
+    def guarded(self, check):
+        from coscc.hooks import Guard, Hooks, Parts
+
+        self.service.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
+
+    def test_a_denial_ends_the_step_failed_with_the_guards_words_and_no_claim(self):
+        steps_seen = self.taken()
+        self.paused(tree=str(self.tree))
+        seen = []
+        self.guarded(lambda facts: seen.append(facts) or "the precondition is gone")
+        [said] = self.up()
+        self.assertEqual(steps_seen, [])
+        self.assertEqual(said["result"], "failed")
+        [row] = self.journal.records(self.key, kind="resume")
+        self.assertEqual(row["result"], "failed")
+        self.assertEqual(row["detail"], "g: the precondition is gone")
+        [end] = self.ends()
+        self.assertEqual(end["outcome"], "failed")
+        self.assertFalse(self.service.holds.busy(self.key, self.unit))
+        self.assertIsNone(self.service.steps.registry.get(self.key, self.unit))
+        [facts] = seen
+        self.assertTrue(facts.resumed)
+        self.assertEqual((facts.unit, facts.stage), (self.unit, "plan"))
+
+    def test_a_guard_that_abstains_still_resumes(self):
+        steps_seen = self.taken()
+        self.paused()
+        self.guarded(lambda facts: None)
+        [said] = self.up()
+        self.assertEqual(said["result"], "resumed")
+        self.assertEqual(len(steps_seen), 1)
+
+
 class APausedOwnerEndsNothing(_Base):
     """Gebo and an estimate re-raise `Suspended` before any branch that writes their `end`."""
 

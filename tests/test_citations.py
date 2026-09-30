@@ -97,11 +97,12 @@ def check(text: str, source: str, root: Path) -> list[Problem]:
 
 def scan(root: Path) -> list[Problem]:
     scripts = root / ".claude" / "scripts"
+    worktrees = root / ".claude" / "worktrees"
     problems = []
     for path in sorted(
         [*(root / ".claude").rglob("*.md"), *(root / "coscc" / "features").glob("*.md")]
     ):
-        if scripts in path.parents:
+        if scripts in path.parents or worktrees in path.parents:
             continue
         source = path.relative_to(root).as_posix()
         problems += check(path.read_text(encoding="utf-8"), source, root)

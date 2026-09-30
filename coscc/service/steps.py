@@ -17,6 +17,7 @@ from coscc.units import board as board_reader
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc.agent import agents, harness, modeltrial
+from coscc.hooks import Facts, Hooks, facts as facts_of
 from coscc.units import submit as submit_mod
 from coscc.github import integrate, prmachine
 from coscc.units import planmap, retake
@@ -129,7 +130,7 @@ def _round_kwargs(
     # person can close: guard `impl-claim` reads them when its object arrives.
     if rounds_before:
         kw["rounds_known"] = tuple(sorted(n for n in rounds_before if isinstance(n, int)))
-    if stage in ("impl", "implement") and found.get("rounds"):
+    if stage == "impl" and found.get("rounds"):
         last = found["rounds"][-1]
         kw.update(open_findings=tuple(last.get("open_ids") or ()), claims_round=last.get("n"))
     return kw
@@ -146,7 +147,7 @@ async def _plan_drift(
     """Which files the plan names `main` changed since the plan ran, for `impl`
     only. Unlike `failed_attempts`, nothing here may refuse the step: a busy run log, an
     unreadable `plan.md` or a bug in `drift.py` is "could not check"."""
-    if stage not in ("impl", "implement"):
+    if stage != "impl":
         return None
     try:
         return await drift.compute(
@@ -218,6 +219,7 @@ class Steps:
         self.ideas = ideas
         self.answers = answers
         self.bus = bus
+        self.hooks = Hooks()
         # Held across one retake of a unit's screenshots, app-wide: every capture binds
         # `127.0.0.1:18783`, so two at once fail. A capture a session runs does not take it.
         self._screens_lock = asyncio.Lock()
@@ -645,6 +647,22 @@ class Steps:
                     )
                 )
                 raise Invalid(reason)
+            refusal = self.feature_refusal(
+                facts_of(
+                    workspace=cwd,
+                    workspace_key=key,
+                    unit=unit,
+                    stage="integrate",
+                    run="",
+                    cwd=str(tree or root),
+                    watch=None,
+                    directory=directory,
+                    commands=(),
+                    resumed=False,
+                )
+            )
+            if refusal:
+                raise Refused(refusal, ("feature-refused",))
             if state == "behind" and how not in integrate.COMPLETION:
                 # An Apply waits for a mechanical integration, so none begins once
                 # one is pressed.
@@ -1271,6 +1289,22 @@ class Steps:
             tree, work = await self._open_tree(cwd, unit, stage)
             base = await self._tree_base(cwd, unit, tree)
             answer = await self._ask_gate(cwd, unit, stage, work)
+            refusal = self.feature_refusal(
+                facts_of(
+                    workspace=cwd,
+                    workspace_key=key,
+                    unit=unit,
+                    stage=stage,
+                    run="",
+                    cwd=work,
+                    watch=None,
+                    directory=self.ws.unit_dir(cwd, unit),
+                    commands=(),
+                    resumed=False,
+                )
+            )
+            if refusal:
+                raise Refused(refusal, ("feature-refused",))
 
             # `pr` and `ship` run no session: the PR machine pushes, opens or
             # merges, and records each move through its guard. The mark is this frame's, as for
@@ -1335,7 +1369,7 @@ class Steps:
             )
 
             # Launch.
-            runner = Runner(self.sessions, journal, app=self.app_identity())
+            runner = Runner(self.sessions, journal, app=self.app_identity(), hooks=self.hooks)
             # The registry is what the page lists and what a Stop finds; the mark
             # taken above is what everything else asks. The same start time for both, and no
             # `await` between the listing and the phase.
@@ -1492,6 +1526,19 @@ class Steps:
             return tree.get("base")
         return await worktrees.refresh_base(cwd, unit, self.config.data_dir)
 
+    def feature_refusal(self, facts: Facts) -> str:
+        """The words of the first feature guard that denies this run, or `""` when all abstain. A
+        guard that raises denies: a run is never let through by a check that could not be made."""
+        for guard in self.hooks.for_step(facts.stage, facts.workspace).guards:
+            try:
+                words = guard.check(facts)
+            except Exception as e:
+                log.exception("guard %s of a feature failed", guard.name)
+                return f"{guard.name}: failed ({type(e).__name__})"
+            if words is not None:
+                return f"{guard.name}: {words}"
+        return ""
+
     async def _ask_gate(self, cwd: str, unit: str, stage: str, work: str) -> board_reader.Gate:
         """`cos.mjs gate` is asked here, not left to the skill: a session often cannot run
         a command. Here rather than in `Runner` because a refusal must arrive before any
@@ -1607,9 +1654,7 @@ class Steps:
         plan_drift = await _plan_drift(journal, key, unit, stage, directory, tree)
         # The files the plan names, as they stand in the tree the step runs
         # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
-        plan_kw = (
-            planmap.for_step(directory / "plan.md", work) if stage in ("impl", "implement") else {}
-        )
+        plan_kw = planmap.for_step(directory / "plan.md", work) if stage == "impl" else {}
         shortlist = _shortlist(journal, key, unit)
         answers_before = _answers_before(stage, directory, row)
         # `dict(...)`, not a literal: two sources naming one key is a `TypeError`, not an override.
@@ -1705,7 +1750,7 @@ class Steps:
             idea_note = self.ideas.idea_note(cwd, unit)
             if idea_note:
                 link_kw["idea_note"] = idea_note
-        if stage in ("impl", "implement"):
+        if stage == "impl":
             sibling_paths, siblings_note = await self.ideas.siblings(cwd, unit)
             if siblings_note:
                 link_kw.update(siblings_note=siblings_note, read_also=sibling_paths)

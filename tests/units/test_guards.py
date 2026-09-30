@@ -75,8 +75,19 @@ class TheReasonTableIsClosed(unittest.TestCase):
         self.assertNotRegex(text, r"codes\.push\('")
 
     def test_a_step_refused_before_spend_is_in_the_table(self):
-        for code in ("unit-busy", "updating", "unavailable", "held", "no-unit", "no-stage"):
+        for code in (
+            "unit-busy",
+            "updating",
+            "unavailable",
+            "held",
+            "no-unit",
+            "no-stage",
+            "feature-refused",
+        ):
             self.assertIn(code, guards.REASONS)
+
+    def test_the_feature_refusal_is_the_app_s_alone(self):
+        self.assertNotIn("feature-refused", COS.read_text(encoding="utf-8"))
 
     def test_a_refusal_with_a_code_outside_the_table_is_refused(self):
         with self.assertRaises(ValueError):

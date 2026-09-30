@@ -345,6 +345,34 @@ def back_and_forward_return_to_the_screens_the_page_moved_between(context, base,
         page.close()
 
 
+def a_script_in_the_topbar_slot_survives_board_settings_board(context, base, _scene) -> bool:
+    """A script that renders through `window.coscc.slot` is drawn again after each route change."""
+    page = context.new_page()
+    try:
+        why = arrive(page, base, href("board", "proj")) or settle(page, "board", "proj")
+        page.evaluate(
+            "() => window.coscc.slot('slot-topbar', el => { el.textContent = 'kit-slot'; })"
+        )
+        for label, nav, place in (
+            ("board", None, ("board", "proj")),
+            ("settings", "#nav-settings", ("settings", "proj")),
+            ("board again", "#nav-board", ("board", "proj")),
+        ):
+            if why:
+                break
+            if nav:
+                page.click(nav)
+                why = settle(page, *place)
+            shown = page.wait_for_function(
+                "() => document.getElementById('slot-topbar')?.textContent === 'kit-slot'",
+                timeout=5000,
+            )
+            why = why or ("" if shown else f"the slot is empty on {label}")
+        return say(not why, "a slot script survives board → settings → board", why)
+    finally:
+        page.close()
+
+
 def the_board_search_keeps_only_the_cards_it_matches(context, base, scene) -> bool:
     """A search that matches nothing empties the board; one that matches finds it."""
     page = context.new_page()
@@ -1119,6 +1147,7 @@ def main() -> int:
                 for case in (
                     every_place_opens_at_its_address_and_stays_after_a_reload,
                     back_and_forward_return_to_the_screens_the_page_moved_between,
+                    a_script_in_the_topbar_slot_survives_board_settings_board,
                     the_board_search_keeps_only_the_cards_it_matches,
                 ):
                     results.append(run(case, context, app.base, scene))

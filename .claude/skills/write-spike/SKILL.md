@@ -5,7 +5,7 @@ description: Write the spike.md that measures the questions an accepted spec mar
 
 # Write a spike
 
-Signed ᛈ Perthro. Answer each `U<n>` the spec could not, by running something. Measure only:
+Answer each `U<n>` the spec could not, by running something. Measure only:
 build nothing to keep, never edit the spec.
 
 ## What you are given (trust it)
@@ -13,8 +13,8 @@ build nothing to keep, never edit the spec.
 `spec.md` and any previous `spike.md` are in the prompt; every `U<n>` under its `## Concerns`
 is one question to answer. Do not re-read them.
 
-Gate: from the board it was asked (the prompt says so); at a terminal run
-`node .claude/scripts/cos.mjs gate <NNNN_slug> spike` first and stop on non-zero.
+Gate: from the board it was asked (the prompt says so); at a terminal ask `cos.mjs gate <unit> spike`
+first and stop on non-zero.
 
 ## Where the probe code goes
 
@@ -39,7 +39,7 @@ Keeps what you measured if the step runs out of turns or budget.
 
 ````markdown
 # Spike: <title>
-Spec: spec.md. Author: ᛈ Perthro. Round: <N>. Status: accepted.
+Spec: spec.md. Author: <name>. Round: <N>. Status: accepted.
 
 ## U1
 

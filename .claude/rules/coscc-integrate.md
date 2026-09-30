@@ -5,31 +5,13 @@ paths:
 
 # Things that break here
 
-- `POST /api/units/integrate` force-pushes under this machine's `gh` login. On `behind` it runs
-  `gh pr update-branch --rebase` and moves the local branch with `reset --keep`. On
-  `conflicting` or `red-after-integration` it opens Gebo, a paid session under the
-  `integrate` grant (`coscc/agent/policy.py:261-270`) that allows one push: `--force-with-lease=<branch>:<head at start>`
-  to the unit's own branch.
-  - Denied by words: `gh api`, `gh repo sync`, `gh extension`, `git send-pack`, `git http-push`,
-    and an alias, include or `GIT_CONFIG_*` made during the step. Any program it may start
-    (`node -e`, `python -c`, a script it wrote) can push past the lease, as can an alias already
-    in a git config (`tests/agent/test_policy.py`, `test_the_known_limit`). What stops a force
-    on `main` is the GitHub ruleset, not this grant.
-  - Gebo may read its unit's folder and the intent, spec and plan of related units
-    (`read_paths`); not a sandbox while it has `cat`.
-  - A `behind` or `current` unit can open Gebo too: a non-zero `update-branch` exit after which
-    `gh pr view` still reads the head unmoved opens it with gh's words in the prompt, and it
-    will likely fail the same way. A timeout or an unmoved head stays `failed` with no session;
-    a moved head is taken as GitHub's rebase.
-  - Local commits the pull request lacks (`ahead`, `diverged`) open Gebo in every state.
-  - The head is read once, so a rebase finishing later races the session: the lease refuses the
-    push, the row is `failed`, the tree is moved to the new head, and the session is paid for.
-  - Every press costs one fetch (`coscc/git/fetches.py`), which moves `refs/remotes/origin/main`
-    for every worktree, and one `gh pr view` up to `gh.TIMEOUT` (`coscc/git/gh.py:16`).
-    Every attempt is one `integration` row.
-- Every board read of a unit between `pr` and `ship` costs one `gh pr list` (up to
-  `gh.TIMEOUT`), plus `gh pr checks` for a unit at its last pushed head; offline each reads
-  `unknown` after the wait. The read does not fetch, but an autopilot pass does when a unit is
-  at `ship`. A background `gh pr checks` runs no oftener than `CI_REFRESH` per head.
-- Every `pr` step costs one `gh pr list` (`coscc/github/prmachine.py`), up to `gh.TIMEOUT`, and
-  opens no session.
+- Integrating force-pushes under the machine's `gh` login. A `behind` unit is rebased by GitHub;
+  a conflict or a red check after integration opens a paid session holding one lease push to the
+  unit's own branch.
+- The session's push grant reads words: any program it may start can push past the lease. What
+  stops a force on `main` is the GitHub ruleset, not the grant.
+- Every press costs a fetch that moves `origin/main` for every worktree, and a `gh` call.
+- The head is read once: a rebase finishing later races the session, the lease refuses the push,
+  and the session is paid for.
+- Every board read of a unit between `pr` and `ship` costs a `gh` call; offline it reads
+  `unknown` after the wait.

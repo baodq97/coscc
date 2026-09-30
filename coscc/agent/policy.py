@@ -54,6 +54,15 @@ class Grant:
     # grant's list `decide` lets through. It writes nothing and runs nothing, and is not in
     # `tools`: `--tools` names the built-in set, and an SDK server's tool reaches the session anyway.
     submits: bool = False
+    # Full names of MCP tools a feature's server holds, derived by `coscc/hooks.py`. Not in `tools`
+    # (`--tools` names the built-in set) and not in `opens_anything`.
+    mcp: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in self.mcp:
+            m = MCP_NAME.fullmatch(name)
+            if m is None or m.group(1) == "cos":
+                raise ValueError(f"not a feature's MCP tool name: {name!r}")
 
     @property
     def opens_anything(self) -> bool:
@@ -64,6 +73,8 @@ class Grant:
 READ_TOOLS = ("Read", "Glob", "Grep")
 # `coscc/units/submit.py`'s `NAME`, spelled here so this module imports nothing of it.
 SUBMIT_TOOL = "mcp__cos__submit"
+# A feature's MCP tool, `mcp__<server>__<name>`; the server is captured. `cos` is the app's own.
+MCP_NAME = re.compile(r"mcp__([a-z][a-z0-9-]*)__[a-z][a-z0-9_]*")
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 EXEC_TOOLS = ("Bash",)
 # Hands work to one of `SUBAGENTS` inside the same session. Every tool call a helper makes
@@ -1208,6 +1219,11 @@ def decide(
     if tool == SUBMIT_TOOL and grant.submits:
         # The one MCP tool a grant lets through, by its exact name: the app's own in-process
         # server, whose handler writes nothing and runs nothing.
+        return ""
+    if tool.startswith("mcp__") and tool in grant.mcp:
+        # Safe because `grant.mcp` holds only names the kernel derived from a feature's declared
+        # tools, and `Grant` refuses any entry that is not `mcp__<server>__<name>` or that names
+        # the `cos` server: a built-in tool or `submit` can never enter it.
         return ""
     if tool not in grant.tools:
         # Covers MCP tools by construction: their names are never in a grant.

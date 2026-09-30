@@ -14,21 +14,20 @@ later a rewrite.
 re-read or re-verify them. A question with a block under `## Answers` is decided: cite it as
 `<artifact> ## Answers, câu N`, quote the person, never re-ask, never write into that section.
 
-Gate: from the board it was asked (the prompt says so); at a terminal run
-`node .claude/scripts/cos.mjs gate <NNNN_slug> spec` first and stop on non-zero.
+Gate: from the board it was asked (the prompt says so); at a terminal ask `cos.mjs gate <unit> spec`
+first and stop on non-zero.
 
 ## Steps
 
 1. Write `.cos/NNNN_<slug>/spec.md` from the template.
 2. Every requirement traces to the intent's outcome and is testable (a number with a unit).
-   `## Design` names components, boundaries and data crossing them, not files or order of work.
+   `## Design` names components, boundaries and data crossing them, not files or order of work,
+   and where the new work plugs in (the extension points the repository's CLAUDE.md names). A
+   need none of them serves is a change to the core: name it apart.
 3. Two contradicting constraints: name it under `## Concerns` and who decides. Never pick silently.
 4. A doubt you cannot measure from here (does an SDK, CLI or process behave as assumed) is an
    `[unmeasured]` item, not a guess.
-5. A UI unit (spec changes a path under `paths:` in `.claude/rules/ui-standard.md`): list in
-   `## Design` each screen (at most six) as an app address with the `S<n>` rules that apply,
-   on fixture workspace `proj`, units `0001_fresh-intent`, `0002_open-question`,
-   `0003_awaiting-ship`, `0004_finished`, `0005_unfinished-review`; say when a screen has no address.
+5. On a unit that changes a screen, the UI standard rule's part for this stage applies.
 
 ````markdown
 # Spec: <title>
@@ -63,8 +62,7 @@ Only when proposing a skip: report each of five criteria: (1) at most two existi
 touched, (2) no public interface, schema or stored data changes, (3) no dependency added,
 (4) no behaviour beyond the intent, (5) nothing in auth, PII or security. All pass means the
 spec *may* be skipped; the decision is a person's. Write `spec.md` with `Status: skipped`,
-`## Why skipped` and the assessment, and submit `not-ready`: only `coscc skip` makes it a
-person's.
+`## Why skipped` and the assessment, and submit `not-ready`.
 
 ## Done when
 

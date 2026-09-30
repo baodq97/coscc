@@ -34,18 +34,15 @@ NAME = re.compile(
 
 FIX = "say why, not which unit: drop the id, or the sentence if it only names the unit"
 
-# Markdown that keeps ids on purpose. `old-units.md` is about the old units themselves and
-# `.claude/scripts/testdata` is fixture data for the parsers. Ids that are a format or a
-# fixture, not a unit: the finding id `F<k>` and the spike id `U<n>` that the skills and the UI
-# rule define, and the fixture units a spec is told to name. The one line in `CLAUDE.md` is the
-# pointer to `old-units.md`.
+# Markdown that keeps ids on purpose. `.claude/scripts/testdata` is fixture data for the parsers.
+# Ids that are a format, not a unit: the finding id `F<k>` and the spike id `U<n>` that the
+# skills and the UI rule define.
 SKIPPED = ("worktrees", "testdata")
 ALLOWED = {
-    ".claude/CLAUDE.md": re.compile(r"`0010"),
     ".claude/rules/ui-standard.md": re.compile(r"F\d"),
     ".claude/skills/write-review/SKILL.md": re.compile(r"F\d"),
     ".claude/skills/write-spike/SKILL.md": re.compile(r"U\d"),
-    ".claude/skills/write-spec/SKILL.md": re.compile(r"U\d|0\d\d\d_"),
+    ".claude/skills/write-spec/SKILL.md": re.compile(r"U\d"),
 }
 
 
@@ -107,11 +104,7 @@ def md_ids(path: Path, where: str | None = None) -> list[str]:
 
 def _markdown() -> list[Path]:
     files = [*(REPO / ".claude").rglob("*.md"), *(REPO / "coscc" / "features").glob("*.md")]
-    return sorted(
-        p
-        for p in files
-        if p.name != "old-units.md" and not set(SKIPPED) & set(p.relative_to(REPO).parts)
-    )
+    return sorted(p for p in files if not set(SKIPPED) & set(p.relative_to(REPO).parts))
 
 
 def _files() -> list[Path]:
@@ -160,9 +153,9 @@ class NoFileCarriesAnId(unittest.TestCase):
     def test_the_named_exceptions_hold_only_their_own_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "x.md"
-            path.write_text("the pointer `0010`, but also `0068`\n")
-            found = md_ids(path, ".claude/CLAUDE.md")
-        self.assertEqual([".claude/CLAUDE.md:1: `0068"], found)
+            path.write_text("the finding F2, but also `0068`\n")
+            found = md_ids(path, ".claude/rules/ui-standard.md")
+        self.assertEqual([".claude/rules/ui-standard.md:1: `0068"], found)
 
 
 if __name__ == "__main__":

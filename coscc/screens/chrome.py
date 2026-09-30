@@ -190,6 +190,8 @@ def _topbar() -> rx.Component:
         rx.cond(P.loading, rx.spinner(size="2")),
         # The mode has to be changeable from the page and survive a reload.
         rx.box(rx.color_mode.button(), id="color-mode"),
+        # Empty: a feature's script renders into it.
+        rx.box(id="slot-topbar"),
         align="center",
         gap="12px",
         width="100%",

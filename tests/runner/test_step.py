@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.agent import harness, modeltrial, policy
+from coscc.hooks import Facts, Hooks, Parts, Tool
 from coscc.runlog.journal import Journal
 from coscc.agent.policy import decide, grant_for
 from coscc.runner.prompt import compose_prompt
@@ -2293,7 +2294,7 @@ class AStepAnUpdatePaused(unittest.TestCase):
                 },
             )
 
-    def run_plan(self, d, sessions, resume=None):
+    def run_plan(self, d, sessions, resume=None, hooks=None):
         from coscc.agent import steps
 
         directory = make_unit(
@@ -2304,7 +2305,7 @@ class AStepAnUpdatePaused(unittest.TestCase):
 
         async def go():
             out = []
-            async for item in Runner(sessions, journal).run(
+            async for item in Runner(sessions, journal, **({"hooks": hooks} if hooks else {})).run(
                 workspace=d,
                 directory=directory,
                 journal_key=d,
@@ -2336,6 +2337,24 @@ class AStepAnUpdatePaused(unittest.TestCase):
 
     def kinds(self, journal):
         return [r["kind"] for r in journal.records() if r["kind"] in ("start", "attempt", "end")]
+
+    def test_a_resumed_step_gets_a_server_made_from_resumed_facts(self):
+        made = []
+        tool = Tool(
+            server="fake",
+            names=("ping",),
+            stages=("plan",),
+            make=lambda facts: made.append(facts) or {"type": "sdk", "name": "fake"},
+        )
+        hooks = Hooks(parts=(("fake", Parts(tools=(tool,))),))
+        with tempfile.TemporaryDirectory() as d:
+            sessions = self.GoesOn(rest=self.PLAN)
+            self.run_plan(d, sessions, self.resume(), hooks=hooks)
+            [call] = sessions.calls
+            self.assertEqual(set(call["mcp_servers"]), {"cos", "fake"})
+        [facts] = made
+        self.assertTrue(facts.resumed)
+        self.assertEqual((facts.unit, facts.stage), (UNIT, "plan"))
 
     def test_a_suspended_step_writes_no_end_and_no_attempt(self):
         from coscc.agent.sessions import Suspended
@@ -2435,3 +2454,153 @@ class AStepAnUpdatePaused(unittest.TestCase):
             # A CLI killed before its `cost-state` leaves the next counting from zero.
             self.assertEqual(end["segments"][0]["cost_usd"], 1.2)
             self.assertTrue(end["segments"][0]["cost_unknown"])
+
+
+class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
+    """A tool a feature declares reaches the session only on the stages it names and only while the
+    feature is on, and it never takes `submit`'s place."""
+
+    made: list[Facts]
+
+    def _hooks(self, on=True, stages=("impl",)):
+        self.made = []
+
+        def make(facts):
+            self.made.append(facts)
+            return {"type": "sdk", "name": f"fake-{facts.unit}"}
+
+        tool = Tool(server="fake", names=("ping",), stages=stages, make=make)
+        return Hooks(
+            parts=(("fake", Parts(tools=(tool,))),),
+            enabled=lambda feature, _workspace: on and feature == "fake",
+        )
+
+    class Probe:
+        def __init__(self):
+            self.kw: dict = {}
+            self.answers: dict = {}
+            self.submitted = None
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            if session_id is not None:
+                return
+            self.kw = kw
+            gate = kw.get("can_use_tool")
+            if gate is not None:
+                for tool in ("mcp__fake__ping", "mcp__fake__other", "mcp__cos__submit", "Bash"):
+                    got = await gate(tool, {"command": "ls"}, None)
+                    self.answers[tool] = type(got).__name__ == "PermissionResultAllow"
+            yield ("chunk", "# Plan: x\nStatus: accepted.\n")
+            self.submitted = await _submits(kw)
+            yield ("done", {"session_id": "s", "cost": {}})
+
+    def _run(self, d, hooks, stage, unit=UNIT, journal=None, cwd=None):
+        probe = self.Probe()
+        directory = make_unit(
+            Path(d),
+            intent_md="Status: accepted.\nI",
+            spec_md="Status: accepted.\nS",
+            plan_md="Status: accepted.\nP",
+        )
+        if stage == "impl":
+            (directory / "impl.md").write_text("# Impl\nStatus: accepted.\n", encoding="utf-8")
+        r = Runner(sessions=probe, journal=journal, hooks=hooks)
+
+        async def go():
+            return [
+                ev
+                async for ev in r.run(
+                    workspace=d,
+                    directory=directory,
+                    journal_key=d,
+                    unit=unit,
+                    stage=stage,
+                    artifact=f"{stage}.md",
+                    stages=STAGES,
+                    mode="autonomous",
+                    **({"cwd": cwd} if cwd else {}),
+                )
+            ]
+
+        _, final = asyncio.run(go())[-1]
+        return probe, final
+
+    def test_an_enabled_impl_step_gets_cos_and_the_feature_server(self):
+        with tempfile.TemporaryDirectory() as d:
+            journal = Journal(d, d)
+            probe, final = self._run(d, self._hooks(), "impl", journal=journal)
+            self.assertEqual(final["outcome"], "done", final)
+            self.assertEqual(set(probe.kw["mcp_servers"]), {"cos", "fake"})
+            # Only the derived name is allowed, beside `submit`; a sibling name and a built-in stay
+            # denied. `Bash` is denied here because the stand-in's command has no allowed first word.
+            self.assertTrue(probe.answers["mcp__fake__ping"])
+            self.assertTrue(probe.answers["mcp__cos__submit"])
+            self.assertFalse(probe.answers["mcp__fake__other"])
+            self.assertEqual(probe.kw["tools"], list(policy.grant_for("impl").tools))
+            self.assertNotIn("mcp__fake__ping", probe.kw["tools"])
+            [start] = journal.records(d, kind="start")
+            self.assertEqual(start["mcp"], ["mcp__fake__ping"])
+            self.assertEqual(start["granted"], list(policy.grant_for("impl").tools))
+
+    def test_another_stage_and_a_feature_that_is_off_get_cos_only(self):
+        for name, hooks, stage in (
+            ("other stage", self._hooks(), "plan"),
+            ("feature off", self._hooks(on=False), "impl"),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as d:
+                journal = Journal(d, d)
+                probe, final = self._run(d, hooks, stage, journal=journal)
+                self.assertEqual(final["outcome"], "done", final)
+                self.assertEqual(list(probe.kw["mcp_servers"]), ["cos"])
+                self.assertFalse(probe.answers.get("mcp__fake__ping", False))
+                self.assertFalse(probe.answers.get("mcp__fake__other", False))
+                # `submit` still ends the step.
+                self.assertIsNotNone(probe.submitted)
+                self.assertEqual(journal.records(d, kind="start")[0]["mcp"], [])
+
+    def test_a_step_with_tools_and_no_submit_channel_still_gets_them(self):
+        hooks = self._hooks(stages=("idea",))
+        with tempfile.TemporaryDirectory() as d:
+            probe, _ = self._run(d, hooks, "idea")
+        self.assertIn("fake", probe.kw["mcp_servers"])
+
+    def test_two_concurrent_runs_each_get_a_server_made_from_their_own_facts(self):
+        hooks = self._hooks()
+        first, second = "0009_a-test-unit", "0010_another-unit"
+
+        async def both(d, trees):
+            probes = {first: self.Probe(), second: self.Probe()}
+            directories = {}
+            for unit in (first, second):
+                directories[unit] = Path(d) / ".cos" / unit
+                directories[unit].mkdir(parents=True)
+                for name, body in (("intent.md", "I"), ("plan.md", "P"), ("impl.md", "# Impl\n")):
+                    (directories[unit] / name).write_text(f"Status: accepted.\n{body}\n")
+
+            async def one(unit):
+                r = Runner(sessions=probes[unit], journal=None, hooks=hooks)
+                async for _ in r.run(
+                    workspace=d,
+                    directory=directories[unit],
+                    journal_key=d,
+                    unit=unit,
+                    stage="impl",
+                    artifact="impl.md",
+                    stages=STAGES,
+                    mode="autonomous",
+                    cwd=trees[unit],
+                ):
+                    pass
+
+            await asyncio.gather(one(first), one(second))
+            return probes
+
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as a:
+            with tempfile.TemporaryDirectory() as b:
+                probes = asyncio.run(both(d, {first: a, second: b}))
+                by_unit = {f.unit: f for f in self.made}
+                self.assertEqual(set(by_unit), {first, second})
+                self.assertEqual((by_unit[first].tree, by_unit[second].tree), (a, b))
+                self.assertNotEqual(by_unit[first].run, by_unit[second].run)
+                for unit in (first, second):
+                    self.assertEqual(probes[unit].kw["mcp_servers"]["fake"]["name"], f"fake-{unit}")

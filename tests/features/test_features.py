@@ -9,8 +9,14 @@ from pathlib import Path
 from unittest import mock
 
 import httpx
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
 
 from coscc import screens
+from coscc.data import Data
+from coscc import features
+from coscc.hooks import Block, Guard, Parts, Tool
+from coscc.plugin import Ctx, Plugin, hooks_of
 from coscc.api import build
 from coscc.config import Config
 
@@ -47,6 +53,28 @@ class TakingTheLineOutRemovesTheFeature(Setup):
         async with self.client() as client:
             self.assertEqual((await client.get("/api/notices/follow")).status_code, 200)
         self.assertIn("__coscc_notices", json.dumps(screens.index().render(), default=str))
+
+
+class ATableIsCreatedAtBuild(Setup):
+    def fake(self, *tables: str) -> Plugin:
+        return Plugin("fake", lambda _ctx: [], tables=tables)
+
+    def test_a_feature_table_exists_after_build_and_a_second_build_is_harmless(self):
+        fake = self.fake("CREATE TABLE IF NOT EXISTS fake_things (id INTEGER PRIMARY KEY)")
+        with mock.patch("coscc.features.FEATURES", (fake,)):
+            build(self.config)
+            build(self.config)
+        with Data(self.config.data_dir).connect() as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'fake_things'"
+            ).fetchone()
+        self.assertIsNotNone(row)
+
+    def test_a_statement_that_is_not_a_create_table_raises_at_build(self):
+        for bad in ("DROP TABLE prefs", "CREATE TABLE t (a INTEGER)", "SELECT 1"):
+            with mock.patch("coscc.features.FEATURES", (self.fake(bad),)):
+                with self.assertRaises(ValueError):
+                    build(self.config)
 
 
 class TurningAFeatureOffForAWorkspace(Setup):
@@ -100,6 +128,87 @@ class TurningAFeatureOffForAWorkspace(Setup):
         paths = {r.path for r in build(self.config).routes}
         self.assertIn("/api/features", paths)
         self.assertNotIn("/api/features", {path for _, path in auth.EXEMPT})
+
+
+def _server(_facts):
+    return {"type": "stdio", "command": "true"}
+
+
+def fake_feature(
+    name="fake", server="fake", stages=("impl",), guard="g", block="b", route=True
+) -> Plugin:
+    async def ping(_request):
+        return PlainTextResponse("pong")
+
+    return Plugin(
+        name,
+        lambda _ctx: [Route(f"/api/{name}/ping", ping)] if route else [],
+        scripts=(f"window.__{name} = 1;",),
+        tables=(f"CREATE TABLE IF NOT EXISTS {name}_things (id INTEGER PRIMARY KEY)",),
+        agent=lambda _ctx: Parts(
+            tools=(Tool(server, ("ping",), stages, _server),),
+            guards=(Guard(guard, lambda _f: None),),
+            blocks=(Block(block, lambda _f: "hello"),),
+        ),
+    )
+
+
+class AFeatureHandsTheAgentItsParts(Setup):
+    async def test_route_table_and_parts_are_there_and_the_switch_empties_them(self):
+        fake = fake_feature()
+        with mock.patch("coscc.features.FEATURES", (fake,)):
+            async with self.client() as client:
+                self.assertEqual((await client.get("/api/fake/ping")).text, "pong")
+                api = client._transport.app
+                hooks = api.state.service.steps.hooks
+                held = hooks.for_step("impl", str(self.ws))
+                self.assertEqual([t.server for t in held.tools], ["fake"])
+                self.assertEqual([g.name for g in held.guards], ["g"])
+                self.assertEqual([b.name for b in held.blocks], ["b"])
+                self.assertEqual(hooks.for_step("plan", str(self.ws)).tools, ())
+                off = await client.post(
+                    "/api/features", json={"cwd": str(self.ws), "name": "fake", "on": False}
+                )
+                self.assertEqual(off.status_code, 200)
+                self.assertEqual(hooks.for_step("impl", str(self.ws)), Parts())
+        with Data(self.config.data_dir).connect() as conn:
+            row = conn.execute("SELECT name FROM sqlite_master WHERE name='fake_things'").fetchone()
+        self.assertIsNotNone(row)
+
+    async def test_with_no_features_none_of_it_remains(self):
+        with mock.patch("coscc.features.FEATURES", ()):
+            async with self.client() as client:
+                self.assertEqual((await client.get("/api/fake/ping")).status_code, 404)
+                hooks = client._transport.app.state.service.steps.hooks
+            shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
+        self.assertEqual(hooks.for_step("impl", str(self.ws)), Parts())
+        self.assertNotIn("__fake", shell)
+
+    def test_a_clash_or_a_tool_on_a_prose_stage_is_refused_naming_the_feature(self):
+        ctx = Ctx(lambda: None, str, lambda _f, _w: True, None, None)
+        with self.assertRaisesRegex(ValueError, "b: the MCP server 'fake' is also a's"):
+            hooks_of([fake_feature("a"), fake_feature("b", guard="g2", block="b2")], ctx)
+        with self.assertRaisesRegex(ValueError, "b: the guard 'g' is also a's"):
+            hooks_of([fake_feature("a"), fake_feature("b", server="other", block="b2")], ctx)
+        with self.assertRaisesRegex(ValueError, "b: the block 'b' is also a's"):
+            hooks_of([fake_feature("a"), fake_feature("b", server="other", guard="g2")], ctx)
+        with self.assertRaisesRegex(ValueError, "fake: .*prose stages \\(plan\\)"):
+            hooks_of([fake_feature(stages=("impl", "plan"))], ctx)
+
+
+class AFeatureWithAgentPartsSaysWhatTheAgentSees(unittest.TestCase):
+    def test_its_doc_has_the_section(self):
+        folder = Path(features.__file__).parent
+        for f in features.FEATURES:
+            if f.agent is None:
+                continue
+            doc = folder / f"{f.name}.md"
+            self.assertIn(
+                "## What the agent sees",
+                doc.read_text() if doc.exists() else "",
+                f"add `## What the agent sees` to coscc/features/{f.name}.md: the tools, "
+                "guards and prompt blocks the agent meets",
+            )
 
 
 if __name__ == "__main__":

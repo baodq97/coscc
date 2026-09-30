@@ -6,8 +6,8 @@ hides a cycle, it does not remove one. Inside a package no module reaches anothe
 it back; an `if TYPE_CHECKING:` import is not read. `tests/` is not checked; a test may reach
 anything.
 
-A feature (`coscc/features/<name>.py`, ending in one `PLUGIN`) is a plug-in, so three more rules:
-it imports only `coscc.plugin`, `coscc.bus`, `coscc.service.common` and packages below `service`;
+A feature (`coscc/features/<name>.py`, or a package `<name>/`, ending in one `PLUGIN`) is a plug-in, so three more rules:
+it imports only its own `coscc.features.<name>`, `coscc.plugin`, `coscc.bus`, `coscc.service.common` and packages below `service`;
 only `coscc/api.py` and `coscc/screens/__init__.py` import `coscc.features`, as
 `from coscc import features`; and it is at most 3 files of at most 800 lines. Each check takes
 text or a listing, so a test can feed it a planted case.
@@ -30,6 +30,7 @@ LAYERS = (
     ("service",),
     ("github", "update"),
     ("runner",),
+    ("hooks",),
     ("units",),
     ("git", "runlog"),
     ("agent",),
@@ -178,6 +179,7 @@ def feature_import_problems(sources: dict[str, str]) -> list[str]:
     for path, text in sorted(sources.items()):
         tree = ast.parse(text)
         is_feature = path.startswith("features/") and path != "features/__init__.py"
+        own = path.split("/")[1].split(".")[0] if is_feature else ""
         for line, name, plain in _coscc_imports(tree):
             at = f"coscc/{path}:{line} imports {name}"
             if is_feature:
@@ -185,6 +187,8 @@ def feature_import_problems(sources: dict[str, str]) -> list[str]:
                     name in FEATURE_MAY_IMPORT
                     or LAYER.get(name.split(".")[1], -1) > LAYER["service"]
                 ):
+                    continue
+                if name == f"coscc.features.{own}" or name.startswith(f"coscc.features.{own}."):
                     continue
                 if name.startswith("coscc.features"):
                     fix = "features talk through `coscc/bus.py`, never by import"
@@ -206,12 +210,12 @@ def feature_import_problems(sources: dict[str, str]) -> list[str]:
 
 
 def feature_size_problems(lines: dict[str, int]) -> list[str]:
-    """`lines` maps each path under `coscc/features/` but `__init__.py` to its line count."""
+    """`lines` maps each path under `coscc/features/` but the registry `__init__.py` to its line
+    count; a package's own `__init__.py` is one of its files."""
     entries: dict[str, set[str]] = {}
     out = []
     for path, n in sorted(lines.items()):
-        head = path.split("/")[0]
-        entries.setdefault(head.split(".")[0], set()).add(head)
+        entries.setdefault(path.split("/")[0].split(".")[0], set()).add(path)
         if n > FEATURE_LINES:
             out.append(
                 f"coscc/features/{path} has {n} lines, above {FEATURE_LINES}: cut it, or move "
@@ -221,7 +225,8 @@ def feature_size_problems(lines: dict[str, int]) -> list[str]:
         if len(found) > FEATURE_FILES:
             out.append(
                 f"feature {name} is {len(found)} files, above {FEATURE_FILES}: a feature is "
-                f"{name}.py, {name}.md and at most one more. Fold the extra file in."
+                f"{name}.py, {name}.md and at most one more, and its package `{name}/` counts "
+                "file by file. Fold the extra file in."
             )
     return out
 
@@ -234,7 +239,7 @@ def _feature_lines() -> dict[str, int]:
     return {
         p.relative_to(ROOT / "features").as_posix(): len(p.read_text().splitlines())
         for p in sorted((ROOT / "features").rglob("*"))
-        if p.is_file() and p.name != "__init__.py" and "__pycache__" not in p.parts
+        if p.is_file() and p != ROOT / "features" / "__init__.py" and "__pycache__" not in p.parts
     }
 
 
@@ -264,6 +269,15 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
             (msg,) = feature_import_problems({"features/a.py": src})
             self.assertIn("features talk through `coscc/bus.py`, never by import", msg)
 
+    def test_a_feature_may_import_its_own_modules_and_no_other_feature(self):
+        own = "from coscc.features.a import x\nfrom coscc.features.a.y import z\n"
+        self.assertEqual(feature_import_problems({"features/a/x.py": own}), [])
+        self.assertEqual(feature_import_problems({"features/a.py": own}), [])
+        (msg,) = feature_import_problems({"features/a/x.py": "from coscc.features.b import x\n"})
+        self.assertIn("features talk through `coscc/bus.py`, never by import", msg)
+        (msg,) = feature_import_problems({"features/a/x.py": "from coscc.features.ab import x\n"})
+        self.assertIn("never by import", msg)
+
     def test_a_feature_may_import_the_door_the_bus_and_lower_packages(self):
         src = "from coscc.plugin import Ctx\nfrom coscc.bus import Bus\nfrom coscc.data import Data\nfrom coscc.service.common import Invalid\n"
         self.assertEqual(feature_import_problems({"features/a.py": src}), [])
@@ -277,10 +291,12 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
         self.assertIn("import the list as `from coscc import features`", msg)
 
     def test_a_feature_of_four_files_or_a_long_one_says_the_fix(self):
-        (msg,) = feature_size_problems(
-            {"a.py": 1, "a.md": 1, "a/x.py": 1, "a/y.txt": 1, "a.txt": 1}
-        )
+        (msg,) = feature_size_problems({"a.py": 1, "a.md": 1, "a.txt": 1, "b.py": 1, "a/x.py": 1})
         self.assertIn("feature a is 4 files, above 3", msg)
+        (msg,) = feature_size_problems({"a.md": 1, "a/x.py": 1, "a/y.py": 1, "a/z.py": 1})
+        self.assertIn("feature a is 4 files, above 3", msg)
+        self.assertIn("Fold the extra file in", msg)
+        self.assertEqual(feature_size_problems({"a.md": 1, "a/x.py": 1, "a/y.py": 1}), [])
         (msg,) = feature_size_problems({"a.py": 801})
         self.assertIn("801 lines, above 800", msg)
         self.assertEqual(feature_size_problems({"a.py": 800, "a.md": 800, "b.py": 5}), [])

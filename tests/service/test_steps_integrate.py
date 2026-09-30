@@ -571,6 +571,32 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertIn((self.key, self.unit), self.service.holds.marks)
         self.assertEqual(self.records("start"), [])
 
+    def guarded(self, check):
+        from coscc.hooks import Guard, Hooks, Parts
+
+        self.service.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
+
+    def test_a_guard_that_denies_stops_an_integration_before_spend_and_push(self):
+        from coscc.service.common import Refused
+
+        seen = []
+        self.guarded(lambda facts: seen.append(facts.stage) or "not today")
+        with self.assertRaises(Refused) as caught:
+            self.integrate_with(self._no_act)
+        self.assertEqual(caught.exception.reasons, ("feature-refused",))
+        self.assertEqual(str(caught.exception), "g: not today")
+        self.assertEqual(seen, ["integrate"])
+        self.assertEqual(self.records("start"), [])
+        self.assertEqual(self.remote_head(), self.head_before)
+        self.assertEqual(self.service.holds.running, {})
+        self.assertFalse(self.service.holds.busy(self.key, self.unit))
+
+    def test_a_guard_that_abstains_leaves_an_integration_alone(self):
+        self.guarded(lambda facts: None)
+        self.assertEqual(len(self.records("integration")), 0)
+        self.integrate_with(self._no_act)
+        self.assertEqual(len(self.records("start")), 1)
+
 
 class AStaleOriginMain(unittest.TestCase):
     """`main` moved on the remote after the workspace's last fetch; the pull request has no

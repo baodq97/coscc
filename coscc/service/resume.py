@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from coscc.agent import transcript
 from coscc.agent import steps as steps_mod
 from coscc.data import Data
+from coscc.hooks import facts as facts_of
 from coscc.runlog import events
 from coscc.runlog.journal import BadRecord
 from coscc.runner.step import Runner
@@ -171,6 +172,30 @@ class Resume:
         self.autopilot = autopilot
         self.bus = bus
 
+    def _feature_refuses(self, owner: dict[str, Any]) -> str:
+        """What the guards of the features say to a step taken up again, from its owner; `""` when
+        none denies."""
+        workspace, unit = str(owner.get("workspace_dir") or ""), str(owner.get("unit") or "")
+        tree, scratch = str(owner.get("tree") or ""), owner.get("scratch")
+        try:
+            directory = self.ws.unit_dir(workspace, unit)
+        except Invalid as e:
+            return str(e)
+        return self.steps.feature_refusal(
+            facts_of(
+                workspace=workspace,
+                workspace_key=str(owner.get("workspace") or ""),
+                unit=unit,
+                stage=str(owner.get("stage") or ""),
+                run=str(owner.get("run") or ""),
+                cwd=str(scratch or tree),
+                watch=tree if scratch else None,
+                directory=directory,
+                commands=(),
+                resumed=True,
+            )
+        )
+
     async def resume_after_update(self) -> list[dict[str, Any]]:
         """At start-up: each `suspend` row no start took up is taken up once, then the
         autopilot starts again. What happened to each row is returned.
@@ -216,6 +241,8 @@ class Resume:
                     if held is not None
                     else ""
                 )
+                if not problem and kind in STEP_KINDS:
+                    problem = self._feature_refuses(owner)
             if not problem and kind in ("estimate", "chat"):
                 problem = self._owner_refuses(kind, owner)
             if not problem and kind == "chat":
@@ -382,7 +409,12 @@ class Resume:
             self.steps.drive(
                 running,
                 mark,
-                Runner(self.sessions, journal, app=self.steps.app_identity()),
+                Runner(
+                    self.sessions,
+                    journal,
+                    app=self.steps.app_identity(),
+                    hooks=self.steps.hooks,
+                ),
                 cwd,
                 unit,
                 stage,
