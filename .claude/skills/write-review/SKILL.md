@@ -14,7 +14,7 @@ nothing here reads as a person's approval.
 `impl.md` (scope, test counts, answers), the commit under review, the gate, the earlier
 findings and any answers are in the prompt. CI is green and `impl.md` records its tests: do not
 re-run the suite or report what CI enforces. From the board the gate was asked (the prompt
-says so); at a terminal run `cos.mjs gate <unit> review` first and stop on non-zero. Read the
+says so); at a terminal ask `cos.mjs gate <unit> review` first and stop on non-zero. Read the
 changed files, not the whole tree.
 
 ## Round
@@ -39,27 +39,9 @@ label it: `[needs-person]` (the grant really lacks it or it costs money), or `[c
 `review.md ## Answers` holds a `### F<k>` block that settles it; if not, keep it `[open]` and
 say what is missing. An `[answered]` never returns to `[needs-person]`: raise a new id.
 
-**The `fast` lane** (a `Type: fix` with no `spec.md` or `plan.md`): check three things, and a
-missing one is a finding of `medium` or more, never `low`: the commit holding only the
-reproducing test comes before the fix; `impl.md` shows that same test failing at the first
-and passing at the fix; the file `Source:` names says what `intent.md ## Expected` says.
-
 **Rebase before a round, not after a pass**: a rebase that changes the patch voids a pass.
 
-## Screens
-
-On a UI unit (a changed file under `paths:` in `.claude/rules/ui-standard.md`) open
-`.screens/manifest.json` and `Read` every PNG it lists against `S1`-`S8`. Add `### Screens`:
-first line exactly `Taken at: <manifest head>. Standard: .claude/rules/ui-standard.md. Looked at by: <agent session>, from screenshots.`
-then `- <path>.png — <W>×<H> — <address> — <what you saw>` per image. A violation is a finding
-whose first word after its severity is the rule id. `high`, and `changes-requested`: no
-manifest or image, a `head` older than the last UI commit, `dirty: true`, an unexplained
-`hits` entry. When the prompt carries *The screenshots, taken again*, the app took them; a hit
-counts as explained if `impl.md ## Screens` explains one with the same address, size and kind.
-At a terminal, if the manifest `head` is not an ancestor of HEAD, run
-`uv run python scripts/capture_screens.py <its addresses>` first. Name unreachable screens
-under `### What was not reviewed`. If *The gate, already asked* says a round passed and ship is
-still closed, fix what that line names in this round.
+On a unit that changes a screen, the UI standard rule's part for this stage applies.
 
 ## Artifact
 
@@ -81,13 +63,12 @@ Reviewed: <40-hex sha>. Verdict: changes-requested.
 ### What was not reviewed
 ```
 
-Lines code parses: a round opens `Reviewed: <sha>. Verdict: <pass|changes-requested|needs-person>.`;
-rounds numbered 1, 2, 3 with no gap; a finding is one line `- F<k> [label] path:line — <high|medium|low> — text`
-with em dashes (U+2014), label one of `[open]`, `[fixed <sha>]`, `[needs-person]`,
-`[claim-rejected]`, `[answered]`; a finding with no severity blocks; no location is an opinion.
-`### What was not reviewed` is required; if you did not see the diff, say so. `Status`:
-`draft`, `changes-requested`, `accepted`, `rejected`; the header is rewritten each round, the
-rest appended.
+Line shapes code parses: `Reviewed: <sha>. Verdict: <pass|changes-requested|needs-person>.`;
+rounds numbered without a gap; a finding `- F<k> [label] path:line — <high|medium|low> — text`
+with em dashes, label one of `[open]`, `[fixed <sha>]`, `[needs-person]`, `[claim-rejected]`,
+`[answered]`; no severity blocks; no location is an opinion. `### What was not reviewed` is
+required. `Status`: `draft`, `changes-requested`, `accepted`, `rejected`; the header is
+rewritten each round, the rest appended.
 
 ## Done when
 

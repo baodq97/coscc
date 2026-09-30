@@ -22,19 +22,15 @@ through `questions` as the prompt says, and never re-ask a question that has a b
 2. Before each round, look: `Grep`/`Read` the code the problem names, `git log` for what was
    tried, the idea or incident they point at. Read only what the next question needs.
 3. Ask at most three questions a round, each with what you found and your recommended answer.
-   Dig where the answer is thin:
-   - What cannot be done today, and what shows it (a number, a log, a unit)? Why now?
-   - Who is affected, and what does it cost them?
-   - What would be observably true when this is done, measured how, by when?
-   - What must not change? What is out of scope?
+   Dig where the answer is thin: the evidence, who pays, how done is measured, what must not
+   change.
 4. Never close a gap by assuming; a gap they leave open goes under `## Open questions`.
 
 ## Write it
 
-`node .claude/scripts/cos.mjs new-path <slug>` allocates the directory (slug lowercase-hyphenated,
-names the problem). Write `intent.md` there, at most 2 KB, in their words where they decided
-something. No solution design: the spec decides how. `Type` is one of
-`feat fix docs refactor test chore perf build ci revert`.
+`cos.mjs new-path <slug>` allocates the directory (slug lowercase-hyphenated, names the
+problem). Write `intent.md` there, at most 2 KB, in their words where they decided something. No
+solution design: the spec decides how. `Type` is a conventional-commit type.
 
 ````markdown
 # Intent: <title>
@@ -79,8 +75,8 @@ Source: <path>[:<L1>-<L2>]
 ````
 
 `Source:` is a path they or an answer under `## Answers` named: relative, outside `.cos/`,
-never one you inferred. With all three, `cos.mjs` puts the unit in the `fast` lane, with no
-spec, spike or plan. If one is missing, write none of them: the unit walks the full lane.
+never one you inferred. With all three the unit takes the fast lane. If one is missing, write
+none of them.
 
 ## Done when
 

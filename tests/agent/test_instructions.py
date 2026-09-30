@@ -140,7 +140,7 @@ class ThisCheckout(unittest.TestCase):
         self.assertIn(".claude/rules/coscc-app.md", got.scoped)
         self.assertIn(".claude/rules/ui-standard.md", got.scoped)
         self.assertEqual(got.verbatim, (".claude/CLAUDE.md",))
-        self.assertIn("coscc/screens/__init__.py", got.text)
+        self.assertIn("coscc/screens/*.py", got.text)
         self.assertNotIn("# The UI standard", got.text)
         self.assertNotIn("# The coscc app", got.text)
 
