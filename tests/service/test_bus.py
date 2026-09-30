@@ -46,6 +46,14 @@ class TheServiceWiresWhoListensToWhat(unittest.TestCase):
         self.ended.assert_not_called()
         self.nudged.assert_called_once_with("k")
 
+    def test_a_saved_shortlist_and_a_moved_hold_wake_only_the_autopilot(self):
+        for name in ("shortlist.saved", "hold.moved"):
+            with self.subTest(name=name):
+                self.nudged.reset_mock()
+                self.service.bus.publish(Event(name, "k", "u"))
+                self.nudged.assert_called_once_with("k")
+        self.ended.assert_not_called()
+
     def test_the_other_endings_wake_only_the_updater(self):
         for name in ("step.released", "integration.escalated", "retake.ended"):
             with self.subTest(name=name):

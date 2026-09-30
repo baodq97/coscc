@@ -19,7 +19,7 @@ from coscc.runlog.journal import BadRecord
 from coscc.data import Busy
 from coscc.config import LOOPBACK, Config
 from coscc.data import Data
-from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, log_setting
+from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, Refused, log_setting
 from coscc.service.workspaces import Workspaces
 from coscc.service.common import Holds
 from coscc.service.agents import Agents
@@ -440,7 +440,16 @@ class Autopilot:
                 try:
                     nxt = await self.steps.next_step(cwd, name)
                 except Invalid as e:
+                    if autopilot.is_waiting(e):
+                        reasons[name] = (
+                            ("ci", "")
+                            if autopilot.is_ci_pending(e)
+                            else ("running", here.get(name, ""))
+                        )
+                        continue
                     found[name] = {"unit": name, "kind": "f", "reason": str(e)}
+                    if isinstance(e, Refused) and e.reasons:
+                        found[name]["code"] = e.reasons[0]
                     reasons[name] = (
                         ("running", here[name]) if name in here else _stop_reason("", found[name])
                     )
@@ -680,8 +689,11 @@ class Autopilot:
             log.exception("the autopilot could not run %s of %s", stage, unit)
             said = str(e)
             # A gate's refusal carries its codes (`Refused`); anything else has none.
-            if not autopilot.is_ci_pending(e) and not self.holds.busy(key, unit):
-                self.set_stops(key, {unit: {"unit": unit, "kind": "f", "reason": said}}, {unit})
+            if not autopilot.is_waiting(e) and not self.holds.busy(key, unit):
+                stop = {"unit": unit, "kind": "f", "reason": said}
+                if isinstance(e, Refused) and e.reasons:
+                    stop["code"] = e.reasons[0]
+                self.set_stops(key, {unit: stop}, {unit})
         finally:
             runs = self.runs.get(key) or {}
             if runs.get(unit, ("", None))[1] is asyncio.current_task():

@@ -15,7 +15,7 @@ from typing import Any
 
 # The closed table. First group: the `why` column `cos.mjs next` writes; second: codes `cos.mjs`
 # hands out as `reasons` beside its words (`test_guards.py` reads them back out of it); third:
-# what the guards below refuse with.
+# what the guards below refuse with; fourth: what the app refuses a step with before any spend.
 REASONS = (
     # `cos.mjs next`'s `why`, and a hold's move.
     "dependency",
@@ -57,6 +57,17 @@ REASONS = (
     "bad-branch",
     "not-merged",
     "not-closed",
+    # A step refused before any spend.
+    "unit-busy",
+    "updating",
+    "unavailable",
+    "held",
+    "no-unit",
+    "no-stage",
+    "rerun-by-person",
+    "no-worktree",
+    "no-git",
+    "no-run-log",
 )
 
 # Who may skip a stage. `agent` and `code` never may.

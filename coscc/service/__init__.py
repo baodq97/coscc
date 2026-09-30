@@ -99,7 +99,13 @@ class Service:
             "chat-turn.ended",
         ):
             self.bus.subscribe(name, lambda _: self.updater.job_ended())
-        for name in ("step.ended", "integration.ended", "answer.written"):
+        for name in (
+            "step.ended",
+            "integration.ended",
+            "answer.written",
+            "shortlist.saved",
+            "hold.moved",
+        ):
             self.bus.subscribe(name, self._wake_autopilot)
         self.resume = Resume(
             self.config,

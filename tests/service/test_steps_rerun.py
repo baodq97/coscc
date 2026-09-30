@@ -22,7 +22,7 @@ from coscc.units import worktrees
 from coscc.config import Config
 from coscc.runner import RunError
 from coscc.service import Service
-from coscc.service.common import Invalid
+from coscc.service.common import Invalid, Refused
 from coscc.agent.sessions import Sessions
 from coscc.service.common import unit_state
 
@@ -226,6 +226,16 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
                 self.assertIn(words, str(refused.exception))
         self.assertEqual(self.seen, [])
         self.assertEqual(self.intent(), ARTIFACTS["intent.md"])
+
+    def test_a_refusal_before_spend_carries_its_code(self):
+        for kw, stage, code in (
+            ({"started_by": "autopilot", "rerun": True}, "pr", "rerun-by-person"),
+            ({}, "nope", "no-stage"),
+        ):
+            with self.subTest(code=code):
+                with self.assertRaises(Refused) as refused:
+                    self.run_step(stage, **kw)
+                self.assertEqual(refused.exception.reasons, (code,))
 
     def test_an_empty_note_is_not_refused(self):
         self.run_step("pr", rerun=True, note="   ")

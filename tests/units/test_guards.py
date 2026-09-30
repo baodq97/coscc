@@ -6,6 +6,7 @@ import re
 import unittest
 from pathlib import Path
 
+from coscc.service.common import Refused, Updating
 from coscc.units import guards, states
 from coscc.units.guards import OPEN, BadVerdict, Verdict
 
@@ -72,6 +73,16 @@ class TheReasonTableIsClosed(unittest.TestCase):
         self.assertEqual(handed - set(guards.REASONS), set())
         # No code is written any other way: the only `reasons` pushed are `code(…)` or a `why`.
         self.assertNotRegex(text, r"codes\.push\('")
+
+    def test_a_step_refused_before_spend_is_in_the_table(self):
+        for code in ("unit-busy", "updating", "unavailable", "held", "no-unit", "no-stage"):
+            self.assertIn(code, guards.REASONS)
+
+    def test_a_refusal_with_a_code_outside_the_table_is_refused(self):
+        with self.assertRaises(ValueError):
+            Refused("x", ("no-such",))
+        self.assertEqual(Refused("x", ("unit-busy",)).reasons, ("unit-busy",))
+        self.assertEqual(Updating("x").reasons, ("updating",))
 
     def test_no_code_is_listed_twice(self):
         self.assertEqual(len(guards.REASONS), len(set(guards.REASONS)))

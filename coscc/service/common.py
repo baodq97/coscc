@@ -14,6 +14,7 @@ from coscc.data import now as _now
 from coscc.git import gitops
 from coscc.github import integrate
 from coscc.runlog.journal import BadRecord, Journal
+from coscc.units.guards import REASONS
 from coscc.data import Busy
 
 
@@ -37,6 +38,9 @@ class Refused(Invalid):
 
     def __init__(self, said: str, reasons: tuple[str, ...] = ()) -> None:
         super().__init__(said)
+        for code in reasons:
+            if code not in REASONS:
+                raise ValueError(f"no reason code {code!r}")
         self.reasons = tuple(reasons)
 
 
@@ -64,7 +68,7 @@ class Holds:
     def take(self, key: str, unit: str, kind: str, stage: str = "") -> steps_mod.Mark:
         said = self.busy(key, unit)
         if said:
-            raise Invalid(said)
+            raise Refused(said, ("unit-busy",))
         mark = steps_mod.Mark(kind, stage, "preparing" if kind == "step" else "")
         self.marks[(key, unit)] = mark
         return mark
@@ -129,8 +133,11 @@ def open_prs_once(cwd: str):
     return prs
 
 
-class Updating(Invalid):
+class Updating(Refused):
     """Refused because the app is in the seconds before it restarts. A 503."""
+
+    def __init__(self, said: str) -> None:
+        super().__init__(said, ("updating",))
 
 
 class NotUpdatable(Invalid):

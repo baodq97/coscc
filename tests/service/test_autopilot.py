@@ -1118,6 +1118,74 @@ class Scripted(_Base):
             await self.pass_()
             self.assertEqual(self.stops(), stops, error)
 
+    async def test_a_race_at_launch_leaves_no_stop_and_another_refusal_leaves_its_code(self):
+        for error, stops in (
+            (Refused("busy", ("unit-busy",)), {}),
+            (Refused("updating", ("updating",)), {}),
+            (Refused("no tree", ("no-worktree",)), {"0001_a": "f"}),
+        ):
+
+            async def refused(cwd, unit, stage, started_by="person", error=error):
+                raise error
+                yield  # pragma: no cover
+
+            self.service.steps.run_step = refused
+            self.service.autopilot.stops.pop(self.key, None)
+            self.add("0001_a", "impl", plan="- `a/b.py`")
+            await self.pass_()
+            self.assertEqual(self.stops(), stops, error)
+        self.assertEqual(self.service.autopilot.stops[self.key]["0001_a"]["code"], "no-worktree")
+
+    async def test_a_bare_invalid_at_launch_has_no_code(self):
+        async def refused(cwd, unit, stage, started_by="person"):
+            raise Invalid("name a work unit")
+            yield  # pragma: no cover
+
+        self.service.steps.run_step = refused
+        self.add("0001_a", "impl", plan="- `a/b.py`")
+        await self.pass_()
+        self.assertNotIn("code", self.service.autopilot.stops[self.key]["0001_a"])
+
+    async def test_a_race_at_next_passes_the_unit_over_and_starts_the_next(self):
+        for code, passed in (
+            ("unit-busy", "running"),
+            ("updating", "running"),
+            ("ci-pending", "ci"),
+        ):
+            self.launched.clear()
+            self.units.clear()
+            self.service.autopilot.stops.pop(self.key, None)
+            self.add("0001_a", "spec")
+            self.add("0002_b", "spec")
+            real = self.service.steps.next_step
+
+            async def next_step(cwd, unit, code=code, real=real):
+                if unit == "0001_a":
+                    raise Refused("a race", (code,))
+                return await real(cwd, unit)
+
+            with mock.patch.object(self.service.steps, "next_step", next_step):
+                self.shortlisted = False
+                await self.pass_()
+            self.assertEqual(self.stops(), {}, code)
+            self.assertEqual([u for u, _, _ in self.launched], ["0002_b"], code)
+            self.release.set()
+            await self.settled()
+            self.release.clear()
+
+    async def test_a_coded_refusal_at_next_is_a_stop_with_its_code(self):
+        self.add("0001_a", "spec")
+
+        async def next_step(cwd, unit):
+            raise Refused("no tree", ("no-worktree",))
+
+        self.service.steps.next_step = next_step
+        await self.pass_()
+        self.assertEqual(
+            self.service.autopilot.stops[self.key]["0001_a"],
+            {"unit": "0001_a", "kind": "f", "reason": "no tree", "code": "no-worktree"},
+        )
+
     async def test_off_loopback_nothing_runs_and_the_board_says_why(self):
         use_config(self.service, dataclasses.replace(self.config, host="0.0.0.0"))
         self.add("0001_a", "spec")

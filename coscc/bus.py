@@ -26,6 +26,8 @@ Name = Literal[
     "estimate.ended",
     "chat-turn.ended",
     "answer.written",
+    "shortlist.saved",
+    "hold.moved",
 ]
 NAMES: tuple[Name, ...] = get_args(Name)
 
