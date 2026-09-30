@@ -26,11 +26,11 @@ import claude_agent_sdk as sdk
 from coscc import hooks as hooks_mod
 from coscc.agent import agents, instructions, modeltrial, steps, transcript
 from coscc.agent import sessions as sessions_mod
+from coscc.agent.helpers import DEFINITIONS, PROTOCOL, Helpers
 from coscc.runlog.journal import Journal, Outcome
 from coscc.units import submit as submit_mod
 from coscc.agent.policy import (
     AGENT_TOOL,
-    SUBAGENTS,
     Grant,
     beyond_reading,
     grant_for_step,
@@ -603,6 +603,21 @@ async def _tree_before(
     if before is not None:
         owner["before"] = list(before)
     return before
+
+
+def _helpers_of(
+    grant: Grant,
+    recorder: Any,
+    blocks: tuple[tuple[str, str], ...],
+    resumed: bool,
+) -> tuple[Helpers | None, tuple[tuple[str, str], ...]]:
+    """This run's helpers, for a grant that may start them (its hooks hold `Agent` and
+    `SendMessage`), and the prompt blocks with `PROTOCOL` added. A step taken up again composes no
+    prompt."""
+    if AGENT_TOOL not in grant.tools:
+        return None, blocks
+    ledger = Helpers(recorder.helper if recorder is not None else None)
+    return ledger, blocks if resumed else (*blocks, ("helpers", PROTOCOL))
 
 
 def _denials(recorder: Any) -> Denials:
@@ -1284,11 +1299,11 @@ class Runner:
         watch: str | None,
         directory: Path,
         resumed: bool,
-    ) -> tuple[Any, hooks_mod.Facts, tuple[tuple[str, str], ...]]:
+    ) -> tuple[Any, hooks_mod.Facts, tuple[tuple[str, str], ...], Helpers | None]:
         """The step's recorder, when `Steps.run_step` gave it one (its `run` goes into `start` and
         `end`, and it is closed, everything on disk, before `end` is written); this run as the
-        features see it; and the prompt blocks they add. A step taken up again composes no prompt,
-        so it has none."""
+        features see it; the prompt blocks they add; and the run's helpers (`_helpers_of`). A step
+        taken up again composes no prompt, so it has no block."""
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
         facts = hooks_mod.facts(
             workspace=workspace,
@@ -1302,18 +1317,24 @@ class Runner:
             commands=grant.commands,
             resumed=resumed,
         )
-        return recorder, facts, () if resumed else self._blocks(facts)
+        ledger, blocks = _helpers_of(
+            grant, recorder, () if resumed else self._blocks(facts), resumed
+        )
+        return recorder, facts, blocks, ledger
 
     def _with_tools(
         self,
         grant: Grant,
         channel: submit_mod.Channel | None,
         facts: hooks_mod.Facts,
+        ledger: Helpers | None = None,
     ) -> tuple[Grant, dict[str, Any]]:
         """The grant with the MCP names features' tools add, and the `mcp_servers` argument holding
-        `submit` (when there is a channel) and one server per tool, each made from this run's facts."""
+        `submit` (when there is a channel) and one server per tool, each made from this run's facts.
+        `ledger`'s `peers` rides on `submit`'s server: a grant holding `Agent` (impl) submits."""
+        extra = (ledger.tool(),) if ledger is not None else ()
         servers: dict[str, Any] = (
-            {submit_mod.SERVER: channel.server()} if channel is not None else {}
+            {submit_mod.SERVER: channel.server(*extra)} if channel is not None else {}
         )
         tools = self.hooks.for_step(facts.stage, facts.workspace).tools
         if tools:
@@ -1428,7 +1449,7 @@ class Runner:
         cwd = cwd or workspace
         was = dict((resume or {}).get("owner") or {})
         turn_kind = str(was.get("kind") or "step") if resume is not None else ""
-        recorder, facts, blocks = self._features(
+        recorder, facts, blocks, ledger = self._features(
             grant,
             running,
             workspace=workspace,
@@ -1472,7 +1493,7 @@ class Runner:
         channel = _channel_for(
             grant, recorder, stage, directory, artifact, head, open_findings, claims_round
         )
-        grant, servers = self._with_tools(grant, channel, facts)
+        grant, servers = self._with_tools(grant, channel, facts, ledger)
         start_at = self._write_start(
             was.get("start_at"),
             resume,
@@ -1572,6 +1593,7 @@ class Runner:
                 resume,
                 servers,
                 turn_kind,
+                ledger,
             ):
                 if kind == "chunk":
                     pieces[-1] += payload
@@ -1648,6 +1670,7 @@ class Runner:
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
             outcome, detail, cost, stopped_by = await self._conclude(
+                ledger=ledger,
                 journal_key=journal_key,
                 unit=unit,
                 stage=stage,
@@ -1850,6 +1873,7 @@ class Runner:
         resume: dict[str, Any] | None,
         servers: dict[str, Any],
         turn_kind: str,
+        ledger: Helpers | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """The main reply's stream. An `opening` or `closing` turn taken up again has its main reply
         already."""
@@ -1886,8 +1910,8 @@ class Runner:
             **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
             # Only a step with a channel.
             **servers,
-            # Only a grant holding the helpers' tool gets them: impl.
-            **({"agents": SUBAGENTS} if AGENT_TOOL in grant.tools else {}),
+            # Only a grant holding the helpers' tool gets them, and their ledger: impl.
+            **({"agents": DEFINITIONS, "helpers": ledger} if ledger is not None else {}),
         )
 
     async def _conclude(
@@ -1930,14 +1954,18 @@ class Runner:
         detail: str,
         error: dict[str, str] | None,
         cost: dict[str, Any],
+        ledger: Helpers | None = None,
     ) -> tuple[Outcome, str, dict[str, Any], str | None]:
         """The end of a step, whatever ended it: the turns that repair a reply, the attempt record and
-        the `end` row. `(outcome, detail, cost, stopped_by)`.
+        the `end` row. `(outcome, detail, cost, stopped_by)`. `ledger` tells what its helpers left
+        untold first, while the recorder is open.
 
         `shutting_down` is set when the task is cancelled with no Stop behind it: the app is going
         down, and no `end` is what says so. What must be raised once the rest has done what it does
         for one is raised at the end.
         """
+        if ledger is not None:
+            ledger.close()
         # The budget a closing or repair turn is given. The CLI compares it only after the turn has
         # run, so on one turn it bounds nothing; one already spent is not passed at all, since `0`
         # reaches `_options` as no ceiling. `turn_spent` is what that turn would then have ended with.

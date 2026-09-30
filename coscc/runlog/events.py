@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
@@ -78,6 +79,9 @@ IDLE_WAKE = 5.0
 
 # The fields every event carries; everything else is the kind's own, and is what gets cut.
 COMMON = ("run", "seq", "at", "kind")
+
+# What a step's helpers did, for measuring only: a start, an end with its tokens, and each write.
+HELPER_KINDS = ("worker_start", "worker_end", "worker_write")
 
 
 def now_ms() -> int:
@@ -244,6 +248,11 @@ class Recorder:
     def denied(self, tool: str, tool_input: Any, reason: str) -> None:
         """`denied`: one refusal of the grant's gate. Every one, not the first five."""
         self._emit("denied", tool=tool, input=tool_input, reason=reason)
+
+    def helper(self, kind: str, fields: Mapping[str, object]) -> None:
+        """One of `HELPER_KINDS`, as `coscc/agent/helpers.py` tells it; any other kind is dropped."""
+        if kind in HELPER_KINDS:
+            self._emit(kind, **fields)
 
     def subscribe(self, after: int) -> tuple[asyncio.Queue, list[dict[str, Any]]]:
         """Register first, then read what is there: nothing falls between."""

@@ -30,10 +30,11 @@ it as `spec.md ## Answers, câu N`. Do not check the spec again.
 ## Steps
 
 1. Read the inputs, then the tree as above.
-2. Write the plan from the template, at most 4 KB. At most 10 paths under `## Files that
-   change`; more means the unit is too big: say how to split it and stop.
-   Count the repository's shared files apart from the new work's own; a change to a shared file
-   is planned on its own first. Most new work is its own files, one registration line and its test.
+2. Write the plan from the template, at most 4 KB. At most 10 paths per step, not per unit: the
+   repository's shared files are one step under `## Order of work`, done first; the new work's
+   own files split into steps on disjoint paths under `## Parallelization`, which run at the
+   same time. Only past about 30 paths in all is the unit too big: say how to split it and stop.
+   Most new work is its own files, one registration line and its test.
 3. `## Risks` answers what could break, which step is riskiest and which option you rejected.
 4. Present it with `ExitPlanMode`; revise until the person approves.
 5. Write it to the unit's `plan.md`, and nothing else.
@@ -59,15 +60,24 @@ to measure is not impl's work: name it under `## Risks`>
 <the commands impl runs at the end and their healthy output>
 
 ## Parallelization
-<steps on disjoint files that separate sessions or subagents can do, each with its scope and
-what it reports; or "none: one session">
+(a) <title>
+- <path or glob, one per bullet, none shared with another step>
+Report: <what the step reports when done>
+
+(b) <title>
+- <path>
+Report: <…>
 ````
+
+Or, under the heading, the one line `none: one session`.
 
 ## Lines the app and `cos.mjs` read
 
 - `Impl: novel` for new logic or a security-sensitive file; otherwise `routine`. A missing label
   runs as `novel`.
 - `## Files that change` is one path or glob per bullet, no prose.
+- `## Parallelization` is `(a) <title>`, then its path bullets, then its report, per step: impl
+  starts one helper per step from it, so a step's paths are its only files.
 - When the spec had `[unmeasured] U<n>` items, every step resting on one cites
   `spike.md ## U<n>`; the `impl` gate is closed on a plan that never names `spike.md`. Never
   write "measure X first, stop if not" for such a question: a new one goes back to the spec.

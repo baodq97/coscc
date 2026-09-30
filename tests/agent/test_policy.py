@@ -156,7 +156,7 @@ class OneGrantPerStage(unittest.TestCase):
         expected = {
             # `submits` on the stages that hand back a stage result.
             "impl": Grant(
-                tools=rw + (policy.AGENT_TOOL,),
+                tools=rw + (policy.AGENT_TOOL, policy.SEND_MESSAGE),
                 commands=policy.IMPL_COMMANDS,
                 max_turns=120,
                 max_budget_usd=8.0,
@@ -194,10 +194,24 @@ class OnlyImplStartsHelpers(unittest.TestCase):
     def test_a_helper_holds_no_tool_impl_does_not(self):
         for name, spec in policy.SUBAGENTS.items():
             with self.subTest(helper=name):
-                self.assertTrue(set(spec["tools"]) <= set(IMPL.tools))
+                # The kernel's `peers` is an MCP tool, which no grant lists.
+                self.assertTrue(set(spec["tools"]) - {policy.PEERS_TOOL} <= set(IMPL.tools))
                 self.assertNotIn(policy.AGENT_TOOL, spec["tools"])
         self.assertEqual(policy.SUBAGENTS["scout"]["tools"], list(READ_TOOLS))
-        self.assertEqual(list(policy.SUBAGENTS), ["scout"])
+        self.assertEqual(list(policy.SUBAGENTS), ["scout", "worker"])
+
+    def test_a_worker_is_sonnet_and_holds_what_a_parallel_step_needs(self):
+        worker = policy.SUBAGENTS["worker"]
+        self.assertEqual(worker["model"], "sonnet")
+        self.assertEqual(
+            set(worker["tools"]),
+            {"Read", "Glob", "Grep", "Write", "Edit", "Bash", "SendMessage", "mcp__cos__peers"},
+        )
+
+    def test_peers_is_open_to_a_grant_that_starts_helpers_only(self):
+        self.assertEqual(decide(IMPL, policy.PEERS_TOOL, {}, "/tmp", agent_id="a1"), "")
+        self.assertEqual(decide(IMPL, policy.PEERS_TOOL, {}, "/tmp"), "")
+        self.assertIn("was not granted", decide(grant_for("review"), policy.PEERS_TOOL, {}, "/tmp"))
 
     def test_only_a_named_helper_may_be_started(self):
         self.assertEqual(decide(IMPL, policy.AGENT_TOOL, {"subagent_type": "scout"}, "/tmp"), "")
@@ -1087,7 +1101,12 @@ class TheLabelDecidesImplsCeilings(unittest.TestCase):
         self.assertEqual((novel.max_turns, novel.max_budget_usd), (250, 16.0))
 
     def test_a_routine_or_unlabelled_impl_is_unchanged(self):
-        rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS + (policy.AGENT_TOOL,)
+        rw = (
+            READ_TOOLS
+            + policy.WRITE_TOOLS
+            + policy.EXEC_TOOLS
+            + (policy.AGENT_TOOL, policy.SEND_MESSAGE)
+        )
         written = Grant(
             tools=rw,
             commands=policy.IMPL_COMMANDS,
@@ -1376,3 +1395,48 @@ class AFeaturesMcpToolIsAllowedByItsExactNameAndNothingElse(unittest.TestCase):
     def test_replace_revalidates(self):
         with self.assertRaises(ValueError):
             replace(Grant(), mcp=("Bash",))
+
+
+class AHelperRunsGitOnlyToRead(unittest.TestCase):
+    def bash(self, command: str, agent_id: str | None) -> str:
+        return decide(IMPL, "Bash", {"command": command}, "/tmp", agent_id=agent_id)
+
+    def test_a_helpers_commit_is_refused_saying_only_the_leading_session_commits(self):
+        for command in (
+            "git commit -m x",
+            "git -C . commit -m x",
+            "git push origin x",
+            "git add .",
+            "git checkout main",
+            "git stash",
+            "git status && git commit -m x",
+            "git",
+            "uv run git commit -m x",
+            "uv run --frozen git push",
+            "find . -name x -exec git add {} ;",
+        ):
+            with self.subTest(command=command):
+                self.assertIn("only the leading session commits", self.bash(command, "a1"))
+
+    def test_a_helper_may_read_with_git(self):
+        for command in (
+            "git diff",
+            "git status --porcelain",
+            "git log --oneline -3",
+            "git show HEAD",
+            "git blame x.py",
+            "git --no-pager diff | head",
+            "uv run pytest tests/x.py",
+            "uv run git diff",
+            "find . -name '*.py' -exec grep -n git {} ;",
+            "grep -n git x.py",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command, "a1"), "")
+
+    def test_the_leading_sessions_commit_is_as_it_was(self):
+        self.assertEqual(self.bash("git commit -m x", None), "")
+        self.assertEqual(
+            decide(IMPL, "Bash", {"command": "git commit -m x"}, "/tmp"),
+            self.bash("git commit -m x", None),
+        )

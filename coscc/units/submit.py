@@ -413,9 +413,10 @@ class Channel:
             f"your object against the unit: {AGAIN}"
         )
 
-    def server(self) -> Any:
-        """The SDK MCP server carrying this channel's one tool, for `mcp_servers`."""
-        return _serve(self)
+    def server(self, *extra: Any) -> Any:
+        """The SDK MCP server carrying this channel's tool, for `mcp_servers`, and `extra`: the
+        kernel's other `cos` tools (`coscc/agent/helpers.py`'s `peers`)."""
+        return _serve(self, extra)
 
     @staticmethod
     def of(config: Mapping[str, Any]) -> Channel | Collector | None:
@@ -464,11 +465,13 @@ def submitted(collector: Collector) -> bool:
     return guards.guard(RUN_SUBMITTED).check({"submitted": collector.object() is not None}).open
 
 
-def _serve(channel: Channel | Collector) -> Any:
+def _serve(channel: Channel | Collector, extra: tuple[Any, ...] = ()) -> Any:
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
     config = create_sdk_mcp_server(
-        SERVER, "1.0.0", [tool(TOOL, channel.description(), channel.schema)(channel.handle)]
+        SERVER,
+        "1.0.0",
+        [tool(TOOL, channel.description(), channel.schema)(channel.handle), *extra],
     )
     _CHANNELS[config["instance"]] = channel
     return config
