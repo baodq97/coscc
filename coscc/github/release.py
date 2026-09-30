@@ -19,14 +19,15 @@ import asyncio
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 from coscc.agent.harness import child_env
 from coscc.git import gh
 from coscc.github import integrate
 
 STATES = ("nothing", "ready", "pr-open", "merged-untagged", "tagged", "published", "unknown")
-OUTCOMES = ("opened", "merged", "tagged", "refused", "failed")
+Outcome = Literal["opened", "merged", "tagged", "refused", "failed"]
+OUTCOMES: tuple[Outcome, ...] = get_args(Outcome)
 PHASES = ("prepare", "publish")
 # The button each state carries; a state absent here has none.
 BUTTON = {"ready": "prepare", "pr-open": "publish", "merged-untagged": "publish"}
@@ -346,7 +347,7 @@ def record(
     workspace: str,
     phase: str,
     version: str,
-    outcome: str,
+    outcome: Outcome,
     proposed: str = "",
     last_tag: str = "",
     units: list[dict] | None = None,

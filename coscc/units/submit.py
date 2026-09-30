@@ -11,13 +11,11 @@ transition through `coscc/units/transitions.py` once the artifact is written. Th
 nothing and runs nothing.
 """
 
-from __future__ import annotations
-
 import hashlib
 import weakref
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 from coscc.units import guards
 
@@ -31,20 +29,28 @@ AGAIN = "Correct the object and call submit again."
 
 # What a stage's `judgement` puts on its artifact. `rejected` and `done` are a person's, or
 # a later machine's, and no agent chooses them.
+Judgement = Literal["ready", "not-ready"]
 JUDGEMENTS = {"ready": "accepted", "not-ready": "draft"}
 
 # The stages whose run hands back a stage result. `review` hands back a round and the
 # integrate and estimate sessions their own objects. A set, as `policy.SUBMITTING` is.
-STAGE_RESULT = ("idea", "impl", "intent", "plan", "spec", "spike")
+ResultStage = Literal["idea", "impl", "intent", "plan", "spec", "spike"]
+STAGE_RESULT: tuple[ResultStage, ...] = get_args(ResultStage)
 ROUND = "review"
 
 # What a round's `verdict` puts on `review.md`. `needs-person` keeps it `changes-requested`:
 # the unit is not finished, and `cos.mjs` reads the round's verdict for the wait.
+Verdict = Literal["pass", "changes-requested", "needs-person"]
 ROUND_STATES = {
     "pass": "accepted",
     "changes-requested": "changes-requested",
     "needs-person": "changes-requested",
 }
+
+FindingState = Literal["open", "fixed", "needs-person", "claim-rejected", "answered"]
+Severity = Literal["high", "medium", "low"]
+SpikeVerdict = Literal["holds", "fails"]
+
 
 _U = {"type": "string", "pattern": "^U[0-9]+$"}
 _F = {"type": "string", "pattern": "^F[0-9]+$"}
@@ -66,7 +72,7 @@ def stage_result_schema(stage: str) -> dict[str, Any]:
     """`unmeasured` belongs to `spec` alone and `verdicts` to `spike`."""
     properties: dict[str, Any] = {
         "stage": {"type": "string", "enum": [stage]},
-        "judgement": {"type": "string", "enum": list(JUDGEMENTS)},
+        "judgement": {"type": "string", "enum": list(get_args(Judgement))},
         "questions": _QUESTIONS,
     }
     required = ["stage", "judgement", "questions"]
@@ -82,7 +88,10 @@ def stage_result_schema(stage: str) -> dict[str, Any]:
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"id": _U, "verdict": {"type": "string", "enum": ["holds", "fails"]}},
+                "properties": {
+                    "id": _U,
+                    "verdict": {"type": "string", "enum": list(get_args(SpikeVerdict))},
+                },
                 "required": ["id", "verdict"],
                 "additionalProperties": False,
             },
@@ -98,7 +107,7 @@ def stage_result_schema(stage: str) -> dict[str, Any]:
 
 # The labels a finding may carry, `cos.mjs`'s own: `open`, `fixed` in a commit, or what the
 # review made of impl's claim or of a person's answer.
-FINDING_STATES = ("open", "fixed", "needs-person", "claim-rejected", "answered")
+FINDING_STATES: tuple[FindingState, ...] = get_args(FindingState)
 
 # The other kinds of object. The estimate's fields are checked by `backlog.parse_proposal`:
 # the schema holds types, the app its rules.
@@ -106,17 +115,17 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     "review-round": {
         "type": "object",
         "properties": {
-            "verdict": {"type": "string", "enum": ["pass", "changes-requested", "needs-person"]},
+            "verdict": {"type": "string", "enum": list(get_args(Verdict))},
             "findings": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
                         "id": _F,
-                        "state": {"type": "string", "enum": list(FINDING_STATES)},
+                        "state": {"type": "string", "enum": list(get_args(FindingState))},
                         # The commit a `fixed` finding was fixed in; `""` for every other state.
                         "fixed_in": {"type": "string", "pattern": "^([0-9a-f]{7,40})?$"},
-                        "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+                        "severity": {"type": "string", "enum": list(get_args(Severity))},
                         "rule": {"type": "string", "pattern": "^(S[0-9]+)?$"},
                         "path": {"type": "string"},
                         "lines": {"type": "string"},

@@ -6,7 +6,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import jsonschema
 
@@ -102,6 +102,12 @@ class TheSchemaOfAStageResult(unittest.TestCase):
     def test_every_kind_of_object_is_closed(self):
         for name, schema in {**submit.SCHEMAS, "stage": submit.stage_result_schema("spec")}.items():
             self.assertIs(schema["additionalProperties"], False, name)
+
+
+class EachMapCoversItsLiteral(unittest.TestCase):
+    def test_the_maps_cover_the_literals(self):
+        self.assertEqual(set(submit.JUDGEMENTS), set(get_args(submit.Judgement)))
+        self.assertEqual(set(submit.ROUND_STATES), set(get_args(submit.Verdict)))
 
 
 class TheChannelChecksWhatTheSchemaCannot(unittest.TestCase):

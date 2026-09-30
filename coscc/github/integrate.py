@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal, get_args
 
 from coscc.agent import agents
 from coscc.agent.transcript import ceilings_left
@@ -37,7 +37,8 @@ STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown"
 # is refused unless the fetch it begins with finds it behind.
 BUTTON_STATES = ("behind", "conflicting", "red-after-integration")
 GEBO_STATES = ("conflicting", "red-after-integration")
-OUTCOMES = ("pushed", "needs-person", "refused", "failed")
+Outcome = Literal["pushed", "needs-person", "refused", "failed"]
+OUTCOMES: tuple[Outcome, ...] = get_args(Outcome)
 # How long the app waits for GitHub's rebase to show as a new head. Chosen, not measured.
 POLL_TRIES = 5
 POLL_DELAY = 2.0
@@ -376,7 +377,7 @@ def record(
     head_before: str,
     head_after: str,
     origin_sha: str,
-    outcome: str,
+    outcome: Outcome,
     related_: dict | None = None,
     report: str = "",
     needs_person: list[str] | None = None,
@@ -453,7 +454,7 @@ def _fetch_of(fetch: dict | None) -> dict | None:
     return {"outcome": fetch.get("outcome"), "age": fetch.get("age")}
 
 
-def outcome_of_session(head_before: str, head_now: str, needs_person: list[str]) -> str:
+def outcome_of_session(head_before: str, head_now: str, needs_person: list[str]) -> Outcome:
     """What a Gebo session did, in order: the head on git moved, else the object it handed back
     names something only a person can settle, else it failed. Its words never decide.
     """

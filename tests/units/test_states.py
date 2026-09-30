@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import get_args
 
 from coscc.agent import harness
 from coscc.units import states
@@ -78,6 +79,15 @@ class TheDefaultIsTheSetInUseToday(unittest.TestCase):
             self.assertIsNotNone(mine, stage["name"])
             self.assertEqual(list(mine.statuses), stage["statuses"], stage["name"])
             self.assertEqual(mine.optional, bool(stage.get("optional")), stage["name"])
+
+    def test_the_stage_type_lists_the_stage_names_of_the_file(self):
+        names = [
+            s["name"]
+            for s in json.loads(Path(states.__file__).with_name("states.json").read_text())[
+                "stages"
+            ]
+        ]
+        self.assertEqual(set(get_args(states.StageName)), set(names))
 
     def test_settled_means_what_cos_mjs_means_by_it(self):
         # `.claude/scripts/cos.mjs:123`. Counted on this, so a disagreement here moves
