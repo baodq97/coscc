@@ -1411,6 +1411,9 @@ class AHelperRunsGitOnlyToRead(unittest.TestCase):
             "git stash",
             "git status && git commit -m x",
             "git",
+            "uv run git commit -m x",
+            "uv run --frozen git push",
+            "find . -name x -exec git add {} ;",
         ):
             with self.subTest(command=command):
                 self.assertIn("only the leading session commits", self.bash(command, "a1"))
@@ -1424,6 +1427,9 @@ class AHelperRunsGitOnlyToRead(unittest.TestCase):
             "git blame x.py",
             "git --no-pager diff | head",
             "uv run pytest tests/x.py",
+            "uv run git diff",
+            "find . -name '*.py' -exec grep -n git {} ;",
+            "grep -n git x.py",
         ):
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command, "a1"), "")

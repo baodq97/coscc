@@ -1324,8 +1324,10 @@ def _helper_git(command: str, agent_id: str | None) -> str:
     """Why a helper's `git` is refused, or "": its subcommand must be one of `HELPER_GIT`. The
     leading session's call (`agent_id` `None`) is never refused here.
 
-    Read on the words `_words` leaves, so `git -C . commit` reads as `git commit`. A tripwire like
-    the rest: `git diff --output=<file>` still writes.
+    Read on the words `_words` leaves, so `git -C . commit` reads as `git commit`, and on the
+    program `_launched` finds, so `uv run git commit` and `find . -exec git commit` read so too.
+    A tripwire like the rest: `git diff --output=<file>` still writes, and `python -c` or
+    `uv run --with x git` hide the program.
     """
     if agent_id is None:
         return ""
@@ -1335,18 +1337,40 @@ def _helper_git(command: str, agent_id: str | None) -> str:
         return ""
     for simple in parsed.commands:
         words = list(simple.words)
-        k = 0
-        while k < len(words) - 1 and _ASSIGNMENT.match(words[k]):
-            k += 1
-        if not words or words[k].rsplit("/", 1)[-1] != "git":
-            continue
-        sub = _words("git", words[k + 1 :])[1:2]
-        if not sub or sub[0] not in HELPER_GIT:
-            return (
-                f"a helper runs git only to read ({', '.join(HELPER_GIT)}): "
-                "only the leading session commits"
-            )
+        for k in _launched(words):
+            if k >= len(words) or words[k].rsplit("/", 1)[-1] != "git":
+                continue
+            sub = _words("git", words[k + 1 :])[1:2]
+            if not sub or sub[0] not in HELPER_GIT:
+                return (
+                    f"a helper runs git only to read ({', '.join(HELPER_GIT)}): "
+                    "only the leading session commits"
+                )
     return ""
+
+
+# What `find` runs a command with.
+_FIND_EXEC = ("-exec", "-execdir", "-ok", "-okdir")
+
+
+def _launched(words: list[str]) -> list[int]:
+    """Where a program starts in one simple command's words: the first past its assignments,
+    the one after `uv run` and its flags, and the one after each `find -exec`."""
+    if not words:
+        return []
+    k = 0
+    while k < len(words) - 1 and _ASSIGNMENT.match(words[k]):
+        k += 1
+    out = [k]
+    program = words[k].rsplit("/", 1)[-1]
+    if program == "uv" and words[k + 1 : k + 2] == ["run"]:
+        j = k + 2
+        while j < len(words) and words[j].startswith("-"):
+            j += 1
+        out.append(j)
+    elif program == "find":
+        out += [j + 1 for j, w in enumerate(words) if w in _FIND_EXEC]
+    return out
 
 
 # git's own options that take a value, in front of the subcommand.
