@@ -5,11 +5,7 @@ description: Report where every unit of work in .cos/ stands and what is blockin
 
 # Report work unit status
 
-```
-uv run coscc state <workspace> | node .claude/scripts/cos.mjs status --state -
-uv run coscc state <workspace> | node .claude/scripts/cos.mjs status --json --state -
-```
-
+Ask `cos.mjs status` (`--json` for data) with the app's snapshot, as the prompt gives it.
 Reproduce the table as printed; do not recompute a cell from the files. Report every line
 under `Problems`. Name the one next action per unit and stop: starting it was not asked.
-With no units, name `write-intent`. This skill writes nothing.
+With no units, name an intent. This skill writes nothing.

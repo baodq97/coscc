@@ -438,7 +438,7 @@ async def _compose(
         rerun=rerun,
         rerun_note=rerun_note,
         plan_map=plan_map,
-        commands=grant.commands if stage in ("impl", "implement") else (),
+        commands=grant.commands if stage == "impl" else (),
         unfinished_round=unfinished_round,
         idea_note=idea_note,
         siblings_note=siblings_note,

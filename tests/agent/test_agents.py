@@ -42,10 +42,6 @@ class TheTableIsTheOneTheSpecChose(unittest.TestCase):
         for key in ("pr", "ship"):
             self.assertIsNone(agent_for(key), key)
 
-    def test_implement_is_impl(self):
-        self.assertEqual(agent_for("implement"), agent_for("impl"))
-        self.assertEqual(agent_for("implement")["key"], "impl")
-
     def test_an_unknown_stage_has_no_agent(self):
         self.assertIsNone(agent_for("deploy"))
         self.assertIsNone(agent_for(""))

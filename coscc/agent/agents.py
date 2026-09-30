@@ -21,8 +21,6 @@ FIELDS = ("glyph", "name", "meaning", "role")
 OVERRIDE = "override"
 DEFAULT = "default"
 
-_ALIASES = {"implement": "impl"}
-
 # ASCII only, so a name is safe as the local part of the trailer's address.
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
 NAME_MAX = 24
@@ -135,7 +133,6 @@ def resolve(
 ) -> dict[str, Any] | None:
     """One row, each field override first, then default, with `source` saying which.
     `None` for a key the defaults do not have: an override alone makes no agent."""
-    key = _ALIASES.get(key, key)
     base = defaults.get(key)
     if base is None:
         return None

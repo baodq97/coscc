@@ -37,10 +37,9 @@ When asked, or when ten rows have no group:
      path:line>. Fix: <the change at the root>. Status: open | intent <unit> | resolved <sha>.
    ```
 
-3. Prefer a fix that removes code, a rule or a route over one that adds one; say what it removes.
-4. Rank the groups by rows × cost. The top one becomes an intent through `write-intent`, with
-   the originator.
-5. When its fix ships, mark the group `resolved <sha>`; a row after that reopens it.
+3. Prefer a fix that removes code over one that adds; rank the groups by rows × cost. The top
+   one becomes an intent, with the originator.
+4. When its fix ships, mark the group `resolved <sha>`; a row after that reopens it.
 
 ## Done when
 

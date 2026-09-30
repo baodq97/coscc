@@ -7,16 +7,16 @@ A local SDLC harness. `cos.mjs` decides every gate; each stage's rules live in i
 ```
 npm test        # lint, then every test
 uv run ruff format && uv run ruff check --fix  # before commit
-uv sync         # after a fresh clone
 node .claude/scripts/cos.mjs <command>:
   status [--json] · gate <unit> <stage> [--json]   # 0 open, 1 blocked with reasons, 2 misuse
   next <unit> · new-path <slug> · new-idea <slug> · unit-branch <unit>
   pr-text <unit> · rerun <unit> [<stage>] · check-branch [name] · check-tag <tag> · check-version
 ```
 
-`status`, `gate`, `next`, `rerun`, `unit-branch`, `pr-text` need `--state -` from
-`uv run coscc state <workspace> |`. Most take `--root <dir>`; `gate` and `next` take `--repo <dir>`.
-Branch on `reasons` codes (`coscc/units/guards.py`), never on their words.
+The deciding commands (`status`, `gate`, `next`, `rerun`, `unit-branch`, `pr-text`) need the
+app's snapshot: `uv run coscc state <workspace> | ... --state -`. Most take `--root <dir>`;
+`gate` and `next` take `--repo <dir>`. Branch on `reasons` codes (`coscc/units/guards.py`), never
+on their words.
 
 ## Verifying your work
 
@@ -25,16 +25,14 @@ Branch on `reasons` codes (`coscc/units/guards.py`), never on their words.
 ## Conventions
 
 - English everywhere except `.cos/`: English filenames and headings, Vietnamese prose.
-- Branches and tags: `<type>/<slug>` (feat fix docs refactor test chore perf build ci revert),
-  `vX.Y.Z`, `vX.Y.Z-rc.N`. Never compose one by hand: `unit-branch`, `check-branch`, `check-tag`.
-- One branch and one PR per change, squashed, rebased onto `main` (never merge `main` in).
-- No unit or requirement ids in comments, docstrings, names or rules (`tests/test_comments.py`).
-- Import downwards, from the defining module; `tests/` mirrors `coscc/`. New work is a feature
-  (`coscc/features/<name>.py` + a `FEATURES` line) using only `Ctx` and the kernel's
-  extension points; a need none serves is a kernel change (`.claude/docs/code-and-tests.md`).
+- Branches and tags are `<type>/<slug>`, `vX.Y.Z`, `vX.Y.Z-rc.N`; never compose one by hand:
+  `unit-branch`, `check-branch`, `check-tag`.
+- One branch and one PR per change, rebased onto `main` (never merge `main` in).
+- New work is a feature (`coscc/features/<name>.py` + a `FEATURES` line) using only `Ctx` and
+  the kernel's extension points; a need none serves is a kernel change, planned first
+  (`.claude/docs/code-and-tests.md`).
 - Code little and simple; split a file only when needed.
-- Unit paths come from `new-path`. Cite files as path:lines. Cut unsourced
-  figures.
+- Unit paths come from `new-path`. Cite committed files as path:lines; cut unsourced figures.
 
 ## Architecture
 
@@ -53,8 +51,8 @@ A unit is `.cos/NNNN_<slug>/` holding its artifacts; its state is in the app's `
 
 ## Docs (read when it applies)
 
-- `.claude/docs/branches.md` — review rounds, rebasing, the branch order.
+- `.claude/docs/code-and-tests.md` — adding a feature, the checks, tests.
+- `.claude/docs/branches.md` — rebasing, review rounds, the merge.
 - `.claude/docs/copying.md` — copying `.claude/` elsewhere.
-- `.claude/docs/not-built.md` — before adding a route, button or grant.
+- `.claude/docs/not-built.md` — the trust model: before adding a route, button or grant.
 - `.claude/docs/ideas.md` — an idea shared by several units.
-- `.claude/docs/old-units.md` — an artifact of a unit below `0010`.

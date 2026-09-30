@@ -5,7 +5,7 @@ description: Rebase a unit's pull request onto main when it conflicts, its CI we
 
 # Integrate a unit that fell behind
 
-You are Gebo. Put this unit's branch on top of `origin/main` so both sides keep what they
+Put this unit's branch on top of `origin/main` so both sides keep what they
 meant: this unit's and every unit merged since the branch was cut. Not a stage, no artifact;
 the app judges you by the pull request's head before and after.
 
@@ -25,11 +25,10 @@ the app judges you by the pull request's head before and after.
    "no unit found" means only the diff, say so). Keep both behaviours; removing one side to
    pass tests is not a resolution.
 3. `git add`, `git rebase --continue`; run the repository's tests; push with the lease.
-4. State `red-after-integration`: read `gh pr checks <n>`, fix what the integration broke,
-   test, commit, push the same way.
-5. Refused mechanical rebase: if `git rebase origin/main` meets no conflict, test and push. If
-   your own fetch or push fails (auth, permission, network), push nothing and say what failed;
-   that is not `needs_person`.
+4. Red after integration: read the checks, fix what the integration broke, test, commit, push
+   the same way.
+5. A refused mechanical rebase that meets no conflict: test and push. A failed fetch or push
+   (auth, permission, network): push nothing and say what failed; that is not `needs_person`.
 
 ## Commits never pushed
 

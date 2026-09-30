@@ -32,8 +32,8 @@ it as `spec.md ## Answers, câu N`. Do not check the spec again.
 1. Read the inputs, then the tree as above.
 2. Write the plan from the template, at most 4 KB. At most 10 paths under `## Files that
    change`; more means the unit is too big: say how to split it and stop.
-   Count core files apart from the new work's own; a core change is planned on its own first.
-   Most new work is its own files, one registration line and its test.
+   Count the repository's shared files apart from the new work's own; a change to a shared file
+   is planned on its own first. Most new work is its own files, one registration line and its test.
 3. `## Risks` answers what could break, which step is riskiest and which option you rejected.
 4. Present it with `ExitPlanMode`; revise until the person approves.
 5. Write it to the unit's `plan.md`, and nothing else.
@@ -56,7 +56,7 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
 to measure is not impl's work: name it under `## Risks`>
 
 ## Verification
-<the commands impl runs at the end and their healthy output, e.g. `npm test`: `ℹ fail 0`, `N passed`>
+<the commands impl runs at the end and their healthy output>
 
 ## Parallelization
 <steps on disjoint files that separate sessions or subagents can do, each with its scope and
@@ -65,8 +65,8 @@ what it reports; or "none: one session">
 
 ## Lines the app and `cos.mjs` read
 
-- `Impl: novel` for new logic, or when `## Files that change` names a `SECURITY_SURFACE` file
-  of `coscc/agent/labels.py`; otherwise `routine`. A missing label runs as `novel`.
+- `Impl: novel` for new logic or a security-sensitive file; otherwise `routine`. A missing label
+  runs as `novel`.
 - `## Files that change` is one path or glob per bullet, no prose.
 - When the spec had `[unmeasured] U<n>` items, every step resting on one cites
   `spike.md ## U<n>`; the `impl` gate is closed on a plan that never names `spike.md`. Never

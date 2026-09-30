@@ -130,7 +130,7 @@ def _round_kwargs(
     # person can close: guard `impl-claim` reads them when its object arrives.
     if rounds_before:
         kw["rounds_known"] = tuple(sorted(n for n in rounds_before if isinstance(n, int)))
-    if stage in ("impl", "implement") and found.get("rounds"):
+    if stage == "impl" and found.get("rounds"):
         last = found["rounds"][-1]
         kw.update(open_findings=tuple(last.get("open_ids") or ()), claims_round=last.get("n"))
     return kw
@@ -147,7 +147,7 @@ async def _plan_drift(
     """Which files the plan names `main` changed since the plan ran, for `impl`
     only. Unlike `failed_attempts`, nothing here may refuse the step: a busy run log, an
     unreadable `plan.md` or a bug in `drift.py` is "could not check"."""
-    if stage not in ("impl", "implement"):
+    if stage != "impl":
         return None
     try:
         return await drift.compute(
@@ -1638,9 +1638,7 @@ class Steps:
         plan_drift = await _plan_drift(journal, key, unit, stage, directory, tree)
         # The files the plan names, as they stand in the tree the step runs
         # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
-        plan_kw = (
-            planmap.for_step(directory / "plan.md", work) if stage in ("impl", "implement") else {}
-        )
+        plan_kw = planmap.for_step(directory / "plan.md", work) if stage == "impl" else {}
         shortlist = _shortlist(journal, key, unit)
         answers_before = _answers_before(stage, directory, row)
         # `dict(...)`, not a literal: two sources naming one key is a `TypeError`, not an override.
@@ -1736,7 +1734,7 @@ class Steps:
             idea_note = self.ideas.idea_note(cwd, unit)
             if idea_note:
                 link_kw["idea_note"] = idea_note
-        if stage in ("impl", "implement"):
+        if stage == "impl":
             sibling_paths, siblings_note = await self.ideas.siblings(cwd, unit)
             if siblings_note:
                 link_kw.update(siblings_note=siblings_note, read_also=sibling_paths)

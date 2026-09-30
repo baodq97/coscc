@@ -385,13 +385,17 @@ class TheIdeaScreensAreUiFiles(unittest.TestCase):
     """A file the UI standard does not list is no UI file to the `ship` gate."""
 
     def test_ui_standard_md_paths_name_every_new_screen_file(self):
+        import fnmatch
         from pathlib import Path
+
+        from coscc.agent.instructions import scoped_patterns
 
         text = (
             Path(__file__).resolve().parents[2] / ".claude" / "rules" / "ui-standard.md"
         ).read_text(encoding="utf-8")
+        globs = scoped_patterns(text) or []
         for path in ("coscc/screens/idea.py", "coscc/state/ideas.py", "coscc/service/ideas.py"):
-            self.assertIn(f'  - "{path}"', text, path)
+            self.assertTrue(any(fnmatch.fnmatch(path, g) for g in globs), path)
 
     def test_the_idea_page_is_drawn(self):
         from coscc.screens.idea import _idea_screen
