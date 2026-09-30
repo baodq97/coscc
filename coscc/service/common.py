@@ -14,13 +14,14 @@ from coscc.data import now as _now
 from coscc.git import gitops
 from coscc.github import integrate
 from coscc.runlog.journal import BadRecord, Journal
+from coscc.units import states
 from coscc.units.guards import REASONS
 from coscc.data import Busy
 
 
-# The eight stage names, in stage order. Repeated here because the board read is async and
-# this method is not; keep in step with the board's stage list.
-STAGE_FILES = ("idea", "intent", "spec", "plan", "impl", "pr", "review", "ship")
+# The stage names, in stage order, from the state set `cos.mjs` is checked against: a copy
+# kept here by hand once left `spike` out, and the unit's detail could not open `spike.md`.
+STAGE_FILES = states.default().stage_names
 
 # Where a unit's branch is cut from: the trunk as this remote has it. Constants, not request
 # fields, so a caller cannot point the fetch at another remote or branch.
