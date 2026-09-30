@@ -1,4 +1,4 @@
-"""Tests for `Notices` in `coscc/service/notices.py`.
+"""Tests for `Notices` in `coscc/features/notices.py`.
 
 The generator is read directly, with `beat` shortened: `httpx.ASGITransport` collects a whole
 response body, so a stream that lasts `notices.LIFETIME_SECONDS` is read through it only with
@@ -14,8 +14,8 @@ import time
 import unittest
 from pathlib import Path
 
-from coscc import auth
-from coscc.service import notices
+from coscc import auth, plugin
+from coscc.features import notices
 from coscc.config import Config
 from coscc.runlog.journal import BELL, Journal
 from coscc.service import Service
@@ -50,6 +50,7 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
             data_dir=str(root / "data"),
         )
         self.service = Service(self.config, Sessions(self.config))
+        self.feed = notices.Notices(plugin.ctx_of(self.service))
         self.key = self.service.ws.key(str(self.ws))
         self.journal = Journal(self.config.working_dir, self.config.data_dir)
         self.streams = []
@@ -59,8 +60,8 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
             await s.aclose()
 
     def follow(self, after=None, workspace="", beat=BEAT, lifetime=None):
-        s = self.service.notices.follow_notices(
-            self.service.notices.notice_scope(workspace), after, beat=beat, lifetime=lifetime
+        s = self.feed.follow_notices(
+            self.feed.notice_scope(workspace), after, beat=beat, lifetime=lifetime
         )
         self.streams.append(s)
         return s
@@ -202,6 +203,19 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         everything = await self.notices(self.follow(after=0), 2)
         self.assertEqual({n["workspace"] for n in everything}, {self.key, other})
 
+    async def test_a_workspace_with_notices_off_is_passed_over_and_another_still_arrives(self):
+        plugin.set_enabled(self.service, ["notices"], "notices", str(self.other), False)
+        other = self.service.ws.key(str(self.other))
+        self.append(stop(other))
+        mine = self.append(stop(self.key))
+        got = await self.notices(self.follow(after=0), 1)
+        self.assertEqual([n["id"] for n in got], [mine])
+        later = self.append(stop(other, "0002_b"))
+        last = self.append(stop(self.key, "0003_c"))
+        [line] = await self.notices(self.follow(after=mine), 1)
+        self.assertEqual(line["id"], last)
+        self.assertGreater(later, mine)
+
     async def test_following_writes_nothing_to_the_run_log(self):
         self.append(stop(self.key))
         before = self.journal.last_id()
@@ -212,7 +226,7 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
     async def test_an_unknown_workspace_is_refused(self):
         for workspace in ("/etc", str(self.ws.parent)):
             with self.assertRaises(Invalid):
-                self.service.notices.notice_scope(workspace)
+                self.feed.notice_scope(workspace)
 
     async def test_a_closed_stream_leaves_no_ticket_behind(self):
         before = len(BELL)

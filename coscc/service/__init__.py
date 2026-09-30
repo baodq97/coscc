@@ -24,7 +24,6 @@ from coscc.service.board import Board
 from coscc.service.common import Holds
 from coscc.service.ideas import Ideas
 from coscc.service.models import Models
-from coscc.service.notices import Notices
 from coscc.service.release import Release
 from coscc.service.resume import Resume
 from coscc.service.sessions import Chat
@@ -55,7 +54,6 @@ class Service:
         # The parts below `Service`, each given what it reads.
         self.agents = Agents(self.config, self.ws)
         self.models = Models(self.config, self.ws)
-        self.notices = Notices(self.ws)
         self.activity = Activity(self.config, self.ws)
         self.chat = Chat(self.config, self.ws, self.sessions, self.updater, self.models)
         self.ideas = Ideas(self.config, self.ws)

@@ -157,6 +157,10 @@ Read this before adding a route, a button or a grant, and before copying this ha
   Gebo or a step at a terminal records nothing here. A step another copy of the app runs on
   the same data root writes into the same tables, but only that copy can follow it live;
   this one reads it as `ended-unknown` until it ends.
+- **Turning a feature off is not an approval, and it starts nothing.** `POST /api/features`
+  (`{cwd, name, on}`) writes the pref `features.off` for one workspace and nothing else. Whoever
+  holds the password or a live session can silence a workspace's notices; nothing is deleted and
+  no gate reads it.
 - **A screenshot is not a person's look.** Since `0083` a unit whose branch changes a file
   listed under `paths:` in `.claude/rules/ui-standard.md` cannot ship until its passing
   review round carries `### Screens`: `impl` takes the screenshots with

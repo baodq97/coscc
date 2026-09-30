@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import reflex as rx
 
+from coscc import features
 from coscc.screens import studio as s
 
 # Every name is imported back so `coscc.screens.<name>` still resolves; a patch reaches only the module that looks it up.
 from coscc.screens.common import P
-from coscc.screens.chrome import _sidebar, _topbar, _status_bar, _banners, _NOTICE_JS
+from coscc.screens.chrome import _sidebar, _topbar, _status_bar, _banners
 from coscc.screens.overview import _overview, _workspaces_screen
 from coscc.screens.board import _RECONNECT_JS, _board
 from coscc.screens.sessions import _sessions, _activity, _cost
@@ -92,8 +93,8 @@ def index() -> rx.Component:
         _watch_dialog(),
         rx.script(_RECONNECT_JS),
         rx.script(_WATCH_JS),
-        # The notices, outside Reflex's state and socket (`chrome.py`).
-        rx.script(_NOTICE_JS),
+        # Each feature's page script, outside Reflex's state and socket; read now so a test can patch the list.
+        *[rx.script(js) for f in features.FEATURES for js in f.scripts],
         # No `on_mount`: it runs again on every path change. The first read is `StudioState.arrive`, every route's `on_load`.
         id="studio-shell",
         data_density=P.density,
