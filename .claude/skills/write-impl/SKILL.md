@@ -28,8 +28,9 @@ non-zero.
 
 ## Work
 
-1. Write the code from the plan. Run the tests of the files you change while working; run
-   `npm test` once at the end.
+1. Write the code from the plan, starting from an existing example of the same kind in the
+   repository and using its shared helpers; never write the plumbing again. Run the tests of
+   the files you change while working; run `npm test` once at the end.
 2. Commit. Each claim in `impl.md` names a commit.
 3. If a file `main` changed contradicts the plan, stop before editing it: record it under
    `## What is still open`, `Status: draft`, and leave `plan.md` alone. Otherwise note what you

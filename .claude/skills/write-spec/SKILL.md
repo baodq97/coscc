@@ -21,7 +21,9 @@ Gate: from the board it was asked (the prompt says so); at a terminal run
 
 1. Write `.cos/NNNN_<slug>/spec.md` from the template.
 2. Every requirement traces to the intent's outcome and is testable (a number with a unit).
-   `## Design` names components, boundaries and data crossing them, not files or order of work.
+   `## Design` names components, boundaries and data crossing them, not files or order of work,
+   and where the new work plugs in (the extension points the repository's CLAUDE.md names). A
+   need none of them serves is a change to the core: name it apart.
 3. Two contradicting constraints: name it under `## Concerns` and who decides. Never pick silently.
 4. A doubt you cannot measure from here (does an SDK, CLI or process behave as assumed) is an
    `[unmeasured]` item, not a guess.

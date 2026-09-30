@@ -32,6 +32,8 @@ it as `spec.md ## Answers, câu N`. Do not check the spec again.
 1. Read the inputs, then the tree as above.
 2. Write the plan from the template, at most 4 KB. At most 10 paths under `## Files that
    change`; more means the unit is too big: say how to split it and stop.
+   Count core files apart from the new work's own; a core change is planned on its own first.
+   Most new work is its own files, one registration line and its test.
 3. `## Risks` answers what could break, which step is riskiest and which option you rejected.
 4. Present it with `ExitPlanMode`; revise until the person approves.
 5. Write it to the unit's `plan.md`, and nothing else.
