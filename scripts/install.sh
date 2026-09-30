@@ -150,6 +150,15 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+# The vault feature encrypts with the external tools `age` and `age-keygen` (one package).
+# Without them only the vault is unavailable, so this warns and goes on; it never installs
+# anything itself and never fails the install.
+if ! command -v age >/dev/null 2>&1 || ! command -v age-keygen >/dev/null 2>&1; then
+  echo "install.sh: warning: 'age' and 'age-keygen' were not both found on PATH. coscc" >&2
+  echo "install.sh: installs without them, but the vault stays unavailable until they are" >&2
+  echo "install.sh: here. On Debian or Ubuntu:  sudo apt install age" >&2
+fi
+
 # ---------------------------------------------------------------------------------------
 # 3-4. The wheel for this exact version, sha256-checked against the value baked above.
 # ---------------------------------------------------------------------------------------

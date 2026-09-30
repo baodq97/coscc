@@ -34,6 +34,10 @@ uv run python scripts/capture_screens.py /board /settings   # into .screens/
   app to the database.
 - Every route, button and grant acts for whoever holds the password: `.claude/docs/not-built.md`
   before adding one.
+- The vault (`coscc/features/vault.py`) is not a security boundary: an agent with python or node
+  can read a call's tmpfs file or `/proc/<pid>/environ`, use its `SSH_AUTH_SOCK`, or print a value
+  the filter misses. The leak scan detects, it does not prevent; one login, every action is
+  `owner`. Rest in `coscc/features/vault.md`.
 
 ## Docs
 
