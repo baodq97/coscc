@@ -247,12 +247,21 @@ class CaptureKeepsTheOutputAndNeverReturnsIt(unittest.TestCase):
         again = self.rig.run("echo made-up-value-42")
         self.assertEqual(again.stdout, "[secret:ws:made]\n")
 
+    def test_the_secret_it_makes_is_one_create_line_before_the_use(self):
+        self.rig.run("echo made-up-value-42", capture="ws:made")
+        self.assertEqual(
+            [(r["action"], r["name"], r["actor"], r.get("via")) for r in self.rig.lines()],
+            [("create", "ws:made", "agent:impl", "capture"), ("use", "", "agent:impl", None)],
+        )
+        self.assertNotIn("made-up-value-42", self.rig.everything_logged())
+
     def test_a_failed_or_empty_command_stores_nothing(self):
         failed = self.rig.run("echo abc; false", capture="ws:a")
         empty = self.rig.run("printf ''", capture="ws:b")
         self.assertEqual((failed.exit_code, failed.captured, empty.captured), (1, 0, 0))
         self.assertIn("nothing was kept", empty.stderr)
         self.assertEqual([s.name for s in self.rig.store.all()], [])
+        self.assertEqual([r["action"] for r in self.rig.lines()], ["use", "use"])
 
     def test_too_much_output_is_not_stored(self):
         done = self.rig.run("printf '%70000s' x", capture="ws:big")

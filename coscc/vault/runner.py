@@ -223,21 +223,25 @@ def _execute(
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _capture(store: Store, name: str, workspace: str, actor: str, stdout: bytes) -> tuple[int, str]:
-    """Keep `stdout` as the value of the new secret `name`: `(bytes kept, a note when none)`."""
+def _capture(
+    store: Store, journal: Journal | None, name: str, workspace: str, actor: str, stdout: bytes
+) -> tuple[bytes, str]:
+    """Keep `stdout` as the value of the new secret `name`, and write its `create` line: `(the
+    value kept, a note when none)`."""
     value = stdout.removesuffix(b"\n")
     if not value or len(value) > CAPTURE_MAX:
-        return 0, f"capture: stdout is empty or over {CAPTURE_MAX} bytes, so nothing was kept"
+        return b"", f"capture: stdout is empty or over {CAPTURE_MAX} bytes, so nothing was kept"
     try:
         store.create(name, workspace, "captured from a command", actor=actor)
     except BadSecret as e:
-        return 0, f"capture failed: {e}"
+        return b"", f"capture failed: {e}"
     try:
         store.put(name, workspace, value)
     except BadSecret as e:
         store.delete(name, workspace)
-        return 0, f"capture failed: {e}"
-    return len(value), ""
+        return b"", f"capture failed: {e}"
+    record(journal, "create", name, workspace, actor, via="capture")
+    return value, ""
 
 
 def _checked_capture(store: Store, name: str, workspace: str) -> None:
@@ -329,9 +333,10 @@ def run(
         return Result(None, "", "", {}, (), refused, 0)
 
     code, out, err = _execute(line, uses, values, cwd, min(max(int(timeout), 1), MAX_TIMEOUT))
-    captured, note = (0, "")
+    kept, note = (b"", "")
     if capture and code == 0:
-        captured, note = _capture(store, capture, workspace, actor, out)
+        kept, note = _capture(store, journal, capture, workspace, actor, out)
+    captured = len(kept)
     shown_out, in_out = mask(values, out)
     shown_err, in_err = mask(values, err)
     masked = dict(Counter(in_out) + Counter(in_err))
