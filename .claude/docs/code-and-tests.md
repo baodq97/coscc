@@ -64,6 +64,7 @@ coscc.py, run.py        the page app, the command line
 screens/                components
 state/                  what the page shows (place, present)
 api.py                  the JSON API
+features/, plugin.py    features that plug in (below), and their door
 service/                every decision the page and the API ask for
 github/, update/        pull requests, integration, release; updating the app
 runner/                 one step of one unit
@@ -90,6 +91,15 @@ config.py
     Add a function to the owner and call that.
   - Types: a public function does not take or return `dict[str, Any]` beyond `DICT_ANY_CEILING`.
     Type the new one with a dataclass, a `TypedDict` or a `Literal`.
+
+- A feature is a plug-in: `coscc/features/<name>.py` ends in one `PLUGIN` (`coscc/plugin.py`) and gets
+  the running app only through a `Ctx`. Add it as its file plus one line in `FEATURES`
+  (`coscc/features/__init__.py`); delete that line and its route and page script are gone.
+  A workspace turns it off with `POST /api/features {cwd, name, on}`, no code change. Three
+  rules in `tests/test_layers.py`: a feature imports only `coscc.plugin`, `coscc.bus`,
+  `coscc.service.common` and packages below `service` (never another feature); only `api.py` and
+  `screens/__init__.py` import `coscc.features`, as `from coscc import features`; a feature is at
+  most 3 files of 800 lines each.
 
 ## Imports
 

@@ -1,7 +1,7 @@
 # Notices: `GET /api/notices/follow`, and listening from a terminal
 
-Read this before changing `coscc/service/notices.py`, the route, or
-`_NOTICE_JS` in `coscc/screens/chrome.py` (`0113`).
+Read this before changing `coscc/features/notices.py`: the route, `_NOTICE_JS` and `PLUGIN` are
+all in it.
 
 ## What it sends
 
@@ -77,7 +77,7 @@ done
 
 `scripts/e2e.py` runs exactly the block between the two markers, through a proxy that cuts
 the connection both ways (`close` and `stall`); it does not run the `/login` line, since its
-session is seeded (`0113` plan, *Proof*).
+session is seeded.
 
 ## Hazards
 
@@ -85,20 +85,19 @@ session is seeded (`0113` plan, *Proof*).
   jar holds a live session: whoever reads that file can call every route. Once the session
   ends — its 30 days, a logout, `coscc reset-password` — a listener hears nothing past the
   end of the stream it is on, at most 30 s; its next connection is refused, it stops with
-  the refusal line and needs the `/login` line again. There is no machine credential
-  (`0113` spec C5).
+  the refusal line and needs the `/login` line again. There is no machine credential.
 - **Each listener holds a connection, and a dead one is held longer.** A peer that vanished
   without closing (a slept laptop, dropped Wi-Fi) is not noticed by the server until a
   `beat` fails to write at the TCP level or the stream's 30 s run out; until then it keeps a
   task and a `journal.BELL` ticket. What the server does with the socket after that, and how
-  many can pile up, is not measured (spec C6; the spike saw one still open 46 s after the
+  many can pile up, is not measured (the spike saw one still open 46 s after the
   cut). Nothing is lost by it.
 - **A record another process writes arrives up to 15 s late**; one this process writes rings
-  the bell and arrives at once. Measured in `service/test_notices.py`, not in production.
+  the bell and arrives at once. Measured in `features/test_notices.py`, not in production.
 - **An autopilot stop reaches the run log only when a pass runs**, every 5 minutes or after a
-  step ends (spec C1): the stream is prompt about the log, not about the stop.
+  step ends: the stream is prompt about the log, not about the stop.
 - **`ship-refused` can be a merge that happened.** `why` is read off the files after the step;
   a `ship` whose branch deletion failed after the merge leaves `ship.md` `draft` and reads as
-  `ship-refused` (plan Risk 4). A `shipped` for the same unit follows once `ship` runs again.
+  `ship-refused`. A `shipped` for the same unit follows once `ship` runs again.
 - **Hearing a notice is not an approval.** It changes no artifact, gate, stop or hold, and
   the stream writes nothing to the run log.

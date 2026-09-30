@@ -98,7 +98,9 @@ def check(text: str, source: str, root: Path) -> list[Problem]:
 def scan(root: Path) -> list[Problem]:
     scripts = root / ".claude" / "scripts"
     problems = []
-    for path in sorted((root / ".claude").rglob("*.md")):
+    for path in sorted(
+        [*(root / ".claude").rglob("*.md"), *(root / "coscc" / "features").glob("*.md")]
+    ):
         if scripts in path.parents:
             continue
         source = path.relative_to(root).as_posix()

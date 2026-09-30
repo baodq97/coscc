@@ -6,8 +6,9 @@ environment, returns configuration or runs anything the caller names, and nothin
 every route translates a request into a `Service` call and the result back into JSON.
 
 The page does not come through here: its buttons reach `Service` over Reflex's socket. It only
-fetches `/api/update` and `/api/notices/follow`. The rest is for the owner's own tools, the
-updater's trial of a new build and `scripts/install.sh`; a route nobody calls is not kept.
+fetches `/api/update` and the routes of the features in `coscc/features/` (notices). The rest
+is for the owner's own tools, the updater's trial of a new build and `scripts/install.sh`; a
+route nobody calls is not kept.
 
 Reflex reserves `/ping/`, `/_event` and `/_upload`; the guard in `coscc/auth.py` serves
 `/login`, `/setup` and `/logout`. Nothing here may use them. Every route sits behind that
@@ -30,6 +31,7 @@ from typing import Any, AsyncIterator
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from coscc import features, plugin
 from coscc.config import Config, from_env
 from coscc.service import Service
 from coscc.service.common import Invalid, NotUpdatable, Updating
@@ -456,33 +458,6 @@ async def running_steps(request: Request) -> Any:
     return _service(request).steps.running_steps(_cwd(request))
 
 
-@router.get("/api/notices/follow")
-async def follow_notices_route(request: Request) -> Any:
-    """NDJSON: a `head` line when there is no `after`, a `notice` line per run-log record
-    past it that is one, and a `beat` line after `notices.BEAT_SECONDS` without one.
-    `workspace` narrows to one. Reads only. It ends after `notices.LIFETIME_SECONDS`, so a
-    listener comes back through the login door.
-
-    Holds a connection per listener (`.claude/docs/coscc-notices.md`). A refusal is a 400
-    before the stream starts; the first line is not waited for, since with `after` it may
-    be a `beat` 15 s away."""
-    raw = request.query_params.get("after") or None
-    after = int(raw) if raw is not None and raw.isdigit() else None
-    if raw is not None and after is None:
-        raise Invalid("after must be a whole number")
-    scope = _service(request).notices.notice_scope(request.query_params.get("workspace", ""))
-    stream = _service(request).notices.follow_notices(scope, after)
-
-    async def lines() -> AsyncIterator[bytes]:
-        try:
-            async for line in stream:
-                yield _line(line)
-        finally:
-            await stream.aclose()
-
-    return StreamingResponse(lines(), media_type="application/x-ndjson")
-
-
 @router.post("/api/units/integrate")
 async def integrate_unit(request: Request) -> Any:
     """Integrate one unit onto `main`, on request. Streams like `/api/board/run`.
@@ -522,6 +497,36 @@ async def release_publish(request: Request) -> Any:
         str(body.get("cwd", "")), str(body.get("version", ""))
     )
     return await _ndjson(stream, "the release")
+
+
+@router.get("/api/features")
+async def get_features(request: Request) -> Any:
+    """Each feature and whether it is on for one workspace: `{name: on}`. A workspace the app
+    does not have is a 400."""
+    service = _service(request)
+    cwd = service.ws.check(_cwd(request))
+    ctx = plugin.ctx_of(service)
+    return {f.name: ctx.enabled(f.name, cwd) for f in features.FEATURES}
+
+
+@router.post("/api/features")
+async def set_feature(request: Request) -> Any:
+    """`{cwd, name, on}` turns one feature on or off for one workspace; a feature or workspace
+    not known, or an `on` that is not a boolean, is a 400. It changes the pref `features.off`
+    and nothing else. Whoever holds the password or a session can silence a workspace's notices."""
+    body = await _body(request)
+    on = body.get("on")
+    if not isinstance(on, bool):
+        raise Invalid("on must be true or false")
+    service = _service(request)
+    plugin.set_enabled(
+        service,
+        [f.name for f in features.FEATURES],
+        str(body.get("name") or ""),
+        str(body.get("cwd") or ""),
+        on,
+    )
+    return {"name": str(body.get("name")), "on": on}
 
 
 # -- updating the app ----------------------------------------------------
@@ -575,7 +580,10 @@ def build(config: Config | None = None) -> FastAPI:
         await sessions.close_all()
 
     # The routes themselves, not `include_router`, which keeps them behind one entry of `routes`.
-    api = FastAPI(title="coscc", lifespan=lifespan, routes=router.routes)
+    # Read now, so a test can patch `features.FEATURES`.
+    ctx = plugin.ctx_of(service)
+    routes = [*router.routes, *(r for f in features.FEATURES for r in f.routes(ctx))]
+    api = FastAPI(title="coscc", lifespan=lifespan, routes=routes)
     api.state.config = config
     api.state.sessions = sessions
     api.state.service = service

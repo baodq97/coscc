@@ -40,7 +40,6 @@ PRIVATE_IMPORTS: set[tuple[str, str, str]] = {
     ("coscc/screens/__init__.py", "coscc.screens.backlog", "_backlog_screen"),
     ("coscc/screens/__init__.py", "coscc.screens.board", "_RECONNECT_JS"),
     ("coscc/screens/__init__.py", "coscc.screens.board", "_board"),
-    ("coscc/screens/__init__.py", "coscc.screens.chrome", "_NOTICE_JS"),
     ("coscc/screens/__init__.py", "coscc.screens.chrome", "_banners"),
     ("coscc/screens/__init__.py", "coscc.screens.chrome", "_sidebar"),
     ("coscc/screens/__init__.py", "coscc.screens.chrome", "_status_bar"),

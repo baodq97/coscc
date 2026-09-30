@@ -1,4 +1,4 @@
-"""Tests for `coscc/service/notices.py`: which records are notices, and what their sentence says."""
+"""Tests for `coscc/features/notices.py`: which records are notices, and what their sentence says."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import unittest
 
 from coscc.units import autopilot
-from coscc.service import notices
+from coscc.features import notices
 
 WS = "/home/someone/work/proj"
 SHA = "0123456789abcdef0123456789abcdef01234567"

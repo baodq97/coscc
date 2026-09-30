@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""The end-to-end cases: the page as built, in chromium, behind the login (`0095` R13).
+"""The end-to-end cases: the page as built, in chromium, behind the login.
 
     COS_HOST=127.0.0.1 COS_PORT=<port> uv run coscc-build && npm run e2e
 
 It starts `coscc.run` on the address the bundle was built for (`COS_HOST`, `COS_PORT`), on a
 temporary working folder and data root with four workspaces, each a clone of a bare-directory
-remote: `proj` and `other`, and since `0133` `f1` and `f2`, 117 units each, where the board is
+remote: `proj` and `other`, and `f1` and `f2`, 117 units each, where the board is
 measured at 1280, 1440 and 1690 by 800 in both densities and at 390×844. A password nobody
 types and one session are written into that
-data root before the app starts, so every case runs past the `0070` login without `/setup`.
+data root before the app starts, so every case runs past the login without `/setup`.
 No session is opened, no quota is spent and nothing leaves the machine.
 
 Each case is one function named for what it shows, and prints `PASS` or `FAIL` for each
-thing it checks. The cases came from the browser proofs `0095` retired; `impl.md` of that
-unit names which claim went where.
+thing it checks. The cases replaced the earlier browser proofs.
 
 Exit codes: 0 every case passed, 1 one did not, 2 the environment is not ready — no bundle
 for this address, the port in use, or no chromium. It is not part of `npm test`.
@@ -40,7 +39,7 @@ import httpx
 
 from coscc import auth
 from coscc.data import Data
-from coscc.service import notices
+from coscc.features import notices
 from coscc.config import from_env
 from coscc.runlog.journal import Journal
 from coscc.units.meta import UnitMeta
@@ -105,7 +104,7 @@ class Scene:
         self.alpha = self.unit(proj, "alpha", intent("alpha"))
         self.beta = self.unit(other, "beta", intent("beta"))
         self.gone = self.unit(proj, "gone", intent("gone"))
-        # Dropped by `load_fixture`, as a row: since `0135` no file carries a hold.
+        # Dropped by `load_fixture`, as a row: no file carries a hold.
         self.holds = [(proj, self.gone, "dropped", "no longer needed", "2026-09-26")]
 
     def unit(self, cwd: Path, slug: str, text: str) -> str:
@@ -116,7 +115,7 @@ class Scene:
         return str(made.json()["unit"])
 
 
-# `0133` spec, F1 and F2: two workspaces the size of the board on 2026-09-28. Each unit's
+# F1 and F2: two workspaces the size of the board on 2026-09-28. Each unit's
 # files are the least that puts it at its stage (`scripts/capture_screens.py` `FIXTURE`).
 STAGE_LADDER = ("idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship")
 DONE = 90
@@ -198,7 +197,7 @@ F2 = [(at, "ready") for at in STAGE_LADDER for _ in range(3)] + [("done", "done"
 
 
 class Wide:
-    """`0133` F1 and F2. One unit made through the route, to learn where the store is; the
+    """F1 and F2. One unit made through the route, to learn where the store is; the
     rest written straight into it, numbered on from `0002`."""
 
     def __init__(self, api: httpx.Client, f1: Path, f2: Path) -> None:
@@ -229,7 +228,7 @@ class Wide:
 
 
 def load_fixture(root: Path, data_dir: Path, scene: Scene, wide: Wide) -> None:
-    """`0135`: the board reads a unit from `cos.db`, not its files. What the fixture wrote by
+    """The board reads a unit from `cos.db`, not its files. What the fixture wrote by
     hand goes in as a finished step's do (`ingest_fixture`); each hold as the row
     `/api/units/hold` writes, without the pull request and worktree a drop closes."""
     ingest_fixture(root, data_dir, *scene.cwd.values(), *wide.cwd.values(), by="e2e")
@@ -306,7 +305,7 @@ def arrive(page, base: str, path: str) -> str:
 
 
 def every_place_opens_at_its_address_and_stays_after_a_reload(context, base, scene) -> bool:
-    """`0003`, `0056` (a) and (b): each screen and a unit on a tab, pasted into a new tab."""
+    """Each screen and a unit on a tab, pasted into a new tab."""
     places = [(s, "proj") for s in SCREENS] + [
         ("unit", "proj", scene.alpha),
         ("unit", "proj", scene.alpha, "questions"),
@@ -327,7 +326,7 @@ def every_place_opens_at_its_address_and_stays_after_a_reload(context, base, sce
 
 
 def back_and_forward_return_to_the_screens_the_page_moved_between(context, base, _scene) -> bool:
-    """`0056` (c): moved with the sidebar, Back and Forward retrace it."""
+    """Moved with the sidebar, Back and Forward retrace it."""
     page = context.new_page()
     try:
         why = arrive(page, base, href("board", "proj")) or settle(page, "board", "proj")
@@ -347,7 +346,7 @@ def back_and_forward_return_to_the_screens_the_page_moved_between(context, base,
 
 
 def the_board_search_keeps_only_the_cards_it_matches(context, base, scene) -> bool:
-    """`0006` flow 2: a search that matches nothing empties the board; one that matches finds it."""
+    """A search that matches nothing empties the board; one that matches finds it."""
     page = context.new_page()
     try:
         why = arrive(page, base, href("board", "proj")) or settle(page, "board", "proj")
@@ -369,8 +368,8 @@ def the_board_search_keeps_only_the_cards_it_matches(context, base, scene) -> bo
 
 
 def an_answer_sent_from_the_dialog_is_recorded_and_shown(context, base, scene, data_dir) -> bool:
-    """`0071` (a), `0016`: Send this answer records one answer and the dialog shows it.
-    Since `0135` R8 the answer is a row in `cos.db` and no byte of `intent.md`."""
+    """Send this answer records one answer and the dialog shows it.
+    The answer is a row in `cos.db` and no byte of `intent.md`."""
     page = context.new_page()
     words = "Có, đã trả lời từ bộ e2e."
     path = scene.paths[scene.alpha] / "intent.md"
@@ -413,7 +412,7 @@ def an_answer_sent_from_the_dialog_is_recorded_and_shown(context, base, scene, d
 
 
 def a_dropped_unit_opens_with_nothing_that_writes(context, base, scene) -> bool:
-    """`0056` R11: its question is shown with no box to answer it."""
+    """Its question is shown with no box to answer it."""
     page = context.new_page()
     try:
         place = ("unit", "proj", scene.gone, "questions")
@@ -431,17 +430,17 @@ def a_dropped_unit_opens_with_nothing_that_writes(context, base, scene) -> bool:
 
 
 # --------------------------------------------------------------------------
-# `0133`: the whole board in one window
+# The whole board in one window
 # --------------------------------------------------------------------------
 
 BOARD_SIZES = ((1280, 800), (1440, 800), (1690, 800))
 PHONE = (390, 844)
 FOLDED = ("done", "dropped")
-# R3's "the start of its title": about ten characters at the card's size, chosen, not measured
+# The start of a card's title: about ten characters at the card's size, chosen, not measured
 # against a reader.
 TITLE_MIN_PX = 80
 
-# R1: the document and every scroller in the shell no wider than it shows.
+# The document and every scroller in the shell no wider than it shows.
 SIDEWAYS_JS = """
 () => {
   const doc = document.documentElement;
@@ -456,7 +455,7 @@ SIDEWAYS_JS = """
 }
 """
 
-# R2–R5 on the board as the page drew it, against `/api/board`'s units.
+# The board as the page drew it, against `/api/board`'s units.
 BOARD_JS = """
 ({stages, units, done, TITLE_MIN_PX}) => {
   const W = innerWidth, H = innerHeight;
@@ -567,7 +566,7 @@ def open_board(page, base: str, ws: str, units: list[dict], size: tuple[int, int
 def the_board_shows_every_stage_and_every_unfinished_unit_without_scrolling(
     context, base, api, wide
 ) -> bool:
-    """`0133` R1–R5: F1 and F2, each width at 800 high, both densities, at the top of the page."""
+    """F1 and F2, each width at 800 high, both densities, at the top of the page."""
     ok = True
     reads = {ws: board_read(api, wide, ws) for ws in ("f1", "f2")}
     for ws, (_, _, why) in reads.items():
@@ -586,9 +585,7 @@ def the_board_shows_every_stage_and_every_unfinished_unit_without_scrolling(
                         ok &= say(False, f"{where}: the board opens", why)
                         continue
                     wide_ = page.evaluate(SIDEWAYS_JS)
-                    ok &= say(
-                        not wide_, f"{where}: nothing scrolls sideways (R1)", "; ".join(wide_)
-                    )
+                    ok &= say(not wide_, f"{where}: nothing scrolls sideways", "; ".join(wide_))
                     got = page.evaluate(
                         BOARD_JS,
                         {
@@ -600,23 +597,23 @@ def the_board_shows_every_stage_and_every_unfinished_unit_without_scrolling(
                     )
                     ok &= say(
                         not got["labels"],
-                        f"{where}: all {len(stages)} lane labels in view (R2)",
+                        f"{where}: all {len(stages)} lane labels in view",
                         f"out of view: {got['labels']}",
                     )
                     ok &= say(
                         not got["cards"],
                         f"{where}: all {len(units)} unfinished cards in view, in their lane, "
-                        "with number and title (R3)",
+                        "with number and title",
                         "; ".join(got["cards"][:12]),
                     )
                     ok &= say(
                         not got["states"],
-                        f"{where}: each card's state reads as the service's (R4)",
+                        f"{where}: each card's state reads as the service's",
                         "; ".join(got["states"][:6]),
                     )
                     ok &= say(
                         not got["done"],
-                        f"{where}: '{DONE} done' in view and no done card drawn (R5)",
+                        f"{where}: '{DONE} done' in view and no done card drawn",
                         got["done"],
                     )
     finally:
@@ -628,7 +625,7 @@ def the_board_shows_every_stage_and_every_unfinished_unit_without_scrolling(
 
 
 def the_board_does_not_scroll_sideways_on_a_phone(context, base, api, wide) -> bool:
-    """`0133` R6: R1 at 390×844."""
+    """No sideways scroll at 390×844."""
     ok = True
     page = context.new_page()
     try:
@@ -647,7 +644,7 @@ def the_board_does_not_scroll_sideways_on_a_phone(context, base, api, wide) -> b
 
 
 def the_done_count_opens_the_done_group(context, base, api, wide) -> bool:
-    """`0133` R5: the count is a link to the group, which it opens."""
+    """The count is a link to the group, which it opens."""
     page = context.new_page()
     try:
         _, units, _ = board_read(api, wide, "f1")
@@ -669,7 +666,7 @@ def the_done_count_opens_the_done_group(context, base, api, wide) -> bool:
 
 
 def new_unit_and_new_idea_move_focus_to_their_forms(context, base, api, wide) -> bool:
-    """`0133` R10: the forms are below the board, and the toolbar's buttons reach them."""
+    """The forms are below the board, and the toolbar's buttons reach them."""
     page = context.new_page()
     ok = True
     try:
@@ -691,7 +688,7 @@ def new_unit_and_new_idea_move_focus_to_their_forms(context, base, api, wide) ->
 
 
 def a_page_without_a_session_is_sent_to_the_login(browser, base) -> bool:
-    """`0070`: a context carrying no cookie is let into no screen."""
+    """A context carrying no cookie is let into no screen."""
     context = browser.new_context(viewport=SIZE)
     try:
         page = context.new_page()
@@ -709,7 +706,7 @@ def a_page_without_a_session_is_sent_to_the_login(browser, base) -> bool:
 
 
 def logging_out_ends_at_the_login_page(context, base, _scene) -> bool:
-    """`0070` --browser: *Log out* ends the session and `/` then asks for the password."""
+    """*Log out* ends the session and `/` then asks for the password."""
     page = context.new_page()
     try:
         why = arrive(page, base, href("overview", "proj")) or settle(page, "overview", "proj")
@@ -726,18 +723,18 @@ def logging_out_ends_at_the_login_page(context, base, _scene) -> bool:
 
 
 # --------------------------------------------------------------------------
-# `0113`: the notices, through a connection a proxy cuts
+# The notices, through a connection a proxy cuts
 # --------------------------------------------------------------------------
 
-NOTICES_DOC = Path(__file__).resolve().parent.parent / ".claude" / "docs" / "coscc-notices.md"
-# R14: every notice reaches both listeners within this many seconds of its record.
+NOTICES_DOC = Path(__file__).resolve().parent.parent / "coscc" / "features" / "notices.md"
+# Every notice reaches both listeners within this many seconds of its record.
 NOTICE_LIMIT_S = 60.0
 # How long past its record the case waits before calling a notice missing: longer than the
 # limit, so a late one is reported late, with its figure, rather than missing.
 NOTICE_WAIT_S = 90.0
 OUTAGE_S = 5.0
 
-# After `spike.md ## U2`'s `drive.py`: every cursor write with the notices in the DOM at that
+# Every cursor write with the notices in the DOM at that
 # moment, the moment each notice's node first appeared, and every time one was added.
 NOTICE_INIT = """
 window.__probe_writes = [];
@@ -760,7 +757,7 @@ new MutationObserver(ms => {
 }).observe(document, {childList: true, subtree: true});
 """
 
-# Review round 1, F2: both listeners start with a cursor from a run log that is gone, past
+# Both listeners start with a cursor from a run log that is gone, past
 # every row, and must be handed a `head` that sets it back. Once per browser profile.
 STALE_CURSOR = "999999999"
 STALE_INIT = (
@@ -780,7 +777,7 @@ NOTICE_STATE_JS = """
 
 
 def listener_block() -> str:
-    """The terminal command of R11, exactly as the document gives it."""
+    """The terminal command, exactly as the document gives it."""
     text = NOTICES_DOC.read_text(encoding="utf-8")
     body = text.split("<!-- listener -->", 1)[1].split("<!-- /listener -->", 1)[0].strip()
     return body.removeprefix("```bash").removesuffix("```").strip()
@@ -789,8 +786,8 @@ def listener_block() -> str:
 def write_notices(
     journal, key: str, tag: str, only_one: bool = False
 ) -> tuple[dict[int, float], set[int]]:
-    """R2's five source records and three that are no notice, as another process writes them
-    (R7's 20 s road). `({id: when its append returned}, {ids that must reach nobody})`."""
+    """Five source records and three that are no notice, as another process writes them
+    (they take the 20 s road). `({id: when its append returned}, {ids that must reach nobody})`."""
     base = {"workspace": key, "unit": "0001_notices"}
     told = [
         {
@@ -1038,9 +1035,9 @@ def notices_through(  # noqa: PLR0915 - still to split
 
 
 def notices_reach_the_page_and_a_terminal_through_close_and_stall(browser, config) -> bool:
-    """`0113` R14. The app behind a `Cut` on the bundle's address; the page as built and the
-    terminal command of `.claude/docs/coscc-notices.md`, both through it. Records are written
-    from this process, so they take R7's 20 s road; the 5 s one is `service/test_notices.py`'s."""
+    """The app behind a `Cut` on the bundle's address; the page as built and the
+    terminal command of `coscc/features/notices.md`, both through it. Records are written
+    from this process, so they take the 20 s road; the 5 s one is `features/test_notices.py`'s."""
     if not (shutil.which("bash") and shutil.which("curl")):
         return say(False, "bash and curl are on PATH, for the terminal listener")
     root = Path(tempfile.mkdtemp(prefix="cos-e2e-notices-work-")).resolve()
@@ -1151,7 +1148,7 @@ def main() -> int:
                 results.append(run(logging_out_ends_at_the_login_page, context, app.base, scene))
             finally:
                 context.close()
-        # `0113`: after the app above has let go of the bundle's address, where its `Cut` stands.
+        # After the app above has let go of the bundle's address, where its `Cut` stands.
         results.append(
             run(notices_reach_the_page_and_a_terminal_through_close_and_stall, browser, config)
         )

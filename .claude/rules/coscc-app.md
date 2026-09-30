@@ -47,7 +47,7 @@ hears what is one table in `Service.__post_init__`, never a callback wired down.
 
 ## Docs (`.claude/docs/`, read when editing what the line names)
 
-- `.claude/docs/coscc-notices.md` — `coscc/service/notices.py`, the notice script.
+- `coscc/features/notices.md` — the notice feature; a feature's doc sits beside it.
 - `.claude/docs/coscc-steps.md` — `Backlog.timeline`, `/api/board/stop`, `/api/board/running`, `Steps.run_step`, `journal.failed_attempts`.
 - `.claude/docs/coscc-answers.md` — answer, outcome, hold and more-rounds routes, `cos.mjs rerun`, `coscc/units/hold.py`, `coscc/runner/prompt.py` answers helpers.
 - `.claude/docs/coscc-settings.md` — `/api/settings/*`, `coscc/agent/models.py`, `/api/backlog/*`.
