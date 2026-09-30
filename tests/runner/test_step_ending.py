@@ -1,5 +1,5 @@
-"""Tests for `Runner` in `coscc/runner/__init__.py`: how a step ends, split from
-`tests/runner/test_runner.py`.
+"""Tests for `Runner` in `coscc/runner/step.py`: how a step ends, split from
+`tests/runner/test_step.py`.
 
 An answer that comes in pieces is written whole. A step that fails, is stopped, dies, runs
 out of turns or touches what it may not still leaves a record that says so, and writes no
@@ -19,10 +19,10 @@ from coscc.agent import harness
 from coscc.git import gitops
 from coscc.runlog.journal import Journal
 from coscc.runner.reply import RunError
-from coscc.runner import Runner
+from coscc.runner.step import Runner
 from coscc.runner.prompt import answers_section, build_prompt, skill_for
 from coscc.runner.attempt import snapshot
-from tests.runner.test_runner import (
+from tests.runner.test_step import (
     REVIEW_R1,
     SPIKE_REPLY,
     STAGES,
@@ -458,7 +458,7 @@ class AFencedAnswerAfterNarrationIsUnwrapped(unittest.TestCase):
 
     def test_a_piece_that_is_only_a_code_block_keeps_its_fence(self):
         # A fence whose top is not the title is the body's, not a wrapper.
-        from coscc.runner import _joined
+        from coscc.runner.reply import _joined
 
         pieces = ["# Plan: x\nStatus: accepted.\n\n## Body\n", "```\ncode\n```"]
         self.assertEqual(
@@ -805,7 +805,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
         tree_fails_from=None,
     ):
         # `tree_fails_from`: the 1-based reading of the worktree from which git fails.
-        from coscc import runner
+        from coscc.runner import step as runner
 
         real_tree_state = runner._tree_state
         readings = []
@@ -866,7 +866,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
                     )
                 ]
 
-            with mock.patch("coscc.runner._tree_state", tree_state):
+            with mock.patch("coscc.runner.step._tree_state", tree_state):
                 _, final = asyncio.run(go())[-1]
             target = directory / "spike.md"
             written = target.read_bytes() if target.exists() else None
@@ -1203,7 +1203,7 @@ class AStoppedStepEndsStopped(unittest.TestCase):
             registry_box.append((registry, running))
             sessions.release.set()
 
-        with tempfile.TemporaryDirectory() as d, mock.patch("coscc.runner.snapshot", capture):
+        with tempfile.TemporaryDirectory() as d, mock.patch("coscc.runner.step.snapshot", capture):
             make_unit(Path(d), intent_md="Status: accepted.\nI")
             out, journal, running = self._run(d, Fails(), "spec", "spec.md", release)
             self.assertEqual(len(refused), 1)
@@ -1578,7 +1578,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertEqual(end["cost_usd"], 1.0)
 
     def test_a_closing_turn_that_hangs_is_cut_at_the_timeout(self):
-        with mock.patch("coscc.runner.CLOSING_TIMEOUT", 0.05):
+        with mock.patch("coscc.runner.step.CLOSING_TIMEOUT", 0.05):
             _, [end], review, _, _ = self.run_review(self.Closes(waits=True))
         self.assertEqual(end["review_md"], "none")
         self.assertTrue(end["closing"]["cost_unknown"])
@@ -1873,7 +1873,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         )
 
     def test_a_repair_turn_that_hangs_is_cut_at_the_timeout(self):
-        with mock.patch("coscc.runner.OPENING_TIMEOUT", 0.05):
+        with mock.patch("coscc.runner.step.OPENING_TIMEOUT", 0.05):
             _, [end], _, written, _ = self.go(self.Repairs(waits=True))
         self.assertIsNone(written)
         self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
@@ -1892,7 +1892,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
 
     def test_a_seal_refused_before_the_repair_turn_withholds_it(self):
         sessions = self.Repairs()
-        with mock.patch("coscc.runner.steps.seal", side_effect=[True, False, True]):
+        with mock.patch("coscc.runner.step.steps.seal", side_effect=[True, False, True]):
             _, [end], _, written, _ = self.go(sessions, running=False)
         self.assertEqual(len(sessions.calls), 1)
         self.assertIsNone(written)
@@ -1975,7 +1975,7 @@ class TheOtherTwoWritesAreCheckedTheSame(unittest.TestCase):
         self.assertIn("review.md lacks its opening: no `# Review:` title", end["detail"])
 
     def test_a_refused_write_leaves_the_file_and_its_answers_byte_for_byte(self):
-        from coscc.runner import _write_artifact
+        from coscc.runner.attempt import _write_artifact
 
         with tempfile.TemporaryDirectory() as d:
             directory = make_unit(Path(d))

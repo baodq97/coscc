@@ -26,7 +26,8 @@ from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord, Journal
 from coscc.data import Busy
 from coscc.agent.policy import grant_for
-from coscc.runner import RunError, Runner, check_started_by
+from coscc.runner.reply import RunError
+from coscc.runner.step import Runner, check_started_by
 from coscc.runner.prompt import answers_section
 from coscc.runner.attempt import describe_attempt
 from coscc.agent import steps as steps_mod

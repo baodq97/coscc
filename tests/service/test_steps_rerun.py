@@ -20,7 +20,7 @@ from tests.units.test_meta import WithSnapshot
 board_reader = WithSnapshot(_board)
 from coscc.units import worktrees
 from coscc.config import Config
-from coscc.runner import RunError
+from coscc.runner.reply import RunError
 from coscc.service import Service
 from coscc.service.common import Invalid, Refused
 from coscc.agent.sessions import Sessions

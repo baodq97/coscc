@@ -847,7 +847,7 @@ class TheReviewPromptCarriesTheIntegration(unittest.TestCase):
         import tempfile
 
         from coscc.runner.prompt import build_prompt
-        from tests.runner.test_runner import STAGES, UNIT, make_unit
+        from tests.runner.test_step import STAGES, UNIT, make_unit
 
         note = ig.describe_for_review({"mode": "mechanical", "head_after": NEW})
         with tempfile.TemporaryDirectory() as d:

@@ -1,4 +1,4 @@
-"""Tests for `coscc/runner/attempt.py`, split from `tests/runner/test_runner.py`.
+"""Tests for `coscc/runner/attempt.py`, split from `tests/runner/test_step.py`.
 
 What a failed attempt left, as the next step and the board are told it."""
 

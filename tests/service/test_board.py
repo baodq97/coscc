@@ -95,14 +95,14 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
         self.assertEqual(self.service.holds.running, {})
 
     def test_none_after_a_run_error(self):
-        from coscc.runner import RunError
+        from coscc.runner.reply import RunError
 
         async def fails(*a, **kw):
             self.seen.append(list(self.service.holds.running.values()))
             raise RunError("stand-in")
             yield  # pragma: no cover
 
-        with mock.patch("coscc.runner.Runner.run", fails):
+        with mock.patch("coscc.runner.step.Runner.run", fails):
             with self.assertRaises(Invalid):
                 self._run("spec")
         self.assertEqual(len(self.seen[0]), 1)

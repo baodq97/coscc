@@ -272,7 +272,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
 
     def test_a_preset_reaches_the_options_as_given(self):
         # No `append`: the spec keeps the preset bare.
-        from coscc.runner import CLAUDE_CODE_PRESET
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
         got = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET).system_prompt
         self.assertEqual(got, {"type": "preset", "preset": "claude_code"})
@@ -284,7 +284,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         # The grant is `tools` + `can_use_tool` + `permission_mode`, and project settings stay out.
         # The preset may move none of them, in either permission mode.
         from coscc.agent import policy
-        from coscc.runner import CLAUDE_CODE_PRESET
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
         def gate(name, data, ctx):  # never called; compared by identity
             raise AssertionError("not called")
@@ -303,7 +303,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
 
     def test_settings_are_set_only_beside_a_preset(self):
         from coscc.agent import agents, policy
-        from coscc.runner import CLAUDE_CODE_PRESET
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
         def gate(name, data, ctx):  # never called; compared by identity
             raise AssertionError("not called")
@@ -332,7 +332,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         # The fixture is the reader's own, with a canary in every kind of file.
         from coscc.agent import instructions
         from tests.agent.test_instructions import plant
-        from coscc.runner import CLAUDE_CODE_PRESET
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as data:
             plant(Path(d))
@@ -353,7 +353,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         self.assertNotIn("append", CLAUDE_CODE_PRESET)
 
     def test_a_directory_with_no_instructions_leaves_the_prompt_as_it_was(self):
-        from coscc.runner import CLAUDE_CODE_PRESET
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
         with tempfile.TemporaryDirectory() as data:
             self.assertIsNone(_options(Config(), "/p", None, data_dir=data).system_prompt)
@@ -366,7 +366,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
     def test_instructions_past_the_argument_limit_never_reach_argv(self):
         # Linux refuses one argument over `MAX_ARG_STRLEN` (32 pages, 128 KiB at 4 KiB pages) with
         # `E2BIG`; a block four times that must leave argv no longer than it is without one.
-        from coscc.runner import CLAUDE_CODE_PRESET
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as data:
             (Path(d) / "CLAUDE.md").write_text(
@@ -388,7 +388,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
     def test_every_shape_of_session_reaches_the_cli_with_no_source_and_no_mcp(self):
         from coscc.agent import policy
         from tests.agent.test_instructions import plant
-        from coscc.runner import CLAUDE_CODE_PRESET
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as data:
             plant(Path(d))
@@ -475,7 +475,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         # Whatever the caller asks for, the ceiling is the same.
         import itertools
 
-        from coscc.runner import CLAUDE_CODE_PRESET
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
         def gate(name, data, ctx):  # never called
             raise AssertionError("not called")
@@ -1553,7 +1553,7 @@ class ASessionIsKnownWhileItRuns(unittest.IsolatedAsyncioTestCase):
 
     def test_every_resume_builds_options_with_snapshot(self):
         from tests.agent.test_instructions import plant
-        from coscc.runner import CLAUDE_CODE_PRESET
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as data:
             plant(Path(d))
@@ -1574,7 +1574,7 @@ class ASessionIsKnownWhileItRuns(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("snapshot", CLAUDE_CODE_PRESET)
 
     def test_a_new_session_carries_no_snapshot_key(self):
-        from coscc.runner import CLAUDE_CODE_PRESET
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
         self.assertIsNone(_options(Config(), "/tmp", None).system_prompt)
         started = _options(Config(), "/tmp", "sid", system_prompt=CLAUDE_CODE_PRESET)

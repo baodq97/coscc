@@ -185,7 +185,7 @@ def a_head(test: unittest.TestCase, sha: str = "c" * 40) -> str:
     round; a test of a review that is not about git gives it one, for the test."""
     from unittest import mock
 
-    patcher = mock.patch("coscc.runner._head_of", mock.AsyncMock(return_value=sha))
+    patcher = mock.patch("coscc.runner.step._head_of", mock.AsyncMock(return_value=sha))
     patcher.start()
     test.addCleanup(patcher.stop)
     return sha

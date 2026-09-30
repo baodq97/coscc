@@ -31,7 +31,7 @@ APP_PATHS = ["coscc/**", "coscc/**/*", "rxconfig.py", "scripts/*.py"]
 # step, which is what tier 2 already is. The spec's list, not measured.
 HOT = {
     "coscc/service/__init__.py",
-    "coscc/runner/__init__.py",
+    "coscc/runner/step.py",
     "coscc/state/__init__.py",
     "coscc/screens/__init__.py",
     "coscc/api.py",

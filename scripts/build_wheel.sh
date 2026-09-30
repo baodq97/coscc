@@ -79,7 +79,7 @@ cp -r .web/backend/. coscc/_web/backend/
 # The second thing this app reads from outside `coscc/`, and the one that shipped missing
 # three times. `.cos/0012_installed-copy-runs-no-stage/intent.md` measured v0.2.2: the
 # Board answered 400 and every step ran with no rules in its prompt, because
-# `coscc/units/board.py` and `coscc/runner/__init__.py` were reaching for a `.claude/` that only exists in
+# `coscc/units/board.py` and `coscc/runner/step.py` were reaching for a `.claude/` that only exists in
 # a checkout.
 #
 # Two named directories, never `.claude/` whole: `.claude/settings.local.json` is a
