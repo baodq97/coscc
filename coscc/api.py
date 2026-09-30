@@ -79,7 +79,7 @@ async def _ndjson(stream: AsyncIterator[tuple[str, Any]], what: str) -> Streamin
     return StreamingResponse(lines(), media_type="application/x-ndjson")
 
 
-async def _refused(_: Request, e: Invalid) -> JSONResponse:
+async def _refused(_: Request, e: Exception) -> JSONResponse:
     status = 503 if isinstance(e, Updating) else 409 if isinstance(e, NotUpdatable) else 400
     return JSONResponse({"error": str(e)}, status_code=status)
 

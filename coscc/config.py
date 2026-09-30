@@ -8,6 +8,7 @@ startup whenever the address is not loopback.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -114,7 +115,7 @@ def _dir(env: dict[str, str], name: str) -> str | None:
     return raw or None
 
 
-def protected_databases(env: dict[str, str] | None = None) -> tuple[Path, ...]:
+def protected_databases(env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
     """The databases `PROTECTED_DB_VAR` names, each resolved; `coscc/data.py` refuses them.
 
     Read on every call, so a test can set the variable around one `Data`.

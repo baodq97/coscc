@@ -55,6 +55,13 @@ def _positive_number(value: Any) -> bool:
     )
 
 
+def _stop_reason(stage: str, stop: dict[str, str]) -> tuple[str, str]:
+    reason = autopilot.reason_for({}, stage, stop)
+    if reason is None:
+        raise ValueError(f"a stop has a reason, and {stop['kind']} gave none")
+    return reason
+
+
 def pref_name(name: str, key: str) -> str:
     return CAP_PREF if name == "daily_cap_usd" else f"{name}:{key}"
 
@@ -435,9 +442,7 @@ class Autopilot:
                 except Invalid as e:
                     found[name] = {"unit": name, "kind": "f", "reason": str(e)}
                     reasons[name] = (
-                        ("running", here[name])
-                        if name in here
-                        else autopilot.reason_for({}, "", found[name])
+                        ("running", here[name]) if name in here else _stop_reason("", found[name])
                     )
                     continue
                 # A first `exhausted` step of a stage other than `ship` runs again once; so does a first prose
@@ -588,7 +593,7 @@ class Autopilot:
                         f"{c['need']:.2f} is over the cap of {cap['limit']:.2f} USD ({cap['day']})"
                     ),
                 }
-                reasons[c["unit"]] = autopilot.reason_for({}, c["stage"], found[c["unit"]])
+                reasons[c["unit"]] = _stop_reason(c["stage"], found[c["unit"]])
             # A run again that `max_parallel` alone held back says so. Any other candidate held back that
             # way still says nothing.
             left = {c["unit"] for c in picked["chosen"] + picked["capped"]} | set(picked["held"])
@@ -598,7 +603,7 @@ class Autopilot:
                         "unit": c["unit"],
                         **autopilot.full_stop(c["stage"], settings["max_parallel"]),
                     }
-                    reasons[c["unit"]] = autopilot.reason_for({}, c["stage"], found[c["unit"]])
+                    reasons[c["unit"]] = _stop_reason(c["stage"], found[c["unit"]])
             # Raises before anything is recorded or started when a unit above one chosen has no
             # reason; `_guarded` shows it as a stop line.
             passed = autopilot.passed_for(names, [c["unit"] for c in picked["chosen"]], reasons)

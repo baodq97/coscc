@@ -34,7 +34,7 @@ KINDS = ("estimate-value", "relation", "shortlist", "estimate")
 AGENT_PREFIX = "agent:"
 
 
-def is_agent(by: str) -> bool:
+def is_agent(by: str | None) -> bool:
     return str(by or "").startswith(AGENT_PREFIX)
 
 

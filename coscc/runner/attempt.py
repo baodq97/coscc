@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import claude_agent_sdk as sdk
+from claude_agent_sdk.types import SystemPromptPreset
 
 from coscc.git import gitops
 from coscc.agent import sessions as sessions_mod
@@ -65,7 +66,7 @@ class Denials:
 # # sends when none is set; without it a step with `Read` and `Grep` searches with `grep`
 # # through Bash. Bare on purpose: it grants nothing (`permission_gate` and the grant's tool
 # # list still decide every call), and tool-less steps and chat never get it. A copy goes out.
-CLAUDE_CODE_PRESET: dict[str, str] = {"type": "preset", "preset": "claude_code"}
+CLAUDE_CODE_PRESET: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
 
 
 def permission_gate(

@@ -66,16 +66,11 @@ max-statements = 60
 # Tests are checked by running them.
 exclude = ["tests/**"]
 
-[tool.ty.rules]
-# Reflex `Var` fields: ty does not follow them, so these three report false findings.
-invalid-argument-type = "ignore"
-invalid-assignment = "ignore"
-not-subscriptable = "ignore"
-
 [[tool.ty.overrides]]
-# Reflex components and state: `str + Var`, `~Var` and event namespaces type as errors.
-include = ["coscc/screens/**", "coscc/state/**"]
-rules = { unresolved-attribute = "ignore", unsupported-operator = "ignore", deprecated = "ignore", no-matching-overload = "ignore", invalid-return-type = "ignore" }
+# Reflex components, state and the page app: ty does not follow `Var` fields, so `str + Var`,
+# `~Var`, event namespaces and a `Var` passed or assigned where its value is typed report errors.
+include = ["coscc/screens/**", "coscc/state/**", "coscc/coscc.py"]
+rules = { unresolved-attribute = "ignore", unsupported-operator = "ignore", deprecated = "ignore", no-matching-overload = "ignore", invalid-return-type = "ignore", invalid-argument-type = "ignore", invalid-assignment = "ignore", not-subscriptable = "ignore" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

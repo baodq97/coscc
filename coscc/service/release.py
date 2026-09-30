@@ -149,11 +149,14 @@ class Release:
         if state == "pr-open":
             open_pr = release.release_prs(block.pop("_prs", []) or [])
             row = open_pr[0] if open_pr else {}
-            block["pr"] = row.get("number")
+            number = row.get("number")
+            block["pr"] = number
             block["head"] = str(row.get("headRefOid") or "")
             try:
+                if number is None:
+                    raise ValueError("no open release pull request")
                 checks: list[dict[str, Any]] | str = await integrate.required_checks(
-                    str(root), int(block["pr"])
+                    str(root), int(number)
                 )
             except (integrate.IntegrateError, TypeError, ValueError) as e:
                 checks = str(e)

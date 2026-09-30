@@ -1524,7 +1524,11 @@ class Runner:
 
             # Before anything is written: a spike that touched the branch it was meant only to read must
             # leave no `spike.md` saying it measured.
-            changed = describe_tree_change(before, await _tree_state(watch)) if watch else ""
+            changed = (
+                describe_tree_change(before, await _tree_state(watch))
+                if watch and before is not None
+                else ""
+            )
             if changed:
                 spike_md, tree_changed = "withheld", True
                 raise RunError(f"the worktree changed during spike: {changed}")

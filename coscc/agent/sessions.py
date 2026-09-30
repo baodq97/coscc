@@ -15,11 +15,12 @@ import shutil
 import signal
 import tempfile
 import uuid
+from collections.abc import Callable
 from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeIs, get_args
 
 import claude_agent_sdk as sdk
 from claude_agent_sdk import (
@@ -27,10 +28,13 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    EffortLevel,
+    PermissionMode,
     ServerToolUseBlock,
     TextBlock,
     ToolUseBlock,
 )
+from claude_agent_sdk.types import SystemPromptPreset
 
 from coscc import config as cfg
 from coscc import frontend
@@ -502,6 +506,14 @@ def cumulative(message: Any) -> dict[str, float]:
 MAX_BUFFER = 32 * 1024 * 1024
 
 
+def _is_permission_mode(value: str) -> TypeIs[PermissionMode]:
+    return value in get_args(PermissionMode)
+
+
+def _is_effort(value: str) -> TypeIs[EffortLevel]:
+    return value in get_args(EffortLevel)
+
+
 def _options(
     config: Config,
     cwd: str,
@@ -512,7 +524,7 @@ def _options(
     max_budget_usd: float | None = None,
     workspace: str | None = None,
     model: str | None = None,
-    system_prompt: dict[str, str] | None = None,
+    system_prompt: SystemPromptPreset | None = None,
     effort: str | None = None,
     settings: str | None = None,
     *,
@@ -553,6 +565,11 @@ def _options(
     # default, empty. `tools=[]` and `tools=None` differ for the SDK, so test `is None`. Read
     # once so the environment below follows the same list.
     resolved = config.effective_tools() if tools is None else list(tools)
+    permission_mode = config.permission_mode()
+    if not _is_permission_mode(permission_mode):
+        raise ValueError(
+            f"permission mode {permission_mode!r} is not one of {', '.join(get_args(PermissionMode))}"
+        )
     options = ClaudeAgentOptions(
         cwd=cwd,
         # Laid over what the child would inherit. See `child_env`.
@@ -564,7 +581,7 @@ def _options(
             bash="Bash" in resolved,
         ),
         tools=resolved,
-        permission_mode=config.permission_mode(),
+        permission_mode=permission_mode,
         resume=resume,
         fork_session=False,  # resume needs the same id back, not a branch
         model=model if model is not None else config.model,
@@ -598,7 +615,7 @@ def _options(
         options.agents = {name: AgentDefinition(**spec) for name, spec in agents.items()}
     project = instructions.read(cwd).text
     if system_prompt is not None:
-        options.system_prompt = dict(system_prompt)
+        options.system_prompt = system_prompt.copy()
         if settings is not None:
             options.settings = settings
     if project:
@@ -614,6 +631,8 @@ def _options(
             options.system_prompt = {"type": "file", "path": str(path)}
     if effort is not None:
         # What `coscc/agent/models.py` resolved for this stage and label. Unset, the SDK default.
+        if not _is_effort(effort):
+            raise ValueError(f"effort {effort!r} is not one of {', '.join(get_args(EffortLevel))}")
         options.effort = effort
     if resume_at is not None:
         # The session goes on from its safe point, and nothing past it is read.
@@ -624,11 +643,11 @@ def _options(
         # form becomes an empty custom prompt with the same file appended, never the file's text
         # in argv (`E2BIG`).
         sp = options.system_prompt
-        if isinstance(sp, dict) and sp.get("type") == "file":
-            options.extra_args["append-system-prompt-file"] = sp.get("path")
+        if isinstance(sp, dict) and sp["type"] == "preset":
+            sp["snapshot"] = True
+        elif isinstance(sp, dict) and sp["type"] == "file":
+            options.extra_args["append-system-prompt-file"] = sp["path"]
             options.system_prompt = {"type": "custom", "prompt": "", "snapshot": True}
-        elif isinstance(sp, dict):
-            options.system_prompt = {**sp, "snapshot": True}
         else:
             options.system_prompt = {"type": "custom", "prompt": "", "snapshot": True}
     return options
@@ -654,7 +673,7 @@ class Sessions:
         # Who counts as a workspace. Defaults to the env list; `Service` replaces it with the
         # union of env and store. Injected so a store-backed workspace that passed the service
         # gate is not refused here; the guard stays as the last thing before a CLI spawns.
-        self.membership = config.is_workspace
+        self.membership: Callable[[str], bool] = config.is_workspace
         self._live: dict[str, Live] = {}
         self._created_here: set[str] = set()
         # Board steps in flight, each with the one client it spawned. Never in `_live`: a step
@@ -732,7 +751,7 @@ class Sessions:
         max_budget_usd: float | None = None,
         workspace: str | None = None,
         model: str | None = None,
-        system_prompt: dict[str, str] | None = None,
+        system_prompt: SystemPromptPreset | None = None,
         effort: str | None = None,
         step: StepHandle | None = None,
         settings: str | None = None,
@@ -767,8 +786,9 @@ class Sessions:
         if self.paused:
             raise Refused(PAUSED)
         resolved_model = model if model is not None else self.config.model
+        flow: StepHandle | dict[str, Any]
         if step is None:
-            flow: Any = self._begin_turn(cwd, session_id, owner, resolved_model)
+            flow = self._begin_turn(cwd, session_id, owner, resolved_model)
         else:
             flow = step
             step.cwd, step.owner, step.model = cwd, owner, resolved_model
@@ -793,7 +813,7 @@ class Sessions:
             mcp_servers=mcp_servers,
             agents=agents,
         )
-        if step is None:
+        if isinstance(flow, dict):
             turn = flow
             try:
                 async with aclosing(inner):
@@ -810,24 +830,24 @@ class Sessions:
                 if self.on_turn_end is not None:
                     self.on_turn_end()
             return
-        self._steps.add(step)
+        self._steps.add(flow)
         try:
             async with aclosing(inner):
                 async for item in inner:
                     yield item
         except Exception as e:
-            if step.suspended and not isinstance(e, Suspended):
-                raise Suspended(f"session {step.session_id} was paused for an update") from e
+            if flow.suspended and not isinstance(e, Suspended):
+                raise Suspended(f"session {flow.session_id} was paused for an update") from e
             raise
         finally:
             try:
-                await step.close()
+                await flow.close()
             finally:
                 # A Stop's cancel can land on this very close; the closing goes on without
                 # us, and the handle must still leave the set.
-                self._steps.discard(step)
+                self._steps.discard(flow)
                 # After the close, so the CLI is gone before its data root is.
-                step.drop_scratch()
+                flow.drop_scratch()
 
     async def _stream(  # noqa: C901, PLR0915 - still to split
         self,
@@ -1043,7 +1063,7 @@ class Sessions:
             if step is None:
                 self._live[resolved] = live
             self._created_here.add(resolved)
-            cost = {name: int(turn.get(name, 0.0)) for name in COST_FIELDS}
+            cost: dict[str, int | float] = {name: int(turn.get(name, 0.0)) for name in COST_FIELDS}
             cost["turns"] = turns
             cost["duration_ms"] = duration_ms
             # Kept as a float and rounded, not truncated: a turn can cost under a cent.

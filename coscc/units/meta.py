@@ -755,8 +755,9 @@ class UnitMeta:
                 e["unknowns"].append(
                     {"artifact": r["artifact"], "field": r["field"], "reason": r["reason"]}
                 )
-                if r["field"] == "status" and r["raw"] is not None:
-                    artifact(r)["raw"] = r["raw"]
+                a = artifact(r)
+                if a is not None and r["field"] == "status" and r["raw"] is not None:
+                    a["raw"] = r["raw"]
             for r in rows(
                 "SELECT workspace, unit, kind, ref FROM unit_links WHERE {where} ORDER BY pos"
             ):

@@ -778,7 +778,9 @@ class Data:
                 f"VALUES ({', '.join('?' for _ in self._DECISION_FIELDS)}, '', ?)",
                 (*values, now()),
             )
-            return int(cur.lastrowid)
+            if cur.lastrowid is None:
+                raise sqlite3.DatabaseError("the decision was not inserted")
+            return cur.lastrowid
 
     def decision_withdraw(self, decision_id: int, day: str) -> bool:
         """Write the day `decision_id` was withdrawn, once. False when there is no such row or it

@@ -89,10 +89,15 @@ class Agents:
         after = {k: v for k, v in overrides.items() if k != key}
         if new is not None:
             after[key] = new
-        name = str(agents.resolve(key, defaults, after)["name"])
-        taken = {
-            str(agents.resolve(k, defaults, after)["name"]).lower(): k for k in defaults if k != key
-        }
+
+        def named(k: str) -> str:
+            row = agents.resolve(k, defaults, after)
+            if row is None:
+                raise Invalid(f"no such agent: {k} (use one of {', '.join(defaults)})")
+            return str(row["name"])
+
+        name = named(key)
+        taken = {named(k).lower(): k for k in defaults if k != key}
         if name.lower() in taken:
             raise Invalid(f"the name {name} is already {taken[name.lower()]}'s")
 

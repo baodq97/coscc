@@ -163,6 +163,13 @@ class Answers:
         """
         unit = found["name"]
         n = rnd.get("n")
+        if not isinstance(n, int):
+            return {
+                "round": None,
+                "state": "failed",
+                "url": "",
+                "reason": "the round has no number",
+            }
         pr_url = (found.get("pr") or {}).get("url") or ""
         # The `review` agent as the table names it now, overrides included.
         reviewer = self.agents.agent("review")
@@ -284,9 +291,9 @@ class Answers:
                 session=str(done.get("session_id") or "") or UNKNOWN,
                 source=f"run:{stage}",
                 wrote=None if submitted else wrote,
-                decided=(wrote,) if submitted else (),
+                decided=(wrote,) if wrote and submitted else (),
             )
-            if submitted:
+            if wrote and submitted:
                 apply = self._apply_round if stage == submit.ROUND else self._apply_result
                 await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
             return {}
@@ -418,7 +425,7 @@ class Answers:
             except GitError:
                 pass
             try:
-                made = {
+                made: dict[str, Any] = {
                     "cwd": cwd,
                     # The host repository's own `.cos/` and every worktree's count toward
                     # the number, so a unit cannot take one already used there.
