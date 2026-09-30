@@ -68,6 +68,8 @@ REASONS = (
     "no-worktree",
     "no-git",
     "no-run-log",
+    # A feature refused the step; the words name the feature, and its reason follows.
+    "feature-refused",
 )
 
 # Who may skip a stage. `agent` and `code` never may.

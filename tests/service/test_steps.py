@@ -2444,6 +2444,113 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
         )
 
 
+class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
+    """The guards of the features are asked once the gate is open, and a denial hands the unit
+    back before anything starts."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.sessions = AStepTheGateClosesNeverStarts.NeverCalled()
+        self.service = Service(
+            Config(
+                workspaces=(str(self.repo),),
+                working_dir=str(self.root / "work"),
+                data_dir=str(self.root / "data"),
+            ),
+            self.sessions,
+        )
+        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        (Path(self.made["path"]) / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
+        self.key = self.service.ws.key(str(self.repo))
+
+    def guarded(self, check):
+        from coscc.hooks import Guard, Hooks, Parts
+
+        self.service.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
+
+    def run_stage(self, stage: str):
+        async def go():
+            return [
+                i
+                async for i in self.service.steps.run_step(str(self.repo), self.made["unit"], stage)
+            ]
+
+        return asyncio.run(go())
+
+    def starts(self):
+        return self.service.ws.journal().records(self.key, kind="start")
+
+    def refused(self, stage: str = "spec"):
+        from coscc.service.common import Refused
+
+        with self.assertRaises(Refused) as caught:
+            self.run_stage(stage)
+        self.assertEqual(caught.exception.reasons, ("feature-refused",))
+        self.assertFalse(self.service.holds.busy(self.key, self.made["unit"]))
+        self.assertEqual(self.starts(), [])
+        self.assertEqual(self.sessions.calls, 0)
+        return str(caught.exception)
+
+    def test_a_guard_that_denies_refuses_the_step_with_its_words(self):
+        self.guarded(lambda facts: "not today")
+        self.assertEqual(self.refused(), "g: not today")
+
+    def test_a_guard_that_raises_refuses_the_step(self):
+        def boom(facts):
+            raise RuntimeError("nope")
+
+        self.guarded(boom)
+        with self.assertLogs("coscc.service.steps", "ERROR"):
+            self.assertEqual(self.refused(), "g: failed (RuntimeError)")
+
+    def test_the_guard_is_told_the_run_it_would_refuse(self):
+        seen = []
+        self.guarded(lambda facts: seen.append(facts) or "no")
+        self.refused()
+        [facts] = seen
+        self.assertEqual(
+            (facts.unit, facts.stage, facts.resumed), (self.made["unit"], "spec", False)
+        )
+
+    def test_a_pr_step_is_refused_before_the_mechanical_path(self):
+        from coscc.units import board as board_reader
+
+        async def open_gate(*a, **kw):
+            return board_reader.Gate(True, "open: pr may proceed", (), None)
+
+        async def tree(*a, **kw):
+            return str(self.repo), str(self.repo)
+
+        async def none(*a, **kw):
+            return None
+
+        mechanical = mock.AsyncMock()
+        self.guarded(lambda facts: "no")
+        steps = self.service.steps
+        with (
+            mock.patch.object(steps, "_ask_gate", open_gate),
+            mock.patch.object(steps, "_open_tree", tree),
+            mock.patch.object(steps, "_tree_base", none),
+            mock.patch.object(steps, "_run_mechanical", mechanical),
+        ):
+            self.refused("pr")
+        mechanical.assert_not_called()
+
+    def test_a_guard_that_abstains_changes_nothing(self):
+        self.guarded(lambda facts: None)
+        self.run_stage("spec")
+        self.assertEqual(self.sessions.calls, 1)
+        self.assertEqual(
+            self.service.steps.feature_refusal(mock.Mock(stage="spec", workspace="w")), ""
+        )
+
+
 class APrOrShipEndsThroughTheMachine(unittest.TestCase):
     """`drive` ends a `pr` or a `ship` through the PR machine and leaves the unit's last word.
     No session opens: the runner and the machine are stand-ins throughout."""
