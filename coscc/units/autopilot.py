@@ -77,6 +77,15 @@ def is_ci_pending(answer: Any) -> bool:
     return said(answer, "ci-pending")
 
 
+# The codes of a refusal that is a race: try again, nobody needs to act.
+WAIT = ("unit-busy", "updating", "ci-pending")
+
+
+def is_waiting(answer: Any) -> bool:
+    """A refusal that is a race: the next pass asks again. Not a stop."""
+    return any(said(answer, code) for code in WAIT)
+
+
 def is_ci_red(answer: Any) -> bool:
     """`next` sends the unit back to `impl` because CI is red."""
     return said(answer, "ci-red")

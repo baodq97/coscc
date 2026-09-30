@@ -464,8 +464,9 @@ class Steps:
         refuse_while_updating(self.updater)
         journal = self.ws.journal()
         if journal is None:
-            raise Invalid(
-                "no working folder is set, so an integration cannot be recorded — set COS_WORKING_DIR"
+            raise Refused(
+                "no working folder is set, so an integration cannot be recorded — set COS_WORKING_DIR",
+                ("no-run-log",),
             )
         if not unit:
             raise Invalid("name a work unit")
@@ -473,10 +474,10 @@ class Steps:
         try:
             data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
         except Unavailable as e:
-            raise Invalid(str(e)) from e
+            raise Refused(str(e), ("unavailable",)) from e
         found = next((u for u in data["units"] if u["name"] == unit), None)
         if found is None:
-            raise Invalid(f"no such work unit in this workspace: {unit}")
+            raise Refused(f"no such work unit in this workspace: {unit}", ("no-unit",))
         key = self.ws.key(cwd)
         root = Path(cwd).expanduser().resolve()
         last = self._last_integrations(journal, key).get(unit)
@@ -1126,7 +1127,7 @@ class Steps:
                 self.ws.units_root(cwd), unit, repo=None, state=self.ws.snapshot(cwd, [unit])
             )
         except Unavailable as e:
-            raise Invalid(str(e)) from e
+            raise Refused(str(e), ("unavailable",)) from e
         if held.get("hold"):
             return {
                 "cwd": cwd,
@@ -1152,7 +1153,7 @@ class Steps:
                 self.ws.units_root(cwd), unit, repo=repo, state=self.ws.snapshot(cwd, [unit])
             )
         except Unavailable as e:
-            raise Invalid(str(e)) from e
+            raise Refused(str(e), ("unavailable",)) from e
         return {
             "cwd": cwd,
             "unit": unit,
@@ -1246,8 +1247,9 @@ class Steps:
         refuse_while_updating(self.updater)
         journal = self.ws.journal()
         if journal is None:
-            raise Invalid(
-                "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR"
+            raise Refused(
+                "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR",
+                ("no-run-log",),
             )
 
         # The unit is held from here, before the first `await`: a second request
@@ -1339,7 +1341,7 @@ class Steps:
             try:
                 running = self.registry.claim(key, unit, stage, started_at=mark.started_at)
             except steps_mod.Busy as e:
-                raise Invalid(str(e)) from e
+                raise Refused(str(e), ("unit-busy",)) from e
             mark.phase = "running"
             rid = self.holds.mark_running(key, unit, stage, "step")
             queue = self._launch(
@@ -1404,20 +1406,23 @@ class Steps:
         try:
             data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
         except Unavailable as e:
-            raise Invalid(str(e)) from e
+            raise Refused(str(e), ("unavailable",)) from e
 
         found = next((u for u in data["units"] if u["name"] == unit), None)
         if found is None:
-            raise Invalid(f"no such work unit in this workspace: {unit}")
+            raise Refused(f"no such work unit in this workspace: {unit}", ("no-unit",))
         row = next((r for r in found["stages"] if r["stage"] == stage), None)
         if row is None:
-            raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
+            raise Refused(
+                f"no such stage: {stage} (use one of {', '.join(data['stages'])})", ("no-stage",)
+            )
         # `cos.mjs`'s own field, read before any worktree is opened — the gate
         # below would refuse too, but only after `worktree` had reopened a dropped tree.
         held = found.get("hold")
         if held:
-            raise Invalid(
-                f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it"
+            raise Refused(
+                f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it",
+                ("held",),
             )
         return data, found, row
 
@@ -1426,8 +1431,9 @@ class Steps:
         the gate asked. Whether `stage` may run again, and the block that says so, are
         `cos.mjs`'s; its refusal is passed on."""
         if started_by != "person":
-            raise Invalid(
-                "a stage is run again only by a person, from the board, never by the autopilot"
+            raise Refused(
+                "a stage is run again only by a person, from the board, never by the autopilot",
+                ("rerun-by-person",),
             )
         if len(note) > RERUN_NOTE_MAX:
             raise Invalid(
@@ -1438,7 +1444,7 @@ class Steps:
                 self.ws.units_root(cwd), unit, stage, state=self.ws.snapshot(cwd, [unit])
             )
         except Unavailable as e:
-            raise Invalid(str(e)) from e
+            raise Refused(str(e), ("unavailable",)) from e
         if "error" in asked:
             raise Invalid(str(asked["error"]))
         return str(asked.get("block") or "")
@@ -1460,13 +1466,16 @@ class Steps:
                     "path": (await worktrees.ensure(cwd, unit, None, self.config.data_dir))["path"]
                 }
             except (GitError, BadUnit) as e:
-                raise Invalid(f"{unit} has no worktree and one could not be opened: {e}") from e
+                raise Refused(
+                    f"{unit} has no worktree and one could not be opened: {e}", ("no-worktree",)
+                ) from e
         work = tree["path"] if tree else cwd
         # A spike is watched through the worktree's `HEAD` and `git status`;
         # with no git there is nothing to watch, so it does not run at all.
         if stage == "spike" and tree is None:
-            raise Invalid(
-                "spike needs a git worktree to watch, and this workspace is not a git repository"
+            raise Refused(
+                "spike needs a git worktree to watch, and this workspace is not a git repository",
+                ("no-git",),
             )
         return tree, work
 
@@ -1502,7 +1511,7 @@ class Steps:
                 state=self.ws.snapshot(cwd, [unit]),
             )
         except Unavailable as e:
-            raise Invalid(str(e)) from e
+            raise Refused(str(e), ("unavailable",)) from e
         allowed, said = answer
         if not allowed:
             raise Refused(said, _gate_reasons(answer))
@@ -1561,7 +1570,7 @@ class Steps:
             if not prepared.get("ok"):
                 prepared = await worktrees.prepare(Path(work), cwd, data_dir=self.config.data_dir)
             if not prepared.get("ok"):
-                raise Invalid(worktrees.describe_failure(prepared))
+                raise Refused(worktrees.describe_failure(prepared), ("no-worktree",))
         # A UI unit whose branch was rewritten since `impl` took its
         # screenshots has them taken again, here, before any money is spent; a retake that
         # fails refuses the step, and no round is spent on a stale manifest.
@@ -1637,7 +1646,7 @@ class Steps:
             config = self.models.stage_config(stage, list(stages), directory, journal, key, unit)
             failed = journal.failed_attempts(key, unit, stage)
         except Busy as e:
-            raise Invalid(str(e)) from e
+            raise Refused(str(e), ("unavailable",)) from e
         # A return to `impl` in the model trial asks `next` once whether CI sent it back;
         # `ci_red` never raises, so nothing here refuses the step.
         if (

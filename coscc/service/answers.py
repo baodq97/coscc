@@ -1123,6 +1123,7 @@ class Answers:
         finally:
             if mark is not None:
                 self.holds.release(key, unit, mark)
+        self.bus.publish(Event("hold.moved", key, unit))
         return {
             "unit": unit,
             "from": from_,

@@ -208,17 +208,17 @@ class Backlog:
             "reason": reason,
             "by": by,
         }
-        return {
-            "recorded": self._append_checked(
-                journal,
-                record,
-                lambda rows: backlog.check_shortlist(
-                    names,
-                    waiting,
-                    backlog.estimates_of(rows),
-                ),
-            )
-        }
+        recorded = self._append_checked(
+            journal,
+            record,
+            lambda rows: backlog.check_shortlist(
+                names,
+                waiting,
+                backlog.estimates_of(rows),
+            ),
+        )
+        self.bus.publish(Event("shortlist.saved", key))
+        return {"recorded": recorded}
 
     async def propose_estimates(  # noqa: C901, PLR0915 - still to split
         self,
