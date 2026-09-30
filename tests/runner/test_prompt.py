@@ -1193,3 +1193,33 @@ class AnswersComeFromTheDatabase(unittest.TestCase):
         self.assertIsNone(
             answers_for(b"# Spec\nStatus: draft.\n", "spec.md", {"answers": [], "holds": []})
         )
+
+
+class FeaturesAddNamedBlocksToThePrompt(unittest.TestCase):
+    def prompt(self, d: str, blocks) -> str:
+        make_unit(Path(d), intent_md="Status: accepted.\nI")
+        return compose_prompt(
+            d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md", blocks=blocks
+        )[0]
+
+    def test_blocks_land_in_order_before_the_task(self):
+        from coscc.runner.prompt import _task
+
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self.prompt(d, (("a", "FIRST-BLOCK"), ("b", "SECOND-BLOCK")))
+            task = _task(d, Path(d) / ".cos" / UNIT, UNIT, "spec", "spec.md", False)
+        self.assertLess(prompt.index("FIRST-BLOCK"), prompt.index("SECOND-BLOCK"))
+        self.assertLess(prompt.index("SECOND-BLOCK"), prompt.index(task))
+
+    def test_an_empty_block_adds_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.prompt(d, (("a", ""),)), self.prompt(d, ()))
+
+    def test_two_blocks_with_one_name_are_refused(self):
+        from coscc.hooks import Block, Hooks, Parts
+
+        block = Block("same", lambda facts: "x")
+        hooks = Hooks(parts=(("one", Parts(blocks=(block,))), ("two", Parts(blocks=(block,)))))
+        with self.assertRaises(ValueError) as caught:
+            hooks.for_step("spec", "w")
+        self.assertIn("same", str(caught.exception))

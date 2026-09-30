@@ -909,6 +909,7 @@ def compose_prompt(
     agent: dict[str, Any] | None = None,
     unit_meta: dict[str, Any] | None = None,
     state_file: str | Path | None = None,
+    blocks: tuple[tuple[str, str], ...] = (),
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole, and the ones it names by
     path only.
@@ -927,6 +928,9 @@ def compose_prompt(
 
     The list of included artifacts is returned rather than inferred later: if a step ran
     without the previous stage's artifact in the prompt, the record says so.
+
+    `blocks` are the named texts features add, in order, before the rerun block and the task; an
+    empty text adds nothing.
 
     `directory` is handed in: the artifacts live in the product's own store while `workspace`
     stays the repository the work is done in.
@@ -955,6 +959,7 @@ def compose_prompt(
     ]
     files, pointed = _unit_files(directory, stage, stages, included)
     parts += files
+    parts += [text for _name, text in blocks if text]
     # Just before the task, so the note is the last thing read before it.
     if rerun:
         parts.append(_rerun_block(directory, stage, artifact, rerun_note))

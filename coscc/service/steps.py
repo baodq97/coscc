@@ -17,7 +17,7 @@ from coscc.units import board as board_reader
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc.agent import agents, harness, modeltrial
-from coscc.hooks import Hooks
+from coscc.hooks import Facts, Hooks, facts as facts_of
 from coscc.units import submit as submit_mod
 from coscc.github import integrate, prmachine
 from coscc.units import planmap, retake
@@ -1273,6 +1273,22 @@ class Steps:
             tree, work = await self._open_tree(cwd, unit, stage)
             base = await self._tree_base(cwd, unit, tree)
             answer = await self._ask_gate(cwd, unit, stage, work)
+            refusal = self.feature_refusal(
+                facts_of(
+                    workspace=cwd,
+                    workspace_key=key,
+                    unit=unit,
+                    stage=stage,
+                    run="",
+                    cwd=work,
+                    watch=None,
+                    directory=self.ws.unit_dir(cwd, unit),
+                    commands=(),
+                    resumed=False,
+                )
+            )
+            if refusal:
+                raise Refused(refusal, ("feature-refused",))
 
             # `pr` and `ship` run no session: the PR machine pushes, opens or
             # merges, and records each move through its guard. The mark is this frame's, as for
@@ -1493,6 +1509,19 @@ class Steps:
         if tree.get("branch"):
             return tree.get("base")
         return await worktrees.refresh_base(cwd, unit, self.config.data_dir)
+
+    def feature_refusal(self, facts: Facts) -> str:
+        """The words of the first feature guard that denies this run, or `""` when all abstain. A
+        guard that raises denies: a run is never let through by a check that could not be made."""
+        for guard in self.hooks.for_step(facts.stage, facts.workspace).guards:
+            try:
+                words = guard.check(facts)
+            except Exception as e:
+                log.exception("guard %s of a feature failed", guard.name)
+                return f"{guard.name}: failed ({type(e).__name__})"
+            if words is not None:
+                return f"{guard.name}: {words}"
+        return ""
 
     async def _ask_gate(self, cwd: str, unit: str, stage: str, work: str) -> board_reader.Gate:
         """`cos.mjs gate` is asked here, not left to the skill: a session often cannot run
