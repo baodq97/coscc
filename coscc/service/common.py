@@ -20,7 +20,7 @@ from coscc.data import Busy
 
 
 # The stage names, in stage order, from the state set `cos.mjs` is checked against: a copy
-# kept here by hand once left `spike` out (`0141`).
+# kept here by hand once left `spike` out, and the unit's detail could not open `spike.md`.
 STAGE_FILES = states.default().stage_names
 
 # Where a unit's branch is cut from: the trunk as this remote has it. Constants, not request

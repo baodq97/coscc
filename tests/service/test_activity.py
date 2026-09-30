@@ -16,7 +16,7 @@ from tests.service.test_service import _service, create_sync
 
 
 class EveryStageArtifactOpens(unittest.TestCase):
-    """The unit's detail opens each artifact the harness names, `spike.md` among them (`0141`)."""
+    """The unit's detail opens each artifact the harness names, `spike.md` among them."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
