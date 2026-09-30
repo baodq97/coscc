@@ -122,6 +122,62 @@ config.py
   and no shim is left behind.
 - A test patches a name where it is looked up (`mock.patch("coscc.service.steps.CI_REFRESH")`).
 
+## Adding a feature
+
+New work is `coscc/features/<name>.py` ending in one `PLUGIN`, a line in `FEATURES`, and its
+test; it reaches the app only through `Ctx` (`coscc/plugin.py`). Copy `notices`. A need no
+extension point serves is a kernel change, planned first.
+
+- Extension points: `routes`, `scripts`, `tables`, `agent` giving `Parts` of `Tool`, `Guard`
+  (`check(Facts)` returns words to deny, or `None`) and `Block` (`render(Facts)` adds prompt
+  text); slots `slot-topbar` and `slot-unit`.
+- Building blocks: `plugin.body/line/ndjson`, `Ctx`, `window.coscc.api/stream/every/ago/slot`.
+
+```python
+"""Bookmarks: a note per unit."""
+
+from coscc.hooks import Facts, Guard, Parts
+from coscc.plugin import Ctx, Plugin, body
+from fastapi import APIRouter, Request
+
+TABLE = "CREATE TABLE IF NOT EXISTS bookmarks (unit TEXT PRIMARY KEY, note TEXT NOT NULL)"
+
+
+def routes(ctx: Ctx):
+    router = APIRouter()
+
+    @router.post("/api/bookmarks")
+    async def save(request: Request) -> dict[str, str]:
+        sent = await body(request)
+        with ctx.data.write() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO bookmarks VALUES (?, ?)", (sent["unit"], sent["note"])
+            )
+        return {"unit": sent["unit"]}
+
+    return router.routes
+
+
+def no_ship(facts: Facts) -> str | None:
+    return "no ship yet" if facts.stage == "ship" else None
+
+
+PLUGIN = Plugin(
+    "bookmarks", routes, tables=(TABLE,), agent=lambda _: Parts(guards=(Guard("b", no_ship),))
+)
+```
+
+```python
+class TheGuardOnlyDenies(unittest.TestCase):
+    def test_it_denies_ship_and_abstains_elsewhere(self):
+        self.assertTrue(bookmarks.no_ship(mock.Mock(spec=Facts, stage="ship")))
+        self.assertIsNone(bookmarks.no_ship(mock.Mock(spec=Facts, stage="impl")))
+```
+
+Rules: at most 3 files (`tests/test_layers.py`); `## What the agent sees` in its doc when it
+has agent parts; a blocking tool handler awaits `asyncio.to_thread`; a handler that runs a
+command calls `policy.check_command` itself; a guard only denies or abstains.
+
 ## Tests
 
 - **Where a test goes.** `tests/` mirrors `coscc/`: `coscc/<pkg>/<module>.py` is tested by

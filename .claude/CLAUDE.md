@@ -1,6 +1,6 @@
 # coscc
 
-A local AI-native SDLC harness. `cos.mjs` decides every gate; each stage's rules live in its skill.
+A local SDLC harness. `cos.mjs` decides every gate; each stage's rules live in its skill.
 
 ## Commands
 
@@ -20,7 +20,7 @@ Branch on `reasons` codes (`coscc/units/guards.py`), never on their words.
 
 ## Verifying your work
 
-`npm test` green before done. Never skip a failing test or switch a check off: fix the code.
+`npm test` green before done. Never skip a test or switch a check off: fix the code.
 
 ## Conventions
 
@@ -29,18 +29,18 @@ Branch on `reasons` codes (`coscc/units/guards.py`), never on their words.
   `vX.Y.Z`, `vX.Y.Z-rc.N`. Never compose one by hand: `unit-branch`, `check-branch`, `check-tag`.
 - One branch and one PR per change, squashed, rebased onto `main` (never merge `main` in).
 - No unit or requirement ids in comments, docstrings, names or rules (`tests/test_comments.py`).
-- Import downwards, from the defining module; `tests/` mirrors `coscc/`. A feature is
-  `coscc/features/<name>.py` + a line in `FEATURES`, using the app only via `Ctx`
-  (`.claude/docs/code-and-tests.md`).
+- Import downwards, from the defining module; `tests/` mirrors `coscc/`. New work is a feature
+  (`coscc/features/<name>.py` + a `FEATURES` line) using only `Ctx` and the kernel's
+  extension points; a need none serves is a kernel change (`.claude/docs/code-and-tests.md`).
 - Code little and simple; split a file only when needed.
-- Take unit paths from `new-path`. Cite committed files by path and lines. Cut unsourced
+- Unit paths come from `new-path`. Cite files as path:lines. Cut unsourced
   figures.
 
 ## Architecture
 
-A unit is `.cos/NNNN_<slug>/` holding its artifacts; its state lives in the app's `cos.db`.
-`cos.mjs` is the one definition of the loop. The app runs every stage, `pr` and `ship` too.
-`Status: accepted` is the agent's judgement, never a person's approval.
+A unit is `.cos/NNNN_<slug>/` holding its artifacts; its state is in the app's `cos.db`.
+`cos.mjs` is the one definition of the loop. The app runs every stage.
+`Status: accepted` is the agent's judgement, not a person's approval.
 
 ## Things agents get wrong
 
@@ -51,7 +51,7 @@ A unit is `.cos/NNNN_<slug>/` holding its artifacts; its state lives in the app'
 - A skip is a person's: `uv run coscc skip <workspace> <unit> spec [--delegated] <reason>`.
 - Committing on `main`: cut the branch from `unit-branch` first.
 
-## Docs (read when the line applies)
+## Docs (read when it applies)
 
 - `.claude/docs/branches.md` — review rounds, rebasing, the branch order.
 - `.claude/docs/copying.md` — copying `.claude/` elsewhere.
