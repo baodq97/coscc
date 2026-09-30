@@ -6,9 +6,15 @@ A feature (`coscc/features/<name>.py`) ends in one `PLUGIN` and reaches the app 
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import json
+import logging
+import re
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
+from fastapi import Request
+from fastapi.responses import StreamingResponse
 from starlette.routing import BaseRoute
 
 from coscc.bus import Bus
@@ -19,6 +25,9 @@ from coscc.service.common import Invalid
 from coscc.service.workspaces import Workspaces
 
 OFF_PREF = "features.off"
+CREATE_TABLE = re.compile(r"\s*CREATE TABLE IF NOT EXISTS\s+\w+", re.IGNORECASE)
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -29,6 +38,7 @@ class Ctx:
     # `(feature, workspace path)`; a workspace the app does not know counts as on.
     enabled: Callable[[str, str], bool]
     bus: Bus
+    data: Data
 
 
 @dataclass(frozen=True)
@@ -36,6 +46,61 @@ class Plugin:
     name: str
     routes: Callable[[Ctx], Sequence[BaseRoute]]
     scripts: tuple[str, ...] = ()
+    # `CREATE TABLE IF NOT EXISTS ...` statements, run once at build through `Data.write()`.
+    tables: tuple[str, ...] = ()
+
+
+async def body(request: Request) -> dict[str, Any]:
+    """The request's JSON object; anything else is the caller's mistake."""
+    try:
+        parsed = await request.json()
+    except json.JSONDecodeError, ValueError:
+        parsed = None
+    if not isinstance(parsed, dict):
+        raise Invalid("send a JSON object")
+    return parsed
+
+
+def line(obj: dict[str, Any]) -> bytes:
+    return json.dumps(obj).encode() + b"\n"
+
+
+async def ndjson(stream: AsyncIterator[tuple[str, Any]], what: str) -> StreamingResponse:
+    """`(kind, payload)` items as NDJSON: a `chunk` line per text, then one `done`.
+
+    The first item is pulled here, so a refusal before any output is still a status code; a
+    failure after it arrives as an `error` line, and the caller must read to the last line.
+    """
+    try:
+        first = await anext(stream)
+    except StopAsyncIteration:
+        raise Invalid(f"{what} produced nothing") from None
+
+    def out(kind: str, payload: Any) -> bytes:
+        return line({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
+
+    async def lines() -> AsyncIterator[bytes]:
+        try:
+            yield out(*first)
+            async for kind, payload in stream:
+                yield out(kind, payload)
+        except Exception as e:
+            log.exception("the stream of %s failed", what)
+            yield line({"type": "error", "error": f"{type(e).__name__}: {e}"})
+
+    return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+
+def create_tables(ctx: Ctx, features: Sequence[Plugin]) -> None:
+    """Run every feature's `tables` once; a statement that is not `CREATE TABLE IF NOT EXISTS` is refused."""
+    for f in features:
+        for statement in f.tables:
+            if not CREATE_TABLE.match(statement):
+                raise ValueError(f"{f.name}: a table is a CREATE TABLE IF NOT EXISTS statement")
+    with ctx.data.write() as conn:
+        for f in features:
+            for statement in f.tables:
+                conn.execute(statement)
 
 
 def _off(data: Data) -> dict[str, list[str]]:
@@ -53,7 +118,7 @@ def ctx_of(service: Service) -> Ctx:
     def enabled(feature: str, workspace: str) -> bool:
         return Workspaces.key(workspace) not in _off(data).get(feature, [])
 
-    return Ctx(service.ws.journal, workspace_key, enabled, service.bus)
+    return Ctx(service.ws.journal, workspace_key, enabled, service.bus, data)
 
 
 def set_enabled(service: Service, known: Sequence[str], feature: str, cwd: str, on: bool) -> None:
