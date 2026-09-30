@@ -26,6 +26,8 @@ One shell under static routes; `coscc/state/place.py` reads and writes the addre
 (a navigation button only returns `rx.redirect`). Components in `screens/`, state in `state/`,
 logic behind `Service` (`service/`): a handler that decides anything is a bug in `Service`.
 `policy.py` is the grant table keyed by stage, outside `Config`; the default grants nothing.
+A part that ends something publishes `<subject>.<past-tense verb>` on `coscc/bus.py`; who
+hears what is one table in `Service.__post_init__`, never a callback wired down.
 
 ## Gotchas
 

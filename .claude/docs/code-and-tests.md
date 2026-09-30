@@ -36,6 +36,12 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
 Fix the code, not the check. A rule is switched off only in `pyproject.toml`, with its reason. A
 `# noqa` or `# ty: ignore` names its rule and says why on the same line.
 
+## Types
+
+- A closed set of strings is a `Literal`, and its tuple comes from it with `get_args`, next to it
+  (`journal.Outcome`, `OUTCOMES`). A value read from JSON, the database or a request is checked
+  against the tuple once, where it is read.
+
 ## Errors and logs
 
 - Catch an error by its type. A read or write of `cos.db` raises `data.Unusable` (`Busy`,
