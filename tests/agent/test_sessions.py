@@ -721,7 +721,7 @@ class _CountingClient(_FakeClient):
 
 
 class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
-    """A chat turn is held while it answers and let go when it ends, which `on_turn_end` hears;
+    """A chat turn is held while it answers and let go when it ends, which the bus hears as `chat-turn.ended`;
     a board step is never one."""
 
     def setUp(self):
@@ -732,7 +732,7 @@ class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
         def ended():
             self.ended += 1
 
-        self.s.on_turn_end = ended
+        self.s.bus.subscribe("chat-turn.ended", lambda _: ended())
         _CountingClient.made = []
         _CountingClient.hold = asyncio.Event()
         _CountingClient.fail = False

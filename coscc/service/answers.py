@@ -39,7 +39,7 @@ from coscc.service.common import Holds
 from coscc.service.agents import Agents
 from coscc.service.backlog import Backlog
 from coscc.service.ideas import Ideas
-from collections.abc import Callable
+from coscc.bus import Bus, Event
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ class Answers:
         agents: Agents,
         backlog: Backlog,
         ideas: Ideas,
-        nudge: Callable[..., None],
+        bus: Bus,
     ) -> None:
         self.config = config
         self.ws = ws
@@ -98,7 +98,7 @@ class Answers:
         self.agents = agents
         self.backlog = backlog
         self.ideas = ideas
-        self.nudge = nudge
+        self.bus = bus
         # Held across read-check-append so two answers arriving together cannot interleave.
         # The page and the API share this instance, so one lock covers both.
         self._answer_lock = asyncio.Lock()
@@ -522,7 +522,7 @@ class Answers:
         )
         written = done["written"][0]
         # The answer itself starts nothing; a pass may, if the switch is on.
-        self.nudge(self.ws.key(cwd))
+        self.bus.publish(Event("answer.written", self.ws.key(cwd), unit))
         return {
             "unit": unit,
             "artifact": written["artifact"],

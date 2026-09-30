@@ -47,6 +47,7 @@ from coscc.service.common import (
     describe_base,
     step_cwd,
 )
+from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces
 from coscc.service.common import Holds
@@ -204,7 +205,7 @@ class Steps:
         models: Models,
         ideas: Ideas,
         answers: Answers,
-        nudge: Callable[..., None],
+        bus: Bus,
     ) -> None:
         self.config = config
         self.ws = ws
@@ -215,7 +216,7 @@ class Steps:
         self.models = models
         self.ideas = ideas
         self.answers = answers
-        self.nudge = nudge
+        self.bus = bus
         # Held across one retake of a unit's screenshots, app-wide: every capture binds
         # `127.0.0.1:18783`, so two at once fail. A capture a session runs does not take it.
         self._screens_lock = asyncio.Lock()
@@ -677,7 +678,7 @@ class Steps:
                 self.holds.running[rid]["kind"] = "gebo"
                 # An update waits for a mechanical integration, and a Gebo session is
                 # paused instead, so one waiting on this can go ahead.
-                self.updater.job_ended()
+                self.bus.publish(Event("integration.escalated", key, unit))
             async for item in self.integrate_gebo(
                 cwd,
                 key,
@@ -700,8 +701,7 @@ class Steps:
         finally:
             self.holds.release(key, unit, mark)
             self.holds.running.pop(rid, None)
-            self.updater.job_ended()
-            self.nudge(key)
+            self.bus.publish(Event("integration.ended", key, unit))
 
     async def _integrate_mechanical(
         self,
@@ -1394,7 +1394,7 @@ class Steps:
             self.holds.running.pop(rid, None)
         if running is not None:
             self.registry.release(running)
-            self.updater.job_ended()
+            self.bus.publish(Event("step.released", key, unit))
 
     async def _find_stage(
         self, cwd: str, unit: str, stage: str
@@ -1868,7 +1868,7 @@ class Steps:
                 raise
             finally:
                 self.retakes.pop(rid, None)
-                self.updater.job_ended()
+                self.bus.publish(Event("retake.ended", key, unit))
         ok, detail = retake.judge(result)
         try:
             journal.append(retake.record(key, unit, old, result, ok, detail, started_by))
@@ -1896,7 +1896,7 @@ class Steps:
         # Never started, so it wrote nothing and has nothing to say.
         self.recorders.pop(running.run, None)
         self.registry.release(running)
-        self.updater.job_ended()
+        self.bus.publish(Event("step.released", running.workspace, running.unit))
         for q in list(running.listeners):
             q.put_nowait(
                 (
@@ -2023,10 +2023,10 @@ class Steps:
                 if scratch is not None and not suspended:
                     shutil.rmtree(scratch, ignore_errors=True)
                 self.registry.release(running)
-                self.updater.job_ended()
-                # A: after the mark is gone, so the pass sees the unit free.
-                if not going_down:
-                    self.nudge(running.workspace)
+                # After the mark is gone, so the pass sees the unit free.
+                self.bus.publish(
+                    Event("step.ended", running.workspace, running.unit, going_down=going_down)
+                )
                 if recorder is not None and not recorder.closed:
                     # The runner closes it on every road that writes an `end`. Left open means the
                     # app is going down -- what can be written is, with no `end` -- or the

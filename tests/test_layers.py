@@ -24,7 +24,7 @@ LAYERS = (
     ("units",),
     ("git", "runlog"),
     ("agent",),
-    ("auth", "build", "frontend", "ui"),
+    ("auth", "build", "bus", "frontend", "ui"),
     ("data",),
     ("config",),
 )

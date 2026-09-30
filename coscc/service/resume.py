@@ -22,6 +22,7 @@ from coscc.data import Busy
 from coscc.service.update import refuse_while_updating
 from coscc.service.common import Invalid
 from coscc.service.sessions import CHAT_TURNS
+from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.agent.sessions import Sessions
 from coscc.update.updater import Updater
@@ -155,6 +156,7 @@ class Resume:
         chat: Chat,
         steps: Steps,
         autopilot: Autopilot,
+        bus: Bus,
     ) -> None:
         self.config = config
         self.ws = ws
@@ -167,6 +169,7 @@ class Resume:
         self.chat = chat
         self.steps = steps
         self.autopilot = autopilot
+        self.bus = bus
 
     async def resume_after_update(self) -> list[dict[str, Any]]:
         """At start-up: each `suspend` row no start took up is taken up once, then the
@@ -438,8 +441,7 @@ class Resume:
             finally:
                 self.holds.release(key, unit, mark)
                 self.holds.running.pop(rid, None)
-                self.updater.job_ended()
-                self.autopilot.nudge(key)
+                self.bus.publish(Event("integration.ended", key, unit))
 
         return go()
 

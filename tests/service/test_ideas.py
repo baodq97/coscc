@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.service import Service
 from coscc.service.common import Invalid
@@ -41,6 +42,10 @@ class Fixture(unittest.TestCase):
     def make(self, *workspaces: str) -> Service:
         class NoSessions:
             """Nothing here starts a session."""
+
+            bus = Bus()
+
+            bus = Bus()
 
         return Service(
             Config(

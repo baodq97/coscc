@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.service.common import Invalid
 from coscc.service import Service
@@ -19,6 +20,9 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
     """The setting chooses the model a step's session is created with, and nothing else."""
 
     class Probe:
+        bus = Bus()
+        bus = Bus()
+
         def __init__(self):
             self.models = []
 

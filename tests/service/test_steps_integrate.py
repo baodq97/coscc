@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.units.test_meta import ingest
+from coscc.bus import Bus
 from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
@@ -63,6 +64,10 @@ class StandIn:
     Like a Gebo that follows its rules, it hands back through `submit` one `needs_person` item per
     `[needs-person] <why>` line its reply carries, unless `said` is set, which it hands back
     instead. The app reads only the object."""
+
+    bus = Bus()
+
+    bus = Bus()
 
     def __init__(self, act, said: list[dict] | None = None):
         self.act = act

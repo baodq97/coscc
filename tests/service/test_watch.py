@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from coscc.bus import Bus
 from coscc.runlog import events as events_mod
 from coscc.config import Config
 from coscc.service.common import Invalid
@@ -30,6 +31,9 @@ class AStepCanBeWatched(unittest.TestCase):
         test = self
 
         class Reports:
+            bus = Bus()
+            bus = Bus()
+
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 recorder = kw["step"].recorder
                 for i in range(test.N):

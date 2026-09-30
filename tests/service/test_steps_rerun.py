@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc.bus import Bus
 from coscc.units import board as _board
 from tests.units.test_meta import WithSnapshot
 
@@ -78,6 +79,9 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         seen, directory = self.seen, self.dir
 
         class StandIn:
+            bus = Bus()
+            bus = Bus()
+
             def __init__(self, *a, **k):
                 pass
 

@@ -10,6 +10,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from coscc.bus import Event
 from coscc.config import Config
 from coscc.agent.sessions import Sessions
 from coscc.update import updater as updater_mod
@@ -50,7 +51,7 @@ class Service:
         self.sessions.membership = self.ws.is_member
         # Told of every step, integration and chat turn that ends.
         self.updater = updater_mod.Updater(self.config, self)
-        self.sessions.on_turn_end = self.updater.job_ended
+        self.bus = self.sessions.bus
         # The parts below `Service`, each given what it reads.
         self.agents = Agents(self.config, self.ws)
         self.models = Models(self.config, self.ws)
@@ -59,17 +60,14 @@ class Service:
         self.chat = Chat(self.config, self.ws, self.sessions, self.updater, self.models)
         self.ideas = Ideas(self.config, self.ws)
         self.backlog = Backlog(
-            self.config, self.ws, self.holds, self.sessions, self.updater, self.models
+            self.config, self.ws, self.holds, self.sessions, self.updater, self.models, self.bus
         )
         self.release = Release(self.config, self.ws, self.updater)
 
         # An answer written and a step or an integration ended each schedule an autopilot
-        # pass; the autopilot, built after them, starts both.
-        def nudge(key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
-            self.autopilot.nudge(key, woken_by)
-
+        # pass; the autopilot, built after them, is looked up when the event comes.
         self.answers = Answers(
-            self.config, self.ws, self.holds, self.agents, self.backlog, self.ideas, nudge
+            self.config, self.ws, self.holds, self.agents, self.backlog, self.ideas, self.bus
         )
         self.steps = Steps(
             self.config,
@@ -81,13 +79,28 @@ class Service:
             self.models,
             self.ideas,
             self.answers,
-            nudge,
+            self.bus,
         )
         self.watch = Watch(self.config, self.ws, self.steps.recorders)
         self.boards = Board(self.config, self.ws, self.holds, self.agents, self.release, self.steps)
         self.autopilot = Autopilot(
             self.config, self.ws, self.holds, self.agents, self.steps, self.boards
         )
+        # Who listens to what. The updater hears every ending; the autopilot hears those that
+        # free a unit or leave a person's answer, and not a step that ended because the app
+        # is going down.
+        for name in (
+            "step.ended",
+            "step.released",
+            "integration.ended",
+            "integration.escalated",
+            "retake.ended",
+            "estimate.ended",
+            "chat-turn.ended",
+        ):
+            self.bus.subscribe(name, lambda _: self.updater.job_ended())
+        for name in ("step.ended", "integration.ended", "answer.written"):
+            self.bus.subscribe(name, self._wake_autopilot)
         self.resume = Resume(
             self.config,
             self.ws,
@@ -100,7 +113,12 @@ class Service:
             self.chat,
             self.steps,
             self.autopilot,
+            self.bus,
         )
+
+    def _wake_autopilot(self, event: Event) -> None:
+        if not event.going_down:
+            self.autopilot.nudge(event.workspace)
 
     async def board(self, cwd: str) -> dict[str, Any]:
         """The board of `cwd` as `boards.read` returns it, with what the autopilot shows on it."""

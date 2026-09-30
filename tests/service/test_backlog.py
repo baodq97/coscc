@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc.bus import Bus
 from coscc import units
 from coscc.git import gitops
 from coscc.units import worktrees
@@ -478,6 +479,9 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
     }
 
     class Replies:
+        bus = Bus()
+        bus = Bus()
+
         def __init__(self, obj, gate=None):
             self.obj, self.gate, self.calls = obj, gate, 0
             self.text = "Here is my estimate."

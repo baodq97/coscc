@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc.bus import Bus
 from coscc.units import hold
 from coscc.agent import steps
 from coscc.units import worktrees
@@ -330,6 +331,10 @@ class Repo(unittest.TestCase):
 
 class NoSession:
     """`Sessions` for a service that must never open one."""
+
+    bus = Bus()
+
+    bus = Bus()
 
     def __init__(self):
         self.membership = None

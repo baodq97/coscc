@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc.bus import Bus
 from coscc.agent import transcript
 from coscc.agent.sessions import Refused, Sessions, Suspended
 from coscc.config import Config
@@ -474,6 +475,9 @@ class TakingUpAfterAnUpdate(_Base):
         held: list[list[str]] = []
 
         class Waits:
+            bus = Bus()
+            bus = Bus()
+
             def __init__(self, *a, **kw):
                 pass
 
