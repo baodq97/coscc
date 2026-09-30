@@ -173,15 +173,15 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
 
         with (
             mock.patch.object(
-                page.SERVICE.boards, "running", lambda cwd: {"running": {}, "unknown_end": {}}
+                page.app.SERVICE.boards, "running", lambda cwd: {"running": {}, "unknown_end": {}}
             ),
-            mock.patch.object(page.SERVICE.backlog, "branch_here", branch_here),
-            mock.patch.object(page.SERVICE, "board", read_board),
+            mock.patch.object(page.app.SERVICE.backlog, "branch_here", branch_here),
+            mock.patch.object(page.app.SERVICE, "board", read_board),
             mock.patch.object(
-                page.SERVICE.chat, "sessions_for", lambda cwd, limit: {"sessions": []}
+                page.app.SERVICE.chat, "sessions_for", lambda cwd, limit: {"sessions": []}
             ),
             mock.patch.object(
-                page.SERVICE.activity,
+                page.app.SERVICE.activity,
                 "activity_and_usage",
                 mock.Mock(side_effect=page.Invalid("not here")),
             ),

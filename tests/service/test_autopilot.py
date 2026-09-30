@@ -2001,7 +2001,7 @@ class ResumedAtStartUp(unittest.TestCase):
     def test_the_app_resumes_the_autopilot_when_it_starts(self):
         # Synchronous: Reflex registers its states in a context an async test's task lacks.
         import coscc.coscc as composed
-        from coscc.state import API
+        from coscc.state.app import API
 
         # Through the one task that takes paused sessions up first.
         self.assertIn(composed.resume_after_update, composed.app._lifespan_tasks)

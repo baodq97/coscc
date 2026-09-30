@@ -86,7 +86,7 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
             _load_board=never,
         )
         with mock.patch.object(
-            state, "SERVICE", SimpleNamespace(answers=SimpleNamespace(record_outcome=refuse))
+            state.app, "SERVICE", SimpleNamespace(answers=SimpleNamespace(record_outcome=refuse))
         ):
             asyncio.run(state.StudioState.record_outcome.fn(page))
         self.assertEqual(
@@ -138,7 +138,9 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
                 _load_artifact=lambda: None,
             )
             with mock.patch.object(
-                state, "SERVICE", SimpleNamespace(answers=SimpleNamespace(record_outcome=record))
+                state.app,
+                "SERVICE",
+                SimpleNamespace(answers=SimpleNamespace(record_outcome=record)),
             ):
                 asyncio.run(state.StudioState.record_outcome.fn(page))
             self.assertEqual(sent[-1][2:4], (word, stored))
@@ -192,7 +194,7 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
                 seen.append(page.answering_key)
 
         with mock.patch.object(
-            state, "SERVICE", SimpleNamespace(answers=SimpleNamespace(answer=answer))
+            state.app, "SERVICE", SimpleNamespace(answers=SimpleNamespace(answer=answer))
         ):
             asyncio.run(drive())
         return seen
@@ -321,7 +323,7 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
             return at_yield
 
         with mock.patch.object(
-            state, "SERVICE", SimpleNamespace(answers=SimpleNamespace(answer=answer))
+            state.app, "SERVICE", SimpleNamespace(answers=SimpleNamespace(answer=answer))
         ):
             self.assertEqual(asyncio.run(first_step()), ("intent.md#1", None))
 

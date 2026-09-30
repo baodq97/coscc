@@ -10,6 +10,7 @@ import dataclasses
 import reflex as rx
 
 from coscc.service.common import Invalid
+from coscc.state import app
 
 # The label each button carries, by the block's `button`.
 RELEASE_BUTTON = {"prepare": "Prepare release", "publish": "Merge and tag"}
@@ -107,17 +108,15 @@ class ReleaseMixin(rx.State, mixin=True):
         """Run the button the panel shows. In the background, holding the state only to
         read and to write it: a press can take minutes (`uv lock`, a push, a merge and its
         poll), and the rest of the page keeps answering meanwhile."""
-        from coscc.state import SERVICE
-
         async with self:
             if self.releasing or not self.rel_phase:
                 return
             self.releasing = True
             phase, cwd, version = self.rel_phase, self.cwd, self.rel_version
         run = (
-            SERVICE.release.release_prepare
+            app.SERVICE.release.release_prepare
             if phase == "prepare"
-            else SERVICE.release.release_publish
+            else app.SERVICE.release.release_publish
         )
         done: dict = {}
         notice = ""

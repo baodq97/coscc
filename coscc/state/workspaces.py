@@ -1,6 +1,6 @@
 """The Workspaces screen: the list, the form that adds or edits one, removing and pulling.
 
-Handlers import `SERVICE` in their bodies: this module cannot import `coscc.state` at the top.
+Handlers call `app.SERVICE`.
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.service.common import Invalid
+from coscc.state import app
 from coscc.state.views import Workspace
 
 
@@ -58,15 +59,13 @@ class WorkspacesMixin(rx.State, mixin=True):
     @rx.event
     async def save_workspace(self):
         """Adopt, clone, or relabel. Which one is `Service`'s decision, not this file's."""
-        from coscc.state import SERVICE
-
         self.busy, self.form_error = True, ""
         yield
         try:
             if self.editing:
-                SERVICE.ws.set_label(self.editing, self.new_label)
+                app.SERVICE.ws.set_label(self.editing, self.new_label)
             else:
-                await SERVICE.ws.add(
+                await app.SERVICE.ws.add(
                     self.new_name, label=self.new_label, repo_url=self.new_url or None
                 )
             self._load_workspaces()
@@ -92,13 +91,11 @@ class WorkspacesMixin(rx.State, mixin=True):
     @rx.event
     async def remove_workspace(self):
         """De-lists only. The directory stays on disk."""
-        from coscc.state import SERVICE
-
         name, self.remove_name = self.remove_name, ""
         if not name:
             return
         try:
-            SERVICE.ws.remove(name)
+            app.SERVICE.ws.remove(name)
             self._load_workspaces()
             self.notice = f"{name} is off the list. Its folder is untouched."
         except Invalid as e:
@@ -108,12 +105,10 @@ class WorkspacesMixin(rx.State, mixin=True):
 
     @rx.event
     async def pull(self, name: str):
-        from coscc.state import SERVICE
-
         self.busy, self.error = True, ""
         yield
         try:
-            await SERVICE.ws.pull(name)
+            await app.SERVICE.ws.pull(name)
             self.notice = f"{name} is up to date."
         except Invalid as e:
             # A failed fast-forward is normal and must be visible, not swallowed.

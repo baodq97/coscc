@@ -1,7 +1,6 @@
 """An idea several units share: starting one, its page, and opening a unit from it.
 
-`StudioState` inherits it; a handler imports `SERVICE` in its body because this module
-cannot import `coscc.state` at the top. Every decision is `Service`'s.
+`StudioState` inherits it. Every decision is `Service`'s.
 """
 
 from __future__ import annotations
@@ -10,7 +9,7 @@ import reflex as rx
 
 from coscc.service.common import Invalid
 from coscc.state.views import ChildRow, IdeaRow, child_rows, idea_rows
-from coscc.state import place
+from coscc.state import app, place
 
 # The first item of *Depends on*: a select cannot hold an empty value, so a chosen
 # dependency could not otherwise be taken back.
@@ -39,11 +38,9 @@ class IdeasMixin(rx.State, mixin=True):
         self.ideas = idea_rows(data, self._name_of(self.cwd))
 
     async def _load_idea(self, idea_id: str) -> None:
-        from coscc.state import SERVICE
-
         self.idea_id, self.idea_note, self.idea_units, self.idea_depends = idea_id, "", [], []
         try:
-            page = await SERVICE.ideas.idea(self.cwd, idea_id)
+            page = await app.SERVICE.ideas.idea(self.cwd, idea_id)
         except Invalid as e:
             self.idea_title, self.idea_brief, self.idea_ref = idea_id, "", ""
             self.idea_note = str(e)
@@ -81,10 +78,8 @@ class IdeasMixin(rx.State, mixin=True):
     @rx.event
     def create_idea(self):
         """Start an idea in this workspace and go to its page."""
-        from coscc.state import SERVICE
-
         try:
-            made = SERVICE.ideas.create_idea(
+            made = app.SERVICE.ideas.create_idea(
                 self.cwd, self.new_idea_slug.strip(), self.new_idea_brief
             )
         except Invalid as e:
@@ -99,14 +94,12 @@ class IdeasMixin(rx.State, mixin=True):
     async def open_child(self):
         """Open a unit from this idea in the workspace chosen; the unit is made in that
         workspace's store, not this one's."""
-        from coscc.state import SERVICE
-
         where = next((w.id for w in self.workspaces if w.name == self.child_ws), "")
         if not where:
             self.notice = "Choose a workspace for the unit."
             return
         try:
-            made = await SERVICE.answers.create_unit(
+            made = await app.SERVICE.answers.create_unit(
                 where,
                 self.child_slug.strip(),
                 idea=self.idea_ref,

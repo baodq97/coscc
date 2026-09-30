@@ -7,7 +7,8 @@ import reflex as rx
 from coscc import screens, ui
 from coscc.auth import Guard
 from coscc.data import Data
-from coscc.state import API, StudioState, place
+from coscc.state import StudioState, place
+from coscc.state.app import API
 
 # The theme lives in `rxconfig.py` (`App(theme=...)` is deprecated).
 app = rx.App(api_transformer=API, style=ui.GLOBAL_STYLE)

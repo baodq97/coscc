@@ -1,7 +1,6 @@
 """Running a stage of a unit again: the stages offered, the one chosen and the confirmation.
 
-Handlers import `SERVICE` and `StudioState` in their bodies: this module cannot import
-`coscc.state` at the top.
+Handlers call `app.SERVICE`.
 """
 
 from __future__ import annotations
@@ -9,6 +8,7 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.service.common import Invalid
+from coscc.state import app
 from coscc.service.common import describe_base
 
 
@@ -57,8 +57,6 @@ class RerunMixin(rx.State, mixin=True):
     @rx.event(background=True)
     async def run_rerun(self):
         """Run the chosen stage again with the note, streaming as `run_step` does."""
-        from coscc.state import SERVICE, StudioState
-
         async with self:
             unit, stage, cwd, note = self.unit_id, self.rerun_stage, self.cwd, self.rerun_note
             self.rerun_confirming = False
@@ -71,7 +69,7 @@ class RerunMixin(rx.State, mixin=True):
 
         listed = False
         try:
-            async for kind, payload in SERVICE.steps.run_step(
+            async for kind, payload in app.SERVICE.steps.run_step(
                 cwd, unit, stage, rerun=True, note=note
             ):
                 async with self:
@@ -104,4 +102,4 @@ class RerunMixin(rx.State, mixin=True):
                 self._load_timeline()
                 self._load_artifact()
                 self._load_activity()
-        return StudioState.load_next
+        return self.__class__.load_next

@@ -40,6 +40,7 @@ paths:
   - "coscc/service/watch.py"
   - "coscc/service/workspaces.py"
   - "coscc/state/answers.py"
+  - "coscc/state/app.py"
   - "coscc/state/backlog.py"
   - "coscc/state/rerun.py"
   - "coscc/state/release.py"
