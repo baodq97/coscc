@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.service.common import STAGE_FILES, Invalid
 from coscc.service import Service
@@ -62,6 +63,10 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
     class Reviews:
         """A review session that adds round 2 to the round `review.md` held."""
+
+        bus = Bus()
+
+        bus = Bus()
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", REVIEW_ONE + ROUND_TWO)

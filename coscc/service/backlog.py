@@ -32,6 +32,7 @@ from coscc.units import BadUnit, CannotCreate
 from coscc.service.update import refuse_while_updating
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, OWNER
 
+from coscc.bus import Bus, Event
 from coscc.config import Config
 
 from coscc.service.workspaces import Workspaces
@@ -73,6 +74,7 @@ class Backlog:
         sessions: Sessions,
         updater: Updater,
         models: Models,
+        bus: Bus,
     ) -> None:
         self.config = config
         self.ws = ws
@@ -80,6 +82,7 @@ class Backlog:
         self.sessions = sessions
         self.updater = updater
         self.models = models
+        self.bus = bus
 
     # -- backlog --------------------------------------------------------------
 
@@ -465,7 +468,7 @@ class Backlog:
             if self.holds.marks.get((key, "")) is mark:
                 del self.holds.marks[(key, "")]
             self.holds.running.pop(rid, None)
-            self.updater.job_ended()
+            self.bus.publish(Event("estimate.ended", key))
 
     async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:
         """Cut this unit's branch in the workspace and switch to it.

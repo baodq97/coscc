@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc.bus import Bus
 from coscc import units
 from coscc.agent import modeltrial
 from coscc.github import prscope
@@ -35,6 +36,9 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
     to anything, the way `AStepRecordsTheTransitionItCaused` does below."""
 
     class Replies:
+        bus = Bus()
+        bus = Bus()
+
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
             await _submits(kw)
@@ -276,6 +280,9 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
     HEADING = "# The files main changed since the plan"
 
     class Replies:
+        bus = Bus()
+        bus = Bus()
+
         def __init__(self):
             self.reply = ""
             self.prompts: list[str] = []
@@ -412,6 +419,9 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
     test is the bookkeeping around a step, not the step."""
 
     class Replies:
+        bus = Bus()
+        bus = Bus()
+
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
             await _submits(kw)
@@ -518,6 +528,9 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
     def test_a_failed_step_records_nothing(self):
         class Empty:
+            bus = Bus()
+            bus = Bus()
+
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 await _submits(kw)
                 yield ("done", {"session_id": "sess-0", "cost": {}})
@@ -551,6 +564,9 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
     def replies(self, text: str, outcome: dict | None = None, **fields):
         class Replies:
+            bus = Bus()
+            bus = Bus()
+
             async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
                 yield ("chunk", text)
                 await _submits(kw, **fields)
@@ -731,6 +747,9 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
     ends one `stopped` with nothing recorded after it."""
 
     class Waits:
+        bus = Bus()
+        bus = Bus()
+
         def __init__(self):
             self.release: dict[str, asyncio.Event] = {}
             self.calls = 0
@@ -890,6 +909,9 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
 
 class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
     class Empty:
+        bus = Bus()
+        bus = Bus()
+
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("session", "sess-fail")
             await _submits(kw)
@@ -924,6 +946,9 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
         self._run("spec")  # Empty: no Status line -> RunError -> outcome "failed"
 
         class Probe:
+            bus = Bus()
+            bus = Bus()
+
             def __init__(self):
                 self.seen = ""
 
@@ -941,6 +966,9 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
 
     def test_a_run_after_done_carries_no_attempt_section(self):
         class Replies:
+            bus = Bus()
+            bus = Bus()
+
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
                 await _submits(kw)
@@ -950,6 +978,9 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
         self._run("spec")
 
         class Probe:
+            bus = Bus()
+            bus = Bus()
+
             def __init__(self):
                 self.seen = ""
 
@@ -1012,6 +1043,10 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
 
     class NeverCalled:
         """A session layer that fails the test if a refused step reaches it."""
+
+        bus = Bus()
+
+        bus = Bus()
 
         def __init__(self):
             self.calls = 0
@@ -1124,6 +1159,9 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.terminal = None
 
     class Impl:
+        bus = Bus()
+        bus = Bus()
+
         def __init__(self, test):
             self.test = test
 
@@ -1564,6 +1602,9 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
     """The scratch is emptied before the step and gone after it."""
 
     class Probe:
+        bus = Bus()
+        bus = Bus()
+
         def __init__(self, fail: bool = False):
             self.fail = fail
             self.seen: list[tuple[str, list[str], str | None]] = []
@@ -1585,6 +1626,10 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
 
     class RunsOut:
         """Keeps its progress file in `cwd`, then stops at the turn ceiling."""
+
+        bus = Bus()
+
+        bus = Bus()
 
         PROGRESS = (
             "# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Round: 1. Status: accepted.\n\n"
@@ -1717,6 +1762,9 @@ class APrStepIsMechanical(unittest.TestCase):
     _typed_unit = AUnitsBaseIsTheRemoteTrunk._typed_unit
 
     class NoSession:
+        bus = Bus()
+        bus = Bus()
+
         async def stream(self, *a, **kw):
             raise AssertionError("a pr step opened a session")
             yield  # pragma: no cover
@@ -1849,6 +1897,10 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
     class Replies:
         """A session that writes `pr.md` itself; with `hold`, it then waits to be stopped."""
+
+        bus = Bus()
+
+        bus = Bus()
 
         def __init__(self, text: str | None = None, hold: bool = False):
             self.text, self.hold = text, hold
@@ -2261,6 +2313,9 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
         seen = self.seen
 
         class StandIn:
+            bus = Bus()
+            bus = Bus()
+
             def __init__(self, *a, **kw):
                 pass
 
@@ -2352,6 +2407,9 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
         service = self.service
 
         class StandIn:
+            bus = Bus()
+            bus = Bus()
+
             def __init__(self, *a, **kw):
                 pass
 
@@ -2436,6 +2494,9 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         from coscc.units import board as board_reader
 
         class StandIn:
+            bus = Bus()
+            bus = Bus()
+
             def __init__(self, *a, **kw):
                 pass
 
@@ -2583,6 +2644,9 @@ class _AReviewStep:
         seen, taken = self.seen, self.taken
 
         class StandIn:
+            bus = Bus()
+            bus = Bus()
+
             def __init__(self, *a, **kw):
                 pass
 

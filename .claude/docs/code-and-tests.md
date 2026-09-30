@@ -62,7 +62,7 @@ runner/                 one step of one unit
 units/                  units, their states and guards, worktrees, the submit tool
 git/, runlog/           the git and gh commands; the run log
 agent/                  sessions, grants, the harness
-auth.py, build.py, frontend.py, ui.py
+auth.py, build.py, bus.py, frontend.py, ui.py
 data.py
 config.py
 ```

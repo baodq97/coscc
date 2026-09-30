@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.units.test_submit import a_head, finding, submits
+from coscc.bus import Bus
 from coscc.agent import harness
 from tests.github.test_prmachine import HEAD, FakeGh, run
 from tests.github.test_prmachine import Fixture as _PrFixture
@@ -31,6 +32,10 @@ from tests.service.test_service import use_sessions
 
 class _Nobody:
     """Sessions until a test hands in its own."""
+
+    bus = Bus()
+
+    bus = Bus()
 
     async def stream(self, *a, **kw):
         raise AssertionError("no session was expected")
@@ -61,6 +66,9 @@ class Place1(unittest.TestCase):
 
     def _spec(self, says: str, judgement: str) -> dict:
         class Replies:
+            bus = Bus()
+            bus = Bus()
+
             async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
                 yield ("chunk", f"# Spec: a problem\nAuthor: t. Status: {says}.\n\n## Body\n")
                 await submits(kw, judgement=judgement)
@@ -112,6 +120,9 @@ class Place1(unittest.TestCase):
         """The `U<n>` of the stage result, carried to `cos.mjs` in the snapshot."""
 
         class Replies:
+            bus = Bus()
+            bus = Bus()
+
             async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
                 yield (
                     "chunk",
@@ -202,6 +213,9 @@ class _Review(unittest.TestCase):
         directory = self.dir
 
         class Replies:
+            bus = Bus()
+            bus = Bus()
+
             async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
                 if stage == "impl":
                     (directory / "impl.md").write_text(reply, encoding="utf-8")

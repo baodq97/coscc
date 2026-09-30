@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.service.common import Invalid
 from coscc.service import Service
@@ -29,6 +30,9 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
         test = self
 
         class Looks:
+            bus = Bus()
+            bus = Bus()
+
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 test.seen.append(list(test.service.holds.running.values()))
                 yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")

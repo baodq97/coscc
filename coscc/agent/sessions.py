@@ -39,6 +39,7 @@ from claude_agent_sdk.types import SystemPromptPreset
 from coscc import config as cfg
 from coscc import frontend
 from coscc.agent import harness, instructions, transcript
+from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.data import Data
 
@@ -668,8 +669,9 @@ def _resolve(directory: str) -> Path | None:
 class Sessions:
     """Holds the live clients. One per session id, created on demand."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, bus: Bus | None = None):
         self.config = config
+        self.bus = bus if bus is not None else Bus()
         # Who counts as a workspace. Defaults to the env list; `Service` replaces it with the
         # union of env and store. Injected so a store-backed workspace that passed the service
         # gate is not refused here; the guard stays as the last thing before a CLI spawns.
@@ -684,8 +686,6 @@ class Sessions:
         # still be named and cut. Each is `{id, session_id, workspace, started}` plus the task
         # reading it. Board steps are never here: `_steps` has those.
         self._turns: dict[str, dict[str, Any]] = {}
-        # Told when a turn ends, so the updater waiting on it need not guess by the clock.
-        self.on_turn_end: Any = None
         # Set by `suspend_all`: from then on no stream opens, so a step between two sessions
         # while the update waits ends saying why, rather than open one the hand-off cuts with no
         # `suspend` row. `resume_after_update` clears it.
@@ -827,8 +827,7 @@ class Sessions:
                 raise
             finally:
                 self._turns.pop(turn["id"], None)
-                if self.on_turn_end is not None:
-                    self.on_turn_end()
+                self.bus.publish(Event("chat-turn.ended"))
             return
         self._steps.add(flow)
         try:
