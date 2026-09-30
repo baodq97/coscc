@@ -1103,17 +1103,33 @@ def check_command(
 def _protected_refused(grant: Grant, simple: _Simple) -> str:
     """Why a word or redirect target of `simple` points into one of `grant.protected`, or "".
 
-    Read on the text, so `--key=/…/vault.key` counts; a relative path, a variable holding the
-    path or a program that builds it is not seen.
+    Read on the text, so `--key=/…/vault.key` counts, and a glob that could expand into one
+    (`~/.config/cos*/vault.key`, `/srv/*/vault`) is refused too. A relative path, a variable
+    holding the path, a brace expansion or a program that builds the path is not seen.
     """
     import os
 
     for word in (*simple.words, *(r.target for r in simple.redirects)):
         for text in {word, os.path.normpath(word)} if word else ():
             for p in grant.protected:
-                if re.search(re.escape(p) + r"(?:/|$)", text):
+                if re.search(re.escape(p) + r"(?:/|$)", text) or _glob_reaches(text, p):
                     return f"this step may not touch {p}: it holds the app's secrets"
     return ""
+
+
+def _glob_reaches(text: str, protected: str) -> bool:
+    """Whether a word with `*`, `?` or `[` in it could expand into `protected`: its path, from
+    the word's start or after an `=`, matches `protected` part by part."""
+    import fnmatch
+
+    if not any(c in text for c in "*?["):
+        return False
+    want = protected.split("/")
+    for path in (text, text.partition("=")[2]):
+        parts = path.split("/")
+        if len(parts) >= len(want) and all(map(fnmatch.fnmatchcase, want, parts)):
+            return True
+    return False
 
 
 def programs_of(command: str) -> tuple[str, ...]:

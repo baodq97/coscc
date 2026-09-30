@@ -1465,6 +1465,24 @@ class TheSecretsAreOutOfEveryCommandsReach(unittest.TestCase):
                 with self.subTest(stage=stage, line=line):
                     self.assertIn("the app's secrets", check_command(grant, line))
 
+    def test_a_glob_that_could_expand_into_one_is_refused(self):
+        grant = replace(IMPL, protected=self.PROTECTED, commands=("cat", "ls"))
+        for line in (
+            "cat ~/.config/cos*/vault.key",
+            "cat $HOME/.config/coscc/vault.k?y",
+            "ls /srv/*/vault",
+            "ls /srv/cos/[v]ault/",
+            "cat --file=/home/u/.config/c*",
+        ):
+            with self.subTest(line=line):
+                self.assertIn("the app's secrets", check_command(grant, line))
+
+    def test_a_glob_that_stops_short_of_one_is_not_refused(self):
+        grant = replace(IMPL, protected=self.PROTECTED, commands=("cat", "ls"))
+        for line in ("ls /srv/*", "ls *.py", "ls /home/u/.config/x*", "cat /srv/cos/v*s/a"):
+            with self.subTest(line=line):
+                self.assertEqual(check_command(grant, line), "")
+
     def test_a_neighbour_of_a_protected_path_is_not_refused(self):
         grant = replace(IMPL, protected=self.PROTECTED)
         for line in ("ls /srv/cos/vaults", "cat /home/u/.config/cosccx/a", "ls /srv/cos"):
