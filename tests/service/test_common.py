@@ -238,7 +238,7 @@ class TheStateOfAUnit(unittest.TestCase):
 
     def test_the_dialog_shows_no_reason_its_state_contradicts(self):
         """A unit with `problems` is `Error`, yet `attention_reason` still reads "Needs a person"; a
-        dropped unit with a draft still reads "Accept <stage>.md"."""
+        dropped unit with a draft still reads "<stage>.md is a draft"."""
         broken = self._unit(problems=["plan.md: no Status line"])
         self.assertEqual(attention_reason(broken), "Needs a person")
         state = unit_state(broken, None, None)["state"]
