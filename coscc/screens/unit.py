@@ -699,15 +699,51 @@ def _links() -> rx.Component:
     )
 
 
+def _paused():
+    return P.current_unit.hold_state == "paused"
+
+
+def _answer_first() -> rx.Component:
+    """The first action while questions are open: a run reads the answers, so they come before it."""
+    n = P.open_questions_here.length()
+    return rx.vstack(
+        rx.button(
+            rx.icon("message-square", size=15),
+            "Answer " + n.to_string() + rx.cond(n == 1, " question", " questions"),
+            id="answer-first",
+            on_click=P.set_detail_tab("questions"),
+            width="100%",
+        ),
+        s.text(
+            rx.cond(
+                P.next_stage != "",
+                "Run " + P.next_stage + " reads your answers, so answer first.",
+                "The next step waits for your answers.",
+            ),
+            size="1",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def _unit_badges() -> rx.Component:
     """The badges the card let go, where the unit is opened. `problems` and `waits_for` are not here: the overview tab already shows both."""
     u = P.current_unit
     return rx.fragment(
         rx.flex(
-            # Only while the service says the unit can still be answered.
+            # Only while the service says the unit can still be answered; it opens them.
             rx.cond(
                 (u.open_questions > 0) & u.answerable,
-                s.badge(u.open_questions.to_string() + " waiting on you", "amber"),
+                rx.button(
+                    u.open_questions.to_string() + " waiting on you",
+                    on_click=P.set_detail_tab("questions"),
+                    color_scheme="amber",
+                    variant="soft",
+                    radius="full",
+                    size="1",
+                    id="unit-waiting",
+                ),
             ),
             # `current` has a button too, and still reads gray.
             rx.cond(
@@ -724,7 +760,6 @@ def _unit_badges() -> rx.Component:
             # Its place in the shortlist.
             rx.cond(u.shortlist_rank > 0, s.badge("#" + u.shortlist_rank.to_string(), "iris")),
             rx.cond(u.mode == "autonomous", s.badge("Autonomous", "iris")),
-            s.badge(u.owner, "gray"),
             wrap="wrap",
             gap="8px",
             margin_top="14px",
@@ -757,19 +792,33 @@ def _detail_dialog() -> rx.Component:
                 rx.fragment(
                     rx.box(
                         rx.hstack(
-                            s.text(
-                                P.current_unit.id, size="1", font_family="ui-monospace, monospace"
-                            ),
-                            s.badge(P.current_unit.state_label, P.current_unit.state_color),
-                            # What a unit waits on, beside its state, where the service finds the two agree.
-                            rx.cond(
-                                P.current_unit.state_reason != "",
-                                s.badge(P.current_unit.state_reason, "amber"),
+                            rx.flex(
+                                s.text(
+                                    P.current_unit.id,
+                                    size="1",
+                                    font_family="ui-monospace, monospace",
+                                    overflow_wrap="anywhere",
+                                ),
+                                s.badge(P.current_unit.state_label, P.current_unit.state_color),
+                                # What a unit waits on, beside its state, where the service finds the two agree. Text, not a pill: nothing here is pressed.
+                                rx.cond(
+                                    P.current_unit.state_reason != "",
+                                    s.text(
+                                        P.current_unit.state_reason, size="1", id="state-reason"
+                                    ),
+                                ),
+                                gap="8px",
+                                align="center",
+                                wrap="wrap",
+                                min_width="0",
                             ),
                             rx.spacer(),
-                            rx.dialog.close(s.icon_button("x", "Close work detail")),
+                            # Never squeezed off a phone's edge by a long id.
+                            rx.dialog.close(
+                                s.icon_button("x", "Close work detail", flex_shrink="0")
+                            ),
                             width="100%",
-                            align="center",
+                            align="start",
                         ),
                         rx.dialog.title(
                             P.current_unit.title,
@@ -822,6 +871,11 @@ def _detail_dialog() -> rx.Component:
                             rx.tabs.trigger("Timeline", value="timeline"),
                             width="100%",
                             padding="0 24px",
+                            # A phone scrolls the tabs rather than hiding the last ones.
+                            overflow_x="auto",
+                            overflow_y="hidden",
+                            flex_wrap="nowrap",
+                            white_space="nowrap",
                         ),
                         rx.tabs.content(
                             rx.vstack(
@@ -860,35 +914,22 @@ def _detail_dialog() -> rx.Component:
                                     width="100%",
                                     spacing="3",
                                 ),
-                                # `cos.mjs next` named findings a person must act on, and offers no stage. Say which, and point at where they are answered.
+                                # A paused unit's one way on, beside the line that says it is paused.
+                                rx.cond(_paused(), _hold_panel()),
+                                # `cos.mjs next` named findings a person must act on, and offers no stage. Say which; the button below opens them.
                                 rx.cond(
                                     (P.next_stage == "") & (P.run_waiting.length() > 0),
+                                    # The findings as a list, not a comma run.
                                     rx.hstack(
-                                        # The findings as a list, not a comma run.
-                                        rx.hstack(
-                                            s.text("Needs a person", size="2"),
-                                            rx.foreach(
-                                                P.run_waiting, lambda f: s.badge(f, "amber")
-                                            ),
-                                            spacing="2",
-                                            align="center",
-                                            flex_wrap="wrap",
-                                            id="next-waiting",
-                                        ),
-                                        rx.button(
-                                            rx.icon("message-square", size=13),
-                                            "Open Questions",
-                                            id="open-questions",
-                                            on_click=P.set_detail_tab("questions"),
-                                            variant="soft",
-                                            size="1",
-                                        ),
-                                        justify="between",
+                                        s.text("Needs a person", size="2"),
+                                        rx.foreach(P.run_waiting, lambda f: s.badge(f, "amber")),
+                                        spacing="2",
                                         align="center",
-                                        width="100%",
-                                        spacing="3",
+                                        flex_wrap="wrap",
+                                        id="next-waiting",
                                     ),
                                 ),
+                                rx.cond(P.answer_first, _answer_first()),
                                 # The findings the last review round left out, as a list beside `next`'s sentence rather than joined into it.
                                 rx.cond(
                                     P.run_dropped.length() > 0,
@@ -958,6 +999,7 @@ def _detail_dialog() -> rx.Component:
                                             "Run " + P.next_stage + " — spends quota",
                                             id="run-step",
                                             on_click=P.run_step,
+                                            variant=rx.cond(P.answer_first, "soft", "solid"),
                                             disabled=P.running_here | ~P.recording,
                                             loading=P.running_here,
                                             width="100%",
@@ -1004,7 +1046,6 @@ def _detail_dialog() -> rx.Component:
                                         width="100%",
                                         align="start",
                                     ),
-                                    s.text("No stage is ready to run; the line above says why."),
                                 ),
                                 # What the board last heard from CI, and when.
                                 rx.cond(
@@ -1014,7 +1055,9 @@ def _detail_dialog() -> rx.Component:
                                 # Under the CI line, so the button stays in view on a phone; the hold panel follows it here rather than below, so the page holds one `#hold-panel` at a time.
                                 rx.cond(
                                     P.current_unit.more_rounds,
-                                    rx.fragment(_rounds_panel(), _hold_panel()),
+                                    rx.fragment(
+                                        _rounds_panel(), rx.cond(~_paused(), _hold_panel())
+                                    ),
                                 ),
                                 # Below the CI line, which belongs to the next step.
                                 rx.cond(
@@ -1025,7 +1068,7 @@ def _detail_dialog() -> rx.Component:
                                 rx.cond(~P.unit_dropped, _outcome_panel()),
                                 _unit_cost(),
                                 # Kept for a dropped unit: its one move (`paused`, `cos.mjs` `HOLD_MOVES`) is the board's way back.
-                                rx.cond(~P.current_unit.more_rounds, _hold_panel()),
+                                rx.cond(~P.current_unit.more_rounds & ~_paused(), _hold_panel()),
                                 rx.cond(
                                     P.log_here,
                                     s.panel(

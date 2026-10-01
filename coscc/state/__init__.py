@@ -423,6 +423,16 @@ class StudioState(
         return sorted(shown, key=lambda q: not q.counted)
 
     @rx.var
+    def answer_first(self) -> bool:
+        """The dialog's first action is answering: the open unit has questions it can still
+        answer, and the next step reads the answers (a run's prompt carries them)."""
+        return (
+            bool(self.open_questions_here)
+            and self.current_unit.answerable
+            and self.current_unit.hold_state != "dropped"
+        )
+
+    @rx.var
     def next_stage(self) -> str:
         """The stage the run button would run: the one `cos.mjs next` named."""
         return self.run_stage
