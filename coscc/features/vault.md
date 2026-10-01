@@ -1,6 +1,6 @@
 # Vault: secrets an agent can use and never read
 
-Read this before changing `coscc/features/vault.py`: the tools, the guard, the prompt block, the
+Read this before changing `coscc/features/vault/`: the tools, the guard, the prompt block, the
 routes and the page are all in it. The store, the filter, the scan and the runner are the
 package `coscc/vault/`'s; the file has the tables' statements through `vault.TABLES`.
 
@@ -32,7 +32,7 @@ All behind the login; none is in `auth.EXEMPT`. Every one refuses a workspace wi
   With the vault off it still opens, with delete and revoke only. Without `age` it says so and
   saves no value. Its colours are the studio's tokens copied from the built Radix CSS, and it
   reads the studio's colour mode from `localStorage.theme`: a theme change in `coscc/ui.py` is
-  made in `_CSS` too.
+  made in `page.py`'s `_CSS` too.
 - `GET /api/vault/secrets?cwd=`: metadata of the secrets the workspace sees, and of the global
   ones it does not. Never a value, a length or a hash.
 - `POST /api/vault/secrets` (form): the only route that takes a value. It makes the secret or

@@ -1,4 +1,4 @@
-"""`coscc/features/vault.py`, the person's side: the page and the routes, driven over ASGI.
+"""`coscc/features/vault/`, the person's side: the page and the routes, driven over ASGI.
 
 The bait values of `test_vault.py`'s `Bed` are in the store throughout; every response and header
 of every route is read for them in all five forms.
@@ -18,6 +18,7 @@ import httpx
 from coscc import auth, plugin, screens, vault
 from coscc.agent import policy
 from coscc.features import vault as feature
+from coscc.features.vault import page
 from coscc.vault.store import NAME
 from tests.features import test_vault as base
 
@@ -119,20 +120,20 @@ class ThePage(Http):
         self.assertIn(">Add secret</button>", form)
 
     def test_the_name_rule_on_the_page_is_the_stores(self):
-        page = re.compile(feature.NAME_PATTERN, re.ASCII)
+        rule = re.compile(page.NAME_PATTERN, re.ASCII)
         for name in ("deploy-key.v2", "db", "a_b", "Bad Name", "-db", "ws:db", "x" * 64):
             store = bool(NAME.fullmatch("ws:" + name))
-            self.assertEqual(bool(page.fullmatch(name)) and len(name) <= 64, store, name)
+            self.assertEqual(bool(rule.fullmatch(name)) and len(name) <= 64, store, name)
 
     async def test_without_age_it_says_so_and_no_value_can_be_saved(self):
         self.store.age = str(self.ws / "no-such-age")
         html = (await self.get("/vault")).text
-        self.assertIn(feature.NO_AGE, html)
+        self.assertIn(page.NO_AGE, html)
         self.assertIn("disabled>Add secret</button>", html)
         self.assertIn("disabled>Replace value</button>", html)
         self.assertIn("Install age to save a value.", html)
         self.store.age = shutil.which("true") or "/bin/true"
-        self.assertNotIn(feature.NO_AGE, (await self.get("/vault")).text)
+        self.assertNotIn(page.NO_AGE, (await self.get("/vault")).text)
 
     async def test_with_the_vault_off_it_opens_with_delete_and_revoke_only(self):
         await self.turn_off()
