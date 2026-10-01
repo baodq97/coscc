@@ -2097,11 +2097,12 @@ class TimesReadForAReader(unittest.TestCase):
             {**base, "kind": "ship", "result": "shipped"},
             {**base, "kind": "autopilot-stop"},
         ]
-        page = SimpleNamespace(cwd="/w", events=[], usage_total_tokens="", usage_total_usd="")
+        page = SimpleNamespace(cwd="/w", events=[], usage_total_usd="")
         service = SimpleNamespace(
             activity=SimpleNamespace(
                 activity_and_usage=lambda cwd, limit: {"events": rows, "total": {}}
-            )
+            ),
+            autopilot=SimpleNamespace(today=lambda cwd: None),
         )
         with mock.patch.object(state.app, "SERVICE", service):
             state.StudioState._load_activity(page)
