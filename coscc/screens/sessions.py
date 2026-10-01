@@ -339,7 +339,7 @@ def _cost() -> rx.Component:
                 "iris",
             ),
             s.stat("Finished steps", P.cost_total_steps, "Every step that ended", "layers"),
-            columns=rx.breakpoints(initial="1", sm="2", lg="4"),
+            columns=rx.breakpoints(initial="2", lg="4"),
             gap="12px",
             width="100%",
             id="cost-total",

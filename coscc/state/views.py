@@ -22,7 +22,7 @@ NAVIGATION = (
     ("board", "Board", "columns-3"),
     ("backlog", "Backlog", "list-ordered"),
     ("sessions", "Sessions", "messages-square"),
-    ("activity", "Activity & usage", "chart-no-axes-combined"),
+    ("activity", "Activity", "chart-no-axes-combined"),
     ("cost", "Cost", "circle-dollar-sign"),
     ("settings", "Settings", "settings-2"),
 )
