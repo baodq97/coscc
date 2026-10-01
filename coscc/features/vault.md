@@ -28,7 +28,11 @@ package `coscc/vault/`'s; the file has the tables' statements through `vault.TAB
 All behind the login; none is in `auth.EXEMPT`. Every one refuses a workspace with the vault off
 (the pref `features.off`), except delete and revoke.
 
-- `GET /vault?cwd=`: the page. With the vault off it still opens, with delete and revoke only.
+- `GET /vault?cwd=`: the page, framed by the studio's *Vault* sidebar entry (`Plugin.page`).
+  With the vault off it still opens, with delete and revoke only. Without `age` it says so and
+  saves no value. Its colours are the studio's tokens copied from the built Radix CSS, and it
+  reads the studio's colour mode from `localStorage.theme`: a theme change in `coscc/ui.py` is
+  made in `_CSS` too.
 - `GET /api/vault/secrets?cwd=`: metadata of the secrets the workspace sees, and of the global
   ones it does not. Never a value, a length or a hash.
 - `POST /api/vault/secrets` (form): the only route that takes a value. It makes the secret or
@@ -60,8 +64,8 @@ All behind the login; none is in `auth.EXEMPT`. Every one refuses a workspace wi
   gets its name, description and ways of passing; any other stage gets names only. No value.
 - One guard, `vault-leak`, asked before `pr`, `ship` and integration and abstaining on every
   other stage. It denies with the secrets' names.
-- In the page: a *Vault* link in the top bar, and on an open unit a line naming the secrets
-  found in its work, when the guard last held it.
+- In the studio: a *Vault* sidebar entry, and on an open unit a line naming the secrets found
+  in its work, when the guard last held it.
 
 ## What it is not
 
