@@ -1635,7 +1635,7 @@ class TheIdListsAnswerAsTheCardListsDid(unittest.TestCase):
                 cv["stage_counts"].fget(page),
                 {n: len([u for u in board if u.at == n]) for n in stages},
             )
-            rank = {"needs-you": 0, "running": 1, "ready": 2}
+            rank = {"running": 0, "ready": 1}
             going = sorted(
                 (rank[u.state], stages.index(u.at), i, u.id)
                 for i, u in enumerate(board)

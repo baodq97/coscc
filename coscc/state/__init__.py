@@ -345,12 +345,12 @@ class StudioState(
 
     @rx.var
     def resume_id(self) -> str:
-        """*Pick up where you left off*: a card in *Needs you*, else `Running`, else `Ready` with
-        an artifact past its idea (`begun`), each in board order — column, then place in it;
-        `""` if none. A unit that only has its idea is not work left off."""
+        """*Pick up where you left off*: a `Running` card, else `Ready` with an artifact past its
+        idea (`begun`), each in board order — column, then place in it; `""` if none. *Needs
+        you* is listed above it, and a unit that only has its idea is not work left off."""
         board = set(self.board_ids)
         order = {name: i for i, name in enumerate(self.stages)}
-        rank = {"needs-you": 0, "running": 1, "ready": 2}
+        rank = {"running": 0, "ready": 1}
         rows = [
             (rank[c.state], order.get(c.at, len(order)), i, c.id)
             for i, c in enumerate(self.cards)

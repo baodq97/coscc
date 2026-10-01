@@ -322,7 +322,7 @@ def _cost() -> rx.Component:
             ),
             s.stat(
                 "Unknown cost",
-                rx.cond(P.cost_total_unknown != "", P.cost_total_unknown, "None"),
+                rx.cond(P.cost_total_unknown != "", P.cost_total_unknown, "0"),
                 "Steps that ended without a cost",
                 "triangle-alert",
                 "amber",
