@@ -1077,6 +1077,15 @@ class Scripted(_Base):
             (cap["estimated"], cap["estimated_count"]), (autopilot.estimate("spec"), 1)
         )
 
+    async def test_today_is_the_cap_figure_with_the_autopilot_off(self):
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        log.finished(self.key, "0009_z", "spec", "done")
+        self.service.autopilot.set_setting(self.ws, "daily_cap_usd", 30.0)
+        self.assertEqual(
+            self.service.autopilot.today(self.ws),
+            (self.service.autopilot.cap(log.records(), 30.0)["spent"], 30.0),
+        )
+
     async def test_ci_pending_is_quiet(self):
         self.add(
             "0001_a",

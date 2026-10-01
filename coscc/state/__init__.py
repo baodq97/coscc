@@ -230,9 +230,11 @@ class StudioState(
 
     # -- activity and settings
     events: list[Event] = []
-    usage_total_tokens: str = "—"
     usage_total_usd: str = "—"
     usage_cost_note: str = COST_NOTE
+    # What every workspace spent today, and against which cap.
+    today_spent: str = "—"
+    today_note: str = ""
     # The *Cost* screen, read only on arrival there, and the open unit's part.
     cost_recording: bool = True
     cost_total_usd: str = "—"
@@ -337,16 +339,18 @@ class StudioState(
 
     @rx.var
     def resume_id(self) -> str:
-        """*Pick up where you left off*: the first card in board order — column, then place
-        in it — that is `Running` or `Ready`, `""` if none."""
+        """*Pick up where you left off*: a card in *Needs you*, else `Running`, else `Ready` with
+        an artifact past its idea (`begun`), each in board order — column, then place in it;
+        `""` if none. A unit that only has its idea is not work left off."""
         board = set(self.board_ids)
         order = {name: i for i, name in enumerate(self.stages)}
+        rank = {"needs-you": 0, "running": 1, "ready": 2}
         rows = [
-            (order.get(c.at, len(order)), i, c.id)
+            (rank[c.state], order.get(c.at, len(order)), i, c.id)
             for i, c in enumerate(self.cards)
-            if c.id in board and c.state in ("running", "ready")
+            if c.id in board and c.state in rank and (c.state != "ready" or c.begun)
         ]
-        return min(rows)[2] if rows else ""
+        return min(rows)[3] if rows else ""
 
     @rx.var
     def active_count(self) -> int:
@@ -783,6 +787,7 @@ class StudioState(
                     usd=_usd(u.get("cost") or {}),
                     token_count=count,
                     progress=int(started * 100 / len(cells)) if cells else 0,
+                    begun=any(c.started for c in cells if c.stage != "idea"),
                     problems="; ".join(u.get("problems") or []),
                     cells=cells,
                     open_questions=waiting,
@@ -901,10 +906,18 @@ class StudioState(
 
     def _load_activity(self) -> None:
         self.events = []
-        self.usage_total_tokens, self.usage_total_usd = "—", "—"
-        self.usage_cost_note = COST_NOTE
+        self.usage_total_usd, self.usage_cost_note = "—", COST_NOTE
+        self.today_spent, self.today_note = "—", ""
         if not self.cwd:
             return
+        try:
+            today = app.SERVICE.autopilot.today(self.cwd)
+        except Invalid:
+            today = None
+        if today is not None:
+            spent, limit = today
+            self.today_spent = f"${spent:.2f}"
+            self.today_note = f"Of the ${limit:g} daily cap, across every workspace"
         try:
             # One read for both halves of this screen; `activity` and `usage` on their own
             # would each scan and parse the identical rows.
@@ -954,9 +967,8 @@ class StudioState(
             )
         self.events = events
         total = feed.get("total") or {}
-        _, shown = _tokens(total)
-        self.usage_total_tokens = shown
-        self.usage_total_usd = _usd(total)
+        # The known part; the caption counts the runs without a cost.
+        self.usage_total_usd = _usd({**total, "unknown": 0})
         self.usage_cost_note = cost_note(total)
 
     def _load_cost(self) -> None:
@@ -1290,6 +1302,12 @@ class StudioState(
     @rx.event
     def search_work(self, value: str):
         self.query = value
+
+    @rx.event
+    def open_needs_you(self):
+        """The board, filtered to *Needs you*."""
+        self.focus = "Needs you"
+        return rx.redirect(place.href(place.Place("board", self._name_of(self.cwd))))
 
     @rx.event
     def filter_work(self, value: str | list[str]):

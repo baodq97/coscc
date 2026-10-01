@@ -735,9 +735,7 @@ class ACostNobodyKnowsIsNeverShownAsNothing(unittest.TestCase):
 
         self.assertEqual(cost_note({"unknown": 0}), COST_NOTE)
         self.assertEqual(cost_note({}), COST_NOTE)
-        self.assertEqual(
-            cost_note({"unknown": 3}), "Added up from each finished run; 3 run(s) with unknown cost"
-        )
+        self.assertEqual(cost_note({"unknown": 3}), "Every finished run; 3 without a cost")
 
 
 class TheLinksOfAUnitOpenedFromAnIdea(unittest.TestCase):

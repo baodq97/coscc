@@ -129,16 +129,6 @@ def _sidebar() -> rx.Component:
             size="1",
             margin_top="10px",
         ),
-        rx.hstack(
-            s.mark("ME", "gray", "32px"),
-            rx.vstack(
-                rx.text("Personal workspace", size="1", weight="medium"),
-                s.text("Local-first / no account", size="1"),
-                spacing="0",
-            ),
-            padding="16px 6px 4px",
-            align="center",
-        ),
         width="228px",
         min_width="228px",
         height="100dvh",
@@ -189,7 +179,10 @@ def _topbar() -> rx.Component:
         ),
         rx.cond(P.loading, rx.spinner(size="2")),
         # The mode has to be changeable from the page and survive a reload.
-        rx.box(rx.color_mode.button(), id="color-mode"),
+        rx.box(
+            rx.color_mode.button(aria_label="Switch light or dark", title="Switch light or dark"),
+            id="color-mode",
+        ),
         # Empty: a feature's script renders into it.
         rx.box(id="slot-topbar"),
         align="center",
@@ -199,19 +192,6 @@ def _topbar() -> rx.Component:
         padding=rx.breakpoints(initial="12px 18px", md="12px 32px"),
         border_bottom=f"1px solid {s.LINE}",
         background=s.CANVAS,
-    )
-
-
-def _status_bar() -> rx.Component:
-    """How many workspaces. The two roots are on Settings, inside *Details*."""
-    return rx.flex(
-        rx.spacer(),
-        s.text(P.workspaces.length().to_string() + " workspace(s)", size="1", id="workspace-count"),
-        width="100%",
-        align="start",
-        wrap="wrap",
-        gap="16px",
-        padding="12px 0 20px",
     )
 
 
@@ -268,21 +248,25 @@ def _metrics() -> rx.Component:
             "Units with an artifact and no end yet",
             "layers",
         ),
-        s.stat(
-            "Needs attention",
-            P.attention_count.to_string(),
-            "Waiting on an answer or a person's decision",
-            "circle-dot",
-            "amber",
+        # A real button, so the keyboard reaches it; the board opens filtered to them.
+        rx.el.button(
+            s.stat(
+                "Needs you",
+                P.attention_count.to_string(),
+                "Waiting on an answer or a decision",
+                "circle-dot",
+                "amber",
+                height="100%",
+                _hover={"border_color": rx.color("amber", 8)},
+            ),
+            on_click=P.open_needs_you,
+            aria_label="Show the units that need you on the board",
+            id="metric-needs-you",
+            style={"all": "unset", "display": "block", "cursor": "pointer", "min_width": "0"},
+            _focus_visible={"outline": f"2px solid {rx.color('iris', 8)}", "border_radius": "14px"},
         ),
-        s.stat(
-            "Tokens",
-            P.usage_total_tokens,
-            "Billed for this workspace, from the run log",
-            "sparkles",
-            "blue",
-        ),
-        s.stat("Cost", P.usage_total_usd, P.usage_cost_note, "wallet", "grass"),
+        s.stat("Spent today", P.today_spent, P.today_note, "gauge", "blue"),
+        s.stat("Spent in all", P.usage_total_usd, P.usage_cost_note, "wallet", "grass"),
         columns=rx.breakpoints(initial="2", lg="4"),
         gap="12px",
         width="100%",

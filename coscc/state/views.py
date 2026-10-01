@@ -172,6 +172,8 @@ class Unit:
     usd: str = ""
     token_count: int = 0
     progress: int = 0
+    # Whether a stage past the idea has an artifact.
+    begun: bool = False
     problems: str = ""
     cells: list[Cell] = dataclasses.field(default_factory=list)
     # How many questions in the counted artifact nobody has answered, taken from `cos.mjs`
@@ -340,6 +342,8 @@ class Card:
     mode: str = "manual"
     owner: str = "You"
     progress: int = 0
+    # *Pick up where you left off* skips a ready unit that has only its idea.
+    begun: bool = False
     tokens: str = ""
     usd: str = ""
     token_count: int = 0
@@ -374,6 +378,7 @@ def _card(u: Unit) -> Card:
         mode=u.mode,
         owner=u.owner,
         progress=u.progress,
+        begun=u.begun,
         tokens=u.tokens,
         usd=u.usd,
         token_count=u.token_count,
@@ -1230,13 +1235,13 @@ def _channel_line(channel: dict) -> str:
     return " ".join(parts)
 
 
-COST_NOTE = "Added up from each finished run"
+COST_NOTE = "Every finished run"
 
 
 def cost_note(total: dict) -> str:
     """The Cost tile's caption, saying how many runs it could not add."""
     n = int(total.get("unknown") or 0)
-    return f"{COST_NOTE}; {n} run(s) with unknown cost" if n > 0 else COST_NOTE
+    return f"{COST_NOTE}; {n} without a cost" if n > 0 else COST_NOTE
 
 
 def _usd(cost: dict) -> str:

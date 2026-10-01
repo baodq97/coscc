@@ -108,7 +108,7 @@ class ThePage(unittest.TestCase):
         self.assertNotIn('?.["path"]', _render(screens._overview()).replace("\\", ""))
         cards = _render(screens._workspaces_screen())
         self.assertIn("ws-path-", cards)
-        self.assertIn("Read only", cards)
+        self.assertIn("Set by the app's environment", cards)
 
     def test_one_sentence_and_no_limits(self):
         for gone in (
