@@ -37,7 +37,7 @@ def _settings_row(label, description, control: rx.Component) -> rx.Component:
 
 def _knob_row(knob: rx.Var[Knob]) -> rx.Component:
     return _settings_row(
-        knob.name,
+        knob.label,
         knob.detail,
         s.badge(knob.value, rx.cond(knob.on, "amber", "grass")),
     )
@@ -88,11 +88,10 @@ def _grant_row(grant: rx.Var[GrantRow]) -> rx.Component:
 
 
 def _model_row(row: rx.Var[ModelRow]) -> rx.Component:
-    """One stage, or chat: how many agents run it, on what model, and where that model came from."""
+    """One stage, or chat: on what model, and where that model came from."""
     return rx.box(
         rx.hstack(
             s.badge(row.name, "iris"),
-            s.text(row.agents.to_string() + " agent", size="1"),
             rx.spacer(),
             s.text(row.model, size="1", font_family="ui-monospace, monospace"),
             s.badge(row.source, rx.cond(row.overridden, "amber", "gray")),
@@ -175,6 +174,7 @@ def _agent_field(row: rx.Var[AgentRow], field: str, value, source, width: str) -
         rx.input(
             name=field,
             default_value=value,
+            placeholder="Not set",
             aria_label=field.capitalize() + " of " + row.key,
             size="1",
             width="100%",
@@ -663,6 +663,16 @@ def _settings() -> rx.Component:
                 ),
                 s.text("Set when the app starts.", size="1"),
                 rx.foreach(P.knobs, _knob_row),
+                # The variables that set them.
+                _details(
+                    "knobs",
+                    "Details",
+                    rx.foreach(
+                        P.knobs,
+                        lambda k: s.text(k.label + ": " + k.variable, size="1", font_family=_MONO),
+                    ),
+                    margin_top="10px",
+                ),
                 id="knobs-panel",
             ),
             columns=rx.breakpoints(initial="1", lg="2"),

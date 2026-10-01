@@ -7,6 +7,7 @@ import json
 
 import ast
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tests.units.test_meta import snapshot_of
@@ -784,3 +785,19 @@ class TheLinksOfAUnitOpenedFromAnIdea(unittest.TestCase):
             }
         )
         self.assertEqual((row.href, gone.href, gone.missing), ("/unit?ws=api&id=0001_b", "", True))
+
+
+class AKnobIsNamedForAReader(unittest.TestCase):
+    """Settings shows what a knob does; its variable waits behind Details (S3)."""
+
+    def test_label_and_variable(self):
+        k = views.knob({"name": "allow_write_and_exec", "value": "off", "detail": "d", "on": False})
+        self.assertEqual(k.label, "Write files and run commands")
+        self.assertEqual(k.variable, "COS_ALLOW_WRITE_AND_EXEC")
+
+    def test_every_knob_the_service_names_has_a_label(self):
+        from coscc.config import from_env
+        from coscc.service.activity import Activity
+
+        found = Activity.settings(mock.Mock(config=from_env({})))
+        self.assertEqual({k["name"] for k in found["knobs"]}, set(views.KNOB_LABELS))

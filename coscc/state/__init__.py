@@ -75,6 +75,7 @@ from coscc.state.views import (
     _number,
     Event,
     Knob,
+    knob,
     ModelRow,
     AgentRow,
     ImportRow,
@@ -483,10 +484,7 @@ class StudioState(
         self.host_port = f"{data.get('host')}:{data.get('port')}"
         self.loopback_only = data.get("host") in ("127.0.0.1", "localhost", "::1")
         self.model = data.get("cos_model") or "unset"
-        self.knobs = [
-            Knob(name=k["name"], value=k["value"], detail=k["detail"], on=bool(k["on"]))
-            for k in data.get("knobs") or []
-        ]
+        self.knobs = [knob(k) for k in data.get("knobs") or []]
         self.grants = [
             GrantRow(
                 stage=g["stage"],

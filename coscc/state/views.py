@@ -1085,6 +1085,30 @@ class Knob:
     value: str = ""
     detail: str = ""
     on: bool = False
+    # What the screen calls it, and the environment variable that sets it.
+    label: str = ""
+    variable: str = ""
+
+
+# A knob's name is the config field's; the screen says what it does.
+KNOB_LABELS = {
+    "tools": "Tools",
+    "allow_write_and_exec": "Write files and run commands",
+    "bypass_permissions": "Skip permission prompts",
+    "resume_foreign_sessions": "Resume sessions started elsewhere",
+}
+
+
+def knob(k: dict) -> Knob:
+    name = k["name"]
+    return Knob(
+        name=name,
+        value=k["value"],
+        detail=k["detail"],
+        on=bool(k["on"]),
+        label=KNOB_LABELS.get(name, name),
+        variable="COS_" + name.upper(),
+    )
 
 
 @dataclasses.dataclass
