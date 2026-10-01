@@ -69,3 +69,12 @@ class UsageCountsWhatItCouldNotAdd(unittest.TestCase):
             {u: b["unknown"] for u, b in got["per_unit"].items()},
             {"0002_a": 1, "0004_b": 1, "0005_c": 0},
         )
+
+
+class AQuestionsRowCountsWhatItAsked(unittest.TestCase):
+    """Older `questions` rows record a count, newer ones the list; both are read."""
+
+    def test_a_count_a_list_or_nothing(self):
+        from coscc.service.activity import _count
+
+        self.assertEqual([_count(3), _count([{"n": 1}, {"n": 2}]), _count(None)], [3, 2, 0])

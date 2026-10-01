@@ -20,6 +20,12 @@ from coscc.service.workspaces import Workspaces
 log = logging.getLogger(__name__)
 
 
+def _count(questions: object) -> int:
+    if isinstance(questions, int):
+        return questions
+    return len(questions) if isinstance(questions, list) else 0
+
+
 class Activity:
     def __init__(self, config: Config, ws: Workspaces) -> None:
         self.config = config
@@ -66,7 +72,8 @@ class Activity:
                 # A `transition`'s new state, how many questions a `questions` row asked, and a
                 # `ship` row's result; empty on every other kind.
                 "to_state": str(r.get("to_state") or ""),
-                "asked": len(r.get("questions") or []),
+                # Older rows record the count, newer ones the questions themselves.
+                "asked": _count(r.get("questions")),
                 "result": str(r.get("result") or ""),
             }
             for r in rows
