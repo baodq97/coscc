@@ -105,16 +105,20 @@ class ThePage(Http):
         self.assertIn("Saved ws:db.", html)
         self.assertIn("That value is short", html)
 
-    async def test_a_secret_shows_access_value_and_danger_apart_and_the_form_has_three_parts(self):
+    async def test_secrets_are_a_table_and_every_change_opens_in_a_dialog(self):
         html = (await self.get("/vault")).text
-        row = html[html.index('<li class="card"><span class="name">ws:db') :]
-        row = row[: row.index("</li>")]
-        self.assertLess(row.index("<legend>Access</legend>"), row.index("<summary>Replace value"))
-        self.assertLess(row.index("<summary>Replace value"), row.index('<div class="danger">'))
-        self.assertIn('data-act="policy"', row[: row.index("<summary>")])
-        self.assertIn('data-act="delete"', row[row.index('<div class="danger">') :])
-        form = html[html.index('class="add"') :]
-        legends = [part.split("</legend>")[0] for part in form.split("<legend>")[1:4]]
+        self.assertIn("<th>Name</th><th>Kept for</th><th>Used by</th><th>Passed as</th>", html)
+        row = html[html.index('<span class="name">ws:db') :]
+        row = row[: row.index("</tr>")]
+        self.assertIn('data-open="access-', row)
+        self.assertIn('data-open="value-', row)
+        self.assertIn('data-act="delete"', row)
+        self.assertIn('data-open="add"', html[: html.index("<table")])
+        access = html[html.index('<dialog id="access-') :]
+        self.assertIn('data-act="policy"', access[: access.index("</dialog>")])
+        form = html[html.index('<dialog id="add"') :]
+        form = form[: form.index("</dialog>")]
+        legends = [part.split("</legend>")[0] for part in form.split("<legend>")[1:]]
         self.assertEqual(legends, ["Secret", "Access", "Value"])
         self.assertEqual(form.count('type="submit"'), 1)
         self.assertIn(">Add secret</button>", form)
