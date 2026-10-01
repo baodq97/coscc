@@ -123,6 +123,16 @@ KIT_JS = r"""
 
 
 @dataclass(frozen=True)
+class Page:
+    """A sidebar entry whose screen frames the feature's own `GET path?cwd=<workspace>`."""
+
+    label: str
+    # A lucide icon name, as the sidebar's own entries use.
+    icon: str
+    path: str
+
+
+@dataclass(frozen=True)
 class Plugin:
     name: str
     routes: Callable[[Ctx], Sequence[BaseRoute]]
@@ -131,6 +141,7 @@ class Plugin:
     tables: tuple[str, ...] = ()
     # What the feature hands the agent's steps, called once at build like `routes`.
     agent: Callable[[Ctx], Parts] | None = None
+    page: Page | None = None
 
 
 async def body(request: Request) -> dict[str, Any]:
