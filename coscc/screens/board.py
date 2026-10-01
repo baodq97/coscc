@@ -748,9 +748,9 @@ def _focus(target: str):
 
 
 def _board() -> rx.Component:
-    """The toolbar, guide panel, lanes, folded groups, what is running, the release panel, and the two forms last so nothing above the lanes pushes them down."""
+    """The toolbar, guide panel, lanes, folded groups, what is running, and the two forms last so nothing above the lanes pushes them down. The release panel is on Settings."""
     return rx.vstack(
-        s.heading("Work board", "From an idea to something real. One clear step at a time."),
+        s.heading("Work board", ""),
         rx.flex(
             rx.input(
                 rx.input.slot(rx.icon("search", size=15)),
@@ -891,7 +891,6 @@ def _board() -> rx.Component:
         ),
         _collapsed_groups(),
         _running_steps(),
-        _release_panel(),
         rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
         rx.cond(P.has_workspace, _start_idea(), rx.fragment()),
         spacing="4",
