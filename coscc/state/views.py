@@ -340,7 +340,8 @@ class Card:
     summary: str = ""
     mode: str = "manual"
     progress: int = 0
-    # *Pick up where you left off* skips a ready unit that has only its idea.
+    # Some stage after the idea has an artifact: *Pick up where you left off* skips a ready
+    # unit without one, and its card is drawn quieter.
     begun: bool = False
     tokens: str = ""
     usd: str = ""
@@ -365,8 +366,6 @@ class Card:
     # The unit `impl` waits on, when it waits.
     waits_for: str = ""
     held: str = ""
-    # Some stage after the idea has an artifact; a `ready` card without one is drawn quieter.
-    begun: bool = False
     # Where the card stands in its lane and in the List (`board_place`).
     place: int = 0
 
@@ -384,7 +383,6 @@ def board_place(state: str, begun: bool) -> int:
 
 def _card(u: Unit) -> Card:
     """A `Unit` as its card. Copies, and places it (`board_place`)."""
-    begun = any(c.started for c in u.cells if c.stage != "idea")
     return Card(
         id=u.id,
         title=u.title,
@@ -413,8 +411,7 @@ def _card(u: Unit) -> Card:
         state_color=u.state_color,
         waits_for=u.waits_for,
         held=u.held,
-        begun=begun,
-        place=board_place(u.state, begun),
+        place=board_place(u.state, u.begun),
     )
 
 

@@ -1521,7 +1521,7 @@ class NoCardLosesWhatItShowed(unittest.TestCase):
         self.assertLessEqual(drawn, fields, "`_unit_card` draws a field a card does not carry")
         for card in cards:
             whole = full[card.id]
-            for name in fields - {"has_problem", "begun", "place"}:
+            for name in fields - {"has_problem", "place"}:
                 self.assertEqual(getattr(card, name), getattr(whole, name), f"{card.id}.{name}")
             self.assertEqual(card.has_problem, whole.problems != "", card.id)
             self.assertEqual(card.place, board_place(whole.state, card.begun), card.id)

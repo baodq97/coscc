@@ -113,14 +113,11 @@ class ACardsPlaceSaysWhatComesFirst(unittest.TestCase):
         self.assertEqual(got, sorted(got))
         self.assertLess(views.board_place("ready", True), views.board_place("ready", False))
 
-    def test_begun_is_any_stage_past_the_idea(self):
-        cell = views.Cell
-        idea_only = views.Unit(id="1", state="ready", cells=[cell(stage="idea", started=True)])
-        with_intent = views.Unit(
-            id="2", state="ready", cells=[cell(stage="idea"), cell(stage="intent", started=True)]
-        )
-        self.assertFalse(views._card(idea_only).begun)
+    def test_a_ready_card_with_only_its_idea_goes_last(self):
+        idea_only = views.Unit(id="1", state="ready", begun=False)
+        with_intent = views.Unit(id="2", state="ready", begun=True)
         self.assertEqual(views._card(idea_only).place, 6)
+        self.assertEqual(views._card(with_intent).place, 5)
         self.assertTrue(views._card(with_intent).begun)
 
 
