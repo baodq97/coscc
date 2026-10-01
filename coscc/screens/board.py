@@ -12,7 +12,9 @@ from coscc.screens.overview import _empty_board
 
 
 def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
-    """One line: the unit's number, its title cut to fit, and its state in words unless it is *Ready*. `grouped` names the stage for a card in a folded group."""
+    """The unit's number, its title on up to two lines, and its state in words unless it is *Ready*. `grouped` names the stage for a card in a folded group. A card stands at its `place`: what waits on a person first, a unit with nothing past its idea last and quieter."""
+    quiet = ~unit.begun & (unit.state == "ready")
+    edge = rx.cond(quiet, f"1px dashed {s.LINE}", f"1px solid {s.LINE}")
     return rx.el.button(
         rx.hstack(
             s.text(unit.id.split("_")[0], size="1", font_family=_MONO, flex_shrink="0"),
@@ -24,10 +26,12 @@ def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
                 unit.title,
                 size="2",
                 weight="medium",
-                color=s.INK,
-                white_space="nowrap",
+                color=rx.cond(quiet, s.MUTED, s.INK),
+                display="-webkit-box",
+                style={"-webkit-line-clamp": "2", "-webkit-box-orient": "vertical"},
                 overflow="hidden",
                 text_overflow="ellipsis",
+                overflow_wrap="anywhere",
                 min_width="0",
                 flex="1",
             ),
@@ -49,12 +53,11 @@ def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
         aria_label="Open " + unit.id + " " + unit.title,
         on_click=P.open_unit(unit.id),
         padding=rx.cond(P.density == "compact", "3px 8px", "5px 10px"),
-        background=s.CANVAS,
-        border=f"1px solid {s.LINE}",
+        background=rx.cond(quiet, "transparent", s.CANVAS),
+        border=edge,
         border_radius="8px",
-        border_left=rx.cond(
-            unit.state == "needs-you", f"3px solid {rx.color('amber', 9)}", f"1px solid {s.LINE}"
-        ),
+        border_left=rx.cond(unit.state == "needs-you", f"3px solid {rx.color('amber', 9)}", edge),
+        order=unit.place,
         width="100%",
         min_width="0",
         cursor="pointer",
@@ -111,7 +114,8 @@ def _lane(stage: rx.Var[str]) -> rx.Component:
     count = P.stage_counts[stage]
     return rx.flex(
         rx.hstack(
-            rx.cond(P.stage_glyphs.contains(stage), _stage_glyph(stage)),
+            # A stage with no agent (pr, ship) keeps the glyph's room, so the names line up.
+            rx.cond(P.stage_glyphs.contains(stage), _stage_glyph(stage), rx.box(width="19px")),
             rx.text(stage, size="2", weight="medium"),
             s.text(count.to_string(), size="1"),
             width=rx.breakpoints(initial="100%", md="112px"),
@@ -752,12 +756,14 @@ def _board() -> rx.Component:
                         rx.icon("columns-3", size=14), rx.text("Board"), spacing="2", align="center"
                     ),
                     value="Board",
+                    aria_label="Board view",
                 ),
                 rx.segmented_control.item(
                     rx.hstack(
                         rx.icon("list", size=14), rx.text("List"), spacing="2", align="center"
                     ),
                     value="List",
+                    aria_label="List view",
                 ),
                 value=P.board_view,
                 on_change=P.set_board_view,
@@ -825,35 +831,45 @@ def _board() -> rx.Component:
                             id="board-grid",
                         ),
                         s.panel(
-                            rx.foreach(
-                                P.cards,
-                                lambda u: rx.cond(
-                                    P.shown_ids.contains(u.id),
-                                    rx.button(
-                                        s.text(
-                                            u.id,
-                                            size="1",
-                                            min_width="110px",
-                                            font_family="ui-monospace, monospace",
+                            _list_row(
+                                s.text("#", size="1", weight="medium"),
+                                s.text("Title", size="1", weight="medium"),
+                                s.text("Stage", size="1", weight="medium"),
+                                s.text("State", size="1", weight="medium"),
+                            ),
+                            rx.flex(
+                                rx.foreach(
+                                    P.cards,
+                                    lambda u: rx.cond(
+                                        P.shown_ids.contains(u.id),
+                                        rx.el.button(
+                                            _list_row(
+                                                s.text(
+                                                    u.id.split("_")[0], size="1", font_family=_MONO
+                                                ),
+                                                rx.text(u.title, size="2", weight="medium"),
+                                                s.badge(u.at, "gray"),
+                                                s.badge(u.state_label, u.state_color),
+                                            ),
+                                            on_click=P.open_unit(u.id),
+                                            type="button",
+                                            aria_label="Open " + u.id + " " + u.title,
+                                            order=u.place,
+                                            width="100%",
+                                            background="transparent",
+                                            border="none",
+                                            border_bottom=f"1px solid {s.LINE}",
+                                            cursor="pointer",
+                                            text_align="left",
+                                            font_family="inherit",
+                                            color="inherit",
+                                            _hover={"background": rx.color("gray", 3)},
                                         ),
-                                        rx.text(
-                                            u.title, size="2", weight="medium", text_align="left"
-                                        ),
-                                        rx.spacer(),
-                                        s.badge(u.at, "gray"),
-                                        s.badge(u.state_label, u.state_color),
-                                        on_click=P.open_unit(u.id),
-                                        variant="ghost",
-                                        color_scheme="gray",
-                                        width="100%",
-                                        height="auto",
-                                        padding="15px 8px",
-                                        flex_wrap="wrap",
-                                        justify_content="flex-start",
-                                        border_bottom=f"1px solid {s.LINE}",
+                                        rx.fragment(),
                                     ),
-                                    rx.fragment(),
                                 ),
+                                direction="column",
+                                width="100%",
                             ),
                             id="board-list",
                         ),
@@ -870,6 +886,24 @@ def _board() -> rx.Component:
         rx.cond(P.has_workspace, _start_idea(), rx.fragment()),
         spacing="4",
         width="100%",
+    )
+
+
+def _list_row(number, title, stage, state) -> rx.Component:
+    """One row of the List, and its header: number, title, stage, state."""
+    return rx.grid(
+        number,
+        title,
+        stage,
+        state,
+        # On a phone, stage and state go under the number and title.
+        grid_template_columns=rx.breakpoints(
+            initial="36px minmax(0, 1fr)", sm="44px minmax(0, 1fr) 80px 150px"
+        ),
+        gap="10px",
+        align_items="center",
+        width="100%",
+        padding="10px 8px",
     )
 
 

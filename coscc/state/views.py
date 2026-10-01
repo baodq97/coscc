@@ -363,10 +363,26 @@ class Card:
     # The unit `impl` waits on, when it waits.
     waits_for: str = ""
     held: str = ""
+    # Some stage after the idea has an artifact; a `ready` card without one is drawn quieter.
+    begun: bool = False
+    # Where the card stands in its lane and in the List (`board_place`).
+    place: int = 0
+
+
+# A card's place among its lane's and the List's: what waits on a person first, what has not
+# begun last before the folded groups.
+PLACE = {"needs-you": 0, "error": 1, "running": 2, "awaiting": 3, "paused": 4, "ready": 5}
+
+
+def board_place(state: str, begun: bool) -> int:
+    if state == "ready" and not begun:
+        return 6
+    return PLACE.get(state, 7)
 
 
 def _card(u: Unit) -> Card:
-    """A `Unit` as its card. Copies; decides nothing."""
+    """A `Unit` as its card. Copies, and places it (`board_place`)."""
+    begun = any(c.started for c in u.cells if c.stage != "idea")
     return Card(
         id=u.id,
         title=u.title,
@@ -395,6 +411,8 @@ def _card(u: Unit) -> Card:
         state_color=u.state_color,
         waits_for=u.waits_for,
         held=u.held,
+        begun=begun,
+        place=board_place(u.state, begun),
     )
 
 
