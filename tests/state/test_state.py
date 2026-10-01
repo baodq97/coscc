@@ -1633,12 +1633,14 @@ class TheIdListsAnswerAsTheCardListsDid(unittest.TestCase):
                 cv["stage_counts"].fget(page),
                 {n: len([u for u in board if u.at == n]) for n in stages},
             )
+            rank = {"needs-you": 0, "running": 1, "ready": 2}
             going = sorted(
-                (stages.index(u.at), i, u.id)
+                (rank[u.state], stages.index(u.at), i, u.id)
                 for i, u in enumerate(board)
-                if u.state in ("running", "ready")
+                if u.state in rank
+                and (u.state != "ready" or any(c.started for c in u.cells if c.stage != "idea"))
             )
-            self.assertEqual(cv["resume_id"].fget(page), going[0][2] if going else "")
+            self.assertEqual(cv["resume_id"].fget(page), going[0][3] if going else "")
             self.assertEqual(cv["command_ids"].fget(page), [u.id for u in command(query)])
 
 
@@ -2075,9 +2077,10 @@ class TimesReadForAReader(unittest.TestCase):
             "at": "2026-09-25T04:13:29+00:00",
         }
         feed = {"events": [row], "total": {}}
-        page = SimpleNamespace(cwd="/w", events=[], usage_total_tokens="", usage_total_usd="")
+        page = SimpleNamespace(cwd="/w", events=[], usage_total_usd="")
         service = SimpleNamespace(
-            activity=SimpleNamespace(activity_and_usage=lambda cwd, limit: feed)
+            activity=SimpleNamespace(activity_and_usage=lambda cwd, limit: feed),
+            autopilot=SimpleNamespace(today=lambda cwd: None),
         )
         with mock.patch.object(state.app, "SERVICE", service):
             state.StudioState._load_activity(page)

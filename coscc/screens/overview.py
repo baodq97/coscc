@@ -6,7 +6,7 @@ import reflex as rx
 
 from coscc.screens import studio as s
 from coscc.state import Workspace
-from coscc.state.views import Activity
+from coscc.state.views import Activity, Card
 from coscc.screens.common import P, _details
 from coscc.screens.chrome import _event_row, _metrics
 
@@ -81,12 +81,39 @@ def _empty_board() -> rx.Component:
 # --- overview ----------------------------------------------------------------
 
 
+def _needs_you_row(u: rx.Var[Card]) -> rx.Component:
+    return rx.button(
+        rx.vstack(
+            s.text(u.id, size="1", font_family="ui-monospace, monospace"),
+            rx.text(u.title, size="3", weight="medium", color=s.INK),
+            s.text(rx.cond(u.attention_reason != "", u.attention_reason, u.summary), size="2"),
+            spacing="1",
+            align="start",
+            min_width="0",
+            text_align="left",
+        ),
+        rx.spacer(),
+        rx.icon("arrow-up-right", size=16, color=s.MUTED, flex_shrink="0"),
+        on_click=P.open_unit(u.id),
+        aria_label="Open " + u.id,
+        variant="ghost",
+        color_scheme="gray",
+        width="100%",
+        height="auto",
+        padding="12px 8px",
+        justify_content="flex-start",
+        white_space="normal",
+        border_bottom=f"1px solid {s.LINE}",
+        border_radius="0",
+        data_testid="needs-you-row",
+    )
+
+
 def _overview() -> rx.Component:
     return rx.vstack(
-        rx.box(s.eyebrow("YOUR WORK, IN FOCUS"), margin_top="6px"),
         s.heading(
-            "Build with intent.",
-            "Less context switching. More meaningful progress.",
+            "Overview",
+            "What needs you, and what is moving in this workspace.",
             rx.button(
                 "Open board",
                 rx.icon("arrow-right", size=16),
@@ -95,10 +122,26 @@ def _overview() -> rx.Component:
                 id="open-board",
             ),
         ),
+        s.panel(
+            s.section_head("Needs you", s.badge(P.attention_count.to_string(), "amber")),
+            rx.foreach(
+                P.cards,
+                lambda u: rx.cond(u.state == "needs-you", _needs_you_row(u), rx.fragment()),
+            ),
+            rx.cond(
+                P.attention_count == 0,
+                s.text("Nothing needs you right now.", padding_top="8px"),
+            ),
+            id="needs-you",
+            border=f"1px solid {rx.color('amber', 6)}",
+        ),
         _metrics(),
         rx.grid(
             s.panel(
-                s.section_head("Pick up where you left off", s.badge("IN MOTION", "iris")),
+                s.section_head(
+                    "Pick up where you left off",
+                    rx.button("View all", on_click=P.navigate("board"), variant="ghost", size="1"),
+                ),
                 rx.cond(
                     P.resume_id != "",
                     # The one card `resume_id` names, picked out of `cards`.
@@ -107,11 +150,17 @@ def _overview() -> rx.Component:
                         lambda u: rx.cond(
                             u.id == P.resume_id,
                             rx.vstack(
-                                s.text(u.id, size="1", font_family="ui-monospace, monospace"),
-                                rx.heading(
-                                    u.title, size="6", weight="medium", letter_spacing="-0.025em"
+                                rx.hstack(
+                                    s.text(u.id, size="1", font_family="ui-monospace, monospace"),
+                                    s.badge(u.state_label, u.state_color),
+                                    spacing="2",
+                                    align="center",
+                                    wrap="wrap",
                                 ),
-                                s.text("Next: " + u.summary, max_width="460px", line_height="1.75"),
+                                rx.heading(
+                                    u.title, size="5", weight="medium", letter_spacing="-0.025em"
+                                ),
+                                s.text("Next: " + u.summary, line_height="1.7"),
                                 rx.box(
                                     rx.progress(
                                         value=u.progress, max=100, color_scheme="iris", size="1"
@@ -124,19 +173,14 @@ def _overview() -> rx.Component:
                                         width="100%",
                                     ),
                                     width="100%",
-                                    margin_top="12px",
+                                    margin_top="8px",
                                 ),
-                                rx.hstack(
-                                    rx.button(
-                                        "Open this work",
-                                        rx.icon("arrow-up-right", size=15),
-                                        on_click=P.open_unit(u.id),
-                                        variant="soft",
-                                    ),
-                                    s.badge(u.mode, "gray"),
-                                    width="100%",
-                                    margin_top="12px",
-                                    wrap="wrap",
+                                rx.button(
+                                    "Open this work",
+                                    rx.icon("arrow-up-right", size=15),
+                                    on_click=P.open_unit(u.id),
+                                    variant="soft",
+                                    margin_top="8px",
                                 ),
                                 spacing="3",
                                 width="100%",
@@ -147,40 +191,8 @@ def _overview() -> rx.Component:
                     ),
                     s.text("Nothing is in progress in this workspace."),
                 ),
-                background=f"linear-gradient(135deg, {rx.color('iris', 2)}, {s.SURFACE})",
                 padding=rx.breakpoints(initial="22px", md="28px"),
             ),
-            s.panel(
-                s.section_head(
-                    "Make space for good work", rx.icon("sparkles", size=18, color=s.MUTED)
-                ),
-                rx.heading(
-                    "You set the direction.\nAI helps with the distance.",
-                    size="5",
-                    weight="medium",
-                    white_space="pre-line",
-                    line_height="1.4",
-                ),
-                s.text(
-                    "Keep decisions human, actions visible, and every next step grounded "
-                    "in what came before.",
-                    margin_top="16px",
-                    line_height="1.8",
-                ),
-                rx.box(height="22px"),
-                rx.button(
-                    "Start a conversation",
-                    rx.icon("arrow-right", size=15),
-                    on_click=P.navigate("sessions"),
-                    variant="ghost",
-                ),
-                padding=rx.breakpoints(initial="22px", md="28px"),
-            ),
-            columns=rx.breakpoints(initial="1", lg="2"),
-            gap="16px",
-            width="100%",
-        ),
-        rx.grid(
             s.panel(
                 s.section_head(
                     "Recent activity",
@@ -188,18 +200,21 @@ def _overview() -> rx.Component:
                         "View all", on_click=P.navigate("activity"), variant="ghost", size="1"
                     ),
                 ),
-                rx.foreach(P.events[:3], _event_row),
+                rx.foreach(P.events[:4], _event_row),
                 rx.cond(
                     P.events.length() == 0, s.text("Nothing has been run in this workspace yet.")
                 ),
             ),
-            s.panel(
-                s.section_head(
-                    "Your workspaces",
-                    rx.button(
-                        "Manage", on_click=P.navigate("workspaces"), variant="ghost", size="1"
-                    ),
-                ),
+            columns=rx.breakpoints(initial="1", lg="2"),
+            gap="16px",
+            width="100%",
+        ),
+        s.panel(
+            s.section_head(
+                "Your workspaces",
+                rx.button("Manage", on_click=P.navigate("workspaces"), variant="ghost", size="1"),
+            ),
+            rx.grid(
                 rx.foreach(
                     P.workspaces,
                     lambda w: rx.button(
@@ -222,11 +237,11 @@ def _overview() -> rx.Component:
                         justify_content="flex-start",
                     ),
                 ),
-                rx.cond(P.workspaces.length() == 0, s.text("No workspaces yet.")),
+                columns=rx.breakpoints(initial="1", md="2"),
+                column_gap="16px",
+                width="100%",
             ),
-            columns=rx.breakpoints(initial="1", lg="2"),
-            gap="16px",
-            width="100%",
+            rx.cond(P.workspaces.length() == 0, s.text("No workspaces yet.")),
         ),
         spacing="5",
         width="100%",
@@ -296,7 +311,10 @@ def _workspace_card(workspace: rx.Var[Workspace]) -> rx.Component:
         ),
         rx.box(height="1px", background=s.LINE, margin="20px 0 16px"),
         rx.hstack(
-            s.text(rx.cond(workspace.source == "env", "Read only", "Stored"), size="1"),
+            rx.cond(
+                workspace.source == "env",
+                s.text("Set by the app's environment; not editable here", size="1"),
+            ),
             rx.spacer(),
             rx.button(
                 "Open workspace",
@@ -316,8 +334,8 @@ def _workspace_card(workspace: rx.Var[Workspace]) -> rx.Component:
 def _workspaces_screen() -> rx.Component:
     return rx.vstack(
         s.heading(
-            "A home for every project.",
-            "Separate contexts. One place to bring it all together.",
+            "Workspaces",
+            "Each workspace is a repository the studio works in.",
             rx.button(
                 rx.icon("plus", size=16),
                 "New workspace",

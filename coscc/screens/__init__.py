@@ -13,7 +13,7 @@ from coscc.screens import studio as s
 
 # Every name is imported back so `coscc.screens.<name>` still resolves; a patch reaches only the module that looks it up.
 from coscc.screens.common import P
-from coscc.screens.chrome import _sidebar, _topbar, _status_bar, _banners
+from coscc.screens.chrome import _sidebar, _topbar, _banners
 from coscc.screens.overview import _overview, _workspaces_screen
 from coscc.screens.board import _RECONNECT_JS, _board
 from coscc.screens.sessions import _sessions, _activity, _cost
@@ -59,20 +59,10 @@ def index() -> rx.Component:
             rx.box(
                 _topbar(),
                 rx.box(
-                    _status_bar(),
                     _banners(),
                     _screen(),
-                    rx.flex(
-                        s.text("COS STUDIO", size="1", letter_spacing="0.07em"),
-                        rx.spacer(),
-                        s.text("Built with Python. Designed around your work.", size="1"),
-                        width="100%",
-                        gap="8px",
-                        wrap="wrap",
-                        padding="36px 0 8px",
-                    ),
                     padding=rx.breakpoints(
-                        initial="0 18px 20px", md="0 32px 24px", xl="0 40px 24px"
+                        initial="20px 18px 32px", md="28px 32px 48px", xl="28px 40px 48px"
                     ),
                     width="100%",
                     max_width="1660px",
