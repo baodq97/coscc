@@ -26,7 +26,7 @@ _CSS = """
   --i10:#6e6ade; --i11:#b1a9ff; --r3:#3b1219; --r6:#72232d; --r11:#ff9592; --g3:#132d21;
   --g6:#20573e; --g11:#3dd68c; --a3:#302008; --a6:#5c3d05; --a11:#ffca16; color-scheme: dark; }
 * { box-sizing: border-box; }
-body { margin: 0 auto; max-width: 960px; padding: 24px 16px 48px; background: var(--s1);
+body { margin: 0; max-width: 1024px; padding: 0 0 48px; background: var(--s1);
   color: var(--s12); font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI",
   Roboto, "Helvetica Neue", Arial, sans-serif; }
 h1 { font-size: 28px; font-weight: 500; letter-spacing: -0.02em; margin: 0; }
@@ -44,7 +44,8 @@ ul.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
 .tag { font-size: 12px; background: var(--s3); color: var(--s11); border-radius: 999px;
   padding: 1px 8px; margin-left: 6px; white-space: nowrap; }
 .groups { display: grid; gap: 12px; margin-top: 12px; }
-@media (min-width: 641px) { .groups { grid-template-columns: 1.5fr 1fr auto; align-items: start; } }
+body.alone { padding: 24px 16px 48px; }
+@media (min-width: 641px) { body.alone { padding: 32px 32px 48px; } .groups { grid-template-columns: 1.5fr 1fr auto; align-items: start; } }
 fieldset, details.group { border: 1px solid var(--s6); border-radius: 10px; padding: 10px 12px;
   margin: 0; min-width: 0; }
 legend, summary, .label { font-size: 13px; font-weight: 500; color: var(--s11); }
@@ -88,7 +89,11 @@ _MODE_JS = """
 
 _PAGE_JS = """
 (function () {
-  if (window.top === window) document.getElementById("back").hidden = false;
+  // The studio frame already pads the page; alone, it pads itself.
+  if (window.top === window) {
+    document.getElementById("back").hidden = false;
+    document.body.classList.add("alone");
+  }
   function boxes(row, name) {
     var all = row.querySelectorAll("input[name=" + name + "]:checked");
     return Array.prototype.map.call(all, function (x) { return x.value; });
