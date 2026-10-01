@@ -63,6 +63,11 @@ class Activity:
                 # A `release` row's version and what happened; empty on every other kind.
                 "version": str(r.get("version") or "") if r.get("kind") == "release" else "",
                 "detail": str(r.get("detail") or "") if r.get("kind") == "release" else "",
+                # A `transition`'s new state, how many questions a `questions` row asked, and a
+                # `ship` row's result; empty on every other kind.
+                "to_state": str(r.get("to_state") or ""),
+                "asked": len(r.get("questions") or []),
+                "result": str(r.get("result") or ""),
             }
             for r in rows
             # A retake of the screenshots is recorded, and shown on no screen.

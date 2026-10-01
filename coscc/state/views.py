@@ -22,7 +22,7 @@ NAVIGATION = (
     ("board", "Board", "columns-3"),
     ("backlog", "Backlog", "list-ordered"),
     ("sessions", "Sessions", "messages-square"),
-    ("activity", "Activity & usage", "chart-no-axes-combined"),
+    ("activity", "Activity", "chart-no-axes-combined"),
     ("cost", "Cost", "circle-dollar-sign"),
     ("settings", "Settings", "settings-2"),
 )
@@ -429,17 +429,6 @@ def _shown(u: Unit, read: dict) -> dict:
 
 
 @dataclasses.dataclass
-class UsageRow:
-    """One line of *Usage by work unit*."""
-
-    id: str = ""
-    title: str = ""
-    tokens: str = ""
-    usd: str = ""
-    token_count: int = 0
-
-
-@dataclasses.dataclass
 class SpendRow:
     """One unit, stage or day of the *Cost* screen: money read by `present.money`, and
     beside it the steps whose cost is not known."""
@@ -509,6 +498,14 @@ def _unknown(n) -> str:
     """Said beside the money, or nothing when every cost is known."""
     n = int(n or 0)
     return f"{n} unknown" if n else ""
+
+
+def per_merged_unit(by_unit: list[dict], done: set[str]) -> tuple[str, int]:
+    """The mean known cost of the units that finished, and how many there were."""
+    costs = [r["usd"] for r in by_unit if r["key"] in done and r.get("usd") is not None]
+    if not costs:
+        return "—", 0
+    return present.money(sum(costs) / len(costs)), len(costs)
 
 
 def _spend_rows(rows: list[dict], unit: bool = False) -> list[SpendRow]:
@@ -1087,6 +1084,38 @@ class Knob:
     value: str = ""
     detail: str = ""
     on: bool = False
+    # What the screen calls it, and the environment variable that sets it.
+    label: str = ""
+    variable: str = ""
+
+
+@dataclasses.dataclass
+class FeatureRow:
+    """One feature and whether it is on for the open workspace."""
+
+    name: str = ""
+    on: bool = True
+
+
+# A knob's name is the config field's; the screen says what it does.
+KNOB_LABELS = {
+    "tools": "Tools",
+    "allow_write_and_exec": "Write files and run commands",
+    "bypass_permissions": "Skip permission prompts",
+    "resume_foreign_sessions": "Resume sessions started elsewhere",
+}
+
+
+def knob(k: dict) -> Knob:
+    name = k["name"]
+    return Knob(
+        name=name,
+        value=k["value"],
+        detail=k["detail"],
+        on=bool(k["on"]),
+        label=KNOB_LABELS.get(name, name),
+        variable="COS_" + name.upper(),
+    )
 
 
 @dataclasses.dataclass

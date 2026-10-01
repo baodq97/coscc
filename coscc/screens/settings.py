@@ -7,6 +7,7 @@ from reflex.style import set_color_mode
 
 from coscc.agent import models
 from coscc.screens import studio as s
+from coscc.service.common import CONSEQUENCE
 from coscc.state import AgentRow, GrantRow, ImportRow, Knob, ModelRow
 from coscc.state.views import DecisionRow
 from coscc.screens.common import P, _MONO, _RUNIC, _details, _table
@@ -37,7 +38,7 @@ def _settings_row(label, description, control: rx.Component) -> rx.Component:
 
 def _knob_row(knob: rx.Var[Knob]) -> rx.Component:
     return _settings_row(
-        knob.name,
+        knob.label,
         knob.detail,
         s.badge(knob.value, rx.cond(knob.on, "amber", "grass")),
     )
@@ -88,11 +89,10 @@ def _grant_row(grant: rx.Var[GrantRow]) -> rx.Component:
 
 
 def _model_row(row: rx.Var[ModelRow]) -> rx.Component:
-    """One stage, or chat: how many agents run it, on what model, and where that model came from."""
+    """One stage, or chat: on what model, and where that model came from."""
     return rx.box(
         rx.hstack(
             s.badge(row.name, "iris"),
-            s.text(row.agents.to_string() + " agent", size="1"),
             rx.spacer(),
             s.text(row.model, size="1", font_family="ui-monospace, monospace"),
             s.badge(row.source, rx.cond(row.overridden, "amber", "gray")),
@@ -175,6 +175,7 @@ def _agent_field(row: rx.Var[AgentRow], field: str, value, source, width: str) -
         rx.input(
             name=field,
             default_value=value,
+            placeholder="Not set",
             aria_label=field.capitalize() + " of " + row.key,
             size="1",
             width="100%",
@@ -294,6 +295,143 @@ def _autopilot_settings() -> rx.Component:
             ),
         ),
         id="autopilot-panel",
+    )
+
+
+def _release_panel() -> rx.Component:
+    """What `main` holds since the last release, and the one button its state has, from the board's `release` block."""
+    row = dict(gap="8px", align="center", wrap="wrap", width="100%")
+    return rx.cond(
+        P.rel_state != "",
+        s.panel(
+            rx.hstack(
+                s.eyebrow("RELEASE"),
+                rx.cond(P.rel_last_tag != "", s.text("last " + P.rel_last_tag, size="1")),
+                rx.spacer(),
+                s.badge(P.rel_state, rx.cond(P.rel_button != "", "amber", "gray")),
+                width="100%",
+                align="center",
+            ),
+            rx.cond(
+                P.rel_reason != "",
+                s.text(P.rel_reason, size="1", margin_top="6px", id="release-reason"),
+            ),
+            rx.cond(
+                P.rel_units.length() > 0,
+                rx.vstack(
+                    s.text(
+                        P.rel_units.length().to_string() + " units since " + P.rel_last_tag,
+                        size="2",
+                    ),
+                    rx.foreach(
+                        P.rel_units,
+                        lambda u: rx.flex(
+                            s.text(u.sha, size="1", font_family=_MONO),
+                            s.badge(u.type, "gray"),
+                            s.text(u.name, size="1"),
+                            s.text(u.pr, size="1"),
+                            **row,
+                        ),
+                    ),
+                    spacing="1",
+                    margin_top="8px",
+                    width="100%",
+                    id="release-units",
+                ),
+            ),
+            rx.cond(
+                P.rel_unmatched.length() > 0,
+                rx.vstack(
+                    s.text(
+                        P.rel_unmatched.length().to_string() + " commits with no unit", size="2"
+                    ),
+                    rx.foreach(
+                        P.rel_unmatched,
+                        lambda c: rx.flex(
+                            s.text(c.sha, size="1", font_family=_MONO),
+                            s.text(c.subject, size="1", overflow_wrap="anywhere"),
+                            **row,
+                        ),
+                    ),
+                    spacing="1",
+                    margin_top="8px",
+                    width="100%",
+                    id="release-unmatched",
+                ),
+            ),
+            rx.cond(
+                P.rel_workflow != "",
+                rx.flex(
+                    s.text("Release workflow: " + P.rel_workflow, size="1"),
+                    rx.link("run", href=P.rel_workflow_url, is_external=True, size="1"),
+                    rx.cond(
+                        P.rel_release_url != "",
+                        rx.link("release", href=P.rel_release_url, is_external=True, size="1"),
+                    ),
+                    margin_top="8px",
+                    **row,
+                ),
+            ),
+            rx.cond(
+                P.rel_button != "",
+                rx.vstack(
+                    s.text(CONSEQUENCE["release"], size="1", id="release-consequence"),
+                    rx.flex(
+                        rx.input(
+                            value=P.rel_version,
+                            on_change=P.set_rel_version,
+                            aria_label="Version",
+                            size="1",
+                            width="120px",
+                            id="release-version",
+                            disabled=P.rel_phase == "publish",
+                        ),
+                        rx.button(
+                            rx.icon("tag", size=14),
+                            P.rel_button,
+                            on_click=P.press_release,
+                            loading=P.releasing,
+                            disabled=P.releasing | ~P.rel_enabled,
+                            size="1",
+                            id="release-button",
+                        ),
+                        gap="8px",
+                        align="center",
+                    ),
+                    rx.cond(
+                        ~P.rel_enabled & (P.rel_disabled_reason != ""),
+                        s.text(P.rel_disabled_reason, size="1", id="release-disabled"),
+                    ),
+                    spacing="2",
+                    margin_top="10px",
+                    align="start",
+                ),
+            ),
+            width="100%",
+            id="release-panel",
+        ),
+    )
+
+
+def _features_panel() -> rx.Component:
+    """Each feature, on or off for this workspace. Off silences it here and starts nothing."""
+    return s.panel(
+        s.section_head("Features", rx.icon("puzzle", size=18, color=s.MUTED)),
+        s.text("Turned off here, a feature does nothing in this workspace.", size="1"),
+        rx.foreach(
+            P.features,
+            lambda f: _settings_row(
+                f.name,
+                rx.cond(f.on, "On in this workspace.", "Off in this workspace."),
+                rx.switch(
+                    checked=f.on,
+                    on_change=lambda on: P.set_feature(f.name, on),
+                    aria_label="Feature " + f.name,
+                ),
+            ),
+        ),
+        rx.cond(P.features.length() == 0, s.text("No feature is installed.", size="1")),
+        id="features-panel",
     )
 
 
@@ -518,9 +656,45 @@ def _import_panel() -> rx.Component:
     )
 
 
+# The index at the top: each panel's label and id. Autopilot and the command lists are drawn
+# only with a workspace chosen; their links go with them.
+SECTIONS = (
+    ("Autopilot", "autopilot-panel"),
+    ("Appearance", "appearance-panel"),
+    ("Where things live", "where-panel"),
+    ("Chat sessions", "knobs-panel"),
+    ("Features", "features-panel"),
+    ("Decisions", "decisions-panel"),
+    ("Import report", "import-panel"),
+    ("Board steps", "grants-panel"),
+    ("Commands", "impl-lists-panel"),
+    ("Agents", "agents-panel"),
+    ("Models", "models-panel"),
+    ("Updates", "update-panel"),
+)
+NEEDS_WORKSPACE = ("autopilot-panel", "features-panel", "impl-lists-panel")
+
+
+def _section_index() -> rx.Component:
+    def link(label: str, target: str) -> rx.Component:
+        button = rx.button(
+            label, on_click=rx.scroll_to(target), variant="soft", color_scheme="gray", size="1"
+        )
+        return rx.cond(P.has_workspace, button) if target in NEEDS_WORKSPACE else button
+
+    return rx.flex(
+        *[link(label, target) for label, target in SECTIONS],
+        gap="6px",
+        wrap="wrap",
+        width="100%",
+        id="settings-index",
+    )
+
+
 def _settings() -> rx.Component:
     return rx.vstack(
-        s.heading("Make it feel like yours.", "A considered default. A few thoughtful choices."),
+        rx.heading("Settings", size="7", weight="medium", letter_spacing="-0.045em"),
+        _section_index(),
         rx.cond(P.has_workspace, _autopilot_settings(), rx.fragment()),
         s.panel(
             s.section_head("Appearance", rx.icon("palette", size=18, color=s.MUTED)),
@@ -566,6 +740,7 @@ def _settings() -> rx.Component:
                     spacing="2",
                 ),
             ),
+            id="appearance-panel",
         ),
         rx.grid(
             s.panel(
@@ -619,6 +794,7 @@ def _settings() -> rx.Component:
                     margin_top="10px",
                     id="data-roots",
                 ),
+                id="where-panel",
             ),
             s.panel(
                 s.section_head(
@@ -626,6 +802,16 @@ def _settings() -> rx.Component:
                 ),
                 s.text("Set when the app starts.", size="1"),
                 rx.foreach(P.knobs, _knob_row),
+                # The variables that set them.
+                _details(
+                    "knobs",
+                    "Details",
+                    rx.foreach(
+                        P.knobs,
+                        lambda k: s.text(k.label + ": " + k.variable, size="1", font_family=_MONO),
+                    ),
+                    margin_top="10px",
+                ),
                 id="knobs-panel",
             ),
             columns=rx.breakpoints(initial="1", lg="2"),
@@ -633,6 +819,7 @@ def _settings() -> rx.Component:
             width="100%",
             align_items="start",
         ),
+        rx.cond(P.has_workspace, _features_panel(), rx.fragment()),
         _decisions_panel(),
         _import_panel(),
         s.panel(
@@ -679,8 +866,9 @@ def _settings() -> rx.Component:
             rx.foreach(P.model_rows, _model_row),
             id="models-panel",
         ),
-        # The update panel.
+        # The update panel, and what `main` holds since the last release.
         _update_panel(),
+        _release_panel(),
         spacing="5",
         width="100%",
     )

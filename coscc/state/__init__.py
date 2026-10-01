@@ -18,6 +18,7 @@ import logging
 import reflex as rx
 from reflex_base.event.context import EventContext
 
+from coscc import plugin
 from coscc.state import app, place, present
 from coscc.service.common import COLLAPSED_STATES
 from coscc.service.common import FOLDED_STATES
@@ -39,7 +40,6 @@ from coscc.state.views import (
     _card,
     _ci_line,
     _shown,
-    UsageRow,
     SpendRow,
     TokenRow,
     WasteRow,
@@ -75,6 +75,8 @@ from coscc.state.views import (
     _number,
     Event,
     Knob,
+    knob,
+    FeatureRow,
     ModelRow,
     AgentRow,
     ImportRow,
@@ -85,6 +87,7 @@ from coscc.state.views import (
     _tokens,
     COST_NOTE,
     cost_note,
+    per_merged_unit,
     _usd,
     _title_of,
     _initials,
@@ -241,6 +244,8 @@ class StudioState(
     cost_total_steps: str = "0"
     cost_total_unknown: str = ""
     cost_offset: str = ""
+    cost_per_merged: str = "—"
+    cost_merged: int = 0
     cost_units: list[SpendRow] = []
     cost_stages: list[SpendRow] = []
     cost_days: list[SpendRow] = []
@@ -250,6 +255,7 @@ class StudioState(
     unit_cost_stages: list[SpendRow] = []
     unit_anomalies: list[AnomalyRow] = []
     knobs: list[Knob] = []
+    features: list[FeatureRow] = []
     grants: list[GrantRow] = []
     # The fields an import could not read, and why the report itself could not be.
     import_rows: list[ImportRow] = []
@@ -464,23 +470,8 @@ class StudioState(
         return [c.id for c in self.cards if q in c.title.lower() or q in c.id.lower()][:6]
 
     @rx.var
-    def usage_rows(self) -> list[UsageRow]:
-        """Only while *Activity & usage* is shown; nothing elsewhere.
-
-        A unit whose steps all died before a token was counted still has a row, reading
-        `unknown`, rather than leaving the table as if it cost nothing."""
-        if self.screen != "activity":
-            return []
-        return [
-            UsageRow(id=c.id, title=c.title, tokens=c.tokens, usd=c.usd, token_count=c.token_count)
-            for c in self.cards
-            if c.token_count > 0 or c.usd not in ("", "—")
-        ]
-
-    @rx.var
-    def usage_scale(self) -> int:
-        """The bar scale, taken from the largest real value rather than from a guess."""
-        return max([c.token_count for c in self.cards] + [1])
+    def cost_over_count(self) -> int:
+        return len([r for r in self.cost_units if r.over])
 
     # -- plumbing ------------------------------------------------------------
 
@@ -497,10 +488,7 @@ class StudioState(
         self.host_port = f"{data.get('host')}:{data.get('port')}"
         self.loopback_only = data.get("host") in ("127.0.0.1", "localhost", "::1")
         self.model = data.get("cos_model") or "unset"
-        self.knobs = [
-            Knob(name=k["name"], value=k["value"], detail=k["detail"], on=bool(k["on"]))
-            for k in data.get("knobs") or []
-        ]
+        self.knobs = [knob(k) for k in data.get("knobs") or []]
         self.grants = [
             GrantRow(
                 stage=g["stage"],
@@ -569,6 +557,26 @@ class StudioState(
         self._show_agents(app.SERVICE.agents.agent_table())
         self._load_autopilot()
         self._load_command_lists()
+        self._load_features()
+
+    def _load_features(self) -> None:
+        """Each feature `api.build` loaded, and whether it is on for this workspace."""
+        if not self.cwd:
+            self.features = []
+            return
+        enabled = plugin.ctx_of(app.SERVICE).enabled
+        self.features = [
+            FeatureRow(name, enabled(name, self.cwd)) for name in app.API.state.features
+        ]
+
+    @rx.event
+    def set_feature(self, name: str, on: bool):
+        """The same call as `POST /api/features`; it writes the pref and starts nothing."""
+        try:
+            plugin.set_enabled(app.SERVICE, app.API.state.features, name, self.cwd, bool(on))
+        except Invalid as e:
+            self.notice = str(e)
+        self._load_features()
 
     def _show_command_lists(self, data: dict) -> None:
         self.impl_allow = [str(n) for n in data.get("allow") or []]
@@ -866,6 +874,9 @@ class StudioState(
             )
             for row in data["sessions"]
         ]
+        # This page's own conversations first; the read-only ones (terminal sessions, the
+        # app's estimates) after them, each group newest first as listed.
+        rows.sort(key=lambda c: not c.resumable)
         self.conversations = rows
         if self.session_id and not any(c.id == self.session_id for c in rows):
             self.session_id = ""
@@ -944,6 +955,8 @@ class StudioState(
             "hold": ("pause", "amber"),
             # A release press, refused ones included.
             "release": ("tag", "iris"),
+            "transition": ("arrow-right", "gray"),
+            "questions": ("circle-help", "amber"),
         }
         events: list[Event] = []
         for row in feed["events"]:
@@ -959,7 +972,10 @@ class StudioState(
                 "attempt": f"{row['stage']} stopped — what it left was recorded",
                 "hold": f"{row.get('from', '')} → {row.get('to', '')}",
                 "release": f"release {row.get('version', '')} {row['outcome']}",
-            }.get(row["kind"], row["kind"])
+                "transition": f"{row['artifact']} {row.get('to_state') or 'changed'}",
+                "questions": f"{row.get('asked', 0)} question(s) for you",
+                "ship": "shipped" if row.get("result") == "shipped" else "ship refused",
+            }.get(row["kind"], row["kind"].replace("-", " "))
             detail = f"{row['unit']}"
             if row["kind"] == "hold":
                 detail += _hold_detail(row)
@@ -967,7 +983,7 @@ class StudioState(
                 detail = str(row.get("detail") or "")
             if row["denials"]:
                 detail += f" / {row['denials']} tool call(s) refused"
-            if row["artifact"]:
+            if row["artifact"] and row["kind"] != "transition":
                 detail += f" / wrote {row['artifact']}"
             events.append(
                 Event(
@@ -987,6 +1003,7 @@ class StudioState(
         self.cost_tokens, self.cost_waste, self.cost_anomalies = [], [], []
         self.cost_total_usd, self.cost_total_steps, self.cost_total_unknown = "—", "0", ""
         self.cost_offset, self.cost_recording = "", True
+        self.cost_per_merged, self.cost_merged = "—", 0
         if not self.cwd:
             return
         rounds = {key: [r.verdict for r in u.rounds] for key, u in self.get_value("_full").items()}
@@ -1004,6 +1021,8 @@ class StudioState(
         self.cost_total_unknown = _unknown(total.get("unknown"))
         self.cost_offset = data["offset"]
         self.cost_units = _spend_rows(data["by_unit"], unit=True)
+        done = {c.id for c in self.cards if c.state == "done"}
+        self.cost_per_merged, self.cost_merged = per_merged_unit(data["by_unit"], done)
         self.cost_stages = _spend_rows(data["by_stage"])
         self.cost_days = _spend_rows(data["by_day"])
         tokens = data["tokens"]
@@ -1011,7 +1030,10 @@ class StudioState(
             _token_row(t["stage"] or "—", t) for t in tokens["by_stage"]
         ]
         self.cost_waste = _waste_rows(data["waste"])
-        self.cost_anomalies = _anomaly_rows(data["anomalies"])
+        # Over budget is the units table's red figure; here it would be one row per unit again.
+        self.cost_anomalies = _anomaly_rows(
+            [a for a in data["anomalies"] if a["kind"] != "over-budget"]
+        )
 
     def _load_unit_cost(self) -> None:
         """The open unit's cost by stage and its anomalies."""
