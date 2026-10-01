@@ -1793,6 +1793,32 @@ class ALongMessageIsCutAndOpensWhole(unittest.TestCase):
         self.assertEqual(shown[4], (reply, 0))
 
 
+class APersonsOwnConversationsComeFirst(unittest.TestCase):
+    """The read-only sessions (a terminal's, the app's estimates) follow the page's own, and the
+    one opened on arrival is the person's."""
+
+    def test_resumable_first_in_listed_order(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        listed = [
+            {"session_id": "est1", "summary": "estimate", "resumable": False},
+            {"session_id": "mine1", "summary": "mine", "resumable": True},
+            {"session_id": "est2", "summary": "estimate", "resumable": False},
+            {"session_id": "mine2", "summary": "mine", "resumable": True},
+        ]
+        page = SimpleNamespace(cwd="/w", session_id="", _load_history=lambda: None)
+        service = SimpleNamespace(
+            chat=SimpleNamespace(sessions_for=lambda cwd, limit: {"sessions": listed})
+        )
+        with mock.patch.object(state.app, "SERVICE", service):
+            state.StudioState._load_sessions(page)
+        self.assertEqual([c.id for c in page.conversations], ["mine1", "mine2", "est1", "est2"])
+        self.assertEqual(page.session_id, "mine1")
+
+
 class SessionsAreReadWhereTheyAreShown(unittest.TestCase):
     """`SERVICE.chat.sessions_for` is asked on arriving at Sessions in a workspace it was not read for,
     and nowhere else."""

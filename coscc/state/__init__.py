@@ -860,6 +860,9 @@ class StudioState(
             )
             for row in data["sessions"]
         ]
+        # This page's own conversations first; the read-only ones (terminal sessions, the
+        # app's estimates) after them, each group newest first as listed.
+        rows.sort(key=lambda c: not c.resumable)
         self.conversations = rows
         if self.session_id and not any(c.id == self.session_id for c in rows):
             self.session_id = ""

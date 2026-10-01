@@ -58,8 +58,8 @@ def _message(message: rx.Var[Message], index: rx.Var[int]) -> rx.Component:
 def _sessions() -> rx.Component:
     return rx.vstack(
         s.heading(
-            "Think it through.",
-            "A conversation with context. A little more room to explore.",
+            "Sessions",
+            "Conversations in this workspace; yours come first.",
             rx.button(
                 rx.icon("plus", size=16),
                 "New conversation",
