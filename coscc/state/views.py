@@ -635,7 +635,7 @@ def _backlog_row(entry: dict, rank: int) -> BacklogRow:
         basis=basis,
         by=_estimated_by(est.get("by")),
         drift=(
-            f"off by rank — computed {entry.get('computed') or 'none'}"
+            (f"computed order: #{entry['computed']}" if entry.get("computed") else "not estimated")
             if entry.get("drift")
             else ""
         ),
