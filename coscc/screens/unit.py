@@ -404,10 +404,11 @@ def _outcome_panel() -> rx.Component:
 
 
 # The button each move gets, keyed by the value `cos.mjs` puts in `holdMoves`.
+# Resume first: on a paused unit it is the way on, and Drop the way out.
 _HOLD_BUTTONS = (
+    ("active", "Resume", "play"),
     ("paused", "Pause", "pause"),
     ("dropped", "Drop", "circle-x"),
-    ("active", "Resume", "play"),
 )
 
 
@@ -542,7 +543,7 @@ def _hold_panel() -> rx.Component:
                             loading=P.holding,
                             disabled=P.holding,
                             size="1",
-                            variant="soft",
+                            variant="solid" if value == "active" else "soft",
                             id=f"hold-{value}",
                         ),
                     )
