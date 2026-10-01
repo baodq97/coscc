@@ -84,13 +84,7 @@ def _empty_board() -> rx.Component:
 def _needs_you_row(u: rx.Var[Card]) -> rx.Component:
     return rx.button(
         rx.vstack(
-            rx.hstack(
-                s.text(u.id, size="1", font_family="ui-monospace, monospace"),
-                s.badge(u.state_label, u.state_color),
-                spacing="2",
-                align="center",
-                wrap="wrap",
-            ),
+            s.text(u.id, size="1", font_family="ui-monospace, monospace"),
             rx.text(u.title, size="3", weight="medium", color=s.INK),
             s.text(rx.cond(u.attention_reason != "", u.attention_reason, u.summary), size="2"),
             spacing="1",
