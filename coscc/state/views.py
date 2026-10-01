@@ -166,7 +166,6 @@ class Unit:
     summary: str = ""
     # The last stage with an artifact: the one the Artifact tab opens. Not the column, which is `at`.
     stage: str = ""
-    owner: str = "You"
     mode: str = "manual"
     tokens: str = ""
     usd: str = ""
@@ -338,7 +337,6 @@ class Card:
     title: str = ""
     summary: str = ""
     mode: str = "manual"
-    owner: str = "You"
     progress: int = 0
     tokens: str = ""
     usd: str = ""
@@ -372,7 +370,6 @@ def _card(u: Unit) -> Card:
         title=u.title,
         summary=u.summary,
         mode=u.mode,
-        owner=u.owner,
         progress=u.progress,
         tokens=u.tokens,
         usd=u.usd,

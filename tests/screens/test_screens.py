@@ -204,7 +204,6 @@ class ThePage(unittest.TestCase):
             "integration_state",
             "outcome_text",
             "shortlist_rank",
-            "owner",
             "relations_text",
             "mode",
             "problems",

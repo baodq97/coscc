@@ -787,7 +787,6 @@ class StudioState(
                     title=_title_of(u["name"]),
                     summary=u.get("next") or "",
                     stage=stage,
-                    owner="AI" if mode == "autonomous" else "You",
                     mode=mode,
                     tokens=shown,
                     usd=_usd(u.get("cost") or {}),
