@@ -596,6 +596,25 @@ class TheQuestionsTabListsWhatWaits(unittest.TestCase):
         )
         self.assertEqual([q.key for q in shown], ["spec.md#2", "intent.md#1"])
 
+    def test_answering_comes_first_only_while_a_question_is_open_and_answerable(self):
+        from types import SimpleNamespace
+
+        from coscc.state import StudioState, _questions
+
+        _, asked = _questions(self.UNIT)
+        first = StudioState.computed_vars["answer_first"].fget
+
+        def page(answerable=True, hold="", questions=asked):
+            unit = SimpleNamespace(answerable=answerable, hold_state=hold, questions=questions)
+            open_here = [q for q in questions if not q.answered]
+            return SimpleNamespace(current_unit=unit, open_questions_here=open_here)
+
+        self.assertTrue(first(page()))
+        self.assertTrue(first(page(hold="paused")))
+        self.assertFalse(first(page(hold="dropped")))
+        self.assertFalse(first(page(answerable=False)))
+        self.assertFalse(first(page(questions=[q for q in asked if q.answered])))
+
 
 class TheBoardShowsTheGuardAndWhoseDecision(unittest.TestCase):
     """Copied from what the service sent; nothing decided here."""

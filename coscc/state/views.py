@@ -166,7 +166,6 @@ class Unit:
     summary: str = ""
     # The last stage with an artifact: the one the Artifact tab opens. Not the column, which is `at`.
     stage: str = ""
-    owner: str = "You"
     mode: str = "manual"
     tokens: str = ""
     usd: str = ""
@@ -340,7 +339,6 @@ class Card:
     title: str = ""
     summary: str = ""
     mode: str = "manual"
-    owner: str = "You"
     progress: int = 0
     # *Pick up where you left off* skips a ready unit that has only its idea.
     begun: bool = False
@@ -376,7 +374,6 @@ def _card(u: Unit) -> Card:
         title=u.title,
         summary=u.summary,
         mode=u.mode,
-        owner=u.owner,
         progress=u.progress,
         begun=u.begun,
         tokens=u.tokens,

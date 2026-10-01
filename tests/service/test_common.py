@@ -238,7 +238,7 @@ class TheStateOfAUnit(unittest.TestCase):
 
     def test_the_dialog_shows_no_reason_its_state_contradicts(self):
         """A unit with `problems` is `Error`, yet `attention_reason` still reads "Needs a person"; a
-        dropped unit with a draft still reads "Accept <stage>.md"."""
+        dropped unit with a draft still reads "<stage>.md is a draft"."""
         broken = self._unit(problems=["plan.md: no Status line"])
         self.assertEqual(attention_reason(broken), "Needs a person")
         state = unit_state(broken, None, None)["state"]
@@ -254,7 +254,7 @@ class TheStateOfAUnit(unittest.TestCase):
                 {"stage": "spec", "status": "draft"},
             ],
         )
-        self.assertEqual(attention_reason(dropped), "Accept spec.md")
+        self.assertEqual(attention_reason(dropped), "spec.md is a draft")
 
         self.assertEqual(
             reason_beside(attention_reason(dropped), unit_state(dropped, None, None)["state"]), ""
@@ -263,7 +263,7 @@ class TheStateOfAUnit(unittest.TestCase):
             self.assertEqual(reason_beside("Changes requested", state), "")
 
         self.assertEqual(reason_beside("Needs a person", "needs-you"), "Needs a person")
-        self.assertEqual(reason_beside("Accept plan.md", "ready"), "Accept plan.md")
+        self.assertEqual(reason_beside("plan.md is a draft", "ready"), "plan.md is a draft")
         self.assertEqual(reason_beside("Changes requested", "ready"), "Changes requested")
 
     def test_attention_reads_the_code_and_not_the_words(self):
@@ -272,7 +272,7 @@ class TheStateOfAUnit(unittest.TestCase):
         for nxt in ("finished", "closed — spec rejected", "waiting on api/0001_b to merge"):
             with self.subTest(nxt=nxt):
                 self.assertEqual(
-                    attention_reason({"next": nxt, "why": "", "stages": rows}), "Accept spec.md"
+                    attention_reason({"next": nxt, "why": "", "stages": rows}), "spec.md is a draft"
                 )
         self.assertEqual(attention_reason({"next": "x", "why": "finished", "stages": rows}), "")
         self.assertEqual(attention_reason({"next": "x", "why": "rejected", "stages": rows}), "")
@@ -299,7 +299,7 @@ class TheStateOfAUnit(unittest.TestCase):
             stages=rows,
             next="finish and accept ship.md",
         )
-        self.assertEqual(attention_reason(old), "Accept ship.md")
+        self.assertEqual(attention_reason(old), "ship.md is a draft")
 
 
 class WhatTheBoardSaysBesideAUnit(unittest.TestCase):
@@ -321,7 +321,7 @@ class WhatTheBoardSaysBesideAUnit(unittest.TestCase):
 
     def test_each_kind_of_wait_has_its_reason_and_a_calm_unit_none(self):
         fixtures = {
-            "Accept intent.md": {
+            "intent.md is a draft": {
                 "next": "accept intent.md",
                 "stages": [{"stage": "intent", "status": "draft"}],
             },
