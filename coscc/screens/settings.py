@@ -297,6 +297,28 @@ def _autopilot_settings() -> rx.Component:
     )
 
 
+def _features_panel() -> rx.Component:
+    """Each feature, on or off for this workspace. Off silences it here and starts nothing."""
+    return s.panel(
+        s.section_head("Features", rx.icon("puzzle", size=18, color=s.MUTED)),
+        s.text("Turned off here, a feature does nothing in this workspace.", size="1"),
+        rx.foreach(
+            P.features,
+            lambda f: _settings_row(
+                f.name,
+                rx.cond(f.on, "On in this workspace.", "Off in this workspace."),
+                rx.switch(
+                    checked=f.on,
+                    on_change=lambda on: P.set_feature(f.name, on),
+                    aria_label="Feature " + f.name,
+                ),
+            ),
+        ),
+        rx.cond(P.features.length() == 0, s.text("No feature is installed.", size="1")),
+        id="features-panel",
+    )
+
+
 def _command_list_field(label: str, value, on_change, field_id: str) -> rx.Component:
     return rx.input(
         value=value,
@@ -525,6 +547,7 @@ SECTIONS = (
     ("Appearance", "appearance-panel"),
     ("Where things live", "where-panel"),
     ("Chat sessions", "knobs-panel"),
+    ("Features", "features-panel"),
     ("Decisions", "decisions-panel"),
     ("Import report", "import-panel"),
     ("Board steps", "grants-panel"),
@@ -533,7 +556,7 @@ SECTIONS = (
     ("Models", "models-panel"),
     ("Updates", "update-panel"),
 )
-NEEDS_WORKSPACE = ("autopilot-panel", "impl-lists-panel")
+NEEDS_WORKSPACE = ("autopilot-panel", "features-panel", "impl-lists-panel")
 
 
 def _section_index() -> rx.Component:
@@ -680,6 +703,7 @@ def _settings() -> rx.Component:
             width="100%",
             align_items="start",
         ),
+        rx.cond(P.has_workspace, _features_panel(), rx.fragment()),
         _decisions_panel(),
         _import_panel(),
         s.panel(

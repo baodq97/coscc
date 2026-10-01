@@ -568,6 +568,8 @@ def build(config: Config | None = None) -> FastAPI:
     api.state.sessions = sessions
     api.state.service = service
     api.state.tables = tables
+    # The names, for Settings: only this module and the page shell import `features`.
+    api.state.features = tuple(f.name for f in features.FEATURES)
     api.add_exception_handler(Invalid, _refused)
 
     # No route for `/` and no static mount: `/` has to fall through to Reflex's compiled-frontend

@@ -2194,5 +2194,40 @@ class ADependencyChosenOnAnIdeaCanBeTakenBack(unittest.TestCase):
         self.assertEqual((page.idea_depends, page.child_depends), ([], ""))
 
 
+class AFeatureIsTurnedOffFromSettings(unittest.TestCase):
+    """The switch goes through `plugin.set_enabled`, the same call as `POST /api/features`."""
+
+    def test_off_then_on_for_the_open_workspace_only(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc.state import StudioState
+
+        with tempfile.TemporaryDirectory() as root:
+            service = mock.Mock(config=mock.Mock(data_dir=root))
+            service.ws.check.side_effect = lambda cwd: cwd
+            api = SimpleNamespace(state=SimpleNamespace(features=("notices", "vault")))
+            page = SimpleNamespace(cwd="/w", features=[], notice="")
+            page._load_features = lambda: StudioState._load_features(page)
+            switch = StudioState.event_handlers["set_feature"].fn
+            with (
+                mock.patch("coscc.state.app.SERVICE", service),
+                mock.patch("coscc.state.app.API", api),
+            ):
+                switch(page, "vault", False)
+                self.assertEqual(
+                    [(f.name, f.on) for f in page.features], [("notices", True), ("vault", False)]
+                )
+                page.cwd = "/other"
+                page._load_features()
+                self.assertTrue(all(f.on for f in page.features))
+                page.cwd = "/w"
+                switch(page, "vault", True)
+                self.assertTrue(all(f.on for f in page.features))
+                switch(page, "nope", False)
+                self.assertEqual(page.notice, "not a feature: nope")
+
+
 if __name__ == "__main__":
     unittest.main()

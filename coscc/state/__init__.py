@@ -18,6 +18,7 @@ import logging
 import reflex as rx
 from reflex_base.event.context import EventContext
 
+from coscc import plugin
 from coscc.state import app, place, present
 from coscc.service.common import COLLAPSED_STATES
 from coscc.service.common import FOLDED_STATES
@@ -76,6 +77,7 @@ from coscc.state.views import (
     Event,
     Knob,
     knob,
+    FeatureRow,
     ModelRow,
     AgentRow,
     ImportRow,
@@ -249,6 +251,7 @@ class StudioState(
     unit_cost_stages: list[SpendRow] = []
     unit_anomalies: list[AnomalyRow] = []
     knobs: list[Knob] = []
+    features: list[FeatureRow] = []
     grants: list[GrantRow] = []
     # The fields an import could not read, and why the report itself could not be.
     import_rows: list[ImportRow] = []
@@ -553,6 +556,26 @@ class StudioState(
         self._show_agents(app.SERVICE.agents.agent_table())
         self._load_autopilot()
         self._load_command_lists()
+        self._load_features()
+
+    def _load_features(self) -> None:
+        """Each feature `api.build` loaded, and whether it is on for this workspace."""
+        if not self.cwd:
+            self.features = []
+            return
+        enabled = plugin.ctx_of(app.SERVICE).enabled
+        self.features = [
+            FeatureRow(name, enabled(name, self.cwd)) for name in app.API.state.features
+        ]
+
+    @rx.event
+    def set_feature(self, name: str, on: bool):
+        """The same call as `POST /api/features`; it writes the pref and starts nothing."""
+        try:
+            plugin.set_enabled(app.SERVICE, app.API.state.features, name, self.cwd, bool(on))
+        except Invalid as e:
+            self.notice = str(e)
+        self._load_features()
 
     def _show_command_lists(self, data: dict) -> None:
         self.impl_allow = [str(n) for n in data.get("allow") or []]

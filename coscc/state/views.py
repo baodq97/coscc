@@ -1090,6 +1090,14 @@ class Knob:
     variable: str = ""
 
 
+@dataclasses.dataclass
+class FeatureRow:
+    """One feature and whether it is on for the open workspace."""
+
+    name: str = ""
+    on: bool = True
+
+
 # A knob's name is the config field's; the screen says what it does.
 KNOB_LABELS = {
     "tools": "Tools",
