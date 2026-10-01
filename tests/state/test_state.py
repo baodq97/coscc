@@ -1949,6 +1949,7 @@ class CostRowsAreCopiedAndLabelled(unittest.TestCase):
                 )
             },
             _fail=lambda e: None,
+            cards=[state.Card(id="0001_a", state="done"), state.Card(id="0002_b", state="ready")],
         )
         with mock.patch.object(
             state.app, "SERVICE", SimpleNamespace(activity=SimpleNamespace(cost=cost))
@@ -1974,11 +1975,13 @@ class CostRowsAreCopiedAndLabelled(unittest.TestCase):
                 ("not recorded", "1", "not recorded", True),
             ],
         )
+        self.assertEqual((page.cost_per_merged, page.cost_merged), ("$18.40", 1))
+        # Over budget is the units table's red figure, not an anomaly row per unit.
         self.assertEqual(
             [a.measured for a in page.cost_anomalies],
-            ["$18.40 > $15", "4 runs > 3", "41,200 per turn > 3 × 10,000", "exhausted"],
+            ["4 runs > 3", "41,200 per turn > 3 × 10,000", "exhausted"],
         )
-        self.assertEqual(page.cost_anomalies[2].unit, "No unit")
+        self.assertEqual(page.cost_anomalies[1].unit, "No unit")
 
 
 class _ReadOnly(_Page):

@@ -87,6 +87,7 @@ from coscc.state.views import (
     _tokens,
     COST_NOTE,
     cost_note,
+    per_merged_unit,
     _usd,
     _title_of,
     _initials,
@@ -241,6 +242,8 @@ class StudioState(
     cost_total_steps: str = "0"
     cost_total_unknown: str = ""
     cost_offset: str = ""
+    cost_per_merged: str = "—"
+    cost_merged: int = 0
     cost_units: list[SpendRow] = []
     cost_stages: list[SpendRow] = []
     cost_days: list[SpendRow] = []
@@ -451,6 +454,10 @@ class StudioState(
         if not q:
             return [c.id for c in self.cards[:5]]
         return [c.id for c in self.cards if q in c.title.lower() or q in c.id.lower()][:6]
+
+    @rx.var
+    def cost_over_count(self) -> int:
+        return len([r for r in self.cost_units if r.over])
 
     # -- plumbing ------------------------------------------------------------
 
@@ -972,6 +979,7 @@ class StudioState(
         self.cost_tokens, self.cost_waste, self.cost_anomalies = [], [], []
         self.cost_total_usd, self.cost_total_steps, self.cost_total_unknown = "—", "0", ""
         self.cost_offset, self.cost_recording = "", True
+        self.cost_per_merged, self.cost_merged = "—", 0
         if not self.cwd:
             return
         rounds = {key: [r.verdict for r in u.rounds] for key, u in self.get_value("_full").items()}
@@ -989,6 +997,8 @@ class StudioState(
         self.cost_total_unknown = _unknown(total.get("unknown"))
         self.cost_offset = data["offset"]
         self.cost_units = _spend_rows(data["by_unit"], unit=True)
+        done = {c.id for c in self.cards if c.state == "done"}
+        self.cost_per_merged, self.cost_merged = per_merged_unit(data["by_unit"], done)
         self.cost_stages = _spend_rows(data["by_stage"])
         self.cost_days = _spend_rows(data["by_day"])
         tokens = data["tokens"]
@@ -996,7 +1006,10 @@ class StudioState(
             _token_row(t["stage"] or "—", t) for t in tokens["by_stage"]
         ]
         self.cost_waste = _waste_rows(data["waste"])
-        self.cost_anomalies = _anomaly_rows(data["anomalies"])
+        # Over budget is the units table's red figure; here it would be one row per unit again.
+        self.cost_anomalies = _anomaly_rows(
+            [a for a in data["anomalies"] if a["kind"] != "over-budget"]
+        )
 
     def _load_unit_cost(self) -> None:
         """The open unit's cost by stage and its anomalies."""

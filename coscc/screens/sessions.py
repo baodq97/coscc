@@ -229,21 +229,24 @@ def _activity() -> rx.Component:
 
 # --- cost --------------------------------------------------------------------
 
-OVER_BUDGET = f"Over ${spend.BUDGET_USD:g}"
+BUDGET = f"${spend.BUDGET_USD:g}"
 
 
 def _spend_row(row: rx.Var[SpendRow]) -> rx.Component:
-    """The steps whose cost is not known stand right beside the money."""
+    """The steps whose cost is not known stand right beside the money; a unit over budget has
+    its money in red, and the table's head counts them."""
     return rx.table.row(
+        rx.table.cell(_mono(row.key)),
         rx.table.cell(
-            rx.hstack(
-                _mono(row.key),
-                rx.cond(row.over, s.badge(OVER_BUDGET, "red")),
-                spacing="2",
-                align="center",
+            rx.text(
+                row.usd,
+                size="1",
+                font_family=_MONO,
+                white_space="nowrap",
+                color=rx.cond(row.over, rx.color("red", 11), s.INK),
+                weight=rx.cond(row.over, "medium", "regular"),
             )
         ),
-        rx.table.cell(_mono(row.usd)),
         rx.table.cell(s.text(row.unknown, size="1", color=rx.color("amber", 11))),
         rx.table.cell(s.text(row.steps, size="1")),
     )
@@ -324,14 +327,31 @@ def _cost() -> rx.Component:
                 "triangle-alert",
                 "amber",
             ),
+            s.stat(
+                "Per merged unit",
+                P.cost_per_merged,
+                rx.cond(
+                    P.cost_merged > 0,
+                    "Mean of " + P.cost_merged.to_string() + " merged units; target " + BUDGET,
+                    "No unit has merged here yet",
+                ),
+                "git-merge",
+                "iris",
+            ),
             s.stat("Finished steps", P.cost_total_steps, "Every step that ended", "layers"),
-            columns=rx.breakpoints(initial="1", sm="3"),
+            columns=rx.breakpoints(initial="1", sm="2", lg="4"),
             gap="12px",
             width="100%",
             id="cost-total",
         ),
         s.panel(
-            s.section_head("By unit"),
+            s.section_head(
+                "By unit",
+                rx.cond(
+                    P.cost_over_count > 0,
+                    s.badge(P.cost_over_count.to_string() + " over " + BUDGET, "red"),
+                ),
+            ),
             _table(
                 ["Unit"] + SPEND_HEADERS,
                 P.cost_units,

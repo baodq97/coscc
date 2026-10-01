@@ -801,3 +801,16 @@ class AKnobIsNamedForAReader(unittest.TestCase):
 
         found = Activity.settings(mock.Mock(config=from_env({})))
         self.assertEqual({k["name"] for k in found["knobs"]}, set(views.KNOB_LABELS))
+
+
+class TheCostOfAMergedUnitIsTheMeanOfTheMergedOnes(unittest.TestCase):
+    def test_only_finished_units_with_a_known_cost_count(self):
+        rows = [
+            {"key": "0001_a", "usd": 10.0},
+            {"key": "0002_b", "usd": 20.0},
+            {"key": "0003_c", "usd": None},
+            {"key": "0004_open", "usd": 99.0},
+        ]
+        done = {"0001_a", "0002_b", "0003_c"}
+        self.assertEqual(views.per_merged_unit(rows, done), ("$15.00", 2))
+        self.assertEqual(views.per_merged_unit(rows, set()), ("—", 0))

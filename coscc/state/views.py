@@ -498,6 +498,14 @@ def _unknown(n) -> str:
     return f"{n} unknown" if n else ""
 
 
+def per_merged_unit(by_unit: list[dict], done: set[str]) -> tuple[str, int]:
+    """The mean known cost of the units that finished, and how many there were."""
+    costs = [r["usd"] for r in by_unit if r["key"] in done and r.get("usd") is not None]
+    if not costs:
+        return "—", 0
+    return present.money(sum(costs) / len(costs)), len(costs)
+
+
 def _spend_rows(rows: list[dict], unit: bool = False) -> list[SpendRow]:
     return [
         SpendRow(
