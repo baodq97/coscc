@@ -743,7 +743,8 @@ def _board() -> rx.Component:
                 value=P.query,
                 on_change=P.search_work,
                 aria_label="Search work",
-                width=rx.breakpoints(initial="100%", sm="240px"),
+                # Narrow enough that the toolbar stays one row at 1280 px.
+                width=rx.breakpoints(initial="100%", sm="200px"),
             ),
             rx.segmented_control.root(
                 *[
