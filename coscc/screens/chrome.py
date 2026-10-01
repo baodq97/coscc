@@ -296,6 +296,8 @@ def _event_row(event: rx.Var[Event]) -> rx.Component:
             size="1",
             text_align="right",
             max_width="150px",
+            white_space="nowrap",
+            flex_shrink="0",
             font_family="ui-monospace, monospace",
         ),
         width="100%",
