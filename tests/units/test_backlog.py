@@ -316,6 +316,17 @@ class TheShortlist(unittest.TestCase):
         )
         self.assertTrue(out["undiscriminating"])
 
+    def test_a_finished_unit_leaves_the_shortlist_and_the_rest_move_up(self):
+        units = [_unit("0001_a", nxt="finished"), _unit("0002_b"), _unit("0003_c")]
+        records = [_est(n, 3, "S") for n in ("0002_b", "0003_c")] + [
+            {"kind": "shortlist", "units": ["0001_a", "0002_b", "0003_c"], "by": "L"},
+        ]
+        out = b.fold(units, records, {})
+        self.assertEqual(
+            [(e["rank"], e["unit"]) for e in out["shortlist"]], [(1, "0002_b"), (2, "0003_c")]
+        )
+        self.assertEqual(out["per_unit"]["0002_b"]["rank"], 1)
+
     def test_replaced_and_duplicate_units_carry_a_warning_and_stay(self):
         units = [_unit(n) for n in ("0001_a", "0002_b", "0003_c")]
         records = [_est(n, 3, "S") for n in ("0001_a", "0002_b", "0003_c")] + [
@@ -403,8 +414,8 @@ class Garbage(unittest.TestCase):
         ]
         out = b.fold(units, records, {})
         self.assertGreaterEqual(len(out["problems"]), 5)
-        self.assertEqual(out["shortlist"][0]["unit"], "9999_ghost")
-        self.assertFalse(out["shortlist"][0]["in_backlog"])
+        # A unit no longer waiting leaves the shortlist shown; the record keeps it.
+        self.assertEqual(out["shortlist"], [])
         self.assertEqual([e["unit"] for e in out["order"]], ["0001_a"])
         self.assertEqual(out["unestimated"], ["0002_b"])
 

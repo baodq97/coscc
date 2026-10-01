@@ -94,6 +94,36 @@ class TheAutopilotBlockIsCopied(unittest.TestCase):
         )
 
 
+class ACardsPlaceSaysWhatComesFirst(unittest.TestCase):
+    """In a lane and in the List: a person's turn first, a unit with only its idea last."""
+
+    def test_the_order(self):
+        got = [
+            views.board_place(state, begun)
+            for state, begun in (
+                ("needs-you", False),
+                ("error", True),
+                ("running", True),
+                ("paused", True),
+                ("ready", True),
+                ("ready", False),
+                ("done", True),
+            )
+        ]
+        self.assertEqual(got, sorted(got))
+        self.assertLess(views.board_place("ready", True), views.board_place("ready", False))
+
+    def test_begun_is_any_stage_past_the_idea(self):
+        cell = views.Cell
+        idea_only = views.Unit(id="1", state="ready", cells=[cell(stage="idea", started=True)])
+        with_intent = views.Unit(
+            id="2", state="ready", cells=[cell(stage="idea"), cell(stage="intent", started=True)]
+        )
+        self.assertFalse(views._card(idea_only).begun)
+        self.assertEqual(views._card(idea_only).place, 6)
+        self.assertTrue(views._card(with_intent).begun)
+
+
 class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
     """The dict is the shape `coscc/units/board.py` hands over for a unit started from the page:
     one accepted `idea.md`, nothing else, `next` pointing at the intent."""

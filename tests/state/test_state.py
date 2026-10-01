@@ -1511,6 +1511,7 @@ class NoCardLosesWhatItShowed(unittest.TestCase):
         import re
 
         from coscc.state import Card
+        from coscc.state.views import board_place
 
         full, cards, _ = _sample_read("state-test-r13-cards")
         self.assertEqual([c.id for c in cards], list(full))
@@ -1520,9 +1521,10 @@ class NoCardLosesWhatItShowed(unittest.TestCase):
         self.assertLessEqual(drawn, fields, "`_unit_card` draws a field a card does not carry")
         for card in cards:
             whole = full[card.id]
-            for name in fields - {"has_problem"}:
+            for name in fields - {"has_problem", "begun", "place"}:
                 self.assertEqual(getattr(card, name), getattr(whole, name), f"{card.id}.{name}")
             self.assertEqual(card.has_problem, whole.problems != "", card.id)
+            self.assertEqual(card.place, board_place(whole.state, card.begun), card.id)
         # The sample reaches every badge: a problem, a question, integration, outcome, hold,
         # a rank, a relation, a cost and a session running.
         self.assertTrue(

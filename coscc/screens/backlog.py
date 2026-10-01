@@ -265,6 +265,28 @@ def _backlog_screen() -> rx.Component:
             ),
         ),
         s.panel(
+            s.section_head("Ideas"),
+            rx.foreach(
+                P.ideas,
+                lambda i: rx.hstack(
+                    rx.link(i.title, href=i.href, size="2", data_testid="idea-link"),
+                    s.text(i.id, size="1", font_family=_MONO, overflow_wrap="anywhere"),
+                    rx.spacer(),
+                    s.badge(i.units.to_string() + " units", "gray"),
+                    width="100%",
+                    align="center",
+                    flex_wrap="wrap",
+                    padding="8px 0",
+                    border_bottom=f"1px solid {s.LINE}",
+                ),
+            ),
+            rx.cond(
+                P.ideas.length() == 0,
+                s.text("No idea in this workspace. Start one from the Board.", size="1"),
+            ),
+            id="backlog-ideas",
+        ),
+        s.panel(
             rx.hstack(
                 rx.button(
                     rx.icon("sparkles", size=14),
