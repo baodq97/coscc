@@ -26,7 +26,7 @@ _CSS = """
   --i10:#6e6ade; --i11:#b1a9ff; --r3:#3b1219; --r6:#72232d; --r11:#ff9592; --g3:#132d21;
   --g6:#20573e; --g11:#3dd68c; --a3:#302008; --a6:#5c3d05; --a11:#ffca16; color-scheme: dark; }
 * { box-sizing: border-box; }
-body { margin: 0; max-width: 1024px; padding: 0 0 48px; background: var(--s1);
+body { margin: 0; padding: 0 0 48px; background: var(--s1);
   color: var(--s12); font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI",
   Roboto, "Helvetica Neue", Arial, sans-serif; }
 h1 { font-size: 28px; font-weight: 500; letter-spacing: -0.02em; margin: 0; }
@@ -37,29 +37,52 @@ a { color: var(--i11); }
 .ok { background: var(--g3); border-color: var(--g6); color: var(--g11); }
 .warn { background: var(--a3); border-color: var(--a6); color: var(--a11); }
 .bad { background: var(--r3); border-color: var(--r6); color: var(--r11); }
-ul.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.card { background: var(--s2); border: 1px solid var(--s6); border-radius: 14px; padding: 16px; }
+.head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .name { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 600;
   overflow-wrap: anywhere; }
+td .muted { display: block; margin: 2px 0 0; }
 .tag { font-size: 12px; background: var(--s3); color: var(--s11); border-radius: 999px;
   padding: 1px 8px; margin-left: 6px; white-space: nowrap; }
-.groups { display: grid; gap: 12px; margin-top: 12px; }
+.warn-text { color: var(--a11); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }
+th { text-align: left; white-space: nowrap; font-weight: 500; color: var(--s11); font-size: 13px;
+  border-bottom: 1px solid var(--s6); padding: 8px 10px; }
+td { border-bottom: 1px solid var(--s4); padding: 10px; vertical-align: top; }
+td.acts, td.short { white-space: nowrap; }
+td.acts { text-align: right; }
+td.acts button { margin-left: 6px; padding: 4px 10px; font-size: 13px; }
 body.alone { padding: 24px 16px 48px; }
-@media (min-width: 641px) { body.alone { padding: 32px 32px 48px; } .groups { grid-template-columns: 1.5fr 1fr auto; align-items: start; } }
-fieldset, details.group { border: 1px solid var(--s6); border-radius: 10px; padding: 10px 12px;
-  margin: 0; min-width: 0; }
-legend, summary, .label { font-size: 13px; font-weight: 500; color: var(--s11); }
-summary { cursor: pointer; }
-.danger { display: flex; gap: 8px; flex-wrap: wrap; align-items: start; }
-.checks { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 2px 0 8px; }
+@media (min-width: 641px) { body.alone { padding: 32px 32px 48px; } }
+@media (max-width: 640px) {
+  thead { display: none; }
+  table, tbody, tr, td { display: block; }
+  tr { background: var(--s2); border: 1px solid var(--s6); border-radius: 14px; padding: 6px 12px;
+    margin-bottom: 12px; }
+  td { border: 0; padding: 6px 0; }
+  td[data-th]:not([data-th=Name])::before { content: attr(data-th) ": "; color: var(--s11); }
+  td.acts, td.short { white-space: normal; }
+  td.acts { text-align: left; display: flex; flex-wrap: wrap; gap: 6px; }
+  td.acts button { margin: 0; }
+}
+dialog { border: 1px solid var(--s6); border-radius: 14px; padding: 20px 22px; width: min(560px, 94vw);
+  max-height: calc(100vh - 32px); overflow: auto;
+  background: var(--s1); color: var(--s12); }
+dialog::backdrop { background: rgb(0 0 0 / 0.35); }
+dialog h2 { margin: 0 0 14px; }
+.form { display: grid; gap: 14px; }
+.form label.field { display: grid; gap: 4px; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; align-items: center; flex-wrap: wrap; }
+.actions .muted { width: 100%; text-align: right; }
+fieldset { border: 1px solid var(--s6); border-radius: 10px; padding: 10px 12px; margin: 0;
+  min-width: 0; display: grid; gap: 6px; }
+legend, .label { font-size: 13px; font-weight: 500; color: var(--s11); }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 4px; }
 .checks label { white-space: nowrap; }
-form.add { max-width: 640px; display: grid; gap: 14px; }
-form.add label.field { display: grid; gap: 4px; }
 input[type=text], select, textarea { width: 100%; font: inherit; color: var(--s12);
   background: var(--s1); border: 1px solid var(--s7); border-radius: 8px; padding: 7px 10px; }
 textarea { font-family: ui-monospace, monospace; -webkit-text-security: disc; }
-input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible,
-summary:focus-visible { outline: 2px solid var(--i8); outline-offset: 1px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--i8); outline-offset: 1px; }
 button { font: inherit; font-size: 14px; font-weight: 500; border: 0; border-radius: 8px;
   padding: 6px 14px; cursor: pointer; background: var(--i3); color: var(--i11); }
 button:hover { background: var(--i4); }
@@ -67,7 +90,6 @@ button.primary { background: var(--i9); color: white; }
 button.primary:hover { background: var(--i10); }
 button.danger-btn { background: var(--r3); color: var(--r11); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-form.replace { display: grid; gap: 8px; margin-top: 8px; }
 """
 
 # Before the first paint: the studio's choice (`localStorage.theme`, `light`/`dark`/`system`) as
@@ -107,15 +129,20 @@ _PAGE_JS = """
     msg.appendChild(p);
   }
   document.addEventListener("click", function (e) {
-    var b = e.target.closest ? e.target.closest("button[data-act]") : null;
+    if (!e.target.closest) return;
+    var open = e.target.closest("button[data-open]");
+    if (open) return document.getElementById(open.getAttribute("data-open")).showModal();
+    var shut = e.target.closest("button[data-close]");
+    if (shut) return shut.closest("dialog").close();
+    var b = e.target.closest("button[data-act]");
     if (!b) return;
     var sent = {cwd: document.body.getAttribute("data-cwd"),
                 name: b.getAttribute("data-name"), tier: b.getAttribute("data-tier")};
     var ask = b.getAttribute("data-ask");
     if (ask && !window.confirm(ask)) return;
     if (b.getAttribute("data-act") === "policy") {
-      sent.stages = boxes(b.closest("li"), "stage");
-      sent.modes = boxes(b.closest("li"), "mode");
+      sent.stages = boxes(b.closest("[data-row]"), "stage");
+      sent.modes = boxes(b.closest("[data-row]"), "mode");
     }
     fetch("/api/vault/" + b.getAttribute("data-act"), {
       method: "POST", credentials: "same-origin",
@@ -123,7 +150,11 @@ _PAGE_JS = """
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) {
         if (r.ok) window.location.reload();
-        else say(j.error || "That did not work.");
+        else {
+          var d = b.closest("dialog");
+          if (d) d.close();
+          say(j.error || "That did not work.");
+        }
       });
     });
   });
@@ -139,14 +170,15 @@ def _e(text: object) -> str:
     return html.escape(str(text), quote=True)
 
 
-def shell(inner: str, cwd: str = "") -> str:
+def shell(inner: str, cwd: str = "", action: str = "") -> str:
     data = f' data-cwd="{_e(cwd)}"' if cwd else ""
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>Vault</title><script>{_MODE_JS}</script><style>{_CSS}</style></head>"
         f'<body{data}><p><a id="back" href="/" hidden>Back to the studio</a></p>'
-        f"<h1>Vault</h1>{inner}<script>{_PAGE_JS}</script></body></html>"
+        f'<div class="head"><h1>Vault</h1>{action}</div>{inner}'
+        f"<script>{_PAGE_JS}</script></body></html>"
     )
 
 
@@ -176,17 +208,22 @@ def _submit(label: str, age: bool) -> str:
     )
 
 
-def _replace_form(cwd: str, s: vault.Secret, age: bool) -> str:
+def _dialog(id_: str, title: str, body: str) -> str:
+    """A native modal: `data-open` shows it, `data-close` and Esc close it."""
     return (
-        '<details class="group"><summary>Replace value</summary>'
-        '<form method="post" action="/api/vault/secrets" class="replace">'
-        f'<input type="hidden" name="cwd" value="{_e(cwd)}">'
-        f'<input type="hidden" name="tier" value="{_e(s.tier)}">'
-        f'<input type="hidden" name="name" value="{_e(s.name)}">'
-        + _VALUE_BOX.format(f' aria-label="New value of {_e(s.name)}"')
-        + _submit("Replace value", age)
-        + "</form></details>"
+        f'<dialog id="{id_}" aria-labelledby="{id_}-t"><h2 id="{id_}-t">{title}</h2>{body}</dialog>'
     )
+
+
+def _opener(id_: str, label: str, kind: str = "", disabled: bool = False) -> str:
+    css = f' class="{kind}"' if kind else ""
+    return (
+        f'<button type="button"{css} data-open="{id_}"{" disabled" if disabled else ""}>'
+        f"{_e(label)}</button>"
+    )
+
+
+_CANCEL = '<button type="button" data-close>Cancel</button>'
 
 
 def _button(act: str, s: vault.Secret, label: str, ask: str = "", kind: str = "") -> str:
@@ -198,39 +235,64 @@ def _button(act: str, s: vault.Secret, label: str, ask: str = "", kind: str = ""
     )
 
 
-def _row(cwd: str, s: vault.Secret, on: bool, age: bool) -> str:
-    tags = ""
-    if not s.has_value:
-        tags += '<span class="tag">no value</span>'
-    if s.broker:
-        tags += '<span class="tag">ssh only</span>'
-    modes = (
-        '<p class="muted">ssh only</p>'
-        if s.broker
-        else _checks("mode", vault.MODES, s.modes, not on)
-    )
-    access = (
-        '<fieldset class="group"><legend>Access</legend><span class="label">Used by</span>'
-        f"{_checks('stage', vault.VAULT_STAGES, s.stages, not on)}"
+def _access_dialog(i: int, s: vault.Secret) -> str:
+    modes = '<p class="muted">ssh only</p>' if s.broker else _checks("mode", vault.MODES, s.modes)
+    return _dialog(
+        f"access-{i}",
+        f"Access of {_e(s.name)}",
+        '<div class="form" data-row>'
+        f'<span class="label">Used by</span>{_checks("stage", vault.VAULT_STAGES, s.stages)}'
         f'<span class="label">Passed as</span>{modes}'
-        f"{_button('policy', s, 'Save access') if on else ''}</fieldset>"
+        f'<div class="actions">{_CANCEL}{_button("policy", s, "Save access", kind="primary")}'
+        "</div></div>",
     )
-    danger = []
+
+
+def _value_dialog(i: int, cwd: str, s: vault.Secret, age: bool) -> str:
+    return _dialog(
+        f"value-{i}",
+        f"Replace the value of {_e(s.name)}",
+        '<form method="post" action="/api/vault/secrets" class="form">'
+        f'<input type="hidden" name="cwd" value="{_e(cwd)}">'
+        f'<input type="hidden" name="tier" value="{_e(s.tier)}">'
+        f'<input type="hidden" name="name" value="{_e(s.name)}">'
+        + _VALUE_BOX.format(f' aria-label="New value of {_e(s.name)}"')
+        + f'<div class="actions">{_CANCEL}{_submit("Replace value", age)}</div></form>',
+    )
+
+
+def _row(i: int, s: vault.Secret, on: bool) -> str:
+    tags = '<span class="tag">ssh only</span>' if s.broker else ""
+    desc = f'<span class="muted">{_e(s.description)}</span>' if s.description else ""
+    modes = "ssh" if s.broker else ", ".join(s.modes)
+    acts = []
+    if on:
+        acts.append(_opener(f"access-{i}", "Edit access"))
+        acts.append(_opener(f"value-{i}", "Replace value"))
     if s.tier == "global":
-        danger.append(_button("revoke", s, "Revoke", kind="danger-btn"))
+        acts.append(_button("revoke", s, "Revoke", kind="danger-btn"))
     ask = "Delete this secret for every workspace?" if s.tier == "global" else "Delete this secret?"
-    danger.append(_button("delete", s, "Delete", ask, "danger-btn"))
-    desc = f'<p class="muted">{_e(s.description)}</p>' if s.description else ""
+    acts.append(_button("delete", s, "Delete", ask, "danger-btn"))
     return (
-        f'<li class="card"><span class="name">{_e(s.name)}</span>{tags}{desc}'
-        f'<div class="groups">{access}{_replace_form(cwd, s, age) if on else ""}'
-        f'<div class="danger">{"".join(danger)}</div></div></li>'
+        f'<tr><td data-th="Name"><span class="name">{_e(s.name)}</span>{tags}{desc}</td>'
+        f'<td class="short" data-th="Kept for">{"every workspace" if s.tier == "global" else "this workspace"}</td>'
+        f'<td class="short" data-th="Used by">{_e(", ".join(s.stages)) or "—"}</td>'
+        f'<td class="short" data-th="Passed as">{_e(modes) or "—"}</td>'
+        f'<td class="short" data-th="Value">{"set" if s.has_value else "<span class=warn-text>not set</span>"}</td>'
+        f'<td class="acts">{"".join(acts)}</td></tr>'
     )
 
 
-def _create_form(cwd: str, age: bool) -> str:
-    return (
-        '<h2>Add a secret</h2><form method="post" action="/api/vault/secrets" class="add">'
+def _table(head: Sequence[str], rows: str) -> str:
+    th = "".join(f"<th>{h}</th>" for h in head)
+    return f'<table><thead><tr>{th}<th><span class="sr">Actions</span></th></tr></thead><tbody>{rows}</tbody></table>'
+
+
+def _add_dialog(cwd: str, age: bool) -> str:
+    return _dialog(
+        "add",
+        "Add a secret",
+        '<form method="post" action="/api/vault/secrets" class="form add">'
         f'<input type="hidden" name="cwd" value="{_e(cwd)}">'
         "<fieldset><legend>Secret</legend>"
         '<label class="field"><span class="label">Name</span><input type="text" name="name" '
@@ -248,20 +310,21 @@ def _create_form(cwd: str, age: bool) -> str:
         "</label></fieldset>"
         '<fieldset><legend>Value</legend><label class="field"><span class="label">Value</span>'
         f"{_VALUE_BOX.format('')}</label></fieldset>"
-        f"<div>{_submit('Add secret', age)}</div></form>"
+        f'<div class="actions">{_CANCEL}{_submit("Add secret", age)}</div></form>',
     )
 
 
 def _grants(key: str, globals_: list[vault.Secret]) -> str:
     rows = "".join(
-        f'<li class="card"><span class="name">{_e(s.name)}</span>'
-        f'<p class="muted">{_e(s.description)}</p>{_button("grant", s, "Grant")}</li>'
+        f'<tr><td data-th="Name"><span class="name">{_e(s.name)}</span>'
+        f'<span class="muted">{_e(s.description)}</span></td>'
+        f'<td class="acts">{_button("grant", s, "Grant")}</td></tr>'
         for s in globals_
         if key not in s.granted
     )
     if not rows:
         return ""
-    return f'<h2>Global secrets not granted here</h2><ul class="list">{rows}</ul>'
+    return f"<h2>Global secrets not granted here</h2>{_table(('Name',), rows)}"
 
 
 def _notes(query: dict[str, str], age: bool) -> str:
@@ -287,17 +350,23 @@ def page(
     age: bool = True,
 ) -> str:
     where = f'<p class="muted">{_e(Path(key).name)}</p>'
+    head = ("Name", "Kept for", "Used by", "Passed as", "Value")
     if mine:
-        rows = "".join(_row(cwd, s, on, age) for s in mine)
-        table = f'<h2>Secrets</h2><ul class="list">{rows}</ul>'
+        table = _table(head, "".join(_row(i, s, on) for i, s in enumerate(mine)))
     else:
         table = '<p class="muted">No secrets here yet.</p>'
+    dialogs = ""
+    action = ""
     if on:
-        tail = _create_form(cwd, age) + _grants(key, globals_)
+        action = _opener("add", "Add secret", "primary")
+        dialogs = _add_dialog(cwd, age) + "".join(
+            _access_dialog(i, s) + _value_dialog(i, cwd, s, age) for i, s in enumerate(mine)
+        )
+        tail = _grants(key, globals_)
     else:
         tail = (
             '<p class="note warn">Vault is off for this workspace, so secrets can only be '
             "revoked or deleted.</p>"
         )
-    inner = f'{where}<div id="msg" role="status">{_notes(query, age)}</div>{table}{tail}'
-    return shell(inner, cwd)
+    inner = f'{where}<div id="msg" role="status">{_notes(query, age)}</div>{table}{tail}{dialogs}'
+    return shell(inner, cwd, action)
