@@ -2,7 +2,7 @@
 
 Agent side: one in-process MCP server per run (`vault_list`, `vault_exec`, `vault_generate`, none
 taking a value), a guard holding `pr`, `ship` and integration while a value is in the unit's work,
-and a prompt block. Person side: a plain HTML page, and one POST a value goes in by. The store,
+and a prompt block. Person side: the page (`page.py`), and one POST a value goes in by. The store,
 filter, scan and runner are `coscc/vault/`'s; what this is not is in `coscc/features/vault.md`.
 """
 
@@ -10,12 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import html
 import json
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from pathlib import Path
 from typing import Any, TypedDict
 from urllib.parse import parse_qs, quote
 
@@ -28,7 +26,8 @@ from coscc import vault
 from coscc.agent import policy
 from coscc.data import Busy
 from coscc.hooks import Block, Facts, Guard, Parts, Tool
-from coscc.plugin import Ctx, Plugin, body
+from coscc.features.vault import page as page
+from coscc.plugin import Ctx, Page, Plugin, body
 from coscc.service.common import Invalid
 
 FEATURE = "vault"
@@ -307,189 +306,6 @@ def agent(ctx: Ctx, store_of: StoreOf | None = None) -> Parts:
     )
 
 
-_CSS = """
-:root { color-scheme: light dark; }
-body { font: 14px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 960px; padding: 24px 16px; }
-header { display: flex; gap: 12px; align-items: baseline; }
-h1, h2 { font-size: 18px; margin: 20px 0 8px; }
-table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid #8884; }
-label { display: inline-block; margin-right: 10px; }
-.tag { font-size: 12px; border: 1px solid #8886; border-radius: 6px; padding: 0 6px; }
-form.row { display: grid; gap: 6px; max-width: 420px; }
-textarea { font-family: monospace; -webkit-text-security: disc; }
-"""
-
-_PAGE_JS = """
-(function () {
-  function boxes(row, name) {
-    var all = row.querySelectorAll("input[name=" + name + "]:checked");
-    return Array.prototype.map.call(all, function (x) { return x.value; });
-  }
-  document.addEventListener("click", function (e) {
-    var b = e.target.closest ? e.target.closest("button[data-act]") : null;
-    if (!b) return;
-    var sent = {cwd: document.body.getAttribute("data-cwd"),
-                name: b.getAttribute("data-name"), tier: b.getAttribute("data-tier")};
-    var ask = b.getAttribute("data-ask");
-    if (ask && !window.confirm(ask)) return;
-    if (b.getAttribute("data-act") === "policy") {
-      sent.stages = boxes(b.closest("tr"), "stage");
-      sent.modes = boxes(b.closest("tr"), "mode");
-    }
-    fetch("/api/vault/" + b.getAttribute("data-act"), {
-      method: "POST", credentials: "same-origin",
-      headers: {"content-type": "application/json"}, body: JSON.stringify(sent)
-    }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (j) {
-        if (r.ok) window.location.reload();
-        else document.getElementById("msg").textContent = j.error || "That did not work.";
-      });
-    });
-  });
-})();
-"""
-
-
-def _e(text: object) -> str:
-    return html.escape(str(text), quote=True)
-
-
-def _shell(title: str, inner: str, cwd: str = "") -> str:
-    data = f' data-cwd="{_e(cwd)}"' if cwd else ""
-    return (
-        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>{_e(title)}</title><style>{_CSS}</style></head><body{data}>"
-        f'<header><a href="/">Board</a><h1>{_e(title)}</h1></header>{inner}</body></html>'
-    )
-
-
-def _checks(name: str, options: Sequence[str], on: Sequence[str], disabled: bool = False) -> str:
-    dis = " disabled" if disabled else ""
-    return "".join(
-        f'<label><input type="checkbox" name="{name}" value="{_e(o)}"'
-        f"{' checked' if o in on else ''}{dis}> {_e(o)}</label>"
-        for o in options
-    )
-
-
-# Not a password input: a browser strips the line breaks out of one, and a key is many lines.
-_VALUE_BOX = (
-    '<textarea name="value" rows="3" required autocomplete="off" spellcheck="false" '
-    'autocapitalize="off" autocorrect="off"{}></textarea>'
-)
-
-
-def _replace_form(cwd: str, s: vault.Secret) -> str:
-    return (
-        '<form method="post" action="/api/vault/secrets" class="row">'
-        f'<input type="hidden" name="cwd" value="{_e(cwd)}">'
-        f'<input type="hidden" name="tier" value="{_e(s.tier)}">'
-        f'<input type="hidden" name="name" value="{_e(s.name)}">'
-        + _VALUE_BOX.format(f' aria-label="New value of {_e(s.name)}"')
-        + '<button type="submit">Replace value</button></form>'
-    )
-
-
-def _button(act: str, s: vault.Secret, label: str, ask: str = "") -> str:
-    said = f' data-ask="{_e(ask)}"' if ask else ""
-    return (
-        f'<button type="button" data-act="{act}" data-name="{_e(s.name)}" '
-        f'data-tier="{_e(s.tier)}"{said}>{_e(label)}</button>'
-    )
-
-
-def _row(cwd: str, s: vault.Secret, on: bool) -> str:
-    tags = ""
-    if not s.has_value:
-        tags += ' <span class="tag">no value</span>'
-    if s.broker:
-        tags += ' <span class="tag">ssh only</span>'
-    modes = "ssh only" if s.broker else _checks("mode", vault.MODES, s.modes, not on)
-    acts = []
-    if on:
-        acts.append(_button("policy", s, "Save"))
-    if s.tier == "global":
-        acts.append(_button("revoke", s, "Revoke"))
-    ask = "Delete this secret?"
-    if s.tier == "global":
-        ask = "Delete this secret for every workspace?"
-    acts.append(_button("delete", s, "Delete", ask))
-    replace_form = _replace_form(cwd, s) if on else ""
-    return (
-        f"<tr><td><b>{_e(s.name)}</b>{tags}</td><td>{_e(s.description)}</td>"
-        f"<td>{_checks('stage', vault.VAULT_STAGES, s.stages, not on)}</td><td>{modes}</td>"
-        f"<td>{' '.join(acts)}{replace_form}</td></tr>"
-    )
-
-
-def _create_form(cwd: str) -> str:
-    return (
-        '<h2>Add a secret</h2><form method="post" action="/api/vault/secrets" class="row">'
-        f'<input type="hidden" name="cwd" value="{_e(cwd)}">'
-        '<label>Name <input type="text" name="name" required pattern="[a-z0-9][a-z0-9._-]*" '
-        'maxlength="64"></label>'
-        '<label>Kept for <select name="tier"><option value="ws">this workspace</option>'
-        '<option value="global">every workspace it is granted to</option></select></label>'
-        '<label>Description <input type="text" name="description"></label>'
-        f"<div>Used by {_checks('stage', vault.VAULT_STAGES, ('impl',))}</div>"
-        f"<div>Passed as {_checks('mode', vault.MODES, ('env', 'file'))}</div>"
-        '<label><input type="checkbox" name="broker" value="1"> Broker: passed as ssh only</label>'
-        f"<label>Value {_VALUE_BOX.format('')}</label>"
-        '<button type="submit">Save</button></form>'
-    )
-
-
-def _grants(key: str, globals_: list[vault.Secret]) -> str:
-    rows = "".join(
-        f"<tr><td><b>{_e(s.name)}</b></td><td>{_e(s.description)}</td>"
-        f"<td>{_button('grant', s, 'Grant')}</td></tr>"
-        for s in globals_
-        if key not in s.granted
-    )
-    if not rows:
-        return ""
-    return (
-        "<h2>Global secrets not granted here</h2><table><thead><tr><th>Name</th>"
-        f"<th>Description</th><th></th></tr></thead><tbody>{rows}</tbody></table>"
-    )
-
-
-def _notes(query: dict[str, str]) -> str:
-    said = []
-    if query.get("saved"):
-        said.append(f"Saved {_e(query['saved'][:80])}.")
-    if query.get("short"):
-        said.append("That value is short, so masking it may hide other text.")
-    if query.get("error"):
-        said.append(_e(query["error"][:200]))
-    return "".join(f"<p>{s}</p>" for s in said)
-
-
-def _page(
-    cwd: str,
-    key: str,
-    on: bool,
-    mine: list[vault.Secret],
-    globals_: list[vault.Secret],
-    query: dict[str, str],
-) -> str:
-    where = f'<p class="muted">{_e(Path(key).name)}</p>'
-    if mine:
-        head = "<th>Name</th><th>Description</th><th>Used by</th><th>Passed as</th><th></th>"
-        rows = "".join(_row(cwd, s, on) for s in mine)
-        table = f"<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>"
-    else:
-        table = "<p>No secrets here yet.</p>"
-    if on:
-        tail = _create_form(cwd) + _grants(key, globals_)
-    else:
-        tail = "<p>Vault is off for this workspace, so secrets can only be revoked or deleted.</p>"
-    inner = f'{where}<p id="msg" role="status">{_notes(query)}</p>{table}{tail}'
-    return _shell("Vault", inner + f"<script>{_PAGE_JS}</script>", cwd)
-
-
 class Meta(TypedDict):
     """What a secret shows of itself: never a value, a length or a hash."""
 
@@ -672,14 +488,15 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
     router = APIRouter()
 
     @router.get("/vault")
-    async def page(request: Request) -> Response:
+    async def shown_page(request: Request) -> Response:
         query = dict(request.query_params)
         cwd = query.get("cwd", "")
         if not cwd:
-            return HTMLResponse(_shell("Vault", "<p>Open the vault from a workspace.</p>"))
+            return HTMLResponse(page.shell('<p class="muted">Open the vault from a workspace.</p>'))
         key = door.key_of(cwd, must_be_on=False)
         mine, others = await asyncio.to_thread(door.rows, key)
-        shown = _page(cwd, key, ctx.enabled(FEATURE, cwd), mine, others, query)
+        age = door.get().can_encrypt()
+        shown = page.page(cwd, key, ctx.enabled(FEATURE, cwd), mine, others, query, age)
         return HTMLResponse(shown, headers={"Cache-Control": "no-store"})
 
     @router.get("/api/vault/secrets")
@@ -746,8 +563,7 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
     return router.routes
 
 
-# A *Vault* link in the top bar, and on an open unit a line naming what the guard found in its
-# work. The address's `ws` is a folder name; `/api/workspaces` says where it is.
+# On an open unit, a line naming what the guard found in its work. The address's `ws` is a folder name; `/api/workspaces` says where it is.
 _JS = """
 (function () {
   if (window.__coscc_vault) return;
@@ -763,20 +579,6 @@ _JS = """
       return list.filter(function (w) { return w.name === ws; })[0] || list[0] || null;
     });
   }
-  window.coscc.slot("slot-topbar", function (el) {
-    var a = document.createElement("a");
-    a.href = "/vault";
-    a.textContent = "Vault";
-    a.style.cssText = "color:var(--gray-12);font-size:14px;text-decoration:none";
-    a.onclick = function (e) {
-      e.preventDefault();
-      here().then(function (w) {
-        window.location.href = w ? "/vault?cwd=" + encodeURIComponent(w.path) : "/vault";
-      });
-    };
-    el.textContent = "";
-    el.appendChild(a);
-  });
   window.coscc.slot("slot-unit", function (el) {
     var id = new URLSearchParams(window.location.search).get("id");
     if (!id) return;
@@ -797,4 +599,11 @@ _JS = """
 })();
 """
 
-PLUGIN = Plugin("vault", routes=routes, scripts=(_JS,), tables=vault.TABLES, agent=agent)
+PLUGIN = Plugin(
+    "vault",
+    routes=routes,
+    scripts=(_JS,),
+    tables=vault.TABLES,
+    agent=agent,
+    page=Page("Vault", "key-round", "/vault"),
+)

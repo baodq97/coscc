@@ -122,6 +122,11 @@ class AValueSitsEncryptedAndIsReadBackWhole(unittest.TestCase):
         self.assertEqual(self.store.identity, Path(self.root / "config" / "coscc" / "vault.key"))
         self.assertEqual(stat.S_IMODE(self.store.identity.stat().st_mode), 0o600)
 
+    def test_it_can_encrypt_only_with_both_tools_found(self):
+        self.assertTrue(self.store.can_encrypt())
+        self.store.age_keygen = str(self.root / "no-such-keygen")
+        self.assertFalse(self.store.can_encrypt())
+
     def test_a_second_put_replaces_the_value(self):
         self.store.put("ws:db", "/a", VALUE)
         self.store.put("ws:db", "/a", b"other-value-entirely")

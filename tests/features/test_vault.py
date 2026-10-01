@@ -1,4 +1,4 @@
-"""`coscc/features/vault.py`, the agent's side: the tools, the guard and the prompt block.
+"""`coscc/features/vault/__init__.py`, the agent's side: the tools, the guard and the prompt block.
 
 The store's `age` is a script in a temporary folder that only scrambles bytes, so no test needs
 the real one. `Bed` is the fixture `test_vault_http.py` builds on.

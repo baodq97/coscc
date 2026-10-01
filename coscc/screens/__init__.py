@@ -48,14 +48,44 @@ def _screen() -> rx.Component:
         ("cost", _cost()),
         ("settings", _settings()),
         ("idea", _idea_screen()),
+        ("feature", _feature_screen()),
         rx.fragment(),
     )
 
 
+def _feature_screen() -> rx.Component:
+    """A feature's own page in a frame: what it sends (a secret, say) stays a plain request of
+    that page, outside the studio's state and socket."""
+    return rx.cond(
+        P.feature_off,
+        s.panel(
+            s.text("This feature is off for this workspace."),
+            rx.button(
+                "Turn it on in Settings",
+                on_click=P.navigate("settings"),
+                variant="ghost",
+                size="1",
+                margin_top="8px",
+            ),
+        ),
+        rx.el.iframe(
+            src=P.feature_src,
+            title=P.feature_label,
+            id="feature-frame",
+            width="100%",
+            height=rx.breakpoints(initial="calc(100dvh - 120px)", md="calc(100dvh - 144px)"),
+            border="none",
+            display="block",
+        ),
+    )
+
+
 def index() -> rx.Component:
+    # Read now, so a test can patch `features.FEATURES`.
+    pages = [(f.name, f.page) for f in features.FEATURES if f.page]
     return rx.box(
         rx.flex(
-            _sidebar(),
+            _sidebar(pages),
             rx.box(
                 _topbar(),
                 rx.box(
@@ -80,7 +110,7 @@ def index() -> rx.Component:
         _workspace_dialog(),
         _remove_dialog(),
         _command_dialog(),
-        _mobile_dialog(),
+        _mobile_dialog(pages),
         _watch_dialog(),
         rx.script(_RECONNECT_JS),
         rx.script(_WATCH_JS),

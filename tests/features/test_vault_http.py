@@ -1,4 +1,4 @@
-"""`coscc/features/vault.py`, the person's side: the page and the routes, driven over ASGI.
+"""`coscc/features/vault/`, the person's side: the page and the routes, driven over ASGI.
 
 The bait values of `test_vault.py`'s `Bed` are in the store throughout; every response and header
 of every route is read for them in all five forms.
@@ -7,6 +7,7 @@ of every route is read for them in all five forms.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import unittest
@@ -14,9 +15,11 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
-from coscc import auth, screens, vault
+from coscc import auth, plugin, screens, vault
 from coscc.agent import policy
 from coscc.features import vault as feature
+from coscc.features.vault import page
+from coscc.vault.store import NAME
 from tests.features import test_vault as base
 
 GET_ROUTES = {"/vault", "/api/vault/secrets", "/api/vault/leaks"}
@@ -101,6 +104,36 @@ class ThePage(Http):
         self.assertIn("&lt;script&gt;", html)
         self.assertIn("Saved ws:db.", html)
         self.assertIn("That value is short", html)
+
+    async def test_a_secret_shows_access_value_and_danger_apart_and_the_form_has_three_parts(self):
+        html = (await self.get("/vault")).text
+        row = html[html.index('<li class="card"><span class="name">ws:db') :]
+        row = row[: row.index("</li>")]
+        self.assertLess(row.index("<legend>Access</legend>"), row.index("<summary>Replace value"))
+        self.assertLess(row.index("<summary>Replace value"), row.index('<div class="danger">'))
+        self.assertIn('data-act="policy"', row[: row.index("<summary>")])
+        self.assertIn('data-act="delete"', row[row.index('<div class="danger">') :])
+        form = html[html.index('class="add"') :]
+        legends = [part.split("</legend>")[0] for part in form.split("<legend>")[1:4]]
+        self.assertEqual(legends, ["Secret", "Access", "Value"])
+        self.assertEqual(form.count('type="submit"'), 1)
+        self.assertIn(">Add secret</button>", form)
+
+    def test_the_name_rule_on_the_page_is_the_stores(self):
+        rule = re.compile(page.NAME_PATTERN, re.ASCII)
+        for name in ("deploy-key.v2", "db", "a_b", "Bad Name", "-db", "ws:db", "x" * 64):
+            store = bool(NAME.fullmatch("ws:" + name))
+            self.assertEqual(bool(rule.fullmatch(name)) and len(name) <= 64, store, name)
+
+    async def test_without_age_it_says_so_and_no_value_can_be_saved(self):
+        self.store.age = str(self.ws / "no-such-age")
+        html = (await self.get("/vault")).text
+        self.assertIn(page.NO_AGE, html)
+        self.assertIn("disabled>Add secret</button>", html)
+        self.assertIn("disabled>Replace value</button>", html)
+        self.assertIn("Install age to save a value.", html)
+        self.store.age = shutil.which("true") or "/bin/true"
+        self.assertNotIn(page.NO_AGE, (await self.get("/vault")).text)
 
     async def test_with_the_vault_off_it_opens_with_delete_and_revoke_only(self):
         await self.turn_off()
@@ -399,13 +432,15 @@ class NoRouteGivesAValueBack(Http):
 
 
 class TheSlots(unittest.TestCase):
-    def test_the_script_draws_a_link_and_a_line_and_names_only(self):
+    def test_the_script_draws_a_line_on_a_unit_and_names_only(self):
         script = feature.PLUGIN.scripts[0]
-        self.assertIn('window.coscc.slot("slot-topbar"', script)
+        self.assertNotIn("slot-topbar", script)
         self.assertIn('window.coscc.slot("slot-unit"', script)
         self.assertIn("/api/vault/leaks", script)
-        self.assertIn('textContent = "Vault"', script)
         self.assertNotIn("innerHTML", script)
+
+    def test_the_sidebar_entry_frames_the_page(self):
+        self.assertEqual(feature.PLUGIN.page, plugin.Page("Vault", "key-round", "/vault"))
 
     def test_the_shell_carries_it_once_and_the_slots_are_there(self):
         shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)

@@ -53,6 +53,14 @@ class AnAddressReadsBackAsThePlaceItWasWrittenFrom(unittest.TestCase):
         self.assertEqual(place.href(Place("unit", "a", "0016_x")), "/unit?ws=a&id=0016_x")
 
 
+class AFeaturePageIsNamedInItsAddress(unittest.TestCase):
+    def test_the_name_reads_back(self):
+        p = Place("feature", "coscc", feature="vault")
+        self.assertEqual(place.href(p), "/feature?ws=coscc&name=vault")
+        self.assertEqual(_read(place.href(p)), p)
+        self.assertEqual(_read("/feature/?name=vault"), Place("feature", feature="vault"))
+
+
 class BothSpellingsAreOnePlace(unittest.TestCase):
     """A direct GET lands on `/board/`, `rx.redirect` on `/board`."""
 

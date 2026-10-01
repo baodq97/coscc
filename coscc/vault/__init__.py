@@ -2,7 +2,7 @@
 
 `store` keeps them, `rules` decides one use, `filters` finds a value in bytes, `runner` runs a
 command with secrets in it, and `sources` gathers what a unit has written. Only
-`coscc/features/vault.py` and `coscc/run.py` import this package.
+`coscc/features/vault/` and `coscc/run.py` import this package.
 """
 
 from coscc.vault.filters import Hit, forms, mask, scan

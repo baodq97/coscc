@@ -14,7 +14,7 @@ from coscc.state.app import API
 app = rx.App(api_transformer=API, style=ui.GLOBAL_STYLE)
 # Static routes, not `/unit/[unit]`: Reflex builds no page for a dynamic route and serves
 # it through the SPA fallback with a 404.
-for route in ("/", *(f"/{s}" for s in place.SCREENS[1:]), "/unit", "/idea"):
+for route in ("/", *(f"/{s}" for s in place.SCREENS[1:]), "/unit", "/idea", "/feature"):
     app.add_page(screens.index, route=route, title="CoS Studio", on_load=StudioState.arrive)
 
 

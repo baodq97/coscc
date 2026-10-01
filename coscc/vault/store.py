@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sqlite3
+import shutil
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -108,6 +109,10 @@ class Store:
         self.dir = data.root / "vault"
         self.identity = Path(config_home) / "coscc" / "vault.key"
         self._ready = False
+
+    def can_encrypt(self) -> bool:
+        """Whether `age` and `age-keygen` are on the `PATH` a call runs with."""
+        return all(shutil.which(tool) for tool in (self.age, self.age_keygen))
 
     def protected(self) -> tuple[str, ...]:
         """The paths no command word may point into (`policy.protected_paths`)."""
