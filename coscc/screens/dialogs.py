@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import reflex as rx
 
+from coscc.plugin import Page
 from coscc.screens import studio as s
 from coscc.state.views import NAVIGATION
 from coscc.state.views import WatchEvent
@@ -405,7 +408,7 @@ def _command_dialog() -> rx.Component:
     )
 
 
-def _mobile_dialog() -> rx.Component:
+def _mobile_dialog(pages: Sequence[tuple[str, Page]]) -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
             rx.hstack(
@@ -416,7 +419,7 @@ def _mobile_dialog() -> rx.Component:
             ),
             rx.dialog.description("Your workspace, your next step.", size="2"),
             _workspace_select(aria_label="Mobile active workspace", width="100%", margin="24px 0"),
-            _nav(mobile=True),
+            _nav(pages, mobile=True),
             rx.button(
                 rx.icon("search", size=16),
                 "Search the studio",

@@ -1,6 +1,7 @@
 """Where the page is, as an address, and back.
 
-A *place* is the screen, the workspace's name, the unit and the unit's tab. `read` and `href`
+A *place* is the screen, the workspace's name, the unit and the unit's tab, or the idea or
+feature it names. `read` and `href`
 only translate: neither knows which workspaces or units exist, and `StudioState.arrive`
 decides what a place that names nothing becomes.
 
@@ -29,6 +30,8 @@ class Place:
     tab: str = "overview"
     # `/idea?ws=<home>&id=NNNN_<slug>`: one idea, like `unit` not in `SCREENS`.
     idea: str = ""
+    # `/feature?ws=<ws>&name=<feature>`: a feature's page, framed.
+    feature: str = ""
 
 
 def read(path: str, query: str) -> Place:
@@ -42,6 +45,8 @@ def read(path: str, query: str) -> Place:
 
     if screen == "idea":
         return Place("idea", one("ws"), idea=one("id"))
+    if screen == "feature":
+        return Place("feature", one("ws"), feature=one("name"))
     if screen != "unit":
         return Place(screen, one("ws"))
     return Place("unit", one("ws"), one("id"), one("tab") or "overview")
@@ -53,6 +58,8 @@ def href(place: Place) -> str:
     pairs = [("ws", place.ws)] if place.ws else []
     if place.screen == "idea" and place.idea:
         pairs.append(("id", place.idea))
+    if place.screen == "feature" and place.feature:
+        pairs.append(("name", place.feature))
     if place.screen == "unit":
         if place.unit:
             pairs.append(("id", place.unit))

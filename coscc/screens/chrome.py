@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import reflex as rx
 
+from coscc.plugin import Page
 from coscc.screens import studio as s
 from coscc.state import Event
 from coscc.state.views import NAVIGATION
@@ -13,32 +16,56 @@ from coscc.screens.common import P
 # --- chrome ------------------------------------------------------------------
 
 
-def _nav(mobile: bool = False) -> rx.Component:
+def _nav_entry(entry_id: str, label: str, icon: str, here, on_click, *extra) -> rx.Component:
+    return rx.button(
+        rx.icon(icon, size=18),
+        rx.text(label, size="2", weight=rx.cond(here, "medium", "regular")),
+        rx.spacer(),
+        *extra,
+        id=entry_id,
+        on_click=on_click,
+        variant="ghost",
+        color_scheme="gray",
+        width="100%",
+        justify_content="flex-start",
+        height="42px",
+        padding="0 12px",
+        border_radius="8px",
+        background=rx.cond(here, rx.color("iris", 3), "transparent"),
+        color=rx.cond(here, rx.color("iris", 11), s.MUTED),
+        aria_current=rx.cond(here, "page", "false"),
+        _hover={"background": rx.color("gray", 4)},
+    )
+
+
+def _nav(pages: Sequence[tuple[str, Page]], mobile: bool = False) -> rx.Component:
+    """The built-in screens, then each feature's `page`: `pages` is `FEATURES`', read by the
+    page shell, the one screen module that imports `features`."""
+    at = "mobile-" if mobile else ""
     return rx.vstack(
         *[
-            rx.button(
-                rx.icon(icon, size=18),
-                rx.text(label, size="2", weight=rx.cond(P.screen == key, "medium", "regular")),
-                rx.spacer(),
+            _nav_entry(
+                f"{at}nav-{key}",
+                label,
+                icon,
+                P.screen == key,
+                P.navigate(key),
                 rx.cond(
                     (key == "board") & (P.attention_count > 0),
                     s.badge(P.attention_count.to_string(), "amber"),
                 ),
-                id=f"{'mobile-' if mobile else ''}nav-{key}",
-                on_click=P.navigate(key),
-                variant="ghost",
-                color_scheme="gray",
-                width="100%",
-                justify_content="flex-start",
-                height="42px",
-                padding="0 12px",
-                border_radius="8px",
-                background=rx.cond(P.screen == key, rx.color("iris", 3), "transparent"),
-                color=rx.cond(P.screen == key, rx.color("iris", 11), s.MUTED),
-                aria_current=rx.cond(P.screen == key, "page", "false"),
-                _hover={"background": rx.color("gray", 4)},
             )
             for key, label, icon in NAVIGATION
+        ],
+        *[
+            _nav_entry(
+                f"{at}nav-feature-{name}",
+                page.label,
+                page.icon,
+                (P.screen == "feature") & (P.feature == name),
+                P.open_feature(name),
+            )
+            for name, page in pages
         ],
         spacing="1",
         width="100%",
@@ -72,7 +99,7 @@ def _workspace_select(**props) -> rx.Component:
     )
 
 
-def _sidebar() -> rx.Component:
+def _sidebar(pages: Sequence[tuple[str, Page]]) -> rx.Component:
     return rx.vstack(
         rx.box(_brand(), padding="10px 10px 26px"),
         rx.box(
@@ -89,7 +116,7 @@ def _sidebar() -> rx.Component:
             padding="0 8px 24px",
             width="100%",
         ),
-        _nav(),
+        _nav(pages),
         rx.spacer(),
         s.panel(
             rx.hstack(

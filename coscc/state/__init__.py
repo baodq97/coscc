@@ -14,6 +14,7 @@ import asyncio
 import copy
 import dataclasses
 import logging
+from urllib.parse import urlencode
 
 import reflex as rx
 from reflex_base.event.context import EventContext
@@ -293,12 +294,19 @@ class StudioState(
     mobile_open: bool = False
     command_open: bool = False
     command_query: str = ""
+    # The feature page `/feature` frames (`_show_feature`).
+    feature: str = ""
+    feature_label: str = ""
+    feature_src: str = ""
+    feature_off: bool = False
 
     # -- computed ------------------------------------------------------------
 
     @rx.var
     def screen_title(self) -> str:
-        # `/idea` is no screen of the navigation, and its title is its own.
+        # `/idea` and `/feature` are no screens of the navigation, and their titles are their own.
+        if self.screen == "feature":
+            return self.feature_label
         return "Idea" if self.screen == "idea" else SCREEN_TITLES.get(self.screen, "Overview")
 
     @rx.var
@@ -1178,17 +1186,20 @@ class StudioState(
         stray = bool(want.ws) and not named
 
         screen, unit, tab = want.screen, want.unit, want.tab
-        if screen not in place.SCREENS and screen not in ("unit", "idea"):
+        if screen not in place.SCREENS and screen not in ("unit", "idea", "feature"):
             screen = "overview"
         if (screen == "unit" and not unit) or (screen == "idea" and not want.idea):
             screen = "board"
+        if screen == "feature" and want.feature not in app.API.state.pages:
+            screen = "overview"
         if screen != "unit":
             unit, tab = "", "overview"
         elif tab not in place.TABS:
             tab = "overview"
         # An idea is read after the board, every arrival, like a unit's dialog.
         idea = want.idea if screen == "idea" else ""
-        fixed = place.Place(screen, self._name_of(cwd), unit, tab, idea=idea)
+        feature = want.feature if screen == "feature" else ""
+        fixed = place.Place(screen, self._name_of(cwd), unit, tab, idea=idea, feature=feature)
 
         moved_ws = cwd != self._read_cwd
         moved_unit = unit != self._read_unit
@@ -1241,6 +1252,7 @@ class StudioState(
             self._load_cost()
         if self.screen == "settings":
             self._load_decisions()
+        self._show_feature(feature, cwd)
         self._read_cwd = cwd
         self.unit_id, self.detail_tab = unit, tab
         self._set_current()
@@ -1275,6 +1287,21 @@ class StudioState(
         self.mobile_open = False
         self.command_open = False
         return rx.redirect(place.href(place.Place(screen, self._name_of(self.cwd))))
+
+    @rx.event
+    def open_feature(self, name: str):
+        self.mobile_open = False
+        return rx.redirect(
+            place.href(place.Place("feature", self._name_of(self.cwd), feature=name))
+        )
+
+    def _show_feature(self, name: str, cwd: str) -> None:
+        """The framed page's title and address, and whether the feature is off here."""
+        page = app.API.state.pages.get(name)
+        self.feature = name if page else ""
+        self.feature_label = page.label if page else ""
+        self.feature_src = f"{page.path}?{urlencode({'cwd': cwd})}" if page and cwd else ""
+        self.feature_off = bool(page and cwd) and not plugin.ctx_of(app.SERVICE).enabled(name, cwd)
 
     @rx.event
     def choose_workspace(self, path: str):

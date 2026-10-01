@@ -1,12 +1,14 @@
-"""The shell carries the page kit once, before every feature script, and the slots features fill."""
+"""The shell carries the page kit once, before every feature script, the slots features fill and
+a sidebar entry for each feature's page."""
 
 from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 
 from coscc import features, screens
-from coscc.plugin import KIT_JS
+from coscc.plugin import KIT_JS, Page, Plugin
 
 
 class TheShellCarriesTheKit(unittest.TestCase):
@@ -28,3 +30,20 @@ class TheShellCarriesTheKit(unittest.TestCase):
         shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
         for slot in ("slot-topbar", "slot-unit"):
             self.assertIn(slot, shell)
+
+
+class AFeaturesPageIsInTheFrame(unittest.TestCase):
+    def test_a_page_gets_a_sidebar_entry_on_both_navigations_and_a_frame(self):
+        page = Page("Planted", "key-round", "/planted")
+        planted = Plugin("planted", routes=lambda ctx: (), page=page)
+        with mock.patch.object(features, "FEATURES", (*features.FEATURES, planted)):
+            shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
+        self.assertIn("nav-feature-planted", shell)
+        self.assertIn("mobile-nav-feature-planted", shell)
+        self.assertIn("feature-frame", shell)
+
+    def test_a_feature_without_a_page_gets_no_entry(self):
+        shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
+        for f in features.FEATURES:
+            if f.page is None:
+                self.assertNotIn(f"nav-feature-{f.name}", shell)

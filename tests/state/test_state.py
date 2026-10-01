@@ -2262,5 +2262,39 @@ class AFeatureIsTurnedOffFromSettings(unittest.TestCase):
                 self.assertEqual(page.notice, "not a feature: nope")
 
 
+class AFeaturePageIsFramedFromItsOwnRoute(unittest.TestCase):
+    """`/feature` frames `page.path?cwd=<workspace>`, or says the feature is off there."""
+
+    def _show(self, name, on=True):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+        from coscc.plugin import Page
+
+        page = SimpleNamespace(feature="", feature_label="", feature_src="", feature_off=False)
+        pages = {"vault": Page("Vault", "key-round", "/vault")}
+        ctx = SimpleNamespace(enabled=lambda feature, cwd: on)
+        with (
+            mock.patch.object(state.app.API.state, "pages", pages, create=True),
+            mock.patch.object(state.plugin, "ctx_of", lambda service: ctx),
+        ):
+            state.StudioState._show_feature(page, name, "/w s")
+        return page
+
+    def test_the_frame_loads_the_page_for_the_workspace(self):
+        page = self._show("vault")
+        self.assertEqual((page.feature, page.feature_label), ("vault", "Vault"))
+        self.assertEqual(page.feature_src, "/vault?cwd=%2Fw+s")
+        self.assertFalse(page.feature_off)
+
+    def test_a_feature_off_here_is_said_so(self):
+        self.assertTrue(self._show("vault", on=False).feature_off)
+
+    def test_a_name_with_no_page_frames_nothing(self):
+        page = self._show("notices")
+        self.assertEqual((page.feature, page.feature_src, page.feature_off), ("", "", False))
+
+
 if __name__ == "__main__":
     unittest.main()
