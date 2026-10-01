@@ -1689,41 +1689,6 @@ class ARunningAskSendsTheCardsOnlyWhenOneChanged(unittest.TestCase):
         self.assertNotIn("self._full[", _source_text())
 
 
-class UsageIsSentOnlyOnItsScreen(unittest.TestCase):
-    def test_rows_only_on_activity(self):
-        from types import SimpleNamespace
-
-        from coscc.state import Card, StudioState, UsageRow
-
-        cards = [
-            Card(id="a", title="A", tokens="10", usd="$0.50", token_count=10, at="intent"),
-            Card(id="b", title="B"),
-        ]
-        rows = StudioState.computed_vars["usage_rows"].fget
-        self.assertEqual(rows(SimpleNamespace(screen="board", cards=cards)), [])
-        self.assertEqual(
-            rows(SimpleNamespace(screen="activity", cards=cards)),
-            [UsageRow(id="a", title="A", tokens="10", usd="$0.50", token_count=10)],
-        )
-
-    def test_a_unit_whose_every_run_died_costless_still_has_a_row(self):
-        """No token and no cost is still a cost nobody knows, not nothing."""
-        from types import SimpleNamespace
-
-        from coscc.state import Card, StudioState, UsageRow, _tokens, _usd
-
-        count, shown = _tokens({"unknown": 2})
-        cards = [
-            Card(id="d", title="D", tokens=shown, usd=_usd({"unknown": 2}), token_count=count),
-            Card(id="e", title="E", tokens="—", usd=_usd({}), token_count=0),
-        ]
-        rows = StudioState.computed_vars["usage_rows"].fget
-        self.assertEqual(
-            rows(SimpleNamespace(screen="activity", cards=cards)),
-            [UsageRow(id="d", title="D", tokens="—", usd="unknown", token_count=0)],
-        )
-
-
 class ALongMessageIsCutAndOpensWhole(unittest.TestCase):
     def test_cut_then_opened_byte_for_byte(self):
         import asyncio
@@ -2084,6 +2049,39 @@ class TimesReadForAReader(unittest.TestCase):
         [event] = page.events
         self.assertTrue(event.time)
         self.assertIsNone(ISO.search(event.time), event.time)
+
+    def test_a_row_says_what_happened_in_words(self):
+        """A `transition`, `questions` or `ship` row reads as what happened, not its kind."""
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        base = {"stage": "", "mode": "", "outcome": "", "unit": "0001_x", "denials": 0}
+        base |= {"artifact": "", "at": "2026-09-25T04:13:29+00:00"}
+        rows = [
+            {**base, "kind": "transition", "artifact": "spike.md", "to_state": "accepted"},
+            {**base, "kind": "questions", "asked": 2},
+            {**base, "kind": "ship", "result": "shipped"},
+            {**base, "kind": "autopilot-stop"},
+        ]
+        page = SimpleNamespace(cwd="/w", events=[], usage_total_tokens="", usage_total_usd="")
+        service = SimpleNamespace(
+            activity=SimpleNamespace(
+                activity_and_usage=lambda cwd, limit: {"events": rows, "total": {}}
+            )
+        )
+        with mock.patch.object(state.app, "SERVICE", service):
+            state.StudioState._load_activity(page)
+        self.assertEqual(
+            [(e.title, e.detail) for e in page.events],
+            [
+                ("spike.md accepted", "0001_x"),
+                ("2 question(s) for you", "0001_x"),
+                ("shipped", "0001_x"),
+                ("autopilot stop", "0001_x"),
+            ],
+        )
 
     def test_a_timeline_row_has_readers_times_and_its_own_key(self):
         from types import SimpleNamespace

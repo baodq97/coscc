@@ -427,17 +427,6 @@ def _shown(u: Unit, read: dict) -> dict:
 
 
 @dataclasses.dataclass
-class UsageRow:
-    """One line of *Usage by work unit*."""
-
-    id: str = ""
-    title: str = ""
-    tokens: str = ""
-    usd: str = ""
-    token_count: int = 0
-
-
-@dataclasses.dataclass
 class SpendRow:
     """One unit, stage or day of the *Cost* screen: money read by `present.money`, and
     beside it the steps whose cost is not known."""

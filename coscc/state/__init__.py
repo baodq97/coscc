@@ -40,7 +40,6 @@ from coscc.state.views import (
     _card,
     _ci_line,
     _shown,
-    UsageRow,
     SpendRow,
     TokenRow,
     WasteRow,
@@ -452,25 +451,6 @@ class StudioState(
         if not q:
             return [c.id for c in self.cards[:5]]
         return [c.id for c in self.cards if q in c.title.lower() or q in c.id.lower()][:6]
-
-    @rx.var
-    def usage_rows(self) -> list[UsageRow]:
-        """Only while *Activity & usage* is shown; nothing elsewhere.
-
-        A unit whose steps all died before a token was counted still has a row, reading
-        `unknown`, rather than leaving the table as if it cost nothing."""
-        if self.screen != "activity":
-            return []
-        return [
-            UsageRow(id=c.id, title=c.title, tokens=c.tokens, usd=c.usd, token_count=c.token_count)
-            for c in self.cards
-            if c.token_count > 0 or c.usd not in ("", "—")
-        ]
-
-    @rx.var
-    def usage_scale(self) -> int:
-        """The bar scale, taken from the largest real value rather than from a guess."""
-        return max([c.token_count for c in self.cards] + [1])
 
     # -- plumbing ------------------------------------------------------------
 
@@ -943,6 +923,8 @@ class StudioState(
             "hold": ("pause", "amber"),
             # A release press, refused ones included.
             "release": ("tag", "iris"),
+            "transition": ("arrow-right", "gray"),
+            "questions": ("circle-help", "amber"),
         }
         events: list[Event] = []
         for row in feed["events"]:
@@ -958,7 +940,10 @@ class StudioState(
                 "attempt": f"{row['stage']} stopped — what it left was recorded",
                 "hold": f"{row.get('from', '')} → {row.get('to', '')}",
                 "release": f"release {row.get('version', '')} {row['outcome']}",
-            }.get(row["kind"], row["kind"])
+                "transition": f"{row['artifact']} {row.get('to_state') or 'changed'}",
+                "questions": f"{row.get('asked', 0)} question(s) for you",
+                "ship": "shipped" if row.get("result") == "shipped" else "ship refused",
+            }.get(row["kind"], row["kind"].replace("-", " "))
             detail = f"{row['unit']}"
             if row["kind"] == "hold":
                 detail += _hold_detail(row)
@@ -966,7 +951,7 @@ class StudioState(
                 detail = str(row.get("detail") or "")
             if row["denials"]:
                 detail += f" / {row['denials']} tool call(s) refused"
-            if row["artifact"]:
+            if row["artifact"] and row["kind"] != "transition":
                 detail += f" / wrote {row['artifact']}"
             events.append(
                 Event(

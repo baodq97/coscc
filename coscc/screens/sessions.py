@@ -204,10 +204,7 @@ def _sessions() -> rx.Component:
 
 def _activity() -> rx.Component:
     return rx.vstack(
-        s.heading(
-            "Nothing behind the curtain.",
-            "A readable trail of the work, and what it took to get here.",
-        ),
+        s.heading("Activity", "What ran in this workspace, newest first."),
         _metrics(),
         rx.cond(
             ~P.recording,
@@ -219,50 +216,11 @@ def _activity() -> rx.Component:
                 width="100%",
             ),
         ),
-        rx.grid(
-            s.panel(
-                s.section_head("Workspace timeline", s.badge("From the run log")),
-                rx.foreach(P.events, _event_row),
-                rx.cond(
-                    P.events.length() == 0, s.text("Nothing has been run in this workspace yet.")
-                ),
-                id="activity-panel",
-            ),
-            s.panel(
-                s.section_head("Usage by work unit", s.badge("Billed", "blue")),
-                rx.foreach(
-                    P.usage_rows,
-                    lambda u: rx.box(
-                        rx.hstack(
-                            s.text(u.id, size="1", font_family="ui-monospace, monospace"),
-                            rx.spacer(),
-                            s.text(u.tokens + " tokens", size="1"),
-                            s.text(u.usd, size="1"),
-                            width="100%",
-                            wrap="wrap",
-                        ),
-                        rx.progress(
-                            value=u.token_count,
-                            max=P.usage_scale,
-                            size="1",
-                            color_scheme="iris",
-                            margin_top="10px",
-                        ),
-                        s.text(u.title, size="1", margin_top="7px"),
-                        padding="12px 0",
-                    ),
-                ),
-                rx.cond(P.usage_rows.length() == 0, s.text("No run has cost anything here yet.")),
-                s.text(
-                    "Includes cache reads and writes, which are billed.",
-                    size="1",
-                    margin_top="18px",
-                ),
-            ),
-            columns=rx.breakpoints(initial="1", lg="2"),
-            gap="16px",
-            width="100%",
-            align_items="start",
+        s.panel(
+            s.section_head("Workspace timeline", s.badge("From the run log")),
+            rx.foreach(P.events, _event_row),
+            rx.cond(P.events.length() == 0, s.text("Nothing has been run in this workspace yet.")),
+            id="activity-panel",
         ),
         spacing="5",
         width="100%",
