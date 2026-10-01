@@ -209,7 +209,7 @@ def _start_unit() -> rx.Component:
 
 
 def _start_idea() -> rx.Component:
-    """An idea several units share, one per repository, and this workspace's ideas, each a link to its page."""
+    """An idea several units share, one per repository. The workspace's ideas are listed on Backlog."""
     return s.panel(
         rx.vstack(
             rx.hstack(
@@ -248,31 +248,6 @@ def _start_idea() -> rx.Component:
                 on_click=P.create_idea,
                 id="new-idea-start",
                 size="2",
-            ),
-            rx.cond(
-                P.ideas.length() > 0,
-                rx.vstack(
-                    s.text("Ideas", size="1", weight="medium", margin_top="8px"),
-                    rx.foreach(
-                        P.ideas,
-                        lambda i: rx.hstack(
-                            rx.link(
-                                i.id,
-                                href=i.href,
-                                size="2",
-                                data_testid="idea-link",
-                                font_family="ui-monospace, monospace",
-                                overflow_wrap="anywhere",
-                            ),
-                            rx.spacer(),
-                            s.badge(i.units.to_string() + " units", "gray"),
-                            width="100%",
-                            align="center",
-                        ),
-                    ),
-                    width="100%",
-                    spacing="2",
-                ),
             ),
             width="100%",
             align="start",
