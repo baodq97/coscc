@@ -10,7 +10,7 @@ from coscc.screens import studio as s
 from coscc.state import AgentRow, GrantRow, ImportRow, Knob, ModelRow
 from coscc.state.views import DecisionRow
 from coscc.screens.common import P, _MONO, _RUNIC, _details, _table
-from coscc.screens.board import _update_panel
+from coscc.screens.board import _release_panel, _update_panel
 
 
 # --- settings ----------------------------------------------------------------
@@ -518,9 +518,44 @@ def _import_panel() -> rx.Component:
     )
 
 
+# The index at the top: each panel's label and id. Autopilot and the command lists are drawn
+# only with a workspace chosen; their links go with them.
+SECTIONS = (
+    ("Autopilot", "autopilot-panel"),
+    ("Appearance", "appearance-panel"),
+    ("Where things live", "where-panel"),
+    ("Chat sessions", "knobs-panel"),
+    ("Decisions", "decisions-panel"),
+    ("Import report", "import-panel"),
+    ("Board steps", "grants-panel"),
+    ("Commands", "impl-lists-panel"),
+    ("Agents", "agents-panel"),
+    ("Models", "models-panel"),
+    ("Updates", "update-panel"),
+)
+NEEDS_WORKSPACE = ("autopilot-panel", "impl-lists-panel")
+
+
+def _section_index() -> rx.Component:
+    def link(label: str, target: str) -> rx.Component:
+        button = rx.button(
+            label, on_click=rx.scroll_to(target), variant="soft", color_scheme="gray", size="1"
+        )
+        return rx.cond(P.has_workspace, button) if target in NEEDS_WORKSPACE else button
+
+    return rx.flex(
+        *[link(label, target) for label, target in SECTIONS],
+        gap="6px",
+        wrap="wrap",
+        width="100%",
+        id="settings-index",
+    )
+
+
 def _settings() -> rx.Component:
     return rx.vstack(
-        s.heading("Make it feel like yours.", "A considered default. A few thoughtful choices."),
+        rx.heading("Settings", size="7", weight="medium", letter_spacing="-0.045em"),
+        _section_index(),
         rx.cond(P.has_workspace, _autopilot_settings(), rx.fragment()),
         s.panel(
             s.section_head("Appearance", rx.icon("palette", size=18, color=s.MUTED)),
@@ -566,6 +601,7 @@ def _settings() -> rx.Component:
                     spacing="2",
                 ),
             ),
+            id="appearance-panel",
         ),
         rx.grid(
             s.panel(
@@ -619,6 +655,7 @@ def _settings() -> rx.Component:
                     margin_top="10px",
                     id="data-roots",
                 ),
+                id="where-panel",
             ),
             s.panel(
                 s.section_head(
@@ -679,8 +716,9 @@ def _settings() -> rx.Component:
             rx.foreach(P.model_rows, _model_row),
             id="models-panel",
         ),
-        # The update panel.
+        # The update panel, and what `main` holds since the last release.
         _update_panel(),
+        _release_panel(),
         spacing="5",
         width="100%",
     )
