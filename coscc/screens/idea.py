@@ -97,7 +97,8 @@ def _idea_screen() -> rx.Component:
         ),
         rx.cond(
             P.idea_brief != "",
-            s.panel(rx.text(P.idea_brief, size="2", white_space="pre-wrap"), width="100%"),
+            # `use_raw=False`: a brief is a file anyone with the repository writes.
+            s.panel(rx.markdown(P.idea_brief, use_raw=False), width="100%", id="idea-brief"),
         ),
         s.panel(
             rx.vstack(
