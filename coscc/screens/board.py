@@ -12,7 +12,7 @@ from coscc.screens.overview import _empty_board
 
 
 def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
-    """The unit's number, its title on up to two lines, and its state in words unless it is *Ready*. `grouped` names the stage for a card in a folded group. A card stands at its `place`: what waits on a person first, a unit with nothing past its idea last and quieter."""
+    """The unit's number, its title on up to two lines (one when quiet), and its state in words unless it is *Ready*. `grouped` names the stage for a card in a folded group. A card stands at its `place`: what waits on a person first, a unit with nothing past its idea last and quieter."""
     quiet = ~unit.begun & (unit.state == "ready")
     edge = rx.cond(quiet, f"1px dashed {s.LINE}", f"1px solid {s.LINE}")
     return rx.el.button(
@@ -27,8 +27,13 @@ def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
                 size="2",
                 weight="medium",
                 color=rx.cond(quiet, s.MUTED, s.INK),
+                line_height="18px",
                 display="-webkit-box",
-                style={"-webkit-line-clamp": "2", "-webkit-box-orient": "vertical"},
+                # A quiet card keeps one line, so the whole board still fits a screen.
+                style={
+                    "-webkit-line-clamp": rx.cond(quiet, "1", "2"),
+                    "-webkit-box-orient": "vertical",
+                },
                 overflow="hidden",
                 text_overflow="ellipsis",
                 overflow_wrap="anywhere",
@@ -52,7 +57,7 @@ def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
         title=unit.id + " · " + unit.title,
         aria_label="Open " + unit.id + " " + unit.title,
         on_click=P.open_unit(unit.id),
-        padding=rx.cond(P.density == "compact", "3px 8px", "5px 10px"),
+        padding=rx.cond(P.density == "compact", "2px 8px", "4px 10px"),
         background=rx.cond(quiet, "transparent", s.CANVAS),
         border=edge,
         border_radius="8px",
@@ -115,7 +120,7 @@ def _lane(stage: rx.Var[str]) -> rx.Component:
     return rx.flex(
         rx.hstack(
             # A stage with no agent (pr, ship) keeps the glyph's room, so the names line up.
-            rx.cond(P.stage_glyphs.contains(stage), _stage_glyph(stage), rx.box(width="19px")),
+            rx.cond(P.stage_glyphs.contains(stage), _stage_glyph(stage), rx.box(width="13px")),
             rx.text(stage, size="2", weight="medium"),
             s.text(count.to_string(), size="1"),
             width=rx.breakpoints(initial="100%", md="112px"),
@@ -890,18 +895,18 @@ def _board() -> rx.Component:
 
 
 def _list_row(number, title, stage, state) -> rx.Component:
-    """One row of the List, and its header: number, title, stage, state."""
+    """One row of the List, and its header: number, title, stage, state. A phone drops the stage."""
     return rx.grid(
         number,
         title,
-        stage,
+        rx.box(stage, display=rx.breakpoints(initial="none", sm="block")),
         state,
-        # On a phone, stage and state go under the number and title.
         grid_template_columns=rx.breakpoints(
-            initial="36px minmax(0, 1fr)", sm="44px minmax(0, 1fr) 80px 150px"
+            initial="36px minmax(0, 1fr) auto", sm="44px minmax(0, 1fr) 80px 150px"
         ),
         gap="10px",
         align_items="center",
+        justify_items="start",
         width="100%",
         padding="10px 8px",
     )
