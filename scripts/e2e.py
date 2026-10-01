@@ -2,6 +2,7 @@
 """The end-to-end cases: the page as built, in chromium, behind the login.
 
     COS_HOST=127.0.0.1 COS_PORT=<port> uv run coscc-build && npm run e2e
+    ... npm run e2e -- --serve <state.json>   # the same fixture, to look at by hand
 
 It starts `coscc.run` on the address the bundle was built for (`COS_HOST`, `COS_PORT`), on a
 temporary working folder and data root with four workspaces, each a clone of a bare-directory
@@ -1113,6 +1114,37 @@ def run(case, *args) -> bool:
         )
 
 
+def serve(config, state_file: Path) -> int:
+    """`--serve <state.json>`: the fixture app for looking at the page by hand, until killed.
+    The file is a Playwright storage state carrying the one session's cookie."""
+    root = Path(tempfile.mkdtemp(prefix="cos-e2e-work-")).resolve()
+    data_dir = Path(tempfile.mkdtemp(prefix="cos-e2e-data-")).resolve()
+    outside = Path(tempfile.mkdtemp(prefix="cos-e2e-remote-")).resolve()
+    try:
+        proj, other, f1, f2 = (
+            make_repo(root, outside, name, f"{name}.git", "e2e\n")
+            for name in ("proj", "other", "f1", "f2")
+        )
+        token = seed_session(data_dir)
+        with (
+            RealApp(config, root, data_dir) as app,
+            httpx.Client(base_url=app.base, timeout=60, cookies={auth.COOKIE: token}) as api,
+        ):
+            for name in ("proj", "other", "f1", "f2"):
+                api.post("/api/workspaces", json={"name": name}).raise_for_status()
+            load_fixture(root, data_dir, Scene(api, proj, other), Wide(api, f1, f2))
+            cookie = {"name": auth.COOKIE, "value": token, "domain": config.host, "path": "/"}
+            state_file.write_text(json.dumps({"cookies": [cookie], "origins": []}))
+            print(f"serving {app.base}", flush=True)
+            # Blocked only now: the app's process must not inherit the mask.
+            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+            signal.sigwait({signal.SIGINT, signal.SIGTERM})
+    finally:
+        for d in (root, data_dir, outside):
+            shutil.rmtree(d, ignore_errors=True)
+    return EXIT_PASS
+
+
 def main() -> int:
     # A step inherits `__REFLEX_*` blank, and a blank mount flag leaves `/` a 404.
     for name in [k for k, v in os.environ.items() if k.startswith("__REFLEX") and not v]:
@@ -1120,6 +1152,8 @@ def main() -> int:
     config = from_env()
     require_build(config)
     require_free_port(config)
+    if sys.argv[1:2] == ["--serve"]:
+        return serve(config, Path(sys.argv[2]))
     playwright, browser = require_browser()
     root = Path(tempfile.mkdtemp(prefix="cos-e2e-work-")).resolve()
     data_dir = Path(tempfile.mkdtemp(prefix="cos-e2e-data-")).resolve()

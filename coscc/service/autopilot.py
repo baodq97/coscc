@@ -764,6 +764,19 @@ class Autopilot:
             "refused_because": off_loopback(self.config),
         }
 
+    def today(self, cwd: str) -> tuple[float, float] | None:
+        """What every workspace spent today and the daily cap, the autopilot on or off; `None`
+        when the journal cannot be read now. Display only."""
+        self.ws.check(cwd)
+        journal = self.ws.journal()
+        if journal is None:
+            return None
+        limit = autopilot_values(self.config, self.ws.key(cwd))["daily_cap_usd"]
+        try:
+            return self.cap(journal.records(kinds=("start", "end")), limit)["spent"], limit
+        except Busy:
+            return None
+
     def set_setting(self, cwd: str, name: Any, value: Any) -> dict[str, Any]:
         """Set one of the four. A wrong value is refused and nothing is written.
 

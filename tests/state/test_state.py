@@ -1511,6 +1511,7 @@ class NoCardLosesWhatItShowed(unittest.TestCase):
         import re
 
         from coscc.state import Card
+        from coscc.state.views import board_place
 
         full, cards, _ = _sample_read("state-test-r13-cards")
         self.assertEqual([c.id for c in cards], list(full))
@@ -1520,9 +1521,10 @@ class NoCardLosesWhatItShowed(unittest.TestCase):
         self.assertLessEqual(drawn, fields, "`_unit_card` draws a field a card does not carry")
         for card in cards:
             whole = full[card.id]
-            for name in fields - {"has_problem"}:
+            for name in fields - {"has_problem", "place"}:
                 self.assertEqual(getattr(card, name), getattr(whole, name), f"{card.id}.{name}")
             self.assertEqual(card.has_problem, whole.problems != "", card.id)
+            self.assertEqual(card.place, board_place(whole.state, card.begun), card.id)
         # The sample reaches every badge: a problem, a question, integration, outcome, hold,
         # a rank, a relation, a cost and a session running.
         self.assertTrue(
@@ -1633,12 +1635,14 @@ class TheIdListsAnswerAsTheCardListsDid(unittest.TestCase):
                 cv["stage_counts"].fget(page),
                 {n: len([u for u in board if u.at == n]) for n in stages},
             )
+            rank = {"running": 0, "ready": 1}
             going = sorted(
-                (stages.index(u.at), i, u.id)
+                (rank[u.state], stages.index(u.at), i, u.id)
                 for i, u in enumerate(board)
-                if u.state in ("running", "ready")
+                if u.state in rank
+                and (u.state != "ready" or any(c.started for c in u.cells if c.stage != "idea"))
             )
-            self.assertEqual(cv["resume_id"].fget(page), going[0][2] if going else "")
+            self.assertEqual(cv["resume_id"].fget(page), going[0][3] if going else "")
             self.assertEqual(cv["command_ids"].fget(page), [u.id for u in command(query)])
 
 
@@ -1687,41 +1691,6 @@ class ARunningAskSendsTheCardsOnlyWhenOneChanged(unittest.TestCase):
 
     def test_the_source_never_changes_full_in_place(self):
         self.assertNotIn("self._full[", _source_text())
-
-
-class UsageIsSentOnlyOnItsScreen(unittest.TestCase):
-    def test_rows_only_on_activity(self):
-        from types import SimpleNamespace
-
-        from coscc.state import Card, StudioState, UsageRow
-
-        cards = [
-            Card(id="a", title="A", tokens="10", usd="$0.50", token_count=10, at="intent"),
-            Card(id="b", title="B"),
-        ]
-        rows = StudioState.computed_vars["usage_rows"].fget
-        self.assertEqual(rows(SimpleNamespace(screen="board", cards=cards)), [])
-        self.assertEqual(
-            rows(SimpleNamespace(screen="activity", cards=cards)),
-            [UsageRow(id="a", title="A", tokens="10", usd="$0.50", token_count=10)],
-        )
-
-    def test_a_unit_whose_every_run_died_costless_still_has_a_row(self):
-        """No token and no cost is still a cost nobody knows, not nothing."""
-        from types import SimpleNamespace
-
-        from coscc.state import Card, StudioState, UsageRow, _tokens, _usd
-
-        count, shown = _tokens({"unknown": 2})
-        cards = [
-            Card(id="d", title="D", tokens=shown, usd=_usd({"unknown": 2}), token_count=count),
-            Card(id="e", title="E", tokens="—", usd=_usd({}), token_count=0),
-        ]
-        rows = StudioState.computed_vars["usage_rows"].fget
-        self.assertEqual(
-            rows(SimpleNamespace(screen="activity", cards=cards)),
-            [UsageRow(id="d", title="D", tokens="—", usd="unknown", token_count=0)],
-        )
 
 
 class ALongMessageIsCutAndOpensWhole(unittest.TestCase):
@@ -1826,6 +1795,32 @@ class ALongMessageIsCutAndOpensWhole(unittest.TestCase):
         self.assertEqual(shown[1], (opened, 0))
         self.assertEqual(shown[2], (closed[: page.MESSAGE_CUT], len(closed) - page.MESSAGE_CUT))
         self.assertEqual(shown[4], (reply, 0))
+
+
+class APersonsOwnConversationsComeFirst(unittest.TestCase):
+    """The read-only sessions (a terminal's, the app's estimates) follow the page's own, and the
+    one opened on arrival is the person's."""
+
+    def test_resumable_first_in_listed_order(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        listed = [
+            {"session_id": "est1", "summary": "estimate", "resumable": False},
+            {"session_id": "mine1", "summary": "mine", "resumable": True},
+            {"session_id": "est2", "summary": "estimate", "resumable": False},
+            {"session_id": "mine2", "summary": "mine", "resumable": True},
+        ]
+        page = SimpleNamespace(cwd="/w", session_id="", _load_history=lambda: None)
+        service = SimpleNamespace(
+            chat=SimpleNamespace(sessions_for=lambda cwd, limit: {"sessions": listed})
+        )
+        with mock.patch.object(state.app, "SERVICE", service):
+            state.StudioState._load_sessions(page)
+        self.assertEqual([c.id for c in page.conversations], ["mine1", "mine2", "est1", "est2"])
+        self.assertEqual(page.session_id, "mine1")
 
 
 class SessionsAreReadWhereTheyAreShown(unittest.TestCase):
@@ -1984,6 +1979,7 @@ class CostRowsAreCopiedAndLabelled(unittest.TestCase):
                 )
             },
             _fail=lambda e: None,
+            cards=[state.Card(id="0001_a", state="done"), state.Card(id="0002_b", state="ready")],
         )
         with mock.patch.object(
             state.app, "SERVICE", SimpleNamespace(activity=SimpleNamespace(cost=cost))
@@ -2009,11 +2005,13 @@ class CostRowsAreCopiedAndLabelled(unittest.TestCase):
                 ("not recorded", "1", "not recorded", True),
             ],
         )
+        self.assertEqual((page.cost_per_merged, page.cost_merged), ("$18.40", 1))
+        # Over budget is the units table's red figure, not an anomaly row per unit.
         self.assertEqual(
             [a.measured for a in page.cost_anomalies],
-            ["$18.40 > $15", "4 runs > 3", "41,200 per turn > 3 × 10,000", "exhausted"],
+            ["4 runs > 3", "41,200 per turn > 3 × 10,000", "exhausted"],
         )
-        self.assertEqual(page.cost_anomalies[2].unit, "No unit")
+        self.assertEqual(page.cost_anomalies[1].unit, "No unit")
 
 
 class _ReadOnly(_Page):
@@ -2075,15 +2073,50 @@ class TimesReadForAReader(unittest.TestCase):
             "at": "2026-09-25T04:13:29+00:00",
         }
         feed = {"events": [row], "total": {}}
-        page = SimpleNamespace(cwd="/w", events=[], usage_total_tokens="", usage_total_usd="")
+        page = SimpleNamespace(cwd="/w", events=[], usage_total_usd="")
         service = SimpleNamespace(
-            activity=SimpleNamespace(activity_and_usage=lambda cwd, limit: feed)
+            activity=SimpleNamespace(activity_and_usage=lambda cwd, limit: feed),
+            autopilot=SimpleNamespace(today=lambda cwd: None),
         )
         with mock.patch.object(state.app, "SERVICE", service):
             state.StudioState._load_activity(page)
         [event] = page.events
         self.assertTrue(event.time)
         self.assertIsNone(ISO.search(event.time), event.time)
+
+    def test_a_row_says_what_happened_in_words(self):
+        """A `transition`, `questions` or `ship` row reads as what happened, not its kind."""
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        base = {"stage": "", "mode": "", "outcome": "", "unit": "0001_x", "denials": 0}
+        base |= {"artifact": "", "at": "2026-09-25T04:13:29+00:00"}
+        rows = [
+            {**base, "kind": "transition", "artifact": "spike.md", "to_state": "accepted"},
+            {**base, "kind": "questions", "asked": 2},
+            {**base, "kind": "ship", "result": "shipped"},
+            {**base, "kind": "autopilot-stop"},
+        ]
+        page = SimpleNamespace(cwd="/w", events=[], usage_total_usd="")
+        service = SimpleNamespace(
+            activity=SimpleNamespace(
+                activity_and_usage=lambda cwd, limit: {"events": rows, "total": {}}
+            ),
+            autopilot=SimpleNamespace(today=lambda cwd: None),
+        )
+        with mock.patch.object(state.app, "SERVICE", service):
+            state.StudioState._load_activity(page)
+        self.assertEqual(
+            [(e.title, e.detail) for e in page.events],
+            [
+                ("spike.md accepted", "0001_x"),
+                ("2 question(s) for you", "0001_x"),
+                ("shipped", "0001_x"),
+                ("autopilot stop", "0001_x"),
+            ],
+        )
 
     def test_a_timeline_row_has_readers_times_and_its_own_key(self):
         from types import SimpleNamespace
@@ -2192,6 +2225,41 @@ class ADependencyChosenOnAnIdeaCanBeTakenBack(unittest.TestCase):
         page.child_depends = "b/0001_gone"
         self._load(page, [])
         self.assertEqual((page.idea_depends, page.child_depends), ([], ""))
+
+
+class AFeatureIsTurnedOffFromSettings(unittest.TestCase):
+    """The switch goes through `plugin.set_enabled`, the same call as `POST /api/features`."""
+
+    def test_off_then_on_for_the_open_workspace_only(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc.state import StudioState
+
+        with tempfile.TemporaryDirectory() as root:
+            service = mock.Mock(config=mock.Mock(data_dir=root))
+            service.ws.check.side_effect = lambda cwd: cwd
+            api = SimpleNamespace(state=SimpleNamespace(features=("notices", "vault")))
+            page = SimpleNamespace(cwd="/w", features=[], notice="")
+            page._load_features = lambda: StudioState._load_features(page)
+            switch = StudioState.event_handlers["set_feature"].fn
+            with (
+                mock.patch("coscc.state.app.SERVICE", service),
+                mock.patch("coscc.state.app.API", api),
+            ):
+                switch(page, "vault", False)
+                self.assertEqual(
+                    [(f.name, f.on) for f in page.features], [("notices", True), ("vault", False)]
+                )
+                page.cwd = "/other"
+                page._load_features()
+                self.assertTrue(all(f.on for f in page.features))
+                page.cwd = "/w"
+                switch(page, "vault", True)
+                self.assertTrue(all(f.on for f in page.features))
+                switch(page, "nope", False)
+                self.assertEqual(page.notice, "not a feature: nope")
 
 
 if __name__ == "__main__":

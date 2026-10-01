@@ -293,7 +293,8 @@ def attention_reason(unit: dict[str, Any]) -> str:
         # reads the unit as finished with its pull request open.
         if unit.get("why") == "ship-refused":
             return ""
-        return f"Accept {draft.get('stage')}.md"
+        # A fact, not an order: no button accepts a draft; its stage's next run does.
+        return f"{draft.get('stage')}.md is a draft"
     return "Changes requested"
 
 

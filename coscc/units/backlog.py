@@ -495,12 +495,14 @@ def fold(
     rank_of = {n: i + 1 for i, n in enumerate(order)}
 
     last, seq = shortlist_of(records)
-    names = list(last["units"]) if last else []
+    waiting = set(backlog)
+    # A unit that finished or left the backlog leaves the shortlist shown and saved again; the
+    # record keeps it, and the autopilot reads the record.
+    names = [n for n in last["units"] if n in waiting] if last else []
     warned = _warnings_for(names, rels, statuses)
     for w in order_warnings:
         if w["unit"] in warned:
             warned[w["unit"]].append(w["text"])
-    waiting = set(backlog)
     entries = []
     for i, n in enumerate(names):
         est = ests.get(n, {})
@@ -513,9 +515,7 @@ def fold(
                 "agent_differs": _differs(est),
                 "computed": computed,
                 "drift": computed != i + 1,
-                "in_backlog": n in waiting,
-                "warnings": warned.get(n, [])
-                + ([] if n in waiting else ["no longer in the backlog"]),
+                "warnings": warned.get(n, []),
             }
         )
     rest = [

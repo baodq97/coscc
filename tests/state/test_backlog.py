@@ -49,7 +49,6 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
                     "unit": "0009_x",
                     "computed": 1,
                     "drift": False,
-                    "in_backlog": True,
                     "warnings": ["bị 0010_y thay thế"],
                     "agent_differs": None,
                     "estimate": {
@@ -86,6 +85,15 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
         self.assertIn("picks nothing out", view["backlog_note"])
         self.assertEqual(view["propose_warning"], "paid")
         self.assertEqual(view["backlog_measured"], "")
+
+    def test_a_drifted_row_says_where_the_computed_order_puts_it(self):
+        from coscc.state.views import _backlog_row
+
+        self.assertEqual(
+            _backlog_row({"unit": "a", "drift": True, "computed": 3}, 1).drift,
+            "computed order: #3",
+        )
+        self.assertEqual(_backlog_row({"unit": "a", "drift": True}, 1).drift, "not estimated")
 
     def test_the_units_left_out_for_an_unknown_cost_are_counted(self):
         from coscc.state import backlog_view

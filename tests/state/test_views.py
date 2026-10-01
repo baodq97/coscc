@@ -7,6 +7,7 @@ import json
 
 import ast
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tests.units.test_meta import snapshot_of
@@ -91,6 +92,33 @@ class TheAutopilotBlockIsCopied(unittest.TestCase):
                 ),
             ],
         )
+
+
+class ACardsPlaceSaysWhatComesFirst(unittest.TestCase):
+    """In a lane and in the List: a person's turn first, a unit with only its idea last."""
+
+    def test_the_order(self):
+        got = [
+            views.board_place(state, begun)
+            for state, begun in (
+                ("needs-you", False),
+                ("error", True),
+                ("running", True),
+                ("paused", True),
+                ("ready", True),
+                ("ready", False),
+                ("done", True),
+            )
+        ]
+        self.assertEqual(got, sorted(got))
+        self.assertLess(views.board_place("ready", True), views.board_place("ready", False))
+
+    def test_a_ready_card_with_only_its_idea_goes_last(self):
+        idea_only = views.Unit(id="1", state="ready", begun=False)
+        with_intent = views.Unit(id="2", state="ready", begun=True)
+        self.assertEqual(views._card(idea_only).place, 6)
+        self.assertEqual(views._card(with_intent).place, 5)
+        self.assertTrue(views._card(with_intent).begun)
 
 
 class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
@@ -596,6 +624,25 @@ class TheQuestionsTabListsWhatWaits(unittest.TestCase):
         )
         self.assertEqual([q.key for q in shown], ["spec.md#2", "intent.md#1"])
 
+    def test_answering_comes_first_only_while_a_question_is_open_and_answerable(self):
+        from types import SimpleNamespace
+
+        from coscc.state import StudioState, _questions
+
+        _, asked = _questions(self.UNIT)
+        first = StudioState.computed_vars["answer_first"].fget
+
+        def page(answerable=True, hold="", questions=asked):
+            unit = SimpleNamespace(answerable=answerable, hold_state=hold, questions=questions)
+            open_here = [q for q in questions if not q.answered]
+            return SimpleNamespace(current_unit=unit, open_questions_here=open_here)
+
+        self.assertTrue(first(page()))
+        self.assertTrue(first(page(hold="paused")))
+        self.assertFalse(first(page(hold="dropped")))
+        self.assertFalse(first(page(answerable=False)))
+        self.assertFalse(first(page(questions=[q for q in asked if q.answered])))
+
 
 class TheBoardShowsTheGuardAndWhoseDecision(unittest.TestCase):
     """Copied from what the service sent; nothing decided here."""
@@ -735,9 +782,7 @@ class ACostNobodyKnowsIsNeverShownAsNothing(unittest.TestCase):
 
         self.assertEqual(cost_note({"unknown": 0}), COST_NOTE)
         self.assertEqual(cost_note({}), COST_NOTE)
-        self.assertEqual(
-            cost_note({"unknown": 3}), "Added up from each finished run; 3 run(s) with unknown cost"
-        )
+        self.assertEqual(cost_note({"unknown": 3}), "Every finished run; 3 without a cost")
 
 
 class TheLinksOfAUnitOpenedFromAnIdea(unittest.TestCase):
@@ -784,3 +829,32 @@ class TheLinksOfAUnitOpenedFromAnIdea(unittest.TestCase):
             }
         )
         self.assertEqual((row.href, gone.href, gone.missing), ("/unit?ws=api&id=0001_b", "", True))
+
+
+class AKnobIsNamedForAReader(unittest.TestCase):
+    """Settings shows what a knob does; its variable waits behind Details (S3)."""
+
+    def test_label_and_variable(self):
+        k = views.knob({"name": "allow_write_and_exec", "value": "off", "detail": "d", "on": False})
+        self.assertEqual(k.label, "Write files and run commands")
+        self.assertEqual(k.variable, "COS_ALLOW_WRITE_AND_EXEC")
+
+    def test_every_knob_the_service_names_has_a_label(self):
+        from coscc.config import from_env
+        from coscc.service.activity import Activity
+
+        found = Activity.settings(mock.Mock(config=from_env({})))
+        self.assertEqual({k["name"] for k in found["knobs"]}, set(views.KNOB_LABELS))
+
+
+class TheCostOfAMergedUnitIsTheMeanOfTheMergedOnes(unittest.TestCase):
+    def test_only_finished_units_with_a_known_cost_count(self):
+        rows = [
+            {"key": "0001_a", "usd": 10.0},
+            {"key": "0002_b", "usd": 20.0},
+            {"key": "0003_c", "usd": None},
+            {"key": "0004_open", "usd": 99.0},
+        ]
+        done = {"0001_a", "0002_b", "0003_c"}
+        self.assertEqual(views.per_merged_unit(rows, done), ("$15.00", 2))
+        self.assertEqual(views.per_merged_unit(rows, set()), ("—", 0))

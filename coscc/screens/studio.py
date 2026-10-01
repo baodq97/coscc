@@ -70,7 +70,7 @@ def heading(title, description, *actions) -> rx.Component:
     )
 
 
-def stat(label, value, hint, icon: str, color="iris") -> rx.Component:
+def stat(label, value, hint, icon: str, color="iris", **props) -> rx.Component:
     return panel(
         rx.hstack(
             text(label, weight="medium"),
@@ -81,6 +81,7 @@ def stat(label, value, hint, icon: str, color="iris") -> rx.Component:
         rx.heading(value, size="7", weight="medium", margin_top="14px", letter_spacing="-0.055em"),
         text(hint, size="1", margin_top="5px"),
         padding="20px",
+        **props,
     )
 
 

@@ -22,7 +22,7 @@ NAVIGATION = (
     ("board", "Board", "columns-3"),
     ("backlog", "Backlog", "list-ordered"),
     ("sessions", "Sessions", "messages-square"),
-    ("activity", "Activity & usage", "chart-no-axes-combined"),
+    ("activity", "Activity", "chart-no-axes-combined"),
     ("cost", "Cost", "circle-dollar-sign"),
     ("settings", "Settings", "settings-2"),
 )
@@ -166,12 +166,13 @@ class Unit:
     summary: str = ""
     # The last stage with an artifact: the one the Artifact tab opens. Not the column, which is `at`.
     stage: str = ""
-    owner: str = "You"
     mode: str = "manual"
     tokens: str = ""
     usd: str = ""
     token_count: int = 0
     progress: int = 0
+    # Whether a stage past the idea has an artifact.
+    begun: bool = False
     problems: str = ""
     cells: list[Cell] = dataclasses.field(default_factory=list)
     # How many questions in the counted artifact nobody has answered, taken from `cos.mjs`
@@ -338,8 +339,10 @@ class Card:
     title: str = ""
     summary: str = ""
     mode: str = "manual"
-    owner: str = "You"
     progress: int = 0
+    # Some stage after the idea has an artifact: *Pick up where you left off* skips a ready
+    # unit without one, and its card is drawn quieter.
+    begun: bool = False
     tokens: str = ""
     usd: str = ""
     token_count: int = 0
@@ -363,17 +366,30 @@ class Card:
     # The unit `impl` waits on, when it waits.
     waits_for: str = ""
     held: str = ""
+    # Where the card stands in its lane and in the List (`board_place`).
+    place: int = 0
+
+
+# A card's place among its lane's and the List's: what waits on a person first, what has not
+# begun last before the folded groups.
+PLACE = {"needs-you": 0, "error": 1, "running": 2, "awaiting": 3, "paused": 4, "ready": 5}
+
+
+def board_place(state: str, begun: bool) -> int:
+    if state == "ready" and not begun:
+        return 6
+    return PLACE.get(state, 7)
 
 
 def _card(u: Unit) -> Card:
-    """A `Unit` as its card. Copies; decides nothing."""
+    """A `Unit` as its card. Copies, and places it (`board_place`)."""
     return Card(
         id=u.id,
         title=u.title,
         summary=u.summary,
         mode=u.mode,
-        owner=u.owner,
         progress=u.progress,
+        begun=u.begun,
         tokens=u.tokens,
         usd=u.usd,
         token_count=u.token_count,
@@ -395,6 +411,7 @@ def _card(u: Unit) -> Card:
         state_color=u.state_color,
         waits_for=u.waits_for,
         held=u.held,
+        place=board_place(u.state, u.begun),
     )
 
 
@@ -424,17 +441,6 @@ def _shown(u: Unit, read: dict) -> dict:
         "state_color": shown["color"],
         "state_reason": reason_beside(u.attention_reason, shown["state"]),
     }
-
-
-@dataclasses.dataclass
-class UsageRow:
-    """One line of *Usage by work unit*."""
-
-    id: str = ""
-    title: str = ""
-    tokens: str = ""
-    usd: str = ""
-    token_count: int = 0
 
 
 @dataclasses.dataclass
@@ -507,6 +513,14 @@ def _unknown(n) -> str:
     """Said beside the money, or nothing when every cost is known."""
     n = int(n or 0)
     return f"{n} unknown" if n else ""
+
+
+def per_merged_unit(by_unit: list[dict], done: set[str]) -> tuple[str, int]:
+    """The mean known cost of the units that finished, and how many there were."""
+    costs = [r["usd"] for r in by_unit if r["key"] in done and r.get("usd") is not None]
+    if not costs:
+        return "—", 0
+    return present.money(sum(costs) / len(costs)), len(costs)
 
 
 def _spend_rows(rows: list[dict], unit: bool = False) -> list[SpendRow]:
@@ -635,7 +649,7 @@ def _backlog_row(entry: dict, rank: int) -> BacklogRow:
         basis=basis,
         by=_estimated_by(est.get("by")),
         drift=(
-            f"off by rank — computed {entry.get('computed') or 'none'}"
+            (f"computed order: #{entry['computed']}" if entry.get("computed") else "not estimated")
             if entry.get("drift")
             else ""
         ),
@@ -1085,6 +1099,38 @@ class Knob:
     value: str = ""
     detail: str = ""
     on: bool = False
+    # What the screen calls it, and the environment variable that sets it.
+    label: str = ""
+    variable: str = ""
+
+
+@dataclasses.dataclass
+class FeatureRow:
+    """One feature and whether it is on for the open workspace."""
+
+    name: str = ""
+    on: bool = True
+
+
+# A knob's name is the config field's; the screen says what it does.
+KNOB_LABELS = {
+    "tools": "Tools",
+    "allow_write_and_exec": "Write files and run commands",
+    "bypass_permissions": "Skip permission prompts",
+    "resume_foreign_sessions": "Resume sessions started elsewhere",
+}
+
+
+def knob(k: dict) -> Knob:
+    name = k["name"]
+    return Knob(
+        name=name,
+        value=k["value"],
+        detail=k["detail"],
+        on=bool(k["on"]),
+        label=KNOB_LABELS.get(name, name),
+        variable="COS_" + name.upper(),
+    )
 
 
 @dataclasses.dataclass
@@ -1230,13 +1276,13 @@ def _channel_line(channel: dict) -> str:
     return " ".join(parts)
 
 
-COST_NOTE = "Added up from each finished run"
+COST_NOTE = "Every finished run"
 
 
 def cost_note(total: dict) -> str:
     """The Cost tile's caption, saying how many runs it could not add."""
     n = int(total.get("unknown") or 0)
-    return f"{COST_NOTE}; {n} run(s) with unknown cost" if n > 0 else COST_NOTE
+    return f"{COST_NOTE}; {n} without a cost" if n > 0 else COST_NOTE
 
 
 def _usd(cost: dict) -> str:
