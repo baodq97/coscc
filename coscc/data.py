@@ -32,8 +32,9 @@ from typing import Any, Iterator
 # Bumped when a migration changes the shape below. `_open` refuses a database numbered higher
 # than this rather than guessing. The refusal runs the other way too: **an older build answers
 # `500` on a database a newer one has touched**, so rolling the app back means rolling the
-# database back with it. Version 7 added *columns* (`_COLUMNS`).
-SCHEMA_VERSION = 7
+# database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
+# number too: a database already at this one never runs `_create` again (8: the `ci` columns).
+SCHEMA_VERSION = 8
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"

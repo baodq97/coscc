@@ -221,7 +221,6 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
     def test_a_v6_database_rises_to_7_and_its_old_transitions_say_no_guard_is_known(self):
         """7 adds four columns to `transitions`, two to `step_runs` and the tables a submitted
         object lands in."""
-        self.assertEqual(SCHEMA_VERSION, 7)
         new = {"stage_results", "review_rounds", "review_findings", "impl_claims", "pull_requests"}
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
@@ -240,7 +239,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 )
                 conn.execute("PRAGMA user_version=6")
 
-            self.assertEqual(data.version(), 7)
+            self.assertEqual(data.version(), SCHEMA_VERSION)
             with data.connect() as conn:
                 tables = {
                     row["name"]
