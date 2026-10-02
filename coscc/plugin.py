@@ -1,7 +1,10 @@
 """The core's door for a feature: what it gets of the running app, and what it hands back.
 
 A feature (`coscc/features/<name>.py`) ends in one `PLUGIN` and reaches the app only through a
-`Ctx`. It is turned off per workspace by the pref `features.off`, `{feature: [workspace keys]}`.
+`Ctx`. Its state per workspace, `off`, `pilot` or `on`, is the pref `features.state`,
+`{feature: {workspace key: state}}`; a feature with no entry there has its `default`. An entry
+of the older pref `features.off`, `{feature: [workspace keys]}`, still reads as `off` until the
+next write for that pair moves it.
 """
 
 from __future__ import annotations
@@ -9,9 +12,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, get_args
 
 from fastapi import Request
 from fastapi.responses import StreamingResponse
@@ -25,11 +28,40 @@ from coscc.runlog.journal import Journal
 from coscc.service import Service
 from coscc.service.common import Invalid
 from coscc.service.workspaces import Workspaces
+from coscc.units import worktrees
 
 OFF_PREF = "features.off"
+STATE_PREF = "features.state"
 CREATE_TABLE = re.compile(r"\s*CREATE TABLE IF NOT EXISTS\s+\w+", re.IGNORECASE)
 
+State = Literal["off", "pilot", "on"]
+STATES: tuple[State, ...] = get_args(State)
+Arm = Literal["on", "off"]
+
 log = logging.getLogger(__name__)
+
+
+def arm_of(state: State, unit: str) -> Arm | None:
+    """The branch a run belongs to: none when `off`; under `pilot` a unit whose `NNNN` is even is
+    `on` and an odd one `off`; under `on` every unit is `on`."""
+    if state == "off":
+        return None
+    if state == "on":
+        return "on"
+    number = unit[:4]
+    return "on" if number.isdigit() and int(number) % 2 == 0 else "off"
+
+
+def _on(_feature: str, _workspace: str) -> State:
+    return "on"
+
+
+def _arm(_feature: str, _workspace: str, unit: str) -> Arm | None:
+    return arm_of("on", unit)
+
+
+async def _no_main_tree(workspace: str) -> tuple[str, str]:
+    raise Invalid(f"no main tree for {workspace} here")
 
 
 @dataclass(frozen=True)
@@ -37,10 +69,19 @@ class Ctx:
     journal: Callable[[], Journal | None]
     # Checks the workspace, raising `Invalid`, and returns how the run log names it.
     workspace_key: Callable[[str], str]
-    # `(feature, workspace path)`; a workspace the app does not know counts as on.
+    # `(feature, workspace path)`: `state` is not `off`.
     enabled: Callable[[str, str], bool]
     bus: Bus
     data: Data
+    # `(feature, workspace path)`: what a person chose there, else the feature's `default`; a
+    # workspace the app does not know counts as the default.
+    state: Callable[[str, str], State] = _on
+    # `(feature, workspace path, unit)`: `arm_of` the state now.
+    arm: Callable[[str, str, str], Arm | None] = _arm
+    # `(workspace path)`: the workspace's own detached tree, made or moved to the fetched
+    # `origin/main`, as `(path, sha)`. Raises `GitError` when git refuses, `Invalid` when the
+    # workspace is not known.
+    main_tree: Callable[[str], Awaitable[tuple[str, str]]] = _no_main_tree
 
 
 # The page kit: one script the shell injects once, before every feature script. `window.coscc`:
@@ -142,6 +183,28 @@ class Plugin:
     # What the feature hands the agent's steps, called once at build like `routes`.
     agent: Callable[[Ctx], Parts] | None = None
     page: Page | None = None
+    # The state of a workspace nobody chose one for: `on` or `off`.
+    default: State = "on"
+    # Whether `pilot` may be chosen: half the units get the feature (`arm_of`).
+    pilot: bool = False
+    # `(ctx, workspace path)`: one sentence for Settings, and whether `pilot` or `on` may be
+    # chosen there now. Quick: it is asked on every read of the panel.
+    status: Callable[[Ctx, str], tuple[str, bool]] | None = None
+    # `(ctx, workspace path, state)`: told once a person set a state. Quick: it schedules long
+    # work and returns.
+    on_set: Callable[[Ctx, str, State], None] | None = None
+
+
+@dataclass(frozen=True)
+class Shown:
+    """A feature as Settings and `GET /api/features` show it for one workspace."""
+
+    name: str
+    # `off` whenever `pilot` and `on` may not be chosen.
+    state: State
+    pilot: bool
+    sentence: str
+    locked: bool
 
 
 async def body(request: Request) -> dict[str, Any]:
@@ -238,33 +301,87 @@ def hooks_of(features: Sequence[Plugin], ctx: Ctx) -> Hooks:
     return Hooks(parts=tuple(parts), enabled=ctx.enabled)
 
 
-def _off(data: Data) -> dict[str, list[str]]:
-    stored = data.pref(OFF_PREF, {})
+def _pref(data: Data, name: str) -> dict[str, Any]:
+    stored = data.pref(name, {})
     return stored if isinstance(stored, dict) else {}
 
 
-def ctx_of(service: Service) -> Ctx:
+def state_of(data: Data, feature: str, key: str, default: State) -> State:
+    """The state chosen for `(feature, workspace key)`; an entry of `features.off` is `off`."""
+    chosen = _pref(data, STATE_PREF).get(feature)
+    got = chosen.get(key) if isinstance(chosen, dict) else None
+    for state in STATES:
+        if got == state:
+            return state
+    off = _pref(data, OFF_PREF).get(feature)
+    return "off" if isinstance(off, list) and key in off else default
+
+
+def ctx_of(service: Service, features: Sequence[Plugin] = ()) -> Ctx:
+    """The `Ctx` every feature gets; `features` gives their `default` states."""
     data = Data(service.config.data_dir)
+    defaults: dict[str, State] = {f.name: f.default for f in features}
 
     def workspace_key(cwd: str) -> str:
         service.ws.check(cwd)
         return Workspaces.key(cwd)
 
+    def state(feature: str, workspace: str) -> State:
+        return state_of(data, feature, Workspaces.key(workspace), defaults.get(feature, "on"))
+
     def enabled(feature: str, workspace: str) -> bool:
-        return Workspaces.key(workspace) not in _off(data).get(feature, [])
+        return state(feature, workspace) != "off"
 
-    return Ctx(service.ws.journal, workspace_key, enabled, service.bus, data)
+    def arm(feature: str, workspace: str, unit: str) -> Arm | None:
+        return arm_of(state(feature, workspace), unit)
+
+    async def main_tree(workspace: str) -> tuple[str, str]:
+        tree, sha = await worktrees.main_tree(service.ws.check(workspace), data.root)
+        return str(tree), sha
+
+    return Ctx(service.ws.journal, workspace_key, enabled, service.bus, data, state, arm, main_tree)
 
 
-def set_enabled(service: Service, known: Sequence[str], feature: str, cwd: str, on: bool) -> None:
-    """Turn `feature` on or off for the workspace `cwd`; a feature or workspace not known is `Invalid`."""
-    if feature not in known:
+def shown(ctx: Ctx, features: Sequence[Plugin], cwd: str) -> list[Shown]:
+    """Each feature for the workspace `cwd`; one whose `status` forbids choosing shows `off`."""
+    out = []
+    for f in features:
+        state = ctx.state(f.name, cwd)
+        sentence, may = f.status(ctx, cwd) if f.status else ("", True)
+        if not sentence:
+            sentence = "Off in this workspace." if state == "off" else "On in this workspace."
+        out.append(Shown(f.name, state if may else "off", f.pilot, sentence, not may))
+    return out
+
+
+def set_state(
+    service: Service, ctx: Ctx, features: Sequence[Plugin], feature: str, cwd: str, state: str
+) -> State:
+    """Set `feature`'s state for the workspace `cwd`, then tell the feature. `Invalid`: a feature,
+    workspace or state not known, `pilot` for a feature without it, or `pilot`/`on` while its
+    `status` forbids them."""
+    plugin = next((f for f in features if f.name == feature), None)
+    if plugin is None:
         raise Invalid(f"not a feature: {feature}")
-    key = ctx_of(service).workspace_key(cwd)
+    key = ctx.workspace_key(cwd)
+    chosen = next((s for s in STATES if s == state), None)
+    if chosen is None:
+        raise Invalid(f"state must be one of {', '.join(STATES)}")
+    if chosen == "pilot" and not plugin.pilot:
+        raise Invalid(f"{feature} has no pilot: choose on or off")
+    if chosen != "off" and plugin.status:
+        sentence, may = plugin.status(ctx, cwd)
+        if not may:
+            raise Invalid(sentence or f"{feature} cannot be turned on here")
     data = Data(service.config.data_dir)
-    off = _off(data)
-    keys = [k for k in off.get(feature, []) if k != key]
-    if not on:
-        keys.append(key)
-    off[feature] = keys
-    data.set_pref(OFF_PREF, off)
+    states = _pref(data, STATE_PREF)
+    mine = states.get(feature)
+    states[feature] = {**(mine if isinstance(mine, dict) else {}), key: chosen}
+    data.set_pref(STATE_PREF, states)
+    off = _pref(data, OFF_PREF)
+    if key in (off.get(feature) or []):
+        off[feature] = [k for k in off[feature] if k != key]
+        data.set_pref(OFF_PREF, off)
+    if plugin.on_set:
+        plugin.on_set(ctx, cwd, chosen)
+    return chosen

@@ -204,7 +204,8 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({n["workspace"] for n in everything}, {self.key, other})
 
     async def test_a_workspace_with_notices_off_is_passed_over_and_another_still_arrives(self):
-        plugin.set_enabled(self.service, ["notices"], "notices", str(self.other), False)
+        ctx = plugin.ctx_of(self.service)
+        plugin.set_state(self.service, ctx, [notices.PLUGIN], "notices", str(self.other), "off")
         other = self.service.ws.key(str(self.other))
         self.append(stop(other))
         mine = self.append(stop(self.key))

@@ -413,22 +413,29 @@ def _release_panel() -> rx.Component:
     )
 
 
+def _feature_choice(f) -> rx.Component:
+    """`off` / `on`, with `pilot` between them for a feature that has one; only `off` while
+    locked, the row's sentence saying why."""
+    pilot = rx.segmented_control.item("Pilot: half the units", value="pilot", disabled=f.locked)
+    return rx.segmented_control.root(
+        rx.segmented_control.item("Off", value="off"),
+        rx.cond(f.pilot, pilot, rx.fragment()),
+        rx.segmented_control.item("On", value="on", disabled=f.locked),
+        value=f.state,
+        on_change=lambda state: P.set_feature(f.name, state),
+        size="1",
+        aria_label="Feature " + f.name,
+    )
+
+
 def _features_panel() -> rx.Component:
-    """Each feature, on or off for this workspace. Off silences it here and starts nothing."""
+    """Each feature's state in this workspace. Off silences it here and starts nothing."""
     return s.panel(
         s.section_head("Features", rx.icon("puzzle", size=18, color=s.MUTED)),
         s.text("Turned off here, a feature does nothing in this workspace.", size="1"),
         rx.foreach(
             P.features,
-            lambda f: _settings_row(
-                f.name,
-                rx.cond(f.on, "On in this workspace.", "Off in this workspace."),
-                rx.switch(
-                    checked=f.on,
-                    on_change=lambda on: P.set_feature(f.name, on),
-                    aria_label="Feature " + f.name,
-                ),
-            ),
+            lambda f: _settings_row(f.name, f.sentence, _feature_choice(f)),
         ),
         rx.cond(P.features.length() == 0, s.text("No feature is installed.", size="1")),
         id="features-panel",

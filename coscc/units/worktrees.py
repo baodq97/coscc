@@ -70,6 +70,41 @@ def release_path(
     return where
 
 
+MAIN_TREE = "_main"
+
+
+def main_path(
+    workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None
+) -> Path:
+    """The workspace's one tree kept at `origin/main` for features to read, beside its units'
+    trees. `_main` is not a `NNNN_slug`, so no unit's tree can be named the same."""
+    where = (Data(data_dir).root / WORKTREES_DIR / units.slot(workspace) / MAIN_TREE).resolve()
+    for forbidden in (Path(units.key(workspace)), _package_dir()):
+        if where == forbidden or forbidden in where.parents:
+            raise BadUnit(f"the main worktree would land inside {forbidden}: {where}")
+    return where
+
+
+async def main_tree(
+    workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None
+) -> tuple[Path, str]:
+    """`(main_path, sha)`: the tree made, or moved, detached at the fetched `origin/main`.
+
+    Moved only by `advance_detached`, so a tree someone committed on or left dirty raises
+    `GitError` and stays where it was; a fetch that fails raises too.
+    """
+    root = Path(units.key(workspace))
+    where = main_path(workspace, data_dir)
+    await fetches.fetch(root)
+    sha = await gitops.rev_parse(root, f"refs/remotes/origin/{gitops.TRUNK}")
+    if not (where / ".git").exists():
+        where.parent.mkdir(parents=True, exist_ok=True)
+        await gitops.worktree_add(root, where, sha)
+    elif await gitops.rev_parse(where, "HEAD") != sha:
+        await gitops.advance_detached(where, sha)
+    return where, sha
+
+
 def prepare_record(tree: Path) -> Path:
     return tree.parent / f"{tree.name}.prepare.json"
 

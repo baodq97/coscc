@@ -586,20 +586,22 @@ class StudioState(
         self._load_features()
 
     def _load_features(self) -> None:
-        """Each feature `api.build` loaded, and whether it is on for this workspace."""
+        """Each feature `api.build` loaded, its state in this workspace and its sentence."""
         if not self.cwd:
             self.features = []
             return
-        enabled = plugin.ctx_of(app.SERVICE).enabled
         self.features = [
-            FeatureRow(name, enabled(name, self.cwd)) for name in app.API.state.features
+            FeatureRow(f.name, f.state, f.pilot, f.sentence, f.locked)
+            for f in plugin.shown(app.API.state.ctx, app.API.state.plugins, self.cwd)
         ]
 
     @rx.event
-    def set_feature(self, name: str, on: bool):
-        """The same call as `POST /api/features`; it writes the pref and starts nothing."""
+    def set_feature(self, name: str, state: str):
+        """The same call as `POST /api/features`: it writes the pref and tells the feature."""
         try:
-            plugin.set_enabled(app.SERVICE, app.API.state.features, name, self.cwd, bool(on))
+            plugin.set_state(
+                app.SERVICE, app.API.state.ctx, app.API.state.plugins, name, self.cwd, state
+            )
         except Invalid as e:
             self.notice = str(e)
         self._load_features()
@@ -1330,7 +1332,7 @@ class StudioState(
         self.feature = name if page else ""
         self.feature_label = page.label if page else ""
         self.feature_src = f"{page.path}?{urlencode({'cwd': cwd})}" if page and cwd else ""
-        self.feature_off = bool(page and cwd) and not plugin.ctx_of(app.SERVICE).enabled(name, cwd)
+        self.feature_off = bool(page and cwd) and not app.API.state.ctx.enabled(name, cwd)
 
     @rx.event
     def choose_workspace(self, path: str):

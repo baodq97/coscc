@@ -464,32 +464,35 @@ async def release_publish(request: Request) -> Any:
 
 @router.get("/api/features")
 async def get_features(request: Request) -> Any:
-    """Each feature and whether it is on for one workspace: `{name: on}`. A workspace the app
-    does not have is a 400."""
+    """Each feature's state in one workspace: `{name: "off" | "pilot" | "on"}`, `off` while its
+    status forbids the others. A workspace the app does not have is a 400."""
     service = _service(request)
     cwd = service.ws.check(_cwd(request))
-    ctx = plugin.ctx_of(service)
-    return {f.name: ctx.enabled(f.name, cwd) for f in features.FEATURES}
+    return {f.name: f.state for f in plugin.shown(request.app.state.ctx, features.FEATURES, cwd)}
 
 
 @router.post("/api/features")
 async def set_feature(request: Request) -> Any:
-    """`{cwd, name, on}` turns one feature on or off for one workspace; a feature or workspace
-    not known, or an `on` that is not a boolean, is a 400. It changes the pref `features.off`
-    and nothing else. Whoever holds the password or a session can silence a workspace's notices."""
+    """`{cwd, name, state}` sets one feature's state for one workspace; the older `{on: bool}`
+    is read as `on` or `off`. A feature, workspace or state not known, `pilot` for a feature
+    without it, or `pilot`/`on` while the feature's status forbids them is a 400. It changes the
+    pref `features.state`, then tells the feature, which may start its own setup (codegraph's
+    install). Whoever holds the password or a session can silence a workspace's notices."""
     body = await plugin.body(request)
-    on = body.get("on")
-    if not isinstance(on, bool):
-        raise Invalid("on must be true or false")
-    service = _service(request)
-    plugin.set_enabled(
-        service,
-        [f.name for f in features.FEATURES],
+    state, on = body.get("state"), body.get("on")
+    if state is None and isinstance(on, bool):
+        state = "on" if on else "off"
+    if not isinstance(state, str):
+        raise Invalid(f"state must be one of {', '.join(plugin.STATES)}")
+    chosen = plugin.set_state(
+        _service(request),
+        request.app.state.ctx,
+        features.FEATURES,
         str(body.get("name") or ""),
         str(body.get("cwd") or ""),
-        on,
+        state,
     )
-    return {"name": str(body.get("name")), "on": on}
+    return {"name": str(body.get("name")), "state": chosen}
 
 
 @router.get("/api/grants/impl")
@@ -562,7 +565,7 @@ def build(config: Config | None = None) -> FastAPI:
 
     # The routes themselves, not `include_router`, which keeps them behind one entry of `routes`.
     # Read now, so a test can patch `features.FEATURES`.
-    ctx = plugin.ctx_of(service)
+    ctx = plugin.ctx_of(service, features.FEATURES)
     service.steps.hooks = plugin.hooks_of(features.FEATURES, ctx)
     # Checked now, created when the app starts (`coscc.py`): building the page imports this
     # module in processes that may not open the database.
@@ -577,6 +580,9 @@ def build(config: Config | None = None) -> FastAPI:
     # import `features`.
     api.state.features = tuple(f.name for f in features.FEATURES)
     api.state.pages = {f.name: f.page for f in features.FEATURES if f.page}
+    # The one `Ctx` and the plugins themselves, for the Settings panel's states.
+    api.state.ctx = ctx
+    api.state.plugins = features.FEATURES
     api.add_exception_handler(Invalid, _refused)
 
     # No route for `/` and no static mount: `/` has to fall through to Reflex's compiled-frontend

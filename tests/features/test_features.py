@@ -17,7 +17,17 @@ from coscc import screens
 from coscc.data import Data
 from coscc import features
 from coscc.hooks import Block, Guard, Parts, Tool
-from coscc.plugin import Ctx, Plugin, create_tables, ctx_of, hooks_of
+from coscc.plugin import (
+    OFF_PREF,
+    STATE_PREF,
+    Ctx,
+    Plugin,
+    arm_of,
+    create_tables,
+    ctx_of,
+    hooks_of,
+    set_state,
+)
 from coscc.api import build
 from coscc.config import PROTECTED_DB_VAR, Config
 
@@ -99,29 +109,31 @@ class TurningAFeatureOffForAWorkspace(Setup):
         )
         async with self.client() as client:
             got = await client.get("/api/features", params={"cwd": str(self.ws)})
-            self.assertEqual((got.status_code, got.json()["notices"]), (200, True))
+            self.assertEqual((got.status_code, got.json()["notices"]), (200, "on"))
             off = await client.post(
-                "/api/features", json={"cwd": str(self.ws), "name": "notices", "on": False}
+                "/api/features", json={"cwd": str(self.ws), "name": "notices", "state": "off"}
             )
-            self.assertEqual((off.status_code, off.json()), (200, {"name": "notices", "on": False}))
+            self.assertEqual(
+                (off.status_code, off.json()), (200, {"name": "notices", "state": "off"})
+            )
             got = await client.get("/api/features", params={"cwd": str(self.ws)})
-            self.assertIs(got.json()["notices"], False)
+            self.assertEqual(got.json()["notices"], "off")
             got = await client.get("/api/features", params={"cwd": str(other)})
-            self.assertIs(got.json()["notices"], True)
+            self.assertEqual(got.json()["notices"], "on")
             await client.post(
-                "/api/features", json={"cwd": str(self.ws), "name": "notices", "on": True}
+                "/api/features", json={"cwd": str(self.ws), "name": "notices", "state": "on"}
             )
             got = await client.get("/api/features", params={"cwd": str(self.ws)})
-            self.assertIs(got.json()["notices"], True)
+            self.assertEqual(got.json()["notices"], "on")
 
     async def test_a_wrong_request_is_a_400_and_writes_nothing(self):
         async with self.client() as client:
-            good = {"cwd": str(self.ws), "name": "notices", "on": False}
+            good = {"cwd": str(self.ws), "name": "notices", "state": "off"}
             for body in (
                 {**good, "name": "nope"},
                 {**good, "cwd": "/etc"},
-                {**good, "on": "no"},
-                {k: v for k, v in good.items() if k != "on"},
+                {**good, "state": "no"},
+                {k: v for k, v in good.items() if k != "state"},
             ):
                 r = await client.post("/api/features", json=body)
                 self.assertEqual(r.status_code, 400, body)
@@ -131,7 +143,46 @@ class TurningAFeatureOffForAWorkspace(Setup):
                 (await client.get("/api/features", params={"cwd": "/etc"})).status_code, 400
             )
             got = await client.get("/api/features", params={"cwd": str(self.ws)})
-            self.assertIs(got.json()["notices"], True)
+            self.assertEqual(got.json()["notices"], "on")
+
+    async def test_a_feature_with_a_default_of_off_starts_off_and_the_rest_on(self):
+        fake = Plugin("graph", lambda _ctx: [], default="off", pilot=True)
+        with mock.patch("coscc.features.FEATURES", (*features.FEATURES, fake)):
+            async with self.client() as client:
+                got = (await client.get("/api/features", params={"cwd": str(self.ws)})).json()
+        self.assertEqual(got["graph"], "off")
+        self.assertEqual({got[f.name] for f in features.FEATURES if f.default == "on"}, {"on"})
+
+    def test_an_entry_of_the_older_pref_reads_as_off_until_the_next_write_moves_it(self):
+        data = Data(self.config.data_dir)
+        key = str(self.ws.resolve())
+        data.set_pref(OFF_PREF, {"notices": [key], "vault": ["/elsewhere"]})
+        service = mock.Mock(config=self.config)
+        service.ws.check.side_effect = lambda cwd: cwd
+        ctx = ctx_of(service, features.FEATURES)
+        self.assertEqual(ctx.state("notices", str(self.ws)), "off")
+        self.assertFalse(ctx.enabled("notices", str(self.ws)))
+        self.assertEqual(ctx.state("vault", str(self.ws)), "on")
+        set_state(service, ctx, features.FEATURES, "notices", str(self.ws), "on")
+        self.assertEqual(ctx.state("notices", str(self.ws)), "on")
+        self.assertEqual(data.pref(OFF_PREF, {}), {"notices": [], "vault": ["/elsewhere"]})
+        self.assertEqual(data.pref(STATE_PREF, {}), {"notices": {key: "on"}})
+
+    def test_the_arm_follows_the_state_and_the_units_number(self):
+        service = mock.Mock(config=self.config)
+        service.ws.check.side_effect = lambda cwd: cwd
+        graph = Plugin("graph", lambda _ctx: [], default="off", pilot=True)
+        ctx = ctx_of(service, (graph,))
+        ws = str(self.ws)
+        want = {"off": (None, None), "pilot": ("on", "off"), "on": ("on", "on")}
+        for state, (even, odd) in want.items():
+            if state != "off":
+                set_state(service, ctx, (graph,), "graph", ws, state)
+            with self.subTest(state=state):
+                self.assertEqual(ctx.state("graph", ws), state)
+                self.assertEqual(ctx.arm("graph", ws, "0148_even"), even)
+                self.assertEqual(ctx.arm("graph", ws, "0149_odd"), odd)
+        self.assertEqual(arm_of("pilot", "0000_zero"), "on")
 
     async def test_the_routes_are_behind_the_login(self):
         from coscc import auth
@@ -178,7 +229,7 @@ class AFeatureHandsTheAgentItsParts(Setup):
                 self.assertEqual([b.name for b in held.blocks], ["b"])
                 self.assertEqual(hooks.for_step("plan", str(self.ws)).tools, ())
                 off = await client.post(
-                    "/api/features", json={"cwd": str(self.ws), "name": "fake", "on": False}
+                    "/api/features", json={"cwd": str(self.ws), "name": "fake", "state": "off"}
                 )
                 self.assertEqual(off.status_code, 200)
                 self.assertEqual(hooks.for_step("impl", str(self.ws)), Parts())

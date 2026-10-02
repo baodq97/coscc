@@ -1947,3 +1947,73 @@ class ReleasingOverHttp(unittest.IsolatedAsyncioTestCase):
             with self.subTest(body=body):
                 got = await self.client.post("/api/release/prepare", json=body)
                 self.assertEqual(got.status_code, 400)
+
+
+class FeatureStatesOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`/api/features` with a two-state feature, a pilot one and one its status locks."""
+
+    async def asyncSetUp(self):
+        from coscc.plugin import Plugin
+
+        self.config = _tmp_config(self)
+        self.cwd = self.config.workspaces[0]
+        self.told: list[tuple[str, str]] = []
+        self.may = True
+        plugins = (
+            Plugin("plain", lambda _c: []),
+            Plugin(
+                "graph",
+                lambda _c: [],
+                default="off",
+                pilot=True,
+                status=lambda _c, _w: ("Needs npm.", self.may),
+                on_set=lambda _c, ws, state: self.told.append((ws, state)),
+            ),
+        )
+        patch = mock.patch("coscc.features.FEATURES", plugins)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=build(self.config)), base_url="http://t"
+        )
+        self.addAsyncCleanup(self.client.aclose)
+
+    async def states(self) -> dict:
+        return (await self.client.get("/api/features", params={"cwd": self.cwd})).json()
+
+    async def test_a_state_is_set_read_back_and_the_feature_told(self):
+        self.assertEqual(await self.states(), {"plain": "on", "graph": "off"})
+        r = await self.client.post(
+            "/api/features", json={"cwd": self.cwd, "name": "graph", "state": "pilot"}
+        )
+        self.assertEqual((r.status_code, r.json()), (200, {"name": "graph", "state": "pilot"}))
+        self.assertEqual(await self.states(), {"plain": "on", "graph": "pilot"})
+        self.assertEqual(self.told, [(self.cwd, "pilot")])
+
+    async def test_a_boolean_on_is_still_read_as_on_or_off(self):
+        for on, state in ((False, "off"), (True, "on")):
+            r = await self.client.post(
+                "/api/features", json={"cwd": self.cwd, "name": "plain", "on": on}
+            )
+            self.assertEqual(r.json(), {"name": "plain", "state": state})
+            self.assertEqual((await self.states())["plain"], state)
+
+    async def test_a_wrong_state_a_pilot_without_one_or_a_locked_feature_is_400(self):
+        self.may = False
+        for name, state, says in (
+            ("graph", "maybe", "state must be one of off, pilot, on"),
+            ("plain", "pilot", "plain has no pilot: choose on or off"),
+            ("graph", "on", "Needs npm."),
+            ("graph", "pilot", "Needs npm."),
+        ):
+            with self.subTest(name=name, state=state):
+                r = await self.client.post(
+                    "/api/features", json={"cwd": self.cwd, "name": name, "state": state}
+                )
+                self.assertEqual((r.status_code, r.json()["error"]), (400, says))
+        self.assertEqual(await self.states(), {"plain": "on", "graph": "off"})
+        self.assertEqual(self.told, [])
+        r = await self.client.post(
+            "/api/features", json={"cwd": self.cwd, "name": "graph", "state": "off"}
+        )
+        self.assertEqual(r.status_code, 200)

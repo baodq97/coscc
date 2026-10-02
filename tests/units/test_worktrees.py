@@ -115,6 +115,38 @@ class TheReleaseTree(Repo):
             worktrees.release_path(self.repo, Path(coscc.__file__).resolve().parent / "d")
 
 
+class TheMainTree(Repo):
+    """One tree per workspace at the fetched `origin/main`, beside its units' trees."""
+
+    def test_it_is_made_at_origin_main_then_moved_when_the_remote_moves(self):
+        where, sha = asyncio.run(worktrees.main_tree(self.repo, self.data))
+        self.assertEqual(where, worktrees.main_path(self.repo, self.data))
+        self.assertEqual(where.parent, worktrees.path(self.repo, "0001_a", self.data).parent)
+        self.assertIsNone(units.UNIT_RE.fullmatch(where.name))
+        self.assertEqual((sha, git(where, "rev-parse", "HEAD")), (self.main, self.main))
+        self.assertEqual(git(where, "branch", "--show-current"), "")
+        new = self._advance_remote()
+        # A fresh coordinator: the first call's fetch is young enough to be reused.
+        with mock.patch.object(fetches, "shared", fetches.Fetches()):
+            self.assertEqual(asyncio.run(worktrees.main_tree(self.repo, self.data))[1], new)
+        self.assertEqual(git(where, "rev-parse", "HEAD"), new)
+        self.assertEqual(git(self.repo, "rev-parse", "main"), self.main)
+
+    def test_a_dirty_tree_is_not_moved(self):
+        where, _ = asyncio.run(worktrees.main_tree(self.repo, self.data))
+        (where / "f.txt").write_text("changed\n", encoding="utf-8")
+        self._advance_remote()
+        with mock.patch.object(fetches, "shared", fetches.Fetches()), self.assertRaises(GitError):
+            asyncio.run(worktrees.main_tree(self.repo, self.data))
+        self.assertEqual(git(where, "rev-parse", "HEAD"), self.main)
+
+    def test_inside_the_workspace_or_the_package_is_refused(self):
+        with self.assertRaises(BadUnit):
+            worktrees.main_path(self.repo, self.repo / "data")
+        with self.assertRaises(BadUnit):
+            worktrees.main_path(self.repo, Path(coscc.__file__).resolve().parent / "d")
+
+
 class Ensuring(Repo):
     def test_a_new_unit_gets_a_detached_tree_at_main_and_the_root_does_not_move(self):
         made = asyncio.run(worktrees.ensure(self.repo, "0001_a", None, self.data))

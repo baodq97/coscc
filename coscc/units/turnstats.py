@@ -231,6 +231,41 @@ def file_fields(
     }
 
 
+def read_chars(
+    conn: sqlite3.Connection, runs: list[str], server: str
+) -> dict[str, tuple[int, int]]:
+    """`{run: (read, served)}` for each of `runs` (an `end`'s `run`) whose events remain: the
+    characters every `Read` returned, and those every tool of the MCP `server`
+    (`mcp__<server>__*`) returned, counted as `file_fields` counts them. An empty `run`, or one
+    whose events `events.purge` deleted, is not in it."""
+    prefix = f"mcp__{server}__"
+    out: dict[str, tuple[int, int]] = {}
+    for run in runs:
+        if not run:
+            continue
+        index = conn.execute("SELECT purged_at FROM step_runs WHERE run = ?", (run,)).fetchone()
+        if index and index[0]:
+            continue
+        names: dict[str, str] = {}
+        read = served = 0
+        for kind, raw in conn.execute(
+            "SELECT kind, event FROM step_events WHERE run = ? AND kind IN ('tool_use', 'tool_result') "
+            "ORDER BY seq",
+            (run,),
+        ).fetchall():
+            event = json.loads(raw)
+            if kind == "tool_use":
+                names[event.get("id")] = str(event.get("name") or "")
+                continue
+            name = names.get(event.get("tool_use_id"), "")
+            if name == "Read":
+                read += _result_chars(event)
+            elif name.startswith(prefix):
+                served += _result_chars(event)
+        out[run] = (read, served)
+    return out
+
+
 def changes_requested(text: str) -> int:
     """The rounds of a `review.md` whose first `Verdict:` is `changes-requested`."""
     parts = _ROUND.split(text)[1:]

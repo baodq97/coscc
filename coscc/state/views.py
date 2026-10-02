@@ -1106,10 +1106,15 @@ class Knob:
 
 @dataclasses.dataclass
 class FeatureRow:
-    """One feature and whether it is on for the open workspace."""
+    """One feature's state in the open workspace, `plugin.Shown` as the panel reads it."""
 
     name: str = ""
-    on: bool = True
+    state: str = "on"
+    # Whether the panel offers `pilot` between `off` and `on`.
+    pilot: bool = False
+    sentence: str = ""
+    # `pilot` and `on` may not be chosen now; `sentence` says why.
+    locked: bool = False
 
 
 # A knob's name is the config field's; the screen says what it does.
