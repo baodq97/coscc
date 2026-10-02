@@ -44,8 +44,10 @@ class MissingRules(RuntimeError):
 
 
 def child_env() -> dict[str, str]:
-    """The environment the loop child (`python -m coscc.loop`, see `coscc.loop.run`) runs in. Built up, never filtered down (see
-    `gitops.child_env`): it needs no secret, so it is given none.
+    """The environment the loop child (`python -m coscc.loop`, see `coscc.loop.run`) runs in.
+
+    Built up, never filtered down (see `gitops.child_env`): it needs no secret, so it is given
+    none.
     """
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -127,9 +129,10 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     """Everything wrong with `wheel`, as sentences. Empty means it would run.
 
     Each entry names a wheel that installs cleanly and then fails differently: no frontend
-    (page 404s), no compile marker (service is `active` and serves nothing), no skills, no `states.json`, no build stamp with a 40-hex commit.
-    The stamp is checked though committed: whether a file arrives by `git` or by a copy step
-    is invisible to the installed copy. Skills are counted, not listed by name.
+    (page 404s), no compile marker (service is `active` and serves nothing), no skills, no
+    `states.json`, no build stamp with a 40-hex commit. The stamp is checked though committed:
+    whether a file arrives by `git` or by a copy step is invisible to the installed copy. Skills
+    are counted, not listed by name.
     """
     path = Path(wheel)
     try:
