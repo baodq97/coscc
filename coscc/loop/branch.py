@@ -1,9 +1,9 @@
 """The commands that name a branch, a pull request's text, a tag or a version.
 
 `TAG_RE` through `version_problem`, the by-hand reading of the version files, the commands
-from `cmd_check_branch` to `cmd_pr_text`, and the dispatch of `unit-branch`, `pr-text`, `check-branch`, `check-tag` and
-`check-version` `check-*` read the checkout the process stands in (`checkout()`), never
-a `--root`, nor where this package is installed.
+from `cmd_check_branch` to `cmd_pr_text`, and the dispatch of `unit-branch`, `pr-text`,
+`check-branch`, `check-tag` and `check-version`. The `check-*` commands read the checkout the
+process stands in (`checkout()`), never a `--root`, nor where this package is installed.
 """
 
 from __future__ import annotations
