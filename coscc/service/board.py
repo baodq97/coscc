@@ -18,7 +18,7 @@ from coscc.runlog.journal import last_runs, timelines_of, totals_of
 from coscc.data import Busy
 from coscc.agent.policy import grant_for
 from coscc import units
-from coscc.units import worktrees
+from coscc.units import scratch, worktrees
 from coscc.units import BadUnit
 from coscc.service.common import (
     open_prs_once,
@@ -368,6 +368,8 @@ class Board:
                 where = worktrees.path(cwd, u["name"], self.config.data_dir)
             except BadUnit:
                 continue
+            if u.get("why") in ("finished", "rejected"):
+                scratch.remove(cwd, u["name"], self.config.data_dir)
             found = listed.get(str(where))
             if found is None:
                 continue

@@ -13,6 +13,7 @@ from coscc.config import Config
 from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
+from coscc.units import scratch
 from tests.service.test_service import create_sync
 from tests.units.test_submit import submits as _submits
 
@@ -308,3 +309,52 @@ class TheGuide(unittest.TestCase):
         self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
         self.assertEqual(self.service.autopilot.guide_block(self.key), {"on": False})
         self.assertEqual(asyncio.run(self.service.board(self.cwd))["guide"], {"on": False})
+
+
+class AUnitThatEndedLosesItsScratch(unittest.TestCase):
+    """A board read removes the two scratch directories of a `finished` or `rejected` unit."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name).resolve()
+        (root / "tmp").mkdir()
+        patch = mock.patch.object(tempfile, "tempdir", str(root / "tmp"))
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.repo = root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.data = str(root / "data")
+        config = Config(
+            workspaces=(str(self.repo),), working_dir=str(root / "work"), data_dir=self.data
+        )
+        self.service = Service(config, Sessions(config))
+
+    def made(self, unit: str) -> tuple[Path, Path]:
+        ram, disk = scratch.ensure(self.repo, unit, self.data)
+        (disk / "big").write_text("x")
+        return ram, disk
+
+    def read(self, rows: list[dict]) -> None:
+        asyncio.run(self.service.boards._attach_worktrees(str(self.repo), rows))
+
+    def test_finished_and_rejected_lose_both_and_a_running_unit_keeps_them(self):
+        places = {
+            "0001_done": self.made("0001_done"),
+            "0002_no": self.made("0002_no"),
+            "0003_live": self.made("0003_live"),
+        }
+        self.read(
+            [
+                {"name": "0001_done", "why": "finished"},
+                {"name": "0002_no", "why": "rejected"},
+                {"name": "0003_live", "why": "running"},
+            ]
+        )
+        for unit in ("0001_done", "0002_no"):
+            for where in places[unit]:
+                self.assertFalse(where.exists(), where)
+        for where in places["0003_live"]:
+            self.assertTrue(where.exists(), where)
+        # A second read of a unit already cleaned is not an error.
+        self.read([{"name": "0001_done", "why": "finished"}])

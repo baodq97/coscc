@@ -63,6 +63,8 @@ def main(argv: list[str] | None = None) -> None:
     # The only time step events are purged. Not in `api.py`'s lifespan, which the real stack
     # never runs.
     purge_events(config)
+    # Nothing is running yet, so every scratch directory of a unit that is gone is an orphan.
+    sweep_scratch(config)
 
     import uvicorn
 
@@ -115,6 +117,22 @@ def purge_events(config) -> None:
         return
     if runs:
         log.info("step events purged: %s run(s), %s bytes", runs, freed)
+
+
+def sweep_scratch(config) -> None:
+    """Remove the scratch of units no workspace has. A failure is logged; the app starts anyway."""
+    from coscc.service.store import Store
+    from coscc.service.workspaces import live_units
+    from coscc.units import scratch
+
+    try:
+        paths = list(config.workspaces)
+        if config.working_dir:
+            store = Store(config.working_dir, config.data_dir)
+            paths += [str(store.path_of(e.name)) for e in store.entries()]
+        scratch.sweep(live_units(paths, config.data_dir), config.data_dir)
+    except Exception:
+        log.exception("unit scratch directories were not swept this start")
 
 
 def installed_version() -> str:

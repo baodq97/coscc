@@ -63,7 +63,13 @@ log = logging.getLogger(__name__)
 # unset, unset read as `~/.cos`, and a step's `npm test` migrated the running app's `cos.db`.
 # `config.PROTECTED_DB_VAR` names that database too.
 def child_env(
-    cwd: str, workspace: str | None = None, *, data_dir: str, app_db: Path, bash: bool = False
+    cwd: str,
+    workspace: str | None = None,
+    *,
+    data_dir: str,
+    app_db: Path,
+    bash: bool = False,
+    scratch: tuple[str, str] | None = None,
 ) -> dict[str, str]:
     """What to lay over the environment a session would otherwise inherit whole.
 
@@ -71,7 +77,8 @@ def child_env(
     somebody else's repository, because leaving one out hands the child this app's own.
     `data_dir` is the session's throwaway data root (`scratch_dir`) and `app_db` this app's
     `cos.db`; both are required. `bash` is true when the session holds `Bash`; it then also
-    gets `FOREGROUND_ENV`.
+    gets `FOREGROUND_ENV`. `scratch` is the unit's `(ram, disk)` directories (`units.scratch`):
+    named in `COS_SCRATCH_RAM` and `COS_SCRATCH_DISK`, and the disk one is the child's `TMPDIR`.
     """
     env = {
         frontend.WEB_WORKDIR_VAR: str(Path(cwd) / ".web"),
@@ -83,6 +90,8 @@ def child_env(
     env.update({name: "" for name in os.environ if name.startswith(("COS_", "__REFLEX_"))})
     env["COS_DATA_DIR"] = data_dir
     env[cfg.PROTECTED_DB_VAR] = cfg.protect(app_db)
+    if scratch is not None:
+        env.update(COS_SCRATCH_RAM=scratch[0], COS_SCRATCH_DISK=scratch[1], TMPDIR=scratch[1])
     if bash:
         env.update(FOREGROUND_ENV)
     return env
@@ -535,6 +544,7 @@ def _options(
     mcp_servers: dict[str, Any] | None = None,
     agents: dict[str, dict[str, Any]] | None = None,
     hooks: dict[HookEvent, list[HookMatcher]] | None = None,
+    unit_scratch: tuple[str, str] | None = None,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -565,6 +575,8 @@ def _options(
     hands back an object; `strict_mcp_config` stays, so those are the only ones.
 
     `hooks` is the app's own in-process callbacks (`Helpers.hooks`), never a settings file's.
+    `unit_scratch` is the unit's `(ram, disk)` directories, which `child_env` puts into the
+    session's environment.
     """
     # A board step brings its own list from `policy.Grant`; everything else gets the app
     # default, empty. `tools=[]` and `tools=None` differ for the SDK, so test `is None`. Read
@@ -584,6 +596,7 @@ def _options(
             data_dir=data_dir,
             app_db=Data(config.data_dir).db_path,
             bash="Bash" in resolved,
+            scratch=unit_scratch,
         ),
         tools=resolved,
         permission_mode=permission_mode,
@@ -767,6 +780,7 @@ class Sessions:
         mcp_servers: dict[str, Any] | None = None,
         agents: dict[str, dict[str, Any]] | None = None,
         helpers: Helpers | None = None,
+        unit_scratch: tuple[str, str] | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -790,6 +804,8 @@ class Sessions:
         A stream `suspend_all` paused raises `Suspended` and yields no `done`; one begun after
         it is `Refused`. `mcp_servers` goes to `_options` as it is. `helpers` is the run's ledger of
         helpers: its hooks go to `_options` and every `task_*` system message to it.
+        `unit_scratch` is the unit's `(ram, disk)` directories, in the session's environment
+        (`child_env`); the caller made them, and the gate it passes holds the same two.
         """
         if self.paused:
             raise Refused(PAUSED)
@@ -821,6 +837,7 @@ class Sessions:
             mcp_servers=mcp_servers,
             agents=agents,
             helpers=helpers,
+            unit_scratch=unit_scratch,
         )
         if isinstance(flow, dict):  # noqa: PLR1702 - still to split
             turn = flow
@@ -879,6 +896,7 @@ class Sessions:
         mcp_servers: dict[str, Any] | None = None,
         agents: dict[str, dict[str, Any]] | None = None,
         helpers: Helpers | None = None,
+        unit_scratch: tuple[str, str] | None = None,
     ):
         member = workspace if workspace is not None else cwd
         if not self.membership(member):
@@ -924,6 +942,7 @@ class Sessions:
                             mcp_servers=mcp_servers,
                             agents=agents,
                             hooks=helpers.hooks() if helpers is not None else None,
+                            unit_scratch=unit_scratch,
                         )
                     )
                     if step is None:

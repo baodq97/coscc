@@ -28,6 +28,7 @@ from coscc.agent import agents, instructions, modeltrial, steps, transcript
 from coscc.agent import sessions as sessions_mod
 from coscc.agent.helpers import DEFINITIONS, PROTOCOL, Helpers
 from coscc.runlog.journal import Journal, Outcome
+from coscc.units import scratch as scratch_mod
 from coscc.units import submit as submit_mod
 from coscc.agent.policy import (
     AGENT_TOOL,
@@ -1307,6 +1308,20 @@ class Runner:
             return grant
         return with_lists(grant, *lists_of(data.pref(GRANTS_PREF, {}), journal_key))
 
+    def _scratch(self, workspace: str, unit: str) -> tuple[Path, Path] | None:
+        """The unit's `(ram, disk)` scratch directories, made if missing, or `None` for a stand-in
+        `Sessions` with no config (a test's), which has no data root to put them in. Raises
+        `RunError` saying why when `scratch.ensure` would not use them."""
+        config = getattr(self.sessions, "config", None)
+        if config is None:
+            return None
+        try:
+            return scratch_mod.ensure(workspace, unit, config.data_dir)
+        except scratch_mod.Unsafe as e:
+            raise RunError(
+                f"the unit's scratch directory cannot be used, so the step did not start: {e}"
+            ) from e
+
     def _features(
         self,
         grant: Grant,
@@ -1617,6 +1632,8 @@ class Runner:
                 servers,
                 turn_kind,
                 ledger,
+                workspace,
+                unit,
             ):
                 if kind == "chunk":
                     pieces[-1] += payload
@@ -1897,11 +1914,15 @@ class Runner:
         servers: dict[str, Any],
         turn_kind: str,
         ledger: Helpers | None = None,
+        workspace: str = "",
+        unit: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """The main reply's stream. An `opening` or `closing` turn taken up again has its main reply
-        already."""
+        already. The unit's `(ram, disk)` scratch directories are made before the session opens:
+        the gate lets the step write below them and the session's environment names them."""
         if turn_kind in ("opening", "closing"):
             return _nothing()
+        places = self._scratch(workspace, unit)
         # A spike writes only its `cwd`; the worktree and the unit are read. Only when a sibling was
         # named, so every other step's gate is unchanged.
         gate_args = (
@@ -1911,6 +1932,8 @@ class Runner:
             if read_also
             else (str(directory),)
         )
+        # A step with nothing to name passes nothing, so a stand-in `stream` keeps working.
+        own = (str(places[0]), str(places[1])) if places is not None else None
         return self.sessions.stream(
             cwd,
             prompt,
@@ -1920,7 +1943,9 @@ class Runner:
             # when empty: `None` would fall back to `COS_TOOLS`, and an `idea` on a machine that set it
             # held tools with no gate in front of them.
             can_use_tool=(
-                permission_gate(grant, cwd, denials, *gate_args)
+                permission_gate(
+                    grant, cwd, denials, *gate_args, scratch=own, ram_cap=scratch_mod.RAM_CAP
+                )
                 if grant.opens_anything or channel is not None or grant.mcp
                 else None
             ),
@@ -1935,6 +1960,7 @@ class Runner:
             **servers,
             # Only a grant holding the helpers' tool gets them, and their ledger: impl.
             **({"agents": DEFINITIONS, "helpers": ledger} if ledger is not None else {}),
+            **({"unit_scratch": own} if own is not None else {}),
         )
 
     async def _conclude(

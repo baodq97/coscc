@@ -27,7 +27,7 @@ from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord, Journal
 from coscc.service.common import Invalid
 from coscc.service.store import BadName, Store, require_name, valid_name
-from coscc.units import BadUnit
+from coscc.units import BadUnit, scratch
 from coscc.units.history import BadTransition
 from coscc.units.meta import MetaError, UnitMeta
 
@@ -50,6 +50,23 @@ def _command_names(raw: object, field: str) -> list[str]:
         if n.strip() not in names:
             names.append(n.strip())
     return names
+
+
+def live_units(workspaces: Iterable[str], data_dir: str | None) -> dict[str, set[str]]:
+    """Each workspace's `units.slot` mapped to the unit directories it has, the shape
+    `scratch.sweep` takes as what to keep."""
+    live: dict[str, set[str]] = {}
+    for path in workspaces:
+        try:
+            found = {
+                e.name
+                for e in os.scandir(units.cos_dir(path, data_dir))
+                if e.is_dir() and units.UNIT_RE.fullmatch(e.name)
+            }
+        except OSError:
+            found = set()
+        live[units.slot(path)] = found
+    return live
 
 
 class Workspaces:
@@ -213,13 +230,15 @@ class Workspaces:
         return self._row(entry.name, entry.label)
 
     def remove(self, name: str) -> dict[str, Any]:
-        """Drops the entry only. The directory stays."""
+        """Drops the entry, and the scratch of every unit that is not in a workspace left. The
+        directory stays."""
         store = self._store_or_refuse()
         self._name_or_refuse(name)
         try:
             store.remove(name)
         except KeyError as e:
             raise Invalid(f"no such workspace: {name}") from e
+        scratch.sweep(live_units(self.all()["paths"], self.config.data_dir), self.config.data_dir)
         return {"removed": name, "count": len(self.all()["workspaces"])}
 
     async def pull(self, name: str) -> dict[str, Any]:

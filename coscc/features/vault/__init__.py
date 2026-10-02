@@ -146,7 +146,7 @@ class Handlers:
         if isinstance(uses, str) or not isinstance(capture, str):
             return _no(uses if isinstance(uses, str) else "capture is a ws: name")
         # The kernel lets the tool through by name; the line is this handler's to check.
-        words = policy.check_command(self._grant(), command, unit=self.facts.unit)
+        words = policy.check_command(self._grant(), command)
         if words:
             return _text({"result": "command-refused", "reason": words}, True)
         timeout = _seconds(args.get("timeout"))

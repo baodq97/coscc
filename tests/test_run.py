@@ -523,6 +523,10 @@ class TheServerIsHeld(unittest.TestCase):
                     recover or (lambda config: order.append("recover") or 0),
                 )
             )
+            # Nor the real temp directory and data root.
+            stack.enter_context(
+                mock.patch.object(run, "sweep_scratch", lambda config: order.append("sweep"))
+            )
             stack.enter_context(mock.patch("uvicorn.Server", FakeServer))
             stack.enter_context(mock.patch("uvicorn.Config", lambda *a, **k: (a, k)))
             stack.enter_context(mock.patch.object(run.frontend, "is_packaged", lambda: False))
@@ -557,7 +561,7 @@ class TheServerIsHeld(unittest.TestCase):
 
         order: list[str] = []
         self.main_with(lambda server: None, order)
-        self.assertEqual(order, ["recover", "purge", "server"])
+        self.assertEqual(order, ["recover", "purge", "sweep", "server"])
 
         def fails(config):
             raise RuntimeError("busy")
@@ -596,7 +600,7 @@ class TheServerIsHeld(unittest.TestCase):
 
         with self.assertLogs("coscc.run", "ERROR"):
             code, _ = self.main_with(lambda server: None, order, recover=fails_in_order)
-        self.assertEqual((code, order), (None, ["recover", "purge", "server"]))
+        self.assertEqual((code, order), (None, ["recover", "purge", "sweep", "server"]))
 
     def test_uvicorn_serves_the_guarded_app_and_trusts_no_proxy_header(self):
         """The guard is the target, and `X-Forwarded-For` is never read."""
@@ -621,6 +625,31 @@ class TheServerIsHeld(unittest.TestCase):
         code, finished = self.main_with(asked_to_stop)
         self.assertEqual((code, finished), (75, ["the hand-off"]))
         self.assertIsNone(update.take_handoff())
+
+
+class StartupSweepsScratch(unittest.TestCase):
+    def test_a_unit_no_workspace_has_loses_its_scratch(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import units
+        from coscc.units import scratch
+
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d).resolve()
+            (base / "tmp").mkdir()
+            ws = base / "repo"
+            data = base / "data"
+            (units.cos_dir(ws, data) / "0001_kept").mkdir(parents=True)
+            with mock.patch.object(tempfile, "tempdir", str(base / "tmp")):
+                kept = scratch.ensure(ws, "0001_kept", data)
+                ghost = scratch.ensure(ws, "9999_ghost", data)
+                config = SimpleNamespace(workspaces=[str(ws)], working_dir=None, data_dir=data)
+                run.sweep_scratch(config)
+            self.assertTrue(all(p.exists() for p in kept))
+            self.assertFalse(any(p.exists() for p in ghost))
 
 
 if __name__ == "__main__":

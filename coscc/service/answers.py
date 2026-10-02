@@ -29,7 +29,7 @@ from coscc.units import submit
 from coscc.units import transitions
 from coscc.agent import steps as steps_mod
 from coscc import units
-from coscc.units import worktrees
+from coscc.units import scratch, worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
 from coscc.service.autopilot import autopilot_values
 from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
@@ -1137,6 +1137,7 @@ class Answers:
                 root = str(Path(cwd).expanduser().resolve())
                 effects.append(await hold_rules.close_pr(root, branch))
                 effects.append(await hold_rules.remove_tree(cwd, unit, self.config.data_dir))
+                scratch.remove(cwd, unit, self.config.data_dir)
             # The hold's row and its run-log record in one transaction, after the effects
             # the record names.
             meta = self.ws.unit_meta()

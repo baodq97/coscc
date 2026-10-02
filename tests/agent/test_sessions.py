@@ -34,8 +34,10 @@ def _options(*args, **kw):
     return sessions._options(*args, **kw)
 
 
-def _child_env(cwd, workspace=None):
-    return sessions.child_env(cwd, workspace, data_dir=tempfile.gettempdir(), app_db=Data().db_path)
+def _child_env(cwd, workspace=None, scratch=None):
+    return sessions.child_env(
+        cwd, workspace, data_dir=tempfile.gettempdir(), app_db=Data().db_path, scratch=scratch
+    )
 
 
 def _info(session_id="s1", cwd="/p", summary="sum", **kw):
@@ -1279,6 +1281,23 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
             c = config.from_env(self.child())
             self.assertEqual((c.host, c.port), ("0.0.0.0", 8790))
 
+    def test_the_unit_scratch_directories_reach_the_child_and_tmpdir_is_the_disk_one(self):
+        """Set after every `COS_*` is blanked, so an inherited value of the same name is replaced."""
+        with mock.patch.dict(
+            os.environ, {"COS_SCRATCH_RAM": "/old", "COS_SCRATCH_DISK": "/old", "TMPDIR": "/old"}
+        ):
+            inherited = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+            inherited.update(_child_env("/w", scratch=("/r/ram", "/r/disk")))
+        self.assertEqual(inherited["COS_SCRATCH_RAM"], "/r/ram")
+        self.assertEqual(inherited["COS_SCRATCH_DISK"], "/r/disk")
+        self.assertEqual(inherited["TMPDIR"], "/r/disk")
+
+    def test_a_session_without_a_unit_names_no_scratch_and_keeps_its_tmpdir(self):
+        with mock.patch.dict(os.environ, {"COS_SCRATCH_RAM": "/old", "TMPDIR": "/t"}):
+            env = _child_env("/w")
+            self.assertEqual(env["COS_SCRATCH_RAM"], "")
+            self.assertNotIn("TMPDIR", env)
+
     def test_everything_else_is_left_alone(self):
         """Overridden, not replaced. A session that loses `HOME` cannot sign in."""
         with mock.patch.dict(os.environ, {"HOME": "/home/someone", "PATH": "/bin"}):
@@ -1371,6 +1390,15 @@ class EverySessionGetsADataRootOfItsOwn(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(mine, app)
         self.assertNotIn(app, mine.parents)
         self.assertNotIn(mine, app.parents)
+
+    async def test_a_steps_unit_scratch_is_in_the_environment_its_client_is_built_with(self):
+        paths = (str(self.tmp / "ram"), str(self.tmp / "disk"))
+        h = sessions.StepHandle()
+        [_ async for _ in self.s.stream("/tmp", "hi", step=h, unit_scratch=paths)]
+        [env] = _EnvClient.envs
+        self.assertEqual(env["COS_SCRATCH_RAM"], paths[0])
+        self.assertEqual(env["COS_SCRATCH_DISK"], paths[1])
+        self.assertEqual(env["TMPDIR"], paths[1])
 
     async def test_two_steps_get_two_directories(self):
         await self._step()
