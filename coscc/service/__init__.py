@@ -7,6 +7,7 @@ Nothing here imports a web framework; `Invalid` is how this layer refuses.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -34,6 +35,12 @@ from coscc.service.common import OWNER
 from coscc.service.update import SETTLE_POLL, as_invalid, update_words
 from coscc.service.watch import Watch
 from coscc.service.workspaces import Workspaces
+
+log = logging.getLogger(__name__)
+
+# How long `shutdown` waits for what it cancelled. Chosen, not measured: past it a step's
+# thread is left running rather than an update held up.
+SHUTDOWN_WITHIN = 10.0
 
 
 @dataclass
@@ -269,32 +276,68 @@ class Service:
         except updater_mod.Refused as e:
             raise as_invalid(e) from e
 
+    def _asks(self) -> list[tuple[str, asyncio.Task]]:
+        """The background `gh` asks running now: CI, the board's and the release panel's."""
+        return [
+            *((f"CI ask of {u} in {ws}", t) for (ws, u), t in self.steps.ci_asks.items()),
+            *((f"gh ask for {' '.join(k)}", t) for k, t in self.boards.prs.asks.items()),
+            *((f"release ask for {' '.join(k)}", t) for k, t in self.release.details.asks.items()),
+        ]
+
     async def shutdown(self) -> None:
-        """Cancel every step still running, and wait for them, 10 seconds at most.
+        """Cancel every autopilot pass, step, board read and background `gh` ask still running,
+        let every tree removal end as it would, and wait for all of them, `SHUTDOWN_WITHIN`
+        seconds at most from the call. An ask a request begins meanwhile is cancelled and
+        waited for too. Once this returns nothing they started still writes, unless it
+        outlived the deadline: each such one is logged by name.
 
         No `end` is written: a step with no `end` is what an app that went down mid-step looks like.
         """
-        # The autopilot first, so no pass starts a step while the rest go down.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + SHUTDOWN_WITHIN
+        # The autopilot first, so no pass starts a step while the rest go down. A pass may be
+        # in a board read's thread, so it is waited for too; taken before `stop` drops it.
+        autopilot = [
+            *((f"autopilot of {k}", t) for k, t in self.autopilot.tasks.items()),
+            *((f"pull request reader of {k}", t) for k, t in self.autopilot.pr_readers.items()),
+            *(("autopilot pass", t) for t in self.autopilot.pending),
+        ]
         for key in list(self.autopilot.tasks):
             self.autopilot.stop(key)
         for t in list(self.autopilot.pending):
             t.cancel()
-        # A CI ask, a board read and a held `gh` answer hold nothing worth waiting for.
-        for t in [
-            *self.steps.ci_asks.values(),
-            *self.boards.reads.values(),
-            *self.boards.prs.asks.values(),
-            *self.release.details.asks.values(),
-        ]:
-            t.cancel()
-        tasks = [
-            r.task for r in self.steps.registry.all() if r.task is not None and not r.task.done()
+        # A CI ask and a held `gh` answer hold nothing worth keeping, but their `gh` is reaped.
+        cancelled = [*autopilot, *self._asks()]
+        steps = [
+            (f"{r.stage} step of {r.unit} in {r.workspace}", r.task)
+            for r in self.steps.registry.all()
+            if r.task is not None and not r.task.done()
         ]
         # A step's task past `steps.release`, still in its `after_end`.
-        tasks += [
-            t for _entry, t in self.holds.finishing.values() if not t.done() and t not in tasks
+        steps += [
+            (f"after-end of {entry['unit']} in {entry['workspace']}", t)
+            for entry, t in self.holds.finishing.values()
+            if not t.done() and t not in [s for _label, s in steps]
         ]
-        for t in tasks:
+        cancelled += steps
+        for _label, t in cancelled:
             t.cancel()
-        if tasks:
-            await asyncio.wait(tasks, timeout=10)
+        # Board reads are cancelled there, and tree removals left to end.
+        waited = cancelled + await self.boards.stop()
+        while True:
+            left = {t for _label, t in waited if not t.done()}
+            if left:
+                await asyncio.wait(left, timeout=max(0.0, deadline - loop.time()))
+            # Only the board has a door: an ask a request began meanwhile is cancelled here.
+            seen = {t for _label, t in waited}
+            late = [(label, t) for label, t in self._asks() if t not in seen and not t.done()]
+            for _label, t in late:
+                t.cancel()
+            waited += late
+            if not late or loop.time() >= deadline:
+                break
+        for label, t in waited:
+            if not t.done():
+                log.warning(
+                    "shutdown returns with the %s still running after %gs", label, SHUTDOWN_WITHIN
+                )

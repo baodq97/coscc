@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sqlite3
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from coscc.units import backlog, prose_import
 from coscc.agent import agents
@@ -90,6 +91,23 @@ def _brief_rounds(units_: list[dict[str, Any]]) -> None:
                 f.pop("text", None)
 
 
+async def _in_thread[T](fn: Callable[..., T], *args: Any) -> T:
+    """`asyncio.to_thread`, except that a cancelled caller ends only once the thread returned: a
+    thread cannot be stopped, and one still writing `cos.db` after shutdown returned is what
+    this waits out."""
+    fut = asyncio.ensure_future(asyncio.to_thread(fn, *args))
+    try:
+        return await asyncio.shield(fut)
+    except asyncio.CancelledError:
+        # `wait` neither cancels `fut` nor raises what it raised; a second cancel waits on.
+        while not fut.done():
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.wait({fut})
+        if not fut.cancelled():
+            fut.exception()  # retrieved: the caller is told it was cancelled, nothing else
+        raise
+
+
 def answerable(unit: dict[str, Any]) -> bool:
     """Whether the board invites an answer on this unit: not once it is finished, closed or
     dropped."""
@@ -128,6 +146,8 @@ class Board:
         self.release.details.changed = self._changed
         # A finished unit's tree being removed, by `(cwd, unit)`: never waited on by a read.
         self._removing: dict[tuple[str, str], asyncio.Task] = {}
+        # Set by `stop`: the app is going down, and no read or removal starts any more.
+        self._stopping = False
 
     # -- the held board ---------------------------------------------------------
 
@@ -135,9 +155,14 @@ class Board:
         """The read of `cwd` running now, or a new one: one per workspace at a time. With
         `again`, a read already running reads once more when it ends, so what the task
         returns was read after this call. A `fresh` read waits on `gh` anew (`read`). Its
-        end is held in `held`."""
+        end is held in `held`. Once `stop` was called it is a read cancelled before it began,
+        as every running read was."""
         key = self.ws.key(cwd)
         loop = asyncio.get_running_loop()
+        if self._stopping:
+            task = loop.create_task(asyncio.sleep(0))
+            task.cancel()
+            return task
         task = self.reads.get(key)
         if task is not None and not task.done() and task.get_loop() is loop:
             if again:
@@ -184,6 +209,20 @@ class Board:
         if found is not None:
             self.refresh(found["cwd"], again=True)
 
+    async def stop(self) -> list[tuple[str, asyncio.Task]]:
+        """The board closed for the app going down: no read or removal starts from now on,
+        every read running is cancelled, and every removal running is left to end as it would.
+        Returns them all, each with what it is, for shutdown to wait on: taken before their
+        ends drop them from `reads` and `_removing`."""
+        self._stopping = True
+        waited = [(f"board read of {key}", t) for key, t in self.reads.items()]
+        for _label, t in waited:
+            t.cancel()
+        waited += [
+            (f"tree removal of {unit} in {cwd}", t) for (cwd, unit), t in self._removing.items()
+        ]
+        return waited
+
     # -- board --------------------------------------------------------------
 
     async def _import_rounds(self, cwd: str, units_: list[dict[str, Any]]) -> None:
@@ -194,7 +233,7 @@ class Board:
         meta = self.ws.unit_meta()
         key = self.ws.key(cwd)
         try:
-            if await asyncio.to_thread(meta.data.has_run, prose_import.key(meta.root, key)):
+            if await _in_thread(meta.data.has_run, prose_import.key(meta.root, key)):
                 return
             root = Path(cwd).expanduser().resolve()
             heads: dict[str, str] = {}
@@ -208,7 +247,7 @@ class Board:
                     heads[sha] = await gitops.rev_parse(root, sha)
                 except GitError:
                     pass
-            await asyncio.to_thread(prose_import.import_rounds, meta, key, units_, heads)
+            await _in_thread(prose_import.import_rounds, meta, key, units_, heads)
         except (Busy, sqlite3.Error, OSError) as e:
             log.warning("the review rounds of %s could not be imported: %s", key, e)
 
@@ -237,7 +276,7 @@ class Board:
             peers, problems = self.ws.peer_table()
             return self.ws.snapshot(cwd, peers=peers), problems
 
-        state, peer_problems = await asyncio.to_thread(_snapshot)
+        state, peer_problems = await _in_thread(_snapshot)
         lap("snapshot")
         try:
             data = await board_reader.read(self.ws.units_root(cwd), state=state)
@@ -285,9 +324,7 @@ class Board:
                 # One read for every unit's cost, comment attempts and the backlog's
                 # records. Asking `totals` per unit re-scanned the
                 # working folder N times for the rows this already has.
-                modes, rows = await asyncio.to_thread(
-                    lambda: (journal.modes(key), journal.records(key))
-                )
+                modes, rows = await _in_thread(lambda: (journal.modes(key), journal.records(key)))
             except Busy as e:
                 raise Invalid(str(e)) from e
             timelines = timelines_of(rows)
@@ -501,7 +538,7 @@ class Board:
 
     def _remove_later(self, cwd: str, unit: dict[str, Any]) -> None:
         slot = (cwd, unit["name"])
-        if slot in self._removing:
+        if slot in self._removing or self._stopping:
             return
 
         async def remove() -> None:

@@ -14,9 +14,11 @@ to make that impossible:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import shutil
+import signal
 from pathlib import Path
 
 # # Measured cloning over https: about 4 MB/s, and a pull with nothing to fetch costs about a
@@ -69,6 +71,18 @@ def child_env() -> dict[str, str]:
     return env
 
 
+async def kill_group(proc: asyncio.subprocess.Process) -> None:
+    """Kill a child started with `process_group=0` and everything it started, then reap it.
+
+    The group, not the child: an `ssh` or a credential helper left holding the pipe would hold
+    `wait` until it exits. One that exited as the kill came is only reaped.
+    """
+    if proc.returncode is None:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    await proc.wait()
+
+
 async def _run(argv: list[str], timeout: float, cwd: str | None = None, strip: bool = True) -> str:
     proc = await asyncio.create_subprocess_exec(
         *argv,
@@ -77,13 +91,17 @@ async def _run(argv: list[str], timeout: float, cwd: str | None = None, strip: b
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         stdin=asyncio.subprocess.DEVNULL,
+        process_group=0,
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
+        await kill_group(proc)
         raise GitError(f"git timed out after {timeout:.0f}s: {' '.join(argv[:2])}")
+    except asyncio.CancelledError:
+        # A cancelled caller leaves no `git` behind it: shutdown returns once this has.
+        await kill_group(proc)
+        raise
     text = (out or b"").decode(errors="replace")
     text = text.strip() if strip else text[:-1] if text.endswith("\n") else text
     if proc.returncode != 0:
@@ -103,13 +121,16 @@ async def _run_code(argv: list[str], timeout: float, cwd: str | None = None) -> 
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         stdin=asyncio.subprocess.DEVNULL,
+        process_group=0,
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
+        await kill_group(proc)
         raise GitError(f"git timed out after {timeout:.0f}s: {' '.join(argv[:2])}")
+    except asyncio.CancelledError:
+        await kill_group(proc)
+        raise
     text = (out or b"").decode(errors="replace").strip()
     return proc.returncode or 0, text
 

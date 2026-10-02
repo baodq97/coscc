@@ -20,6 +20,7 @@ from typing import Any
 # Which copy of the harness, and where, is `coscc/agent/harness.py`'s question.
 from coscc.agent import harness
 from coscc.agent.harness import child_env as _child_env
+from coscc.git.gitops import kill_group
 from coscc.units import guards
 
 # Turns a hung child into an error rather than bounding the work (like `store.LOCK_TIMEOUT`).
@@ -100,14 +101,15 @@ async def _run(argv: list[str], timeout: float, stdin: str | None = None) -> tup
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         stdin=asyncio.subprocess.DEVNULL if stdin is None else asyncio.subprocess.PIPE,
+        process_group=0,
     )
     try:
         out, err = await asyncio.wait_for(
             proc.communicate(None if stdin is None else stdin.encode()), timeout=timeout
         )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
+    except asyncio.TimeoutError, asyncio.CancelledError:
+        # A cancelled caller leaves no `node` behind it either, nor what `node` started.
+        await kill_group(proc)
         raise
     return (
         proc.returncode or 0,
