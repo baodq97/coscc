@@ -34,7 +34,14 @@ directory, and five units in it, always the same, so a spec can name its address
 
 After them `make_idea_fixture` makes `0006_frontend-calls-api`, and
 `0007_unread-status` has a spec whose status no stage writes, so `/settings` lists it in
-its import report. Every file is written by hand, then goes into `cos.db` through the
+its import report. Then `AUTOPILOT_FIXTURE`:
+
+    0008_draft-impl        a draft impl.md with no question, gone on with twice on
+                           one head by the autopilot (`make_autopilot_fixture`)
+    0009_refused-impl      an accepted plan, whose `impl` the autopilot queued and
+                           the gate refused with `gate-closed` (`seed_refusal`)
+
+Every file is written by hand, then goes into `cos.db` through the
 import and an ingest (`ingest_fixture`), since the board reads a unit from there.
 
 The run log holds a `spec` run that ended `done` for $0.52 and an `impl` run
@@ -50,9 +57,10 @@ visible text as `<address slug>-<W>x<H>.txt`.
 `v0.1.0`, then a `feat` and a `build(deps)` commit of no unit (`seed_release`), so `/board`
 shows its *Release* panel ready with `0.2.0` proposed.
 
-The autopilot is on for `proj` and the run log holds no `shortlist`, so `/board`
-shows its strip with one *No shortlist* stop and it starts nothing. **Add a shortlist to the
-fixture and the app under the camera starts real steps**, sessions that spend quota.
+The autopilot is on for `proj` and its shortlist names `0008` and `0009` alone, so `/board`
+shows its strip with stop `e` on the first and stop `f` on the second, and it starts nothing.
+**Add a unit to the shortlist, or let one of the two leave its stop, and the app under the
+camera starts real steps**, sessions that spend quota.
 
 For example `/board`, `/settings`, or `/unit?ws=proj&id=0002_open-question&tab=questions`
 (`tab` is one of `coscc/state/place.py`'s `TABS`, lowercase; any other value opens `overview`).
@@ -197,6 +205,24 @@ FIXTURE = {
     },
 }
 
+# The two units the shortlist names, each at a stop of the autopilot, so it starts neither.
+AUTOPILOT_FIXTURE = {
+    # A draft `impl.md` with no question, gone on with twice on one head: stop `e`.
+    "draft-impl": {
+        "intent.md": INTENT.format(title="draft impl", problem="Một impl còn draft."),
+        "spec.md": "# Spec: draft impl\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
+        "plan.md": "# Plan: draft impl\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
+        "impl.md": "# Impl: draft impl\nIntent: intent.md. Author: capture_screens. Status: draft.\n",
+    },
+    # An `impl` the autopilot queued that the gate refused (`seed_refusal`): stop `f`.
+    "refused-impl": {
+        "intent.md": INTENT.format(title="refused impl", problem="Một impl bị gate từ chối."),
+        "spec.md": "# Spec: refused impl\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
+        "plan.md": "# Plan: refused impl\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
+    },
+}
+DRAFT_IMPL, REFUSED_IMPL = "0008_draft-impl", "0009_refused-impl"
+
 FAKE_GH = '#!/bin/sh\nif [ "$1" = pr ] && [ "$2" = list ]; then echo \'[]\'; exit 0; fi\nexit 1\n'
 
 
@@ -305,9 +331,12 @@ def run_build(env: dict[str, str]) -> bool:
     return subprocess.run([sys.executable, "-m", "coscc.build"], cwd=REPO, env=env).returncode == 0
 
 
-def make_fixture(api: httpx.Client, proj: Path) -> None:
-    """The five units, numbered 0001–0005 in this order, through the app's own route."""
-    for name, files in FIXTURE.items():
+def make_fixture(
+    api: httpx.Client, proj: Path, fixture: dict[str, dict[str, str]] = FIXTURE
+) -> None:
+    """The units of `fixture`, numbered in this order after those already there (0001–0005
+    for `FIXTURE`), through the app's own route."""
+    for name, files in fixture.items():
         made = api.post(
             "/api/units",
             json={
@@ -474,6 +503,51 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
         )
 
 
+def seed_refusal(data_dir: Path, proj: Path) -> None:
+    """The autopilot's `impl` of `0009_refused-impl`, refused by the gate with `gate-closed`.
+    Written before the app starts, so its scheduler never sees the row `queued`."""
+    from coscc.bus import Bus
+    from coscc.service.attempts import Attempts
+
+    attempts = Attempts(data_dir, Bus())
+    row = attempts.open("step", str(proj.resolve()), REFUSED_IMPL, "impl", started_by="autopilot")
+    attempts.move(row["id"], "refused", "gate-closed")
+
+
+def make_autopilot_fixture(api: httpx.Client, work: Path, data_dir: Path, proj: Path) -> None:
+    """`AUTOPILOT_FIXTURE`, a shortlist of those two units alone, and two tries of
+    `0008_draft-impl` on one head: each an `autopilot-pick` that went on with the draft and the
+    step it began, ended."""
+    from coscc.runlog.journal import Journal
+
+    make_fixture(api, proj, AUTOPILOT_FIXTURE)
+    journal, key = Journal(work, data_dir), str(proj.resolve())
+    for _ in range(2):
+        journal.append(
+            {
+                "kind": "autopilot-pick",
+                "workspace": key,
+                "unit": DRAFT_IMPL,
+                "stage": "impl",
+                "continued": True,
+            }
+        )
+        journal.started(
+            key, DRAFT_IMPL, "impl", "autonomous", started_by="autopilot", head="d" * 40
+        )
+        journal.finished(key, DRAFT_IMPL, "impl", "done", turns=8, cost_usd=0.30)
+    journal.append(
+        {
+            "kind": "shortlist",
+            "workspace": key,
+            "unit": "",
+            "units": [DRAFT_IMPL, REFUSED_IMPL],
+            "reason": "capture_screens",
+            "by": "owner",
+        }
+    )
+
+
 def _tokens(total: int) -> dict[str, int]:
     """`total` split across the four billed kinds, cache reads the most as in real runs."""
     return {
@@ -637,6 +711,7 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
         seed_release(proj)
         token = seed_session(data_dir)
         seed_conversation(proj)
+        seed_refusal(data_dir, proj)
         with RealApp(config, work, data_dir) as app:
             with httpx.Client(base_url=app.base, timeout=30, cookies={auth.COOKIE: token}) as api:
                 added = api.post("/api/workspaces", json={"name": "proj"})
@@ -652,13 +727,15 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                     make_fixture(api, proj)
                     make_idea_fixture(api, proj, other)
                     make_unread_fixture(api, proj)
+                    make_autopilot_fixture(api, work, data_dir, proj)
                     ingest_fixture(work, data_dir, proj, other)
                     seed_runs(work, data_dir, proj)
                     seed_transitions(work, data_dir, proj)
                 except RuntimeError as e:
                     print(str(e), file=sys.stderr)
                     return EXIT_BROKEN
-                # The autopilot on, and no shortlist, so it starts nothing and says so.
+                # The autopilot on, and each unit of the shortlist at a stop, so it starts nothing
+                # and says why.
                 on = api.post(
                     "/api/settings/autopilot",
                     json={"cwd": str(proj), "name": "autopilot", "value": True},
