@@ -288,6 +288,44 @@ class TheFilesTouched(Fixture):
         self.assertNotIn("touched_steps", self.measure())
 
 
+class TheCharactersRead(Fixture):
+    def chars(self) -> dict:
+        with Data(self.data).connect() as conn:
+            steps = turnstats.pairs(conn, self.key, None, None)
+            runs = [p["end"].get("run") or "" for p in steps]
+            return turnstats.read_chars(conn, runs, "graph")
+
+    def test_every_read_and_the_servers_tools_are_summed_apart_and_the_rest_ignored(self):
+        self.step("2026-09-24T10:00:00", "0001_a", turns=1, run="r1")
+        self.calls(
+            "r1",
+            self.use("a", "Read", file_path="/anywhere/x.py"),
+            self.result("a", "x" * 5, truncated=True, length=1000, truncated_fields=["content"]),
+            self.use("b", "Read", file_path="/w/y.py"),
+            self.result("b", "y" * 7),
+            self.use("c", "mcp__graph__find", query="q"),
+            self.result("c", [{"type": "text", "text": "z" * 11}]),
+            self.use("d", "Grep", pattern="p"),
+            self.result("d", "g" * 50),
+            self.use("e", "mcp__other__find"),
+            self.result("e", "o" * 50),
+        )
+        self.assertEqual(self.chars(), {"r1": (1007, 11)})
+
+    def test_a_purged_step_or_one_with_no_run_is_left_out(self):
+        self.step("2026-09-24T10:00:00", "0001_a", turns=1, run="r1")
+        self.step("2026-09-24T11:00:00", "0002_b", turns=1)
+        self.step("2026-09-24T12:00:00", "0003_c", turns=1, run="r3")
+        self.calls("r3", self.use("a", "Read", file_path="/x"), self.result("a", "abc"))
+        with Data(self.data).connect() as conn:
+            conn.execute(
+                "INSERT INTO step_runs (run, root, workspace, unit, stage, started_at, purged_at) "
+                "VALUES ('r1', '/r', ?, 'u', 'impl', 0, '2026-10-25T00:00:00')",
+                (self.key,),
+            )
+        self.assertEqual(self.chars(), {"r3": (3, 0)})
+
+
 class TheCommand(Fixture):
     def main(self, *args: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()

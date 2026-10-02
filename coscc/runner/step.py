@@ -13,6 +13,7 @@ whose rules it cannot find does not run.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -1322,7 +1323,7 @@ class Runner:
                 f"the unit's scratch directory cannot be used, so the step did not start: {e}"
             ) from e
 
-    def _features(
+    async def _features(
         self,
         grant: Grant,
         running: Any,
@@ -1354,7 +1355,7 @@ class Runner:
             resumed=resumed,
         )
         ledger, blocks = _helpers_of(
-            grant, recorder, () if resumed else self._blocks(facts), resumed
+            grant, recorder, () if resumed else await self._blocks(facts), resumed
         )
         return recorder, facts, blocks, ledger
 
@@ -1372,19 +1373,22 @@ class Runner:
         servers: dict[str, Any] = (
             {submit_mod.SERVER: channel.server(*extra)} if channel is not None else {}
         )
-        tools = self.hooks.for_step(facts.stage, facts.workspace).tools
+        tools = self.hooks.tools_for(facts)
         if tools:
             grant = replace(grant, mcp=hooks_mod.granted(tools))
             servers.update({t.server: t.make(facts) for t in tools})
         return grant, ({"mcp_servers": servers} if servers else {})
 
-    def _blocks(self, facts: hooks_mod.Facts) -> tuple[tuple[str, str], ...]:
+    async def _blocks(self, facts: hooks_mod.Facts) -> tuple[tuple[str, str], ...]:
         """The prompt blocks features add to this run, in order, those with words only."""
-        rendered = (
-            (b.name, b.render(facts))
-            for b in self.hooks.for_step(facts.stage, facts.workspace).blocks
-        )
-        return tuple((name, text) for name, text in rendered if text)
+        out = []
+        for b in self.hooks.for_step(facts.stage, facts.workspace).blocks:
+            text = b.render(facts)
+            if inspect.isawaitable(text):
+                text = await text
+            if text:
+                out.append((b.name, text))
+        return tuple(out)
 
     async def run(
         self,
@@ -1487,7 +1491,7 @@ class Runner:
         cwd = cwd or workspace
         was = dict((resume or {}).get("owner") or {})
         turn_kind = str(was.get("kind") or "step") if resume is not None else ""
-        recorder, facts, blocks, ledger = self._features(
+        recorder, facts, blocks, ledger = await self._features(
             grant,
             running,
             workspace=workspace,

@@ -59,13 +59,36 @@ class HooksKeepOnlyWhatIsOnAndMeantForTheStage(unittest.TestCase):
         self.assertTrue(Hooks().enabled("x", "/w"))
 
 
+class AToolIsGrantedOnlyToARunItsWhenLetsThrough(unittest.TestCase):
+    def test_the_even_unit_of_a_pilot_gets_the_tool_and_the_odd_one_does_not(self):
+        armed = Tool("armed", ("ping",), ("impl",), lambda f: {}, when=_even)
+        plain = tool(server="plain")
+        h = Hooks(parts=(("a", Parts(tools=(armed, plain))),))
+        even = FactsFollowTheRunsTree._facts(None, None, unit="0002_u", stage="impl")
+        odd = FactsFollowTheRunsTree._facts(None, None, unit="0003_u", stage="impl")
+        self.assertEqual(h.tools_for(even), (armed, plain))
+        self.assertEqual(h.tools_for(odd), (plain,))
+        self.assertEqual(hooks.granted(h.tools_for(odd)), ("mcp__plain__ping",))
+
+    def test_a_tool_off_for_the_workspace_is_not_asked(self):
+        asked = []
+        t = Tool("t", ("ping",), ("impl",), lambda f: {}, when=lambda f: asked.append(f) or True)
+        h = Hooks(parts=(("a", Parts(tools=(t,))),), enabled=lambda _f, _w: False)
+        self.assertEqual(h.tools_for(FactsFollowTheRunsTree._facts(None, None, stage="impl")), ())
+        self.assertEqual(asked, [])
+
+
+def _even(facts) -> bool:
+    return int(facts.unit[:4]) % 2 == 0
+
+
 class FactsFollowTheRunsTree(unittest.TestCase):
-    def _facts(self, watch):
+    def _facts(self, watch, unit="0001_u", stage="spike"):
         return hooks.facts(
             workspace="/w",
             workspace_key="k",
-            unit="0001_u",
-            stage="spike",
+            unit=unit,
+            stage=stage,
             run="r",
             cwd="/scratch",
             watch=watch,

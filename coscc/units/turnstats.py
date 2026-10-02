@@ -231,6 +231,41 @@ def file_fields(
     }
 
 
+def read_chars(
+    conn: sqlite3.Connection, runs: list[str], server: str
+) -> dict[str, tuple[int, int]]:
+    """`{run: (read, served)}` for each of `runs` (an `end`'s `run`) whose events remain: the
+    characters every `Read` returned, and those every tool of the MCP `server`
+    (`mcp__<server>__*`) returned, counted as `file_fields` counts them. An empty `run`, or one
+    whose events `events.purge` deleted, is not in it."""
+    prefix = f"mcp__{server}__"
+    out: dict[str, tuple[int, int]] = {}
+    for run in runs:
+        if not run:
+            continue
+        index = conn.execute("SELECT purged_at FROM step_runs WHERE run = ?", (run,)).fetchone()
+        if index and index[0]:
+            continue
+        names: dict[str, str] = {}
+        read = served = 0
+        for kind, raw in conn.execute(
+            "SELECT kind, event FROM step_events WHERE run = ? AND kind IN ('tool_use', 'tool_result') "
+            "ORDER BY seq",
+            (run,),
+        ).fetchall():
+            event = json.loads(raw)
+            if kind == "tool_use":
+                names[event.get("id")] = str(event.get("name") or "")
+                continue
+            name = names.get(event.get("tool_use_id"), "")
+            if name == "Read":
+                read += _result_chars(event)
+            elif name.startswith(prefix):
+                served += _result_chars(event)
+        out[run] = (read, served)
+    return out
+
+
 def changes_requested(text: str) -> int:
     """The rounds of a `review.md` whose first `Verdict:` is `changes-requested`."""
     parts = _ROUND.split(text)[1:]
@@ -238,13 +273,11 @@ def changes_requested(text: str) -> int:
     return sum(1 for m in firsts if m and m.group(1) == "changes-requested")
 
 
-def quality_fields(
-    conn: sqlite3.Connection, workspace: str, cos_dir: Path, since: str | None, until: str | None
-) -> dict[str, Any]:
-    """Shipped is a `ship.md` -> `accepted` transition in the window; (a) counts only the
-    `impl` starts in the window, (b) reads `review.md` from the unit store.
-    """
-    shipped = sorted(
+def shipped_units(
+    conn: sqlite3.Connection, workspace: str, since: str | None, until: str | None
+) -> list[str]:
+    """The units with a `ship.md` -> `accepted` transition in the window, sorted."""
+    return sorted(
         {
             unit
             for unit, at in conn.execute(
@@ -255,6 +288,15 @@ def quality_fields(
             if _in(at, since, until)
         }
     )
+
+
+def quality_fields(
+    conn: sqlite3.Connection, workspace: str, cos_dir: Path, since: str | None, until: str | None
+) -> dict[str, Any]:
+    """Shipped is `shipped`; (a) counts only the `impl` starts in the window, (b) reads
+    `review.md` from the unit store.
+    """
+    shipped = shipped_units(conn, workspace, since, until)
     starts: dict[str, int] = {}
     for unit, at in conn.execute(
         "SELECT unit, at FROM runs WHERE workspace = ? AND kind = 'start' AND stage = 'impl'",

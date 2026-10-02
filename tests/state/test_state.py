@@ -2236,19 +2236,26 @@ class ADependencyChosenOnAnIdeaCanBeTakenBack(unittest.TestCase):
 
 
 class AFeatureIsTurnedOffFromSettings(unittest.TestCase):
-    """The switch goes through `plugin.set_enabled`, the same call as `POST /api/features`."""
+    """The choice goes through `plugin.set_state`, the same call as `POST /api/features`."""
 
     def test_off_then_on_for_the_open_workspace_only(self):
         import tempfile
         from types import SimpleNamespace
         from unittest import mock
 
+        from coscc import plugin
         from coscc.state import StudioState
 
         with tempfile.TemporaryDirectory() as root:
             service = mock.Mock(config=mock.Mock(data_dir=root))
             service.ws.check.side_effect = lambda cwd: cwd
-            api = SimpleNamespace(state=SimpleNamespace(features=("notices", "vault")))
+            plugins = (
+                plugin.Plugin("notices", lambda _c: []),
+                plugin.Plugin("graph", lambda _c: [], default="off", pilot=True),
+            )
+            api = SimpleNamespace(
+                state=SimpleNamespace(ctx=plugin.ctx_of(service, plugins), plugins=plugins)
+            )
             page = SimpleNamespace(cwd="/w", features=[], notice="")
             page._load_features = lambda: StudioState._load_features(page)
             switch = StudioState.event_handlers["set_feature"].fn
@@ -2256,17 +2263,21 @@ class AFeatureIsTurnedOffFromSettings(unittest.TestCase):
                 mock.patch("coscc.state.app.SERVICE", service),
                 mock.patch("coscc.state.app.API", api),
             ):
-                switch(page, "vault", False)
+                switch(page, "notices", "off")
                 self.assertEqual(
-                    [(f.name, f.on) for f in page.features], [("notices", True), ("vault", False)]
+                    [(f.name, f.state, f.pilot) for f in page.features],
+                    [("notices", "off", False), ("graph", "off", True)],
                 )
+                self.assertEqual(page.features[0].sentence, "Off in this workspace.")
                 page.cwd = "/other"
                 page._load_features()
-                self.assertTrue(all(f.on for f in page.features))
+                self.assertEqual([f.state for f in page.features], ["on", "off"])
                 page.cwd = "/w"
-                switch(page, "vault", True)
-                self.assertTrue(all(f.on for f in page.features))
-                switch(page, "nope", False)
+                switch(page, "graph", "pilot")
+                self.assertEqual([f.state for f in page.features], ["off", "pilot"])
+                switch(page, "notices", "pilot")
+                self.assertEqual(page.notice, "notices has no pilot: choose on or off")
+                switch(page, "nope", "off")
                 self.assertEqual(page.notice, "not a feature: nope")
 
 
@@ -2285,7 +2296,7 @@ class AFeaturePageIsFramedFromItsOwnRoute(unittest.TestCase):
         ctx = SimpleNamespace(enabled=lambda feature, cwd: on)
         with (
             mock.patch.object(state.app.API.state, "pages", pages, create=True),
-            mock.patch.object(state.plugin, "ctx_of", lambda service: ctx),
+            mock.patch.object(state.app.API.state, "ctx", ctx, create=True),
         ):
             state.StudioState._show_feature(page, name, "/w s")
         return page

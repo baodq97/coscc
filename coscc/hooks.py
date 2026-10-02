@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Awaitable, Callable
 
 from claude_agent_sdk import McpServerConfig
 
@@ -39,14 +39,20 @@ class Facts:
     resumed: bool
 
 
+def _any_run(_facts: Facts) -> bool:
+    return True
+
+
 @dataclass(frozen=True)
 class Tool:
-    """MCP tools of one server. `make` is called once per run, so a server is never shared."""
+    """MCP tools of one server. `make` is called once per run, so a server is never shared;
+    `when` is asked first, and a run it says no to gets neither the server nor its names."""
 
     server: str
     names: tuple[str, ...]
     stages: tuple[str, ...]
     make: Callable[[Facts], McpServerConfig]
+    when: Callable[[Facts], bool] = _any_run
 
     def __post_init__(self) -> None:
         if not SERVER.fullmatch(self.server) or self.server == KERNEL_SERVER:
@@ -68,10 +74,11 @@ class Guard:
 
 @dataclass(frozen=True)
 class Block:
-    """A named block of the prompt. An empty string adds nothing."""
+    """A named block of the prompt. An empty string adds nothing. A render that waits on
+    something is a coroutine, awaited before the session starts."""
 
     name: str
-    render: Callable[[Facts], str]
+    render: Callable[[Facts], str | Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -100,6 +107,10 @@ class Hooks:
             guards=tuple(g for p in on for g in p.guards),
             blocks=tuple(b for p in on for b in p.blocks),
         )
+
+    def tools_for(self, facts: Facts) -> tuple[Tool, ...]:
+        """`for_step`'s tools that this run's `when` lets through."""
+        return tuple(t for t in self.for_step(facts.stage, facts.workspace).tools if t.when(facts))
 
 
 def granted(tools: tuple[Tool, ...]) -> tuple[str, ...]:
