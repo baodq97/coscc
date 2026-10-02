@@ -30,9 +30,31 @@ def _node_message(arg: str, e: OSError) -> str:
 
 
 def _json_message(text: str, e: json.JSONDecodeError) -> str:
-    """V8's `JSON.parse` words for the two failures said alike everywhere; Python's otherwise."""
-    if text.strip(" \t\n\r") == "":
+    """V8's `JSON.parse` words for a token that opens no value, the end of input and trailing
+    text; Python's for any other failure."""
+    at = e.pos
+    # V8 reads `t`, `f` and `n` as `true`, `false` and `null`, and names the first letter off it.
+    word = {"t": "true", "f": "false", "n": "null"}.get(text[at : at + 1])
+    if e.msg == "Expecting value" and word:
+        at += next((i for i, c in enumerate(word) if text[at + i : at + i + 1] != c), 0)
+    if text.strip(" \t\n\r") == "" or (e.msg == "Expecting value" and at >= len(text)):
         return "Unexpected end of JSON input"
+    if e.msg == "Expecting value":
+        # V8 quotes the whole text under 21 characters, else 10 either side of the token.
+        if len(text) < 21:
+            source = f'"{text}"'
+        else:
+            start, end = max(0, at - 10), min(len(text), at + 10)
+            pre, post = ("..." if start > 0 else ""), ("..." if end < len(text) else "")
+            source = f'{pre}"{text[start:end]}"{post}'
+        return f"Unexpected token '{text[at]}', {source} is not valid JSON"
+    if e.msg == "Extra data":
+        line = text.count("\n", 0, at) + 1
+        column = at - (text.rfind("\n", 0, at) + 1) + 1
+        return (
+            "Unexpected non-whitespace character after JSON "
+            f"at position {at} (line {line} column {column})"
+        )
     return e.msg
 
 
