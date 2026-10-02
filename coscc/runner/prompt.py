@@ -342,6 +342,17 @@ def _rerun_block(directory: Path, stage: str, artifact: str, note: str) -> str:
     return text
 
 
+def _app_note_block(note: str) -> str:
+    """What the app itself tells a step the autopilot queued: why it runs now. Apart from a
+    person's note, so the agent never reads it as the intent's owner's wish."""
+    return (
+        "# What the app noted\n\n"
+        "The autopilot queued this step and wrote the note below. It is the app's reading of the "
+        "unit, not a person's request or decision.\n\n"
+        f"~~~\n{note.strip()}\n~~~"
+    )
+
+
 def build_prompt(*args: Any, **kwargs: Any) -> tuple[str, list[str]]:
     """`compose_prompt` without `pointed`."""
     prompt, included, _ = compose_prompt(*args, **kwargs)
@@ -858,6 +869,7 @@ def compose_prompt(
     ceilings: tuple[int, float] | None = None,
     rerun: bool = False,
     rerun_note: str = "",
+    app_note: str = "",
     plan_map: str = "",
     commands: tuple[str, ...] = (),
     unfinished_round: dict[str, Any] | None = None,
@@ -878,7 +890,8 @@ def compose_prompt(
     `agent` is the stage's resolved row of the agent table; its section opens the prompt.
     `idea_note` is the shared idea a unit was opened from (`intent` only); `siblings_note` the
     sibling checkouts `impl` may read (`impl` only). `rerun` is true only for a stage a person
-    ran again from the board, with `rerun_note` their note. `plan_map` is what `planmap.for_step` built and
+    ran again from the board, with `rerun_note` their note; `app_note` is the autopilot's own,
+    under its own heading. `plan_map` is what `planmap.for_step` built and
     `commands` the words of the step's grant (`impl` only). `unfinished_round` is
     `{"n", "dropped"}` of a last round the loop read as unfinished (`review` only).
     `runs_commands` is true when the step's grant holds `Bash`. `unit_meta` is the unit's entry
@@ -920,6 +933,8 @@ def compose_prompt(
     parts += files
     parts += [text for _name, text in blocks if text]
     # Just before the task, so the note is the last thing read before it.
+    if app_note.strip():
+        parts.append(_app_note_block(app_note))
     if rerun:
         parts.append(_rerun_block(directory, stage, artifact, rerun_note))
     parts.append(_task(workspace, directory, unit, artifact, writes_own))

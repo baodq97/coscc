@@ -411,6 +411,7 @@ async def _compose(
     drift_note: str,
     rerun: bool,
     rerun_note: str,
+    app_note: str,
     plan_map: str,
     unfinished_round: dict[str, Any] | None,
     idea_note: str,
@@ -445,6 +446,7 @@ async def _compose(
         ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
         rerun=rerun,
         rerun_note=rerun_note,
+        app_note=app_note,
         plan_map=plan_map,
         commands=grant.commands if stage == "impl" else (),
         unfinished_round=unfinished_round,
@@ -1426,6 +1428,7 @@ class Runner:
         trial_record: dict[str, Any] | None = None,
         rerun: bool = False,
         rerun_note: str = "",
+        app_note: str = "",
         plan_map: str = "",
         plan_map_record: dict[str, Any] | None = None,
         unfinished_round: dict[str, Any] | None = None,
@@ -1452,7 +1455,7 @@ class Runner:
 
         `model`, `model_source`, `effort`, the label fields, `impl_run`, `base`, `plan_drift`,
         `shortlist`, `started_by` (`person` or `autopilot`, else `ValueError`),
-        `trial_record`, `plan_map*`, `rerun*`, `agent`
+        `trial_record`, `plan_map*`, `rerun*`, `app_note` (the autopilot's note), `agent`
         (the stage's resolved agent-table row; a preset session gets its commit attribution as
         `settings`) and `meta` (the unit's snapshot entry) are carried into the prompt or the
         `start` record and nowhere else; this module reads no git and decides no meaning.
@@ -1523,6 +1526,7 @@ class Runner:
             drift_note=drift_note,
             rerun=rerun,
             rerun_note=rerun_note,
+            app_note=app_note,
             plan_map=plan_map,
             unfinished_round=unfinished_round,
             idea_note=idea_note,

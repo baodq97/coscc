@@ -829,6 +829,59 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.assertTrue(task.cancelled())
         self.assertEqual(self.service.holds.finishing, {})
 
+    def test_a_step_the_autopilot_queued_runs_to_its_end_with_no_reader(self):
+        """`enqueue_step` opens no reader; the step's own task still ends the attempt,
+        publishes `step.ended` and runs `after_end`."""
+        ended: list[str] = []
+        self.service.bus.subscribe("step.ended", lambda e: ended.append(e.unit))
+        real = self.service.steps.after_end
+        after: list[str] = []
+
+        async def counted(*args):
+            after.append(args[2])
+            await real(*args)
+
+        async def go():
+            self.service.steps.after_end = counted
+            attempt = self.service.steps.enqueue_step(str(self.repo), self.unit, "spec")
+            for _ in range(1000):
+                if after and not self.service.holds.finishing:
+                    break
+                await asyncio.sleep(0.01)
+            return attempt
+
+        row = self.service.attempts.get(asyncio.run(go()))
+        self.assertEqual(
+            (row["state"], row["outcome"], row["started_by"]), ("ended", "done", "autopilot")
+        )
+        self.assertEqual((ended, after), ([self.unit], ["spec"]))
+        self.assertEqual(
+            [r["kind"] for r in self.records()][-3:], ["end", "transition", "questions"]
+        )
+        self.assertEqual(self.service.steps.tasks, {})
+
+    def test_an_enqueued_step_carries_the_apps_note_and_a_second_is_unit_busy(self):
+        steps = self.service.steps
+        first = steps.enqueue_step(str(self.repo), self.unit, "spec", note=" red: tests ")
+        row = self.service.attempts.get(first)
+        self.assertEqual(
+            (row["state"], row["note"], row["note_by"]), ("queued", "red: tests", "app")
+        )
+        with self.assertRaises(Refused) as caught:
+            steps.enqueue_step(str(self.repo), self.unit, "spec")
+        self.assertEqual(caught.exception.reasons, ("unit-busy",))
+
+    def test_run_step_refuses_a_note_that_says_it_is_the_autopilots(self):
+        async def go():
+            stream = self.service.steps.run_step(
+                str(self.repo), self.unit, "spec", started_by="autopilot", note="mine"
+            )
+            await stream.__anext__()
+
+        with self.assertRaises(Invalid):
+            asyncio.run(go())
+        self.assertEqual(self.service.attempts.unfinished(), [])
+
 
 class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
     """A step is its own task: a reader leaving does not end it, a second step on one unit is

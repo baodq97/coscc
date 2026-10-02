@@ -54,9 +54,19 @@ class TheServiceWiresWhoListensToWhat(unittest.TestCase):
                 self.nudged.assert_called_once_with("k")
         self.ended.assert_not_called()
 
+    def test_a_refused_step_or_integration_wakes_the_updater_and_the_autopilot(self):
+        # The autopilot reads a refusal of what it queued from its row, on the pass this wakes.
+        for name in ("step.refused", "integration.refused"):
+            with self.subTest(name=name):
+                self.ended.reset_mock()
+                self.nudged.reset_mock()
+                self.service.bus.publish(Event(name, "k", "u"))
+                self.ended.assert_called_once_with()
+                self.nudged.assert_called_once_with("k")
+
     def test_the_other_endings_wake_only_the_updater(self):
         # `step.released` is gone (0150): a step that never ran ends its attempt `step.refused`.
-        for name in ("step.refused", "integration.escalated", "retake.ended", "estimate.ended"):
+        for name in ("integration.escalated", "retake.ended", "estimate.ended"):
             with self.subTest(name=name):
                 self.ended.reset_mock()
                 self.service.bus.publish(Event(name, "k", "u"))

@@ -76,6 +76,12 @@ class EveryMoveIsOneRowAndOneEvent(_Store):
         self.attempts.move(held["id"], "ended", "stopped")
         self.attempts.open("step", "/w", "0001_a", "plan")
 
+    def test_a_notes_author_is_written_and_read_back(self):
+        app = self.attempts.open("step", "/w", "0001_a", "impl", note="red", note_by="app")
+        person = self.attempts.open("step", "/w", "0002_b", "impl", note="mine")
+        self.assertEqual((app["note"], app["note_by"]), ("red", "app"))
+        self.assertEqual(self.attempts.get(person["id"])["note_by"], "person")
+
     def test_a_stop_is_a_column_recorded_once_with_the_first_name(self):
         a = self.attempts.open("step", "/w", "0001_a", "spec")["id"]
         self.attempts.ask_stop(a, "Lan")

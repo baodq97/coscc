@@ -270,8 +270,8 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 conn.execute("PRAGMA user_version=7")
 
             self.assertIsNone(prmachine.ci_held(history, "p", 7, "abc"))
-            # And on to the version of this build (9: the attempt tables).
-            self.assertEqual(data.version(), 9)
+            # And on to the version of this build (9: the attempt tables; 10: `note_by`).
+            self.assertEqual(data.version(), SCHEMA_VERSION)
             with data.connect() as conn:
                 row = conn.execute(
                     "SELECT unit, files, ci, ci_head, ci_checks, ci_at FROM pull_requests"

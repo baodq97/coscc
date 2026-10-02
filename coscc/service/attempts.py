@@ -71,6 +71,7 @@ class Attempt(TypedDict):
     started_by: str
     rerun: int
     note: str
+    note_by: str
     stop_asked_at: str | None
     stop_asked_by: str | None
     run: str
@@ -223,11 +224,12 @@ class Attempts:
         started_by: str = "person",
         rerun: bool = False,
         note: str = "",
+        note_by: str = "person",
         state: str = "queued",
     ) -> Attempt:
         """A new attempt in `state`, unless the unit already has one: then `Refused` with
         `unit-busy`, the only refusal left, and nothing written. Checked and written in one
-        transaction."""
+        transaction. `note_by` is who wrote `note`: `person`, or `app` for the autopilot's."""
         if machine not in MACHINES or state not in ENTRIES:
             raise Illegal(f"no attempt of {machine!r} begins {state!r}")
         with self.data.write() as conn:
@@ -240,7 +242,7 @@ class Attempts:
                 raise Refused(describe(unit, cast(Attempt, dict(held))), ("unit-busy",))
             cur = conn.execute(
                 "INSERT INTO attempts (machine, workspace, unit, stage, slot, started_by, rerun, "
-                "note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "note, note_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     machine,
                     workspace,
@@ -250,6 +252,7 @@ class Attempts:
                     started_by,
                     int(rerun),
                     note,
+                    note_by,
                 ),
             )
             attempt = int(cur.lastrowid or 0)

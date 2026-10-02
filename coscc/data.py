@@ -34,8 +34,8 @@ from typing import Any, Iterator
 # `500` on a database a newer one has touched**, so rolling the app back means rolling the
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
-# 9: `attempts` and `attempt_moves`).
-SCHEMA_VERSION = 9
+# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`).
+SCHEMA_VERSION = 10
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -477,6 +477,9 @@ _COLUMNS = (
     ("pull_requests", "ci_head", "TEXT NOT NULL DEFAULT ''"),
     ("pull_requests", "ci_checks", "TEXT"),
     ("pull_requests", "ci_at", "TEXT NOT NULL DEFAULT ''"),
+    # Who wrote an attempt's `note`: `person` (a rerun's) or `app` (what the autopilot hands a
+    # step it queued: a draft to go on with, the red checks of a head).
+    ("attempts", "note_by", "TEXT NOT NULL DEFAULT 'person'"),
 )
 
 
