@@ -789,7 +789,7 @@ def full_stop(stage: str, max_parallel: int) -> dict[str, str]:
 _BEFORE = ("idea", "intent", "estimate")
 
 
-def started_by(record: dict[str, Any]) -> str:
+def started_by(record: Mapping[str, Any]) -> str:
     """A record with no `started_by` reads as `person`."""
     return str(record.get("started_by") or "person")
 

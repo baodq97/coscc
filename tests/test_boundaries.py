@@ -384,7 +384,6 @@ DICT_ANY: set[str] = {
     "coscc.units.autopilot:skips_exhausted",
     "coscc.units.autopilot:spent_on",
     "coscc.units.autopilot:spent_today",
-    "coscc.units.autopilot:started_by",
     "coscc.units.autopilot:stop_for",
     "coscc.units.autopilot:unopened_of",
     "coscc.units.backfill:run",
