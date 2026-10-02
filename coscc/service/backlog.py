@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, TypedDict
 
 from coscc.units import backlog, guards
 from coscc.units import board as board_reader
@@ -62,6 +63,69 @@ def _labelled(row: dict[str, Any]) -> dict[str, Any]:
         "inputs": inputs,
         "guard_label": known.label if known else "",
         "head": str(inputs.get("merge_commit") or inputs.get("head") or ""),
+    }
+
+
+class Cut(TypedDict):
+    """A branch `cut_branch` cut: its name, the commit and tree it was cut in, and the prepare."""
+
+    cwd: str
+    unit: str
+    branch: str
+    base: str
+    sha: str
+    output: str
+    worktree: str
+    switched: bool
+    prepare: dict[str, Any]
+
+
+async def cut_branch(
+    cwd: str, unit: str, data_dir: str | os.PathLike[str] | None, state: Any
+) -> Cut:
+    """Cut the unit's branch in its worktree from the freshly fetched trunk, and prepare it.
+
+    One path for the "Cut this unit's branch" button and for an `impl` that starts on a
+    detached tree. It raises `Invalid` with the words of what failed; nothing is cut then."""
+    try:
+        name = units.branch_name(cwd, unit, data_dir, state)
+    except (CannotCreate, BadUnit) as e:
+        raise Invalid(str(e)) from e
+    # Cut in the unit's own worktree, never in the workspace: cutting there took one unit's
+    # branch away from another. The workspace stays on `main`.
+    try:
+        tree = await worktrees.ensure(cwd, unit, None, data_dir)
+    except (GitError, BadUnit) as e:
+        raise Invalid(f"Could not open {unit}'s worktree, so no branch was cut. {e}") from e
+    repo = Path(tree["path"])
+    # Through the coordinator, so a step starting beside this does not race it for
+    # `refs/remotes/origin/main`; a fetch under 30s old is reused here too.
+    try:
+        await fetches.fetch(repo, BRANCH_REMOTE, BRANCH_TRUNK)
+    except GitError as e:
+        raise Invalid(
+            f"Could not update {BRANCH_TRUNK} from {BRANCH_REMOTE}, so no branch was cut. "
+            f"Nothing in the repository changed. git said: {e}"
+        ) from e
+    try:
+        sha = await gitops.rev_parse(repo, f"refs/remotes/{BRANCH_REMOTE}/{BRANCH_TRUNK}")
+        output = await gitops.create_branch(repo, name, sha)
+    except GitError as e:
+        raise Invalid(str(e)) from e
+    # Prepared here rather than when the tree was made: the lockfiles an `impl` works with are
+    # the ones at the commit just cut from. A failure is returned, not raised (the branch is cut
+    # either way), and `run_step` refuses `impl` until preparing succeeds.
+    prepared = await worktrees.prepare(repo, cwd, data_dir=data_dir)
+    return {
+        "cwd": cwd,
+        "unit": unit,
+        "branch": name,
+        "base": f"{BRANCH_REMOTE}/{BRANCH_TRUNK}",
+        "sha": sha[:7],
+        "output": output,
+        "worktree": str(repo),
+        "switched": bool(tree.get("switched")),
+        "prepare": prepared,
     }
 
 
@@ -470,7 +534,7 @@ class Backlog:
             self.holds.running.pop(rid, None)
             self.bus.publish(Event("estimate.ended", key))
 
-    async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:
+    async def start_branch(self, cwd: str, unit: str) -> Cut:
         """Cut this unit's branch in the workspace and switch to it.
 
         The name is not the caller's: `cos.mjs unit-branch` reads the `Type:` the intent
@@ -483,46 +547,7 @@ class Backlog:
         result names the ref and the commit. The remote and the trunk are constants here.
         """
         self.ws.check(cwd)
-        try:
-            name = units.branch_name(cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit]))
-        except (CannotCreate, BadUnit) as e:
-            raise Invalid(str(e)) from e
-        # Cut in the unit's own worktree, never in the workspace: cutting there took one unit's
-        # branch away from another. The workspace stays on `main`.
-        try:
-            tree = await worktrees.ensure(cwd, unit, None, self.config.data_dir)
-        except (GitError, BadUnit) as e:
-            raise Invalid(f"Could not open {unit}'s worktree, so no branch was cut. {e}") from e
-        repo = Path(tree["path"])
-        # Through the coordinator, so a step starting beside this does not race it for
-        # `refs/remotes/origin/main`; a fetch under 30s old is reused here too.
-        try:
-            await fetches.fetch(repo, BRANCH_REMOTE, BRANCH_TRUNK)
-        except GitError as e:
-            raise Invalid(
-                f"Could not update {BRANCH_TRUNK} from {BRANCH_REMOTE}, so no branch was cut. "
-                f"Nothing in the repository changed. git said: {e}"
-            ) from e
-        try:
-            sha = await gitops.rev_parse(repo, f"refs/remotes/{BRANCH_REMOTE}/{BRANCH_TRUNK}")
-            output = await gitops.create_branch(repo, name, sha)
-        except GitError as e:
-            raise Invalid(str(e)) from e
-        # Prepared here rather than when the tree was made: the lockfiles an `impl` works with are
-        # the ones at the commit just cut from. A failure is returned, not raised (the branch is cut
-        # either way), and `run_step` refuses `impl` until preparing succeeds.
-        prepared = await worktrees.prepare(repo, cwd, data_dir=self.config.data_dir)
-        return {
-            "cwd": cwd,
-            "unit": unit,
-            "branch": name,
-            "base": f"{BRANCH_REMOTE}/{BRANCH_TRUNK}",
-            "sha": sha[:7],
-            "output": output,
-            "worktree": str(repo),
-            "switched": bool(tree.get("switched")),
-            "prepare": prepared,
-        }
+        return await cut_branch(cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit]))
 
     async def branch_here(self, cwd: str) -> dict[str, Any]:
         """Which branch the workspace is on. A read."""

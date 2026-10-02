@@ -15,6 +15,7 @@ from unittest import mock
 
 from coscc.agent import harness
 from coscc.data import Data
+from coscc.runlog.journal import Journal
 from coscc.units.history import History
 from coscc.units.meta import SOURCE, MetaError, UnitMeta
 
@@ -248,6 +249,63 @@ class TheSnapshotDecides(Base):
             check=True,
         )
         self.assertEqual(json.loads(done.stdout), json.loads(full.stdout))
+
+    def relate(self, unit: str, other: str, op: str = "add", rtype: str = "phụ thuộc") -> None:
+        Journal(self.tmp / "work", self.data).append(
+            {
+                "kind": "relation",
+                "workspace": WS,
+                "unit": unit,
+                "other": other,
+                "type": rtype,
+                "op": op,
+                "reason": "r",
+                "by": "owner",
+            }
+        )
+
+    def test_a_snapshot_carries_the_dependencies_the_backlog_holds_in_force(self):
+        self.meta.import_store(WS, self.store)
+        self.relate("0017_linked", "0013_open-question")
+        self.relate("0013_open-question", "0010_full-loop")
+        self.relate("0013_open-question", "0010_full-loop", op="remove")
+        self.relate("0010_full-loop", "0013_open-question", rtype="liên quan")
+        units = self.meta.snapshot(WS, NAMES)["units"]
+        self.assertEqual(
+            units["proj/0017_linked"]["links"]["backlog"],
+            [{"ref": "0013_open-question", "source": "backlog"}],
+        )
+        # One removed, one of another type, one never related: no key at all.
+        for name in ("0013_open-question", "0010_full-loop", "0011_paused-then-resumed"):
+            self.assertNotIn("backlog", units[f"proj/{name}"]["links"], name)
+
+    def test_a_snapshot_for_one_unit_carries_the_unit_its_relation_names(self):
+        self.meta.import_store(WS, self.store)
+        self.relate("0017_linked", "0013_open-question")
+        snap = self.meta.snapshot(WS, NAMES, ["0017_linked"])
+        self.assertEqual(
+            sorted(snap["units"]),
+            ["proj/0010_full-loop", "proj/0013_open-question", "proj/0017_linked"],
+        )
+        gate = subprocess.run(
+            [
+                "node",
+                str(harness.script()),
+                "--root",
+                str(self.store),
+                "--state",
+                "-",
+                "gate",
+                "0017_linked",
+                "impl",
+                "--json",
+            ],
+            input=json.dumps(snap),
+            capture_output=True,
+            text=True,
+            env=harness.child_env(),
+        )
+        self.assertIn("waiting-on", json.loads(gate.stdout)["reasons"])
 
     def test_changing_a_status_in_the_snapshot_changes_the_output(self):
         self.meta.import_store(WS, self.store)

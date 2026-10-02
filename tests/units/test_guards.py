@@ -151,6 +151,16 @@ class TheGuards(unittest.TestCase):
             ("waiting-on",),
         )
 
+    def test_impl_waits_on_a_backlog_dependency_as_on_a_depends_on(self):
+        merged = {"ref": "a", "merged": True}
+        waiting = {"ref": "b", "merged": False, "source": "backlog"}
+        self.assertEqual(
+            guards.dependency_merged({"depends": [merged, waiting]}).reasons, ("waiting-on",)
+        )
+        self.assertEqual(
+            guards.dependency_merged({"depends": [merged, {**waiting, "merged": True}]}), OPEN
+        )
+
     def test_ship_needs_green_ci_and_a_pass_of_the_head_it_merges(self):
         ok = {"ci": "green", "verdict": "pass", "head": "h", "reviewed_head": "h"}
         self.assertEqual(guards.ship_ready(ok), OPEN)

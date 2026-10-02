@@ -81,6 +81,43 @@ def opens_with(by: Any, names: Any) -> bool:
     return False
 
 
+def _to_send(found: dict[str, Any]) -> str:
+    """What a refused `question` should have been: the open questions of the board read
+    `found`, the first 60 characters of each, and the forms accepted."""
+    open_ = [
+        f"{q.get('artifact')} {q.get('n')} ({str(q.get('text') or '')[:60]})"
+        for q in found.get("questions") or []
+        if not q.get("answered")
+    ]
+    return (
+        f"Open questions: {'; '.join(open_) or 'none'}. "
+        'Send question as its number, 1 or "1", or F<n> for a finding in review.md.'
+    )
+
+
+def _named(unit: str, found: dict[str, Any], artifact: str, question: Any) -> tuple[str, int | str]:
+    """`artifact` as its file name and `question` as an int or `F<n>`, whichever way they
+    were sent, or `Invalid` saying what to send. The one place that reads either: `found` is
+    the board read the check that follows uses."""
+    stages = found.get("stages") or []
+    wanted = str(artifact or "").strip().casefold()
+    file = next(
+        (s["file"] for s in stages if wanted in (s["file"].casefold(), s["stage"].casefold())), None
+    )
+    if file is None:
+        names = ", ".join(s["file"] for s in stages)
+        raise Invalid(f"{artifact!r} is not an artifact of {unit}; send one of {names}")
+    if isinstance(question, int) and not isinstance(question, bool):
+        return file, question
+    if isinstance(question, str):
+        text = question.strip()
+        if re.fullmatch(r"F[0-9]+", text):
+            return file, text
+        if re.fullmatch(r"[0-9]+", text):
+            return file, int(text)
+    raise Invalid(f"{question!r} does not name a question. {_to_send(found)}")
+
+
 class Answers:
     def __init__(
         self,
@@ -564,6 +601,7 @@ class Answers:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
             texts: list[str] = []
             for artifact, question, answer in items:
+                artifact, question = _named(unit, found, artifact, question)
                 number, finding, text = self._append_one(
                     cwd,
                     unit,
@@ -692,31 +730,34 @@ class Answers:
         `(number, finding, text)`, the text as its row keeps it. `_record_answers` writes it."""
         # A finding the last review round confirmed needs a person is answered by its id,
         # `F<n>`, into `review.md`, and only while `cos.mjs` lists it in `personFindings`.
-        finding = str(question).strip() if isinstance(question, str) else ""
-        finding = finding if re.fullmatch(r"F\d+", finding) else ""
+        # `question` is what `_named` returned: an int or `F<n>`.
+        finding = question if isinstance(question, str) else ""
         if finding:
             if artifact != "review.md":
-                raise Invalid(f"a finding is answered in review.md, not {artifact}")
+                raise Invalid(
+                    f"a finding is answered in review.md, not {artifact}. {_to_send(found)}"
+                )
             awaited = [p["id"] for p in found.get("person_findings") or []]
             if finding not in awaited:
                 raise Invalid(
                     f"{finding} is not a finding the last review round of {unit} "
                     "confirmed needs a person"
                     + (f" (those are {', '.join(awaited)})" if awaited else "")
+                    + f". {_to_send(found)}"
                 )
             number: int | str = finding
         else:
             asked = [q for q in found.get("questions") or [] if q.get("artifact") == artifact]
             if not asked:
-                raise Invalid(f"{artifact} in {unit} has no numbered item under ## Open questions")
-            try:
-                number = int(question)
-            except TypeError, ValueError:
-                raise Invalid(f"a question is named by its number, got {question!r}") from None
+                raise Invalid(
+                    f"{artifact} in {unit} has no numbered item under ## Open questions. "
+                    + _to_send(found)
+                )
+            number = question
             if number not in {q["n"] for q in asked}:
                 raise Invalid(
                     f"{artifact} has no question {number} "
-                    f"(it has {', '.join(str(q['n']) for q in asked)})"
+                    f"(it has {', '.join(str(q['n']) for q in asked)}). {_to_send(found)}"
                 )
         if not text.strip():
             raise Invalid("the answer is empty")

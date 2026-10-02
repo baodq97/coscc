@@ -66,6 +66,7 @@ REASONS = (
     "no-stage",
     "rerun-by-person",
     "no-worktree",
+    "no-branch",
     "no-git",
     "no-run-log",
     # A feature refused the step; the words name the feature, and its reason follows.

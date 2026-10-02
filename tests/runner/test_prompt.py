@@ -16,6 +16,7 @@ from coscc.runner.prompt import (
     answers_section,
     build_prompt,
     compose_prompt,
+    _LANGUAGE,
     strip_answers,
     with_answers,
 )
@@ -641,11 +642,31 @@ class ImplAndShipKeepTheirTaskByteForByte(unittest.TestCase):
                     f"Do the work this unit's plan authorises, in the repository at "
                     f"`{Path(d).expanduser().resolve()}`, then write `{directory / 'impl.md'}` "
                     "recording what you did.\n\n"
-                    "That file must carry the `Status:` line the rules above describe. Prose in "
-                    "Vietnamese; filenames and headings in English. Write it yourself with your "
+                    "That file must carry the `Status:` line the rules above describe. "
+                    f"{_LANGUAGE} Write it yourself with your "
                     "tools — do not paste it into your reply."
                 ),
             )
+
+
+OLD_LANGUAGE = "Prose in Vietnamese; filenames and headings in English."
+
+
+class EveryStageAsksForTheLanguageOfTheProjectInstructions(unittest.TestCase):
+    """One sentence, shared by every stage, and none that forces Vietnamese."""
+
+    def test_the_sentence_defers_to_the_project_instructions(self):
+        self.assertIn("the language the project instructions set", _LANGUAGE)
+        self.assertIn("filenames and headings in English", _LANGUAGE)
+        self.assertNotEqual(_LANGUAGE, OLD_LANGUAGE)
+
+    def test_every_stage_carries_it_once_and_not_the_old_one(self):
+        for stage in ("intent", "spec", "spike", "plan", "impl", "review", "pr", "ship"):
+            with self.subTest(stage=stage):
+                text = _golden_prompt(stage)
+                self.assertEqual(text.count(_LANGUAGE), 1)
+                self.assertNotIn(OLD_LANGUAGE, text)
+                self.assertNotIn("Prose in Vietnamese", text)
 
 
 def _golden_prompt(stage: str) -> str:
@@ -711,7 +732,8 @@ class TheStagesThatReadWholeInputsKeepTheirPrompt(unittest.TestCase):
                 block = "\n\n---\n\n" + submit_block(stage, f"{stage}.md", False)
                 text = _golden_prompt(stage)
                 self.assertEqual(text.count(block + "\n\nINCLUDED:"), 1)
-                text = text.replace(block, "")
+                # The language sentence is the one change since the digests were taken.
+                text = text.replace(block, "").replace(_LANGUAGE, OLD_LANGUAGE)
                 self.assertNotIn("# The unit's files", text)
                 self.assertEqual(hashlib.sha256(text.encode("utf-8")).hexdigest(), digest)
 

@@ -1041,7 +1041,8 @@ export const NEEDS_STATE = 'needs the coscc app: pass --state <file|-> (uv run c
 // `{workspace, workspaces, units: {<ws>/<unit>: entry}, ideas: {<ws>: [idea]}}`, an entry
 // `{artifacts: {<file>: {status, raw, questions}}, type, links, holds, answers, unknowns, merged}`.
 // `raw` is a status word outside the artifact's set, kept so it is reported as it was;
-// `merged` is whether the app holds the unit's merge (`0139` R5).
+// `merged` is whether the app holds the unit's merge (`0139` R5). `links.backlog`, `[{ref, source}]`,
+// is there only for a unit with a `phụ thuộc` relation of the backlog in force (`0144` R9).
 const NO_ENTRY = { artifacts: {}, type: null, links: { idea: null, repo: null, dependsOn: null }, holds: [], answers: [], unknowns: [], merged: false }
 const entryOf = (state, ws, name) => state.units?.[`${ws}/${name}`] ?? null
 const statusIn = (e, file) => e.artifacts?.[file]?.status ?? e.artifacts?.[file]?.raw ?? null
@@ -1239,16 +1240,21 @@ function ideaLine(idea, unit, repo, ctx) {
 // `impl` (R6, R9).
 function resolveLinks(unit, links, ctx) {
   const { idea, repo, dependsOn } = links
-  if (idea === null && repo === null && dependsOn === null) return
+  // `0144` R9: a `phụ thuộc` relation of the backlog the app holds, `[{ref, source}]`, waited on
+  // like a `Depends on:`. One whose unit is dropped or rejected no longer holds anything (R10).
+  const related = (links.backlog ?? [])
+    .map(({ ref, source }) => ({ ...dependency(ref, unit, repo, ctx), source }))
+    .filter((d) => d.why !== 'dropped' && !d.why.startsWith('rejected'))
+  if (idea === null && repo === null && dependsOn === null && !related.length) return
   const needs = []
   if (idea !== null) unit.idea = idea
   if (repo !== null) {
     unit.repo = repo
     if (!validWs(repo)) unit.problems.push(`intent.md: Repo: "${repo}" is not a workspace name`)
   }
-  if (dependsOn !== null) {
-    unit.dependsOn = dependsOn.map((ref) => dependency(ref, unit, repo, ctx))
-    for (const d of unit.dependsOn) if (d.merged === null) unit.problems.push(`intent.md: Depends on: ${d.ref} — ${d.why}`)
+  if (dependsOn !== null || related.length) {
+    unit.dependsOn = [...(dependsOn ?? []).map((ref) => dependency(ref, unit, repo, ctx)), ...related]
+    for (const d of unit.dependsOn) if (d.merged === null) unit.problems.push(`${d.source ? 'backlog relation' : 'intent.md: Depends on:'} ${d.ref} — ${d.why}`)
   }
   if (idea !== null) {
     const found = ideaLine(idea, unit, repo, ctx)
@@ -1271,7 +1277,7 @@ function resolveLinks(unit, links, ctx) {
 // The reasons `impl` is shut for a unit's links: R9 first, then one line per dependency (R7).
 function linkNeeds(unit) {
   const { needs, waiting } = linksOf(unit)
-  return [...needs, ...waiting.map((d) => `waits on ${d.ref}: ${d.why}`)]
+  return [...needs, ...waiting.map((d) => `waits on ${d.ref}: ${d.why} (${d.source ? 'backlog relation' : 'Depends on:'})`)]
 }
 
 // The words `next` opens its action with while `impl` waits on a dependency. Words for a

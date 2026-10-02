@@ -335,6 +335,95 @@ class ADelegatedAnswer(unittest.TestCase):
             )
 
 
+class HowAnAnswerNamesItsQuestion(unittest.TestCase):
+    """`artifact` and `question` in any accepted form write the same row; any other form is
+    refused with what to send."""
+
+    LONG = "A question long enough to be cut at sixty characters, and this tail is not shown?"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.cwd = str(root / "work" / "proj")
+        Path(self.cwd).mkdir(parents=True)
+        config = Config(
+            workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
+        self.service = Service(config, Sessions(config))
+        made = create_sync(self.service, self.cwd, "a-problem", "x")
+        self.unit = made["unit"]
+        (Path(made["path"]) / "intent.md").write_text(
+            "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n"
+            f"## Open questions\n\n1. One?\n2. {self.LONG}\n",
+            encoding="utf-8",
+        )
+
+    def answer(self, artifact, question, text="Có."):
+        return asyncio.run(
+            self.service.answers.answer(self.cwd, self.unit, artifact, question, text, "Phong")
+        )
+
+    def answers(self):
+        [u] = asyncio.run(self.service.board(self.cwd))["units"]
+        return [(a["artifact"], a["n"]) for a in u["answers"]]
+
+    def refused(self, artifact, question) -> str:
+        with self.assertRaises(Invalid) as e:
+            self.answer(artifact, question)
+        self.assertEqual(self.answers(), [], "nothing was written")
+        return str(e.exception)
+
+    def assertSays(self, message, *parts):
+        for part in parts:
+            self.assertIn(part, message)
+
+    def assertListsTheOpenQuestions(self, message):
+        self.assertSays(message, "intent.md 1 (One?)", f"intent.md 2 ({self.LONG[:60]})")
+        self.assertNotIn("this tail", message.split("Open questions:")[1])
+        self.assertSays(message, 'Send question as its number, 1 or "1", or F<n>')
+
+    def test_a_stage_name_and_a_file_name_write_the_same_row(self):
+        for artifact in ("intent", "intent.md", " INTENT.md "):
+            got = self.answer(artifact, 1)
+            self.assertEqual((got["artifact"], got["question"]), ("intent.md", 1))
+            self.assertEqual(self.answers(), [("intent.md", 1)])
+
+    def test_a_number_and_a_digit_string_write_the_same_row(self):
+        for question in (1, "1", " 1\n"):
+            got = self.answer("intent.md", question)
+            self.assertEqual((got["artifact"], got["question"]), ("intent.md", 1))
+            self.assertEqual(self.answers(), [("intent.md", 1)])
+
+    def test_a_bad_artifact_lists_the_artifacts_of_the_unit(self):
+        message = self.refused("intnet", 1)
+        self.assertSays(message, "'intnet'", self.unit, "intent.md", "spec.md", "review.md")
+
+    def test_a_question_that_is_not_a_number_lists_the_open_questions(self):
+        for question in ("Câu 1", "One?", self.LONG, "1.0", 1.0, True, None, "", "-1", "١"):
+            self.assertListsTheOpenQuestions(self.refused("intent.md", question))
+
+    def test_a_number_the_artifact_does_not_have_lists_the_open_questions(self):
+        message = self.refused("intent.md", 5)
+        self.assertSays(message, "has no question 5")
+        self.assertListsTheOpenQuestions(message)
+
+    def test_an_artifact_with_no_questions_lists_the_open_questions(self):
+        message = self.refused("spec", 1)
+        self.assertSays(message, "has no numbered item")
+        self.assertListsTheOpenQuestions(message)
+
+    def test_a_finding_in_another_artifact_lists_the_open_questions(self):
+        message = self.refused("intent.md", "F1")
+        self.assertSays(message, "a finding is answered in review.md")
+        self.assertListsTheOpenQuestions(message)
+
+    def test_a_finding_nobody_awaits_lists_the_open_questions(self):
+        message = self.refused("review", " F9 ")
+        self.assertSays(message, "F9 is not a finding")
+        self.assertListsTheOpenQuestions(message)
+
+
 class RecordingAnOutcome(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
