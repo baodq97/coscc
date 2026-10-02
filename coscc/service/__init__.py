@@ -7,6 +7,7 @@ Nothing here imports a web framework; `Invalid` is how this layer refuses.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -34,6 +35,8 @@ from coscc.service.common import OWNER
 from coscc.service.update import SETTLE_POLL, as_invalid, update_words
 from coscc.service.watch import Watch
 from coscc.service.workspaces import Workspaces
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -270,31 +273,47 @@ class Service:
             raise as_invalid(e) from e
 
     async def shutdown(self) -> None:
-        """Cancel every step still running, and wait for them, 10 seconds at most.
+        """Cancel every step, board read and background `gh` ask still running, let every tree
+        removal end as it would, and wait for all of them, 10 seconds at most from the call.
+        Once this returns nothing they started still writes, unless it outlived the 10
+        seconds: each such one is logged by name.
 
         No `end` is written: a step with no `end` is what an app that went down mid-step looks like.
         """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 10
         # The autopilot first, so no pass starts a step while the rest go down.
         for key in list(self.autopilot.tasks):
             self.autopilot.stop(key)
         for t in list(self.autopilot.pending):
             t.cancel()
-        # A CI ask, a board read and a held `gh` answer hold nothing worth waiting for.
-        for t in [
-            *self.steps.ci_asks.values(),
-            *self.boards.reads.values(),
-            *self.boards.prs.asks.values(),
-            *self.release.details.asks.values(),
-        ]:
-            t.cancel()
-        tasks = [
-            r.task for r in self.steps.registry.all() if r.task is not None and not r.task.done()
+        # A CI ask and a held `gh` answer hold nothing worth keeping, but their `gh` is reaped.
+        cancelled = [
+            *((f"CI ask of {u} in {ws}", t) for (ws, u), t in self.steps.ci_asks.items()),
+            *((f"gh ask for {' '.join(k)}", t) for k, t in self.boards.prs.asks.items()),
+            *((f"release ask for {' '.join(k)}", t) for k, t in self.release.details.asks.items()),
+        ]
+        steps = [
+            (f"{r.stage} step of {r.unit} in {r.workspace}", r.task)
+            for r in self.steps.registry.all()
+            if r.task is not None and not r.task.done()
         ]
         # A step's task past `steps.release`, still in its `after_end`.
-        tasks += [
-            t for _entry, t in self.holds.finishing.values() if not t.done() and t not in tasks
+        steps += [
+            (f"after-end of {entry['unit']} in {entry['workspace']}", t)
+            for entry, t in self.holds.finishing.values()
+            if not t.done() and t not in [s for _label, s in steps]
         ]
-        for t in tasks:
+        cancelled += steps
+        for _label, t in cancelled:
             t.cancel()
-        if tasks:
-            await asyncio.wait(tasks, timeout=10)
+        # Board reads are cancelled there, and tree removals left to end.
+        waited = cancelled + await self.boards.stop()
+        if not waited:
+            return
+        _done, pending = await asyncio.wait(
+            {t for _label, t in waited}, timeout=max(0.0, deadline - loop.time())
+        )
+        for label, t in waited:
+            if t in pending:
+                log.warning("shutdown returns with the %s still running after 10s", label)

@@ -126,6 +126,17 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.running, 0)
         self.assertTrue(read.cancelled())
 
+    async def test_r2_a_read_cancelled_twice_still_waits_for_its_thread_and_ends_cancelled(self):
+        read = await self.a_read_in_its_thread()
+        read.cancel()
+        self.assertTrue(await self.still_running(read))
+        read.cancel()
+        self.assertTrue(await self.still_running(read))
+        self.release.set()
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(read, 5)
+        self.assertEqual(self.running, 0)
+
     async def test_r3_a_removal_ends_as_it_would_and_none_starts_once_shutdown_began(self):
         self.boards._remove_later(self.cwd, {"name": "0001_done", "why": "finished"})
         [removal] = self.boards._removing.values()
