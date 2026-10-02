@@ -28,6 +28,8 @@ class FakeIndexes:
         self.shown = Status("ready", SHA, now(), "")
         self._binary: Path | None = Path("/bin/node")
         self._installing = False
+        self.locked = ""
+        self.retried = 0
         self.scheduled: list[str] = []
 
     async def ensure(self, workspace: str) -> Ready | str:
@@ -38,6 +40,12 @@ class FakeIndexes:
 
     def status(self, key: str) -> Status:
         return self.shown
+
+    def lock(self) -> str:
+        return self.locked
+
+    def retry(self) -> None:
+        self.retried += 1
 
     def schedule(self, key: str) -> None:
         self.scheduled.append(key)
@@ -132,6 +140,12 @@ class EachRunIsRecordedWithItsArm(Setup):
             [("r1", "There is no code index yet."), ("r2", "boom")],
         )
 
+    async def test_an_engine_found_broken_is_off_for_every_unit_and_records_nothing(self):
+        self.idx.locked = "The Node that came with codegraph is 22.5.0."
+        for unit in ("0002_a", "0003_a"):
+            self.assertEqual(await codegraph._render(self.ctx, self.facts(unit)), "")
+        self.assertEqual(self.rows(), [])
+
     async def test_a_stage_other_than_impl_or_review_is_not_recorded(self):
         self.assertEqual(await codegraph._render(self.ctx, self.facts("0002_a", "plan")), "")
         self.assertEqual(self.rows(), [])
@@ -144,7 +158,10 @@ class TheToolsGoOnlyToAnOnArmRunWithAReadyIndex(Setup):
         self.ready_row()
         self.assertTrue(codegraph._ready_for(self.ctx, even))
         self.assertFalse(codegraph._ready_for(self.ctx, odd))
+        # After a restart nothing has checked the engine yet: a resumed run still gets them.
         self.idx._binary = None
+        self.assertTrue(codegraph._ready_for(self.ctx, even))
+        self.idx.locked = "The codegraph install has no Node binary for this machine."
         self.assertFalse(codegraph._ready_for(self.ctx, even))
         tool = codegraph.agent(self.ctx).tools[0]
         self.assertEqual((tool.stages, tool.names), (("impl",), ("find", "callers", "impact")))
@@ -161,6 +178,15 @@ class TheToolsGoOnlyToAnOnArmRunWithAReadyIndex(Setup):
         self.assertEqual(got["content"], [{"type": "text", "text": mock.ANY}])
         self.assertIn(SHA[:12], json.dumps(got["content"]))
 
+    async def test_a_tool_asks_for_the_engine_and_says_so_when_there_is_none(self):
+        self.ready_row()
+        self.idx._binary = None
+        tools = {t.name: t for t in codegraph.build_tools(self.ctx, self.facts("0002_a"))}
+        with mock.patch.object(codegraph, "call") as called:
+            got = await tools["find"].handler({"query": "ensure"})
+        called.assert_not_called()
+        self.assertTrue(got["is_error"])
+
 
 class SettingsSaysOneSentence(Setup):
     def test_each_state_has_its_sentence(self):
@@ -176,10 +202,9 @@ class SettingsSaysOneSentence(Setup):
             self.idx.shown = Status("", "", "", "")
             self.assertIn("next impl", codegraph.status(self.ctx, "/w/proj")[0])
 
-    def test_no_npm_and_nothing_installed_locks_it(self):
-        self.idx._binary = None
-        with mock.patch("shutil.which", return_value=None):
-            self.assertEqual(codegraph.status(self.ctx, "/w/proj"), (codegraph.NO_NPM, False))
+    def test_a_lock_is_the_sentence_and_forbids_choosing(self):
+        self.idx.locked = codegraph.NO_NPM
+        self.assertEqual(codegraph.status(self.ctx, "/w/proj"), (codegraph.NO_NPM, False))
 
     def test_the_feature_is_off_by_default_and_offers_a_pilot(self):
         self.assertIn(codegraph.PLUGIN, features.FEATURES)
@@ -230,7 +255,7 @@ class PickingAStateStartsTheSetup(Setup):
         codegraph.on_set(self.ctx, "/w/proj", "off")
         codegraph.on_set(self.ctx, "/w/proj", "pilot")
         await asyncio.gather(*codegraph._running)
-        self.assertEqual(asked, ["/w/proj"])
+        self.assertEqual((asked, self.idx.retried), (["/w/proj"], 1))
 
 
 if __name__ == "__main__":

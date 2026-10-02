@@ -132,6 +132,10 @@ class Indexes:
         # Held by an install, a build and a sync, never by a query.
         self._lock = threading.Lock()
         self._binary: Path | None = None
+        # `_broken`: the install there is cannot run (its bundled Node), kept until the app restarts, so the
+        # feature stays off and no run installs again. `_failure`: the last install failed; a run
+        # does not retry it, a person's pick (`retry`) does.
+        self._broken = ""
         self._failure = self._failed_at = ""
         self._installing = False
         self._install_done = threading.Event()
@@ -139,16 +143,36 @@ class Indexes:
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
     async def _engine(self) -> Path | str:
-        """The checked binary, asked once and then remembered; a failure is never remembered, so
-        an install that finished is seen at the next call."""
+        """The checked binary, asked once and then remembered. A failure is remembered only for
+        an install that is there, so one not there yet is seen once it finishes."""
         if self._binary is not None:
             return self._binary
         if self._installing:
             return "The code index engine is being installed."
+        if self._broken:
+            return self._broken
         found = await asyncio.to_thread(self._installed, self.home)
         if isinstance(found, Path):
             self._binary = found
+        elif self._present():
+            self._broken = found
         return found
+
+    def _present(self) -> bool:
+        return (self.home / "node_modules").is_dir() and (self.home / "package-lock.json").is_file()
+
+    def lock(self) -> str:
+        """Why `pilot` and `on` cannot be chosen, or "": an install found unable to run, or no
+        npm and nothing installed. Reads what is known, runs no process."""
+        if self._binary is not None or self._installing:
+            return ""
+        if self._broken:
+            return self._broken
+        return "" if (self.home / "node_modules").is_dir() or shutil.which("npm") else NO_NPM
+
+    def retry(self) -> None:
+        """A person picked `pilot` or `on`: a failed install may be tried again."""
+        self._failure = ""
 
     def start_install(self) -> None:
         """Install the engine in the background unless it is there or on its way. A daemon thread,
@@ -275,7 +299,8 @@ class Indexes:
             return str(error)
         engine = await self._engine()
         if not isinstance(engine, Path):
-            self.start_install()
+            if not self._broken and not self._failure:
+                self.start_install()
             return engine
         task = self._task(key, workspace)
         try:
@@ -513,9 +538,9 @@ def _map(ctx: Ctx, facts: Facts, binary: Path, ready: Ready) -> str:
 async def _render(ctx: Ctx, facts: Facts) -> str:
     """The map for the `on` arm, nothing for the `off` one; either way one record of the run."""
     arm = ctx.arm(FEATURE, facts.workspace, facts.unit)
-    if facts.stage not in MAP_STAGES or arm is None:
-        return ""
     idx = _indexes(ctx)
+    if facts.stage not in MAP_STAGES or arm is None or idx.lock():
+        return ""
     text = error = sha = ""
     wait_ms = 0
     if arm == "on":
@@ -542,10 +567,11 @@ async def _render(ctx: Ctx, facts: Facts) -> str:
 
 
 def _ready_for(ctx: Ctx, facts: Facts) -> bool:
-    """The tools go to an `on`-arm impl run while the index is ready and the engine checked."""
-    if ctx.arm(FEATURE, facts.workspace, facts.unit) != "on":
+    """The tools go to an `on`-arm impl run while the index is ready and the engine not found
+    broken. The engine is checked at the first call, so a resumed run gets them too."""
+    if ctx.arm(FEATURE, facts.workspace, facts.unit) != "on" or _indexes(ctx).lock():
         return False
-    return _indexes(ctx)._binary is not None and _where(ctx, facts.workspace_key) is not None
+    return _where(ctx, facts.workspace_key) is not None
 
 
 # What an SDK tool handler hands back: `{"content": [{"type": "text", "text"}], "is_error"}`. Not
@@ -562,8 +588,8 @@ def build_tools(ctx: Ctx, facts: Facts) -> list[SdkMcpTool[Any]]:
     home = ctx.data.root / FEATURE
 
     async def answer(make: Callable[[Callable[..., object], str, set[str]], str]) -> Reply:
-        where, binary = _where(ctx, facts.workspace_key), _indexes(ctx)._binary
-        if where is None or binary is None:
+        where, binary = _where(ctx, facts.workspace_key), await _indexes(ctx)._engine()
+        if where is None or not isinstance(binary, Path):
             return _text("The code index is not ready; use Read and Grep.", True)
         root, sha = where
         grant = replace(policy.grant_for(facts.stage), commands=facts.commands)
@@ -659,19 +685,10 @@ def _ago(at: str) -> str:
     return then.strftime("%b %-d")
 
 
-def _locked(home: Path) -> str:
-    """Why `pilot` and `on` cannot be chosen, or "": no npm and nothing installed, or an install
-    whose bundled Node is missing or of a version the library does not run on."""
-    if not (home / "node_modules").is_dir():
-        return "" if shutil.which("npm") else NO_NPM
-    got = installed(home)
-    return got if isinstance(got, str) and (home / "package-lock.json").is_file() else ""
-
-
 def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
     """One sentence for the Settings row, and whether `pilot` and `on` may be chosen."""
     idx = _indexes(ctx)
-    why = "" if idx._binary is not None or idx._installing else _locked(idx.home)
+    why = idx.lock()
     if why:
         return why, False
     if ctx.state(FEATURE, workspace) == "off":
@@ -690,6 +707,7 @@ def on_set(ctx: Ctx, workspace: str, state: State) -> None:
     if state == "off":
         return
     idx = _indexes(ctx)
+    idx.retry()
     try:
         task = asyncio.get_running_loop().create_task(idx.ensure(workspace))
     except RuntimeError:

@@ -10,12 +10,14 @@ import time
 import unittest
 from collections.abc import Mapping
 from pathlib import Path
+from unittest import mock
 
 from coscc.bus import Bus
 from coscc.data import Data
 from coscc.features.codegraph import (
     DB_FILE,
     INDEX_TABLE,
+    NO_NPM,
     Indexes,
     Ready,
 )
@@ -99,6 +101,7 @@ class Bed(unittest.IsolatedAsyncioTestCase):
         self.binary = Path("/fake/node")
         self.gate_install: threading.Event | None = None
         self.installs = 0
+        self.checks = 0
         self.present = True
         self.indexes = self.make()
 
@@ -107,6 +110,7 @@ class Bed(unittest.IsolatedAsyncioTestCase):
         return Indexes(ctx, self.base, self._install, self._installed, self.engine, wait_s=wait_s)
 
     def _installed(self, home: Path) -> Path | str:
+        self.checks += 1
         return self.binary if self.present else "Node is not installed."
 
     def _install(self, home: Path) -> Path | str:
@@ -261,6 +265,24 @@ class AnEngineNotThereYet(Bed):
             (status.state, status.reason), ("failed", "No network to fetch the engine.")
         )
 
+    async def test_a_failed_install_is_not_tried_again_by_a_run_only_by_a_retry(self):
+        self.present = False
+        self.indexes._install = lambda home: self._count("No network to fetch the engine.")
+        with self.assertLogs("coscc.features.codegraph", "WARNING"):
+            await self.indexes.ensure("proj")
+            await self.indexes.settle()
+            await self.indexes.ensure("proj")
+            await self.indexes.settle()
+            self.assertEqual(self.installs, 1)
+            self.indexes.retry()
+            await self.indexes.ensure("proj")
+            await self.indexes.settle()
+        self.assertEqual(self.installs, 2)
+
+    def _count(self, reason: str) -> str:
+        self.installs += 1
+        return reason
+
     async def test_the_install_waits_for_a_build_running(self):
         self.engine.gate = threading.Event()
         self.indexes.wait_s = 0.05
@@ -276,6 +298,38 @@ class AnEngineNotThereYet(Bed):
         self.engine.gate.set()
         await self.indexes.settle()
         self.assertEqual(order, ["released", "installed"])
+
+
+class AnInstallThatCannotRun(Bed):
+    """An install there whose bundled Node is missing or wrong is checked once, locks the
+    choice and is never installed again by a run."""
+
+    def there(self) -> None:
+        (self.base / "node_modules").mkdir()
+        (self.base / "package-lock.json").write_text("{}")
+        self.present = False
+
+    async def test_it_is_checked_once_locks_and_installs_nothing(self):
+        self.there()
+        self.assertEqual(self.indexes.lock(), "")
+        for _ in range(3):
+            self.assertEqual(await self.indexes.ensure("proj"), "Node is not installed.")
+        await self.indexes.settle()
+        self.assertEqual((self.checks, self.installs), (1, 0))
+        self.assertEqual(self.indexes.lock(), "Node is not installed.")
+        self.assertEqual(self.engine.ops, [])
+
+    async def test_the_lock_runs_no_check(self):
+        self.there()
+        with mock.patch("shutil.which", return_value=None):
+            self.assertEqual(self.indexes.lock(), "")
+        self.assertEqual(self.checks, 0)
+
+    async def test_no_npm_and_nothing_installed_locks_it(self):
+        with mock.patch("shutil.which", return_value=None):
+            self.assertEqual(self.indexes.lock(), NO_NPM)
+        with mock.patch("shutil.which", return_value="/usr/bin/npm"):
+            self.assertEqual(self.indexes.lock(), "")
 
 
 class TheBusAsksForARefresh(Bed):

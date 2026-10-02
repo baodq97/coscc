@@ -16,7 +16,10 @@ install, the Node bridge and the text the agent reads.
 
 Picking `pilot` or `on` installs the engine once if it is missing, then builds the index. The
 row is locked at `off`, its sentence saying why, when `npm` is missing and nothing is installed,
-or when the installed engine's bundled Node is missing or outside `>=22.16.0 <25.0.0`.
+or when the installed engine's bundled Node is missing or outside `>=22.16.0 <25.0.0`. That
+check runs once per app process, at the first run or pick that needs the engine; until the app
+restarts, an install found broken keeps the feature off for every unit and is not installed
+again. A failed install is tried again only when a person picks `pilot` or `on`.
 
 ## What the agent sees
 
@@ -35,7 +38,10 @@ or when the installed engine's bundled Node is missing or outside `>=22.16.0 <25
 ## Hazards
 
 - The index is of `main`, in a detached tree `worktrees/<slot>/_main` beside the units' trees;
-  it shows in `git worktree list` of the workspace. `.codegraph/` there ignores itself. A read
+  it shows in `git worktree list` of the workspace. `.codegraph/` there is untracked (its
+`.gitignore` ignores all but itself); the tree moves past untracked files, and is left where it
+is when a tracked file there changed or a commit was made on it. Nothing goes in
+`info/exclude`. A read
   leaves `codegraph.db-shm` and `codegraph.db-wal` beside the db: a reader writes the shared
   memory index, never the db.
 - Symbols a unit adds are not in the index, and lines of a changed file are `main`'s.
