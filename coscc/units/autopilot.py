@@ -1,19 +1,20 @@
 """What the autopilot decides, with no I/O: every function here is pure.
 
-The autopilot starts the stage the loop's `next` names through the same `Steps.run_step` a
-person's press goes through, which still asks the gate. What it decides is where it must
-stop for a person, whether the day's money allows one more step, and which candidate steps
-may start now. Starting a step is not a person's approval of anything.
+The autopilot queues the stage the loop's `next` names, as an attempt the scheduler starts and
+the gate is asked about, as a person's press is. What it decides is where it must stop for a
+person, whether the day's money allows one more step, and which candidate steps may queue now.
+Queueing a step is not a person's approval of anything.
 """
 
 from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from coscc.agent import labels
 from coscc.runlog import spend
+from coscc.units.guards import REASONS as GATE_REASONS
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, grant_for, grant_for_step, is_prose_stage
 
 # Defaults.
@@ -89,6 +90,11 @@ def is_waiting(answer: Any) -> bool:
 def is_ci_red(answer: Any) -> bool:
     """`next` sends the unit back to `impl` because CI is red."""
     return said(answer, "ci-red")
+
+
+def continues(answer: Any) -> bool:
+    """`next` names no stage but says the unit's `impl` ended with its file still a draft."""
+    return isinstance(answer, dict) and answer.get("continue") == "impl"
 
 
 def is_recording_ship(answer: Any) -> bool:
@@ -243,8 +249,9 @@ def stop_for(
     if stage == "ship" and not may_ship:
         return _stop("c", "ship waits for a person: the autopilot may not ship in this workspace")
 
-    # A draft whose questions are all answered is a stage to run again, not a stop.
-    if not stage and nxt.get("rerun"):
+    # A draft whose questions are all answered, or an impl that left its file a draft, is a stage
+    # to run again, not a stop.
+    if not stage and (nxt.get("rerun") or continues(nxt)):
         return None
     if not stage and is_waiting_on_dependency(nxt):
         return None
@@ -682,6 +689,86 @@ def rerun_stop(artifact: str) -> dict[str, str]:
         "reruns",
         f"{artifact} was run again {MAX_RERUNS} times after its answers; a person decides the next run.",
     )
+
+
+# --- a try that must change the head ---------------------------------
+
+# How often `impl` is queued on one head with an app note (a draft continued, a red CI) before a
+# person decides the next run.
+MAX_TRIES = 2
+# The note of a draft `impl.md` that runs again.
+CONTINUE_NOTE = "impl.md is still a draft: go on with it"
+# The buckets of `gh pr checks` that are red.
+RED_BUCKETS = ("fail", "cancel")
+
+
+def tries_on_head(
+    records: Iterable[Mapping[str, Any]], workspace: str, unit: str, head: str = ""
+) -> int:
+    """How many `autopilot-pick`s carrying `continued` or `ci_note` the unit had on its head since
+    that head last changed. A pick belongs to the head of the `start` that follows it, which is
+    the head the step began on; one with no `start` yet belongs to the last head seen. `head`: the
+    head the PR machine reads now, when there is one; a different one than the last `start` saw
+    means the step pushed, and nothing was tried on it yet."""
+    count, current, pending = 0, "", 0
+    for r in records:
+        if r.get("workspace") != workspace or r.get("unit") != unit:
+            continue
+        if r.get("kind") == "autopilot-pick" and (r.get("continued") or r.get("ci_note")):
+            pending += 1
+        elif r.get("kind") == "start" and r.get("head"):
+            if r["head"] != current:
+                current, count = str(r["head"]), 0
+            count, pending = count + pending, 0
+    if head and current and head != current:
+        return 0
+    return count + pending
+
+
+def tries_stop(stage: str, tries: int) -> dict[str, str]:
+    """`stage` was queued with a note as often as it may on one head."""
+    return _stop(
+        "e", f"{stage} was tried {tries} times on the same head; a person decides the next run."
+    )
+
+
+def ci_note(head: str, checks: Iterable[Mapping[str, Any]]) -> str:
+    """The app's note for an `impl` after CI went red: the red required checks and the head the PR
+    machine read them at."""
+    red = [str(c.get("name") or "?") for c in checks if str(c.get("bucket") or "") in RED_BUCKETS]
+    at = f" at {head[:12]}" if head else ""
+    names = ", ".join(red) if red else "the required checks"
+    return f"CI is red{at}: {names} failed. Fix them and push."
+
+
+# --- an attempt the gate refused --------------------------------------
+
+# A refusal that is a race gets one try again after this long, unless a read of the pull requests
+# woke the pass. Chosen, not measured.
+REFUSAL_HOLD = timedelta(seconds=30)
+
+
+def after_refusal(
+    refusal: Mapping[str, Any] | None, stage: str, now: datetime, fresh: bool = False
+) -> tuple[dict[str, str] | None, tuple[str, str] | None]:
+    """What the autopilot's last attempt of a unit, refused by the gate, makes of a pass that would
+    queue `stage` again: `(stop, why_not)`. `refusal` is `{stage, code, at}`.
+
+    The same stage refused is the stop `f`, with the refusal's code, but for a race (`WAIT`). A race is
+    asked again at once if `fresh` (a read of the pull requests moved something), else after
+    `REFUSAL_HOLD`; before that the unit waits with a reason of its own. Another stage than the
+    refused one is no part of it."""
+    if refusal is None or refusal.get("stage") != stage:
+        return None, None
+    code = str(refusal.get("code") or "")
+    if code in WAIT:
+        # `unit-busy` is no hold: the other attempt shows as running while it lasts.
+        moment = _moment(refusal.get("at"))
+        if code != "unit-busy" and not fresh and moment is not None and now - moment < REFUSAL_HOLD:
+            return None, (("ci", "") if code == "ci-pending" else ("running", ""))
+        return None, None
+    stop = _stop("f", f"{stage} was refused: {code or 'no reason given'}")
+    return ({**stop, "code": code} if code in GATE_REASONS else stop), None
 
 
 def full_stop(stage: str, max_parallel: int) -> dict[str, str]:

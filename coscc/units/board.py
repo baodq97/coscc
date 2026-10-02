@@ -346,6 +346,8 @@ async def next_step(
         "hold": data.get("hold") or None,
         # Present only when a draft's questions are all answered; only the autopilot reads it.
         "rerun": str(data.get("rerun") or ""),
+        # Present only when `impl` left its file a draft asking nothing; only the autopilot reads it.
+        "continue": str(data.get("continue") or ""),
         # `dependency` only when `impl` waits on a unit not merged; else "".
         "why": str(data.get("why") or ""),
         # The codes of what settled the answer; the autopilot reads these, never `action`.

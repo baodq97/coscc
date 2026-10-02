@@ -1294,6 +1294,8 @@ class Steps:
             # The stage a fully answered draft would run again; only the autopilot
             # reads it.
             "rerun": str(found.get("rerun") or ""),
+            # `impl` when it left its file a draft asking nothing; only the autopilot reads it.
+            "continue": str(found.get("continue") or ""),
             # The codes the autopilot branches on, copied from `coscc.loop next`.
             "reasons": list(found.get("reasons") or []),
         }

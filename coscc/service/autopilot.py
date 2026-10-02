@@ -1,4 +1,4 @@
-"""The autopilot: the loop that asks `coscc.loop next` and starts the stages it names.py`)."""
+"""The autopilot: the loop that asks `coscc.loop next` and queues the stages it names."""
 
 from __future__ import annotations
 
@@ -110,12 +110,12 @@ class Autopilot:
         self.steps = steps
         self.boards = boards
         # Per journal key: the lock every pass holds, the poll loop, the workspace directory it
-        # was turned on for, the reader of each step it started, the stops the last pass found
-        # by unit, and the passes scheduled but not yet run.
+        # was turned on for, the stops the last pass found by unit, the wake that no pass has
+        # taken yet (the transitions that came with it), and the passes scheduled but not yet run.
         self.locks: dict[str, asyncio.Lock] = {}
         self.tasks: dict[str, asyncio.Task] = {}
         self.cwds: dict[str, str] = {}
-        self.runs: dict[str, dict[str, tuple[str, asyncio.Task]]] = {}
+        self.waiting: dict[str, list[dict[str, Any]]] = {}
         self.stops: dict[str, dict[str, dict[str, str]]] = {}
         self.pending: set[asyncio.Task] = set()
         # What the last pass held back by unit, `(code, detail)`, for the card to show.
@@ -125,9 +125,10 @@ class Autopilot:
 
     # The autopilot holds no rule of the loop. Each pass reads the board, the run log, the settings
     # and the workspace's last shortlist, and asks `next` for every unit on it and no other; with no
-    # shortlist it asks nothing. `coscc/units/autopilot.py` decides where to stop and what to start;
-    # what it starts goes through `run_step` and `integrate`, which ask the gate themselves. A
-    # refusal from them is a stop line, never a second way past the gate.
+    # shortlist it asks nothing. `coscc/units/autopilot.py` decides where to stop and what to queue;
+    # what it queues is an attempt the scheduler starts and the gate is asked about in `_prepare`.
+    # A refusal is the attempt's `refused` row, read on the next pass as a stop line, never a
+    # second way past the gate. It holds no task: what runs is what the attempts say runs.
 
     def start(self, cwd: str) -> None:
         """Run a pass now and every `POLL_SECONDS` after, for as long as the switch is on. A second
@@ -152,6 +153,7 @@ class Autopilot:
         reader = self.pr_readers.pop(key, None)
         if reader is not None:
             reader.cancel()
+        self.waiting.pop(key, None)
         self.stops.pop(key, None)
         self.held.pop(key, None)
 
@@ -171,15 +173,29 @@ class Autopilot:
         return task is not None and not task.done()
 
     def nudge(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
-        """A step or an integration ended, or an answer was written. One pass is scheduled and not
-        waited for; nothing happens when the switch is off. `woken_by`: the transitions of the PR
-        machine that scheduled it, which its picks record.
+        """A step or an integration ended or was refused, or an answer was written. One pass is
+        scheduled and not waited for; nothing happens when the switch is off. A wake that comes
+        while one is scheduled and has not begun joins it; one that comes while a pass runs
+        schedules exactly one more, which the wakes after it join. `woken_by`: the transitions of
+        the PR machine that scheduled it, which its picks record.
         """
         if not self._on(key):
             return
-        task = asyncio.get_running_loop().create_task(self._guarded(key, woken_by))
+        if key in self.waiting:
+            self.waiting[key].extend(woken_by or [])
+            return
+        self.waiting[key] = list(woken_by or [])
+        task = asyncio.get_running_loop().create_task(self._woken(key))
         self.pending.add(task)
         task.add_done_callback(self.pending.discard)
+
+    async def _woken(self, key: str) -> None:
+        """A scheduled pass: it waits its turn, takes the wakes that joined it, and runs once."""
+        lock = self.locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            taken = self.waiting.pop(key, None)
+        if taken is not None:
+            await self._guarded(key, taken or None)
 
     async def _loop(self, key: str) -> None:
         while True:
@@ -246,15 +262,38 @@ class Autopilot:
             )
 
     def _running(self, key: str) -> list[dict[str, Any]]:
-        """What runs in this workspace now, by unit, a person's steps included."""
+        """What holds a unit in this workspace now, by unit: every attempt not ended, a queued one
+        and a person's steps included."""
         out: dict[str, dict[str, Any]] = {}
         for row in self.holds.attempts.unfinished(key):
             if row["unit"]:
                 out[row["unit"]] = {"unit": row["unit"], "stage": row["stage"] or row["machine"]}
-        for unit, (stage, task) in (self.runs.get(key) or {}).items():
-            if not task.done() and unit not in out:
-                out[unit] = {"unit": unit, "stage": stage}
         return list(out.values())
+
+    def _refusals(self, key: str) -> dict[str, dict[str, Any]]:
+        """Per unit, the attempt the autopilot queued that the gate refused, while it is the unit's
+        last attempt: `{stage, code, at}`. Read from the rows, not from anything this process kept."""
+        try:
+            rows = self.holds.attempts.latest(key)
+        except sqlite3.Error, Busy:
+            return {}
+        return {
+            r["unit"]: {"stage": r["stage"], "code": r["outcome"], "at": r["at"]}
+            for r in rows
+            if r["state"] == "refused" and r["started_by"] == "autopilot"
+        }
+
+    def _ci_read(self, key: str, unit: str) -> tuple[str, list[dict[str, Any]]]:
+        """The head the PR machine read for the unit, and the required checks it held at that head;
+        `("", [])` when it has read none."""
+        try:
+            history = self.steps.pr_machine().history
+            now = prmachine.state(history, key, unit)
+            head, number = str(now.get("head") or ""), now.get("number")
+            held = prmachine.ci_held(history, key, int(number), head) if number and head else None
+        except sqlite3.Error, OSError, Busy, ValueError, TypeError:
+            return "", []
+        return str((held or {}).get("head") or head), list((held or {}).get("checks") or [])
 
     def _files(self, cwd: str, unit: str) -> set[str] | None:
         try:
@@ -273,12 +312,6 @@ class Autopilot:
             for row in self.holds.attempts.unfinished()
             if row["unit"]
         }
-        # A launch has no attempt until `run_step` or `integrate` opens one, and is counted
-        # from the moment it was chosen.
-        for k, runs in self.runs.items():
-            for unit, (stage, task) in runs.items():
-                if not task.done():
-                    active.setdefault((k, unit), stage)
         running = autopilot.reserved(
             records, now, [(k, unit, stage) for (k, unit), stage in active.items()]
         )
@@ -334,7 +367,8 @@ class Autopilot:
 
     async def run_pass(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:  # noqa: C901, PLR0915 - still to split
         """One look at a workspace: follow its shortlist, find each listed unit's stop or why it waits,
-        then start what may start, highest first, each after its record.
+        then queue what may start, highest first, each after its record. Nothing here starts a step:
+        the attempt it queues is the scheduler's.
         """
         cwd = self.cwds.get(key)
         if cwd is None or not self._on(key):
@@ -362,6 +396,7 @@ class Autopilot:
                         "shortlist",
                         "answer",
                         "screens",
+                        "autopilot-pick",
                         autopilot.PR_MACHINE,
                     ),
                 )
@@ -424,6 +459,8 @@ class Autopilot:
 
             running = self._running(key)
             here = {r["unit"]: r["stage"] for r in running}
+            refusals = self._refusals(key)
+            at_pass = datetime.now().astimezone()
             board = {u["name"]: u for u in data["units"]}
             found: dict[str, dict[str, str]] = {}
             candidates: list[dict[str, Any]] = []
@@ -536,6 +573,38 @@ class Autopilot:
                         )
                     else:
                         stage, rerun = nxt["rerun"], True
+                # The unit's `impl` queued again with a note of the app's: a draft `impl.md` that
+                # `next` says to go on with, or a red CI. Each head gets `MAX_TRIES`.
+                app_note = ""
+                extra: dict[str, Any] = {}
+                if stop is None and not stage and autopilot.continues(nxt):
+                    head, _ = self._ci_read(key, name)
+                    tries = autopilot.tries_on_head(records, key, name, head)
+                    if tries >= autopilot.MAX_TRIES:
+                        stop = autopilot.tries_stop("impl", tries)
+                    else:
+                        stage, app_note, extra = (
+                            "impl",
+                            autopilot.CONTINUE_NOTE,
+                            {"continued": True},
+                        )
+                elif stop is None and stage == "impl" and autopilot.is_ci_red(nxt):
+                    head, checks = self._ci_read(key, name)
+                    tries = autopilot.tries_on_head(records, key, name, head)
+                    if tries >= autopilot.MAX_TRIES:
+                        stop = autopilot.tries_stop("impl", tries)
+                    else:
+                        app_note = autopilot.ci_note(head, checks)
+                        extra = {"ci_note": app_note}
+                # What the gate said to the autopilot's last attempt of the unit, when it would queue
+                # that same stage again.
+                if stop is None and stage and name not in here:
+                    stop, why_not = autopilot.after_refusal(
+                        refusals.get(name), stage, at_pass, fresh=bool(woken_by)
+                    )
+                    if why_not is not None:
+                        reasons[name] = why_not
+                        continue
                 if stop is not None and unfetched is not None and name in at_ship:
                     note = integrate.origin_note(str(info.get("origin_sha") or ""), unfetched)
                     stop = {**stop, "reason": f"{stop['reason']}; {note}"}
@@ -565,6 +634,8 @@ class Autopilot:
                         "rank": rank,
                         "need": autopilot.reservation(stage),
                         "rerun": rerun,
+                        "note": app_note,
+                        "extra": extra,
                         "past_exhausted": {"at": last[name].get("at")} if skipped else None,
                     }
                 )
@@ -636,6 +707,7 @@ class Autopilot:
                             "rank": c["rank"],
                             "shortlist": shortlist,
                             "passed": over,
+                            **c["extra"],
                             **(
                                 {"past_exhausted": c["past_exhausted"]}
                                 if c.get("past_exhausted")
@@ -658,44 +730,25 @@ class Autopilot:
                         },
                     )
                     return
-                task = asyncio.get_running_loop().create_task(
-                    self._launch(key, cwd, c["unit"], c["stage"])
-                )
-                self.runs.setdefault(key, {})[c["unit"]] = (c["stage"], task)
+                self._queue(key, cwd, c)
 
-    async def _launch(self, key: str, cwd: str, unit: str, stage: str) -> None:
-        """Start one step or integration and read it to its end, since no client will.
-
-        A refusal is a stop line with the gate's words, unless it is CI still running, or the unit
-        taken by someone else in the meantime, which are not stops.
-        """
+    def _queue(self, key: str, cwd: str, c: dict[str, Any]) -> None:
+        """Queue one chosen step or integration, written before the pass returns. A refusal at once
+        is a stop line with the words of the refusal, unless it is a race, which the next pass asks
+        again."""
+        unit, stage = c["unit"], c["stage"]
         try:
-            # Turned off between the pass and this task's first turn.
-            if not self._on(key):
-                return
-            stream = (
-                self.steps.integrate(cwd, unit, started_by="autopilot")
-                if stage == "integrate"
-                else self.steps.run_step(cwd, unit, stage, started_by="autopilot")
-            )
-            async for _ in stream:
-                pass
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            # The reason is shown, not swallowed.
-            log.exception("the autopilot could not run %s of %s", stage, unit)
-            said = str(e)
-            # A gate's refusal carries its codes (`Refused`); anything else has none.
+            if stage == "integrate":
+                self.steps.enqueue_integration(cwd, unit)
+            else:
+                self.steps.enqueue_step(cwd, unit, stage, c["note"])
+        except (Refused, Invalid) as e:
+            log.exception("the autopilot could not queue %s of %s", stage, unit)
             if not autopilot.is_waiting(e) and not self.holds.busy(key, unit):
-                stop = {"unit": unit, "kind": "f", "reason": said}
+                stop = {"unit": unit, "kind": "f", "reason": str(e)}
                 if isinstance(e, Refused) and e.reasons:
                     stop["code"] = e.reasons[0]
                 self.set_stops(key, {unit: stop}, {unit})
-        finally:
-            runs = self.runs.get(key) or {}
-            if runs.get(unit, ("", None))[1] is asyncio.current_task():
-                del runs[unit]
 
     def _block(self, key: str) -> dict[str, Any]:
         """What the board shows of the autopilot. Display only; decides nothing."""

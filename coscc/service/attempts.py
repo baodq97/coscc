@@ -202,6 +202,14 @@ class Attempts:
             args.append(unit)
         return self._rows(where, tuple(args))
 
+    def latest(self, workspace: str) -> list[Attempt]:
+        """The last attempt of each unit of `workspace`, ended or refused included, oldest first."""
+        return self._rows(
+            "WHERE a.workspace = ? AND a.unit != '' AND a.id = "
+            "(SELECT MAX(id) FROM attempts WHERE workspace = a.workspace AND unit = a.unit)",
+            (workspace,),
+        )
+
     def holding(self, workspace: str, unit: str) -> Attempt | None:
         """The unit's unfinished attempt, or `None`."""
         rows = self.unfinished(workspace, unit)

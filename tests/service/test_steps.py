@@ -1755,6 +1755,24 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         self.assertEqual((first["stage"], first["waiting"]), ("", ["F3"]))
         self.assertEqual(second["waiting"], [])
 
+    def test_continue_is_copied_and_absent_reads_as_empty(self):
+        """An `impl` left a draft reaches the autopilot as the loop named it."""
+        from coscc.units import board as board_reader
+
+        answers = [
+            {"unit": "u", "stage": "", "action": "a", "blocked": True, "continue": "impl"},
+            {"unit": "u", "stage": "review", "action": "a", "blocked": True},
+        ]
+
+        async def fake_next(units_root, unit, repo=None, **kw):
+            if repo is None:
+                return {"unit": "u", "stage": "", "action": "", "blocked": True, "hold": None}
+            return answers.pop(0)
+
+        with mock.patch.object(board_reader, "next_step", fake_next):
+            first, second = self._next(), self._next()
+        self.assertEqual((first["continue"], second["continue"]), ("impl", ""))
+
     def test_dropped_is_copied_and_absent_reads_as_none(self):
         """The ids the last round left out reach the page as the loop listed them, not inside
         `action`."""

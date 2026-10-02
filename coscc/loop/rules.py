@@ -39,6 +39,7 @@ from coscc.loop.model import (
     links_of,
     missing,
     needs_a_person,
+    needs_person_claims,
     out_of_rounds,
     person_findings,
     present,
@@ -74,8 +75,8 @@ A = re.ASCII
 
 
 def next_action(unit, limit=REVIEW_ROUNDS):
-    """`nextAction`: `decide` without `why` and `rerun`."""
-    return {k: v for k, v in decide(unit, limit).items() if k not in ("why", "rerun")}
+    """`nextAction`: `decide` without `why`, `rerun` and `continue`."""
+    return {k: v for k, v in decide(unit, limit).items() if k not in ("why", "rerun", "continue")}
 
 
 def decide(unit, limit=REVIEW_ROUNDS):
@@ -246,6 +247,11 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
             }
             if answered:
                 out["rerun"] = s["name"]
+            elif s["name"] == "impl" and not questions and not needs_person_claims(unit):
+                # An impl that stopped with its draft asking nothing and handing nothing to a
+                # person has more to write; only the autopilot reads this, the board offers
+                # `stage` alone. A draft plan never gets one: its open points are a person's.
+                out["continue"] = s["name"]
             return out
         if status == "changes-requested":
             used = rounds_used(unit)
@@ -760,7 +766,7 @@ def cmd_status(json, cos_dir, limit, state, out):
     )
     rows: list[Any] = []
     for u in units:
-        next_ = {k: v for k, v in decide(u, limit).items() if k != "rerun"}
+        next_ = {k: v for k, v in decide(u, limit).items() if k not in ("rerun", "continue")}
         row = {
             **u,
             "next": next_,
@@ -833,6 +839,8 @@ def cmd_next(unit_name, cos_dir, repo_dir, limit, state, out, err):
         body["hold"] = unit["hold"]
     if answer.get("rerun"):
         body["rerun"] = answer["rerun"]
+    if answer.get("continue"):
+        body["continue"] = answer["continue"]
     if answer.get("why") == "dependency":
         body["why"] = answer["why"]
     body["reasons"] = answer["reasons"]

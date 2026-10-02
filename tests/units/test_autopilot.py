@@ -1135,6 +1135,152 @@ class Reruns(unittest.TestCase):
             self.assertIn(stop["kind"], ap.STOP_KINDS)
 
 
+class TriesOnAHead(unittest.TestCase):
+    """`impl` queued with a note of the app's is tried `MAX_TRIES` times on one head."""
+
+    @staticmethod
+    def pick(**extra):
+        return {
+            "kind": "autopilot-pick",
+            "workspace": "w",
+            "unit": "0001_a",
+            "stage": "impl",
+            **extra,
+        }
+
+    @staticmethod
+    def start(head, unit="0001_a"):
+        return {"kind": "start", "workspace": "w", "unit": unit, "stage": "impl", "head": head}
+
+    def test_each_pick_with_a_note_on_the_same_head_is_a_try(self):
+        rows = [self.pick(continued=True), self.start("h1")]
+        self.assertEqual(ap.tries_on_head(rows, "w", "0001_a"), 1)
+        rows += [self.pick(ci_note="CI is red"), self.start("h1")]
+        self.assertEqual(ap.tries_on_head(rows, "w", "0001_a"), 2)
+
+    def test_a_pick_with_no_note_and_what_is_not_the_unit_s_is_none(self):
+        rows = [
+            self.pick(),
+            self.start("h1"),
+            {**self.pick(continued=True), "unit": "0002_b"},
+            {**self.pick(continued=True), "workspace": "x"},
+            self.start("h1", "0002_b"),
+        ]
+        self.assertEqual(ap.tries_on_head(rows, "w", "0001_a"), 0)
+
+    def test_the_count_starts_again_when_the_head_changes(self):
+        rows = [
+            self.pick(continued=True),
+            self.start("h1"),
+            self.pick(continued=True),
+            self.start("h1"),
+            self.pick(continued=True),
+            self.start("h2"),
+        ]
+        # The third was made on `h2`, a head nothing had been tried on before it.
+        self.assertEqual(ap.tries_on_head(rows, "w", "0001_a"), 1)
+        self.assertEqual(ap.tries_on_head(rows[:4], "w", "0001_a"), 2)
+
+    def test_a_pick_not_started_yet_counts_on_the_last_head(self):
+        rows = [self.pick(continued=True), self.start("h1"), self.pick(continued=True)]
+        self.assertEqual(ap.tries_on_head(rows, "w", "0001_a"), 2)
+
+    def test_a_head_the_pr_machine_reads_that_the_last_start_did_not_see_is_a_new_one(self):
+        rows = [
+            self.pick(ci_note="x"),
+            self.start("h1"),
+            self.pick(ci_note="x"),
+            self.start("h1"),
+        ]
+        self.assertEqual(ap.tries_on_head(rows, "w", "0001_a", "h1"), 2)
+        self.assertEqual(ap.tries_on_head(rows, "w", "0001_a", "h2"), 0)
+
+    def test_the_third_try_on_a_head_is_stop_e_that_says_how_many(self):
+        stop = ap.tries_stop("impl", 2)
+        self.assertEqual(stop["kind"], "e")
+        self.assertIn("2 times", stop["reason"])
+        self.assertEqual(ap.MAX_TRIES, 2)
+        self.assertIn("e", ap.STOP_KINDS)
+
+
+class NotesOfTheApp(unittest.TestCase):
+    def test_the_note_of_a_red_ci_names_the_red_required_checks_and_the_head(self):
+        checks = [
+            {"name": "tests", "bucket": "fail"},
+            {"name": "lint", "bucket": "pass"},
+            {"name": "build", "bucket": "cancel"},
+        ]
+        self.assertEqual(
+            ap.ci_note("0123456789abcdef", checks),
+            "CI is red at 0123456789ab: tests, build failed. Fix them and push.",
+        )
+        self.assertEqual(
+            ap.ci_note("", []), "CI is red: the required checks failed. Fix them and push."
+        )
+
+    def test_a_draft_impl_next_says_to_go_on_with_is_no_stop_f(self):
+        draft = {**nxt("", "impl.md is still a draft", reasons=["draft"]), "continue": "impl"}
+        self.assertTrue(ap.continues(draft))
+        self.assertIsNone(ap.stop_for(unit(), draft, None, False))
+        self.assertEqual(
+            ap.stop_for(
+                unit(), nxt("", "impl.md is still a draft", reasons=["draft"]), None, False
+            )["kind"],
+            "f",
+        )
+        self.assertFalse(ap.continues({**draft, "continue": "plan"}))
+
+
+class AfterARefusal(unittest.TestCase):
+    """What the gate's refusal of an attempt the autopilot queued makes of the next pass."""
+
+    @staticmethod
+    def refused(code, stage="impl", ago=timedelta(seconds=1)):
+        return {"stage": stage, "code": code, "at": at(-ago)}
+
+    def test_a_refusal_is_the_stop_f_of_the_same_stage_with_its_code(self):
+        stop, why = ap.after_refusal(self.refused("no-worktree"), "impl", NOW)
+        self.assertEqual(
+            (stop, why),
+            (
+                {
+                    "kind": "f",
+                    "reason": "impl was refused: no-worktree",
+                    "code": "no-worktree",
+                },
+                None,
+            ),
+        )
+
+    def test_a_code_the_gate_has_not_is_a_stop_with_no_code(self):
+        stop, _ = ap.after_refusal(self.refused("invalid"), "impl", NOW)
+        self.assertEqual(stop, {"kind": "f", "reason": "impl was refused: invalid"})
+
+    def test_no_refusal_or_another_stage_is_no_part_of_it(self):
+        self.assertEqual(ap.after_refusal(None, "impl", NOW), (None, None))
+        self.assertEqual(
+            ap.after_refusal(self.refused("no-worktree", "review"), "impl", NOW), (None, None)
+        )
+
+    def test_ci_pending_and_updating_make_no_stop_and_hold_for_a_while(self):
+        self.assertEqual(
+            ap.after_refusal(self.refused("ci-pending"), "impl", NOW), (None, ("ci", ""))
+        )
+        self.assertEqual(
+            ap.after_refusal(self.refused("updating"), "impl", NOW), (None, ("running", ""))
+        )
+        late = ap.REFUSAL_HOLD + timedelta(seconds=1)
+        self.assertEqual(
+            ap.after_refusal(self.refused("ci-pending", ago=late), "impl", NOW), (None, None)
+        )
+
+    def test_a_read_of_the_pull_requests_ends_the_hold_and_unit_busy_has_none(self):
+        self.assertEqual(
+            ap.after_refusal(self.refused("ci-pending"), "impl", NOW, fresh=True), (None, None)
+        )
+        self.assertEqual(ap.after_refusal(self.refused("unit-busy"), "impl", NOW), (None, None))
+
+
 class ExhaustedOf(unittest.TestCase):
     """How many times a stage ran out, the count `stop_for`'s e reads."""
 

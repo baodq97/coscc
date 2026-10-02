@@ -820,13 +820,9 @@ class AStaleOriginMain(unittest.TestCase):
         use_config(self.service, dataclasses.replace(self.service.config, host="127.0.0.1"))
         calls: list[tuple[str, str]] = []
 
-        def integrate_(cwd, unit, started_by="person"):
-            calls.append((unit, started_by))
-
-            async def go():
-                yield ("done", {"integration": {}})
-
-            return go()
+        def enqueue_integration(cwd, unit):
+            calls.append((unit, "autopilot"))
+            return 0
 
         async def next_step(cwd, unit):
             return {
@@ -854,15 +850,11 @@ class AStaleOriginMain(unittest.TestCase):
                     "by": "proof",
                 }
             )
-            self.service.steps.integrate = integrate_
+            self.service.steps.enqueue_integration = enqueue_integration
             self.service.steps.next_step = next_step
             before = (await self.service.board(self.cwd))["units"][0]
+            # What the pass queues is written before it returns.
             await self.service.autopilot.run_pass(self.key)
-            # Every launch of the pass has ended.
-            for _ in range(500):
-                if not self.service.autopilot.runs.get(self.key):
-                    break
-                await asyncio.sleep(0.01)
             after = next(
                 u for u in (await self.service.board(self.cwd))["units"] if u["name"] == self.unit
             )
