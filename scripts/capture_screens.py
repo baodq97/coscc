@@ -105,6 +105,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -335,7 +336,7 @@ def run_build(env: dict[str, str]) -> bool:
 
 
 def make_fixture(
-    api: httpx.Client, proj: Path, fixture: dict[str, dict[str, str]] = FIXTURE
+    api: httpx.Client, proj: Path, fixture: Mapping[str, Mapping[str, str]] = FIXTURE
 ) -> None:
     """The units of `fixture`, numbered in this order after those already there (0001–0005
     for `FIXTURE`), through the app's own route."""
