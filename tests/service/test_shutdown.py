@@ -212,6 +212,17 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ProcessLookupError):
             os.kill(proc.pid, 0)
 
+    async def test_what_outlives_the_deadline_is_logged_by_name(self):
+        await self.a_read_in_its_thread()
+        with (
+            mock.patch("coscc.service.SHUTDOWN_WITHIN", 0.3),
+            self.assertLogs("coscc.service", "WARNING") as logs,
+        ):
+            await asyncio.wait_for(self.service.shutdown(), 5)
+        [line] = logs.output
+        self.assertIn("shutdown returns with the board read of ", line)
+        self.assertIn("still running after 0.3s", line)
+
     async def test_nothing_writes_once_shutdown_returned(self):
         self.boards._remove_later(self.cwd, {"name": "0001_done", "why": "finished"})
         await self.a_read_in_its_thread()

@@ -38,6 +38,10 @@ from coscc.service.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
 
+# How long `shutdown` waits for what it cancelled. Chosen, not measured: past it a step's
+# thread is left running rather than an update held up.
+SHUTDOWN_WITHIN = 10.0
+
 
 @dataclass
 class Service:
@@ -272,16 +276,24 @@ class Service:
         except updater_mod.Refused as e:
             raise as_invalid(e) from e
 
+    def _asks(self) -> list[tuple[str, asyncio.Task]]:
+        """The background `gh` asks running now: CI, the board's and the release panel's."""
+        return [
+            *((f"CI ask of {u} in {ws}", t) for (ws, u), t in self.steps.ci_asks.items()),
+            *((f"gh ask for {' '.join(k)}", t) for k, t in self.boards.prs.asks.items()),
+            *((f"release ask for {' '.join(k)}", t) for k, t in self.release.details.asks.items()),
+        ]
+
     async def shutdown(self) -> None:
         """Cancel every autopilot pass, step, board read and background `gh` ask still running,
-        let every tree removal end as it would, and wait for all of them, 10 seconds at most
-        from the call. Once this returns nothing they started still writes, unless it outlived
-        the 10 seconds: each such one is logged by name.
+        let every tree removal end as it would, and wait for all of them, `SHUTDOWN_WITHIN`
+        seconds at most from the call. Once this returns nothing they started still writes,
+        unless it outlived the deadline: each such one is logged by name.
 
         No `end` is written: a step with no `end` is what an app that went down mid-step looks like.
         """
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + 10
+        deadline = loop.time() + SHUTDOWN_WITHIN
         # The autopilot first, so no pass starts a step while the rest go down. A pass may be
         # in a board read's thread, so it is waited for too; taken before `stop` drops it.
         autopilot = [
@@ -294,12 +306,7 @@ class Service:
         for t in list(self.autopilot.pending):
             t.cancel()
         # A CI ask and a held `gh` answer hold nothing worth keeping, but their `gh` is reaped.
-        cancelled = [
-            *autopilot,
-            *((f"CI ask of {u} in {ws}", t) for (ws, u), t in self.steps.ci_asks.items()),
-            *((f"gh ask for {' '.join(k)}", t) for k, t in self.boards.prs.asks.items()),
-            *((f"release ask for {' '.join(k)}", t) for k, t in self.release.details.asks.items()),
-        ]
+        cancelled = [*autopilot, *self._asks()]
         steps = [
             (f"{r.stage} step of {r.unit} in {r.workspace}", r.task)
             for r in self.steps.registry.all()
@@ -316,11 +323,11 @@ class Service:
             t.cancel()
         # Board reads are cancelled there, and tree removals left to end.
         waited = cancelled + await self.boards.stop()
-        if not waited:
-            return
-        _done, pending = await asyncio.wait(
-            {t for _label, t in waited}, timeout=max(0.0, deadline - loop.time())
-        )
+        left = {t for _label, t in waited if not t.done()}
+        if left:
+            await asyncio.wait(left, timeout=max(0.0, deadline - loop.time()))
         for label, t in waited:
-            if t in pending:
-                log.warning("shutdown returns with the %s still running after 10s", label)
+            if not t.done():
+                log.warning(
+                    "shutdown returns with the %s still running after %gs", label, SHUTDOWN_WITHIN
+                )
