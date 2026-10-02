@@ -4473,6 +4473,48 @@ test('0040 R7: a dropped dependency shuts impl and says dropped', () => {
   assert.match(cli('--root', rejected.b, 'gate', '0001_y', 'impl', '--peer', `a=${rejected.a}`).stderr, /waits on a\/0001_x: rejected: its intent\.md is rejected/)
 })
 
+// `0144` R9, R10: `0001_y` is ready for `impl`; the app's snapshot says it depends, by a
+// relation of the backlog, on `0002_x`, whose `impl` is done and whose `intent.md` is `intent`.
+const related44 = (intent, change = () => {}) => {
+  const b = store40({ '0001_y': toImpl('Repo: b.'), '0002_x': { 'intent.md': intent, 'impl.md': '# Impl\nStatus: accepted.\n' } })
+  const state = stateOfRoots(b)
+  state.units['/0001_y'].links.backlog = [{ ref: '0002_x', source: 'backlog' }]
+  change(state)
+  const gate = (...args) => spawnSync(process.execPath, [SCRIPT, '--root', b, 'gate', '0001_y', 'impl', ...args, '--state', '-'], { encoding: 'utf8', input: JSON.stringify(state) })
+  return { b, state, gate }
+}
+
+test('0144 R9: a backlog relation to a unit not shipped shuts impl, and merged opens it', () => {
+  const { state, gate } = related44(I40('accepted'))
+  const shut = gate()
+  assert.equal(shut.status, 1)
+  assert.match(shut.stderr, /waits on 0002_x: not merged: the app holds no merge of it \(backlog relation\)/)
+  assert.deepEqual(JSON.parse(gate('--json').stdout).reasons, ['waiting-on'])
+  state.units['/0002_x'].merged = true
+  assert.equal(gate().status, 0)
+})
+
+test('0144 R10: a backlog relation to a rejected or dropped unit holds nothing', () => {
+  for (const intent of [I40('rejected'), `${I40('accepted')}\n## Answers\n${holdBlock('Dropped', 'Not needed.')}`]) {
+    const { gate } = related44(intent)
+    const out = gate('--json')
+    assert.equal(out.status, 0, out.stderr)
+    assert.deepEqual(JSON.parse(out.stdout).reasons, [])
+  }
+})
+
+test('0144: status carries the source of a backlog dependency, and a unit with none carries no source', () => {
+  const b = store40({ '0001_y': toImpl('Repo: b. Depends on: 0003_z.'), '0002_x': { 'intent.md': I40('accepted') }, '0003_z': { 'intent.md': I40('accepted') } })
+  const state = stateOfRoots(b)
+  state.units['/0001_y'].links.backlog = [{ ref: '0002_x', source: 'backlog' }]
+  const out = spawnSync(process.execPath, [SCRIPT, '--root', b, 'status', '--json', '--state', '-'], { encoding: 'utf8', input: JSON.stringify(state) })
+  const [y, x] = json40(out).units
+  assert.deepEqual(y.dependsOn.map((d) => [d.ref, d.source ?? null]), [['0003_z', null], ['0002_x', 'backlog']])
+  assert.ok(!('dependsOn' in x))
+  const gate = spawnSync(process.execPath, [SCRIPT, '--root', b, 'gate', '0001_y', 'impl', '--state', '-'], { encoding: 'utf8', input: JSON.stringify(state) })
+  assert.match(gate.stderr, /waits on 0003_z: .* \(Depends on:\)/)
+})
+
 test('0040 R9: an unreadable Idea: shuts impl but no other gate', () => {
   const b = store40({ '0001_y': toImpl('Idea: b/ideas/0001_gone.md. Repo: b.') })
   for (const stage of ['spec', 'plan']) assert.equal(cli('--root', b, 'gate', '0001_y', stage, '--peer', `b=${b}`).status, 0, stage)

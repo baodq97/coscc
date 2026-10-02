@@ -23,6 +23,8 @@ from typing import Any
 
 from coscc.agent import harness
 from coscc.data import Data, now
+from coscc.runlog.journal import Journal
+from coscc.units import backlog
 from coscc.units.history import History
 from coscc.units.states import Machine
 
@@ -593,6 +595,22 @@ class UnitMeta:
                 for r in conn.execute(sql + " ORDER BY workspace, unit, artifact, field", args)
             ]
 
+    def _backlog_depends(
+        self, keys: list[str], wanted: list[str] | None
+    ) -> dict[tuple[str, str], list[str]]:
+        """`{(workspace, unit): [other]}` for each `phụ thuộc` relation of the backlog in force.
+
+        The relations are `relation` records of the run log, folded by `backlog.relations_of`;
+        `cos.mjs` holds `impl` for the unit they name like a `Depends on:`.
+        """
+        journal = Journal(self.root, self.data)
+        out: dict[tuple[str, str], list[str]] = {}
+        for workspace in keys:
+            for r in backlog.relations_of(journal.records(workspace, kind="relation")):
+                if r["type"] == "phụ thuộc" and (wanted is None or r["unit"] in wanted):
+                    out.setdefault((workspace, r["unit"]), []).append(r["other"])
+        return out
+
     def snapshot(  # noqa: C901, PLR0915 - still to split
         self, own: str, names: Mapping[str, str], units_: Iterable[str] | None = None
     ) -> dict[str, Any]:
@@ -600,8 +618,9 @@ class UnitMeta:
 
         One query per table. Units are keyed `<name>/<unit>`; `own`'s name is the one `names`
         gives it, or `""`. `not started` is no status at all here. `units_` narrows it to those
-        units of `own` and every unit their `Depends on:` may name, which is all `gate`,
-        `next` and `unit-branch` read.
+        units of `own` and every unit their `Depends on:` or backlog relation may name, which is
+        all `gate`, `next` and `unit-branch` read. A unit with a `phụ thuộc` relation in force
+        carries `links.backlog`, `[{ref, source: "backlog"}]`; one with none has no such key.
         """
         named = dict(names)
         own_name = next((n for n, k in named.items() if k == own), "")
@@ -612,10 +631,14 @@ class UnitMeta:
         args: list[Any] = [self.root, *keys]
         pairs: set[tuple[str, str]] | None = None
         units: dict[str, dict[str, Any]] = {}
+        wanted = sorted(set(units_)) if units_ is not None else None
+        waited = self._backlog_depends(keys, wanted)
         with self.data.connect() as conn:
-            if units_ is not None:
-                wanted = sorted(set(units_))
+            if wanted is not None:
                 pairs = {(own, u) for u in wanted}
+                pairs.update(
+                    (own, o) for (ws, _), others in waited.items() if ws == own for o in others
+                )
                 links = conn.execute(
                     f"SELECT ref FROM unit_links WHERE root = ? AND workspace = ? AND kind = 'depends' "
                     f"AND unit IN ({', '.join('?' for _ in wanted)})",
@@ -768,6 +791,10 @@ class UnitMeta:
                     e["links"]["dependsOn"] = [*(e["links"]["dependsOn"] or []), r["ref"]]
                 else:
                     e["links"][r["kind"]] = r["ref"]
+            for (ws, name), others in waited.items():
+                e = units.get(f"{name_of[ws]}/{name}")
+                if e is not None:
+                    e["links"]["backlog"] = [{"ref": o, "source": "backlog"} for o in others]
             for r in rows(
                 "SELECT workspace, unit, artifact, ref, text, answered_by, date, via, authority "
                 "FROM unit_answers WHERE {where} ORDER BY id"
