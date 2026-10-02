@@ -1149,8 +1149,15 @@ class TriesOnAHead(unittest.TestCase):
         }
 
     @staticmethod
-    def start(head, unit="0001_a"):
-        return {"kind": "start", "workspace": "w", "unit": unit, "stage": "impl", "head": head}
+    def start(head, unit="0001_a", by="autopilot"):
+        return {
+            "kind": "start",
+            "workspace": "w",
+            "unit": unit,
+            "stage": "impl",
+            "head": head,
+            "started_by": by,
+        }
 
     def test_each_pick_with_a_note_on_the_same_head_is_a_try(self):
         rows = [self.pick(continued=True), self.start("h1")]
@@ -1181,9 +1188,16 @@ class TriesOnAHead(unittest.TestCase):
         self.assertEqual(ap.tries_on_head(rows, "w", "0001_a"), 1)
         self.assertEqual(ap.tries_on_head(rows[:4], "w", "0001_a"), 2)
 
-    def test_a_pick_not_started_yet_counts_on_the_last_head(self):
+    def test_a_pick_whose_step_never_began_is_no_try(self):
+        # Refused at once, or by the gate: no `start` follows it, and the next one is one try.
         rows = [self.pick(continued=True), self.start("h1"), self.pick(continued=True)]
+        self.assertEqual(ap.tries_on_head(rows, "w", "0001_a"), 1)
+        rows += [self.pick(continued=True), self.start("h1")]
         self.assertEqual(ap.tries_on_head(rows, "w", "0001_a"), 2)
+
+    def test_a_persons_start_after_a_pick_is_no_try(self):
+        rows = [self.pick(continued=True), self.start("h1", by="person")]
+        self.assertEqual(ap.tries_on_head(rows, "w", "0001_a"), 0)
 
     def test_a_head_the_pr_machine_reads_that_the_last_start_did_not_see_is_a_new_one(self):
         rows = [

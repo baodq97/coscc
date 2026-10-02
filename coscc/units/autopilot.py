@@ -705,24 +705,27 @@ RED_BUCKETS = ("fail", "cancel")
 def tries_on_head(
     records: Iterable[Mapping[str, Any]], workspace: str, unit: str, head: str = ""
 ) -> int:
-    """How many `autopilot-pick`s carrying `continued` or `ci_note` the unit had on its head since
-    that head last changed. A pick belongs to the head of the `start` that follows it, which is
-    the head the step began on; one with no `start` yet belongs to the last head seen. `head`: the
-    head the PR machine reads now, when there is one; a different one than the last `start` saw
-    means the step pushed, and nothing was tried on it yet."""
-    count, current, pending = 0, "", 0
+    """How many steps the autopilot began on the unit's head, since that head last changed, after an
+    `autopilot-pick` carrying `continued` or `ci_note`. A try is such a pick and the autopilot's
+    `start` that follows it, on the head the step began on: picks refused before their step began
+    are none, and a pick with no `start` yet is still queued or running, which no pass picks again.
+    `head`: the head the PR machine reads now, when there is one; a different one than the last
+    `start` saw means the step pushed, and nothing was tried on it yet."""
+    count, current, pending = 0, "", False
     for r in records:
         if r.get("workspace") != workspace or r.get("unit") != unit:
             continue
         if r.get("kind") == "autopilot-pick" and (r.get("continued") or r.get("ci_note")):
-            pending += 1
+            pending = True
         elif r.get("kind") == "start" and r.get("head"):
             if r["head"] != current:
                 current, count = str(r["head"]), 0
-            count, pending = count + pending, 0
+            if pending and started_by(r) == "autopilot":
+                count += 1
+            pending = False
     if head and current and head != current:
         return 0
-    return count + pending
+    return count
 
 
 def tries_stop(stage: str, tries: int) -> dict[str, str]:
