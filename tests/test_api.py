@@ -573,10 +573,10 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.rows(), self.intent.read_bytes()), ([], before))
 
     async def test_the_board_then_counts_one_fewer_open(self):
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         self.assertEqual(board["units"][0]["open"], 3)
         await self.post()
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         self.assertEqual(board["units"][0]["open"], 2)
 
     async def test_a_second_answer_is_a_second_row(self):
@@ -803,7 +803,7 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
         after = self.intent.read_bytes()
         self.assertTrue(after.startswith(before))
         self.assertIn("### Outcome", after[len(before) :].decode("utf-8"))
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         self.assertEqual(board["units"][0]["outcome"]["result"], "missed")
         self.assertEqual(board["units"][0]["outcome_label"]["text"], "trượt")
 
@@ -952,7 +952,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 400)
         self.assertIn("has not used all its review rounds", got.json()["error"])
         self.assertEqual((self.first / "review.md").read_bytes(), before)
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         [row] = [u for u in board["units"] if u["name"] == self.first.name]
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (False, 1))
         # A fourth round asking for changes, written above `## Answers` as the runner writes
@@ -962,7 +962,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         (self.first / "review.md").write_text(
             f"{head}{round4}\n## Answers\n{answers}", encoding="utf-8"
         )
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         [row] = [u for u in board["units"] if u["name"] == self.first.name]
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (True, 1))
         self.assertEqual((await self.allow()).status_code, 200)
@@ -1026,7 +1026,7 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
 
     async def test_the_board_then_waits_on_the_other_one_only(self):
         await self.finding()
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         [u] = board["units"]
         self.assertEqual(u["waiting"], ["F3"])
         self.assertEqual([p["answered"] for p in u["person_findings"]], [True, False])
@@ -1115,7 +1115,7 @@ class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_board_then_shows_the_round_on_the_pr(self):
         await self.post()
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         [rnd] = board["units"][0]["rounds"]
         self.assertEqual(rnd["comment"]["url"], f"{self.PR_URL}#c1")
 
@@ -1192,7 +1192,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(made.status_code, 200, made.text)
         name = made.json()["unit"]
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         self.assertEqual([u["name"] for u in board["units"]], [name])
 
     async def test_the_brief_is_stored_as_the_idea_the_intent_step_will_read(self):
@@ -1239,7 +1239,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         # so.
         seen = await self.app.state.service.backlog.branch_here(self.cwd)
         self.assertEqual(seen["branch"], "main")
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         tree = next(u["worktree"] for u in board["units"] if u["name"] == made["unit"])
         self.assertEqual(tree["branch"], "feat/a-problem")
         self.assertEqual(tree["path"], cut.json()["worktree"])
@@ -1247,7 +1247,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_something_that_is_not_json_is_refused_before_anything_is_made(self):
         got = await self.client.post("/api/units", content=b"not json")
         self.assertEqual(got.status_code, 400)
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         self.assertEqual(board["count"], 0)
 
 
@@ -1539,7 +1539,7 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
             ).status_code,
             400,
         )
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         self.assertEqual([e["unit"] for e in board["backlog"]["shortlist"]], [self.a])
         self.assertTrue(board["backlog"]["propose_warning"])
         self.assertEqual(
@@ -1769,7 +1769,7 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         return await self.client.post(route, json=body)
 
     async def board(self, ws: str) -> dict:
-        r = await self.client.get("/api/board", params={"cwd": self.cwd[ws]})
+        r = await self.client.get("/api/board", params={"cwd": self.cwd[ws], "fresh": 1})
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()
 

@@ -28,6 +28,7 @@ Name = Literal[
     "answer.written",
     "shortlist.saved",
     "hold.moved",
+    "mode.set",
 ]
 NAMES: tuple[Name, ...] = get_args(Name)
 

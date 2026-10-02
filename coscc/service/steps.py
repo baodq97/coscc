@@ -250,16 +250,18 @@ class Steps:
         journal: Journal | None,
         key: str,
         prs_once=None,
+        fresh: bool = False,
     ) -> list[tuple[tuple[str, str], str, int, str]]:
         """Give every unit `integration: {...}` when it sits in the window, else None.
 
-        **Reads only.** One `gh pr list` for the workspace (up to `gh.TIMEOUT`),
-        `git` counts against the `origin/main` the last fetch brought — no fetch here — and
-        `gh pr checks` only for a unit whose head is the one its last integration pushed.
-        Nothing here writes a record, calls `update-branch` or opens a session.
+        **Reads only.** The workspace's open pull requests from `prs_once` (the board passes
+        the held list), `git` counts against the `origin/main` the last fetch brought — no
+        fetch here — and, for a unit whose head is the one its last integration pushed, the
+        held CI answer: no `gh pr checks` is waited on, unless `fresh`. Nothing here writes a
+        record, calls `update-branch` or opens a session.
 
         Also gives each unit in the window `ci_held`, the held CI answer when it
-        is for the head `gh pr list` just returned, and returns the CI asks `board` starts
+        is for the head `gh pr list` returned, and returns the CI asks `board` starts
         once it has answered: `(slot, tree, pr number, head)` for each unit with no answer
         for that head, or one older than `CI_REFRESH`, and no ask already running.
 
@@ -279,9 +281,6 @@ class Steps:
         asks: list[tuple[tuple[str, str], str, int, str]] = []
         oldest = datetime.fromisoformat(_now()) - timedelta(seconds=CI_REFRESH)
         for u in window:
-            info = await self._integration_of(root, u, prs, last.get(u["name"]))
-            if info is not None:
-                u["integration"] = info
             number = (u.get("pr") or {}).get("number")
             row = (
                 next((r for r in prs if r.get("number") == number), None)
@@ -289,10 +288,18 @@ class Steps:
                 else None
             )
             if row is None or number is None:
+                info = await self._integration_of(root, u, prs, last.get(u["name"]), ask=fresh)
+                if info is not None:
+                    u["integration"] = info
                 continue
             slot, head = (key, u["name"]), str(row.get("headRefOid") or "")
             held = self._held_ci(key, u["name"], int(number), head)
-            if held is not None and held.get("head") == head:
+            if held is not None and held.get("head") != head:
+                held = None
+            info = await self._integration_of(root, u, prs, last.get(u["name"]), held, ask=fresh)
+            if info is not None:
+                u["integration"] = info
+            if held is not None:
                 u["ci_held"] = held
             if slot in self.ci_asks:
                 continue
@@ -317,36 +324,24 @@ class Steps:
         error = self.ci.get((key, unit))
         return error if error is not None and error.get("head") == head else None
 
-    def ask_ci(self, asks: list[tuple[tuple[str, str], str, int, str]]) -> None:
+    def ask_ci(
+        self,
+        asks: list[tuple[tuple[str, str], str, int, str]],
+        ended: Callable[[str], None] | None = None,
+    ) -> None:
         """One background `gh pr checks` per ask, none awaited. Its
         answer is recorded by `prmachine.record_ci`, through `ci-at-head`, on the unit's
         `pull_requests` row; `gh`'s error is held in `ci` with the time it was read, so it
-        is not asked again before `CI_REFRESH` either."""
+        is not asked again before `CI_REFRESH` either. `ended` is told the tree of each ask
+        that brought an answer or an error, so the board can be read again."""
         for slot, tree, number, head in asks:
             if slot in self.ci_asks:
                 continue
 
             async def ask(slot=slot, tree=tree, number=number, head=head) -> None:
-                try:
-                    checks = await integrate.required_checks(tree, number)
-                except integrate.IntegrateError as e:
-                    self.ci[slot] = {"head": head, "error": str(e), "at": _now()}
-                    return
-                u = prmachine.Unit(slot[0], slot[1], Path(tree), tree, "", "", None)
-                try:
-                    self.pr_machine().record_ci(
-                        u, number, head, [c for c in checks if isinstance(c, dict)]
-                    )
-                except Exception as e:
-                    # A background ask never raises.
-                    log.exception("the CI answer of %s could not be recorded", u)
-                    self.ci[slot] = {
-                        "head": head,
-                        "error": f"the CI answer could not be recorded: {e}",
-                        "at": _now(),
-                    }
-                    return
-                self.ci.pop(slot, None)
+                await self._answer_ci(slot, tree, number, head)
+                if ended is not None:
+                    ended(tree)
 
             task = asyncio.get_running_loop().create_task(ask())
             self.ci_asks[slot] = task
@@ -356,6 +351,26 @@ class Steps:
                     self.ci_asks.pop(slot, None) if self.ci_asks.get(slot) is t else None
                 )
             )
+
+    async def _answer_ci(self, slot: tuple[str, str], tree: str, number: int, head: str) -> None:
+        try:
+            checks = await integrate.required_checks(tree, number)
+        except integrate.IntegrateError as e:
+            self.ci[slot] = {"head": head, "error": str(e), "at": _now()}
+            return
+        u = prmachine.Unit(slot[0], slot[1], Path(tree), tree, "", "", None)
+        try:
+            self.pr_machine().record_ci(u, number, head, [c for c in checks if isinstance(c, dict)])
+        except Exception as e:
+            # A background ask never raises.
+            log.exception("the CI answer of %s could not be recorded", u)
+            self.ci[slot] = {
+                "head": head,
+                "error": f"the CI answer could not be recorded: {e}",
+                "at": _now(),
+            }
+            return
+        self.ci.pop(slot, None)
 
     @staticmethod
     def _last_integrations(journal: Journal | None, key: str) -> dict[str, dict[str, Any]]:
@@ -373,8 +388,12 @@ class Steps:
         u: dict[str, Any],
         prs: list[dict[str, Any]] | str,
         last_record: dict[str, Any] | None,
+        held_ci: dict[str, Any] | None = None,
+        ask: bool = True,
     ) -> dict[str, Any] | None:
-        """One unit's state. None when its pull request is not among the open ones."""
+        """One unit's state. None when its pull request is not among the open ones. The
+        required checks are asked of `gh`, or with `ask` off are `held_ci`'s: none held is
+        none counted red yet."""
         number = (u.get("pr") or {}).get("number")
         if isinstance(prs, str):
             pr_row: dict[str, Any] | str = prs
@@ -398,7 +417,10 @@ class Steps:
             except GitError as e:
                 missing = str(e)
         checks: list[dict[str, Any]] | str | None = None
-        if number is not None and integrate.needs_checks(pr_row, last_record):
+        if not ask:
+            if held_ci is not None:
+                checks = held_ci.get("checks", str(held_ci.get("error") or ""))
+        elif number is not None and integrate.needs_checks(pr_row, last_record):
             try:
                 checks = await integrate.required_checks(str(root), int(number))
             except integrate.IntegrateError as e:
@@ -1241,6 +1263,7 @@ class Steps:
             raise Invalid(str(e)) from e
         except Busy as e:
             raise Invalid(str(e)) from e
+        self.bus.publish(Event("mode.set", self.ws.key(cwd), unit))
         return {"cwd": cwd, "unit": unit, "stage": stage, "mode": mode}
 
     async def run_step(

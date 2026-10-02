@@ -156,7 +156,7 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
         async def branch_here(cwd):
             return {"branch": "main"}
 
-        async def read_board(cwd):
+        async def read_board(cwd, which="new"):
             return self.BOARD
 
         async def go():

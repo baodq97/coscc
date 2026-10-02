@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import dataclasses
+import json
 import logging
 from urllib.parse import urlencode
 
@@ -121,6 +122,20 @@ from coscc.state.release import ReleaseMixin
 
 log = logging.getLogger(__name__)
 
+# How long a tab's board watch waits on one read before it looks at whether the tab is still
+# on the Board; a wait that times out just starts again.
+BOARD_WAIT = 5
+# The tabs (by token) whose `watch_board` loop is running.
+_WATCHING: set[str] = set()
+
+
+def _fingerprint(data: dict) -> int:
+    """What a board read says, apart from when it was read: two reads of one board agree.
+    Taken at once, because the service lays the autopilot's block on the held dict in place."""
+    return hash(
+        json.dumps({k: v for k, v in data.items() if k != "read_at"}, sort_keys=True, default=str)
+    )
+
 
 class StudioState(
     WorkspacesMixin,
@@ -178,6 +193,9 @@ class StudioState(
     # `Board.running`'s latest answer, kept so a board read that rebuilds every card can
     # put `live` back on at once. Backend only.
     _running_read: dict = {}
+    # `_fingerprint` of the board last put on the page, so `watch_board` sends nothing for a
+    # read that says the same. Backend only.
+    _board_seen: int = 0
     query: str = ""
     focus: str = "All work"
     board_view: str = "Board"
@@ -725,10 +743,13 @@ class StudioState(
         self.current_unit = copy.deepcopy(found) if found is not None else Unit()
 
     async def _load_board(self) -> None:
+        """The board held for this workspace: at once when one was read, else when the first
+        read ends. The next read, if anything changed, arrives through `watch_board`."""
         self._full, self.cards, self.stages, self.board_note = {}, [], [], ""
         self._set_current()
         self.empty_store, self.empty_host, self.empty_host_units = "", "", 0
         self.branch = ""
+        self._board_seen = 0
         self._load_running()
         if not self.cwd:
             return
@@ -739,11 +760,15 @@ class StudioState(
             # right here: there is no branch to show, and that is not an error to report.
             self.branch = ""
         try:
-            data = await app.SERVICE.board(self.cwd)
+            data = await app.SERVICE.board(self.cwd, "held")
         except Invalid as e:
             self.board_note = str(e)
             return
+        self._board_seen = _fingerprint(data)
+        self._show_board(data)
 
+    def _show_board(self, data: dict) -> None:
+        """Put one board read on the page: every var `_load_board` fills from it."""
         self.stages = list(data["stages"])
         found = data.get("stage_agents") or {}
         self.stage_glyphs = {k: str(v.get("glyph") or "") for k, v in found.items()}
@@ -1120,13 +1145,6 @@ class StudioState(
         except Invalid as e:
             self._fail(e)
 
-    async def _load_rest(self) -> None:
-        await self._load_models()
-        await self._load_board()
-        # No Sessions here: `arrive` reads them when Sessions is where it lands.
-        self._load_activity()
-        self._load_update()
-
     def _load_unit(self, forget: bool = True) -> None:
         """What opening a unit reads. Asked even of a unit the board does not list: the
         board may predate it, and whether it exists is the service's to say."""
@@ -1225,8 +1243,18 @@ class StudioState(
 
         # One read, the one of the largest change.
         if first:
+            # The cards first: they are what the page is for, and the rest waits behind them.
+            try:
+                self._running_read = app.SERVICE.boards.running(cwd)
+            except Invalid:
+                self._running_read = {}
             yield
-            await self._load_rest()
+            await self._load_board()
+            yield
+            await self._load_models()
+            # No Sessions here: this arrival reads them when Sessions is where it lands.
+            self._load_activity()
+            self._load_update()
             self.loading = False
             self._loaded_sid = sid
         elif moved_ws:
@@ -1276,8 +1304,9 @@ class StudioState(
         if unit and self._asked != unit:
             self._ask_joins = True
             yield StudioState.load_next
-        # A reload that finds the tab already on the Board: nothing else would start the loop.
+        # A reload that finds the tab already on the Board: nothing else would start the loops.
         yield StudioState.poll_running
+        yield StudioState.watch_board
 
     @rx.event
     def navigate(self, screen: str):
@@ -1352,6 +1381,48 @@ class StudioState(
                 await asyncio.sleep(RUNNING_POLL)
         finally:
             _POLLING.discard(token)
+
+    @rx.event(background=True)
+    async def watch_board(self):
+        """Put each board read on the page while the Board shows, and send nothing for a read
+        that says what the page already shows.
+
+        It waits on the service's next read (`board(cwd, "next")`), which the app's own changes
+        and `gh`'s late answers start, and starts none itself. One loop per tab, ended like
+        `poll_running`'s: the tab leaves the Board, has no workspace, or has no socket for
+        `GONE_AFTER` waits in a row.
+        """
+        token = EventContext.get().token
+        if token in _WATCHING:
+            return
+        _WATCHING.add(token)
+        missed = 0
+        try:
+            while True:
+                missed = missed + 1 if _tab_gone(token) else 0
+                if missed >= GONE_AFTER:
+                    return
+                async with self:
+                    if self.screen != "board" or not self.cwd:
+                        return
+                    cwd = self.cwd
+                try:
+                    data = await asyncio.wait_for(app.SERVICE.board(cwd, "next"), BOARD_WAIT)
+                except TimeoutError:
+                    continue
+                except Invalid:
+                    await asyncio.sleep(BOARD_WAIT)
+                    continue
+                seen = _fingerprint(data)
+                async with self:
+                    # The tab may have moved on while the read ran; the loop asks again.
+                    if self.screen != "board" or self.cwd != cwd or seen == self._board_seen:
+                        continue
+                    self._board_seen = seen
+                    self._load_running()
+                    self._show_board(data)
+        finally:
+            _WATCHING.discard(token)
 
     @rx.event
     def search_workspaces(self, value: str):

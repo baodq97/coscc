@@ -947,16 +947,23 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         return next(u for u in data["units"] if u["name"] == self.unit)
 
     async def settle(self) -> None:
-        """Let the background asks that can finish, finish."""
+        """Let the background asks that can finish, finish, and the board reads an answer
+        starts."""
         for _ in range(5):
             await asyncio.sleep(0)
+        while self.service.boards.reads:
+            await asyncio.gather(*self.service.boards.reads.values(), return_exceptions=True)
+            for _ in range(5):
+                await asyncio.sleep(0)
 
     def asked(self) -> int:
         return self.calls.count(["pr", "checks"])
 
     async def test_a_gh_that_never_answers_does_not_hold_the_board(self):
         u = await self.read()
-        self.assertEqual(self.calls, [["pr", "list"]])
+        # The read runs in its own task, so the ask it started may have begun by now; it has
+        # not answered, and the read did not wait for it.
+        self.assertEqual(self.calls[0], ["pr", "list"])
         await self.settle()
         # (a)
         self.assertEqual(u["state"]["state"], "awaiting")

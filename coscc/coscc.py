@@ -29,6 +29,15 @@ async def resume_after_update() -> None:
 app.register_lifespan_task(resume_after_update)
 
 
+async def warm_boards() -> None:
+    """Read every listed workspace's board once, so the first board opened after the start
+    finds one held instead of waiting on `git` and `gh`."""
+    await API.state.service.warm_boards()
+
+
+app.register_lifespan_task(warm_boards)
+
+
 async def create_feature_tables() -> None:
     """Every feature's tables, made when the app starts and never when the page is built."""
     plugin.create_tables(plugin.ctx_of(API.state.service), API.state.tables)

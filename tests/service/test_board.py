@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.bus import Bus
+from coscc.bus import Bus, Event
 from coscc.config import Config
+from coscc.github import integrate
 from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
+from tests.service.test_answers import REVIEW_ONE
 from tests.service.test_service import create_sync
+from tests.service.test_steps_integrate import PR, SLUG, StandIn, git
 from tests.units.test_submit import submits as _submits
 
 
@@ -358,3 +363,149 @@ class AUnitThatEndedLosesItsScratch(unittest.TestCase):
             self.assertTrue(where.exists(), where)
         # A second read of a unit already cleaned is not an error.
         self.read([{"name": "0001_done", "why": "finished"}])
+
+
+class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
+    """A board read once is answered from memory, one read per workspace runs at a time, and no
+    read waits on `gh`."""
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.workspace = root / "work" / "proj"
+        self.workspace.mkdir(parents=True)
+        git(self.workspace, "init", "-q", "-b", "main")
+        git(self.workspace, "commit", "-q", "--allow-empty", "-m", "seed")
+        self.cwd = str(self.workspace)
+        config = Config(
+            workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
+        self.service = Service(config, StandIn(None))
+        self.key = self.service.ws.key(self.cwd)
+        made = await self.service.answers.create_unit(self.cwd, SLUG, "fixture")
+        self.unit, directory = made["unit"], Path(made["path"])
+        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
+            extra = " Type: feat." if name == "intent.md" else ""
+            (directory / name).write_text(
+                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
+            )
+        (directory / "pr.md").write_text(
+            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
+            encoding="utf-8",
+        )
+        (directory / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
+        self.hang = False
+        self.calls: list[list[str]] = []
+        patch = mock.patch.object(integrate, "_gh", self._gh)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    async def asyncTearDown(self):
+        await self.service.shutdown()
+
+    async def _gh(self, argv, cwd):
+        self.calls.append(argv[:2])
+        if self.hang:
+            await asyncio.sleep(30)
+        if argv[:2] == ["pr", "list"]:
+            row = {"number": PR, "headRefOid": "a" * 40, "headRefName": f"feat/{SLUG}"}
+            return 0, json.dumps([{**row, "mergeable": "MERGEABLE"}]), ""
+        return 0, "[]", ""
+
+    def counted(self) -> list[str]:
+        """Every `Board.read` from now on, by cwd."""
+        reads: list[str] = []
+        real = self.service.boards.read
+
+        async def read(cwd, fresh=False):
+            reads.append(cwd)
+            return await real(cwd, fresh)
+
+        self.service.boards.read = read
+        return reads
+
+    async def ended(self) -> None:
+        """Every board read and CI ask running now ended, and the reads an answer starts."""
+        while running := [
+            *self.service.boards.reads.values(),
+            *self.service.steps.ci_asks.values(),
+        ]:
+            await asyncio.gather(*running)
+            for _ in range(5):
+                await asyncio.sleep(0)
+
+    async def test_a_round_on_the_board_carries_no_text(self):
+        [u] = (await self.service.board(self.cwd))["units"]
+        [rnd] = u["rounds"]
+        self.assertNotIn("text", rnd)
+        self.assertEqual([sorted(f) for f in rnd["found"]], [["fixed_by", "id", "label"]] * 2)
+        self.assertEqual((rnd["verdict"], rnd["open_ids"]), ("changes-requested", ["F1", "F2"]))
+
+    async def test_a_gh_that_hangs_holds_neither_the_held_board_nor_a_read(self):
+        first = await self.service.board(self.cwd)
+        self.assertEqual(first["units"][0]["integration"]["pr_head"], "a" * 40)
+        self.hang = True
+        began = time.monotonic()
+        held = await self.service.board(self.cwd, "held")
+        self.assertLessEqual(time.monotonic() - began, 0.5)
+        self.assertEqual(held["read_at"], first["read_at"])
+        # The read it started takes the held list and asks `gh` again in the background.
+        await asyncio.wait_for(self.ended(), 5)
+        self.assertEqual(
+            self.service.boards.held[self.key]["data"]["units"][0]["integration"]["pr_head"],
+            "a" * 40,
+        )
+        self.assertEqual(len(self.service.boards.prs.asks), 1)
+
+    async def test_two_asks_while_a_read_runs_start_one_read(self):
+        await self.service.board(self.cwd)
+        await self.ended()
+        reads = self.counted()
+        await asyncio.gather(
+            self.service.board(self.cwd, "held"), self.service.board(self.cwd, "held")
+        )
+        await self.ended()
+        self.assertEqual(reads, [self.cwd])
+
+    async def test_a_new_ask_while_a_read_runs_reads_once_more_after_it(self):
+        await self.service.board(self.cwd)
+        await self.ended()
+        reads = self.counted()
+        await self.service.board(self.cwd, "held")
+        await self.service.board(self.cwd)
+        self.assertEqual(reads, [self.cwd, self.cwd])
+
+    async def test_a_change_the_app_makes_starts_a_read_and_next_waits_for_it(self):
+        await self.service.board(self.cwd)
+        await self.ended()
+        reads = self.counted()
+        waiting = asyncio.ensure_future(self.service.board(self.cwd, "next"))
+        await asyncio.sleep(0)
+        self.assertFalse(waiting.done())
+        self.assertEqual(reads, [])
+        await self.service.steps.set_mode(self.cwd, self.unit, "impl", "autonomous")
+        data = await asyncio.wait_for(waiting, 5)
+        self.assertEqual(reads, [self.cwd])
+        [u] = data["units"]
+        self.assertEqual(next(r["mode"] for r in u["stages"] if r["stage"] == "impl"), "autonomous")
+
+    async def test_a_change_before_any_read_starts_none(self):
+        reads = self.counted()
+        self.service.bus.publish(Event("answer.written", self.key, self.unit))
+        self.assertEqual((reads, self.service.boards.reads), ([], {}))
+
+    async def test_every_read_logs_how_long_each_part_took(self):
+        with self.assertLogs("coscc.service.board", "INFO") as logs:
+            await self.service.board(self.cwd)
+        [line] = [m for m in logs.output if " read in " in m]
+        for part in (
+            "snapshot",
+            "cos.mjs",
+            "import",
+            "run log",
+            "worktree",
+            "integration",
+            "release",
+        ):
+            self.assertIn(f"{part} ", line)

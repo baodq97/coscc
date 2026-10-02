@@ -498,7 +498,7 @@ class ChangingWorkspaceForgetsTheOldRead(unittest.TestCase):
         async def branch_here(cwd):
             return {"branch": "main"}
 
-        async def read_board(cwd):
+        async def read_board(cwd, which="new"):
             return board
 
         async def go():
@@ -715,6 +715,7 @@ class _Page:
         self.redirects: list[tuple[str, bool]] = []
 
     def patches(self):
+        import asyncio
         import contextlib
         from unittest import mock
 
@@ -729,6 +730,10 @@ class _Page:
 
         def acounted(name, answer):
             async def call(*args, **kwargs):
+                if args[1:] == ("next",):
+                    # A tab's watch waits for the next read: none comes, and it is not a read.
+                    await asyncio.sleep(0.05)
+                    return answer
                 self.calls[name] += 1
                 return answer
 
@@ -978,7 +983,10 @@ class AnArrivalReadsOnce(unittest.TestCase):
             token = f"state-test-cancelled-{start}"
             read: list[str] = []
 
-            async def board(cwd):
+            async def board(cwd, which="new"):
+                if which == "next":
+                    await asyncio.sleep(0.05)
+                    return _Page.BOARD
                 read.append(cwd)
                 if cwd == "/b":
                     await asyncio.Event().wait()  # a `gh` that has not answered yet

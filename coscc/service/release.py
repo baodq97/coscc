@@ -19,7 +19,7 @@ from coscc.units import BadUnit
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable
 from coscc.service.update import refuse_while_updating
-from coscc.service.common import CONSEQUENCE, Invalid, open_prs_once
+from coscc.service.common import CONSEQUENCE, Asked, Invalid, open_prs_once
 
 PrsOnce = Callable[[], Awaitable["list[dict[str, Any]] | str"]]
 from coscc.config import Config
@@ -58,6 +58,8 @@ class Release:
         self.updater = updater
         # Journal keys with a release press running now, checked and marked with no `await` between.
         self._releasing: set[str] = set()
+        # The block's `gh pr checks` and `gh release view` answers, for a board read.
+        self.details = Asked()
 
     def _release_records(self, journal: Journal | None, key: str) -> list[dict[str, Any]]:
         if journal is None:
@@ -138,10 +140,11 @@ class Release:
         return block
 
     async def _release_detail(
-        self, root: Path, block: dict[str, Any], records: list[dict[str, Any]]
+        self, root: Path, block: dict[str, Any], records: list[dict[str, Any]], fresh: bool
     ) -> None:
         """The button, whether it may be pressed, and the workflow. Only the state that needs one asks
-        `gh` again.
+        `gh`, through `details`: waited on the first time a pull request's head or a tag is asked,
+        or when `fresh`; else held and asked again in the background.
         """
         state = block["state"]
         block["button"] = release.BUTTON.get(state, "")
@@ -152,14 +155,22 @@ class Release:
             number = row.get("number")
             block["pr"] = number
             block["head"] = str(row.get("headRefOid") or "")
-            try:
-                if number is None:
-                    raise ValueError("no open release pull request")
-                checks: list[dict[str, Any]] | str = await integrate.required_checks(
-                    str(root), int(number)
+
+            async def _ask_checks(number: Any) -> list[dict[str, Any]] | str:
+                try:
+                    return await integrate.required_checks(str(root), int(number))
+                except (integrate.IntegrateError, TypeError, ValueError) as e:
+                    return str(e)
+
+            checks: list[dict[str, Any]] | str = (
+                "no open release pull request"
+                if number is None
+                else await self.details.get(
+                    (str(root), "checks", str(number), block["head"]),
+                    lambda: _ask_checks(number),
+                    fresh,
                 )
-            except (integrate.IntegrateError, TypeError, ValueError) as e:
-                checks = str(e)
+            )
             block["checks"] = checks if isinstance(checks, list) else []
             opened, _ = release.opened_head(records, block["version"])
             why = release.publish_problem(
@@ -171,7 +182,10 @@ class Release:
             )
             block["enabled"], block["disabled_reason"] = not why, why
         elif state == "tagged":
-            status = await release.release_status(str(root), block["last_tag"])
+            tag = block["last_tag"]
+            status = await self.details.get(
+                (str(root), "status", tag), lambda: release.release_status(str(root), tag), fresh
+            )
             block.update(status)
             if status["release"] == "published":
                 block["state"], block["reason"] = "published", f"{block['last_tag']} is published"
@@ -183,19 +197,21 @@ class Release:
         journal: Journal | None,
         key: str,
         prs: PrsOnce,
+        fresh: bool = False,
     ) -> dict[str, Any] | None:
         """The board's `release` block, or None for a workspace that is not a git checkout.
 
         Costs, at most: `git` reads, one `node cos.mjs check-tag` per candidate tag, and once a
         release tag is found the board's shared `gh pr list`, then `gh pr checks` on an open release
-        pull request or `gh release view` and `gh run list` after a tag this app pushed. No fetch.
+        pull request or `gh release view` and `gh run list` after a tag this app pushed; each `gh`
+        answer is held, and waited on only the first time or when `fresh`. No fetch.
         """
         root = Path(cwd).expanduser().resolve()
         if not (root / ".git").exists():
             return None
         records = self._release_records(journal, key)
         block = await self._release_facts(root, units_, prs, records)
-        await self._release_detail(root, block, records)
+        await self._release_detail(root, block, records, fresh)
         for k in ("_prs", "tags", "origin_sha"):
             block.pop(k, None)
         return block
