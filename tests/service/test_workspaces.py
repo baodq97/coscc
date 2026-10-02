@@ -14,6 +14,7 @@ from coscc.config import Config
 from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Live, Sessions
+from coscc.units import scratch
 
 
 class PullStopsAtALiveSession(unittest.TestCase):
@@ -80,3 +81,35 @@ class PullStopsAtALiveSession(unittest.TestCase):
         with self.assertRaises(Invalid) as e:
             self._pull("repo")
         self.assertNotIn("live session", str(e.exception))
+
+
+class RemovingAWorkspaceSweepsScratch(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        (self.root / "tmp").mkdir()
+        patch = mock.patch.object(tempfile, "tempdir", str(self.root / "tmp"))
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.data = str(self.root / "data")
+        config = Config(workspaces=(), working_dir=str(self.root / "work"), data_dir=self.data)
+        self.s = Service(config, Sessions(config))
+        store = self.s.ws.store
+        assert store is not None
+        for name in ("one", "two"):
+            (self.root / "work" / name).mkdir(parents=True)
+            store.add(name)
+
+    def test_the_removed_workspaces_scratch_is_gone_and_the_others_is_kept(self):
+        one = scratch.ensure(self.root / "work" / "one", "0001_a", self.data)
+        two = scratch.ensure(self.root / "work" / "two", "0001_a", self.data)
+        # A unit of a kept workspace that has a directory is live; one without is an orphan.
+        units_dir = self.s.ws.units_root(str(self.root / "work" / "two")) / ".cos" / "0001_a"
+        units_dir.mkdir(parents=True)
+        orphan = scratch.ensure(self.root / "work" / "two", "0002_b", self.data)
+        self.s.ws.remove("one")
+        for where in (*one, *orphan):
+            self.assertFalse(where.exists(), where)
+        for where in two:
+            self.assertTrue(where.exists(), where)

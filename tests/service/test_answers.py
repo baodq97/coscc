@@ -16,6 +16,7 @@ from coscc.config import Config
 from coscc.service.common import STAGE_FILES, Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
+from coscc.units import scratch
 from tests.service.test_service import create_sync
 from tests.units.test_submit import a_head, finding, submits as _submits
 from tests.service.test_service import use_sessions
@@ -574,3 +575,40 @@ class RecordingAnOutcome(unittest.TestCase):
         self.board_unit()
         self.assertEqual(len(journal.records(key)), before)
         self.assertEqual(self.service.chat.sessions_for(self.cwd)["sessions"], [])
+
+
+class DroppingAUnitRemovesItsScratch(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name).resolve()
+        (root / "tmp").mkdir()
+        patch = mock.patch.object(tempfile, "tempdir", str(root / "tmp"))
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.repo = root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.data = str(root / "data")
+        config = Config(
+            workspaces=(str(self.repo),), working_dir=str(root / "work"), data_dir=self.data
+        )
+        self.service = Service(config, Sessions(config))
+        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        self.unit = made["unit"]
+        (Path(made["path"]) / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
+
+    def test_both_directories_are_gone_after_a_drop(self):
+        ram, disk = scratch.ensure(self.repo, self.unit, self.data)
+        (disk / "big").write_text("x")
+        done = {"effect": "worktree", "result": "absent", "detail": ""}
+        with (
+            mock.patch("coscc.units.hold.close_pr", mock.AsyncMock(return_value=done)),
+            mock.patch("coscc.units.hold.remove_tree", mock.AsyncMock(return_value=done)),
+        ):
+            asyncio.run(
+                self.service.answers.hold(str(self.repo), self.unit, "dropped", "no use", "Leif")
+            )
+        self.assertFalse(ram.exists())
+        self.assertFalse(disk.exists())
