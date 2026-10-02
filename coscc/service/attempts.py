@@ -17,9 +17,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypedDict, cast
 
-from coscc.bus import Bus, Event
+from coscc.bus import NAMES, Bus, Event, Name
 from coscc.data import Data, now
 from coscc.service.common import Refused
 
@@ -58,12 +58,42 @@ ENTRIES = ("queued", "running")
 STOPPABLE = ("step", "integration")
 
 
+class Attempt(TypedDict):
+    """One attempt as read: its row, and what its last and first moves say."""
+
+    id: int
+    machine: str
+    workspace: str
+    unit: str
+    stage: str
+    slot: str
+    started_by: str
+    rerun: int
+    note: str
+    stop_asked_at: str | None
+    stop_asked_by: str | None
+    run: str
+    road: str
+    state: str
+    outcome: str
+    at: str
+    since: str
+
+
+class Move(TypedDict):
+    attempt: int
+    seq: int
+    moved_to: str
+    outcome: str
+    at: str
+
+
 class Illegal(ValueError):
     """A move the machine's table does not have, or of an attempt that is not there."""
 
 
 _ROW = """
-SELECT a.*, m.state AS state, m.outcome AS outcome, m.at AS at, f.at AS since
+SELECT a.*, m.moved_to AS state, m.outcome AS outcome, m.at AS at, f.at AS since
 FROM attempts a
 JOIN attempt_moves m ON m.attempt = a.id
     AND m.seq = (SELECT MAX(seq) FROM attempt_moves WHERE attempt = a.id)
@@ -71,7 +101,7 @@ JOIN attempt_moves f ON f.attempt = a.id AND f.seq = 1
 """
 
 
-def describe(unit: str, row: dict[str, Any]) -> str:
+def describe(unit: str, row: Attempt) -> str:
     """The one sentence every refusal of a busy unit carries: what holds it, and since when."""
     t, machine, state, stage = row["since"], row["machine"], row["state"], row["stage"]
     stopping = "; a stop was asked" if row.get("stop_asked_at") else ""
@@ -122,37 +152,40 @@ class Attempts:
         # How many attempts of a workspace may hold a kind of slot at once.
         self.capacity = capacity
         # By machine: what the scheduler calls with the row it moved on. Set by the runner.
-        self.launchers: dict[str, Callable[[dict[str, Any]], None]] = {}
+        self.launchers: dict[str, Callable[[Attempt], None]] = {}
         self._waking = False
         self._again: set[str] = set()
-        for machine in SLOTS:
-            for state in ("queued", *ENDS):
-                self.bus.subscribe(f"{machine}.{state}", self._woken)  # type: ignore[arg-type]
+        # Every move of every machine: a slot is freed by an end, wanted by a `queued`, and a
+        # wake is one read when neither.
+        for name in NAMES:
+            if name.split(".")[0] in MACHINES:
+                self.bus.subscribe(name, self._woken)
 
     # -- reading ----------------------------------------------------------
 
-    def _rows(self, where: str = "", args: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-        with self.data.connect() as conn:
-            return [dict(r) for r in conn.execute(f"{_ROW} {where} ORDER BY a.id", args).fetchall()]
-
-    def get(self, attempt: int) -> dict[str, Any] | None:
-        rows = self._rows("WHERE a.id = ?", (int(attempt),))
-        return rows[0] if rows else None
-
-    def moves(self, attempt: int) -> list[dict[str, Any]]:
+    def _rows(self, where: str = "", args: tuple[Any, ...] = ()) -> list[Attempt]:
         with self.data.connect() as conn:
             return [
-                dict(r)
+                cast(Attempt, dict(r))
+                for r in conn.execute(f"{_ROW} {where} ORDER BY a.id", args).fetchall()
+            ]
+
+    def get(self, attempt: int) -> Attempt | None:
+        rows = self._rows("WHERE a.id = ?", (int(attempt),))
+        return rows[0] if rows else None  # one id, one row
+
+    def moves(self, attempt: int) -> list[Move]:
+        with self.data.connect() as conn:
+            return [
+                cast(Move, dict(r))
                 for r in conn.execute(
                     "SELECT * FROM attempt_moves WHERE attempt = ? ORDER BY seq", (int(attempt),)
                 )
             ]
 
-    def unfinished(
-        self, workspace: str | None = None, unit: str | None = None
-    ) -> list[dict[str, Any]]:
+    def unfinished(self, workspace: str | None = None, unit: str | None = None) -> list[Attempt]:
         """Every attempt not yet `ended` or `refused`, oldest first; of one workspace, one unit."""
-        where = "WHERE m.state NOT IN ('ended', 'refused')"
+        where = "WHERE m.moved_to NOT IN ('ended', 'refused')"
         args: list[Any] = []
         if workspace is not None:
             where += " AND a.workspace = ?"
@@ -162,7 +195,7 @@ class Attempts:
             args.append(unit)
         return self._rows(where, tuple(args))
 
-    def holding(self, workspace: str, unit: str) -> dict[str, Any] | None:
+    def holding(self, workspace: str, unit: str) -> Attempt | None:
         """The unit's unfinished attempt, or `None`."""
         rows = self.unfinished(workspace, unit)
         return rows[0] if rows else None
@@ -185,7 +218,7 @@ class Attempts:
         rerun: bool = False,
         note: str = "",
         state: str = "queued",
-    ) -> dict[str, Any]:
+    ) -> Attempt:
         """A new attempt in `state`, unless the unit already has one: then `Refused` with
         `unit-busy`, the only refusal left, and nothing written. Checked and written in one
         transaction."""
@@ -194,11 +227,11 @@ class Attempts:
         with self.data.write() as conn:
             held = conn.execute(
                 f"{_ROW} WHERE a.workspace = ? AND a.unit = ? "
-                "AND m.state NOT IN ('ended', 'refused') ORDER BY a.id",
+                "AND m.moved_to NOT IN ('ended', 'refused') ORDER BY a.id",
                 (workspace, unit),
             ).fetchone()
             if held is not None:
-                raise Refused(describe(unit, dict(held)), ("unit-busy",))
+                raise Refused(describe(unit, cast(Attempt, dict(held))), ("unit-busy",))
             cur = conn.execute(
                 "INSERT INTO attempts (machine, workspace, unit, stage, slot, started_by, rerun, "
                 "note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -215,10 +248,10 @@ class Attempts:
             )
             attempt = int(cur.lastrowid or 0)
             conn.execute(
-                "INSERT INTO attempt_moves (attempt, seq, state, at) VALUES (?, 1, ?, ?)",
+                "INSERT INTO attempt_moves (attempt, seq, moved_to, at) VALUES (?, 1, ?, ?)",
                 (attempt, state, now()),
             )
-        self.bus.publish(Event(f"{machine}.{state}", workspace, unit))  # type: ignore[arg-type]
+        self.bus.publish(Event(cast(Name, f"{machine}.{state}"), workspace, unit))
         row = self.get(attempt)
         assert row is not None
         return row
@@ -231,7 +264,7 @@ class Attempts:
         *,
         run: str | None = None,
         going_down: bool = False,
-    ) -> dict[str, Any]:
+    ) -> Attempt:
         """Move an attempt to `to`, or raise `Illegal` and write nothing. `outcome` is an
         `ended` move's outcome or a `refused` move's code; `run` the step's events, set with
         the move that launched it."""
@@ -248,19 +281,21 @@ class Attempts:
                 "SELECT MAX(seq) FROM attempt_moves WHERE attempt = ?", (int(attempt),)
             ).fetchone()[0]
             conn.execute(
-                "INSERT INTO attempt_moves (attempt, seq, state, outcome, at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO attempt_moves (attempt, seq, moved_to, outcome, at) VALUES (?, ?, ?, ?, ?)",
                 (int(attempt), int(seq) + 1, to, outcome if to in ENDS else "", now()),
             )
             if run is not None:
                 conn.execute("UPDATE attempts SET run = ? WHERE id = ?", (run, int(attempt)))
         self.bus.publish(
-            Event(f"{machine}.{to}", row["workspace"], row["unit"], going_down=going_down)  # type: ignore[arg-type]
+            Event(
+                cast(Name, f"{machine}.{to}"), row["workspace"], row["unit"], going_down=going_down
+            )
         )
         moved = self.get(attempt)
         assert moved is not None
         return moved
 
-    def ask_stop(self, attempt: int, by: str) -> dict[str, Any]:
+    def ask_stop(self, attempt: int, by: str) -> Attempt:
         """Record a Stop on an unfinished attempt: the first name stays, two presses are one
         stop. Publishes `<machine>.stop-asked` once, when it is recorded."""
         with self.data.write() as conn:
@@ -274,7 +309,9 @@ class Attempts:
                     (now(), by, int(attempt)),
                 )
         if first:
-            self.bus.publish(Event(f"{row['machine']}.stop-asked", row["workspace"], row["unit"]))  # type: ignore[arg-type]
+            self.bus.publish(
+                Event(cast(Name, f"{row['machine']}.stop-asked"), row["workspace"], row["unit"])
+            )
         asked = self.get(attempt)
         assert asked is not None
         return asked

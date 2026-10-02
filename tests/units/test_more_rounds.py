@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from coscc.units import more_rounds
-from coscc.agent.steps import Mark, describe
+from coscc.service.attempts import describe
 
 STUCK = {"name": "0001_q", "more_rounds": True}
 
@@ -24,7 +24,9 @@ class TheRefusals(unittest.TestCase):
         self.assertEqual(more_rounds.refusal(STUCK, "owner", ""), "")
 
     def test_the_first_reason_wins_in_spec_order(self):
-        busy = describe("0001_q", Mark(kind="step", stage="review", phase="running"))
+        busy = describe(
+            "0001_q", {"machine": "step", "state": "running", "stage": "review", "since": "t"}
+        )
         self.assertEqual(
             more_rounds.refusal(None, "#x\ny", busy), "no such work unit in this workspace"
         )
@@ -37,7 +39,9 @@ class TheRefusals(unittest.TestCase):
         self.assertTrue(said.endswith("; allowing a round does not stop anything itself"), said)
 
     def test_a_round_being_allowed_is_described_as_such(self):
-        said = describe("0001_q", Mark(kind="more-rounds"))
+        said = describe(
+            "0001_q", {"machine": "rounds", "state": "running", "stage": "", "since": "t"}
+        )
         self.assertIn("a review round is being allowed since", said)
 
 

@@ -183,6 +183,11 @@ class GeboThroughTheService(unittest.TestCase):
             return 0, json.dumps([{"name": "tests", "bucket": "pass"}]), ""
         return 1, "", f"stand-in gh: unexpected {argv}"
 
+    def nothing_held(self) -> None:
+        """No attempt holds the unit, and nothing live is kept for one."""
+        self.assertEqual(self.service.attempts.unfinished(), [])
+        self.assertEqual(self.service.steps.tasks, {})
+
     def integrate_with(self, act) -> dict:
         use_sessions(self.service, StandIn(act))
 
@@ -319,9 +324,9 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual([e["outcome"] for e in ends], ["failed"])
 
     def test_a_step_is_refused_while_the_unit_is_being_integrated(self):
-        """`run_step` asks `holds.marks`, and does not clear Gebo's mark.
+        """`run_step` is refused `unit-busy` by Gebo's attempt, and does not end it.
 
-        It asks before its first `await`, and the refusal is `steps.describe`'s."""
+        It asks at the open, and the refusal is `attempts.describe`'s."""
         said = {}
 
         async def act(tree, gate):
@@ -330,13 +335,14 @@ class GeboThroughTheService(unittest.TestCase):
                     pass
             except Invalid as e:
                 said["step"] = str(e)
-            said["still_marked"] = (self.key, self.unit) in self.service.holds.marks
+            held = self.service.attempts.holding(self.key, self.unit)
+            said["still_held"] = held is not None and held["machine"] == "integration"
             return "[needs-person] stand-in"
 
         self.integrate_with(act)
         self.assertIn("being integrated", said.get("step", ""))
-        self.assertTrue(said["still_marked"])
-        self.assertNotIn((self.key, self.unit), self.service.holds.marks)
+        self.assertTrue(said["still_held"])
+        self.nothing_held()
 
     def test_gebo_is_running_under_its_name_while_it_works_and_not_after(self):
         seen = {}
@@ -349,29 +355,35 @@ class GeboThroughTheService(unittest.TestCase):
         [row] = seen["running"][self.unit]
         self.assertEqual((row["kind"], row["stage"]), ("gebo", "integrate"))
         self.assertEqual(row["agent"], {"glyph": "ᚷ", "name": "Gebo"})
-        self.assertEqual(self.service.holds.running, {})
+        self.nothing_held()
 
-    def test_gebo_is_on_the_running_list_and_refuses_a_stop(self):
-        """The list a restart reads names the integration, and Stop says what holds the unit rather
-        than that nothing runs."""
+    def test_gebo_is_on_the_running_list_and_a_stop_is_recorded_late(self):
+        """The list a restart reads names the integration. a Stop that reaches it once
+        Gebo is open is no longer refused: it is recorded, Gebo goes on, and the attempt ends
+        `stop_late`, past the last stop point."""
         seen = {}
 
         async def act(tree, gate):
             seen["listed"] = self.service.steps.running_steps(self.cwd)
-            try:
-                await self.service.steps.stop_step(self.cwd, self.unit, "")
-            except Invalid as e:
-                seen["stop"] = str(e)
+            seen["attempt"] = self.service.attempts.holding(self.key, self.unit)["id"]
+            seen["stop"] = await self.service.steps.stop_step(self.cwd, self.unit, "Lan")
+            seen["after"] = self.service.steps.running_steps(self.cwd)
             return "[needs-person] stand-in"
 
-        self.integrate_with(act)
+        rec = self.integrate_with(act)
         [row] = seen["listed"]
         self.assertEqual(
             (row["unit"], row["stage"], row["kind"], row["run"], row["stopping"]),
             (self.unit, "integrate", "integration", None, False),
         )
-        self.assertIn("being integrated", seen["stop"])
-        self.assertNotIn("has no step running", seen["stop"])
+        self.assertEqual(seen["stop"]["stopped_by"], "Lan")
+        [after] = seen["after"]
+        self.assertTrue(after["stopping"])
+        # Gebo ran on to its record.
+        self.assertEqual(rec["outcome"], "needs-person")
+        end = self.service.attempts.get(seen["attempt"])
+        self.assertEqual((end["state"], end["outcome"]), ("ended", "stop_late"))
+        self.assertEqual(end["stop_asked_by"], "Lan")
         self.assertEqual(self.service.steps.running_steps(self.cwd), [])
 
     def test_a_mechanical_rebase_is_rebasing_with_no_agent_and_not_after(self):
@@ -397,7 +409,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(rec["update_branch"]["code"], 1)
         [row] = seen["running"][self.unit]
         self.assertEqual((row["kind"], row["agent"]), ("rebase", None))
-        self.assertEqual(self.service.holds.running, {})
+        self.nothing_held()
 
     def mergeable_gh(self, update_branch):
         """`self._gh` with the list saying MERGEABLE — the conflict shows only on rebasing — and
@@ -557,19 +569,29 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual([e["outcome"] for e in ends], ["failed"])
 
     def test_a_refused_integration_leaves_no_entry(self):
-        self.service.holds.take(self.key, self.unit, "step", "spec").phase = "running"
+        step = self.service.attempts.open("step", self.key, self.unit, "spec", state="running")
         with self.assertRaises(Invalid):
             self.integrate_with(self._no_act)
-        self.assertEqual(self.service.holds.running, {})
+        # Nothing was opened for the press and nothing live is kept for it; the step's own
+        # attempt is the one that holds the unit.
+        self.assertIsNone(self.service.attempts.get(step["id"] + 1))
+        self.assertEqual([r["id"] for r in self.service.attempts.unfinished()], [step["id"]])
+        self.assertEqual(self.service.steps.tasks, {})
 
     def test_an_integration_is_refused_while_a_step_runs(self):
-        """The mark a step holds refuses Gebo, and opens no session."""
-        self.service.holds.take(self.key, self.unit, "step", "spec").phase = "running"
-        with self.assertRaises(Invalid) as caught:
+        """The attempt a step holds refuses Gebo `unit-busy`, and opens no session."""
+        from coscc.service.common import Refused
+
+        step = self.service.attempts.open("step", self.key, self.unit, "spec", state="running")
+        with self.assertRaises(Refused) as caught:
             self.integrate_with(self._no_act)
+        self.assertEqual(caught.exception.reasons, ("unit-busy",))
         self.assertIn("a spec step is running", str(caught.exception))
-        self.assertIn((self.key, self.unit), self.service.holds.marks)
+        self.assertEqual(self.service.attempts.holding(self.key, self.unit)["id"], step["id"])
         self.assertEqual(self.records("start"), [])
+        # a busy unit is refused at the open, before any board read, and writes no
+        # `integration` refused record.
+        self.assertEqual(self.records("integration"), [])
 
     def guarded(self, check):
         from coscc.hooks import Guard, Hooks, Parts
@@ -588,7 +610,10 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(seen, ["integrate"])
         self.assertEqual(self.records("start"), [])
         self.assertEqual(self.remote_head(), self.head_before)
-        self.assertEqual(self.service.holds.running, {})
+        # The press ended `refused` with the guard's code, and holds nothing.
+        self.nothing_held()
+        ended = self.service.attempts.get(1)
+        self.assertEqual((ended["state"], ended["outcome"]), ("refused", "feature-refused"))
         self.assertFalse(self.service.holds.busy(self.key, self.unit))
 
     def test_a_guard_that_abstains_leaves_an_integration_alone(self):

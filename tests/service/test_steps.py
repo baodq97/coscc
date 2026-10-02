@@ -28,6 +28,11 @@ from tests.units.test_submit import submits as _submits
 from tests.service.test_service import use_sessions
 
 
+def live(service, unit: str):
+    """The `Running` this process holds for the unit's unfinished attempt, or `None`."""
+    return next((r for r in service.steps.tasks.values() if r.unit == unit), None)
+
+
 class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
     """`run_step` refreshes a still-detached tree from `origin/main` before the step runs, and
     carries what it found into the `done` record — the reading `describe_base` turns into
@@ -678,7 +683,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         async def go():
             stream = self.service.steps.run_step(str(self.repo), self.unit, stage)
             items = [await stream.__anext__()]
-            running = self.service.steps.registry.get(self.key, self.unit)
+            running = live(self.service, self.unit)
             items += [item async for item in stream]
             # The reader has its `done` before `after_end` runs, last in the step's task.
             if running is not None:
@@ -758,26 +763,29 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
             _, payload = self._run()[-1]
         self.assertEqual(payload["outcome"], "done")
         self.assertEqual([r["kind"] for r in self.records()][-2:], ["end", "transition"])
-        self.assertEqual(self.service.holds.marks, {})
+        self.assertEqual(self.service.attempts.unfinished(), [])
+        self.assertEqual(self.service.steps.tasks, {})
 
     async def _ended(self, after_end) -> asyncio.Task:
         """A step run to its `done` with `after_end` as its `after_end`, returned once its
-        task is past `holds.running` and in `holds.finishing`."""
+        attempt has ended and its task is in `holds.finishing`."""
         self.service.steps.after_end = after_end
         stream = self.service.steps.run_step(str(self.repo), self.unit, "spec")
         await stream.__anext__()
-        task = self.service.steps.registry.get(self.key, self.unit).task
+        task = live(self.service, self.unit).task
         [_ async for _ in stream]
         for _ in range(500):
             if self.service.holds.finishing:
                 break
             await asyncio.sleep(0.01)
-        self.assertEqual(self.service.holds.running, {})
+        # R: the attempt is ended before `after_end` runs, so nothing holds the unit.
+        self.assertEqual(self.service.attempts.unfinished(), [])
+        self.assertEqual(self.service.steps.tasks, {})
         return task
 
     def test_an_apply_waits_for_the_after_end_of_a_step_that_just_ended(self):
-        # `drive` gives back the unit and its `holds.running` entry before `after_end`; the settle
-        # still waits, and the `questions` row is written.
+        # `drive` ends the unit's attempt before `after_end`; the settle still waits, and the
+        # `questions` row is written.
         real = self.service.steps.after_end
 
         async def go():
@@ -901,7 +909,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         async def go():
             agen = await self._first_chunk(a)
             await agen.aclose()  # the NDJSON client went away
-            running = self.service.steps.registry.get(self.service.ws.key(self.ws), a["unit"])
+            running = live(self.service, a["unit"])
             self.assertIsNotNone(running)
             self._release(a)
             await running.task
@@ -938,7 +946,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
             said = await self.service.steps.stop_step(self.ws, a["unit"], "Lan")
             self.assertEqual(said, {"unit": a["unit"], "stage": "spec", "stopped_by": "Lan"})
             # A second press is the same stop.
-            running = self.service.steps.registry.get(self.service.ws.key(self.ws), a["unit"])
+            running = live(self.service, a["unit"])
             if running is not None:
                 await self.service.steps.stop_step(self.ws, a["unit"], "Minh")
             rest = [i async for i in agen]
@@ -954,6 +962,68 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
         self.assertIn("Status: accepted.", (Path(a["path"]) / "intent.md").read_text())
         self.assertEqual(self.service.steps.running_steps(self.ws), [])
+
+    def test_a_stop_at_ending_is_recorded_and_the_step_runs_on_and_ends_stop_late(self):
+        # a Stop that reaches a sealed step is not refused and not honoured halfway.
+        from coscc.agent import steps as steps_mod
+
+        a = self.units[0]
+
+        async def go():
+            agen = await self._first_chunk(a)
+            running = live(self.service, a["unit"])
+            steps_mod.seal(running)  # what the runner does as it begins the artifact
+            [row] = self.service.attempts.unfinished()
+            self.assertEqual(row["state"], "ending")
+            said = await self.service.steps.stop_step(self.ws, a["unit"], "Lan")
+            self.assertEqual(said["stopped_by"], "Lan")
+            self.assertFalse(running.stop_requested)
+            [asked] = self.service.steps.running_steps(self.ws)
+            self.assertTrue(asked["stopping"])
+            self._release(a)
+            return row["id"], [i async for i in agen]
+
+        attempt, rest = asyncio.run(go())
+        self.assertEqual(rest[-1][1]["outcome"], "done")
+        self.assertIn("Status: accepted.", (Path(a["path"]) / "spec.md").read_text())
+        [end] = self._ends(a["unit"])
+        self.assertEqual(end["outcome"], "done")
+        ended = self.service.attempts.get(attempt)
+        self.assertEqual((ended["state"], ended["outcome"]), ("ended", "stop_late"))
+        self.assertEqual(ended["stop_asked_by"], "Lan")
+
+    def test_a_stop_at_queued_ends_stopped_at_once_and_touches_no_session(self):
+        # a click with no free slot is `queued`; its Stop ends it `stopped` with nothing
+        # run, and its reader is told.
+        a, b = self.units
+        self.service.attempts.capacity = lambda workspace, slot: 1
+
+        async def go():
+            first = await self._first_chunk(a)
+            second = self.service.steps.run_step(self.ws, b["unit"], "spec")
+            waiting = asyncio.create_task(second.__anext__())
+            for _ in range(200):
+                if self.service.attempts.holding(self.service.ws.key(self.ws), b["unit"]):
+                    break
+                await asyncio.sleep(0.01)
+            held = self.service.attempts.holding(self.service.ws.key(self.ws), b["unit"])
+            self.assertEqual(held["state"], "queued")
+            [listed] = [
+                r for r in self.service.steps.running_steps(self.ws) if r["unit"] == b["unit"]
+            ]
+            self.assertEqual(listed["state"], "queued")
+            await self.service.steps.stop_step(self.ws, b["unit"], "Lan")
+            with self.assertRaises(Invalid):
+                await waiting
+            self._release(a)
+            await first.aclose()
+            return held["id"]
+
+        attempt = asyncio.run(go())
+        ended = self.service.attempts.get(attempt)
+        self.assertEqual((ended["state"], ended["outcome"]), ("ended", "stopped"))
+        self.assertEqual(self.sessions.calls, 1)
+        self.assertEqual(self._ends(b["unit"]), [])
 
     def test_stopping_nothing_is_refused_and_no_name_stops_as_owner(self):
         """A Stop with no name used to be refused; it now records `owner`."""
@@ -984,7 +1054,12 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
 
         asyncio.run(go())
         self.assertEqual(self._ends(a["unit"]), [])
-        self.assertEqual(self.service.steps.running_steps(self.ws), [])
+        # going down leaves the attempt as it was, for the next start to take up or end;
+        # nothing live is kept for it here.
+        self.assertEqual(
+            [r["unit"] for r in self.service.steps.running_steps(self.ws)], [a["unit"]]
+        )
+        self.assertEqual(self.service.steps.tasks, {})
 
 
 class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
@@ -2523,7 +2598,10 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
             asyncio.run(go())
         self.assertEqual(len(abandoned), 1)
         self.assertEqual((nudged, after), ([], []))
-        self.assertEqual(service.steps.registry.all(), [])
+        # the paused step's attempt is left as it was, for the next start; nothing live
+        # is kept for it.
+        self.assertEqual(service.steps.tasks, {})
+        self.assertEqual([r["unit"] for r in service.attempts.unfinished()], [self.unit])
         # The spike's directory stays for the step taken up again.
         self.assertTrue(
             units.spike_dir(str(self.repo), self.unit, service.config.data_dir).is_dir()
@@ -2948,8 +3026,8 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         self.assertEqual((rec["outcome"], rec["head_after"], rec["code"]), ("failed", "", 2))
         self.assertIn("exited 2", rec["detail"])
         self.assertIn("already in use", rec["detail"])
-        # The mark is given back, and nothing was appended to the unit.
-        self.assertEqual(self.service.holds.marks, {})
+        # The unit is given back, and nothing was appended to it.
+        self.assertEqual(self.service.attempts.unfinished(), [])
         self.assertEqual({p.name: p.read_bytes() for p in self.dir.iterdir()}, files)
         # One sentence, and no commit, path or log line in it (S1, S3).
         self.assertNotIn("/", said)

@@ -10,6 +10,7 @@ Nothing here decides a stage.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tomllib
@@ -130,6 +131,42 @@ async def find(
     return None
 
 
+async def discard_half(
+    workspace: str | os.PathLike[str],
+    unit: str,
+    data_dir: str | os.PathLike[str] | None = None,
+) -> bool:
+    """Remove the unit's tree when its `worktree add` never finished, and say whether there was one.
+
+    Half made is what `gitops.worktree_half_made` says: `locked initializing`, or an
+    `index.lock` left in its admin directory. A whole tree, or none, is not touched and gives
+    False. For an attempt a restart found still `preparing`, where nothing cancelled `ensure`.
+    """
+    found = await find(workspace, unit, data_dir)
+    root = Path(units.key(workspace))
+    if found is None or not await gitops.worktree_half_made(root, found):
+        return False
+    await gitops.worktree_discard(root, Path(found["path"]))
+    return True
+
+
+async def _add_or_discard(root: Path, where: Path, start: str) -> None:
+    """`worktree_add`, and when it is cancelled or fails, the tree it half made removed.
+
+    Only a tree this call made: a destination that was already there is not ours to delete, and
+    `worktree_add` refuses it.
+    """
+    ours = not where.exists()
+    try:
+        await gitops.worktree_add(root, where, start)
+    except BaseException:
+        if ours:
+            # A cleanup that fails must not hide why the add did; `discard_half` finds what is left.
+            with contextlib.suppress(GitError):
+                await gitops.worktree_discard(root, where)
+        raise
+
+
 async def _branch_exists(root: Path, name: str) -> bool:
     try:
         await gitops.rev_parse(root, f"refs/heads/{name}")
@@ -205,12 +242,19 @@ async def ensure(
     the one touch of the workspace's own tree, only when clean and only after the needed fetch
     has succeeded, so a later refusal never follows a workspace that already moved.
 
+    A tree git lists but whose `worktree add` never finished is removed and made again, and so
+    is one this call's own `worktree add` was cancelled or failed in.
+
     Raises `GitError` when the needed fetch failed, or the workspace is dirty and standing on
     the branch this unit needs.
     """
     root = Path(units.key(workspace))
     where = path(workspace, unit, data_dir)
     found = await find(workspace, unit, data_dir)
+    if found is not None and await gitops.worktree_half_made(root, found):
+        # A `worktree add` that never finished (killed, or the app stopped): not a tree yet.
+        await gitops.worktree_discard(root, where)
+        found = None
     wanted = bool(branch) and await _branch_exists(root, branch)
     if found is not None and (found["branch"] or not wanted):
         return {"path": str(where), "branch": found["branch"], "created": False, "switched": False}
@@ -239,7 +283,7 @@ async def ensure(
         # `_fetch_or_refuse`, and still before `_step_aside`.
         fetched = await _fetch_or_refuse(root, branch)
         switched = await _step_aside(root, branch)
-        await gitops.worktree_add(root, where, branch)
+        await _add_or_discard(root, where, branch)
         branch_sha = await gitops.rev_parse(root, f"refs/heads/{branch}")
         base = await _base_against_origin(root, branch, branch_sha, fetched)
         found = await find(workspace, unit, data_dir) or {"branch": ""}
@@ -251,7 +295,7 @@ async def ensure(
             "base": base,
         }
     sha = await gitops.rev_parse(root, f"refs/heads/{gitops.TRUNK}")
-    await gitops.worktree_add(root, where, sha)
+    await _add_or_discard(root, where, sha)
     found = await find(workspace, unit, data_dir) or {"branch": ""}
     return {"path": str(where), "branch": found["branch"], "created": True, "switched": False}
 

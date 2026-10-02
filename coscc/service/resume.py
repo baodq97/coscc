@@ -308,7 +308,7 @@ class Resume:
         return describe("", held) if held is not None else ""
 
     async def _recover(self) -> None:
-        """At start-up, before Resume: what a process that went down left unfinished (R9).
+        """At start-up, before Resume: what a process that went down left unfinished.
         `queued` stays queued; one a Stop reached ends `stopped`; `preparing` and `ending`
         end `interrupted`, the tree `preparing` left half made removed first; a hold, a
         review round or an estimate ends `interrupted`. A `running` step or integration

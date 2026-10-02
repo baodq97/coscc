@@ -19,6 +19,7 @@ from coscc.agent.sessions import Refused, Sessions, Suspended
 from coscc.config import Config
 from coscc.service import Service
 from coscc.service import resume as resume_mod
+from coscc.service.attempts import describe
 from tests.service.test_service import create_sync
 from tests.units.test_submit import submits as _submits
 
@@ -307,14 +308,17 @@ class TakingUpAfterAnUpdate(_Base):
         # The `resume` row says what happened, not what was about to.
         steps_seen = self.taken()
         self.paused()
-        self.service.holds.take(self.key, self.unit, "integrate")
+        held = self.service.attempts.open(
+            "integration", self.key, self.unit, "integrate", state="running"
+        )
         [said] = self.up()
         self.assertEqual(steps_seen, [])
         self.assertEqual(said["result"], "failed")
         [row] = self.journal.records(self.key, kind="resume")
         self.assertEqual(row["result"], "failed")
         self.assertEqual(row["detail"], said["detail"])
-        self.assertTrue(row["detail"])
+        # the sentence is the one every busy refusal carries.
+        self.assertEqual(row["detail"], describe(self.unit, held))
         [end] = self.ends()
         self.assertEqual(end["outcome"], "failed")
 
@@ -486,7 +490,7 @@ class TakingUpAfterAnUpdate(_Base):
                 yield
 
         def autopilot_resume():
-            held.append([r.unit for r in self.service.steps.registry.all()])
+            held.append([r["unit"] for r in self.service.attempts.unfinished()])
             gate.set()
             return []
 
@@ -497,7 +501,10 @@ class TakingUpAfterAnUpdate(_Base):
         ):
             self.up()
         self.assertEqual(held, [[self.unit]])
-        self.assertEqual(self.service.steps.registry.all(), [])
+        # paused again, the app is going down, so the attempt is left as it is for the next
+        # start to end; no task of it is left.
+        self.assertEqual([r["unit"] for r in self.service.attempts.unfinished()], [self.unit])
+        self.assertEqual(self.service.steps.tasks, {})
 
     def test_resume_runs_no_git_command_on_the_worktree(self):
         # Nothing reads or cleans the worktree before the session goes on.
@@ -556,7 +563,7 @@ class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
         [end] = self.ends()
         self.assertEqual(end["outcome"], "failed")
         self.assertFalse(self.service.holds.busy(self.key, self.unit))
-        self.assertIsNone(self.service.steps.registry.get(self.key, self.unit))
+        self.assertEqual(self.service.attempts.unfinished(self.key, self.unit), [])
         [facts] = seen
         self.assertTrue(facts.resumed)
         self.assertEqual((facts.unit, facts.stage), (self.unit, "plan"))
@@ -618,7 +625,7 @@ class APausedOwnerEndsNothing(_Base):
                 with self.assertRaises(Suspended):
                     asyncio.run(run())
                 self.assertEqual([e for e in self.ends() if e.get("stage") == name], [])
-                self.assertEqual(self.service.holds.marks, {})
+                self.assertEqual(self.service.attempts.unfinished(), [])
 
 
 if __name__ == "__main__":

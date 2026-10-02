@@ -38,7 +38,7 @@ from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service.update import refuse_while_updating, refuse_mechanical_while_updating
-from coscc.service.attempts import MACHINES, STOPPABLE, describe
+from coscc.service.attempts import MACHINES, STOPPABLE, Attempt, describe
 from coscc.service.common import (
     open_prs_once,
     BRANCH_REMOTE,
@@ -527,7 +527,7 @@ class Steps:
         async for item in self._follow(running, queue):
             yield item
 
-    def _launch_integration(self, row: dict[str, Any]) -> None:
+    def _launch_integration(self, row: Attempt) -> None:
         """The scheduler's launcher of an integration: `_integration` as the attempt's task."""
         running = self._live(row)
         running.task = asyncio.get_running_loop().create_task(self._integration(running, row))
@@ -544,7 +544,7 @@ class Steps:
         if last:
             self.holds.attempts.move(running.attempt, "ending")
 
-    async def _integration(self, running: steps_mod.Running, asked: dict[str, Any]) -> None:
+    async def _integration(self, running: steps_mod.Running, asked: Attempt) -> None:
         """An integration from `running` to its end, its items told to its readers."""
         outcome = "done"
         try:
@@ -556,7 +556,7 @@ class Steps:
             self._tell(running, ("raise", Invalid(str(e))))
             outcome = "stopped"
         except asyncio.CancelledError:
-            # The app going down: the next start ends the attempt (R9).
+            # The app going down: the next start ends the attempt.
             if self.tasks.get(running.attempt) is running:
                 del self.tasks[running.attempt]
             raise
@@ -1429,7 +1429,7 @@ class Steps:
         for q in list(running.listeners):
             q.put_nowait(item)
 
-    def _live(self, row: dict[str, Any]) -> steps_mod.Running:
+    def _live(self, row: Attempt) -> steps_mod.Running:
         """The `Running` of an attempt the scheduler moved on: the one its click made, or, for
         one queued before a restart, a new one with no reader."""
         running = self._opening if self._opening is not None and not self._opening.attempt else None
@@ -1444,7 +1444,7 @@ class Steps:
         self.tasks[row["id"]] = running
         return running
 
-    def _launch_step(self, row: dict[str, Any]) -> None:
+    def _launch_step(self, row: Attempt) -> None:
         """The scheduler's launcher of a step: `_prepare` as the attempt's task."""
         running = self._live(row)
         running.task = asyncio.get_running_loop().create_task(self._prepare(running, row))
@@ -1465,7 +1465,7 @@ class Steps:
             code = error.reasons[0] if error.reasons else "refused"
         elif isinstance(error, Invalid):
             code = "invalid"
-        if code and "refused" in MACHINES[row["machine"]][row["state"]]:
+        if code and outcome != "stopped" and "refused" in MACHINES[row["machine"]][row["state"]]:
             attempts.move(running.attempt, "refused", code)
         else:
             attempts.move(
@@ -1474,7 +1474,7 @@ class Steps:
                 "stop_late" if row["stop_asked_at"] and outcome != "stopped" else outcome,
             )
 
-    async def _prepare(self, running: steps_mod.Running, asked: dict[str, Any]) -> None:
+    async def _prepare(self, running: steps_mod.Running, asked: Attempt) -> None:
         """A step from `preparing` to `drive`: the board read, the tree, the gate and the inputs,
         nothing spent until the gate is open. A Stop cancels it; `gitops` kills the `git` it
         was in and `worktrees.ensure` removes the tree it left half made."""
@@ -1599,7 +1599,7 @@ class Steps:
         except asyncio.CancelledError:
             if not running.stop_requested:
                 # The app going down: the attempt stays `preparing`, and the next start
-                # removes what this left (R9).
+                # removes what this left.
                 if self.tasks.get(running.attempt) is running:
                     del self.tasks[running.attempt]
                 raise
@@ -2280,7 +2280,7 @@ class Steps:
                 if not going_down:
                     # Ended before the board read `after_end` costs, so the pass it wakes and
                     # the reader's `done` find the unit free. The app going down leaves the
-                    # attempt as it is, for the next start to take up or end (R9).
+                    # attempt as it is, for the next start to take up or end.
                     self.end_attempt(running.attempt, outcome)
                 if recorder is not None and not recorder.closed:
                     # The runner closes it on every road that writes an `end`. Left open means the
@@ -2492,7 +2492,7 @@ class Steps:
         return await self.stop_running(self.ws.key(cwd), unit, name)
 
     async def stop_running(self, key: str, unit: str, by: str) -> dict[str, Any]:
-        """The Stop itself, recorded on the unit's attempt whatever its state (R6):
+        """The Stop itself, recorded on the unit's attempt whatever its state:
 
         - `queued`: `ended(stopped)` now, with no git and no session touched;
         - `preparing`: its task is cancelled, which kills the `git` it was in;
@@ -2531,7 +2531,7 @@ class Steps:
         if not running.stop_requested:
             # The first name stays: two presses are one stop, with one person behind it.
             running.stop_requested = True
-            running.stopped_by = row["stop_asked_by"]
+            running.stopped_by = row["stop_asked_by"] or by
         await running.handle.close()
         if running.task is not None:
             running.task.cancel()

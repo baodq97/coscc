@@ -409,33 +409,47 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
     async def test_a_stop_of_a_running_step_is_a_200_naming_it(self):
-        running = self.service.steps.registry.claim(self.service.ws.key("/tmp"), "0001_a", "spec")
+        from coscc.agent.steps import Running
+
+        key = self.service.ws.key("/tmp")
+        row = self.service.attempts.open("step", key, "0001_a", "spec", state="running")
+        # The live part of the attempt: its session handle and task, by attempt id.
+        running = Running(workspace=key, unit="0001_a", stage="spec", started_at=row["since"])
+        running.attempt = row["id"]
+        self.service.steps.tasks[row["id"]] = running
         r = await self.client.post(
             "/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": "Lan"}
         )
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"unit": "0001_a", "stage": "spec", "stopped_by": "Lan"})
         self.assertTrue(running.stop_requested)
+        # the Stop is recorded on the attempt, with the name that asked.
+        self.assertEqual(self.service.attempts.get(row["id"])["stop_asked_by"], "Lan")
 
-    async def test_the_running_list_is_what_the_registry_holds(self):
+    async def test_the_running_list_is_what_the_attempts_hold(self):
         self.assertEqual(
             (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), []
         )
-        self.service.steps.registry.claim(self.service.ws.key("/tmp"), "0001_a", "plan")
+        self.service.attempts.open(
+            "step", self.service.ws.key("/tmp"), "0001_a", "plan", state="running"
+        )
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual((row["unit"], row["stage"], row["stopping"]), ("0001_a", "plan", False))
         self.assertEqual(row["kind"], "step")
 
     async def test_an_integration_is_on_the_running_list_until_it_ends(self):
         key = self.service.ws.key("/tmp")
-        rid = self.service.holds.mark_running(key, "0001_a", "integrate", "gebo")
+        held = self.service.attempts.open(
+            "integration", key, "0001_a", "integrate", state="running"
+        )
+        self.service.attempts.set_road(held["id"], "gebo")
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual(
             (row["unit"], row["stage"], row["stopping"], row["run"], row["kind"]),
             ("0001_a", "integrate", False, None, "integration"),
         )
-        self.assertEqual(row["started_at"], self.service.holds.running[rid]["started"])
-        self.service.holds.running.pop(rid)
+        self.assertEqual(row["started_at"], held["since"])
+        self.service.attempts.move(held["id"], "ended", "done")
         self.assertEqual(
             (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), []
         )
@@ -1295,7 +1309,7 @@ class WhatIsRunningOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_both_keys_and_no_session_id_prompt_or_path(self):
         service = self.app.state.service
         key = service.ws.key(self.cwd)
-        service.holds.mark_running(key, self.unit, "impl", "step")
+        service.attempts.open("step", key, self.unit, "impl", state="running")
         service.ws.journal().started(
             key,
             "0099_other",

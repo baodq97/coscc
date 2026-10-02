@@ -27,7 +27,7 @@ from coscc.runlog.journal import BadRecord, Journal
 from coscc.data import Busy, Unusable
 from coscc.units import submit
 from coscc.units import transitions
-from coscc.service.attempts import describe
+from coscc.service.attempts import Attempt, describe
 from coscc import units
 from coscc.units import scratch, worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
@@ -1183,7 +1183,7 @@ class Answers:
 
     def _short_attempt(
         self, machine: str, key: str, unit: str
-    ) -> tuple[dict[str, Any] | None, int | None]:
+    ) -> tuple[Attempt | None, int | None]:
         """`(what holds the unit, None)`, or `(None, id)` of this hold's or round's own attempt,
         `running` from here: queued and moved on at once, with no slot."""
         try:

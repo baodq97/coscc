@@ -1,65 +1,85 @@
-"""Tests for the registry of steps running now."""
+"""Tests for what this process holds of a launched step (`Running`, `seal`) and for the attempt
+that holds the unit (`coscc.service.attempts`): one per unit, the sentence a busy unit gets,
+and what a Stop records."""
 
+import tempfile
 import unittest
 
 from coscc.agent import steps
-from coscc.agent.steps import Busy, Finishing, NotRunning, Registry
+from coscc.agent.steps import Running
+from coscc.bus import Bus
+from coscc.service import attempts as attempts_mod
+from coscc.service.attempts import Attempts
+from coscc.service.common import Refused
 
 
-class OneStepPerUnit(unittest.TestCase):
+def running(unit: str = "0001_a", stage: str = "spec") -> Running:
+    return Running(workspace="w", unit=unit, stage=stage, started_at="2026-09-24T01:02:03+00:00")
+
+
+class WithAttempts(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.bus = Bus()
+        self.attempts = Attempts(self._tmp.name, self.bus)
+
+    def listing(self, workspace: str):
+        return [r for r in self.attempts.unfinished(workspace)]
+
+
+class OneStepPerUnit(WithAttempts):
     def test_a_second_claim_on_the_same_unit_is_refused_and_names_the_first(self):
-        r = Registry()
-        r.claim("w", "0001_a", "spec")
-        with self.assertRaises(Busy) as e:
-            r.claim("w", "0001_a", "plan")
+        self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        with self.assertRaises(Refused) as e:
+            self.attempts.open("step", "w", "0001_a", "plan")
         self.assertIn("spec", str(e.exception))
-        self.assertIsInstance(e.exception, ValueError)
+        self.assertEqual(e.exception.reasons, ("unit-busy",))
 
     def test_two_units_run_at_once(self):
-        r = Registry()
-        r.claim("w", "0001_a", "spec")
-        r.claim("w", "0002_b", "impl")
-        self.assertEqual([x["unit"] for x in r.listing("w")], ["0001_a", "0002_b"])
+        self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        self.attempts.open("step", "w", "0002_b", "impl", state="running")
+        self.assertEqual([x["unit"] for x in self.listing("w")], ["0001_a", "0002_b"])
 
     def test_the_same_unit_name_in_another_workspace_is_another_unit(self):
-        r = Registry()
-        r.claim("w", "0001_a", "spec")
-        r.claim("v", "0001_a", "spec")
-        self.assertEqual(len(r.listing("w")), 1)
-        self.assertEqual(len(r.listing("v")), 1)
+        self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        self.attempts.open("step", "v", "0001_a", "spec", state="running")
+        self.assertEqual(len(self.listing("w")), 1)
+        self.assertEqual(len(self.listing("v")), 1)
 
-    def test_release_frees_the_unit(self):
-        r = Registry()
-        running = r.claim("w", "0001_a", "spec")
-        r.release(running)
-        self.assertIsNone(r.get("w", "0001_a"))
-        self.assertEqual(r.listing("w"), [])
-        r.claim("w", "0001_a", "plan")
+    def test_an_end_frees_the_unit(self):
+        row = self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        self.attempts.move(row["id"], "ended", "done")
+        self.assertIsNone(self.attempts.holding("w", "0001_a"))
+        self.assertEqual(self.listing("w"), [])
+        self.attempts.open("step", "w", "0001_a", "plan")
 
-    def test_release_removes_only_that_object(self):
-        r = Registry()
-        old = r.claim("w", "0001_a", "spec")
-        r.release(old)
-        new = r.claim("w", "0001_a", "plan")
-        r.release(old)  # a late release of the finished step
-        self.assertIs(r.get("w", "0001_a"), new)
+    def test_an_end_frees_only_that_attempt(self):
+        old = self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        self.attempts.move(old["id"], "ended", "done")
+        new = self.attempts.open("step", "w", "0001_a", "plan", state="running")
+        # A late second end of the finished step is not a move its machine has.
+        with self.assertRaises(attempts_mod.Illegal):
+            self.attempts.move(old["id"], "ended", "done")
+        self.assertEqual(self.attempts.holding("w", "0001_a")["id"], new["id"])
 
-    def test_claim_keeps_the_start_it_is_given(self):
-        r = Registry()
-        running = r.claim("w", "0001_a", "spec", started_at="2026-09-24T01:02:03+00:00")
-        self.assertEqual(running.started_at, "2026-09-24T01:02:03+00:00")
-        self.assertEqual(r.listing("w")[0]["started_at"], "2026-09-24T01:02:03+00:00")
+    def test_an_attempt_keeps_the_start_it_was_opened_at(self):
+        row = self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        self.assertTrue(row["since"])
+        self.attempts.move(row["id"], "ending")
+        self.assertEqual(self.attempts.get(row["id"])["since"], row["since"])
+        self.assertEqual(self.listing("w")[0]["since"], row["since"])
 
-    def test_listing_carries_what_the_page_shows(self):
-        r = Registry()
-        running = r.claim("w", "0001_a", "spec")
-        [row] = r.listing("w")
-        self.assertEqual(set(row), {"unit", "stage", "started_at", "stopping", "run"})
-        self.assertFalse(row["stopping"])
-        # `Steps.run_step` sets it as it hands the step over.
-        self.assertEqual(row["run"], "")
-        running.run = "r-1"
-        self.assertEqual(r.listing("w")[0]["run"], "r-1")
+    def test_a_row_carries_what_the_page_shows(self):
+        row = self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        self.assertTrue(
+            {"unit", "stage", "since", "state", "stop_asked_at", "run"} <= set(row), set(row)
+        )
+        self.assertIsNone(row["stop_asked_at"])
+        # `Steps._launch` sets it as it hands the step over.
+        self.assertFalse(row["run"])
+        self.attempts.set_run(row["id"], "r-1")
+        self.assertEqual(self.listing("w")[0]["run"], "r-1")
 
 
 class Describe(unittest.TestCase):
@@ -68,61 +88,83 @@ class Describe(unittest.TestCase):
     def test_describe_names_the_kind_the_stage_the_phase_and_the_time(self):
         t = "2026-09-24T01:02:03+00:00"
         cases = [
-            (steps.Mark("step", "spec", "preparing", t), "a spec step is being prepared since "),
-            (steps.Mark("step", "spec", "running", t), "a spec step is running since "),
-            (steps.Mark("integrate", started_at=t), "it is being integrated since "),
-            (steps.Mark("hold", started_at=t), "a hold is being recorded since "),
+            ("step", "spec", "preparing", "a spec step is being prepared since "),
+            ("step", "spec", "running", "a spec step is running since "),
+            ("step", "spec", "queued", "a spec step is queued since "),
+            ("step", "spec", "ending", "a spec step is writing its artifact since "),
+            ("integration", "integrate", "running", "it is being integrated since "),
+            ("hold", "", "running", "a hold is being recorded since "),
         ]
-        for mark, said in cases:
-            with self.subTest(kind=mark.kind, phase=mark.phase):
-                text = steps.describe("0001_a", mark)
+        for machine, stage, state, said in cases:
+            with self.subTest(machine=machine, state=state):
+                row = {"machine": machine, "stage": stage, "state": state, "since": t}
+                text = attempts_mod.describe("0001_a", row)
                 self.assertTrue(text.startswith("0001_a is busy: "), text)
                 self.assertIn(said + t, text)
 
-    def test_a_mark_starts_now_unless_told(self):
-        mark = steps.Mark("hold")
-        self.assertTrue(mark.started_at)
-        # Identity, not value: a release holding an equal mark must not free this one.
-        self.assertNotEqual(mark, steps.Mark("hold", started_at=mark.started_at))
+    def test_a_refused_open_carries_the_sentence_of_what_holds_the_unit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = Attempts(tmp, Bus())
+            row = a.open("step", "w", "0001_a", "spec", state="running")
+            with self.assertRaises(Refused) as e:
+                a.open("integration", "w", "0001_a", "integrate")
+            self.assertEqual(str(e.exception), attempts_mod.describe("0001_a", row))
+            self.assertEqual(a.busy("w", "0001_a"), attempts_mod.describe("0001_a", row))
+            self.assertEqual(a.busy("w", "0002_b"), "")
 
 
-class Stopping(unittest.TestCase):
+class Stopping(WithAttempts):
     def test_nothing_running_is_refused(self):
-        with self.assertRaises(NotRunning):
-            Registry().request_stop("w", "0001_a", "Lan")
+        with self.assertRaises(attempts_mod.Illegal):
+            self.attempts.ask_stop(999, "Lan")
+        row = self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        self.attempts.move(row["id"], "ended", "done")
+        with self.assertRaises(attempts_mod.Illegal):
+            self.attempts.ask_stop(row["id"], "Lan")
 
     def test_a_stop_is_recorded_with_its_name(self):
-        r = Registry()
-        r.claim("w", "0001_a", "spec")
-        running = r.request_stop("w", "0001_a", "Lan")
-        self.assertTrue(running.stop_requested)
-        self.assertEqual(running.stopped_by, "Lan")
-        self.assertTrue(r.listing("w")[0]["stopping"])
+        row = self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        asked = self.attempts.ask_stop(row["id"], "Lan")
+        self.assertTrue(asked["stop_asked_at"])
+        self.assertEqual(asked["stop_asked_by"], "Lan")
+        self.assertTrue(self.listing("w")[0]["stop_asked_at"])
 
     def test_a_second_stop_is_the_first_one(self):
-        r = Registry()
-        r.claim("w", "0001_a", "spec")
-        first = r.request_stop("w", "0001_a", "Lan")
-        second = r.request_stop("w", "0001_a", "Minh")
-        self.assertIs(first, second)
-        self.assertEqual(second.stopped_by, "Lan")
+        row = self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        first = self.attempts.ask_stop(row["id"], "Lan")
+        second = self.attempts.ask_stop(row["id"], "Minh")
+        self.assertEqual(second["stop_asked_by"], "Lan")
+        self.assertEqual(first["stop_asked_at"], second["stop_asked_at"])
 
-    def test_a_sealed_step_cannot_be_stopped(self):
-        r = Registry()
-        running = r.claim("w", "0001_a", "spec")
-        self.assertTrue(steps.seal(running))
-        with self.assertRaises(Finishing):
-            r.request_stop("w", "0001_a", "Lan")
-        self.assertFalse(running.stop_requested)
+    def test_a_stop_is_recorded_on_a_sealed_step_too(self):
+        # a Stop is recorded at every unfinished state; one that reaches an `ending`
+        # step is no longer refused, the step runs on and ends `stop_late`.
+        row = self.attempts.open("step", "w", "0001_a", "spec", state="running")
+        self.attempts.move(row["id"], "ending")
+        asked = self.attempts.ask_stop(row["id"], "Lan")
+        self.assertEqual((asked["state"], asked["stop_asked_by"]), ("ending", "Lan"))
+
+
+class Sealing(unittest.TestCase):
+    def test_a_sealed_step_is_sealed_and_tells_its_attempt_once(self):
+        r = running()
+        told = []
+        r.on_seal = lambda: told.append(1)
+        self.assertTrue(steps.seal(r))
+        self.assertTrue(steps.seal(r))
+        self.assertTrue(r.sealed)
+        self.assertEqual(told, [1])
 
     def test_a_stopped_step_cannot_be_sealed(self):
-        r = Registry()
-        running = r.claim("w", "0001_a", "spec")
-        r.request_stop("w", "0001_a", "Lan")
-        self.assertFalse(steps.seal(running))
-        self.assertFalse(running.sealed)
+        r = running()
+        told = []
+        r.on_seal = lambda: told.append(1)
+        r.stop_requested, r.stopped_by = True, "Lan"
+        self.assertFalse(steps.seal(r))
+        self.assertFalse(r.sealed)
+        self.assertEqual(told, [])
 
-    def test_a_step_with_no_registry_row_always_seals(self):
+    def test_a_step_with_no_running_always_seals(self):
         self.assertTrue(steps.seal(None))
 
 

@@ -58,6 +58,8 @@ from coscc.state.views import (
     _activities,
     RUNNING_POLL,
     _POLLING,
+    ATTEMPT_WAKES,
+    listen_to_attempts,
     GONE_AFTER,
     _asking,
     _tab_gone,
@@ -1309,6 +1311,7 @@ class StudioState(
         # A reload that finds the tab already on the Board: nothing else would start the loops.
         yield StudioState.poll_running
         yield StudioState.watch_board
+        yield StudioState.watch_attempts
 
     @rx.event
     def navigate(self, screen: str):
@@ -1425,6 +1428,44 @@ class StudioState(
                     self._show_board(data)
         finally:
             _WATCHING.discard(token)
+
+    @rx.event(background=True)
+    async def watch_attempts(self):
+        """Put the unfinished attempts on the page the moment one moves, while the Board shows.
+
+        The service's attempt events (queued, preparing, a Stop asked, ended, ...) wake it
+        through an `asyncio.Event`; it then reads `running_steps` and sends it, with no board
+        read behind it. Where `watch_board` waits on a read of the whole board, this waits on
+        one attempt. One loop per tab, ended like `watch_board`'s.
+        """
+        token = EventContext.get().token
+        if token in ATTEMPT_WAKES:
+            return
+        woken = asyncio.Event()
+        ATTEMPT_WAKES[token] = (asyncio.get_running_loop(), woken)
+        listen_to_attempts(app.SERVICE.bus)
+        missed = 0
+        # The first pass reads too: a move between the arrival's read and the subscription.
+        heard = True
+        try:
+            while True:
+                missed = missed + 1 if _tab_gone(token) else 0
+                if missed >= GONE_AFTER:
+                    return
+                async with self:
+                    if self.screen != "board" or not self.cwd:
+                        return
+                    if heard:
+                        # Cleared before the read: a move during it wakes the next pass.
+                        woken.clear()
+                        self._load_running()
+                try:
+                    await asyncio.wait_for(woken.wait(), BOARD_WAIT)
+                    heard = True
+                except TimeoutError:
+                    heard = False
+        finally:
+            ATTEMPT_WAKES.pop(token, None)
 
     @rx.event
     def search_workspaces(self, value: str):

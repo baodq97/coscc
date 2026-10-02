@@ -443,17 +443,17 @@ CREATE TABLE IF NOT EXISTS attempts (
     road          TEXT NOT NULL DEFAULT ''
 )""",
     """CREATE INDEX IF NOT EXISTS attempts_unit ON attempts (workspace, unit)""",
-    """-- Every move of an attempt, in order. `outcome` is an `ended` move's outcome or a
+    """-- Every move of an attempt, in order: the state it `moved_to`. `outcome` is an `ended` move's outcome or a
 -- `refused` move's reason code, `''` for any other.
 CREATE TABLE IF NOT EXISTS attempt_moves (
-    attempt INTEGER NOT NULL REFERENCES attempts (id),
-    seq     INTEGER NOT NULL,
-    state   TEXT NOT NULL,
-    outcome TEXT NOT NULL DEFAULT '',
-    at      TEXT NOT NULL,
+    attempt  INTEGER NOT NULL REFERENCES attempts (id),
+    seq      INTEGER NOT NULL,
+    moved_to TEXT NOT NULL,
+    outcome  TEXT NOT NULL DEFAULT '',
+    at       TEXT NOT NULL,
     PRIMARY KEY (attempt, seq)
 )""",
-    """CREATE INDEX IF NOT EXISTS attempt_moves_state ON attempt_moves (state, attempt)""",
+    """CREATE INDEX IF NOT EXISTS attempt_moves_to ON attempt_moves (moved_to, attempt)""",
 )
 
 # Columns added to a table that already existed, as `(table, column, declaration)`. `_SCHEMA`

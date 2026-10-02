@@ -19,7 +19,7 @@ from coscc.update import updater as updater_mod
 from coscc.service.activity import Activity
 from coscc.service.agents import Agents
 from coscc.service.answers import Answers
-from coscc.service.attempts import Attempts
+from coscc.service.attempts import Attempt, Attempts
 from coscc.service.autopilot import Autopilot, autopilot_values
 from coscc.service.backlog import Backlog
 from coscc.service.board import Board
@@ -284,7 +284,7 @@ class Service:
         left += [{**entry, "kind": "after-end"} for entry, _task in self.holds.finishing.values()]
         return left
 
-    def _launched(self) -> list[dict[str, Any]]:
+    def _launched(self) -> list[Attempt]:
         """The attempts past `queued` and not ended, of every workspace."""
         return [r for r in self.attempts.unfinished() if r["state"] != "queued"]
 

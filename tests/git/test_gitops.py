@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -402,6 +404,137 @@ class Worktrees(FetchingTheTrunkFromARemote):
     def test_main_is_never_deleted(self):
         with self.assertRaises(GitError):
             asyncio.run(gitops.delete_merged_branch(self.repo, "main", self.main))
+
+
+def running(marker: str) -> list[str]:
+    """Command lines of the processes whose argv holds `marker`, read from /proc."""
+    found = []
+    for proc in Path("/proc").glob("[0-9]*"):
+        if proc.name == str(os.getpid()):
+            continue
+        try:
+            argv = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        if marker in argv:
+            found.append(argv)
+    return found
+
+
+async def cancelled_after(coro, delay: float = 1.0) -> float:
+    """Seconds the task took to end once cancelled `delay` seconds in. It must end cancelled."""
+    task = asyncio.ensure_future(coro)
+    await asyncio.sleep(delay)
+    task.cancel()
+    began = time.monotonic()
+    try:
+        await task
+    except asyncio.CancelledError:
+        return time.monotonic() - began
+    raise AssertionError("the task finished before it was cancelled")
+
+
+class CancellingAGitCommand(FetchingTheTrunkFromARemote):
+    """A cancelled caller leaves no `git` behind and no half-made tree. The slowness is real: a
+    remote whose `uploadpack` sleeps, a smudge filter that sleeps mid-checkout."""
+
+    def setUp(self):
+        super().setUp()
+        (self.seed / ".gitattributes").write_text("slow.txt filter=slow\n", encoding="utf-8")
+        (self.seed / "slow.txt").write_text("x\n", encoding="utf-8")
+        self._git(self.seed, "add", "-A")
+        self._git(self.seed, "commit", "-q", "-m", "slow")
+        self._git(self.seed, "push", "-q", "origin", "main")
+        self._git(self.repo, "pull", "-q", "--ff-only")
+        self.main = self._git(self.repo, "rev-parse", "main")
+        self.tree = Path(self._tmp.name) / "trees" / "0001_a"
+
+    def _admins(self) -> list[str]:
+        where = self.repo / ".git" / "worktrees"
+        return sorted(p.name for p in where.iterdir()) if where.exists() else []
+
+    def _half_made_by_a_killed_add(self) -> None:
+        """What a `kill -9` of `git worktree add` mid-checkout leaves behind (spike S3)."""
+        self._git(self.repo, "config", "filter.slow.smudge", "sleep 3.33; cat")
+        self.tree.parent.mkdir(parents=True, exist_ok=True)
+        add = subprocess.Popen(
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "worktree",
+                "add",
+                "--detach",
+                "--",
+                str(self.tree),
+                self.main,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        time.sleep(1.0)
+        os.killpg(add.pid, signal.SIGKILL)
+        add.wait()
+        self._git(self.repo, "config", "--unset", "filter.slow.smudge")
+        self.assertEqual(running("sleep 3.33"), [])
+
+    def test_a_fetch_cancelled_midway_ends_at_once_and_leaves_no_git(self):
+        self._git(self.repo, "config", "remote.origin.uploadpack", "sleep 3.11; git-upload-pack")
+        took = asyncio.run(cancelled_after(gitops.fetch(self.repo)))
+        self.assertLess(took, 10)
+        self.assertEqual(running("sleep 3.11"), [])
+
+    def test_a_worktree_add_cancelled_midway_ends_at_once_and_leaves_no_git(self):
+        self._git(self.repo, "config", "filter.slow.smudge", "sleep 3.22; cat")
+        took = asyncio.run(cancelled_after(gitops.worktree_add(self.repo, self.tree, self.main)))
+        self.assertLess(took, 10)
+        self.assertEqual(running("sleep 3.22"), [])
+
+    def test_discarding_what_a_cancelled_add_left_gives_a_clean_tree_next_time(self):
+        self._git(self.repo, "config", "filter.slow.smudge", "sleep 3.44; cat")
+        asyncio.run(cancelled_after(gitops.worktree_add(self.repo, self.tree, self.main)))
+        asyncio.run(gitops.worktree_discard(self.repo, self.tree))
+        self.assertFalse(self.tree.exists())
+        self.assertEqual(self._admins(), [])
+        self.assertEqual(len(asyncio.run(gitops.worktree_list(self.repo))), 1)
+        self._git(self.repo, "config", "--unset", "filter.slow.smudge")
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
+        self.assertEqual(self._git(self.tree, "status", "--porcelain"), "")
+        self._git(self.tree, "add", "-A")
+
+    def test_a_killed_add_is_locked_initializing_and_discard_clears_it(self):
+        self._half_made_by_a_killed_add()
+        listed = asyncio.run(gitops.worktree_list(self.repo))[1]
+        self.assertEqual(listed["locked"], "initializing")
+        self.assertTrue(asyncio.run(gitops.worktree_half_made(self.repo, listed)))
+        admin = asyncio.run(gitops.worktree_admin_dir(self.repo, self.tree))
+        self.assertTrue((admin / "index.lock").exists())
+        asyncio.run(gitops.worktree_discard(self.repo, self.tree))
+        self.assertFalse(self.tree.exists())
+        self.assertEqual(self._admins(), [])
+        self.assertEqual(len(asyncio.run(gitops.worktree_list(self.repo))), 1)
+
+    def test_a_whole_tree_is_not_half_made(self):
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
+        listed = asyncio.run(gitops.worktree_list(self.repo))[1]
+        self.assertEqual(listed["locked"], "")
+        self.assertFalse(asyncio.run(gitops.worktree_half_made(self.repo, listed)))
+
+    def test_a_left_index_lock_alone_makes_a_tree_half_made(self):
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
+        admin = asyncio.run(gitops.worktree_admin_dir(self.repo, self.tree))
+        (admin / "index.lock").write_text("", encoding="utf-8")
+        listed = asyncio.run(gitops.worktree_list(self.repo))[1]
+        self.assertTrue(asyncio.run(gitops.worktree_half_made(self.repo, listed)))
+
+    def test_discarding_the_workspace_itself_is_refused(self):
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.worktree_discard(self.repo, self.repo))
+        self.assertTrue((self.repo / ".git").exists())
+
+    def test_discarding_what_is_not_there_is_not_an_error(self):
+        asyncio.run(gitops.worktree_discard(self.repo, self.tree))
 
 
 class MeasuringAncestryAndDistance(unittest.TestCase):

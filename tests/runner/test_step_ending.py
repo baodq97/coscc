@@ -918,8 +918,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
             directory = make_unit(
                 Path(ws) / "store", intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS"
             )
-            registry = steps.Registry()
-            running = registry.claim(ws, UNIT, "spike")
+            running = steps.Running(ws, UNIT, "spike", "")
             journal = Journal(ws, ws)
             r = Runner(sessions=Waits(), journal=journal)
 
@@ -945,7 +944,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
                 running.task = asyncio.create_task(drive())
                 while not out:
                     await asyncio.sleep(0)
-                await AStoppedStepEndsStopped.stop(registry, running, None)
+                await AStoppedStepEndsStopped.stop(running, None)
                 await running.task
                 return out
 
@@ -1082,8 +1081,7 @@ class AStoppedStepEndsStopped(unittest.TestCase):
     def _run(self, d, sessions, stage, artifact, act):
         from coscc.agent import steps
 
-        registry = steps.Registry()
-        running = registry.claim(d, UNIT, stage)
+        running = steps.Running(d, UNIT, stage, "")
         journal = Journal(d, d)
         r = Runner(sessions=sessions, journal=journal)
 
@@ -1107,7 +1105,7 @@ class AStoppedStepEndsStopped(unittest.TestCase):
             running.task = asyncio.create_task(drive())
             while not out:
                 await asyncio.sleep(0)
-            await act(registry, running, sessions)
+            await act(running, sessions)
             try:
                 await running.task
             except asyncio.CancelledError:
@@ -1117,8 +1115,10 @@ class AStoppedStepEndsStopped(unittest.TestCase):
         return asyncio.run(go()), journal, running
 
     @staticmethod
-    async def stop(registry, running, sessions):
-        registry.request_stop(running.workspace, running.unit, "Lan")
+    async def stop(running, sessions):
+        # What `Steps.stop_running` sets, with the attempt's `stop_asked_at`, on a step not yet
+        # `ending`.
+        running.stop_requested, running.stopped_by = True, "Lan"
         await running.handle.close()
         running.task.cancel()
 
@@ -1159,31 +1159,30 @@ class AStoppedStepEndsStopped(unittest.TestCase):
             [end] = self._ends(journal)
             self.assertEqual(end["outcome"], "stopped")
 
-    def test_a_stop_after_the_seal_is_refused_and_the_step_is_done(self):
-        from coscc.agent import steps
-
-        async def release_then_stop(registry, running, sessions):
+    def test_a_stop_after_the_seal_is_not_honoured_and_the_step_is_done(self):
+        # a Stop that reaches a sealed (`ending`) step is no longer refused; the
+        # attempt records it (`stop_late`, tested in tests/service/test_steps.py) and
+        # `Steps.stop_running` does not set `stop_requested`, so the runner finishes the step.
+        async def release_then_stop(running, sessions):
             sessions.release.set()
             while not running.sealed:
                 await asyncio.sleep(0)
-            with self.assertRaises(steps.Finishing):
-                registry.request_stop(running.workspace, running.unit, "Lan")
 
         with tempfile.TemporaryDirectory() as d:
             directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
-            out, journal, _ = self._run(d, self.Waits(), "spec", "spec.md", release_then_stop)
+            out, journal, running = self._run(d, self.Waits(), "spec", "spec.md", release_then_stop)
+            self.assertTrue(running.sealed)
+            self.assertFalse(running.stop_requested)
             self.assertEqual(out[-1][1]["outcome"], "done")
             self.assertTrue((directory / "spec.md").exists())
             [end] = self._ends(journal)
             self.assertEqual((end["outcome"], end["cost_usd"]), ("done", 0.25))
 
-    def test_a_stop_after_the_outcome_is_decided_is_refused_and_the_end_says_failed(self):
+    def test_a_stop_after_the_outcome_is_decided_is_not_honoured_and_the_end_says_failed(self):
         """A Stop that lands while a failed step captures its attempt used to be told "stopped"
-        while the `end` said `failed`."""
-        from coscc.agent import steps
-
-        registry_box = []
-        refused = []
+        while the `end` said `failed`. The door was closed by then: the step is sealed, so the
+        Stop is only recorded on its attempt and never reaches the runner."""
+        sealed = []
 
         class Fails(self.Waits):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
@@ -1191,22 +1190,20 @@ class AStoppedStepEndsStopped(unittest.TestCase):
                 await self.release.wait()
                 raise RuntimeError("the CLI died")
 
+        box = []
+
         async def capture(cwd, session_id):
-            registry, running = registry_box[0]
-            try:
-                registry.request_stop(running.workspace, running.unit, "Lan")
-            except steps.Finishing as e:
-                refused.append(e)
+            sealed.append(box[0].sealed)
             return {}, None
 
-        async def release(registry, running, sessions):
-            registry_box.append((registry, running))
+        async def release(running, sessions):
+            box.append(running)
             sessions.release.set()
 
         with tempfile.TemporaryDirectory() as d, mock.patch("coscc.runner.step.snapshot", capture):
             make_unit(Path(d), intent_md="Status: accepted.\nI")
             out, journal, running = self._run(d, Fails(), "spec", "spec.md", release)
-            self.assertEqual(len(refused), 1)
+            self.assertEqual(sealed, [True])
             self.assertFalse(running.stop_requested)
             self.assertEqual(out[-1][1]["outcome"], "failed")
             self.assertNotIn("stopped_by", out[-1][1])
@@ -1215,7 +1212,7 @@ class AStoppedStepEndsStopped(unittest.TestCase):
             self.assertNotIn("stopped_by", end)
 
     def test_a_cancel_with_no_stop_behind_it_writes_no_end(self):
-        async def cancel(registry, running, sessions):
+        async def cancel(running, sessions):
             running.task.cancel()
 
         with tempfile.TemporaryDirectory() as d:
@@ -1257,7 +1254,7 @@ class ADeadStepKeepsItsTurns(unittest.TestCase):
             make_unit(Path(d), intent_md="Status: accepted.\nI")
             data = Data(d)
             journal = Journal(d, data)
-            running = steps.Registry().claim(d, UNIT, "impl")
+            running = steps.Running(d, UNIT, "impl", "")
             running.handle.recorder = events.Recorder("r-dead", data, d, d, UNIT, "impl")
 
             async def go():
@@ -1406,8 +1403,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                 pr_md="Status: accepted.\nP",
                 review_md=REVIEW_R1,
             )
-            registry = steps.Registry()
-            running = registry.claim(ws, UNIT, stage)
+            running = steps.Running(ws, UNIT, stage, "")
             if stop:
                 sessions.stop = running
             journal = Journal(ws, ws)
@@ -1672,7 +1668,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
             )
             if existing is not None:
                 (directory / f"{stage}.md").write_bytes(existing)
-            handle = steps.Registry().claim(d, UNIT, stage) if running else None
+            handle = steps.Running(d, UNIT, stage, "") if running else None
             journal = Journal(d, d)
             r = Runner(sessions=sessions, journal=journal)
 
