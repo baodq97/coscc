@@ -295,7 +295,6 @@ DICT_ANY: set[str] = {
     "coscc.service.backlog:Backlog.record_estimate",
     "coscc.service.backlog:Backlog.record_relation",
     "coscc.service.backlog:Backlog.record_shortlist",
-    "coscc.service.backlog:Backlog.start_branch",
     "coscc.service.backlog:Backlog.timeline",
     "coscc.service.backlog:Backlog.unit_history",
     "coscc.service.backlog:Backlog.units_with_history",

@@ -60,6 +60,7 @@ from coscc.service.agents import Agents
 from coscc.service.models import Models
 from coscc.service.ideas import Ideas
 from coscc.service.answers import Answers
+from coscc.service.backlog import cut_branch
 from collections.abc import Awaitable, Callable
 
 log = logging.getLogger(__name__)
@@ -1618,6 +1619,13 @@ class Steps:
         if tree is None:
             return ""
         if stage == "impl":
+            # A tree still detached gets its branch here, before the session opens, by the
+            # path of the "Cut this unit's branch" button; a tree already on one is left alone.
+            if not tree.get("branch"):
+                try:
+                    await cut_branch(cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit]))
+                except (GitError, Invalid) as e:
+                    raise Refused(f"no branch could be cut for {unit}: {e}", ("no-branch",)) from e
             # A tree that cannot run its tests turns every `impl` red from the start, so
             # the step is not started on one. Tried once more first: a network blip is the
             # ordinary reason, and the page has nothing better to offer than *try again*.

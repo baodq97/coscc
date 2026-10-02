@@ -19,7 +19,7 @@ from coscc.git import fetches
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.units import autopilot
-from coscc.service.common import Invalid, describe_base, step_cwd
+from coscc.service.common import Invalid, Refused, describe_base, step_cwd
 from coscc.service import Service
 from coscc.service.answers import Answers
 from coscc.agent.sessions import Sessions
@@ -260,6 +260,92 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
             ).stdout.strip(),
             "0",
         )
+
+    def _impl(self, unit: str) -> None:
+        """Start `impl` with the gate open and a runner that stops at once: what is looked at is
+        the tree it was handed, not a session."""
+        from coscc.units import board as board_reader
+        from coscc.runner.reply import RunError
+
+        class StandIn:
+            bus = Bus()
+
+            def __init__(self, *a, **kw):
+                pass
+
+            async def run(self, **kw):
+                raise RunError("a stand-in runner")
+                yield  # pragma: no cover
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, f"open: {stage} may proceed"
+
+        async def go():
+            async for _ in self.service.steps.run_step(str(self.repo), unit, "impl"):
+                pass
+
+        with (
+            mock.patch.object(board_reader, "gate", open_gate),
+            mock.patch("coscc.service.steps.Runner", StandIn),
+            mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
+        ):
+            asyncio.run(go())
+
+    def _commits_past_main(self, tree: Path) -> str:
+        return subprocess.run(
+            ["git", "-C", str(tree), "rev-list", "--count", "origin/main..HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    def test_impl_on_a_detached_tree_cuts_the_branch_from_the_remote_tip_first(self):
+        unit = self._typed_unit()
+        tip = self._advance_remote()
+        tree = self._tree(unit)
+        with self.assertRaises(Invalid):
+            self._impl(unit)  # the stand-in runner fails after the tree was readied
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(tree), "branch", "--show-current"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip(),
+            "fix/a-problem",
+        )
+        self.assertEqual(self._tree_head(tree), tip)
+        self.assertEqual(self._commits_past_main(tree), "0")
+
+    def test_impl_leaves_a_tree_already_on_a_branch_alone(self):
+        unit = self._typed_unit()
+        asyncio.run(self.service.backlog.start_branch(str(self.repo), unit))
+        tree = self._tree(unit)
+        subprocess.run(
+            ["git", "-C", str(tree), "branch", "-m", "fix/mine"], check=True, capture_output=True
+        )
+        with self.assertRaises(Invalid):
+            self._impl(unit)
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(tree), "branch", "--show-current"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip(),
+            "fix/mine",
+        )
+
+    def test_impl_is_refused_with_no_branch_when_the_fetch_fails(self):
+        unit = self._typed_unit()
+        tree = self._tree(unit)
+        before = self._tree_head(tree)
+        self._git("remote", "set-url", "origin", str(self.root / "gone.git"))
+        with self.assertRaises(Refused) as refused:
+            self._impl(unit)
+        self.assertEqual(refused.exception.reasons, ("no-branch",))
+        self.assertEqual(self._tree_head(tree), before)
+        self.assertEqual(self._commits_past_main(tree), "0")
 
     def test_describe_base_is_empty_when_fresh_and_names_the_sha_when_not(self):
         self.assertEqual(describe_base(None), "")
