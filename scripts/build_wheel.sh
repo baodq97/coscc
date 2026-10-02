@@ -82,13 +82,12 @@ cp -r .web/backend/. coscc/_web/backend/
 # `coscc/units/board.py` and `coscc/runner/step.py` were reaching for a `.claude/` that only exists in
 # a checkout.
 #
-# Two named directories, never `.claude/` whole: `.claude/settings.local.json` is a
-# personal file (`.gitignore`) and a release is published. `coscc/agent/harness.py` refuses a
+# One named directory, never `.claude/` whole (the loop is `coscc/loop/`, in the package already):
+# `.claude/settings.local.json` is a personal file (`.gitignore`) and a release is published. `coscc/agent/harness.py` refuses a
 # wheel that carries one. `rm -rf` first: a tree left over from an earlier build would be
 # copied into the wheel alongside the new one, and the packaged copy is the one that wins.
 rm -rf coscc/_harness
 mkdir -p coscc/_harness
-cp -r .claude/scripts coscc/_harness/scripts
 cp -r .claude/skills coscc/_harness/skills
 
 # The build stamp the board reads its commit from (0068 R1). Always written, never read

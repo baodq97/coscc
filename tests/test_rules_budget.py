@@ -163,7 +163,7 @@ class TheHarnessIsGenericAndTimeless(unittest.TestCase):
                 with self.subTest(skill=path.parent.name, found=m.group(0)):
                     self.fail(
                         f"{path.parent.name} names `{m.group(0)}`: say it in generic words "
-                        "(ask `cos.mjs gate`, a security-sensitive file) or drop it"
+                        "(ask the loop for the gate, a security-sensitive file) or drop it"
                     )
 
     def test_no_rule_or_doc_reads_as_a_log(self):

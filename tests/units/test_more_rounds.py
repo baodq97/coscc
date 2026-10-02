@@ -11,8 +11,9 @@ STUCK = {"name": "0001_q", "more_rounds": True}
 
 
 class TheBlock(unittest.TestCase):
-    def test_the_block_is_the_bytes_cos_mjs_reads(self):
-        # The same bytes `cos.test.mjs` `MORE` holds, so the two sides cannot drift apart.
+    def test_the_block_is_the_bytes_the_loop_reads(self):
+        # The same bytes `tests/loop/test_model_rebase.py` `MORE` holds, so the two sides cannot
+        # drift apart.
         self.assertEqual(
             more_rounds.block("owner", "2026-09-27"),
             "\n### More rounds\nDecided by: owner. Date: 2026-09-27. Via: product.\nRounds: 1\n",

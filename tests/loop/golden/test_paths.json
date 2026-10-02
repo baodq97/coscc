@@ -1,0 +1,452 @@
+{
+ "tests/loop/test_paths.py::test_meta_of_a_store_with_an_empty_ideas_dir#1": [
+  0,
+  "{\"units\":{\"0001_a\":{\"artifacts\":{\"intent.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"25b358650c9a2feef7d9002aac680963afb67552ebb3a1fdc4c4f47fa7db2b2b\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}},\"ideas\":[]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_a_whole_store_with_units_and_ideas#1": [
+  0,
+  "{\"units\":{\"20\":{\"artifacts\":{},\"answers\":[]},\"123\":{\"artifacts\":{},\"answers\":[]},\"0001_first\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"0301b86df3f3e531a7a9f6e180a962dc85b18cc331fdb3cf13cb629455584829\",\"questions\":[{\"n\":1,\"text\":\"Which database should hold the units?\"},{\"n\":3,\"text\":\"Does it need a migration? And a rollback?\\n   Because the old rows stay.\"}]},\"spec.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"b9c8023665d8b391a8a84599757ec209a04a9c6eccadcbfbbadad1a3170a0bf1\",\"questions\":[{\"n\":1,\"text\":\"Which database should hold the units?\"},{\"n\":3,\"text\":\"Does it need a migration? And a rollback?\\n   Because the old rows stay.\"}]},\"plan.md\":{\"status\":null,\"raw\":\"weird-word\",\"sha256\":\"069b12592cab34a58e20fa21e6a5f0eadd236c283cd8540096e46becda7913d5\",\"questions\":null},\"ship.md\":{\"status\":null,\"raw\":null,\"sha256\":\"703443c0c8d180eb052a44abd1e67c99da51fc60d382f856018ab32908e6826f\",\"questions\":null}},\"answers\":[{\"artifact\":\"intent.md\",\"n\":1,\"id\":null,\"by\":\"Phong\",\"date\":\"2026-09-01\",\"via\":\"product\",\"text\":\"Dùng SQLite, vì nó có sẵn.\"},{\"artifact\":\"intent.md\",\"n\":null,\"id\":\"F1\",\"by\":\"Bao Do\",\"date\":\"2026-09-02\",\"via\":\"cli\",\"text\":\"Fixed in the next round.\"}],\"type\":\"feat\",\"links\":{\"idea\":\"ws/ideas/0001_x.md\",\"repo\":\"coscc\",\"dependsOn\":[\"ws/0001_a\",\"other/0002_b\"]},\"holds\":[{\"state\":\"paused\",\"reason\":\"Waiting on the vendor.\",\"by\":\"Phong\",\"date\":\"2026-09-03\",\"via\":\"product\"},{\"state\":\"active\",\"reason\":\"The vendor answered.\",\"by\":\"Phong\",\"date\":\"2026-09-04\",\"via\":\"product\"},{\"state\":\"dropped\",\"reason\":null,\"by\":null,\"date\":null,\"via\":null}]},\"0002_second\":{\"artifacts\":{\"impl.md\":{\"status\":\"done\",\"raw\":\"done\",\"sha256\":\"ad933e4c1485295e0a7e07ca3939bd0d3ca8699b7eb30a5e4697f1aa1adacbfe\",\"questions\":null}},\"answers\":[]},\"0003_empty\":{\"artifacts\":{},\"answers\":[]},\"Zed\":{\"artifacts\":{\"review.md\":{\"status\":\"changes-requested\",\"raw\":\"changes-requested\",\"sha256\":\"35addbc48241f7f9368c944f3c52f112e02e2d1188a6123d1d7a5d087f58f813\",\"questions\":null}},\"answers\":[]},\"odd name\":{\"artifacts\":{\"idea.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"5d29dde176ee60c0eb0e2366e3608cf0945ba259252efca2a11f007d0e1fced5\",\"questions\":null}},\"answers\":[]}},\"ideas\":[{\"id\":\"0001_good\",\"title\":\"Tiếng Việt\",\"status\":\"accepted\",\"units\":[{\"ref\":\"ws/0001_a\",\"dependsOn\":[]},{\"ref\":\"ws/0002_b\",\"dependsOn\":[\"ws/0001_a\",\"ws/0003_c\"]},{\"ref\":\"ws/0004_d\",\"dependsOn\":[\"ws/0001_a\"]},{\"ref\":\"other/0006_f\",\"dependsOn\":[]}],\"problems\":[\"## Units: \\\"- not a unit\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\",\"## Units: \\\"- ws/0005_e. Depends on: nope\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\"]},{\"id\":\"0002_nostatus\",\"title\":\"No status\",\"status\":null,\"units\":[],\"problems\":[\"carries no Status line\",\"has no ## Units section\"]},{\"id\":\"0003_crlf\",\"title\":\"Crlf\",\"status\":\"draft\",\"units\":[{\"ref\":\"ws/0001_a\",\"dependsOn\":[]}],\"problems\":[]},{\"id\":\"0004_bad\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"carries no Status line\",\"## Units: \\\"-\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\"]},{\"id\":\"0005_adir.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"0010-slug.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a_under.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a-hyphen.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a.dot\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"B_upper.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"broken.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_an_empty_name_and_of_a_file_alike#1": [
+  0,
+  "{\"units\":{\"\":{\"artifacts\":{},\"answers\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_an_empty_name_and_of_a_file_alike#2": [
+  0,
+  "{\"units\":{\"stray.txt\":{\"artifacts\":{},\"answers\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_an_empty_store#1": [
+  0,
+  "{\"units\":{},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_each_kind_of_unit[0002_second]#1": [
+  0,
+  "{\"units\":{\"0002_second\":{\"artifacts\":{\"impl.md\":{\"status\":\"done\",\"raw\":\"done\",\"sha256\":\"ad933e4c1485295e0a7e07ca3939bd0d3ca8699b7eb30a5e4697f1aa1adacbfe\",\"questions\":null}},\"answers\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_each_kind_of_unit[0003_empty]#1": [
+  0,
+  "{\"units\":{\"0003_empty\":{\"artifacts\":{},\"answers\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_each_kind_of_unit[123]#1": [
+  0,
+  "{\"units\":{\"123\":{\"artifacts\":{},\"answers\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_each_kind_of_unit[Zed]#1": [
+  0,
+  "{\"units\":{\"Zed\":{\"artifacts\":{\"review.md\":{\"status\":\"changes-requested\",\"raw\":\"changes-requested\",\"sha256\":\"35addbc48241f7f9368c944f3c52f112e02e2d1188a6123d1d7a5d087f58f813\",\"questions\":null}},\"answers\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_each_kind_of_unit[odd name]#1": [
+  0,
+  "{\"units\":{\"odd name\":{\"artifacts\":{\"idea.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"5d29dde176ee60c0eb0e2366e3608cf0945ba259252efca2a11f007d0e1fced5\",\"questions\":null}},\"answers\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_one_unit#1": [
+  0,
+  "{\"units\":{\"0001_first\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"0301b86df3f3e531a7a9f6e180a962dc85b18cc331fdb3cf13cb629455584829\",\"questions\":[{\"n\":1,\"text\":\"Which database should hold the units?\"},{\"n\":3,\"text\":\"Does it need a migration? And a rollback?\\n   Because the old rows stay.\"}]},\"spec.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"b9c8023665d8b391a8a84599757ec209a04a9c6eccadcbfbbadad1a3170a0bf1\",\"questions\":[{\"n\":1,\"text\":\"Which database should hold the units?\"},{\"n\":3,\"text\":\"Does it need a migration? And a rollback?\\n   Because the old rows stay.\"}]},\"plan.md\":{\"status\":null,\"raw\":\"weird-word\",\"sha256\":\"069b12592cab34a58e20fa21e6a5f0eadd236c283cd8540096e46becda7913d5\",\"questions\":null},\"ship.md\":{\"status\":null,\"raw\":null,\"sha256\":\"703443c0c8d180eb052a44abd1e67c99da51fc60d382f856018ab32908e6826f\",\"questions\":null}},\"answers\":[{\"artifact\":\"intent.md\",\"n\":1,\"id\":null,\"by\":\"Phong\",\"date\":\"2026-09-01\",\"via\":\"product\",\"text\":\"Dùng SQLite, vì nó có sẵn.\"},{\"artifact\":\"intent.md\",\"n\":null,\"id\":\"F1\",\"by\":\"Bao Do\",\"date\":\"2026-09-02\",\"via\":\"cli\",\"text\":\"Fixed in the next round.\"}],\"type\":\"feat\",\"links\":{\"idea\":\"ws/ideas/0001_x.md\",\"repo\":\"coscc\",\"dependsOn\":[\"ws/0001_a\",\"other/0002_b\"]},\"holds\":[{\"state\":\"paused\",\"reason\":\"Waiting on the vendor.\",\"by\":\"Phong\",\"date\":\"2026-09-03\",\"via\":\"product\"},{\"state\":\"active\",\"reason\":\"The vendor answered.\",\"by\":\"Phong\",\"date\":\"2026-09-04\",\"via\":\"product\"},{\"state\":\"dropped\",\"reason\":null,\"by\":null,\"date\":null,\"via\":null}]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_one_unit_with_named_artifacts#1": [
+  0,
+  "{\"units\":{\"0001_first\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"0301b86df3f3e531a7a9f6e180a962dc85b18cc331fdb3cf13cb629455584829\",\"questions\":[{\"n\":1,\"text\":\"Which database should hold the units?\"},{\"n\":3,\"text\":\"Does it need a migration? And a rollback?\\n   Because the old rows stay.\"}]},\"spec.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"b9c8023665d8b391a8a84599757ec209a04a9c6eccadcbfbbadad1a3170a0bf1\",\"questions\":[{\"n\":1,\"text\":\"Which database should hold the units?\"},{\"n\":3,\"text\":\"Does it need a migration? And a rollback?\\n   Because the old rows stay.\"}]}},\"answers\":[{\"artifact\":\"intent.md\",\"n\":1,\"id\":null,\"by\":\"Phong\",\"date\":\"2026-09-01\",\"via\":\"product\",\"text\":\"Dùng SQLite, vì nó có sẵn.\"},{\"artifact\":\"intent.md\",\"n\":null,\"id\":\"F1\",\"by\":\"Bao Do\",\"date\":\"2026-09-02\",\"via\":\"cli\",\"text\":\"Fixed in the next round.\"}],\"type\":\"feat\",\"links\":{\"idea\":\"ws/ideas/0001_x.md\",\"repo\":\"coscc\",\"dependsOn\":[\"ws/0001_a\",\"other/0002_b\"]},\"holds\":[{\"state\":\"paused\",\"reason\":\"Waiting on the vendor.\",\"by\":\"Phong\",\"date\":\"2026-09-03\",\"via\":\"product\"},{\"state\":\"active\",\"reason\":\"The vendor answered.\",\"by\":\"Phong\",\"date\":\"2026-09-04\",\"via\":\"product\"},{\"state\":\"dropped\",\"reason\":null,\"by\":null,\"date\":null,\"via\":null}]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_one_unit_with_named_artifacts#2": [
+  0,
+  "{\"units\":{\"0001_first\":{\"artifacts\":{\"plan.md\":{\"status\":null,\"raw\":\"weird-word\",\"sha256\":\"069b12592cab34a58e20fa21e6a5f0eadd236c283cd8540096e46becda7913d5\",\"questions\":null}},\"answers\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_of_one_unit_with_named_artifacts#3": [
+  0,
+  "{\"units\":{\"0001_first\":{\"artifacts\":{},\"answers\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_a_file_with_a_bad_byte_alike#1": [
+  0,
+  "{\"units\":{\"0001_bytes\":{\"artifacts\":{\"intent.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"8dee9aa4341efda4b79bf2ab24975ca059f0c65cf339ecdb31afe108d5697ee5\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_an_idea_alike[# Idea:  \\xa0spaced\\xa0 \\nStatus: draft.\\n## Units\\n- ws/0001_a\\xa0\\n]#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"0001_x\",\"title\":\"spaced\",\"status\":\"draft\",\"units\":[{\"ref\":\"ws/0001_a\",\"dependsOn\":[]}],\"problems\":[]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_an_idea_alike[# Idea: x\\nStatus: draft.\\n## Units\\n- bad ws/0001_a\\n- ws/0002_b. Depends on: 0003_c\\n]#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"0001_x\",\"title\":\"x\",\"status\":\"draft\",\"units\":[],\"problems\":[\"## Units: \\\"- bad ws/0001_a\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\",\"## Units: \\\"- ws/0002_b. Depends on: 0003_c\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\"]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_an_idea_alike[# Idea: x\\nStatus: draft.\\n## Units\\n- ws/0001_a. Depends on: ws/0002_b,\\tws/0003_c\\n]#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"0001_x\",\"title\":\"x\",\"status\":\"draft\",\"units\":[{\"ref\":\"ws/0001_a\",\"dependsOn\":[\"ws/0002_b\",\"ws/0003_c\"]}],\"problems\":[]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_an_idea_alike[# Idea: x\\nStatus: draft.\\n## Units\\n- ws/0001_a. Depends on: ws/0002_b\\n]#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"0001_x\",\"title\":\"x\",\"status\":\"draft\",\"units\":[{\"ref\":\"ws/0001_a\",\"dependsOn\":[\"ws/0002_b\"]}],\"problems\":[]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_an_idea_alike[# Idea: x\\nStatus: draft.\\n## Units\\n- ws/0001_a.\\n- ws/0002_b. Depends on: ws/0001_a.\\n]#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"0001_x\",\"title\":\"x\",\"status\":\"draft\",\"units\":[{\"ref\":\"ws/0001_a\",\"dependsOn\":[]},{\"ref\":\"ws/0002_b\",\"dependsOn\":[\"ws/0001_a\"]}],\"problems\":[]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_an_idea_alike[# Idea: x\\nStatus: draft.\\n## Units\\n- ws/1_a\\n- w s/0001_a\\n- ws/ws/0001_a\\n]#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"0001_x\",\"title\":\"x\",\"status\":\"draft\",\"units\":[],\"problems\":[\"## Units: \\\"- ws/1_a\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\",\"## Units: \\\"- w s/0001_a\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\",\"## Units: \\\"- ws/ws/0001_a\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\"]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_an_idea_alike[# Idea: x\\r\\n# Idea: y\\nStatus: draft.\\n## Units\\n\\n\\n## Other\\n- ws/0001_a\\n]#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"0001_x\",\"title\":\"x\",\"status\":\"draft\",\"units\":[],\"problems\":[]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_an_idea_alike[# Idea:x\\nStatus: draft.\\n## Units\\n   - ws/0001_a   \\n]#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"0001_x\",\"title\":\"x\",\"status\":\"draft\",\"units\":[],\"problems\":[\"## Units: \\\"- ws/0001_a\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\"]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_an_idea_alike[Status: draft.\\n# Idea: later\\n## Units\\n- ws/0001_a. Depends on: ws/0002_b,ws/0003_c\\n]#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"0001_x\",\"title\":\"later\",\"status\":\"draft\",\"units\":[{\"ref\":\"ws/0001_a\",\"dependsOn\":[\"ws/0002_b\",\"ws/0003_c\"]}],\"problems\":[]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_an_idea_alike[]#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"0001_x\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"carries no Status line\",\"has no ## Units section\"]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: Ti\\u1ebfng Vi\\u1ec7t\\nStatus: Draft.\\nType: fix\\nDepends on: a/0001_x,  b/0002_y\\n]#1": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"2043e28c990b6cae18243b6d23a2c44c829b6dcb0dfeac0ecb56bbd1119a4a41\",\"questions\":null},\"spec.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"2043e28c990b6cae18243b6d23a2c44c829b6dcb0dfeac0ecb56bbd1119a4a41\",\"questions\":null}},\"answers\":[],\"type\":\"fix\",\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":[\"a/0001_x\",\"b/0002_y\"]},\"holds\":[]}},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: Ti\\u1ebfng Vi\\u1ec7t\\nStatus: Draft.\\nType: fix\\nDepends on: a/0001_x,  b/0002_y\\n]#2": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"2043e28c990b6cae18243b6d23a2c44c829b6dcb0dfeac0ecb56bbd1119a4a41\",\"questions\":null}},\"answers\":[],\"type\":\"fix\",\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":[\"a/0001_x\",\"b/0002_y\"]},\"holds\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: x\\nIdea: ws/ideas/0001_x.md\\nRepo:\\nStatus: rejected\\n\\n## Why\\nRepo: late\\n]#1": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"rejected\",\"raw\":\"rejected\",\"sha256\":\"f19e3e9538906e284d25eddc90b0994d3d7a588e9a8754b476aaae2dee716af9\",\"questions\":null},\"spec.md\":{\"status\":\"rejected\",\"raw\":\"rejected\",\"sha256\":\"f19e3e9538906e284d25eddc90b0994d3d7a588e9a8754b476aaae2dee716af9\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":\"ws/ideas/0001_x.md\",\"repo\":null,\"dependsOn\":null},\"holds\":[]}},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: x\\nIdea: ws/ideas/0001_x.md\\nRepo:\\nStatus: rejected\\n\\n## Why\\nRepo: late\\n]#2": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"rejected\",\"raw\":\"rejected\",\"sha256\":\"f19e3e9538906e284d25eddc90b0994d3d7a588e9a8754b476aaae2dee716af9\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":\"ws/ideas/0001_x.md\",\"repo\":null,\"dependsOn\":null},\"holds\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: x\\nStatus: accepted.\\n## Answers\\n### C\\xe2u 1\\nAnswered by: A. Date: 2026-01-01. Via: cli.\\nOK\\n### C\\xe2u 2\\nbroken\\n]#1": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"096849eaef908178d4493142e1da35f1b03d4de9889168d4476737291614f46b\",\"questions\":null},\"spec.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"096849eaef908178d4493142e1da35f1b03d4de9889168d4476737291614f46b\",\"questions\":null}},\"answers\":[{\"artifact\":\"intent.md\",\"n\":1,\"id\":null,\"by\":\"A\",\"date\":\"2026-01-01\",\"via\":\"cli\",\"text\":\"OK\"},{\"artifact\":\"spec.md\",\"n\":1,\"id\":null,\"by\":\"A\",\"date\":\"2026-01-01\",\"via\":\"cli\",\"text\":\"OK\"}],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: x\\nStatus: accepted.\\n## Answers\\n### C\\xe2u 1\\nAnswered by: A. Date: 2026-01-01. Via: cli.\\nOK\\n### C\\xe2u 2\\nbroken\\n]#2": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"096849eaef908178d4493142e1da35f1b03d4de9889168d4476737291614f46b\",\"questions\":null}},\"answers\":[{\"artifact\":\"intent.md\",\"n\":1,\"id\":null,\"by\":\"A\",\"date\":\"2026-01-01\",\"via\":\"cli\",\"text\":\"OK\"}],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: x\\nStatus: draft\\n## Answers\\n### Paused\\nDecided by: A. Date: 2026-01-01. Via: cli.\\nWhy\\n### Dropped\\nDecided by: A. Date: 2026-01-02. Via: cli.\\nNo\\n]#1": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"6d30c3e7b7ba82e8ce26ab3af9df4703e10906f64a4ce11b092053f0f8f445ed\",\"questions\":null},\"spec.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"6d30c3e7b7ba82e8ce26ab3af9df4703e10906f64a4ce11b092053f0f8f445ed\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[{\"state\":\"paused\",\"reason\":\"Why\",\"by\":\"A\",\"date\":\"2026-01-01\",\"via\":\"cli\"},{\"state\":\"dropped\",\"reason\":\"No\",\"by\":\"A\",\"date\":\"2026-01-02\",\"via\":\"cli\"}]}},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: x\\nStatus: draft\\n## Answers\\n### Paused\\nDecided by: A. Date: 2026-01-01. Via: cli.\\nWhy\\n### Dropped\\nDecided by: A. Date: 2026-01-02. Via: cli.\\nNo\\n]#2": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"6d30c3e7b7ba82e8ce26ab3af9df4703e10906f64a4ce11b092053f0f8f445ed\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[{\"state\":\"paused\",\"reason\":\"Why\",\"by\":\"A\",\"date\":\"2026-01-01\",\"via\":\"cli\"},{\"state\":\"dropped\",\"reason\":\"No\",\"by\":\"A\",\"date\":\"2026-01-02\",\"via\":\"cli\"}]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: x\\r\\nAuthor: a. Status: Accepted.\\r\\n\\r\\n## Open questions\\r\\n1. Why?\\r\\n]#1": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"03260cbe6526a2b54e51fa4f786299c1bc5dc86def36b0cd6560d88e644098e3\",\"questions\":[{\"n\":1,\"text\":\"Why?\"}]},\"spec.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"03260cbe6526a2b54e51fa4f786299c1bc5dc86def36b0cd6560d88e644098e3\",\"questions\":[{\"n\":1,\"text\":\"Why?\"}]}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: x\\r\\nAuthor: a. Status: Accepted.\\r\\n\\r\\n## Open questions\\r\\n1. Why?\\r\\n]#2": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"03260cbe6526a2b54e51fa4f786299c1bc5dc86def36b0cd6560d88e644098e3\",\"questions\":[{\"n\":1,\"text\":\"Why?\"}]}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: x\\u2028Status: accepted.\\n]#1": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"326b0d25ef038ec4cb4ec338942ce6f519331761cc826228a8a814104519b2c6\",\"questions\":null},\"spec.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"326b0d25ef038ec4cb4ec338942ce6f519331761cc826228a8a814104519b2c6\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[# Intent: x\\u2028Status: accepted.\\n]#2": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"326b0d25ef038ec4cb4ec338942ce6f519331761cc826228a8a814104519b2c6\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[Status: draft\\n]#1": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"063b1d52a49d8edee9d05e58785c12fa6fdb575fc10209fcd28a2c4f50bf2d97\",\"questions\":null},\"spec.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"063b1d52a49d8edee9d05e58785c12fa6fdb575fc10209fcd28a2c4f50bf2d97\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[Status: draft\\n]#2": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"063b1d52a49d8edee9d05e58785c12fa6fdb575fc10209fcd28a2c4f50bf2d97\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[\\ufeff# Intent: x\\nStatus: accepted\\n]#1": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"2a99a062197267246845cb28802f45784037d16c7887fa9fdb9ef9cd76b5b47c\",\"questions\":null},\"spec.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"2a99a062197267246845cb28802f45784037d16c7887fa9fdb9ef9cd76b5b47c\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[\\ufeff# Intent: x\\nStatus: accepted\\n]#2": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"2a99a062197267246845cb28802f45784037d16c7887fa9fdb9ef9cd76b5b47c\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[]#1": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":null,\"raw\":null,\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"questions\":null},\"spec.md\":{\"status\":null,\"raw\":null,\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_odd_text_alike[]#2": [
+  0,
+  "{\"units\":{\"0001_odd\":{\"artifacts\":{\"intent.md\":{\"status\":null,\"raw\":null,\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"questions\":null}},\"answers\":[],\"type\":null,\"links\":{\"idea\":null,\"repo\":null,\"dependsOn\":null},\"holds\":[]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_questions_answers_holds_and_links#1": [
+  0,
+  "{\"units\":{\"0001_first\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"0301b86df3f3e531a7a9f6e180a962dc85b18cc331fdb3cf13cb629455584829\",\"questions\":[{\"n\":1,\"text\":\"Which database should hold the units?\"},{\"n\":3,\"text\":\"Does it need a migration? And a rollback?\\n   Because the old rows stay.\"}]}},\"answers\":[{\"artifact\":\"intent.md\",\"n\":1,\"id\":null,\"by\":\"Phong\",\"date\":\"2026-09-01\",\"via\":\"product\",\"text\":\"Dùng SQLite, vì nó có sẵn.\"},{\"artifact\":\"intent.md\",\"n\":null,\"id\":\"F1\",\"by\":\"Bao Do\",\"date\":\"2026-09-02\",\"via\":\"cli\",\"text\":\"Fixed in the next round.\"}],\"type\":\"feat\",\"links\":{\"idea\":\"ws/ideas/0001_x.md\",\"repo\":\"coscc\",\"dependsOn\":[\"ws/0001_a\",\"other/0002_b\"]},\"holds\":[{\"state\":\"paused\",\"reason\":\"Waiting on the vendor.\",\"by\":\"Phong\",\"date\":\"2026-09-03\",\"via\":\"product\"},{\"state\":\"active\",\"reason\":\"The vendor answered.\",\"by\":\"Phong\",\"date\":\"2026-09-04\",\"via\":\"product\"},{\"state\":\"dropped\",\"reason\":null,\"by\":null,\"date\":null,\"via\":null}]}}}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_reads_the_status_a_stage_may_carry#1": [
+  0,
+  "{\"units\":{\"20\":{\"artifacts\":{},\"answers\":[]},\"123\":{\"artifacts\":{},\"answers\":[]},\"0001_first\":{\"artifacts\":{\"intent.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"0301b86df3f3e531a7a9f6e180a962dc85b18cc331fdb3cf13cb629455584829\",\"questions\":[{\"n\":1,\"text\":\"Which database should hold the units?\"},{\"n\":3,\"text\":\"Does it need a migration? And a rollback?\\n   Because the old rows stay.\"}]},\"spec.md\":{\"status\":\"accepted\",\"raw\":\"accepted\",\"sha256\":\"b9c8023665d8b391a8a84599757ec209a04a9c6eccadcbfbbadad1a3170a0bf1\",\"questions\":[{\"n\":1,\"text\":\"Which database should hold the units?\"},{\"n\":3,\"text\":\"Does it need a migration? And a rollback?\\n   Because the old rows stay.\"}]},\"plan.md\":{\"status\":null,\"raw\":\"weird-word\",\"sha256\":\"069b12592cab34a58e20fa21e6a5f0eadd236c283cd8540096e46becda7913d5\",\"questions\":null},\"ship.md\":{\"status\":null,\"raw\":null,\"sha256\":\"703443c0c8d180eb052a44abd1e67c99da51fc60d382f856018ab32908e6826f\",\"questions\":null}},\"answers\":[{\"artifact\":\"intent.md\",\"n\":1,\"id\":null,\"by\":\"Phong\",\"date\":\"2026-09-01\",\"via\":\"product\",\"text\":\"Dùng SQLite, vì nó có sẵn.\"},{\"artifact\":\"intent.md\",\"n\":null,\"id\":\"F1\",\"by\":\"Bao Do\",\"date\":\"2026-09-02\",\"via\":\"cli\",\"text\":\"Fixed in the next round.\"}],\"type\":\"feat\",\"links\":{\"idea\":\"ws/ideas/0001_x.md\",\"repo\":\"coscc\",\"dependsOn\":[\"ws/0001_a\",\"other/0002_b\"]},\"holds\":[{\"state\":\"paused\",\"reason\":\"Waiting on the vendor.\",\"by\":\"Phong\",\"date\":\"2026-09-03\",\"via\":\"product\"},{\"state\":\"active\",\"reason\":\"The vendor answered.\",\"by\":\"Phong\",\"date\":\"2026-09-04\",\"via\":\"product\"},{\"state\":\"dropped\",\"reason\":null,\"by\":null,\"date\":null,\"via\":null}]},\"0002_second\":{\"artifacts\":{\"impl.md\":{\"status\":\"done\",\"raw\":\"done\",\"sha256\":\"ad933e4c1485295e0a7e07ca3939bd0d3ca8699b7eb30a5e4697f1aa1adacbfe\",\"questions\":null}},\"answers\":[]},\"0003_empty\":{\"artifacts\":{},\"answers\":[]},\"Zed\":{\"artifacts\":{\"review.md\":{\"status\":\"changes-requested\",\"raw\":\"changes-requested\",\"sha256\":\"35addbc48241f7f9368c944f3c52f112e02e2d1188a6123d1d7a5d087f58f813\",\"questions\":null}},\"answers\":[]},\"odd name\":{\"artifacts\":{\"idea.md\":{\"status\":\"draft\",\"raw\":\"draft\",\"sha256\":\"5d29dde176ee60c0eb0e2366e3608cf0945ba259252efca2a11f007d0e1fced5\",\"questions\":null}},\"answers\":[]}},\"ideas\":[{\"id\":\"0001_good\",\"title\":\"Tiếng Việt\",\"status\":\"accepted\",\"units\":[{\"ref\":\"ws/0001_a\",\"dependsOn\":[]},{\"ref\":\"ws/0002_b\",\"dependsOn\":[\"ws/0001_a\",\"ws/0003_c\"]},{\"ref\":\"ws/0004_d\",\"dependsOn\":[\"ws/0001_a\"]},{\"ref\":\"other/0006_f\",\"dependsOn\":[]}],\"problems\":[\"## Units: \\\"- not a unit\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\",\"## Units: \\\"- ws/0005_e. Depends on: nope\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\"]},{\"id\":\"0002_nostatus\",\"title\":\"No status\",\"status\":null,\"units\":[],\"problems\":[\"carries no Status line\",\"has no ## Units section\"]},{\"id\":\"0003_crlf\",\"title\":\"Crlf\",\"status\":\"draft\",\"units\":[{\"ref\":\"ws/0001_a\",\"dependsOn\":[]}],\"problems\":[]},{\"id\":\"0004_bad\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"carries no Status line\",\"## Units: \\\"-\\\" is not \\\"- <ws>/NNNN_<slug>\\\", with \\\". Depends on: <ws>/NNNN_<slug>\\\" or not\"]},{\"id\":\"0005_adir.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"0010-slug.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a_under.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a-hyphen.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a.dot\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"B_upper.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"broken.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words0]#1": [
+  2,
+  "",
+  "No such work unit: 0009_missing\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words10]#1": [
+  2,
+  "",
+  "not an artifact: intent — use idea.md, intent.md, spec.md, spike.md, plan.md, impl.md, pr.md, review.md, ship.md\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words11]#1": [
+  2,
+  "",
+  "not an artifact:  — use idea.md, intent.md, spec.md, spike.md, plan.md, impl.md, pr.md, review.md, ship.md\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words1]#1": [
+  2,
+  "",
+  "No such work unit: ..\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words2]#1": [
+  2,
+  "",
+  "No such work unit: .\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words3]#1": [
+  2,
+  "",
+  "No such work unit: ideas\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words4]#1": [
+  2,
+  "",
+  "No such work unit: a/b\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words5]#1": [
+  2,
+  "",
+  "No such work unit: ../x\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words6]#1": [
+  2,
+  "",
+  "No such work unit: a\\b\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words7]#1": [
+  2,
+  "",
+  "No such work unit: /\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words8]#1": [
+  2,
+  "",
+  "not an artifact: nope.md — use idea.md, intent.md, spec.md, spike.md, plan.md, impl.md, pr.md, review.md, ship.md\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_refuses_misuse_alike[words9]#1": [
+  2,
+  "",
+  "not an artifact: nope.md, other — use idea.md, intent.md, spec.md, spike.md, plan.md, impl.md, pr.md, review.md, ship.md\n"
+ ],
+ "tests/loop/test_paths.py::test_meta_sorts_idea_names_alike#1": [
+  0,
+  "{\"units\":{},\"ideas\":[{\"id\":\"_x\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"-x\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"1\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"10\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"2\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"ä\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a b.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a_b\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a_B\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"A_b\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a-b\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a.b\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"A.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a~\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"a1\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"A1\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"aa\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"ab\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"b.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"B.md\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"d\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"đ\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"e\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"é\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"É\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"ê\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"f\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"s\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"ß\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"z\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]},{\"id\":\"Z\",\"title\":null,\"status\":null,\"units\":[],\"problems\":[\"not a file named NNNN_<slug>.md\"]}]}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_meta_without_a_cos_dir#1": [
+  0,
+  "{\"units\":{},\"ideas\":null}\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_idea_after_existing_ones#1": [
+  0,
+  ".cos/ideas/0006_next.md\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_idea_ignores_stray_files#1": [
+  0,
+  ".cos/ideas/0096_next.md\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_idea_refuses_a_slug_alike[words0]#1": [
+  2,
+  "",
+  "usage: python -m coscc.loop new-idea <slug>\n"
+ ],
+ "tests/loop/test_paths.py::test_new_idea_refuses_a_slug_alike[words1]#1": [
+  2,
+  "",
+  "usage: python -m coscc.loop new-idea <slug>\n"
+ ],
+ "tests/loop/test_paths.py::test_new_idea_refuses_a_slug_alike[words2]#1": [
+  2,
+  "",
+  "Invalid slug \"Bad\".\n  Lowercase letters, digits and single hyphens only; no underscore,\n  because the underscore separates the number from the slug.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_idea_refuses_a_slug_alike[words3]#1": [
+  2,
+  "",
+  "Invalid slug \"a_b\".\n  Lowercase letters, digits and single hyphens only; no underscore,\n  because the underscore separates the number from the slug.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_idea_refuses_a_slug_alike[words4]#1": [
+  2,
+  "",
+  "Invalid slug \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\": it is 61 characters, over the 60 a branch allows.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_idea_with_an_empty_ideas_dir#1": [
+  0,
+  ".cos/ideas/0001_first.md\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_idea_with_no_ideas_yet#1": [
+  0,
+  ".cos/ideas/0001_first.md\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_allows_a_slug_of_sixty#1": [
+  0,
+  ".cos/0001_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_counts_a_dir_whatever_its_files_say#1": [
+  0,
+  ".cos/0008_x\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_goes_past_four_digits#1": [
+  0,
+  ".cos/10000_x\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_ignores_a_symlink_to_a_dir#1": [
+  0,
+  ".cos/0003_x\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_on_an_empty_store#1": [
+  0,
+  ".cos/0001_first\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words0]#1": [
+  2,
+  "",
+  "usage: python -m coscc.loop new-path <slug>\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words10]#1": [
+  2,
+  "",
+  "Invalid slug \"x\n\".\n  Lowercase letters, digits and single hyphens only; no underscore,\n  because the underscore separates the number from the slug.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words1]#1": [
+  2,
+  "",
+  "usage: python -m coscc.loop new-path <slug>\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words2]#1": [
+  2,
+  "",
+  "Invalid slug \"Bad\".\n  Lowercase letters, digits and single hyphens only; no underscore,\n  because the underscore separates the number from the slug.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words3]#1": [
+  2,
+  "",
+  "Invalid slug \"has_underscore\".\n  Lowercase letters, digits and single hyphens only; no underscore,\n  because the underscore separates the number from the slug.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words4]#1": [
+  2,
+  "",
+  "Invalid slug \"double--hyphen\".\n  Lowercase letters, digits and single hyphens only; no underscore,\n  because the underscore separates the number from the slug.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words5]#1": [
+  2,
+  "",
+  "Invalid slug \"-lead\".\n  Lowercase letters, digits and single hyphens only; no underscore,\n  because the underscore separates the number from the slug.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words6]#1": [
+  2,
+  "",
+  "Invalid slug \"trail-\".\n  Lowercase letters, digits and single hyphens only; no underscore,\n  because the underscore separates the number from the slug.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words7]#1": [
+  2,
+  "",
+  "Invalid slug \"tiếng-việt\".\n  Lowercase letters, digits and single hyphens only; no underscore,\n  because the underscore separates the number from the slug.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words8]#1": [
+  2,
+  "",
+  "Invalid slug \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\": it is 61 characters, over the 60 a branch allows.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words9]#1": [
+  2,
+  "",
+  "Invalid slug \"a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-b\": it is 61 characters, over the 60 a branch allows.\n"
+ ],
+ "tests/loop/test_paths.py::test_new_path_reserves_from_a_relative_dir#1": [
+  0,
+  ".cos/0021_x\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_reserves_from_one_dir#1": [
+  0,
+  ".cos/0007_x\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_reserves_from_two_dirs_and_one_without_cos#1": [
+  0,
+  ".cos/0004_x\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_reserves_from_two_dirs_and_one_without_cos#2": [
+  0,
+  ".cos/0012_x\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_takes_the_highest_number_over_gaps#1": [
+  0,
+  ".cos/0005_next\n",
+  ""
+ ],
+ "tests/loop/test_paths.py::test_new_path_without_a_cos_dir#1": [
+  0,
+  ".cos/0001_first\n",
+  ""
+ ]
+}

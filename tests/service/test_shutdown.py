@@ -199,9 +199,9 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.entered.is_set())
         self.assertEqual(self.boards.reads, {})
 
-    async def test_a_cancelled_read_kills_and_reaps_its_cos_mjs(self):
+    async def test_a_cancelled_read_kills_and_reaps_its_loop(self):
         self.release.set()
-        children = Children(only="node")
+        children = Children(only=sys.executable)
         self.addAsyncCleanup(children.reap)
         with mock.patch.object(asyncio, "create_subprocess_exec", children):
             self.boards.refresh(self.cwd)
@@ -284,15 +284,15 @@ class ACancelledCallKillsItsChild(unittest.IsolatedAsyncioTestCase):
     async def test_gh(self):
         self.assertReaped(await self.cancelled(lambda: gh.run(["pr", "list"], ".")))
 
-    async def test_cos_mjs(self):
-        self.assertReaped(await self.cancelled(lambda: board_reader._run(["cos.mjs"], 30)))
+    async def test_the_loop(self):
+        self.assertReaped(await self.cancelled(lambda: board_reader._run(["status"], 30)))
 
     async def test_what_the_child_started_is_killed_with_it(self):
         for call in (
             lambda: gitops._run(["git", "fetch"], 30),
             lambda: gitops._run_code(["git", "fetch"], 30),
             lambda: gh.run(["pr", "list"], "."),
-            lambda: board_reader._run(["cos.mjs"], 30),
+            lambda: board_reader._run(["status"], 30),
         ):
             with tempfile.TemporaryDirectory() as tmp:
                 said = Path(tmp) / "pid"

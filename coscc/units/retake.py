@@ -1,6 +1,6 @@
 """Taking a UI unit's screenshots again after its branch was rewritten.
 
-Before a `review` step, when `cos.mjs screens` says the manifest is stale, the app runs the
+Before a `review` step, when the loop's `screens` says the manifest is stale, the app runs the
 branch's own `scripts/capture_screens.py` in the unit's worktree and checks what it wrote.
 This module runs the command, judges its result and says what happened.
 

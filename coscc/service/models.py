@@ -31,7 +31,7 @@ class Models:
     # -- which model each stage runs on --------------------------------------
     #
     # The resolving is `coscc/agent/models.py`; this gathers its inputs: the stage list from
-    # `cos.mjs`, the overrides from `prefs`, `COS_MODEL` from `Config`.
+    # the loop, the overrides from `prefs`, `COS_MODEL` from `Config`.
 
     def model_overrides(self) -> tuple[dict[str, str], list[str]]:
         return models.overrides_from(Data(self.config.data_dir).pref_rows(models.PREFIX))
@@ -101,7 +101,7 @@ class Models:
         }
 
     async def ci_red(self, cwd: str, unit: str, repo: str) -> bool | None:
-        """Whether `cos.mjs next` sends `unit` back to `impl` because CI is red, read with
+        """Whether `coscc.loop next` sends `unit` back to `impl` because CI is red, read with
         `autopilot.is_ci_red`; `None` when it could not be asked. Never raises."""
         try:
             found = await board_reader.next_step(
@@ -128,7 +128,7 @@ class Models:
     async def stage_models(self) -> dict[str, Any]:
         """Every row Settings shows: stage, agents, model, effort, where each came from.
 
-        When `node` cannot run there is no stage list (a second copy of the loop would be
+        When the loop cannot run there is no stage list (a second copy of the loop would be
         wrong), so the table is empty and `problems` says why. `pr` and `ship` run no session.
         """
         try:
@@ -149,7 +149,7 @@ class Models:
         return table
 
     async def _setting_row(self, name: Any, allow_chat: bool) -> str:
-        """Check a Settings row name against `cos.mjs`: a stage, `<stage>:novel` for a
+        """Check a Settings row name against the loop: a stage, `<stage>:novel` for a
         stage after `plan`, or `chat` when the setting has one."""
         if not isinstance(name, str) or not name:
             raise Invalid("name is required")

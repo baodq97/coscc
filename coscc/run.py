@@ -181,7 +181,7 @@ def _answer_and_stop(args: list[str]) -> None:
 
 
 def _state(target: str) -> int:
-    """Print the snapshot `cos.mjs --state` reads for workspace `target` (board name or path).
+    """Print the snapshot `coscc.loop --state` reads for workspace `target` (board name or path).
 
     A store not imported yet is imported first. Workspaces are named as `Workspaces.peer_table`
     names them: a shared name, or one `valid_name` refuses, gets none.

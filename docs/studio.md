@@ -42,7 +42,7 @@ and `0008` removed it — see `.claude/CLAUDE.md`.
 |---|---|---|
 | Overview | workspaces, board, run log | nothing |
 | Workspaces | the workspace list | add, adopt, clone, relabel, pull, remove from the list |
-| Board | `cos.mjs status` in each workspace, joined with the run log | a step's mode; running a step |
+| Board | `coscc.loop status` in each workspace, joined with the run log | a step's mode; running a step |
 | Sessions | the SDK's session store | sends a message, which creates or resumes a session |
 | Activity & usage | the run log | nothing |
 | Settings | the configuration and the grant table | board density and colour mode |

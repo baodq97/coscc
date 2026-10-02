@@ -9,7 +9,7 @@ from tests.state.test_state import SOURCE, _self_names, _state_class
 
 
 class TheRerunHoldsNoCopyOfTheRule(unittest.TestCase):
-    """The stages offered are `cos.mjs rerun`'s, copied by `load_next` alone, and only `run_rerun`
+    """The stages offered are `coscc.loop rerun`'s, copied by `load_next` alone, and only `run_rerun`
     asks the service to run one again."""
 
     def setUp(self):

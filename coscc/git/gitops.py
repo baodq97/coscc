@@ -157,7 +157,7 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 # # a short list on purpose.
 # #
 # # The app may: fetch the trunk into `refs/remotes/origin/main`; create a branch from the
-# # fetched commit with a name `cos.mjs unit-branch` produced; and, only as the functions
+# # fetched commit with a name `coscc.loop unit-branch` produced; and, only as the functions
 # # below spell out:
 # #
 # # - `worktree add` a unit's tree outside the workspace (detached at a full SHA or on an
@@ -186,7 +186,7 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 # # belong to a step (`coscc/agent/policy.py`) or nobody.
 # #
 # # This is a hand-written list, not a mechanism. What keeps it narrow is that the only
-# # argument reaching git from a request is a branch name, and it comes back from `cos.mjs`.
+# # argument reaching git from a request is a branch name, and it comes back from the loop.
 
 BRANCH_TIMEOUT = 30.0
 
@@ -194,7 +194,7 @@ BRANCH_TIMEOUT = 30.0
 # # quietly contains another unit's work.
 TRUNK = "main"
 
-# # What a branch name may look like. `cos.mjs check-branch` owns the grammar; this stops a
+# # What a branch name may look like. `coscc.loop check-branch` owns the grammar; this stops a
 # # name reaching `git` as an option (`-` or `--` at the front).
 _BRANCH_RE = re.compile(r"^[a-z]+/[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -767,7 +767,7 @@ async def reset_branch_to(
 # #
 # # The only functions that commit, push and tag. They take a release branch that passed
 # # `_RELEASE_BRANCH_RE`, a tag that passed `_RELEASE_TAG_RE`, a full SHA, or a file in
-# # `RELEASE_FILES`; the caller asked `cos.mjs check-branch`/`check-tag` first. Every writer
+# # `RELEASE_FILES`; the caller asked `coscc.loop check-branch`/`check-tag` first. Every writer
 # # takes the tree twice: the tree it works in and `expected`, the path `worktrees.release_path`
 # # names, recomputed by the caller from the workspace. Both must agree and the tree must be a
 # # linked worktree named `RELEASE_TREE`, so a wrong path in both is still refused.

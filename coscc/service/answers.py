@@ -168,7 +168,7 @@ class Answers:
     async def post_review_comment(self, cwd: str, unit: str, round_n: Any) -> dict[str, Any]:
         """Post one review round to the unit's pull request, or say it is there.
 
-        The body is built from the round as `cos.mjs` read it; nothing a caller sends reaches
+        The body is built from the round as the loop read it; nothing a caller sends reaches
         GitHub but the unit's name and the round's number. Not an approval; no gate reads it.
         """
         self.ws.check(cwd)
@@ -246,7 +246,7 @@ class Answers:
         """Put `pr.md`'s title and body onto its pull request. Never raises.
 
         Called by `drive` after a `pr` step that was not stopped, and by `run_step` before
-        it asks the gate of a `ship` step; `stage` names which. The words are `cos.mjs
+        it asks the gate of a `ship` step; `stage` names which. The words are `coscc.loop
         pr-text`'s; `prsync` compares and writes. A `pr.md` that is not accepted or names no
         pull request is `skipped` with no `gh` call. One `pr-sync` row says how it went
         (`existed` is `None` when the lookup before a `pr` step could not answer). After a
@@ -303,7 +303,7 @@ class Answers:
         self, cwd: str, unit: str, done: dict[str, Any], wrote: str | None = None
     ) -> dict[str, Any]:
         """The one read of a unit's files after a step that finished, prose or not: what
-        changed goes into `cos.db` through `cos.mjs meta`.
+        changed goes into `cos.db` through `coscc.loop meta`.
 
         The step still ends as it ended, but a failure is not dropped: the `done` item
         carries `ingest_error`, and a `unit_unknowns` row tells the snapshot.
@@ -336,7 +336,7 @@ class Answers:
             return {}
         except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
             # One fixed sentence on the card and the step, the error in the log: `MetaError`
-            # carries `cos.mjs`'s stderr or its argv, `Busy` the database's path.
+            # carries the loop's stderr or its argv, `Busy` the database's path.
             # A `BadTransition` names a status and nothing else.
             log.warning("%s in %s could not be read after its step: %s", unit, workspace, e)
             if isinstance(e, BadTransition):
@@ -435,13 +435,13 @@ class Answers:
     ) -> dict[str, Any]:
         """Start a work unit, in the product's store rather than the repository.
 
-        The number and the slug grammar are `cos.mjs`'s. It also opens the unit's own
+        The number and the slug grammar are the loop's. It also opens the unit's own
         worktree, detached at the workspace's `main`; a worktree that cannot be opened does
         not undo the unit: the result says why under `worktree.error`.
 
         With `idea`, the unit is one side of a shared idea. Everything is checked before a
         number is taken; the unit gets no `idea.md`, and the idea gets one line under
-        `## Units`. A failed append leaves a unit the idea does not list, which `cos.mjs`
+        `## Units`. A failed append leaves a unit the idea does not list, which the loop
         reports and whose `impl` it keeps shut.
         """
         self.ws.check(cwd)
@@ -532,13 +532,13 @@ class Answers:
         """A person answers one item under an artifact's `## Open questions`.
 
         The answer is a row in `cos.db`; the artifact is not touched. What counts as a
-        question and whether it is answered is `cos.mjs`'s decision, read through one board
+        question and whether it is answered is the loop's decision, read through one board
         read. Not an approval; it starts nothing itself, though with the autopilot on the
         pass it nudges may start the next stage. `answered_by` is whatever name the caller
         typed: a claim, not an identity.
 
-        `question` may be `"F<n>"`, a finding `cos.mjs` lists in the unit's `personFindings`;
-        then `artifact` must be `review.md`. That row is read by `cos.mjs next` and the
+        `question` may be `"F<n>"`, a finding the loop lists in the unit's `personFindings`;
+        then `artifact` must be `review.md`. That row is read by `coscc.loop next` and the
         `ship` gate.
 
         With `delegation` `D<n>`, the answer is an agent's under a delegation the person
@@ -729,7 +729,7 @@ class Answers:
         """Check one answer against the board read `found`. Raises `Invalid`; returns
         `(number, finding, text)`, the text as its row keeps it. `_record_answers` writes it."""
         # A finding the last review round confirmed needs a person is answered by its id,
-        # `F<n>`, into `review.md`, and only while `cos.mjs` lists it in `personFindings`.
+        # `F<n>`, into `review.md`, and only while the loop lists it in `personFindings`.
         # `question` is what `_named` returned: an int or `F<n>`.
         finding = question if isinstance(question, str) else ""
         if finding:
@@ -950,7 +950,7 @@ class Answers:
 
         Same lock, board read and refusal when a section follows `## Answers` as `answer()`,
         and appended, so every byte above the block stays as the stage left it. The block is
-        `### Outcome` under `intent.md`'s `## Answers`; `cos.mjs` reads whether it is valid.
+        `### Outcome` under `intent.md`'s `## Answers`; the loop reads whether it is valid.
 
         Not an approval; no gate reads it. `recorded_by` and `measured_by` are names somebody
         typed, so both are claims. `source` is not checked against anything.
@@ -1091,7 +1091,7 @@ class Answers:
         """A person pauses, drops or resumes a unit (`to`: paused, dropped, active).
 
         Records one row in `unit_holds` and one `hold` record in the run log, in one
-        transaction; `intent.md` is not touched. Which moves exist is `cos.mjs`'s
+        transaction; `intent.md` is not touched. Which moves exist is the loop's
         `holdMoves`. Dropping also closes the unit's open pull request with this machine's
         `gh` login and removes its worktree; a failure there is reported, never raised.
 
@@ -1197,7 +1197,7 @@ class Answers:
         """A person allows one more review round to a unit that used all of its.
 
         Appends one `### More rounds` block under `review.md ## Answers`, never rewriting a
-        byte above it. Whether the unit is out of rounds is `cos.mjs`'s `moreRounds`. Not an
+        byte above it. Whether the unit is out of rounds is the loop's `moreRounds`. Not an
         approval; it starts nothing and does not wake the autopilot. `by` is `owner` when
         none. Refused while a step or an integration of this unit runs; it holds that same
         mark itself while it writes.

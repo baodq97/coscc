@@ -33,7 +33,7 @@ def _count(v: Any) -> bool:
 
 
 def compare(scope: Any, got: Any) -> dict[str, Any]:
-    """`pr.md`'s scope, as `cos.mjs pr-text` read it, against `gh`'s JSON. Pure.
+    """`pr.md`'s scope, as `pr-text` of the loop read it, against `gh`'s JSON. Pure.
 
     `github` is kept whenever `gh` gave the three counts, even when `pr.md` cannot be read:
     the outcome is measured on those numbers.

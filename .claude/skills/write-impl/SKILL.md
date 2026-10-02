@@ -12,8 +12,8 @@ a diff. The code is in git; do not copy it here.
 
 The plan (accepted), the answers, the files `main` changed since the plan, the files' line maps
 and the commands this step may run are in the prompt. Do not re-read them or re-verify the plan.
-From the board the gate was asked (the prompt says so); at a terminal ask `cos.mjs gate <unit> impl`
-first and stop on non-zero.
+From the board the gate was asked (the prompt says so); at a terminal ask
+`uv run python -m coscc.loop gate <unit> impl` first and stop on non-zero.
 
 ## Reading the tree
 
@@ -37,7 +37,7 @@ first and stop on non-zero.
 5. Write `impl.md`.
 
 **A finding this stage cannot close** (needs real money, a command the grant lacks, a person's
-measurement): one line under `## Needs a person`, exactly `- F<k>: <reason>`; `cos.mjs`
+measurement): one line under `## Needs a person`, exactly `- F<k>: <reason>`; the loop
 reads only the id. It is a claim the review accepts or rejects. Fix everything you can first.
 
 **Work only a person can do** goes under `## Open questions`, one `N. …?` per item at column 0.

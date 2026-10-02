@@ -579,7 +579,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
         # The store is imported on its first read, before `meta` is broken: only the ingest fails.
         asyncio.run(self.service.board(str(self.repo)))
-        error = meta.MetaError("cos.mjs meta did not run: /home/x/cos.mjs --root /home/x/units")
+        error = meta.MetaError("coscc.loop meta did not run: no interpreter at /home/x/units")
         with (
             mock.patch.object(meta, "read", side_effect=error),
             self.assertLogs("coscc", "WARNING") as log,
@@ -756,7 +756,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         async def broken(root, timeout=board_reader.TIMEOUT, state=None):
             # Only once the step's `end` is written: the gate before it reads the board too.
             if "end" in [r["kind"] for r in self.records()]:
-                raise board_reader.Unavailable("node is missing")
+                raise board_reader.Unavailable("the loop could not start")
             return await real(root, timeout, state)
 
         with mock.patch.object(board_reader, "read", broken):
@@ -1184,7 +1184,7 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
     """`.claude/CLAUDE.md` invariant 2, enforced by the app for the first time.
 
     Until 2026-09-23 `run_step` went from reading the board straight to starting a
-    session. The gate existed, `cos.mjs` decided it, every skill opened by telling the
+    session. The gate existed, the loop decided it, every skill opened by telling the
     stage to ask it — and the product asked nobody. The board would run `ship` on a unit
     whose `spec.md` had never been written.
 
@@ -1401,7 +1401,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
 class AnImplStepUnderTheModelTrial(unittest.TestCase):
     """The fixture of `AnImplStepRunsUnderThePlansLabel`, with the arm forced by patching
     `modeltrial.arm`; the session stand-in names in `init` the model it was asked for, unless
-    `self.init` says otherwise. `cos.mjs next` is a stub that counts its calls and answers
+    `self.init` says otherwise. `coscc.loop next` is a stub that counts its calls and answers
     `self.action`, or raises `self.next_fails`."""
 
     PLAN = AnImplStepRunsUnderThePlansLabel.PLAN
@@ -1622,7 +1622,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
 
 class TheNextStageComesFromTheScript(unittest.TestCase):
-    """`Steps.next_step` asks `cos.mjs next` and chooses nothing itself."""
+    """`Steps.next_step` asks `coscc.loop next` and chooses nothing itself."""
 
     # The fixture of the class above, borrowed rather than inherited so its tests run once.
     NeverCalled = AStepTheGateClosesNeverStarts.NeverCalled
@@ -1677,7 +1677,7 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         self.assertEqual(seen["next"][1], str(self.repo))
 
     def test_waiting_is_copied_and_absent_reads_as_none(self):
-        """The findings a person is awaited on reach the page as `cos.mjs` named them."""
+        """The findings a person is awaited on reach the page as the loop named them."""
         from coscc.units import board as board_reader
 
         answers = [
@@ -1703,7 +1703,7 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         self.assertEqual(second["waiting"], [])
 
     def test_dropped_is_copied_and_absent_reads_as_none(self):
-        """The ids the last round left out reach the page as `cos.mjs` listed them, not inside
+        """The ids the last round left out reach the page as the loop listed them, not inside
         `action`."""
         from coscc.units import board as board_reader
 
@@ -2028,7 +2028,7 @@ class APrStepIsMechanical(unittest.TestCase):
 
 class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
     """Through `run_step`: after a `pr` step that was not stopped, the title and body
-    `cos.mjs pr-text` cut from `pr.md` are on the pull request, and one `pr-sync` row says how.
+    `coscc.loop pr-text` cut from `pr.md` are on the pull request, and one `pr-sync` row says how.
     `APrStepIsHandedItsPullRequest`'s fixture, with `gh` in memory."""
 
     setUp = AUnitsBaseIsTheRemoteTrunk.setUp
@@ -2856,8 +2856,8 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
 
 
 class _AReviewStep:
-    """A `review` step run against stand-ins for the gate, `cos.mjs screens`, the capture and
-    the runner; the board is read by the real `cos.mjs`. `self.seen` holds the kwargs each
+    """A `review` step run against stand-ins for the gate, `coscc.loop screens`, the capture and
+    the runner; the board is read by the real the loop. `self.seen` holds the kwargs each
     `Runner.run` was handed."""
 
     def setUp(self):
@@ -2933,18 +2933,16 @@ class _AReviewStep:
 
 
 class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCase):
-    """`cos.mjs screens` and the capture are stand-ins, and so is the runner: what is checked is
+    """`coscc.loop screens` and the capture are stand-ins, and so is the runner: what is checked is
     whether `Runner.run` is reached, with which section, and what the run log holds."""
 
     OLD = {"head": "a" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
     NEW = {"head": "b" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
 
-    def test_the_step_is_handed_a_snapshot_file_cos_mjs_decides_on(self):
-        """A step that runs `cos.mjs gate` or `pr-text` itself needs `--state`."""
+    def test_the_step_is_handed_a_snapshot_file_the_loop_decides_on(self):
+        """A step that runs `coscc.loop gate` or `pr-text` itself needs `--state`."""
         import json
-        import subprocess
-
-        from coscc.agent import harness
+        from coscc.loop import run as loop
 
         self.step(
             {"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None
@@ -2953,23 +2951,10 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         snap = json.loads(path.read_text(encoding="utf-8"))
         self.assertIn(f"{snap['workspace']}/{self.unit}", snap["units"])
         self.assertFalse(path.is_relative_to(self.dir.parent))
-        done = subprocess.run(
-            [
-                "node",
-                str(harness.script()),
-                "--root",
-                str(self.dir.parent.parent),
-                "gate",
-                self.unit,
-                "spec",
-                "--state",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            env=harness.child_env(),
+        done = loop.ask_sync(
+            ["--root", str(self.dir.parent.parent), "gate", self.unit, "spec", "--state", str(path)]
         )
-        self.assertIn(done.returncode, (0, 1), done.stderr)
+        self.assertIn(done.code, (0, 1), done.err)
 
     def test_no_retake_records_nothing_and_the_step_runs(self):
         self.step(
@@ -3037,7 +3022,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         from coscc.units import board as board_reader
 
         async def unavailable(*a, **kw):
-            raise board_reader.Unavailable("node is missing")
+            raise board_reader.Unavailable("the loop could not start")
 
         with mock.patch.object(board_reader, "screens", unavailable):
             with self.assertRaises(Invalid):
@@ -3258,7 +3243,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
 
 
 class AReviewAfterAnUnfinishedRoundIsToldWhy(_AReviewStep, unittest.TestCase):
-    """Which round `cos.mjs` read as unfinished reaches `Runner.run` as it was read; `service_steps`
+    """Which round the loop read as unfinished reaches `Runner.run` as it was read; `service_steps`
     compares no ids itself."""
 
     NO_RETAKE = {"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}

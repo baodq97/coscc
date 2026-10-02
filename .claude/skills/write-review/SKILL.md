@@ -14,8 +14,8 @@ nothing here reads as a person's approval.
 `impl.md` (scope, test counts, answers), the commit under review, the gate, the earlier
 findings and any answers are in the prompt. CI is green and `impl.md` records its tests: do not
 re-run the suite or report what CI enforces. From the board the gate was asked (the prompt
-says so); at a terminal ask `cos.mjs gate <unit> review` first and stop on non-zero. Read the
-changed files, not the whole tree.
+says so); at a terminal ask `uv run python -m coscc.loop gate <unit> review` first and stop on
+non-zero. Read the changed files, not the whole tree.
 
 ## Round
 

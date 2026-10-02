@@ -2,7 +2,7 @@
 
 `Workspaces` is the one object that answers both: which workspaces there are (listing,
 adopting, labelling, removing and pulling one), and, for a workspace, its journal key, its
-units' root, a unit's directory and the `cos.db` snapshot `cos.mjs --state` decides on.
+units' root, a unit's directory and the `cos.db` snapshot `coscc.loop --state` decides on.
 """
 
 from __future__ import annotations
@@ -349,7 +349,7 @@ class Workspaces:
         units_: Iterable[str] | None = None,
         peers: list[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
-        """What `cos.mjs --state` decides on: `cwd`'s units and those of every workspace a link
+        """What `coscc.loop --state` decides on: `cwd`'s units and those of every workspace a link
         may name, from `cos.db`; `units_` narrows it as `UnitMeta.snapshot` says. A store not
         imported yet is imported first.
 
@@ -398,7 +398,7 @@ class Workspaces:
             unknowns = meta.import_store(key, store)
         except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
             # The workspace by name and the error in the log: `key` is a path, and `Busy` and
-            # `MetaError` carry the database's path or `cos.mjs`'s stderr.
+            # `MetaError` carry the database's path or the loop's stderr.
             log.warning("the units of %s could not be imported: %s", key, e)
             raise Invalid(
                 f"the units of {self.name(key) or 'a workspace'} could not be imported"

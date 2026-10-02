@@ -11,7 +11,16 @@ from coscc.units import guards, states
 from coscc.units.guards import OPEN, BadVerdict, Verdict
 
 REPO = Path(__file__).resolve().parents[2]
-COS = REPO / ".claude" / "scripts" / "cos.mjs"
+LOOP = REPO / "coscc" / "loop"
+
+
+def loop_lines() -> list[str]:
+    """Every line of the loop's own source: where the `why` and the codes it hands out are written."""
+    return [
+        line
+        for path in sorted(LOOP.glob("*.py"))
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
 
 
 class EveryGuardIsNamed(unittest.TestCase):
@@ -39,24 +48,24 @@ class TheReasonTableIsClosed(unittest.TestCase):
         with self.assertRaises(BadVerdict):
             Verdict(False, ())
 
-    def test_every_why_cos_mjs_writes_is_in_the_table(self):
-        # Until step 5 makes `cos.mjs` a client of this module, it still writes its own `why`;
-        # each one must already be a code here, or the autopilot would meet one it cannot name.
-        # Not a dependency's own `why` (`merged`, `dropped`), on a line carrying `merged:`: it
+    def test_every_why_the_loop_writes_is_in_the_table(self):
+        # The loop writes its own `why`, a literal or `code("…")`; each one must be a code here,
+        # or the autopilot would meet one it cannot name.
+        # Not a dependency's own `why` (`merged`, `dropped`), on a line carrying `"merged":`: it
         # describes the other unit and is no reason code.
         written = {
             code
-            for line in COS.read_text(encoding="utf-8").splitlines()
-            if "merged:" not in line
-            for code in re.findall(r"why: '([a-z-]+)'", line)
+            for line in loop_lines()
+            if '"merged":' not in line
+            for code in re.findall(r'"why": (?:code\()?"([a-z-]+)"', line)
         }
         self.assertGreaterEqual(len(written), 15)
         self.assertEqual(written - set(guards.REASONS), set())
 
-    def test_every_code_cos_mjs_hands_out_is_in_the_table(self):
-        # `gate --json` and `next` carry `reasons`, each written as `code('…')`.
-        text = COS.read_text(encoding="utf-8")
-        handed = set(re.findall(r"code\('([a-z-]+)'\)", text))
+    def test_every_code_the_loop_hands_out_is_in_the_table(self):
+        # `gate --json` and `next` carry `reasons`, each written as `code("…")`.
+        text = "\n".join(loop_lines())
+        handed = set(re.findall(r'code\("([a-z-]+)"\)', text))
         self.assertGreaterEqual(
             handed,
             {
@@ -71,8 +80,8 @@ class TheReasonTableIsClosed(unittest.TestCase):
             },
         )
         self.assertEqual(handed - set(guards.REASONS), set())
-        # No code is written any other way: the only `reasons` pushed are `code(…)` or a `why`.
-        self.assertNotRegex(text, r"codes\.push\('")
+        # No code is written any other way: the only `reasons` added are `code(…)` or a `why`.
+        self.assertNotRegex(text, r'codes\.(?:append|extend)\(\[?"')
 
     def test_a_step_refused_before_spend_is_in_the_table(self):
         for code in (
@@ -87,7 +96,7 @@ class TheReasonTableIsClosed(unittest.TestCase):
             self.assertIn(code, guards.REASONS)
 
     def test_the_feature_refusal_is_the_app_s_alone(self):
-        self.assertNotIn("feature-refused", COS.read_text(encoding="utf-8"))
+        self.assertNotIn("feature-refused", "\n".join(loop_lines()))
 
     def test_a_refusal_with_a_code_outside_the_table_is_refused(self):
         with self.assertRaises(ValueError):
@@ -209,7 +218,7 @@ class TheGuards(unittest.TestCase):
         )
 
     def test_a_round_naming_the_head_by_a_short_sha_passes_it(self):
-        """`cos.mjs` `ROUND_META` takes a `Reviewed:` of 7 to 40 characters."""
+        """The loop's `ROUND_META` takes a `Reviewed:` of 7 to 40 characters."""
         head = "a" * 40
         ok = {"ci": "green", "verdict": "pass", "head": head}
         for reviewed in (head[:7], head[:39]):

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import subprocess
 
 import pytest
 
 from coscc.loop import js, nullish, stringify
 from coscc.loop.branch import declared_versions, version_problem
-from tests.loop.conftest import COS_MJS, entry, env, git_repo, header, same
+from tests.loop.conftest import entry, env, expect, git, git_repo, header, python
 
 UNIT = "0151_the-loop-is-decided"
 
@@ -43,29 +42,32 @@ UNIT = "0151_the-loop-is-decided"
     ],
 )
 def test_check_branch_with_a_name(name, tmp_path):
-    r = same(["check-branch", name], cwd=tmp_path)
+    r = expect(["check-branch", name], cwd=tmp_path)
     assert r.code in (0, 1)
 
 
-def test_check_branch_with_no_name_reads_this_checkout(tmp_path):
-    r = same(["check-branch"], cwd=tmp_path)
-    assert r.code in (0, 1)
-    assert r.out.strip() or r.err.strip()
+def test_check_branch_with_no_name_reads_the_checkout_of_the_cwd(tmp_path):
+    repo = git_repo(tmp_path / "repo")
+    git(repo, "checkout", "-q", "-b", "feat/x")
+    (repo / "sub").mkdir()
+    r = python(["check-branch"], environ=env(), cwd=repo / "sub")
+    assert (r.code, r.out, r.err) == (0, "feat/x\n", "")
 
 
 def test_check_branch_names_the_problem(tmp_path):
-    r = same(["check-branch", "feat/a/b"], cwd=tmp_path)
+    r = expect(["check-branch", "feat/a/b"], cwd=tmp_path)
     assert r.code == 1
     assert "second slash" in r.err
 
 
-def test_check_branch_works_from_anywhere(tmp_path):
-    assert same(["check-branch"], cwd=tmp_path).out == same(["check-branch"]).out
+def test_check_branch_outside_a_checkout_and_with_no_name_is_refused(tmp_path):
+    r = python(["check-branch"], environ=env(), cwd=tmp_path)
+    assert (r.code, r.err) == (2, "not a git checkout, and no branch name was given\n")
 
 
 def test_check_branch_beside_other_words(tmp_path):
-    assert same(["feat/x", "check-branch"], cwd=tmp_path).code == 2
-    assert same(["check-branch", "feat/x", "fix/y"], cwd=tmp_path).out == "feat/x\n"
+    assert expect(["feat/x", "check-branch"], cwd=tmp_path).code == 2
+    assert expect(["check-branch", "feat/x", "fix/y"], cwd=tmp_path).out == "feat/x\n"
 
 
 # --- check-tag ------------------------------------------------------------------------------
@@ -99,39 +101,34 @@ def test_check_branch_beside_other_words(tmp_path):
     ],
 )
 def test_check_tag(tag, tmp_path):
-    r = same(["check-tag", tag], cwd=tmp_path)
+    r = expect(["check-tag", tag], cwd=tmp_path)
     assert r.code in (0, 1)
 
 
 def test_check_tag_says_release_or_prerelease(tmp_path):
-    assert same(["check-tag", "v1.2.3"], cwd=tmp_path).out == "release\n"
-    assert same(["check-tag", "v1.2.3-rc.4"], cwd=tmp_path).out == "prerelease\n"
+    assert expect(["check-tag", "v1.2.3"], cwd=tmp_path).out == "release\n"
+    assert expect(["check-tag", "v1.2.3-rc.4"], cwd=tmp_path).out == "prerelease\n"
 
 
 def test_check_tag_with_no_tag_is_misuse(tmp_path):
-    r = same(["check-tag"], cwd=tmp_path)
+    r = expect(["check-tag"], cwd=tmp_path)
     assert r.code == 2
     assert "usage" in r.err
-    assert same(["check-tag", ""], cwd=tmp_path).code == 2
+    assert expect(["check-tag", ""], cwd=tmp_path).code == 2
 
 
 # --- check-version --------------------------------------------------------------------------
 
 
-def test_check_version_reads_this_checkout(tmp_path):
-    r = same(["check-version"], cwd=tmp_path)
-    assert r.code in (0, 1)
-    assert r.out.strip() or r.err.strip()
-
-
-def test_check_version_is_the_same_from_a_repository_elsewhere(tmp_path):
-    other = git_repo(tmp_path / "elsewhere")
-    assert same(["check-version"], cwd=other).out == same(["check-version"]).out
+def test_check_version_outside_a_checkout_reads_the_cwd(tmp_path):
+    r = python(["check-version"], environ=env(), cwd=tmp_path)
+    assert (r.code, r.out) == (1, "")
+    assert r.err.startswith("the version is not in step: pyproject.toml declares no version\n")
 
 
 @pytest.mark.parametrize("words", [["check-branch", "--root"], ["check-version", "--root", ""]])
 def test_a_misused_root_is_refused_alike(words, tmp_path):
-    assert same(words, cwd=tmp_path).code == 2
+    assert expect(words, cwd=tmp_path).code == 2
 
 
 @pytest.mark.parametrize(
@@ -145,7 +142,7 @@ def test_a_misused_root_is_refused_alike(words, tmp_path):
     ],
 )
 def test_root_is_refused_for_the_checks_in_every_form(argv, tmp_path):
-    r = same(argv, cwd=tmp_path)
+    r = expect(argv, cwd=tmp_path)
     assert r.code == 2
 
 
@@ -153,54 +150,54 @@ def test_root_is_refused_for_the_checks_in_every_form(argv, tmp_path):
 
 
 def test_unit_branch_with_no_name_is_misuse(store):
-    r = same(store.argv("unit-branch"))
+    r = expect(store.argv("unit-branch"))
     assert r.code == 2
     assert "usage" in r.err
 
 
 def test_unit_branch_of_no_such_unit(store):
-    r = same(store.argv("unit-branch", "0001_x"))
+    r = expect(store.argv("unit-branch", "0001_x"))
     assert r.code == 2
     assert "No such work unit" in r.err
 
 
 def test_unit_branch_of_a_unit_the_app_does_not_know(store):
     store.unit("0001_x", {"intent.md": header("x", "accepted")})
-    r = same(store.argv("unit-branch", "0001_x"))
+    r = expect(store.argv("unit-branch", "0001_x"))
     assert r.code == 1
     assert "declares no Type" in r.err
 
 
 def test_unit_branch_of_a_name_that_is_no_unit(store):
     store.unit("x", {"intent.md": header("x", "accepted")}, entry())
-    assert same(store.argv("unit-branch", "x")).code == 1
+    assert expect(store.argv("unit-branch", "x")).code == 1
     store.unit("0002_Bad", {"intent.md": header("x", "accepted")}, entry())
-    assert same(store.argv("unit-branch", "0002_Bad")).code == 1
+    assert expect(store.argv("unit-branch", "0002_Bad")).code == 1
 
 
 def test_unit_branch_with_no_type(store):
     store.unit("0001_x", {"intent.md": header("x", "accepted")}, entry(type=None))
-    r = same(store.argv("unit-branch", "0001_x"))
+    r = expect(store.argv("unit-branch", "0001_x"))
     assert r.code == 1
     assert "declares no Type" in r.err
 
 
 def test_unit_branch_with_a_bad_type(store):
     store.unit("0001_x", {"intent.md": header("x", "accepted")}, entry(type="wip"))
-    r = same(store.argv("unit-branch", "0001_x"))
+    r = expect(store.argv("unit-branch", "0001_x"))
     assert r.code == 1
     assert "is not one of" in r.err
 
 
 def test_unit_branch_with_a_type_that_is_no_string(store):
     store.unit("0001_x", {"intent.md": header("x", "accepted")}, entry(type=3))
-    assert same(store.argv("unit-branch", "0001_x")).code == 1
+    assert expect(store.argv("unit-branch", "0001_x")).code == 1
 
 
 def test_unit_branch_cuts_a_long_slug(store):
     name = "0001_" + "-".join(["word"] * 20)
     store.unit(name, {"intent.md": header("x", "accepted")}, entry(type="refactor"))
-    r = same(store.argv("unit-branch", name))
+    r = expect(store.argv("unit-branch", name))
     assert r.code == 0
     assert r.out.startswith("refactor/")
     assert len(r.out.strip()) <= len("refactor/") + 60
@@ -209,20 +206,20 @@ def test_unit_branch_cuts_a_long_slug(store):
 @pytest.mark.parametrize("type_", ["feat", "fix", "docs", "refactor", "revert"])
 def test_unit_branch_is_type_and_slug(store, type_):
     store.unit(UNIT, {"intent.md": header("x", "accepted")}, entry(type=type_))
-    r = same(store.argv("unit-branch", UNIT))
+    r = expect(store.argv("unit-branch", UNIT))
     assert r.out == f"{type_}/the-loop-is-decided\n"
 
 
 def test_unit_branch_in_a_workspace_the_state_names(store):
     store.unit(UNIT, {"intent.md": header("x", "accepted")}, entry(type="fix"))
-    r = same(store.argv("unit-branch", UNIT))
+    r = expect(store.argv("unit-branch", UNIT))
     assert r.code == 0
 
 
 def test_unit_branch_with_a_path_in_the_name(store):
     store.unit(UNIT, {"intent.md": header("x", "accepted")}, entry())
-    assert same(store.argv("unit-branch", f"nowhere/../{UNIT}")).code in (0, 1, 2)
-    assert same(store.argv("unit-branch", "../store/.cos/" + UNIT)).code in (0, 1, 2)
+    assert expect(store.argv("unit-branch", f"nowhere/../{UNIT}")).code in (0, 1, 2)
+    assert expect(store.argv("unit-branch", "../store/.cos/" + UNIT)).code in (0, 1, 2)
 
 
 # --- pr-text --------------------------------------------------------------------------------
@@ -237,7 +234,7 @@ def _pr(store, body, *, type_="feat", unit=UNIT, intent=True, status="draft"):
 
 
 def test_pr_text_with_no_name_is_misuse(store):
-    r = same(store.argv("pr-text"))
+    r = expect(store.argv("pr-text"))
     assert r.code == 2
     assert "usage" in r.err
 
@@ -246,20 +243,20 @@ def test_pr_text_with_no_name_is_misuse(store):
     "name", ["x", "0001", "0001_X", "../0001_x", "0001_x/", "00001_x", "0001_x\n"]
 )
 def test_pr_text_with_a_bad_name(store, name):
-    r = same(store.argv("pr-text", name))
+    r = expect(store.argv("pr-text", name))
     assert r.code == 2
     assert "Invalid unit name" in r.err
 
 
 def test_pr_text_of_no_unit(store):
-    r = same(store.argv("pr-text", "0001_x"))
+    r = expect(store.argv("pr-text", "0001_x"))
     assert r.code == 1
     assert "No such work unit" in r.err
 
 
 def test_pr_text_of_a_unit_with_no_pr(store):
     store.unit("0001_x", {"intent.md": header("x", "accepted")}, entry())
-    r = same(store.argv("pr-text", "0001_x"))
+    r = expect(store.argv("pr-text", "0001_x"))
     assert r.code == 1
     assert "has no pr.md" in r.err
 
@@ -270,7 +267,7 @@ def test_pr_text_of_a_good_title(store):
         "# PR: feat(0151): port the loop\nAuthor: t. Status: draft.\n\nBody here.\n\nPR: "
         "https://github.com/o/r/pull/12\n",
     )
-    r = same(store.argv("pr-text", UNIT))
+    r = expect(store.argv("pr-text", UNIT))
     assert r.code == 0
     assert '"titleProblem":null' in r.out
     assert '"number"' not in r.out
@@ -306,23 +303,23 @@ def test_pr_text_of_a_good_title(store):
 )
 def test_pr_text_titles(store, title_line):
     _pr(store, f"{title_line}\nAuthor: t. Status: draft.\n\nBody.\n")
-    assert same(store.argv("pr-text", UNIT)).code == 0
+    assert expect(store.argv("pr-text", UNIT)).code == 0
 
 
 def test_pr_text_with_no_title_line(store):
     _pr(store, "Author: t. Status: draft.\n\nBody only.\n")
-    r = same(store.argv("pr-text", UNIT))
+    r = expect(store.argv("pr-text", UNIT))
     assert "has no title" in r.out
 
 
 def test_pr_text_with_a_title_that_is_not_the_first_line(store):
     _pr(store, "Preface\n\n# PR: feat(0151): port the loop\nAuthor: t. Status: draft.\n\nBody.\n")
-    assert same(store.argv("pr-text", UNIT)).code == 0
+    assert expect(store.argv("pr-text", UNIT)).code == 0
 
 
 def test_pr_text_with_two_title_lines(store):
     _pr(store, "# PR: feat(0151): one\n# PR: feat(0151): two\nStatus: draft.\n\nBody.\n")
-    assert same(store.argv("pr-text", UNIT)).code == 0
+    assert expect(store.argv("pr-text", UNIT)).code == 0
 
 
 @pytest.mark.parametrize(
@@ -336,7 +333,7 @@ def test_pr_text_against_the_units_type(store, type_, intent):
         type_=type_,
         intent=intent,
     )
-    assert same(store.argv("pr-text", UNIT)).code == 0
+    assert expect(store.argv("pr-text", UNIT)).code == 0
 
 
 def test_pr_text_of_a_unit_the_app_does_not_know(store):
@@ -347,7 +344,7 @@ def test_pr_text_of_a_unit_the_app_does_not_know(store):
             "intent.md": header("x", "accepted"),
         },
     )
-    r = same(store.argv("pr-text", UNIT))
+    r = expect(store.argv("pr-text", UNIT))
     assert r.code == 0
     assert '"status":null' in r.out
 
@@ -359,7 +356,7 @@ def test_pr_text_carries_the_status_the_app_read(store, status):
         "# PR: feat(0151): port the loop\nAuthor: t. Status: draft.\n\nB.\n",
         status=status,
     )
-    assert same(store.argv("pr-text", UNIT)).code == 0
+    assert expect(store.argv("pr-text", UNIT)).code == 0
 
 
 @pytest.mark.parametrize(
@@ -381,7 +378,7 @@ def test_pr_text_carries_the_status_the_app_read(store, status):
 )
 def test_pr_text_with_a_scope_block(store, block):
     _pr(store, f"# PR: feat(0151): port the loop\nAuthor: t. Status: draft.\n\nBody.\n\n{block}")
-    assert same(store.argv("pr-text", UNIT)).code == 0
+    assert expect(store.argv("pr-text", UNIT)).code == 0
 
 
 def test_pr_text_scope_is_read(store):
@@ -390,7 +387,7 @@ def test_pr_text_scope_is_read(store):
         "# PR: feat(0151): port\nAuthor: t. Status: draft.\n\n"
         "## Scope of the diff\n\n2 files, +3/-4\n\n- `a.py`\n- `b.py`\n",
     )
-    r = same(store.argv("pr-text", UNIT))
+    r = expect(store.argv("pr-text", UNIT))
     assert '"scope":{"files":2,"additions":3,"deletions":4,"paths":["a.py","b.py"]}' in r.out
 
 
@@ -409,7 +406,7 @@ def test_pr_text_scope_is_read(store):
 )
 def test_pr_text_with_crlf_lines(store, body):
     _pr(store, body)
-    assert same(store.argv("pr-text", UNIT)).code == 0
+    assert expect(store.argv("pr-text", UNIT)).code == 0
 
 
 def test_pr_text_with_a_vietnamese_body(store):
@@ -419,7 +416,7 @@ def test_pr_text_with_a_vietnamese_body(store):
         "Chuyển vòng lặp sang Python, đầu ra giống từng byte. Ưu điểm: ổn định.\n\n"
         '- Đã kiểm tra "ngoặc kép" và \\ gạch chéo\n- tab\there\n',
     )
-    r = same(store.argv("pr-text", UNIT))
+    r = expect(store.argv("pr-text", UNIT))
     assert "Chuyển vòng lặp" in r.out
 
 
@@ -429,7 +426,7 @@ def test_pr_text_with_json_hostile_text(store):
         "# PR: feat(0151): port the loop\nStatus: draft.\n\n"
         'quote " slash \\ ctrl \x01 \x1f del \x7f nbsp   sep   emoji \U0001f600\n',
     )
-    assert same(store.argv("pr-text", UNIT)).code == 0
+    assert expect(store.argv("pr-text", UNIT)).code == 0
 
 
 def test_pr_text_with_a_pr_url(store):
@@ -437,18 +434,18 @@ def test_pr_text_with_a_pr_url(store):
         store,
         "# PR: feat(0151): port\nStatus: draft.\n\nPR: https://github.com/o/r/pull/42\n",
     )
-    r = same(store.argv("pr-text", UNIT))
+    r = expect(store.argv("pr-text", UNIT))
     assert '"url":"https://github.com/o/r/pull/42"' in r.out
 
 
 def test_pr_text_with_no_status_line(store):
     _pr(store, "# PR: feat(0151): port\n\nBody.\n")
-    assert same(store.argv("pr-text", UNIT)).code == 0
+    assert expect(store.argv("pr-text", UNIT)).code == 0
 
 
 def test_pr_text_of_an_empty_file(store):
     _pr(store, "")
-    assert same(store.argv("pr-text", UNIT)).code == 0
+    assert expect(store.argv("pr-text", UNIT)).code == 0
 
 
 # --- the version files, read by hand --------------------------------------------------------
@@ -503,22 +500,120 @@ FILES = [
 ]
 
 
-@pytest.mark.parametrize("files", FILES)
-def test_the_version_files_are_read_alike(files):
-    script = (
-        f"import {{declaredVersions, versionProblem}} from {json.dumps(str(COS_MJS))}\n"
-        "const c = JSON.parse(process.argv[1])\n"
-        "const f = declaredVersions((r) => c[r] ?? '')\n"
-        "console.log(JSON.stringify([f, versionProblem(f),"
-        " Object.entries(f).map(([p, v]) => `${p}: ${v ?? '(unreadable)'}`)]))\n"
-    )
-    r = subprocess.run(
-        ["node", "--input-type=module", "-e", script, json.dumps(files)],
-        capture_output=True,
-        text=True,
-        env=env(),
-        check=True,
-    )
+# What each of `FILES` reads as, as JSON writes it, the problem and the lines: a missing place is
+# left out of the JSON, and a value that is no string is written as JavaScript would.
+LOCK = "package-lock.json packages['']"
+READ = [
+    [
+        {
+            p: "1.2.3"
+            for p in ["pyproject.toml", "package.json", "uv.lock", "package-lock.json", LOCK]
+        },
+        None,
+        [
+            f"{p}: 1.2.3"
+            for p in ["pyproject.toml", "package.json", "uv.lock", "package-lock.json", LOCK]
+        ],
+    ],
+    [
+        {
+            "pyproject.toml": "1.2.3",
+            "package.json": 1,
+            "uv.lock": "1.2.3",
+            "package-lock.json": [1, None],
+            LOCK: {"a": 1},
+        },
+        "pyproject.toml says 1.2.3, but package.json is 1; package-lock.json is 1,; "
+        f"{LOCK} is [object Object]",
+        [
+            "pyproject.toml: 1.2.3",
+            "package.json: 1",
+            "uv.lock: 1.2.3",
+            "package-lock.json: 1,",
+            f"{LOCK}: [object Object]",
+        ],
+    ],
+    [
+        {"pyproject.toml": None, "package.json": None, "uv.lock": None, "package-lock.json": True},
+        "pyproject.toml declares no version",
+        [
+            "pyproject.toml: (unreadable)",
+            "package.json: (unreadable)",
+            "uv.lock: (unreadable)",
+            "package-lock.json: true",
+            f"{LOCK}: (unreadable)",
+        ],
+    ],
+    [
+        {
+            "pyproject.toml": "1.0",
+            "package.json": None,
+            "uv.lock": "1.0",
+            "package-lock.json": 1,
+            LOCK: 0,
+        },
+        f"pyproject.toml says 1.0, but package.json is unreadable; package-lock.json is 1; {LOCK} is 0",
+        [
+            "pyproject.toml: 1.0",
+            "package.json: (unreadable)",
+            "uv.lock: 1.0",
+            "package-lock.json: 1",
+            f"{LOCK}: 0",
+        ],
+    ],
+    [
+        {p: None for p in ["pyproject.toml", "package.json", "uv.lock", "package-lock.json", LOCK]},
+        "pyproject.toml declares no version",
+        [
+            f"{p}: (unreadable)"
+            for p in ["pyproject.toml", "package.json", "uv.lock", "package-lock.json", LOCK]
+        ],
+    ],
+    [
+        {"pyproject.toml": "", "uv.lock": None},
+        "pyproject.toml declares no version",
+        [
+            "pyproject.toml: ",
+            "package.json: (unreadable)",
+            "uv.lock: (unreadable)",
+            "package-lock.json: (unreadable)",
+            f"{LOCK}: (unreadable)",
+        ],
+    ],
+    [
+        {
+            "pyproject.toml": "1",
+            "package.json": None,
+            "uv.lock": "1",
+            "package-lock.json": 1.5,
+            LOCK: 2,
+        },
+        f"pyproject.toml says 1, but package.json is unreadable; package-lock.json is 1.5; {LOCK} is 2",
+        [
+            "pyproject.toml: 1",
+            "package.json: (unreadable)",
+            "uv.lock: 1",
+            "package-lock.json: 1.5",
+            f"{LOCK}: 2",
+        ],
+    ],
+    [
+        {"pyproject.toml": "1", "package.json": None, "uv.lock": "1"},
+        "pyproject.toml says 1, but package.json is unreadable; package-lock.json is unreadable; "
+        f"{LOCK} is unreadable",
+        [
+            "pyproject.toml: 1",
+            "package.json: (unreadable)",
+            "uv.lock: 1",
+            "package-lock.json: (unreadable)",
+            f"{LOCK}: (unreadable)",
+        ],
+    ],
+]
+
+
+@pytest.mark.parametrize(("files", "want"), list(zip(FILES, READ, strict=True)))
+def test_the_version_files_are_read_by_hand(files, want):
     found = declared_versions(lambda rel: files.get(rel, ""))
     lines = [f"{p}: {js(nullish(v, '(unreadable)'))}" for p, v in found.items()]
-    assert [json.loads(stringify(found)), version_problem(found), lines] == json.loads(r.stdout)
+    assert [json.loads(stringify(found)), version_problem(found), lines] == want

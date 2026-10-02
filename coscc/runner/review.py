@@ -54,7 +54,7 @@ def _rounds(text: str) -> list[str]:
     return [m.group(0).rstrip() for m in _ROUND_RE.finditer(text or "")]
 
 
-# # The standard a round's screenshots are judged against, as `cos.mjs` names it.
+# # The standard a round's screenshots are judged against, as the loop names it.
 UI_STANDARD = ".claude/rules/ui-standard.md"
 
 
@@ -144,14 +144,14 @@ def replace_new_rounds(
 
 
 def _header_status(text: str) -> str | None:
-    """The artifact's own status, read the way `cos.mjs` reads it."""
+    """The artifact's own status, read the way the loop reads it."""
     m = HEADER_STATUS_RE.search(text or "")
     return m.group(1).lower() if m else None
 
 
-# # A finding line as `cos.mjs` `FINDING` reads it, and the one label it counts closed: `fixed`
+# # A finding line as the loop's `FINDING` reads it, and the one label it counts closed: `fixed`
 # # with a sha. An `[answered]` is closed only by a validated block under `## Answers`, which
-# # is left to `cos.mjs`, so it is kept here.
+# # is left to the loop, so it is kept here.
 _FINDING_RE = re.compile(r"^- (F\d+)\s+\[([^\]]*)\]")
 _FIXED_RE = re.compile(r"^fixed\s+[0-9a-f]{7,40}$", re.IGNORECASE)
 
@@ -160,9 +160,9 @@ def open_findings(text: str) -> tuple[str, int | None, str]:
     """`review.md`'s header line, its last round's number, and that round's findings still open,
     each with the indented lines under it.
 
-    Only cuts text out to embed in a prompt; `cos.mjs` is the one reader of findings that opens
+    Only cuts text out to embed in a prompt; the loop is the one reader of findings that opens
     anything. "Open" is every label but `fixed <sha>` (a `fixed` with no sha and unreadable
-    labels included), so nothing `cos.mjs` may count open is dropped from the prompt.
+    labels included), so nothing the loop may count open is dropped from the prompt.
 
     The header is the line holding the first `Status:`. A file with no `## Round` is read whole
     below that line, as a single round with no number.
@@ -194,7 +194,7 @@ def open_findings(text: str) -> tuple[str, int | None, str]:
 
 # # The three sections of a round the closing turn writes, in this order.
 INCOMPLETE_SECTIONS = ("### Reviewed so far", "### Findings", "### What was not reviewed")
-# # A round's first non-blank line as `cos.mjs` `ROUND_META` reads it.
+# # A round's first non-blank line as the loop's `ROUND_META` reads it.
 _ROUND_META_RE = re.compile(
     r"^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*(pass|changes-requested|needs-person|incomplete)\.?\s*$",
     re.IGNORECASE,
@@ -202,7 +202,7 @@ _ROUND_META_RE = re.compile(
 
 
 def _round_meta(section: str) -> tuple[str, str] | None:
-    """A round's `(reviewed, verdict)`, lower-cased, or `None` when `cos.mjs` could not read it."""
+    """A round's `(reviewed, verdict)`, lower-cased, or `None` when the loop could not read it."""
     for line in section.splitlines()[1:]:
         if line.strip():
             m = _ROUND_META_RE.match(line.strip())
@@ -248,7 +248,7 @@ def closing_prompt(head: str, number: int) -> str:
 def closing_round_problem(existing: str, reply: str, head: str) -> str | None:
     """`None` when `reply` is a closing turn's round the app may write, else why not.
 
-    Only an incomplete round, under a `draft` header, which `cos.mjs` reads as "review again".
+    Only an incomplete round, under a `draft` header, which the loop reads as "review again".
     A full round is refused: it would open or close `ship` on a review that did not finish.
     `merge_review` decides the rest when the round is written.
     """

@@ -25,7 +25,7 @@ def seed_store(data_dir, workspace=REPO) -> Path:
     Copied rather than pointed at, because these tests drive routes that could write.
 
     The fixture stays this repository's own `.cos/` for the reason `tests/units/test_board.py:1-7`
-    gives: what breaks here is the *agreement* with `cos.mjs`, and a hand-built fixture
+    gives: what breaks here is the *agreement* with the loop, and a hand-built fixture
     keeps passing after the two drift apart."""
     import shutil
 

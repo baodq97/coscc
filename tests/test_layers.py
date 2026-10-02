@@ -16,6 +16,8 @@ text or a listing, so a test can feed it a planted case.
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -39,6 +41,9 @@ LAYERS = (
     ("data",),
     ("config",),
 )
+# The helper that runs `python -m coscc.loop` in a child process. It imports only `agent` and
+# `git`, so a package below the loop may use it; the rest of `coscc.loop` decides on every package.
+LOOP_CHILD = "coscc.loop.run"
 LAYER = {name: i for i, line in enumerate(LAYERS) for name in line}
 
 
@@ -56,28 +61,33 @@ def _top(path: Path) -> str:
 
 
 def _imported(tree: ast.AST):
-    """`(line, top name)` of every `coscc` module the tree imports, at any depth."""
+    """`(line, top name, module)` of every `coscc` module the tree imports, at any depth. Of
+    `from coscc.loop import x` the module is `coscc.loop.x`: the one child helper is told apart."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names = [a.name for a in node.names]
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
             names = (
-                [node.module] if node.module != "coscc" else [f"coscc.{a.name}" for a in node.names]
+                [f"{node.module}.{a.name}" for a in node.names]
+                if node.module in ("coscc", "coscc.loop")
+                else [node.module]
             )
         else:
             continue
         for name in names:
             parts = name.split(".")
             if parts[0] == "coscc" and len(parts) > 1:
-                yield node.lineno, parts[1]
+                yield node.lineno, parts[1], name
 
 
 def violations() -> list[str]:
     out = []
     for path in _files():
         own = _top(path)
-        for line, top in _imported(ast.parse(path.read_text())):
+        for line, top, name in _imported(ast.parse(path.read_text())):
             if (own, top) == ("features", "plugin"):
+                continue
+            if name == LOOP_CHILD:
                 continue
             if top != own and LAYER.get(top, -1) <= LAYER[own]:
                 out.append(f"{path.relative_to(ROOT.parent)}:{line} {own} imports {top}")
@@ -250,6 +260,32 @@ class PackagesSitInLayers(unittest.TestCase):
 
     def test_no_import_goes_up_or_sideways(self):
         self.assertEqual(violations(), [])
+
+    def test_the_loop_child_helper_reaches_only_what_is_below_units(self):
+        tree = ast.parse((ROOT / "loop" / "run.py").read_text())
+        above = sorted(
+            {top for _, top, _ in _imported(tree) if LAYER.get(top, -1) <= LAYER["units"]}
+        )
+        self.assertEqual(above, [])
+
+    def test_the_loop_child_loads_neither_the_database_nor_the_helper_that_started_it(self):
+        # `coscc.loop` reaches `coscc.units.guards`, which runs `coscc/units/__init__.py`: had
+        # that imported `coscc.loop.run`, the package would come back to itself half-loaded.
+        heavy = ("coscc.data", "coscc.loop.run", "asyncio")
+        child = (
+            "import importlib, pkgutil, sys, coscc.loop\n"
+            "for m in pkgutil.iter_modules(coscc.loop.__path__):\n"
+            "    if m.name != 'run': importlib.import_module('coscc.loop.' + m.name)\n"
+            f"print([m for m in {heavy!r} if m in sys.modules])"
+        )
+        done = subprocess.run(
+            [sys.executable, "-P", "-c", child],
+            cwd=ROOT.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual((done.returncode, done.stdout.strip(), done.stderr), (0, "[]", ""))
 
     def test_no_module_and_a_module_of_its_package_import_each_other(self):
         self.assertEqual(import_cycles(), [])

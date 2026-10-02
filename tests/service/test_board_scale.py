@@ -54,7 +54,7 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
         return 0, "[]", ""
 
     async def store(self, name: str, units: int) -> tuple[Service, str]:
-        """A workspace of `units` units `cos.mjs` reads as `finished`, each with a long review."""
+        """A workspace of `units` units the loop reads as `finished`, each with a long review."""
         workspace = self.root / name / "proj"
         workspace.mkdir(parents=True)
         git(workspace, "init", "-q", "-b", "main")

@@ -300,7 +300,7 @@ class Warnings(unittest.TestCase):
         # A patch left unchanged goes back to impl; only a changed one costs a round.
         said = ig.warnings([{"verdict": "changes-requested"}], "changes-requested", False, "W")[0]
         self.assertIn("If integrating leaves the unit's patch unchanged", said)
-        self.assertIn("cos.mjs next still offers impl, and no review round is spent", said)
+        self.assertIn("the loop's next still offers impl, and no review round is spent", said)
         self.assertIn(
             "If it changes the patch, next offers review once CI is green, and that round counts toward COS_REVIEW_ROUNDS",
             said,

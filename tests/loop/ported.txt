@@ -1,0 +1,371 @@
+parseStatus takes the first Status line, whatever prose surrounds it → tests/loop/test_model.py::test_parse_status_takes_the_first_status_line
+a later Status mention in the body cannot shadow the real one → tests/loop/test_model.py::test_a_later_status_mention_cannot_shadow_the_real_one
+parseStatus returns null rather than guessing → tests/loop/test_model.py::test_parse_status_returns_none_rather_than_guessing
+parseSkipReason reads the reason out of the plan header → tests/loop/test_model.py::test_parse_skip_reason_reads_the_plan_header
+spec gate needs an accepted intent → tests/loop/test_model.py::test_spec_gate_needs_an_accepted_intent
+plan gate accepts a skipped spec but not a missing one → tests/loop/test_model.py::test_plan_gate_accepts_a_skipped_spec_but_not_a_missing_one
+implement gate needs the whole chain accepted → tests/loop/test_model.py::test_implement_gate_needs_the_whole_chain_accepted
+a blocked gate says what is missing → tests/loop/test_model.py::test_a_blocked_gate_says_what_is_missing
+an unknown stage is refused, not treated as open → tests/loop/test_model.py::test_an_unknown_stage_is_refused
+nextAction names one action per state → tests/loop/test_model.py::test_next_action_names_one_action_per_state
+a rejected artifact closes the unit instead of blocking it → tests/loop/test_model.py::test_a_rejected_artifact_closes_the_unit
+a done plan is finished, not awaiting anything → tests/loop/test_model.py::test_a_done_plan_is_finished
+nextNumber counts from the highest, not from the count → tests/loop/test_model.py::test_next_number_counts_from_the_highest
+nextNumber survives a directory that failed to parse → dropped: JavaScript's `{ number: undefined }` of an unparsed directory has no Python form; `next_number` takes the ints `new-path` and `new-idea` parsed, so none is ever missing
+an unreadable artifact is distinguished from a missing one → tests/loop/test_model.py::test_an_unreadable_artifact_is_not_a_missing_one
+every stage name opens a gate, and a tenth does not → tests/loop/test_model.py::test_every_stage_name_opens_a_gate_and_a_tenth_does_not
+implement still names the impl stage, because a skill still says it → tests/loop/test_model.py::test_implement_still_names_the_impl_stage
+idea gates nothing — every unit on disk was opened without one → tests/loop/test_model.py::test_idea_gates_nothing
+a later stage needs the earlier ones behind it → tests/loop/test_model.py::test_a_later_stage_needs_the_earlier_ones_behind_it
+a done artifact is behind us, not in the way → tests/loop/test_model.py::test_a_done_artifact_is_not_in_the_way
+nextAction walks past an accepted plan into the new stages → tests/loop/test_model.py::test_next_action_walks_past_an_accepted_plan
+a rejection in a late stage closes the unit, same as an early one → tests/loop/test_model.py::test_a_late_rejection_closes_the_unit
+the six new artifacts are read, not reported as unexpected files → tests/loop/test_model.py::test_the_nine_artifacts_are_read_not_reported_as_unexpected
+a unit whose intent declares no Type is a problem, and the message says which → tests/loop/test_model.py::test_an_intent_with_no_type_is_a_problem
+a Type outside the ten is a different problem from a missing one → tests/loop/test_model.py::test_a_type_outside_the_ten_is_another_problem
+a Type inside the ten is recorded on the unit and reports nothing → tests/loop/test_model.py::test_a_type_inside_the_ten_is_recorded
+a missing intent.md reports that, and not a missing Type on top of it → tests/loop/test_model.py::test_a_missing_intent_is_not_also_a_missing_type
+a unit holding only a valid idea is pre-intent and reports nothing → tests/loop/test_model.py::test_a_unit_holding_only_a_valid_idea_is_pre_intent
+an idea with a later artifact and no intent is still a problem → tests/loop/test_model.py::test_an_idea_with_a_later_artifact_and_no_intent_is_a_problem
+an idea with no Status line is not pre-intent → tests/loop/test_model.py::test_an_idea_with_no_status_line_is_not_pre_intent
+a unit with an intent is started → tests/loop/test_model.py::test_a_unit_with_an_intent_is_started
+reporting a Type problem does not close any gate → tests/loop/test_model.py::test_a_type_problem_closes_no_gate
+branchProblem: ${name || '(empty)'} → tests/loop/test_model.py::test_branch_problem
+the type set is the ten of Conventional Commits, and it is closed → tests/loop/test_model.py::test_the_type_set_is_the_ten_of_conventional_commits
+a slug over sixty characters is refused, and the message says how long it was → tests/loop/test_model.py::test_a_slug_over_sixty_characters_is_refused
+a name with no slash is told what shape to take → tests/loop/test_model.py::test_a_name_with_no_slash_is_told_its_shape
+tagProblem: ${name} → tests/loop/test_model.py::test_tag_problem
+a leading zero is refused so one release has one spelling → tests/loop/test_model.py::test_a_leading_zero_is_refused
+prerelease is decided by the same grammar that validates the tag → tests/loop/test_model.py::test_prerelease_is_decided_by_the_tag_grammar
+tagVersion strips the v and the candidate suffix, or refuses → tests/loop/test_model.py::test_tag_version_strips_the_v_and_the_candidate
+pyproject.toml is the source, and the message says which one is right → tests/loop/test_model.py::test_pyproject_is_the_version_source
+a place that could not be read is named, not skipped → tests/loop/test_model.py::test_a_version_place_that_could_not_be_read_is_named
+parseType reads the header field beside Author and Status → tests/loop/test_model.py::test_parse_type_reads_the_header_field
+the branch name is derived from the unit and its type → tests/loop/test_model.py::test_the_branch_name_is_derived_from_the_unit_and_its_type
+a derived name that no grammar would accept cannot be produced → tests/loop/test_model.py::test_a_derived_name_no_grammar_accepts_cannot_be_produced
+every name unit-branch gives passes check-branch, whatever the slug length → tests/loop/test_model.py::test_every_name_unit_branch_gives_passes_check_branch
+a slug over the limit is cut at its last hyphen, and one within it is left alone → tests/loop/test_model.py::test_a_long_slug_is_cut_at_its_last_hyphen
+--root is refused by ${args[0]} → tests/loop/test_model.py::test_root_is_refused_by_the_checkout_commands
+--root still reaches the command that reads a .cos/ → tests/loop/test_model.py::test_root_still_reaches_the_command_that_reads_a_cos
+an unknown command prints both halves of the boundary → tests/loop/test_model.py::test_an_unknown_command_prints_both_halves_of_the_boundary
+new-path counts the numbers taken in a reserved directory → tests/loop/test_model.py::test_new_path_counts_the_numbers_of_a_reserved_directory
+new-path takes the highest of root and reserve, and still writes nothing → tests/loop/test_model.py::test_new_path_takes_the_highest_and_writes_nothing
+a reserved directory with no .cos/ contributes nothing → tests/loop/test_model.py::test_a_reserved_directory_with_no_cos_contributes_nothing
+--reserve-from is repeatable → tests/loop/test_model.py::test_reserve_from_is_repeatable
+--reserve-from is refused by ${args[0]} → tests/loop/test_model.py::test_reserve_from_is_refused_by_the_others
+--reserve-from with no directory is misuse → tests/loop/test_model.py::test_reserve_from_with_no_directory_is_misuse
+new-path refuses a slug longer than a branch allows, and makes nothing → tests/loop/test_model.py::test_new_path_refuses_a_slug_longer_than_a_branch_allows
+status and unit-branch name the same shortened branch → tests/loop/test_model.py::test_status_and_unit_branch_name_the_same_shortened_branch
+questions are the numbered items under Open questions and nowhere else → tests/loop/test_model.py::test_questions_are_the_numbered_items_under_open_questions
+a bullet is never a question, even when nothing is numbered → tests/loop/test_model.py::test_a_bullet_is_never_a_question
+a numbered item is a question only when it asks one → tests/loop/test_model.py::test_a_numbered_item_is_a_question_only_when_it_asks_one
+the ? must be in the first paragraph of the item → tests/loop/test_model.py::test_the_question_mark_must_be_in_the_first_paragraph
+a numbered note still ends the question above it and keeps its number → tests/loop/test_model.py::test_a_numbered_note_ends_the_question_above_it
+a note keeps no answer, a question keeps its own, and a heading with none is counted → tests/loop/test_model.py::test_a_note_keeps_no_answer_and_a_heading_with_none_is_counted
+the notes of 0107 and 0054 are not questions → tests/loop/test_model.py::test_the_notes_of_a_hold_and_a_rerun_are_not_questions
+no Open questions section is not the same as an empty one → tests/loop/test_model.py::test_no_open_questions_section_is_not_an_empty_one
+three questions and no answers is three open → tests/loop/test_model.py::test_three_questions_and_no_answers_is_three_open
+one answer leaves two open, and carries who gave it → tests/loop/test_model.py::test_one_answer_leaves_two_open_and_says_who_gave_it
+two blocks for one number: the last is the one in force → tests/loop/test_model.py::test_of_two_blocks_for_one_number_the_last_is_in_force
+a block with no header line is not an answer → tests/loop/test_model.py::test_a_block_with_no_header_line_is_not_an_answer
+Answers is never read as questions, and the Status line survives it → tests/loop/test_model.py::test_answers_are_never_read_as_questions
+only the latest artifact with questions is counted, but every question is listed → tests/loop/test_model.py::test_only_the_latest_artifact_with_questions_is_counted
+a unit with no Open questions anywhere has nothing open → tests/loop/test_model.py::test_a_unit_with_no_open_questions_has_nothing_open
+an open question does not close a gate → tests/loop/test_model.py::test_an_open_question_closes_no_gate
+status --json over 64 KiB reaches a pipe whole → tests/loop/test_model.py::test_status_json_over_64_kib_reaches_a_pipe_whole
+status --json carries questions and open for each unit → tests/loop/test_model.py::test_status_json_carries_questions_and_open
+parseStatus reads a hyphenated status whole → tests/loop/test_model.py::test_parse_status_reads_a_hyphenated_status_whole
+parsePr reads the pull request from the header, or returns null → tests/loop/test_model.py::test_parse_pr_reads_the_pull_request_or_none
+parseReview reads rounds, verdicts and labelled findings, and stops at Answers → tests/loop/test_model.py::test_parse_review_reads_rounds_verdicts_and_findings
+parseReview gives each round its text verbatim, bounded by the next ## heading → tests/loop/test_model.py::test_parse_review_gives_each_round_its_text_verbatim
+R1: the review gate is closed while pr.md names no pull request → tests/loop/test_model.py::test_the_review_gate_is_closed_while_pr_md_names_no_pull_request
+R2: changes-requested and rejected lead to different places → tests/loop/test_model.py::test_changes_requested_and_rejected_lead_to_different_places
+changes-requested closes the ship gate but leaves the review gate open → tests/loop/test_model.py::test_changes_requested_closes_ship_but_not_review
+CI decides whether review may begin → tests/loop/test_model.py::test_ci_decides_whether_review_may_begin
+F4: the three closed cases, in the shapes gh pr checks --required --json name,bucket gives them → tests/loop/test_model.py::test_the_three_closed_ci_cases_in_the_shapes_gh_gives_them
+the round limit stops the loop and says it needs a person → tests/loop/test_model.py::test_the_round_limit_stops_the_loop_for_a_person
+reviewRounds reads COS_REVIEW_ROUNDS and refuses what is not a positive integer → tests/loop/test_model.py::test_review_rounds_reads_the_variable_and_refuses_what_is_no_positive_integer
+R3: an accepted review with a finding still open cannot ship, and names it → tests/loop/test_model.py::test_an_accepted_review_with_a_finding_open_cannot_ship
+R4: an earlier round survives, a dropped finding or a renumbered round is caught → tests/loop/test_model.py::test_an_earlier_round_survives_and_a_dropped_or_renumbered_one_is_caught
+R5: code after the reviewed commit closes the ship gate; the unit's own files do not → tests/loop/test_model.py::test_code_after_the_reviewed_commit_closes_ship_and_the_units_files_do_not
+F2: ship reads the pull request head, not only the refs here, and pins the merge to it → tests/loop/test_model.py::test_ship_reads_the_pull_request_head_and_pins_the_merge_to_it
+F3: pass, then rebase, closes ship; another passing round opens it and costs no round → tests/loop/test_model.py::test_a_rebase_after_the_pass_closes_ship_and_another_pass_opens_it
+a review.md with no rounds cannot ship → tests/loop/test_model.py::test_a_review_md_with_no_rounds_cannot_ship
+--repo belongs to gate and nothing else → tests/loop/test_model.py::test_repo_belongs_to_gate_and_nothing_else
+a bad COS_REVIEW_ROUNDS is misuse, and names the variable → tests/loop/test_model.py::test_a_bad_review_round_limit_is_misuse_and_names_the_variable
+with --root and no --repo, review says there is no repository instead of reading this one → tests/loop/test_model.py::test_with_root_and_no_repo_review_says_there_is_no_repository
+nextAction.stage names the missing stage, and nothing where the files do not settle it → tests/loop/test_model.py::test_next_action_stage_names_the_missing_stage_or_nothing
+0024 a: a missing stage that needs no git is offered as it was → tests/loop/test_model.py::test_a_missing_stage_that_needs_no_git_is_offered_as_it_was
+0024 b: changes asked, nothing new on the pull request: impl, though impl.md exists → tests/loop/test_model.py::test_changes_asked_and_nothing_new_on_the_pull_request_is_impl
+0024 c: changes asked, a fix is on the head and CI is green: review, though review.md exists → tests/loop/test_model.py::test_changes_asked_and_a_fix_on_a_green_head_is_review
+0024 d: the fix is on the head but CI runs, or failed → tests/loop/test_model.py::test_a_fix_on_the_head_while_ci_runs_or_failed
+0024 e: pr is open, no review yet: review on green, impl on red, nothing while it runs → tests/loop/test_model.py::test_an_open_pull_request_with_no_review_goes_by_ci
+0024 f: the round limit used up offers nothing and says needs a person → tests/loop/test_model.py::test_the_round_limit_used_up_offers_nothing
+0024 g: the last round passed and the ship gate is open: ship, pinned → tests/loop/test_model.py::test_a_pass_with_the_ship_gate_open_is_ship_pinned
+0024 h: a done plan offers nothing, whatever the later files say → tests/loop/test_model.py::test_a_done_plan_offers_nothing_whatever_the_later_files_say
+0024 i: the branch moved after the pass: review again, not ship → tests/loop/test_model.py::test_a_branch_moved_after_the_pass_is_review_again
+0024: with no repository, the three git cases offer nothing and say --repo → tests/loop/test_model.py::test_with_no_repository_the_git_cases_offer_nothing_and_say_repo
+0024: nextStep never offers a stage whose gate is closed → tests/loop/test_model.py::test_next_step_never_offers_a_stage_whose_gate_is_closed
+coscc.loop next prints one JSON line, and misuse is exit 2 → tests/loop/test_model.py::test_next_prints_one_json_line_and_misuse_is_exit_2
+status --json carries next.stage for each unit → tests/loop/test_model.py::test_status_json_carries_next_stage
+0028 R1: impl.md ## Needs a person reads well-formed lines, skips others, stops at Answers → tests/loop/test_model.py::test_needs_a_person_reads_well_formed_lines_and_stops_at_answers
+0028 R7: parseAnswers reads Câu N and F<n> blocks side by side, the last per id in force → tests/loop/test_model.py::test_parse_answers_reads_numbered_and_finding_blocks_side_by_side
+0028 R3/R4: the three new labels and the needs-person verdict are read; others stay unreadable → tests/loop/test_model.py::test_the_person_labels_and_the_needs_person_verdict_are_read
+0028 R5: a needs-person round is not counted toward the limit → tests/loop/test_model.py::test_a_needs_person_round_is_not_counted_toward_the_limit
+0028 R10 S0: every open finding claimed, no review has confirmed it: review, not impl → tests/loop/test_model.py::test_every_open_finding_claimed_and_unconfirmed_is_review
+0028 R10 S1: the review confirmed both claims: nothing to run, a person is named → tests/loop/test_model.py::test_both_claims_confirmed_names_a_person
+0028 R10 S2: one answered, one not: still waiting, for the other → tests/loop/test_model.py::test_one_answered_one_not_still_waits_for_the_other
+0028 R10 S3: both answered: review reads the answers → tests/loop/test_model.py::test_both_answered_review_reads_the_answers
+0028 R10 escape F4: one open finding impl did not claim sends the unit to impl → tests/loop/test_model.py::test_an_open_finding_impl_did_not_claim_is_impl
+0028 R10 escape claim-rejected: a rejected claim sends the unit to impl → tests/loop/test_model.py::test_a_rejected_claim_is_impl
+0028 answered but not settled: a finding a round kept [open] after its answer goes to impl, not review again → tests/loop/test_model.py::test_answered_but_kept_open_is_impl_not_review_again
+0028: a needs-person verdict written wrong falls back to the old path → tests/loop/test_model.py::test_a_needs_person_verdict_written_wrong_falls_back
+0028: an impl.md with no Needs a person section changes nothing → tests/loop/test_model.py::test_an_impl_with_no_needs_a_person_section_changes_nothing
+0028 R8: ship closes a finding marked answered only when review.md holds its answer → tests/loop/test_model.py::test_ship_closes_an_answered_finding_only_with_its_answer
+0028: coscc.loop next prints waiting only when a person is awaited → tests/loop/test_model.py::test_next_prints_waiting_only_when_a_person_is_awaited
+0028: nextStep never offers a stage whose gate is closed, in any of the new states → tests/loop/test_model.py::test_next_step_never_offers_a_closed_gate_in_the_person_states
+0035: betweenPrAndShip is true only on an accepted pr.md naming a pull request, unfinished → tests/loop/test_model.py::test_between_pr_and_ship_only_on_an_accepted_pr_naming_a_pull_request
+0035: status --json carries betweenPrAndShip for every unit; gate and next do not change → tests/loop/test_model.py::test_status_json_carries_between_pr_and_ship_and_gate_and_next_do_not_change
+0033 R11: the plan's Impl: label opens and closes no gate, and moves no next → tests/loop/test_model.py::test_the_plans_impl_label_opens_and_closes_no_gate_and_moves_no_next
+0047: the deadline is the first real date under Proposed outcome, or null → tests/loop/test_model.py::test_the_deadline_is_the_first_real_date_under_proposed_outcome
+0047: a valid block needs a known result, Measured by, and Source or Reason by result → tests/loop/test_model.py::test_a_valid_outcome_block_needs_a_result_measured_by_and_source_or_reason
+0047: with no block, every field but deadline and invalid is null → tests/loop/test_model.py::test_with_no_outcome_block_every_field_but_deadline_and_invalid_is_none
+0047 R6: an Outcome block ends the answer above it and is not an answer itself → tests/loop/test_model.py::test_an_outcome_block_ends_the_answer_above_it_and_is_no_answer
+0047 R5: an outcome block changes nothing but outcome, for next and every gate → tests/loop/test_model.py::test_an_outcome_block_changes_nothing_but_outcome
+parseUnmeasured reads [unmeasured] U<n> items under ## Concerns only (R1) → tests/loop/test_model.py::test_parse_unmeasured_reads_items_under_concerns_only
+an [unmeasured] item with no id, or an id twice, is a problem that closes plan (R2) → tests/loop/test_model.py::test_an_unmeasured_item_with_no_id_or_twice_is_a_problem_that_closes_plan
+parseSpike reads verdicts and blocks per U<n>, and stops at ## Answers (R6) → tests/loop/test_model.py::test_parse_spike_reads_verdicts_and_blocks_and_stops_at_answers
+0136 R4: a stage result decides the spec's U<n> and the spike's verdicts, not the files → tests/loop/test_model.py::test_a_stage_result_decides_the_specs_ids_and_the_spikes_verdicts
+0136 R5, R6: a round and the claims the app holds decide, not review.md and impl.md → tests/loop/test_model.py::test_a_round_and_the_claims_the_app_holds_decide
+parseSpike reads Round: from the header line only, never from a fenced block → tests/loop/test_model.py::test_parse_spike_reads_round_from_the_header_line_only
+a unit with no [unmeasured] item walks the loop as if spike did not exist (R4) → tests/loop/test_model.py::test_a_unit_with_nothing_unmeasured_walks_as_if_spike_did_not_exist
+a skipped spec never needs a spike, even beside a stray spike.md (R5) → tests/loop/test_model.py::test_a_skipped_spec_never_needs_a_spike
+an unmeasured spec sends the unit to spike, and closes plan until every U<n> holds (R7) → tests/loop/test_model.py::test_an_unmeasured_spec_sends_the_unit_to_spike_and_closes_plan
+spec → spike (U2 fails) → spec again → spike → plan (R8, the Design flow) → tests/loop/test_model.py::test_spec_spike_spec_again_spike_plan
+fails ahead of missing: spec is rewritten before the spike is redone (R8) → tests/loop/test_model.py::test_fails_ahead_of_missing
+a question still failing at round 2 needs a person → tests/loop/test_model.py::test_a_question_still_failing_at_the_last_spike_round_needs_a_person
+a spec rewritten without its questions no longer needs the spike beside it (0136 R14) → tests/loop/test_model.py::test_a_spec_rewritten_without_its_questions_needs_no_spike
+0136 R14: a skip an agent wrote, or one whose author the app does not know, stops the unit for a person → tests/loop/test_model.py::test_a_skip_no_person_decided_stops_the_unit_for_a_person
+0136 R14: a skip a person or their delegate decided opens plan, with or without a spec.md → tests/loop/test_model.py::test_a_skip_a_person_decided_opens_plan_with_or_without_a_file
+with a spike required, impl opens only on a plan that cites spike.md (R9) → tests/loop/test_model.py::test_with_a_spike_required_impl_opens_only_on_a_plan_citing_it
+0045 R9: a hold block ends the answer before it, and is never an answer → tests/loop/test_model.py::test_a_hold_block_ends_the_answer_before_it
+0045 R1: no hold block is hold null and the active moves → tests/loop/test_model.py::test_no_hold_block_is_no_hold_and_the_active_moves
+0045 R9: blocks are read in order and the last valid one decides → tests/loop/test_model.py::test_hold_blocks_are_read_in_order_and_the_last_valid_one_decides
+0045 R9: an invalid move is ignored and reported → tests/loop/test_model.py::test_an_invalid_hold_move_is_ignored_and_reported
+0045 R9: a block without a well-formed Decided by line is not counted → tests/loop/test_model.py::test_a_hold_block_without_a_decided_by_line_is_not_counted
+0045 R3: next offers no stage and asks no probe, for paused and dropped → tests/loop/test_model.py::test_next_offers_no_stage_and_asks_no_probe_when_held
+0045 R4: every gate is closed on a held unit, and says why → tests/loop/test_model.py::test_every_gate_is_closed_on_a_held_unit_and_says_why
+0045 R2: status --json carries hold and holdMoves, and the table says paused — → tests/loop/test_model.py::test_status_json_carries_hold_and_hold_moves_and_the_table_says_paused
+0045 R5: a done plan or a rejection wins over a hold, and the block is reported → tests/loop/test_model.py::test_a_done_plan_or_a_rejection_wins_over_a_hold
+0045: a unit with no intent has nowhere to hold → tests/loop/test_model.py::test_a_unit_with_no_intent_has_nowhere_to_hold
+0045 R1: next on an unheld unit carries no hold field → tests/loop/test_model.py::test_next_on_an_unheld_unit_carries_no_hold_field
+0045 R1: every unit in this repository reads unheld and answers as it did → tests/loop/test_model.py::test_every_unit_of_this_repository_reads_unheld
+0061 R2: severity is read only between two em dashes right after the location → tests/loop/test_model.py::test_severity_is_read_only_between_two_em_dashes_after_the_location
+0061 R3: an open low does not block, unless an earlier round rated the id higher → tests/loop/test_model.py::test_an_open_low_does_not_block_unless_rated_higher_before
+0061 R10: status --json carries nonBlocking for each unit and severity for each finding → tests/loop/test_model.py::test_status_json_carries_non_blocking_and_each_findings_severity
+0061 R4: ship lets an open low through, and nothing else → tests/loop/test_model.py::test_ship_lets_an_open_low_through_and_nothing_else
+0061 R5: a severity lowered between rounds closes ship and says so → tests/loop/test_model.py::test_a_severity_lowered_between_rounds_closes_ship
+0078 R1: the pass round of 0050, with F4 its only open finding, opens ship → tests/loop/test_model_pr.py::test_a_pass_round_with_one_open_low_among_fixed_findings_opens_ship
+0078 R2: a lowered finding is named once, on its own line, not among the findings not fixed → tests/loop/test_model_pr.py::test_a_lowered_finding_is_named_once_not_among_the_findings_not_fixed
+0061 R12: three counted rounds of prose severities, then a pass of lows: ship opens at the default limit → tests/loop/test_model_pr.py::test_three_counted_rounds_of_prose_severities_then_a_pass_of_lows_opens_ship
+0061 R8: a needs-person round beside an open low is still a wait for a person → tests/loop/test_model_pr.py::test_a_needs_person_round_beside_an_open_low_is_still_a_wait_for_a_person
+0061 R8: every blocking finding claimed, one low unclaimed: review, not impl → tests/loop/test_model_pr.py::test_every_blocking_finding_claimed_and_one_low_unclaimed_is_review_not_impl
+0061 R7: a pass that leaves lows open costs no round → tests/loop/test_model_pr.py::test_a_pass_that_leaves_lows_open_costs_no_round
+0055 R1 (a): the template gives a body without the header or the title line → tests/loop/test_model_pr.py::test_the_template_gives_a_body_without_the_header_or_the_title_line
+0055 R1 (b): a later Status: in the body stays in the body → tests/loop/test_model_pr.py::test_a_later_status_in_the_body_stays_in_the_body
+0055 R1 (c): no # PR: line, or an empty one, is a null title → tests/loop/test_model_pr.py::test_no_title_line_or_an_empty_one_is_a_null_title
+0055 R1 (d): the same input gives the same output → tests/loop/test_model_pr.py::test_the_same_input_gives_the_same_output
+0055 R1 (e): a file with \r\n keeps \r\n on the lines it keeps → tests/loop/test_model_pr.py::test_a_file_with_crlf_keeps_crlf_on_the_lines_it_keeps
+0055: a header on the title line itself drops only that one line → tests/loop/test_model_pr.py::test_a_header_on_the_title_line_itself_drops_only_that_one_line
+0055 R2: pr-text prints what prText reads, with the unit and its status → tests/loop/test_model_pr.py::test_pr_text_prints_what_the_reader_reads_with_the_unit_and_its_status
+0055 R2: no unit or no pr.md is 1; a missing or malformed name is 2 → tests/loop/test_model_pr.py::test_pr_text_of_no_unit_or_no_pr_md_is_1_and_of_a_missing_or_malformed_name_is_2
+0055 R2: --repo and --reserve-from are refused by pr-text → tests/loop/test_model_pr.py::test_repo_and_reserve_from_are_refused_by_pr_text
+0055 R2: pr-text writes nothing and leaves status as it was → tests/loop/test_model_pr.py::test_pr_text_writes_nothing_and_leaves_status_as_it_was
+0122 R3: a scope written to its grammar is read as counts and paths → tests/loop/test_model_pr.py::test_a_scope_written_to_its_grammar_is_read_as_counts_and_paths
+0122 R3: no Scope of the diff heading is a null scope → tests/loop/test_model_pr.py::test_no_scope_heading_is_a_null_scope
+0122 R3: the old git diff --stat line is a null scope → tests/loop/test_model_pr.py::test_the_old_git_diff_stat_line_is_a_null_scope
+0122 R3: a path listed twice is a null scope → tests/loop/test_model_pr.py::test_a_path_listed_twice_is_a_null_scope
+0122 R3: prose after the list is not a path, and the body is kept byte for byte → tests/loop/test_model_pr.py::test_prose_after_the_list_is_not_a_path_and_the_body_is_kept_byte_for_byte
+0122 R3: a file with \r\n reads the same scope → tests/loop/test_model_pr.py::test_a_file_with_crlf_reads_the_same_scope
+0122 R3: pr-text prints scope beside title, body, url and status → tests/loop/test_model_pr.py::test_pr_text_prints_scope_beside_title_body_url_and_status
+0083 R2: parseStandard reads the globs under paths: in the front-matter, and nothing else → tests/loop/test_model_pr.py::test_parse_standard_reads_the_globs_under_paths_in_the_front_matter_and_nothing_else
+0083 R3: globMatch — ** crosses directories, * and ? stay inside one → tests/loop/test_model_pr.py::test_glob_match_double_star_crosses_directories_and_star_and_question_mark_do_not
+0083 R2: every glob of this checkout's standard names a file git tracks → tests/loop/test_model_pr.py::test_every_glob_of_this_checkouts_standard_names_a_file_git_tracks
+0083 R2: no other tracked file holds a copy of the list → tests/loop/test_model_pr.py::test_no_other_tracked_file_holds_a_copy_of_the_list
+0083 R9: parseReview reads ### Screens, and a round without one reads null → tests/loop/test_model_pr.py::test_parse_review_reads_screens_and_a_round_without_one_reads_none
+0083 R10: screensProblems names each thing wrong with the words → tests/loop/test_model_pr.py::test_screens_problems_names_each_thing_wrong_with_the_words
+0083 R11: an open low against the standard blocks; one that is not still does not → tests/loop/test_model_pr.py::test_an_open_low_against_the_standard_blocks_and_one_that_is_not_still_does_not
+0083 R12: a unit that changes no screen reads exactly as with no standard → tests/loop/test_model_pr.py::test_a_unit_that_changes_no_screen_reads_exactly_as_with_no_standard
+0083 R10: a UI unit whose pass has no ### Screens cannot ship, and next offers review → tests/loop/test_model_pr.py::test_a_ui_unit_whose_pass_has_no_screens_cannot_ship_and_next_offers_review
+0083 R10: each condition, broken once, closes ship and says which → tests/loop/test_model_pr.py::test_each_condition_broken_once_closes_ship_and_says_which
+0083 R10: valid ### Screens on a UI unit opens ship, pinned to the head → tests/loop/test_model_pr.py::test_valid_screens_on_a_ui_unit_open_ship_pinned_to_the_head
+0083 C7: neither origin/main nor main readable closes ship, and no round is offered → tests/loop/test_model_pr.py::test_neither_origin_main_nor_main_readable_closes_ship_and_no_round_is_offered
+0083 R12: no standard asks git nothing more; a standard and no screen, one diff more → tests/loop/test_model_pr.py::test_no_standard_asks_git_nothing_more_and_a_standard_with_no_screen_one_diff_more
+0085 R8 a: an incomplete round is read as one, with its verdict → tests/loop/test_model_pr.py::test_an_incomplete_round_is_read_as_one_with_its_verdict
+0085 R8 b: draft over an incomplete round offers review on green, impl on red → tests/loop/test_model_pr.py::test_draft_over_an_incomplete_round_offers_review_on_green_and_impl_on_red
+0085 R9 c: an incomplete round never changes how many rounds are used → tests/loop/test_model_pr.py::test_an_incomplete_round_never_changes_how_many_rounds_are_used
+0085 R8 d: a draft whose last round is not incomplete is still finished by hand → tests/loop/test_model_pr.py::test_a_draft_whose_last_round_is_not_incomplete_is_still_finished_by_hand
+0027 R1: a round that omits an earlier id is unfinished only under changes-requested → tests/loop/test_model_pr.py::test_a_round_that_omits_an_earlier_id_is_unfinished_only_under_changes_requested
+0027 R2 b: a changes-requested round that carries every earlier id counts exactly one more → tests/loop/test_model_pr.py::test_a_changes_requested_round_that_carries_every_earlier_id_counts_exactly_one_more
+0027 R3: an unfinished last round sends next to review with its ids, CI permitting, and leaves the review gate open → tests/loop/test_model_pr.py::test_an_unfinished_last_round_sends_next_to_review_with_its_ids_and_leaves_the_gate_open
+0027 R3: an unfinished round at the limit still stops at needs a person → tests/loop/test_model_pr.py::test_an_unfinished_round_at_the_limit_still_stops_at_needs_a_person
+0027 R2: an incomplete round 1 then an unfinished round 2 uses no round → tests/loop/test_model_pr.py::test_an_incomplete_first_round_then_an_unfinished_second_uses_no_round
+0027 R2 a: 0017's round 2 adds no round to the count → tests/loop/test_model_pr.py::test_the_dropped_round_of_the_old_review_adds_no_round_to_the_count
+0027 R4: reading 0017's rounds leaves review.md byte for byte → tests/loop/test_model_pr.py::test_reading_the_old_rounds_leaves_review_md_byte_for_byte
+0027 R5: the ship gate names the same dropped ids, in the same words → tests/loop/test_model_pr.py::test_the_ship_gate_names_the_same_dropped_ids_in_the_same_words
+0100: stageAt is the stage next names, else the last artifact on disk, else the first stage → tests/loop/test_model_rerun.py::test_stage_at_is_the_stage_next_names_else_the_last_artifact_else_the_first_stage
+0100: status --json carries at and next.why for every unit → tests/loop/test_model_rerun.py::test_status_json_carries_at_and_next_why_for_every_unit
+0100: the line coscc.loop next prints carries no why → tests/loop/test_model_rerun.py::test_the_line_next_prints_carries_no_why
+0054 R4: the hash above ## Answers does not move when an answer is appended → tests/loop/test_model_rerun.py::test_the_hash_above_answers_does_not_move_when_an_answer_is_appended
+0054: a ### Rerun block ends the answer before it and is never an answer → tests/loop/test_model_rerun.py::test_a_rerun_block_ends_the_answer_before_it_and_is_never_an_answer
+0054: a malformed ### Rerun block is ignored and reported → tests/loop/test_model_rerun.py::test_a_malformed_rerun_block_is_ignored_and_reported
+0054 R1, R2: a unit up to a passed review is offered intent, spec, plan and pr → tests/loop/test_model_rerun.py::test_a_unit_up_to_a_passed_review_is_offered_intent_spec_plan_and_pr
+0054 R3: the block names the stage, owner and a hash per artifact, and no approval → tests/loop/test_model_rerun.py::test_the_block_names_the_stage_owner_and_a_hash_per_artifact_and_no_approval
+0054 R5, R10: rerunning pr closes ship until pr and then review are written again → tests/loop/test_model_rerun.py::test_rerunning_pr_closes_ship_until_pr_and_then_review_are_written_again
+0054 R5: a stale artifact before the target closes its gate, and names the stage run again → tests/loop/test_model_rerun.py::test_a_stale_artifact_before_the_target_closes_its_gate_and_names_the_stage
+0054 R4: a changes-requested review and a spike the spec no longer needs are never stale → tests/loop/test_model_rerun.py::test_a_changes_requested_review_and_a_spike_the_spec_no_longer_needs_are_never_stale
+0054 R1: nothing is offered on a finished, held or closed unit → tests/loop/test_model_rerun.py::test_nothing_is_offered_on_a_finished_held_or_closed_unit
+0054 R1: only an accepted artifact is offered, spike only when the spec needs one → tests/loop/test_model_rerun.py::test_only_an_accepted_artifact_is_offered_and_spike_only_when_the_spec_needs_one
+0054: rerun refuses a stage it does not offer, an unknown one, and --repo → tests/loop/test_model_rerun.py::test_rerun_refuses_a_stage_it_does_not_offer_an_unknown_one_and_repo
+0106 R1: a draft intent with every question answered is rerun: intent, and nothing else changes → tests/loop/test_model_rerun.py::test_a_draft_intent_with_every_question_answered_is_rerun_intent_and_nothing_else
+0106 R1: one question left unanswered is no rerun → tests/loop/test_model_rerun.py::test_one_question_left_unanswered_is_no_rerun
+0106 R1: a held unit is no rerun, even with every question answered → tests/loop/test_model_rerun.py::test_a_held_unit_is_no_rerun_even_with_every_question_answered
+0106 R1: a draft with no questions is no rerun → tests/loop/test_model_rerun.py::test_a_draft_with_no_questions_is_no_rerun
+0106 R1: a spec draft answered in full is rerun: spec → tests/loop/test_model_rerun.py::test_a_spec_draft_answered_in_full_is_rerun_spec
+0106 R1: status --json and nextAction never carry rerun → tests/loop/test_model_rerun.py::test_status_json_and_next_action_never_carry_rerun
+0115 R1: a draft impl with an open question is listed and counted → tests/loop/test_model_rerun.py::test_a_draft_impl_with_an_open_question_is_listed_and_counted
+0115 R3: a draft impl answered in full is rerun: impl → tests/loop/test_model_rerun.py::test_a_draft_impl_answered_in_full_is_rerun_impl
+0115 R3: a draft impl with one question unanswered is no rerun → tests/loop/test_model_rerun.py::test_a_draft_impl_with_one_question_unanswered_is_no_rerun
+0115 R3: a draft impl with no questions is no rerun → tests/loop/test_model_rerun.py::test_a_draft_impl_with_no_questions_is_no_rerun
+0115 R3: a paused or dropped unit with an answered draft impl is no rerun → tests/loop/test_model_rerun.py::test_a_paused_or_dropped_unit_with_an_answered_draft_impl_is_no_rerun
+0115 R3: plan.md draft keeps the impl gate closed → tests/loop/test_model_rerun.py::test_plan_draft_keeps_the_impl_gate_closed
+0115 R4: status --json names the stages an answered draft runs again → tests/loop/test_model_rerun.py::test_status_json_names_the_stages_an_answered_draft_runs_again
+0111 R1, R2: a UI unit whose clean manifest names a rewritten head is taken again → tests/loop/test_model_rerun.py::test_a_ui_unit_whose_clean_manifest_names_a_rewritten_head_is_taken_again
+0111 R2: each condition, broken once, is no retake and says which → tests/loop/test_model_rerun.py::test_each_condition_broken_once_is_no_retake_and_says_which
+0111 R1: no standard, or one with no globs, is ui [] and asks git no diff → tests/loop/test_model_rerun.py::test_no_standard_or_one_with_no_globs_is_ui_empty_and_asks_git_no_diff
+0111 R1: git that cannot diff is no retake, and why is its error; main alone is enough → tests/loop/test_model_rerun.py::test_git_that_cannot_diff_is_no_retake_and_why_is_its_error_and_main_alone_is_enough
+0111 R9: screensAnswer and the ship gate leave out the same files → tests/loop/test_model_rerun.py::test_screens_answer_and_the_ship_gate_leave_out_the_same_files
+0111 R1: coscc.loop screens, on a real repository → tests/loop/test_model_rerun.py::test_screens_on_a_real_repository
+0112 R5: parseShip reads Round from the header and the first Refused line of What went out → tests/loop/test_model_rerun.py::test_parse_ship_reads_round_from_the_header_and_the_first_refused_line_of_what_went_out
+0112 R5: readUnit attaches ship only to a ship.md that says something → tests/loop/test_model_rerun.py::test_read_unit_attaches_ship_only_to_a_ship_md_that_says_something
+0112 R3: a pull request behind origin/main closes ship, says by how much, and names no full sha → tests/loop/test_model_rerun.py::test_a_pull_request_behind_origin_main_closes_ship_says_by_how_much_and_names_no_full_sha
+0112 R3: no origin/main here, or origin/main an ancestor of the head: ship opens as before → tests/loop/test_model_rerun.py::test_no_origin_main_here_or_origin_main_an_ancestor_of_the_head_opens_ship_as_before
+0112 R3: a head already rebased goes to review, not to the behind reason → tests/loop/test_model_rerun.py::test_a_head_already_rebased_goes_to_review_not_to_the_behind_reason
+0112 R6 a: a draft ship.md from an older round is a missing one: ship, review, or the gate's reason → tests/loop/test_model_rerun.py::test_a_draft_ship_md_from_an_older_round_is_a_missing_one
+0112 R6 b: a draft ship.md from the last round asks the gate, and an open one stops on the Refused line → tests/loop/test_model_rerun.py::test_a_draft_ship_md_from_the_last_round_asks_the_gate_and_an_open_one_stops_on_refused
+0112 R6 c: a draft ship.md with no Round stops as it always did → tests/loop/test_model_rerun.py::test_a_draft_ship_md_with_no_round_stops_as_it_always_did
+0112 R2: a pass, then a rebase, with no ship.md, is review — not a draft stop → tests/loop/test_model_rerun.py::test_a_pass_then_a_rebase_with_no_ship_md_is_review_not_a_draft_stop
+0112 review F1: status offers no acceptance of a ship.md naming its Round, and still does of one naming none → tests/loop/test_model_rerun.py::test_status_offers_no_acceptance_of_a_ship_md_naming_its_round_only
+0067 R1: normalizePatch drops index lines and hunk numbers, and keeps every other byte → tests/loop/test_model_rebase.py::test_normalize_patch_drops_index_lines_and_hunk_numbers_and_keeps_every_other_byte
+0067 R1: a merge-base that names no commit is an error, never a clean rebase → tests/loop/test_model_rebase.py::test_a_merge_base_that_names_no_commit_is_an_error_never_a_clean_rebase
+0067 R2: a rewritten ref whose patch is unchanged opens ship once CI is green, and the gate names both commits → tests/loop/test_model_rebase.py::test_a_rewritten_ref_whose_patch_is_unchanged_opens_ship_once_ci_is_green
+0067 review F1: a branch ref rewritten clean while the pull request head is still the reviewed commit names no rebase → tests/loop/test_model_rebase.py::test_a_branch_ref_rewritten_clean_while_the_pull_request_head_is_the_reviewed_commit
+0067 R3: red, pending, none or unreadable CI on a clean rebase closes ship with said.ci and never said.moved → tests/loop/test_model_rebase.py::test_red_pending_none_or_unreadable_ci_on_a_clean_rebase_closes_ship_with_the_ci_reason
+0067 R4: a patch that differs names its files, one that cannot be compared quotes git, and both still ask for a round → tests/loop/test_model_rebase.py::test_a_patch_that_differs_names_its_files_and_one_that_cannot_be_compared_quotes_git
+0067 R7: a unit not rebased asks git no merge-base to trunk, no patch diff and gh no checks → tests/loop/test_model_rebase.py::test_a_unit_not_rebased_asks_git_no_merge_base_to_trunk_no_patch_and_gh_no_checks
+0067 R5: next offers ship on a green clean rebase, impl on red, nothing while CI runs or reports none — never review → tests/loop/test_model_rebase.py::test_next_offers_ship_on_a_green_clean_rebase_impl_on_red_and_nothing_while_ci_runs
+0067 R5: a ship refused as not up to date and then rebased clean is offered ship again; another refusal still stops → tests/loop/test_model_rebase.py::test_a_ship_refused_as_not_up_to_date_and_then_rebased_clean_is_offered_ship_again
+0067 R6: gate prints a second line naming the reviewed commit and the new head, with no full sha → tests/loop/test_model_rebase.py::test_gate_prints_a_second_line_naming_the_reviewed_commit_and_the_new_head
+0067 R9: main inserts a line far from the hunk — a clean rebase, ship opens on green, next offers ship → tests/loop/test_model_rebase.py::test_main_inserts_a_line_far_from_the_hunk_a_clean_rebase_ship_opens_on_green
+0067 R9: main changes a line of the 3-line context — not clean, next offers review → tests/loop/test_model_rebase.py::test_main_changes_a_line_of_the_context_not_clean_next_offers_review
+0067 R9: a conflict resolved on the adjacent line — not clean → tests/loop/test_model_rebase.py::test_a_conflict_resolved_on_the_adjacent_line_is_not_clean
+0067 R9: a binary file the unit changes comes out different while the text is identical — not clean, and the file is named → tests/loop/test_model_rebase.py::test_a_binary_file_that_comes_out_different_with_identical_text_is_not_clean
+0067 R9: red, pending or none on a clean rebase closes ship, and next never offers review → tests/loop/test_model_rebase.py::test_red_pending_or_none_on_a_clean_rebase_on_a_real_repository_never_offers_review
+0067 R9: a head that differs only under .cos/<unit>/ is clean → tests/loop/test_model_rebase.py::test_a_head_that_differs_only_under_the_units_own_files_is_clean
+0121 R1: changes asked, then only a clean rebase — next offers impl and asks gh no checks → tests/loop/test_model_rebase.py::test_changes_asked_then_only_a_clean_rebase_next_offers_impl_and_asks_gh_no_checks
+0121 R1: the 0115 case on a real repository — round 2 asked for changes, main moved, the branch was rebased, CI is green: impl → tests/loop/test_model_rebase.py::test_changes_asked_main_moved_and_the_branch_rebased_on_a_real_repository_is_impl
+0121 R2: a rebase with a fix commit on top goes to review on green, impl on red, nothing while CI runs → tests/loop/test_model_rebase.py::test_a_rebase_with_a_fix_commit_on_top_goes_to_review_on_green_impl_on_red
+0121 R2: a rebase whose patch differs in one file names it and goes to review → tests/loop/test_model_rebase.py::test_a_rebase_whose_patch_differs_in_one_file_names_it_and_goes_to_review
+0121 R3: a rewrite that cannot be compared goes to review on green and says why → tests/loop/test_model_rebase.py::test_a_rewrite_that_cannot_be_compared_goes_to_review_on_green_and_says_why
+0121 R4: a head that was not rewritten asks git for no patch and no merge-base to trunk → tests/loop/test_model_rebase.py::test_a_head_that_was_not_rewritten_asks_git_for_no_patch_and_no_merge_base_to_trunk
+0125 R1: a screenshot line may carry a parenthesised note after its size, and size drops it → tests/loop/test_model_rebase.py::test_a_screenshot_line_may_carry_a_parenthesised_note_after_its_size
+0125 R2: 0120's five passing rounds with "1440×900 (full page)" open ship → tests/loop/test_model_rebase.py::test_five_passing_rounds_with_a_full_page_screenshot_open_ship
+0125 R3: one pass the ship gate stays closed on sends next to review, and the review gate names why → tests/loop/test_model_rebase.py::test_one_pass_the_ship_gate_stays_closed_on_sends_next_to_review_and_the_gate_names_why
+0125 R3: the review gate adds nothing when the stop has come, when ship would open, or when the last round did not pass → tests/loop/test_model_rebase.py::test_the_review_gate_adds_nothing_when_the_stop_has_come_or_ship_would_open
+0125 R4: a second pass on the same head that leaves ship closed stops, with the gate's reasons → tests/loop/test_model_rebase.py::test_a_second_pass_on_the_same_head_that_leaves_ship_closed_stops_with_the_gates_reasons
+0125 R4: the same stop in the ship-refused branch → tests/loop/test_model_rebase.py::test_the_same_stop_in_the_ship_refused_branch
+0125 R4: two passes on different heads do not stop → tests/loop/test_model_rebase.py::test_two_passes_on_different_heads_do_not_stop
+0125 R4: a round whose reviewed commit is not here stops and says so → tests/loop/test_model_rebase.py::test_a_round_whose_reviewed_commit_is_not_here_stops_and_says_so
+0125 review F2: where git cannot compare the two rounds, the stop does not say they share a head → tests/loop/test_model_rebase.py::test_where_git_cannot_compare_the_two_rounds_the_stop_does_not_say_they_share_a_head
+0125 review F1: a pull request behind the reviewed commit gets one retry, then stops → tests/loop/test_model_rebase.py::test_a_pull_request_behind_the_reviewed_commit_gets_one_retry_then_stops
+0125 R6: a commit outside .cos/ on the pull request head, or a rejected review, is the way out → tests/loop/test_model_rebase.py::test_a_commit_outside_the_units_files_on_the_head_or_a_rejected_review_is_the_way_out
+0125 R7: the one retry does not read COS_REVIEW_ROUNDS → tests/loop/test_model_rebase.py::test_the_one_retry_does_not_read_the_review_round_limit
+0116 R1: a merged pull request opens ship to record it when its branch is gone, local and origin → tests/loop/test_model_rebase.py::test_a_merged_pull_request_opens_ship_to_record_it_when_its_branch_is_gone
+0116 R1: a merged pull request opens ship to record it while its branch is still here → tests/loop/test_model_rebase.py::test_a_merged_pull_request_opens_ship_to_record_it_while_its_branch_is_still_here
+0116 R1: the open line names the pull request, the merge commit and when it merged, and no --match-head-commit → tests/loop/test_model_rebase.py::test_the_open_line_names_the_pull_request_the_merge_commit_and_when_it_merged
+0116 R2: a merge commit that cannot be read, is not here, or is not on origin/main closes ship: fetch, then ask again → tests/loop/test_model_rebase.py::test_a_merge_commit_that_cannot_be_read_is_not_here_or_not_on_trunk_closes_ship
+0116 R3: a pull request closed without merging still closes ship with the old sentence, and the unit is not finished → tests/loop/test_model_rebase.py::test_a_pull_request_closed_without_merging_closes_ship_with_the_old_sentence
+0116 R4: next offers ship for a merged pull request when ship.md is missing, stale or a refused draft, and never says MERGED, not open → tests/loop/test_model_rebase.py::test_next_offers_ship_for_a_merged_pull_request_when_ship_md_is_missing_stale_or_refused
+0116 R5: an accepted ship.md is finished for a merged pull request without asking gh, with or without a repository → tests/loop/test_model_rebase.py::test_an_accepted_ship_md_is_finished_for_a_merged_pull_request_without_asking_gh
+0081 R3: a more rounds block lifts the review limit of its unit alone → tests/loop/test_model_rebase.py::test_a_more_rounds_block_lifts_the_review_limit_of_its_unit_alone
+0081 R7: a unit that used its granted round needs a person again at the new limit → tests/loop/test_model_rebase.py::test_a_unit_that_used_its_granted_round_needs_a_person_again_at_the_new_limit
+0081 R2: a more rounds block with no Decided by or no Rounds line is not counted and is reported → tests/loop/test_model_rebase.py::test_a_more_rounds_block_with_no_decided_by_or_no_rounds_line_is_not_counted
+0081 R2: a more rounds block is never an answer and never the tail of an F answer → tests/loop/test_model_rebase.py::test_a_more_rounds_block_is_never_an_answer_and_never_the_tail_of_a_finding_answer
+0081 R4: moreRounds is attached only to a unit out of rounds and neither field to any other unit → tests/loop/test_model_rebase.py::test_more_rounds_is_attached_only_to_a_unit_out_of_rounds_and_to_no_other
+0081 R9: a more rounds block changes no answer of the ship gate → tests/loop/test_model_rebase.py::test_a_more_rounds_block_changes_no_answer_of_the_ship_gate
+0103 R8: #97 — branch-name red while tests pend: next stops, needs a person, with the check and check-branch's line → tests/loop/test_model_rebase.py::test_a_branch_name_red_while_tests_pend_next_stops_and_needs_a_person
+0103 R8: a code failure goes back to impl with the red line byte for byte → tests/loop/test_model_rebase.py::test_a_code_failure_goes_back_to_impl_with_the_red_line_byte_for_byte
+0103 R4 a: a red branch-name check on a valid head goes to impl, saying why cannot be told from here → tests/loop/test_model_rebase.py::test_a_red_branch_name_check_on_a_valid_head_goes_to_impl_saying_why_cannot_be_told
+0103 R4 b, c: a bad head no red check runs check-branch for, or a head gh cannot read, goes to impl with the line kept and a clause after it → tests/loop/test_model_rebase.py::test_a_bad_head_no_red_check_runs_check_branch_for_or_a_head_gh_cannot_read_goes_to_impl
+0103 R3: every branch of next that reads CI stops on the same line, and the review and ship gates close on it → tests/loop/test_model_rebase.py::test_every_branch_of_next_that_reads_ci_stops_on_the_same_line_and_the_gates_close_on_it
+0136 R11: next and gate name CI, a person, a merge made and a closed unit by code → tests/loop/test_model_links.py::test_next_and_gate_name_ci_a_person_a_merge_made_and_a_closed_unit_by_code
+0136 R11: every closed gate names at least one code → tests/loop/test_model_links.py::test_every_closed_gate_names_at_least_one_code
+0136 R11: gate --json prints the lines it prints without it, its codes, and the same exit → tests/loop/test_model_links.py::test_gate_json_prints_the_lines_it_prints_without_it_its_codes_and_the_same_exit
+0103 R7: a red read asks gh once more for the head, a green read never does → tests/loop/test_model_links.py::test_a_red_read_asks_gh_once_more_for_the_head_and_a_green_read_never_does
+0103 R2 a: branchChecks finds the job whose run step calls coscc.loop check-branch, by its name or its key, and nothing else → tests/loop/test_model_links.py::test_branch_checks_finds_the_job_whose_run_step_calls_coscc_loop_check_branch
+0103: makeProbe reads the workflows of the repository it is given, and none when it has none → tests/loop/test_model_links.py::test_make_probe_reads_the_workflows_of_the_repository_it_is_given_and_none_when_it_has_none
+0103: check-branch prints notAWorkBranch's line unchanged → tests/loop/test_model_links.py::test_check_branch_prints_not_a_work_branchs_line_unchanged
+0040 R1: new-idea gives 0001 then 0002 and leaves new-path numbering alone → tests/loop/test_model_links.py::test_new_idea_gives_one_then_two_and_leaves_new_path_numbering_alone
+0040 R1: new-idea refuses a bad slug with exit 2 → tests/loop/test_model_links.py::test_new_idea_refuses_a_bad_slug_with_exit_2
+0040 R2, R3: a store with ideas/ reports no problem about it → tests/loop/test_model_links.py::test_a_store_with_ideas_reports_no_problem_about_it
+0040 R2: status --json without ideas/ is byte-identical → tests/loop/test_model_links.py::test_status_json_without_ideas_is_byte_identical
+0040 R4: a child unit carries idea, repo and dependsOn in status --json → tests/loop/test_model_links.py::test_a_child_unit_carries_idea_repo_and_depends_on_in_status_json
+0040 R4: a unit without those headers has none of the keys → tests/loop/test_model_links.py::test_a_unit_without_those_headers_has_none_of_the_keys
+0040 R4: the header fields read to whitespace, less the closing dot, and a list splits on commas → tests/loop/test_model_links.py::test_the_header_fields_read_to_whitespace_less_the_closing_dot_and_a_list_splits_on_commas
+0040 R3: a line under ## Units that is not the grammar is a problem of that idea → tests/loop/test_model_links.py::test_a_line_under_units_that_is_not_the_grammar_is_a_problem_of_that_idea
+0040 R6: a missing peer, a missing idea file and an unlisted unit each land in problems → tests/loop/test_model_links.py::test_a_missing_peer_a_missing_idea_file_and_an_unlisted_unit_each_land_in_problems
+0040 R5, since 0135: --peer exits 2 wherever it is given → tests/loop/test_model_links.py::test_peer_exits_2_wherever_it_is_given
+0040 R7: impl gate stays shut while the dependency's ship.md is not accepted → tests/loop/test_model_links.py::test_impl_gate_stays_shut_while_the_dependencys_ship_is_not_accepted
+0139 R5: a dependency opens on the merged row, not on ship.md → tests/loop/test_model_links.py::test_a_dependency_opens_on_the_merged_row_not_on_ship_md
+0040 R7: next says why dependency and names the ref → tests/loop/test_model_links.py::test_next_says_why_dependency_and_names_the_ref
+0040 R8: impl gate opens once the dependency's ship.md is accepted → tests/loop/test_model_links.py::test_impl_gate_opens_once_the_dependencys_ship_is_accepted
+0040 R7: a workspace the snapshot does not name shuts impl and says so → tests/loop/test_model_links.py::test_a_workspace_the_snapshot_does_not_name_shuts_impl_and_says_so
+0040 R9: a Depends on that differs from the idea's line shuts impl → tests/loop/test_model_links.py::test_a_depends_on_that_differs_from_the_ideas_line_shuts_impl
+0040 R7: a dropped dependency shuts impl and says dropped → tests/loop/test_model_links.py::test_a_dropped_dependency_shuts_impl_and_says_dropped
+0144 R9: a backlog relation to a unit not shipped shuts impl, and merged opens it → tests/loop/test_model_links.py::test_a_backlog_relation_to_a_unit_not_shipped_shuts_impl_and_merged_opens_it
+0144 R10: a backlog relation to a rejected or dropped unit holds nothing → tests/loop/test_model_links.py::test_a_backlog_relation_to_a_rejected_or_dropped_unit_holds_nothing
+0144: status carries the source of a backlog dependency, and a unit with none carries no source → tests/loop/test_model_links.py::test_status_carries_the_source_of_a_backlog_dependency_and_a_unit_with_none_carries_none
+0040 R9: an unreadable Idea: shuts impl but no other gate → tests/loop/test_model_links.py::test_an_unreadable_idea_shuts_impl_but_no_other_gate
+0040 R7: a red check that sends the work back to impl waits on the dependency too → tests/loop/test_model_links.py::test_a_red_check_that_sends_the_work_back_to_impl_waits_on_the_dependency_too
+0049 R3: titleProblem refuses the titles the spec names and passes the one it names → tests/loop/test_model_links.py::test_title_problem_refuses_the_titles_the_spec_names_and_passes_the_one_it_names
+0049 R3: an em dash passes and a decomposed Vietnamese letter does not → tests/loop/test_model_links.py::test_an_em_dash_passes_and_a_decomposed_vietnamese_letter_does_not
+0049 R3: a unit with no type is named as the reason → tests/loop/test_model_links.py::test_a_unit_with_no_type_is_named_as_the_reason
+0049 R4: pr-text prints titleProblem beside the fields it printed before, and its exit code is unchanged → tests/loop/test_model_links.py::test_pr_text_prints_title_problem_beside_the_fields_it_printed_before_and_exits_as_before
+0049 R5: the review gate is closed on a title outside the grammar, before gh is asked → tests/loop/test_model_links.py::test_the_review_gate_is_closed_on_a_title_outside_the_grammar_before_gh_is_asked
+0049 R5: next names no stage for a unit whose pr.md title is outside the grammar → tests/loop/test_model_links.py::test_next_names_no_stage_for_a_unit_whose_pr_md_title_is_outside_the_grammar
+0049 R6: the ship gate is closed on a title outside the grammar, before gh is asked → tests/loop/test_model_links.py::test_the_ship_gate_is_closed_on_a_title_outside_the_grammar_before_gh_is_asked
+0049 R6: the ship gate is closed when the open pull request's title differs from pr.md, and names both → tests/loop/test_model_links.py::test_the_ship_gate_is_closed_when_the_open_pull_requests_title_differs_and_names_both
+0049 R6: titles that differ only in surrounding whitespace pass → tests/loop/test_model_links.py::test_titles_that_differ_only_in_surrounding_whitespace_pass
+0049 R6: a merged pull request's title is not compared → tests/loop/test_model_links.py::test_a_merged_pull_requests_title_is_not_compared
+0049 R6: the title is read from the one gh pr view the ship gate already asks → tests/loop/test_model_links.py::test_the_title_is_read_from_the_one_gh_pr_view_the_ship_gate_already_asks
+0049: next offers ship when a differing title is the only thing closing its gate → tests/loop/test_model_links.py::test_next_offers_ship_when_a_differing_title_is_the_only_thing_closing_its_gate
+0049 R1: no skill opens a pull request with --fill → tests/loop/test_model_links.py::test_no_skill_opens_a_pull_request_with_fill
+0139 R12: next never names write-pr or write-ship → tests/loop/test_model_links.py::test_next_never_names_write_pr_or_write_ship
+meta prints every field status reads, from the same parsers → tests/loop/test_model_links.py::test_meta_prints_every_field_status_reads_from_the_same_parsers
+meta of one unit reads only the artifacts named, and intent.md brings its header → tests/loop/test_model_links.py::test_meta_of_one_unit_reads_only_the_artifacts_named_and_intent_md_brings_its_header
+0135 R6: stripping Status, Type, Idea, Depends on, Open questions and Answers lines leaves status, next and gate unchanged → tests/loop/test_model_links.py::test_stripping_status_type_idea_depends_on_open_questions_and_answers_lines_changes_nothing
+0135 R6: a deciding command without --state exits 2 and says it needs the app → tests/loop/test_model_links.py::test_a_deciding_command_without_state_exits_2_and_says_it_needs_the_app
+0135 R6: changing a status in the snapshot changes the output → tests/loop/test_model_links.py::test_changing_a_status_in_the_snapshot_changes_the_output
+status --json of the fixture store is what it was before meta existed → tests/loop/test_model_links.py::test_status_json_of_the_fixture_store_is_what_it_was_before_meta_existed
+next, status --json and gate at every stage answer every fixture unit as before lanes → tests/loop/test_model_links.py::test_next_status_json_and_gate_at_every_stage_answer_every_fixture_unit_as_before_lanes
+a fix with its reproduction, a cited expected result and the actual one is in the fast lane → tests/loop/test_model_links.py::test_a_fix_with_its_reproduction_a_cited_expected_result_and_the_actual_one_is_fast
+a unit that is not a fix is in the full lane, and nothing is missing for it → tests/loop/test_model_links.py::test_a_unit_that_is_not_a_fix_is_in_the_full_lane_and_nothing_is_missing_for_it
+a fix missing one mark is in the full lane, and laneMissing names that mark → tests/loop/test_model_links.py::test_a_fix_missing_one_mark_is_in_the_full_lane_and_lane_missing_names_that_mark
+the expected result cites one relative path outside .cos/, and says something besides → tests/loop/test_model_links.py::test_the_expected_result_cites_one_relative_path_outside_cos_and_says_something_besides
+a spec, a plan or Lane: full in the impl header keeps a fix in the full lane, and it still entered → tests/loop/test_model_links.py::test_a_spec_a_plan_or_lane_full_in_the_impl_header_keeps_a_fix_in_full_and_it_still_entered
+a fix in the fast lane goes from its accepted intent to impl, and spec, spike and plan are not its stages → tests/loop/test_model_links.py::test_a_fix_in_the_fast_lane_goes_from_its_accepted_intent_to_impl
+a fix in the fast lane still waits on its intent being accepted → tests/loop/test_model_links.py::test_a_fix_in_the_fast_lane_still_waits_on_its_intent_being_accepted
+gate impl in the fast lane stays shut while the intent is stale, the unit is held, or a dependency is not merged → tests/loop/test_model_links.py::test_gate_impl_in_the_fast_lane_stays_shut_while_stale_held_or_a_dependency_is_not_merged
+a fix whose intent cites no source walks the full lane from spec → tests/loop/test_model_links.py::test_a_fix_whose_intent_cites_no_source_walks_the_full_lane_from_spec
+review and ship ask a fix in the fast lane what they ask one in the full lane → tests/loop/test_model_links.py::test_review_and_ship_ask_a_fix_in_the_fast_lane_what_they_ask_one_in_the_full_lane
+an impl that takes a fix out of the fast lane sends it to spec, and impl runs again after the plan → tests/loop/test_model_links.py::test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl_runs_after_plan

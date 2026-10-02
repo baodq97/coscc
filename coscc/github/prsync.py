@@ -1,7 +1,7 @@
 """Puts `pr.md`'s title and body onto its pull request after a `pr` step.
 
 Only reads title and body (`gh pr view --json title,body`) and replaces them (`gh pr edit
---title=<title> --body-file -`); no other flag. The text is what `cos.mjs pr-text` cut from
+--title=<title> --body-file -`); no other flag. The text is what `pr-text` of the loop cut from
 `pr.md`.
 
 It overwrites: a description edited on GitHub is replaced and the old text is kept nowhere.

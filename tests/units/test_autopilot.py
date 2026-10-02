@@ -57,7 +57,7 @@ class TheCodesAreRead(unittest.TestCase):
         )
 
     def test_a_skip_no_person_decided_stops_for_a_person(self):
-        # `cos.mjs` names no stage for it, since running the spec again would only skip again; the
+        # The loop names no stage for it, since running the spec again would only skip again; the
         # stop is `b`, a person's, never `f`'s "no stage it can name".
         said = nxt(
             "",
@@ -1091,7 +1091,7 @@ class Reruns(unittest.TestCase):
         self.assertTrue(ap.answer_completes(u, "spec.md", {1, 2}))
 
     def test_impl_completes_and_review_never_does(self):
-        """`impl` is one of the stages `cos.mjs` lists; `review` is not."""
+        """`impl` is one of the stages the loop lists; `review` is not."""
         qs = [
             {"artifact": "impl.md", "n": 1, "answered": True},
             {"artifact": "review.md", "n": 1, "answered": True},
@@ -1101,15 +1101,14 @@ class Reruns(unittest.TestCase):
         self.assertFalse(ap.answer_completes(u, "review.md", {"F1"}))
 
     def test_a_board_read_without_after_answers_completes_nothing(self):
-        """An older `cos.mjs` sends no list, and no stage is guessed in its place."""
+        """An older loop sends no list, and no stage is guessed in its place."""
         qs = [{"artifact": "intent.md", "n": 1, "answered": True}]
         u = {k: v for k, v in self.board_row(qs).items() if k != "after_answers"}
         self.assertFalse(ap.answer_completes(u, "intent.md", {1}))
 
     def test_no_module_keeps_its_own_copy_of_the_rerun_stages(self):
-        """The list lives in `cos.mjs` alone. The four stages `intent`, `spec`, `spike` and `plan`,
-        in that order, appear in no module of the app. `coscc/loop/` is `cos.mjs` ported, the
-        one other definition until `cos.mjs` goes."""
+        """The list lives in `coscc/loop/` alone. The four stages `intent`, `spec`, `spike` and `plan`,
+        in that order, appear in no other module of the app."""
         literal = re.compile(r"""["']intent["'],\s*["']spec["'],\s*["']spike["'],\s*["']plan["']""")
         package = Path(ap.__file__).resolve().parents[1]
         copies = [

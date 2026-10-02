@@ -1,6 +1,6 @@
 """A person pauses, drops or resumes a unit from the board.
 
-`cos.mjs` decides what a hold is and which moves are allowed (`parseHold`, `HOLD_MOVES`); this
+The loop decides what a hold is and which moves are allowed (`parseHold`, `HOLD_MOVES`); this
 module only reads the board's `hold` and `hold_moves`. The pure functions `refusal` and
 `record` shape what `Answers.hold` writes; the two side effects of a drop, `close_pr` and
 `remove_tree`, each return one `{effect, result, detail}` and never raise, so one failing

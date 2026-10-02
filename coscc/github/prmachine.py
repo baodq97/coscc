@@ -56,7 +56,7 @@ class PrError(RuntimeError):
 class Unit:
     """One unit as the machine needs it. `workspace` is the key `transitions` uses; `tree`
     the checkout git and `gh` run in; `branch` the one it is on and `expected` the one
-    `cos.mjs unit-branch` names for it."""
+    `unit-branch` of the loop names for it."""
 
     workspace: str
     name: str
@@ -102,8 +102,8 @@ class Outcome:
 
 
 def title_of(name: str, type_: str | None) -> str:
-    """`<type>(<NNNN>): <slug, hyphens as spaces>`, the grammar `cos.mjs titleProblem` holds a
-    title to. The slug is English by `cos.mjs new-path`'s grammar.
+    """`<type>(<NNNN>): <slug, hyphens as spaces>`, the grammar the loop's `title_problem` holds a
+    title to. The slug is English by the grammar of `new-path`.
     """
     number, _, slug = name.partition("_")
     return f"{type_ or 'chore'}({number}): {slug.replace('-', ' ')}"
@@ -120,7 +120,7 @@ def body_of(name: str) -> str:
 
 def render_pr(u: Unit, title: str, url: str, head: str, at: str = "") -> str:
     """`at` is when the app wrote it: a `pr` run again writes other bytes, so the artifact it made
-    stale is not stale any more (`cos.mjs` compares hashes).
+    stale is not stale any more (the loop compares hashes).
     """
     return (
         f"# PR: {title}\n"
@@ -150,8 +150,8 @@ def render_ship(
     merge_commit: str = "",
     refused: str = "",
 ) -> str:
-    """`Round:` on the header line and `Refused:` under `## What went out` are what `cos.mjs
-    parseShip` reads.
+    """`Round:` on the header line and `Refused:` under `## What went out` are what the loop's
+    `parse_ship` reads.
     """
     lines = [
         f"# Ship: {u.name}",
@@ -552,7 +552,7 @@ class Machine:
                 "refused",
                 reasons=("bad-branch",),
                 guard="branch-named",
-                detail=f"the tree is on {u.branch or 'no branch'}, not {u.expected or 'a branch cos.mjs names'}",
+                detail=f"the tree is on {u.branch or 'no branch'}, not {u.expected or 'a branch the loop names'}",
             )
         try:
             await (self._push or _push)(u.tree, u.branch)

@@ -1,5 +1,5 @@
 """The fixture store (`testdata/meta_store`) holds one unit of each kind the plan's step 1 names,
-and `testdata/meta_store_before.json` is `status --json` of it, taken by `cos.mjs` before this unit
+and `testdata/meta_store_before.json` is `status --json` of it, taken by the loop before this unit
 changed it."""
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ import asyncio
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,14 +27,25 @@ WS = "/w/proj"
 NAMES = {"proj": WS}
 
 
-def status(store: Path, snapshot: dict) -> dict:
-    done = subprocess.run(
-        ["node", str(harness.script()), "--root", str(store), "--state", "-", "status", "--json"],
-        input=json.dumps(snapshot),
+REPO = HERE.parents[1]
+
+
+def loop(*args: str, input: str | None = None, check: bool = True) -> subprocess.CompletedProcess:
+    """`python -m coscc.loop <args>` as the app runs it, for a test that reads the loop's own words."""
+    return subprocess.run(
+        [sys.executable, "-m", "coscc.loop", *args],
+        input=input,
         capture_output=True,
         text=True,
         env=harness.child_env(),
-        check=True,
+        cwd=REPO,
+        check=check,
+    )
+
+
+def status(store: Path, snapshot: dict) -> dict:
+    done = loop(
+        "--root", str(store), "--state", "-", "status", "--json", input=json.dumps(snapshot)
     )
     return json.loads(done.stdout)
 
@@ -60,7 +72,7 @@ def ingest(service, cwd: str, unit: str) -> None:
 
 
 def snapshot_of(root, peers=(), units_=None) -> dict:
-    """Test glue (plan step 8): the snapshot the app would hand `cos.mjs` for the store
+    """Test glue (plan step 8): the snapshot the app would hand the loop for the store
     `root`, and for each `(name, store)` of `peers`, built by the app's own import into a
     throwaway database. A store is keyed by its resolved path."""
     with tempfile.TemporaryDirectory() as d:
@@ -75,7 +87,7 @@ def snapshot_of(root, peers=(), units_=None) -> dict:
 
 class WithSnapshot:
     """Test glue (plan step 8): `coscc/units/board.py` as a test module sees it, each question
-    to `cos.mjs` handed `snapshot_of` its store when the test gave no `state` — what
+    to the loop handed `snapshot_of` its store when the test gave no `state` — what
     `Workspaces.snapshot` hands it in the app. Every other attribute, and every patch a test
     sets on it, is the module's own."""
 
@@ -214,39 +226,17 @@ class TheSnapshotDecides(Base):
         snap = self.meta.snapshot(WS, NAMES, ["0017_linked"])
         self.assertEqual(sorted(snap["units"]), ["proj/0010_full-loop", "proj/0017_linked"])
         self.assertEqual(snap["ideas"]["proj"][0]["id"], "0001_x")
-        done = subprocess.run(
-            [
-                "node",
-                str(harness.script()),
-                "--root",
-                str(self.store),
-                "--state",
-                "-",
-                "next",
-                "0017_linked",
-            ],
-            input=json.dumps(snap),
-            capture_output=True,
-            text=True,
-            env=harness.child_env(),
-            check=True,
+        done = loop(
+            "--root", str(self.store), "--state", "-", "next", "0017_linked", input=json.dumps(snap)
         )
-        full = subprocess.run(
-            [
-                "node",
-                str(harness.script()),
-                "--root",
-                str(self.store),
-                "--state",
-                "-",
-                "next",
-                "0017_linked",
-            ],
+        full = loop(
+            "--root",
+            str(self.store),
+            "--state",
+            "-",
+            "next",
+            "0017_linked",
             input=json.dumps(self.meta.snapshot(WS, NAMES)),
-            capture_output=True,
-            text=True,
-            env=harness.child_env(),
-            check=True,
         )
         self.assertEqual(json.loads(done.stdout), json.loads(full.stdout))
 
@@ -287,23 +277,17 @@ class TheSnapshotDecides(Base):
             sorted(snap["units"]),
             ["proj/0010_full-loop", "proj/0013_open-question", "proj/0017_linked"],
         )
-        gate = subprocess.run(
-            [
-                "node",
-                str(harness.script()),
-                "--root",
-                str(self.store),
-                "--state",
-                "-",
-                "gate",
-                "0017_linked",
-                "impl",
-                "--json",
-            ],
+        gate = loop(
+            "--root",
+            str(self.store),
+            "--state",
+            "-",
+            "gate",
+            "0017_linked",
+            "impl",
+            "--json",
             input=json.dumps(snap),
-            capture_output=True,
-            text=True,
-            env=harness.child_env(),
+            check=False,
         )
         self.assertIn("waiting-on", json.loads(gate.stdout)["reasons"])
 
@@ -371,14 +355,14 @@ class TheIngest(Base):
 
     def test_a_failed_ingest_is_a_problem_on_the_card(self):
         self.meta.import_store(WS, self.store)
-        self.meta.ingest_failed(WS, "0013_open-question", "cos.mjs meta exited 2")
+        self.meta.ingest_failed(WS, "0013_open-question", "coscc.loop meta exited 2")
         unit = next(
             u
             for u in status(self.store, self.meta.snapshot(WS, NAMES))["units"]
             if u["name"] == "0013_open-question"
         )
         self.assertTrue(
-            any("cos.mjs meta exited 2" in p for p in unit["problems"]), unit["problems"]
+            any("coscc.loop meta exited 2" in p for p in unit["problems"]), unit["problems"]
         )
         self.assertEqual(
             self.meta.unknowns([WS]),

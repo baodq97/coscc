@@ -17,20 +17,20 @@ accepts its own, so `Status: accepted` records readiness rather than approval;
 `.claude/CLAUDE.md`, under `## What is deliberately not built`, says what was traded
 away for that and what is left.
 
-The harness is entirely inside `.claude/`:
+The harness is inside `.claude/`; the mechanical checks — numbering, gates, status — are the
+app's `coscc.loop`:
 
 | Path | What it is |
 |---|---|
 | `.claude/CLAUDE.md` | Every rule that holds in every session. Claude Code loads it automatically. Read this first. |
 | `.claude/rules/` | Rules that load only when a session touches the files they name. |
 | `.claude/skills/` | One skill per stage that runs a session — `write-idea` through `write-review` — plus `cos-status`. `pr` and `ship` are the app's own and have none. |
-| `.claude/scripts/` | The mechanical checks — numbering, gates, status — and their tests. |
 
 Work units live in `.cos/NNNN_<slug>/`. `docs/` holds the playbook this is built from.
 
 ```
-node .claude/scripts/cos.mjs status   # where everything stands
-npm test                              # lint (ruff, ty), then the harness scripts and the app
+uv run python -m coscc.loop status   # where everything stands
+npm test                              # lint (ruff, ty), then the app
 uv run ruff format && uv run ruff check --fix   # before a commit
 ```
 

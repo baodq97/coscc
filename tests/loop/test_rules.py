@@ -1,21 +1,22 @@
-"""`status`, `gate` and `next` print what `cos.mjs` prints, for every shape of unit.
+"""`status`, `gate` and `next` print what the goldens hold, for every shape of unit.
 
 One store holds a unit for each rule that answers without a repository. Every test asks both
-versions through `same()`, which asserts stdout, stderr and the exit code are alike; the
-coverage test then reads the codes each unit gets and checks every one `cos.mjs` can hand out
+versions through `expect()`, which asserts stdout, stderr and the exit code are alike; the
+coverage test then reads the codes each unit gets and checks every one the loop can hand out
 without git or `gh` is among them.
 """
 
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
 from coscc.loop import STAGE_NAMES
 from coscc.loop.model import above_answers, read_unit
 from coscc.loop.rules import gate_answer, next_answer
-from tests.loop.conftest import UnitStore, entry, env, git_repo, same
+from tests.loop.conftest import UnitStore, entry, env, git_repo, expect
 
 KIND = {
     "idea.md": "Idea",
@@ -324,14 +325,14 @@ STAGES_ASKED = [*STAGE_NAMES, "implement", "bogus"]
 
 
 def test_status_table_of_every_shape(world):
-    r = same(world.argv("status"))
+    r = expect(world.argv("status"))
     assert r.code == 0
     assert "Next action" in r.out
     assert "Problems (report these" in r.out
 
 
 def test_status_json_prints_whole_units_and_the_ideas(world):
-    r = same(world.argv("status", "--json"))
+    r = expect(world.argv("status", "--json"))
     body = json.loads(r.out)
     assert body["ideas"][0]["id"] == "0001_big"
     assert len(body["units"]) == len(UNITS)
@@ -339,63 +340,63 @@ def test_status_json_prints_whole_units_and_the_ideas(world):
 
 
 def test_status_json_flag_may_stand_anywhere(world):
-    same(["--json", *world.argv("status")])
+    expect(["--json", *world.argv("status")])
 
 
 def test_status_of_an_empty_store(store):
-    r = same(store.argv("status"))
+    r = expect(store.argv("status"))
     assert r.out == "No work units yet. `write-intent` opens one.\n"
-    same(store.argv("status", "--json"))
+    expect(store.argv("status", "--json"))
 
 
 def test_status_of_an_empty_store_lists_the_idea_problems(store):
     (store.cos / "ideas").mkdir()
     store.ideas["ws"] = [{"id": "0001_big", "problems": ["no Units section", "x"], "units": []}]
-    r = same(store.argv("status"))
+    r = expect(store.argv("status"))
     assert "  - ideas/0001_big: no Units section" in r.out
-    r = same(store.argv("status", "--json"))
+    r = expect(store.argv("status", "--json"))
     assert json.loads(r.out)["ideas"][0]["problems"][0] == "no Units section"
 
 
 def test_status_without_an_ideas_directory_has_no_ideas_key(store):
     put(store, "0001_a", {"intent.md": "draft"})
     store.ideas["ws"] = [{"id": "0001_big", "problems": [], "units": []}]
-    r = same(store.argv("status", "--json"))
+    r = expect(store.argv("status", "--json"))
     assert "ideas" not in json.loads(r.out)
 
 
 def test_status_with_an_empty_ideas_directory_has_an_empty_ideas_key(store):
     put(store, "0001_a", {"intent.md": "draft"})
     (store.cos / "ideas").mkdir()
-    r = same(store.argv("status", "--json"))
+    r = expect(store.argv("status", "--json"))
     assert json.loads(r.out)["ideas"] == []
-    same(store.argv("status"))
+    expect(store.argv("status"))
 
 
 def test_status_with_a_unit_missing_from_the_snapshot(store):
     store.unit("0001_unknown-to-app", {"intent.md": text("intent.md", "accepted")}, None)
-    same(store.argv("status"))
-    same(store.argv("status", "--json"))
+    expect(store.argv("status"))
+    expect(store.argv("status", "--json"))
 
 
 def test_status_of_a_vietnamese_title_and_hold_reason(store):
     put(store, "0001_tiếng-việt", {"intent.md": "accepted"})
     put(store, "0002_ok", {"intent.md": "accepted"}, holds=[{"state": "paused", **HOLD}])
-    same(store.argv("status"))
-    same(store.argv("status", "--json"))
+    expect(store.argv("status"))
+    expect(store.argv("status", "--json"))
 
 
 @pytest.mark.parametrize("limit", ["1", "2", "5"])
 def test_status_under_a_review_round_limit(world, limit):
     argv = world.argv("status", "--json")
-    same(argv, environ=env(COS_REVIEW_ROUNDS=limit))
-    same(world.argv("status"), environ=env(COS_REVIEW_ROUNDS=limit))
+    expect(argv, environ=env(COS_REVIEW_ROUNDS=limit))
+    expect(world.argv("status"), environ=env(COS_REVIEW_ROUNDS=limit))
 
 
 def test_status_reads_the_snapshot_from_stdin(world):
     path = world.state()
     argv = ["status", "--root", str(world.root), "--state", "-"]
-    same(argv, stdin=path.read_text())
+    expect(argv, stdin=path.read_text())
 
 
 # --- gate -------------------------------------------------------------------------------
@@ -404,7 +405,7 @@ def test_status_reads_the_snapshot_from_stdin(world):
 @pytest.mark.parametrize("unit", UNITS)
 def test_gate_json_of_every_stage(world, unit):
     for stage in STAGES_ASKED:
-        r = same(world.argv("gate", unit, stage, "--json"))
+        r = expect(world.argv("gate", unit, stage, "--json"))
         body = json.loads(r.out)
         assert body["ok"] == (r.code == 0)
         assert body["reasons"] is not None
@@ -413,7 +414,7 @@ def test_gate_json_of_every_stage(world, unit):
 @pytest.mark.parametrize("unit", UNITS)
 def test_gate_text_of_every_stage(world, unit):
     for stage in ["impl", "review", "ship", "implement", "bogus"]:
-        r = same(world.argv("gate", unit, stage))
+        r = expect(world.argv("gate", unit, stage))
         first = (r.out or r.err).splitlines()[0]
         assert first.startswith(("open: ", "blocked: "))
 
@@ -421,22 +422,22 @@ def test_gate_text_of_every_stage(world, unit):
 @pytest.mark.parametrize("stage", STAGES_ASKED)
 def test_gate_text_of_a_unit_with_no_artifact_at_all(store, stage):
     store.unit("0001_empty", {}, entry())
-    same(store.argv("gate", "0001_empty", stage))
-    same(store.argv("gate", "0001_empty", stage, "--json"))
+    expect(store.argv("gate", "0001_empty", stage))
+    expect(store.argv("gate", "0001_empty", stage, "--json"))
 
 
 def test_gate_opens_every_stage_of_a_finished_unit(world):
     for stage in ["intent", "spec", "plan", "impl"]:
-        assert same(world.argv("gate", "0010_finished", stage)).code == 0
+        assert expect(world.argv("gate", "0010_finished", stage)).code == 0
 
 
 def test_gate_opens_with_the_gate_flag_first(world):
-    same(["--json", *world.argv("gate", "0006_impl-missing", "impl")])
-    same(world.argv("gate", "--json", "0006_impl-missing", "impl"))
+    expect(["--json", *world.argv("gate", "0006_impl-missing", "impl")])
+    expect(world.argv("gate", "--json", "0006_impl-missing", "impl"))
 
 
 def test_gate_names_the_unit_and_stage_it_was_asked(world):
-    r = same(world.argv("gate", "0006_impl-missing", "implement"))
+    r = expect(world.argv("gate", "0006_impl-missing", "implement"))
     assert r.out == "open: implement may proceed for 0006_impl-missing\n"
 
 
@@ -452,7 +453,7 @@ def test_gate_names_the_unit_and_stage_it_was_asked(world):
     ],
 )
 def test_gate_misuse_is_refused_alike(world, words):
-    r = same(world.argv("gate", *words))
+    r = expect(world.argv("gate", *words))
     assert r.code == 2
 
 
@@ -461,7 +462,7 @@ def test_gate_misuse_is_refused_alike(world, words):
 
 @pytest.mark.parametrize("unit", UNITS)
 def test_next_of_every_shape(world, unit):
-    r = same(world.argv("next", unit))
+    r = expect(world.argv("next", unit))
     body = json.loads(r.out)
     assert body["unit"] == unit
     assert body["reasons"]
@@ -478,46 +479,53 @@ def test_next_of_every_shape(world, unit):
 )  # fmt: skip
 def test_next_and_gate_under_a_review_round_limit(world, unit, limit):
     environ = env(COS_REVIEW_ROUNDS=limit)
-    same(world.argv("next", unit), environ=environ)
+    expect(world.argv("next", unit), environ=environ)
     for stage in ("review", "ship"):
-        same(world.argv("gate", unit, stage, "--json"), environ=environ)
+        expect(world.argv("gate", unit, stage, "--json"), environ=environ)
 
 
 @pytest.mark.parametrize("raw", ["0", "-1", "abc", "2.5", " 4 ", "04"])
 def test_a_broken_or_odd_review_limit(world, raw):
     for cmd in ("status", "next"):
         argv = world.argv(cmd, *(["0030_changes-requested"] if cmd == "next" else []))
-        same(argv, environ=env(COS_REVIEW_ROUNDS=raw))
+        expect(argv, environ=env(COS_REVIEW_ROUNDS=raw))
 
 
 @pytest.mark.parametrize("words", [[], ["0999_none"], ["--json"]])
 def test_next_misuse_is_refused_alike(world, words):
-    assert same(world.argv("next", *words)).code == 2
+    assert expect(world.argv("next", *words)).code == 2
 
 
 def test_next_names_the_branch_it_cannot_read_without_a_repo(world):
-    r = same(world.argv("next", "0030_changes-requested"))
+    r = expect(world.argv("next", "0030_changes-requested"))
     assert "no repository given to tell which: pass --repo" in json.loads(r.out)["action"]
 
 
 def test_next_with_a_repo_that_cannot_answer(world, tmp_path):
     repo = git_repo(tmp_path / "repo")
+    # What a logged-in `gh` says of a repository with no remote, whoever runs the tests.
+    gh = tmp_path / "bin" / "gh"
+    gh.parent.mkdir()
+    gh.write_text("#!/bin/sh\necho 'no git remotes found' >&2\nexit 1\n")
+    gh.chmod(0o755)
+    environ = env(PATH=f"{gh.parent}{os.pathsep}{os.environ['PATH']}")
     for unit in (
         "0030_changes-requested",
         "0028_review-missing",
         "0041_ship-missing",
         "0039_ship-refused",
     ):
-        same([*world.argv("next", unit), "--repo", str(repo)])
+        expect([*world.argv("next", unit), "--repo", str(repo)], environ=environ)
         for stage in ("review", "ship"):
-            same([*world.argv("gate", unit, stage, "--json"), "--repo", str(repo)])
+            argv = [*world.argv("gate", unit, stage, "--json"), "--repo", str(repo)]
+            expect(argv, environ=environ)
 
 
 def test_next_with_a_repo_that_is_not_one(world, tmp_path):
-    same([*world.argv("next", "0028_review-missing"), "--repo", str(tmp_path / "nowhere")])
+    expect([*world.argv("next", "0028_review-missing"), "--repo", str(tmp_path / "nowhere")])
 
 
-# --- every code `cos.mjs` hands out without a repository --------------------------------
+# --- every code the loop hands out without a repository --------------------------------
 
 # `next`'s `why`, and a gate's codes, that files alone settle. `ci-*`, `recording-ship` and the
 # ones that read git are the probe's, in `test_repo_rules.py`.
@@ -565,6 +573,6 @@ def test_the_units_hand_out_every_code_files_alone_can(world):
 def test_gate_json_codes_are_the_ones_the_words_explain(world, unit, stage, codes):
     if unit == "0999_nothing":
         unit = "0001_fresh"
-    r = same(world.argv("gate", unit, stage, "--json"))
+    r = expect(world.argv("gate", unit, stage, "--json"))
     got = json.loads(r.out)["reasons"]
     assert got == list(dict.fromkeys(codes))

@@ -1,6 +1,6 @@
 """The autopilot inside `Service`, with stand-in sessions: no quota is spent.
 
-`OnTheRealLoop` runs the real `cos.mjs` gate and `next` over a workspace with no git, and only the
+`OnTheRealLoop` runs the real the loop gate and `next` over a workspace with no git, and only the
 session is a stand-in."""
 
 from __future__ import annotations
@@ -911,7 +911,7 @@ class Scripted(_Base):
 
     async def _impl_after_a_red_rebase(self, outcome: str = "done") -> Journal:
         """0115/#120 up to its `impl`: a `pass`, the autopilot's mechanical rebase, CI red on
-        it, and `next` naming `impl` with `cos.mjs`'s words. Returns once that `impl` ended
+        it, and `next` naming `impl` with the loop's words. Returns once that `impl` ended
         `outcome`."""
         self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         red = "CI is red on #120: tests — back to impl: fix on the branch and push"
@@ -1873,7 +1873,7 @@ class Scripted(_Base):
         self.assertEqual(out.result, "opened")
 
     def waiting(self, machine, until, reason):
-        """`next` as `cos.mjs` answers it: the scripted stage once `until()`, else nothing."""
+        """`next` as the loop answers it: the scripted stage once `until()`, else nothing."""
 
         async def next_step(cwd, unit):
             self.asked.append(unit)

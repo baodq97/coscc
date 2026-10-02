@@ -130,7 +130,7 @@ class Cell:
 
 @dataclasses.dataclass
 class Question:
-    """One numbered item under an artifact's `## Open questions`, as `cos.mjs` read it;
+    """One numbered item under an artifact's `## Open questions`, as the loop read it;
     every field is copied from `status --json`."""
 
     # `<artifact>#<n>`: one string the page can bind a text box to.
@@ -149,7 +149,7 @@ class Question:
 @dataclasses.dataclass
 class Round:
     """One round of `review.md` and whether it is on the pull request as a comment. The
-    round is `cos.mjs`'s; whether it is posted is `Service.board`'s reading of the run log."""
+    round is the loop's; whether it is posted is `Service.board`'s reading of the run log."""
 
     number: int = 0
     verdict: str = ""
@@ -175,7 +175,7 @@ class Unit:
     begun: bool = False
     problems: str = ""
     cells: list[Cell] = dataclasses.field(default_factory=list)
-    # How many questions in the counted artifact nobody has answered, taken from `cos.mjs`
+    # How many questions in the counted artifact nobody has answered, taken from the loop
     # (`open`) and never recounted. An open question makes the unit's state *Needs you*.
     open_questions: int = 0
     questions: list[Question] = dataclasses.field(default_factory=list)
@@ -206,14 +206,14 @@ class Unit:
     # What is running on this unit now, or ended unseen: one line each, copied from
     # `Board.running` by `_activities`.
     live: list[Activity] = dataclasses.field(default_factory=list)
-    # The hold `cos.mjs` read (`paused`, `dropped`, or empty) and the moves it allows from
+    # The hold the loop read (`paused`, `dropped`, or empty) and the moves it allows from
     # there, copied from the board. The page offers one button per move and decides none.
     hold_state: str = ""
     hold_reason: str = ""
     hold_by: str = ""
     hold_date: str = ""
     hold_moves: list[str] = dataclasses.field(default_factory=list)
-    # Whether `cos.mjs` says the unit used its review rounds with findings still open. The
+    # Whether the loop says the unit used its review rounds with findings still open. The
     # page offers *Allow one more review round* off this alone.
     more_rounds: bool = False
     # The unit's place in the shortlist in effect, 0 when it has none, and its relations
@@ -224,7 +224,7 @@ class Unit:
     # *Needs you* waits on.
     answerable: bool = True
     attention_reason: str = ""
-    # The stage whose column the unit sits in, as `cos.mjs` sent it, and the state shown:
+    # The stage whose column the unit sits in, as the loop sent it, and the state shown:
     # `Service.board`'s decision (`decided_*`), with `Running` laid over it by
     # `service.shown_state` alone. `ci_line` is the dialog's CI line, and `state_reason`
     # the `attention_reason` its header shows beside the state.
@@ -839,7 +839,7 @@ def listen_to_attempts(bus) -> None:
 GONE_AFTER = 12
 
 
-# The `cos.mjs next` asks in flight, by (workspace, unit). Navigation cancels an arrival's
+# The loop `next` asks in flight, by (workspace, unit). Navigation cancels an arrival's
 # `on_load` chain, but the ask itself runs on in a task of its own behind `asyncio.shield`,
 # so the next arrival at that unit waits for it instead of starting a second.
 _ASKING: dict[tuple[str, str], asyncio.Task] = {}
@@ -1255,7 +1255,7 @@ class GrantRow:
 
 def _run_target(data: dict) -> tuple[str, str]:
     """The stage the run button offers and the sentence beside it, copied from
-    `Steps.next_step`, which is `cos.mjs next`'s answer.
+    `Steps.next_step`, which is `coscc.loop next`'s answer.
 
     The page must not work the stage out itself: that would be a second copy of the loop.
     Nothing here reads `action` to pick a stage.
@@ -1264,13 +1264,13 @@ def _run_target(data: dict) -> tuple[str, str]:
 
 
 def _run_waiting(data: dict) -> list[str]:
-    """The findings `cos.mjs next` says a person is awaited on, copied; nothing here
+    """The findings `coscc.loop next` says a person is awaited on, copied; nothing here
     decides whether anyone is awaited."""
     return [str(x) for x in data.get("waiting") or []]
 
 
 def _run_dropped(data: dict) -> list[str]:
-    """The ids `cos.mjs next` says the last review round left out, copied, so the page
+    """The ids `coscc.loop next` says the last review round left out, copied, so the page
     lists them rather than reading them out of `action`."""
     return [str(x) for x in data.get("dropped") or []]
 
@@ -1356,10 +1356,10 @@ def _initials(name: str) -> str:
 
 
 def _questions(unit: dict) -> tuple[int, list[Question]]:
-    """The open count and the questions of one board unit, copied from what `cos.mjs` sent.
+    """The open count and the questions of one board unit, copied from what the loop sent.
     `open` is taken as sent, so the page and `status --json` cannot disagree.
 
-    The findings `cos.mjs` lists in `personFindings` follow, one row each, keyed
+    The findings the loop lists in `personFindings` follow, one row each, keyed
     `review.md#F<n>`. They are not counted into `open`."""
     return int(unit.get("open") or 0), [
         Question(

@@ -241,10 +241,8 @@ class ThePage(unittest.TestCase):
         from pathlib import Path
 
         repo = Path(__file__).resolve().parents[2]
-        mjs = (repo / ".claude" / "scripts" / "cos.mjs").read_text(encoding="utf-8")
-        stages = re.findall(
-            r"name: '(\w+)'", mjs.split("const STAGES = [", 1)[1].split("\n]", 1)[0]
-        )
+        from coscc.loop import STAGE_NAMES as stages
+
         self.assertEqual(len(stages), 9)
         named = re.compile(r"""["'](%s)["']""" % "|".join(stages))
         found = []

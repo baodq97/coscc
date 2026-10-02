@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -224,20 +225,13 @@ class TheShapeOfModelsJson(unittest.TestCase):
         self.assertEqual(len(problems), 1)
 
 
-class TheShippedDefaultsMatchTheScript(unittest.TestCase):
-    """Spec Concerns 2. A stage added to `cos.mjs` without a default here would quietly run
+class TheShippedDefaultsMatchTheLoop(unittest.TestCase):
+    """Spec Concerns 2. A stage added to the loop without a default here would quietly run
     on `COS_MODEL`; a key here for a stage that is gone would change nothing."""
 
-    def test_the_keys_are_exactly_the_stages_cos_mjs_names(self):
+    def test_the_keys_are_exactly_the_stages_the_loop_names(self):
         out = subprocess.run(
-            [
-                "node",
-                str(REPO / ".claude" / "scripts" / "cos.mjs"),
-                "--state",
-                "-",
-                "status",
-                "--json",
-            ],
+            [sys.executable, "-m", "coscc.loop", "--state", "-", "status", "--json"],
             # The stage table needs no unit, so an empty snapshot.
             input='{"workspace": "", "units": {}}',
             cwd=REPO,
@@ -249,7 +243,7 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
         defaults, problems = models.load_defaults()
         self.assertEqual(problems, [])
         base = {k for k in defaults if not k.endswith(models.NOVEL_SUFFIX)}
-        # `estimate` is a row of its own, not a stage `cos.mjs` names. `pr` and `ship` run no
+        # `estimate` is a row of its own, not a stage the loop names. `pr` and `ship` run no
         # session and have none.
         self.assertEqual(base, (set(names) - set(prmachine.STAGES)) | {models.ESTIMATE})
         # The only variants shipped are these two.

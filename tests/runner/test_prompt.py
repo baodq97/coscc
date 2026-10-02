@@ -136,8 +136,8 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
 class TheAnswersSectionIsFound(unittest.TestCase):
     """The three functions the write path is built from, tested apart from it.
 
-    Every reader of "the Answers section" -- `coscc/service/__init__.py:900`, `.claude/scripts/
-    cos.mjs:194`, and this module -- must agree on where it starts, or a section one of them keeps
+    Every reader of "the Answers section" -- `coscc/service/__init__.py:900`, `coscc/loop/`'s
+    own reader, and this module -- must agree on where it starts, or a section one of them keeps
     is a section another cannot find."""
 
     def test_no_heading_is_no_section(self):
@@ -250,7 +250,7 @@ class ThePromptNamesTheFilesMainChanged(unittest.TestCase):
 
 
 class ThePromptSaysTheGateWasAlreadyAsked(unittest.TestCase):
-    """Every stage's skill opens by telling it to run `cos.mjs gate` and stop on non-zero.
+    """Every stage's skill opens by telling it to run `coscc.loop gate` and stop on non-zero.
     The four toolless prose stages can never run it, and `ship` responded the only honest
     way left to it: it wrote `Status: draft` and gave the unasked gate as a reason. Its
     gate was open. The app knew, and never said."""
@@ -543,7 +543,7 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
             self.assertIn("review.md", pointed)
 
     def test_impl_is_told_to_push_the_fix(self):
-        """`cos.mjs next` offers `review` only once a fix reaches the pull request, so a fix
+        """`coscc.loop next` offers `review` only once a fix reaches the pull request, so a fix
         committed and never pushed keeps the button on `impl` (plan, Risk 2)."""
         with tempfile.TemporaryDirectory() as d:
             prompt, _ = self.prompt(d, "changes-requested")
@@ -715,11 +715,11 @@ class TheStagesThatReadWholeInputsKeepTheirPrompt(unittest.TestCase):
     the prompt without it, which must then end with it, before `INCLUDED:`."""
 
     BEFORE = {
-        "idea": "9267c865c80da178ba395a2cdd9f338275803bbc443a3cb9620e3f9f1470972e",
-        "intent": "b96ef1e1b1e7fbc220a1d174597c28695fba2ab6918b0b836408e6239c75297e",
-        "spec": "380ab76a53c79b7e78f263ab12e3ef960bcd3d3a3c416598589b92d330266d18",
-        "spike": "e1fcb244a461bb7573eb184a80fc5cdf187add7432dbc3024bd38d578655b6fd",
-        "plan": "4359018c31dedd5772e11bd9fc902b845df6e1075de60af80271a9e97e389f93",
+        "idea": "050afd6d959df71b2a5549c12c1cb0576245626f3725fdb1cfa10267ce603bf3",
+        "intent": "32481678a67752b6912e1d46a3e38425ed8bec4331d0643f93677ac716b2290d",
+        "spec": "7a5198d71c39b18914411a07cd891c295e51881de6797679e7c489c14e09ddad",
+        "spike": "badae9a2566d17fefd1a68afd1a12f4edf14b3c54730ba6427d859b0066f5d02",
+        "plan": "da50f0a7a2bfe255c809f71e0522b461004019beaef581e721cec6b92a8a03a3",
     }
 
     def test_byte_for_byte(self):
@@ -732,7 +732,8 @@ class TheStagesThatReadWholeInputsKeepTheirPrompt(unittest.TestCase):
                 block = "\n\n---\n\n" + submit_block(stage, f"{stage}.md", False)
                 text = _golden_prompt(stage)
                 self.assertEqual(text.count(block + "\n\nINCLUDED:"), 1)
-                # The language sentence is the one change since the digests were taken.
+                # The language sentence is a change since the digests were taken, and so is the
+                # gate's name in `The gate, already asked`: the digests are of the prompt as it is now.
                 text = text.replace(block, "").replace(_LANGUAGE, OLD_LANGUAGE)
                 self.assertNotIn("# The unit's files", text)
                 self.assertEqual(hashlib.sha256(text.encode("utf-8")).hexdigest(), digest)
@@ -820,7 +821,7 @@ class EveryPathAPromptNamesCanBeRead(unittest.TestCase):
     def test_decide_allows_read_of_every_named_path(self):
         from coscc.runner.prompt import _POINTING
 
-        # `implement` is `cos.mjs`'s alias for `impl` and has no rules of its own to build from.
+        # `implement` is the loop's alias for `impl` and has no rules of its own to build from.
         for stage in sorted(_POINTING.intersection(SESSION_STAGES)):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
                 directory = _golden_unit(Path(d) / "store")
@@ -912,7 +913,7 @@ class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):
 
 
 class TheNextReviewIsToldWhyARoundDidNotCount(unittest.TestCase):
-    """`service.steps.run_step` hands over the round `cos.mjs` read as unfinished; this module only places
+    """`service.steps.run_step` hands over the round the loop read as unfinished; this module only places
     it."""
 
     HEADING = "# The round that did not count"

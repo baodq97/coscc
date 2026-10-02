@@ -132,7 +132,7 @@ class OpenFindings(unittest.TestCase):
         )
 
     def test_only_fixed_with_a_sha_is_left_out(self):
-        # `cos.mjs` counts `[answered]` closed only with a block under `## Answers`, and `[fixed]`
+        # the loop counts `[answered]` closed only with a block under `## Answers`, and `[fixed]`
         # only with a sha, so both stay in the prompt.
         from coscc.runner.review import open_findings
 

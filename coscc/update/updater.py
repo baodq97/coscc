@@ -32,8 +32,8 @@ from typing import Any, Callable
 
 from coscc import update
 from coscc import auth, frontend
-from coscc.agent import harness
 from coscc.git import fetches
+from coscc.loop import run
 from coscc.data import Data
 
 # `log` is an update's or a build's log file, everywhere below.
@@ -133,7 +133,7 @@ class Updater:
         self.db = Data(config.data_dir).db_path
         self._me = me
         self._opener = opener or _urlopen
-        self._check_tag = check_tag or self._check_tag_with_node
+        self._check_tag = check_tag or self._check_tag_with_loop
         self.state = "idle"
         self.window = False
         self.pending: dict[str, Any] | None = None
@@ -164,9 +164,6 @@ class Updater:
     def available(self) -> bool:
         return self.me()["shape"] == "service"
 
-    def node(self) -> str | None:
-        return shutil.which("node", path=self.config.path_env or None)
-
     def env(self, **extra: str) -> dict[str, str]:
         """What every subprocess here gets: built from `Config`, never inherited, so a trial run sees no `INVOCATION_ID` and no `COS_WORKING_DIR`."""
         uv_dir = str(Path(self.me().get("uv", "uv")).parent)
@@ -183,7 +180,7 @@ class Updater:
             return
         self._report_last()
         self._read_channels()
-        if self.config.update_check and self.node() is not None:
+        if self.config.update_check:
             self._thread = threading.Thread(
                 target=self._check_loop, name="coscc-update-check", daemon=True
             )
@@ -196,11 +193,6 @@ class Updater:
         me = self.me()
         if not self.config.update_check:
             self.release = {"state": "off", "reason": "COS_UPDATE_CHECK=0"}
-        elif self.node() is None:
-            self.release = {
-                "state": "unavailable",
-                "reason": "node cannot run, so no release can be checked",
-            }
         else:
             found = update.verified_wheel(self.root / "release")
             if found and self._newer(found["version"]):
@@ -285,18 +277,11 @@ class Updater:
             self.check_once()
             self._stop.wait(CHECK_EVERY)
 
-    def _check_tag_with_node(self, tag: str) -> str:
-        node = self.node()
-        if node is None:
-            raise OSError("no node")
-        out = subprocess.run(
-            [node, str(harness.script()), "check-tag", tag],
-            capture_output=True,
-            text=True,
-            timeout=CHECK_TAG_TIMEOUT,
-            env=self.env(),
-        )
-        return out.stdout.strip() if out.returncode == 0 else ""
+    def _check_tag_with_loop(self, tag: str) -> str:
+        """`python -m coscc.loop check-tag <tag>` of this app. An answer that did not come
+        (`OSError`, `TimeoutError`) is the caller's to read as "not a release"."""
+        got = run.ask_sync(["check-tag", tag], timeout=CHECK_TAG_TIMEOUT)
+        return got.out.strip() if got.code == 0 else ""
 
     def check_once(self) -> None:
         """One check. Silent on every failure: the old state stands until the next one."""
@@ -376,7 +361,7 @@ class Updater:
     def rollback(self) -> str:
         """`""` when the apply will find a way back, else the reason it will refuse.
 
-        The apply fills an empty `current/` itself when the running version is a release, so the Checker is not the only road there (it never runs with `COS_UPDATE_CHECK=0` or no `node`). A local build running with no `current/` has no road at all, and the panel says so instead of offering a press the apply refuses.
+        The apply fills an empty `current/` itself when the running version is a release, so the Checker is not the only road there (it never runs with `COS_UPDATE_CHECK=0`). A local build running with no `current/` has no road at all, and the panel says so instead of offering a press the apply refuses.
         """
         version = self.me()["version"]
         if self._refetchable(version) or self._current_matches():

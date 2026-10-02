@@ -71,7 +71,7 @@ Report: <…>
 
 Or, under the heading, the one line `none: one session`.
 
-## Lines the app and `cos.mjs` read
+## Lines the app and the loop read
 
 - `Impl: novel` for new logic or a security-sensitive file; otherwise `routine`. A missing label
   runs as `novel`.

@@ -34,7 +34,7 @@ NAME = re.compile(
 
 FIX = "say why, not which unit: drop the id, or the sentence if it only names the unit"
 
-# Markdown that keeps ids on purpose. `.claude/scripts/testdata` is fixture data for the parsers.
+# Fixture data for the parsers keeps ids on purpose.
 # Ids that are a format, not a unit: the finding id `F<k>` and the spike id `U<n>` that the
 # skills and the UI rule define.
 SKIPPED = ("worktrees", "testdata")

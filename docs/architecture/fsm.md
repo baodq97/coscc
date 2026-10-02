@@ -3,10 +3,12 @@
 Written by Leif for the originator, to see the whole picture before the FSM/DB work. Every
 fact was read from the code on `main` at `088101e` (v0.14.0); paths are cited so each one can
 be checked. Nothing here is a design yet — section 6 lists what the redesign must decide.
+`loop:N` and a bare `:N` in section 1 cite a line of the Node script that decided the loop at
+that commit; since `0153` the loop is `coscc.loop`, the same commands in Python.
 
 Who decides a transition:
 
-- **CODE** — deterministic: `cos.mjs`, the app's Python, git/gh reads.
+- **CODE** — deterministic: `coscc.loop`, the app's Python, git/gh reads.
 - **AGENT** — an LLM session's free-form output (a `Status:` it wrote, a verdict, a JSON reply).
 - **PERSON** — a route or a button on the board.
 
@@ -26,7 +28,7 @@ flowchart LR
   subgraph Autopilot["Autopilot pass (per workspace)"]
     A1{stop_for / pick}
   end
-  subgraph Unit["Unit lifecycle (cos.mjs, from files)"]
+  subgraph Unit["Unit lifecycle (coscc.loop, from files)"]
     U1[next / gate]
   end
   subgraph Step["Step (one agent session)"]
@@ -48,19 +50,19 @@ flowchart LR
   S1 -- "end → nudge" --> A1
 ```
 
-The unit's state is **not stored anywhere**: `cos.mjs` recomputes it on every read from the
+The unit's state is **not stored anywhere**: `coscc.loop` recomputes it on every read from the
 markdown files, git and `gh`. The app keeps its own facts (steps, picks, stops, holds'
 effects, answers, shortlist, estimates, settings) as rows in `~/.cos/cos.db` table `runs`
-and `prefs`. The two halves meet through `cos.mjs status/next/gate` called as a subprocess
+and `prefs`. The two halves meet through `coscc.loop status/next/gate` called as a subprocess
 (`coscc/units/board.py:44-415`).
 
-## 1. Unit lifecycle (per unit) — `cos.mjs`
+## 1. Unit lifecycle (per unit) — `coscc.loop`
 
 ### 1.1 States per artifact
 
 | Artifact | Statuses | Written by |
 |---|---|---|
-| idea | draft, accepted, rejected — optional, but a *draft* idea blocks `next` (`cos.mjs:32,1236,1255`) | PERSON (brief, written `accepted` by the app) or AGENT write-idea |
+| idea | draft, accepted, rejected — optional, but a *draft* idea blocks `next` (`loop:32,1236,1255`) | PERSON (brief, written `accepted` by the app) or AGENT write-idea |
 | intent | draft, accepted, rejected (`:33`) | AGENT (prose; the app writes the reply) |
 | spec | draft, accepted, rejected, **skipped** — never used on 90 shipped units (`:34`) | AGENT (prose) |
 | spike | draft, accepted, rejected; only when spec `## Concerns` has `[unmeasured] U<n>` (`:35,1122-1126`) | AGENT (prose) |
@@ -76,11 +78,11 @@ Derived states (CODE, recomputed each read):
 - **stale** = intent has a `### Rerun` block whose `Stale:` hash equals the artifact's current text hash (`:886-898`).
 - **held** = last valid `### Paused|Dropped|Resumed` block in intent `## Answers` (`:193-229`); moves active→paused/dropped, paused→dropped/active, dropped→paused (`:200`).
 - **rejected** anywhere closes the unit (`:1239`).
-- **open questions** = numbered items with `?` under `## Open questions` without a `### Câu N` answer (`:112-126,348`). They gate nothing in `cos.mjs`; a *draft* does (`:451,1255`).
+- **open questions** = numbered items with `?` under `## Open questions` without a `### Câu N` answer (`:112-126,348`). They gate nothing in `coscc.loop`; a *draft* does (`:451,1255`).
 - **review rounds used** / **out of rounds** (`COS_REVIEW_ROUNDS`, default 3, plus `### More rounds`) (`:1345-1364`).
 - **dependency merged** = the snapshot's `merged` for that unit: the PR machine's `merge-read` row, or, for a unit it never moved, a `ship.md: accepted` from the `0135` import or a `ship` session (`0139` R5, `units/meta.py` `snapshot`).
 
-### 1.2 `next` — first match wins (`cos.mjs:1190-1322`)
+### 1.2 `next` — first match wins (`loop:1190-1322`)
 
 | why | condition | offers stage |
 |---|---|---|
@@ -104,14 +106,14 @@ CI green → review; CI red → impl; PR merged → ship "record, do not merge";
 pass → review again (or "needs a person" if a second pass lands on the same head); clean
 rebase + CI red → impl; changes-requested → impl if code must change, else review.
 
-### 1.3 Gates (`cos.mjs:2046-2097`) — all CODE
+### 1.3 Gates (`loop:2046-2097`) — all CODE
 
 - every stage: not held; every earlier required stage exists, is settled and not stale; spike only when required; plan waits for every `U<n>` `Verdict: holds`.
 - impl: + idea links resolve and every `Depends on:` is merged (`:2094`).
 - review: + `PR:` present, not out of rounds, `gh pr checks --required` all green (empty = not green; red branch-name check = unfixable) (`:1669-1746`).
 - ship: + last verdict pass, no open finding but fixed/answered/non-blocking low, no demoted severity, reviewed sha named and still the head (or a clean rebase with green CI), not behind `origin/main`, UI screens block valid when UI files changed, `S<n>` findings block (`:1791-1906`). Open gate prints `--match-head-commit <sha>`.
 
-### 1.4 Rerun (`cos.mjs:2286-2334`)
+### 1.4 Rerun (`loop:2286-2334`)
 
 intent, spec, spike, plan, pr can be rerun from the board when accepted and not stale; the app
 appends `### Rerun` with `Stale:` hashes for that artifact and every later one on disk — so
@@ -132,7 +134,7 @@ stateDiagram-v2
 
 | Transition | Decided by | Recorded |
 |---|---|---|
-| refuse before spend: busy mark, held, `cos.mjs gate` non-zero, impl tree prep fails, review screenshot retake fails (`steps.py:764-1106`) | CODE | none / `screens` |
+| refuse before spend: busy mark, held, `coscc.loop gate` non-zero, impl tree prep fails, review screenshot retake fails (`steps.py:764-1106`) | CODE | none / `screens` |
 | prompt assembly (skill + gate text + artifacts + answers + review history + note) (`runner/prompt.py:409-823`) | CODE | `start` (`included`, `pointed`, model, effort, grant) |
 | the work itself, and the artifact's `Status:` | **AGENT** | the file |
 | prose stages: app writes the file from the reply, checks the title + header `Status:` (`reply.py:36,118-130`) | CODE on AGENT text | `end.opening` |
@@ -157,7 +159,7 @@ worktree's cleanup — since no `ship` step follows it.
 A pass, all CODE (`service/autopilot.py:159-375`):
 
 1. No shortlist → stop `shortlist`.
-2. For each shortlisted unit in order: `cos.mjs next`, then `stop_for` (`units/autopilot.py:115-198`):
+2. For each shortlisted unit in order: `coscc.loop next`, then `stop_for` (`units/autopilot.py:115-198`):
    `a` open questions · `b` findings waiting / needs a person · `d` integration needs a person ·
    `e` last step not done (except first exhausted, first missing-opening, exhausted ship before
    a recording ship), integration failed/refused, screenshot retake failed, and since `0136` a
@@ -192,7 +194,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 
 | Machine | States | Transitions / decided by | Recorded |
 |---|---|---|---|
-| **Questions & answers** | open → answered | detection CODE (`cos.mjs`); answer PERSON `POST /api/units/answer` appends `### Câu N` / `### F<n>` (`answers.py:299-544`) | `questions`, `answer` |
+| **Questions & answers** | open → answered | detection CODE (`coscc.loop`); answer PERSON `POST /api/units/answer` appends `### Câu N` / `### F<n>` (`answers.py:299-544`) | `questions`, `answer` |
 | **Holds** | active, paused, dropped | PERSON `POST /api/units/hold`; dropped → CODE closes the PR and removes the worktree (`units/hold.py:99-165`) | `### Paused…` block + `hold` row |
 | **PR / CI / integrate** | unknown, conflicting, red-after-integration, behind, current (`github/integrate.py:80-111`) | read by `gh pr list` on each board read, `gh pr checks` ≤ every 60 s per head, and the 300 s pass — no dedicated poller. `behind` → CODE `gh pr update-branch`; conflicting / red / refused / diverged head → **AGENT Gebo** (120 turns, $8, leased push) (`steps.py:417-594`); Gebo's `[needs-person]` lines set the outcome (since `0136`, the object it hands back through `submit`) | `integration`, `start`/`end` |
 | **Review loop** | round n: changes-requested → impl → CI → review n+1 … pass → ship | verdict and severities AGENT; rounds counted CODE; clean-rebase re-review skip CODE (0067) | review.md, `pr-comment` |
@@ -207,33 +209,33 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 | From → to | Transport | Format | Parsed by |
 |---|---|---|---|
 | app → agent | Agent SDK `query(text)` | one prompt, sections joined by `\n\n---\n\n` (`runner/prompt.py:824`); options: model, effort, max_turns, budget, tools grant, `setting_sources=[]`, cwd = worktree | — |
-| agent → app (prose stages) | SDK stream → reply text | markdown: `# <Stem>: title`, header line with `Status:`, sections | regex (`reply.py`), then `cos.mjs` regex |
+| agent → app (prose stages) | SDK stream → reply text | markdown: `# <Stem>: title`, header line with `Status:`, sections | regex (`reply.py`), then `coscc.loop` regex |
 | agent → app (tool stages) | the agent's `Write` tool | markdown file | `Status:` anywhere (weaker check) |
 | agent → app (estimate, Gebo) | the `submit` tool call (`0136`) | an object | JSON + CODE validation |
-| app ↔ cos.mjs | subprocess | JSON on stdout (`status`, `next`, `pr-text`, `rerun`, `screens`); `gate` = prose lines on stdout/stderr, exit 0/1/2, merged into one string by the app (`board.py:352`) | JSON / substring |
+| app ↔ coscc.loop | subprocess | JSON on stdout (`status`, `next`, `pr-text`, `rerun`, `screens`); `gate` = prose lines on stdout/stderr, exit 0/1/2, merged into one string by the app (`board.py:352`) | JSON / substring |
 | app ↔ GitHub | `gh` subprocess | `--json` fields; PR comments with a hidden marker `<!-- coscc-review unit=U round=N -->` | JSON |
 | person ↔ app | Reflex websocket (board, in-process service), REST + NDJSON streams (`/api/board/run`, `/api/notices/follow`) | NDJSON `{type, …}` | JSON |
-| agent ↔ agent | artifacts on disk | review rounds `## Round N` / `Reviewed: <sha>. Verdict: …` / `- F<k> [state] path:line — severity — text`; `impl.md ## Needs a person`; `### Rerun` notes | regex in **three** places (`cos.mjs:517`, `review.py:13`, `priorfindings.py:29`) |
+| agent ↔ agent | artifacts on disk | review rounds `## Round N` / `Reviewed: <sha>. Verdict: …` / `- F<k> [state] path:line — severity — text`; `impl.md ## Needs a person`; `### Rerun` notes | regex in **three** places (`loop:517`, `review.py:13`, `priorfindings.py:29`) |
 | everything → history | SQLite `runs` | JSON record per kind (`start`, `end`, `attempt`, `autopilot-pick`, `autopilot-stop`, `integration`, `answer`, `hold`, `shortlist`, …) | JSON |
 
 ## 6. What the as-is map shows
 
 **Where an LLM's free text becomes a machine decision** (each is a regex over prose):
 
-1. Every `Status:` an agent writes opens or closes a gate. *`0136`: the stage result the run hands back through `submit`, guard `stage-result`. Left, for the next unit: a run that handed back no result (one at a terminal) still reaches `cos.db` through `cos.mjs meta`, which reads the file's `Status:` (`parseStatus`).*
+1. Every `Status:` an agent writes opens or closes a gate. *`0136`: the stage result the run hands back through `submit`, guard `stage-result`. Left, for the next unit: a run that handed back no result (one at a terminal) still reaches `cos.db` through `coscc.loop meta`, which reads the file's `Status:` (`parseStatus`).*
 2. Review `Verdict`, finding states and severities decide the ship gate. *`0136`: the round object, guard `review-round`, at the head the app recorded. Left, for the next unit: a round `cos.db` holds no row for (a terminal run's, or the closing turn's `incomplete`) is still read from `review.md` (`parseReview`).*
-3. `impl.md ## Needs a person` routes the unit back to review. *`0136`: `needs_person` of impl's stage result, guard `impl-claim`. Left, for the next unit: when the last impl run handed back no result, `cos.mjs` still reads the claims from `## Needs a person`.*
+3. `impl.md ## Needs a person` routes the unit back to review. *`0136`: `needs_person` of impl's stage result, guard `impl-claim`. Left, for the next unit: when the last impl run handed back no result, `coscc.loop` still reads the claims from `## Needs a person`.*
 4. Gebo's `[needs-person]` lines decide the integration outcome. *`0136`: R7's order — the head moved, else `needs_person` of the object Gebo hands back through `submit`, else `failed`.*
 5. Estimate JSON becomes backlog rows. *`0136`: the object handed back through `submit`, guard `run-submitted`; each row carries `authority: agent`.*
 6. The reviewed sha and the merge pin are copied by the model out of prompt prose. *`0136`: `ship` is the PR machine's (`coscc/github/prmachine.py`); guard `ship-ready` reads the head the review run recorded and the head its own `gh pr view` found, and the merge is pinned to that read. A head the `ship` gate reads as a clean rebase of the reviewed one (`0067`) stands in for it: `gate --json` hands the guard `rebased`, and the guard checks that it names those two commits.*
-7. The autopilot matches English substrings of `cos.mjs`'s messages (`CI is red on #`, `needs a person`, `record it in ship.md; do not merge`) (`units/autopilot.py:51-86` at `088101e`). *`0136`: `next` and `gate --json` hand out `reasons` from `guards.REASONS`, and the autopilot branches on them through `said` (`coscc/units/autopilot.py:60-67`). Left, for the next unit: `units/backlog.py`, `service/common.py` and `units/hold.py` still compare `next`'s words with `finished` or `closed`.*
+7. The autopilot matches English substrings of `coscc.loop`'s messages (`CI is red on #`, `needs a person`, `record it in ship.md; do not merge`) (`units/autopilot.py:51-86` at `088101e`). *`0136`: `next` and `gate --json` hand out `reasons` from `guards.REASONS`, and the autopilot branches on them through `said` (`coscc/units/autopilot.py:60-67`). Left, for the next unit: `units/backlog.py`, `service/common.py` and `units/hold.py` still compare `next`'s words with `finished` or `closed`.*
 
 **Defects found while mapping (verified in code):**
 
 - `STATUS_RE` has no hyphen (`coscc/runner/reply.py:13`), so after a review step the history
   records `changes` instead of `changes-requested`; the history refuses it and the error is
   swallowed (`coscc/service/answers.py:190-210`). Review transitions are likely never recorded.
-- Three `## Round` patterns disagree (`cos.mjs:517` strict vs `review.py:13`, `priorfindings.py:29` loose).
+- Three `## Round` patterns disagree (`loop:517` strict vs `review.py:13`, `priorfindings.py:29` loose).
 - Tool-stage artifacts pass on a `Status:` anywhere in the file; prose stages need a header.
 - After a repair or closing turn, `cost_usd` is the session total but tokens/turns are the first turn's (`runner/__init__.py:228`).
 - `answered_by` is free text, unchecked (`answers.py:326`).

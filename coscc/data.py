@@ -259,7 +259,7 @@ CREATE TABLE IF NOT EXISTS unit_links (
     pos       INTEGER NOT NULL
 )""",
     """CREATE INDEX IF NOT EXISTS unit_links_scope ON unit_links (root, workspace, unit)""",
-    """-- One row per file under `.cos/ideas/`: `read` is what `cos.mjs meta` read of it, as
+    """-- One row per file under `.cos/ideas/`: `read` is what `coscc.loop meta` read of it, as
 -- JSON (`{title, status, units, problems}`), replaced whole on the next read. Not a column
 -- per field: an idea has no transitions, and a `status` column here would be the current
 -- state the transitions keep out of every table (`tests/units/test_history.py`).
@@ -301,7 +301,7 @@ CREATE TABLE IF NOT EXISTS unit_answers (
     """CREATE UNIQUE INDEX IF NOT EXISTS unit_answers_once
     ON unit_answers (once_key) WHERE once_key <> ''""",
     """-- A hold decision, the `move` to `paused`, `dropped` or `active`. Appended; the
--- hold in force is the fold `cos.mjs` makes over the rows by `HOLD_MOVES`.
+-- hold in force is the fold the loop makes over the rows by `HOLD_MOVES`.
 CREATE TABLE IF NOT EXISTS unit_holds (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     root       TEXT NOT NULL,

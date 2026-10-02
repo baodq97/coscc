@@ -1,6 +1,6 @@
 """A person allows one more review round to a unit that used all of its.
 
-`cos.mjs` decides whether a unit is out of rounds; this module only reads the board's
+The loop decides whether a unit is out of rounds; this module only reads the board's
 `more_rounds` and never compares rounds with a limit.
 """
 

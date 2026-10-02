@@ -1,8 +1,7 @@
 """The rules that decide a unit: `decide`, the gates, `next`, and the commands that print them.
 
-Ported 1:1 from `.claude/scripts/cos.mjs`: `decideFiles` (`:1467`), `evaluate`/`gateAnswer`/
-`gateReasons` (`:2323-2441`), `stepOf`/`nextAnswer`/`nextReasons` (`:2480-2668`), and `cmdStatus`,
-`cmdNext`, `cmdGate` (`:2895-3052`). What needs git or the pull request is asked of a probe
+`decide_files`, `evaluate`/`gate_answer`/`gate_reasons`, `step_of`/`next_answer`/
+`next_reasons`, and `cmd_status`, `cmd_next`, `cmd_gate`. What needs git or the pull request is asked of a probe
 (`coscc.loop.repo_rules`); here every question is answered from the unit's files and the
 snapshot alone. Every reason code goes through `code`, so none leaves `REASONS`.
 """
@@ -75,7 +74,7 @@ A = re.ASCII
 
 
 def next_action(unit, limit=REVIEW_ROUNDS):
-    """`cos.mjs` `nextAction`: `decide` without `why` and `rerun`."""
+    """`nextAction`: `decide` without `why` and `rerun`."""
     return {k: v for k, v in decide(unit, limit).items() if k not in ("why", "rerun")}
 
 
@@ -313,7 +312,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
 
 
 def check_gate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
-    """`cos.mjs` `checkGate`: `gate_answer` without `reasons`."""
+    """`checkGate`: `gate_answer` without `reasons`."""
     return {k: v for k, v in gate_answer(unit, stage, probe, limit).items() if k != "reasons"}
 
 
@@ -482,7 +481,7 @@ def evaluate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
 
 
 def next_step(unit, probe=None, limit=REVIEW_ROUNDS):
-    """`cos.mjs` `nextStep`: `next_answer` without `reasons`."""
+    """`nextStep`: `next_answer` without `reasons`."""
     return {k: v for k, v in next_answer(unit, probe, limit).items() if k != "reasons"}
 
 
@@ -811,7 +810,7 @@ def cmd_status(json, cos_dir, limit, state, out):
 
 def cmd_next(unit_name, cos_dir, repo_dir, limit, state, out, err):
     if not unit_name:
-        err("usage: cos.mjs next <NNNN_slug> [--repo <dir>] --state <file|->")
+        err("usage: python -m coscc.loop next <NNNN_slug> [--repo <dir>] --state <file|->")
         return 2
     dir_ = _join(cos_dir, unit_name)
     if not os.path.exists(dir_):
@@ -871,7 +870,7 @@ def open_lines(stage, unit_name, head=None, rebased=None, retry=None, merged=Non
 def cmd_gate(unit_name, stage, cos_dir, repo_dir, limit, state, json, out, err):
     if not unit_name or not stage:
         err(
-            f"usage: cos.mjs gate <NNNN_slug> <{'|'.join(STAGE_NAMES)}> [--json] "
+            f"usage: python -m coscc.loop gate <NNNN_slug> <{'|'.join(STAGE_NAMES)}> [--json] "
             "[--repo <dir>] --state <file|->"
         )
         return 2
@@ -902,7 +901,7 @@ def cmd_gate(unit_name, stage, cos_dir, repo_dir, limit, state, json, out, err):
 
 
 def run(args, out, err):
-    """`cos.mjs`'s dispatch (`:3441-3447`) for the three commands this module answers."""
+    """The dispatch for the three commands this module answers."""
     rest = args.rest
     if args.cmd == "status":
         return cmd_status("--json" in rest, args.cos_dir, args.limit, args.state, out)

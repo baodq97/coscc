@@ -1,7 +1,7 @@
 """`rerun`: which accepted stages the board may run again, and the `### Rerun` block.
 
-A port of `cos.mjs` `rerunLater`, `rerunClosed`, `rerunRefusal`, `rerunOffers`, `rerunBlock`,
-`cmdRerun` and `localDate`. It reads files and prints; it writes nothing, the app appends the
+`rerun_later`, `rerun_closed`, `rerun_refusal`, `rerun_offers`, `rerun_block`, `cmd_rerun`
+and `local_date`. It reads files and prints; it writes nothing, the app appends the
 block.
 """
 
@@ -105,7 +105,7 @@ def cmd_rerun(unit_name, stage, cos_dir, limit, today, state, out, err):
     """`cmdRerun`: `{unit, offers, why}` with no `stage`, else `{unit, stage, later, block}`
     and exit 0, or the reason and exit 1. Exit 2 is misuse, as `gate`'s."""
     if not unit_name:
-        err(f"usage: cos.mjs rerun <NNNN_slug> [{'|'.join(RERUNNABLE)}]")
+        err(f"usage: python -m coscc.loop rerun <NNNN_slug> [{'|'.join(RERUNNABLE)}]")
         return 2
     if not UNIT_RE.fullmatch(unit_name):
         err(f'Invalid unit name "{unit_name}": expected NNNN_slug.')

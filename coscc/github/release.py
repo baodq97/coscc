@@ -7,10 +7,10 @@ required checks are green and pushes `vX.Y.Z` onto the merge commit (the tag bui
 Every press leaves one `release` record in the run log. State is read again from git and `gh`
 on every board read, never from memory.
 
-Grammar is `cos.mjs`'s (`check-tag`, `check-branch`, `check-version`). The regular expressions
+Grammar is the loop's (`check-tag`, `check-branch`, `check-version` of `python -m coscc.loop`). The regular expressions
 here only sort versions and keep a string from being read as a flag.
 
-Pure functions come first; the `gh`, `node` and `uv` calls after them.
+Pure functions come first; the `gh`, loop and `uv` calls after them.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from typing import Any, Literal, get_args
 from coscc.agent.harness import child_env
 from coscc.git import gh
 from coscc.github import integrate
+from coscc.loop import run
 
 STATES = ("nothing", "ready", "pr-open", "merged-untagged", "tagged", "published", "unknown")
 Outcome = Literal["opened", "merged", "tagged", "refused", "failed"]
@@ -35,11 +36,10 @@ BUTTON = {"ready": "prepare", "pr-open": "publish", "merged-untagged": "publish"
 # The four files a release commit may change, and nothing else.
 VERSION_FILES = ("pyproject.toml", "package.json", "package-lock.json", "uv.lock")
 BRANCH_PREFIX = "chore/release-"
-SCRIPT = Path(".claude") / "scripts" / "cos.mjs"
 
 # Seconds. `uv lock` resolves again and may reach the network. Chosen, not measured.
 LOCK_TIMEOUT = 300.0
-# Seconds. `cos.mjs` reads a few files and prints one line. Chosen, not measured.
+# Seconds. The loop child reads a few files and prints one line. Chosen, not measured.
 COS_TIMEOUT = 30.0
 
 # The page shows `CONSEQUENCE["release"]` beside the button; this whole string is in `/api/board`.
@@ -59,7 +59,7 @@ _GREEN = ("pass", "skipping")
 
 
 class ReleaseError(Exception):
-    """A `gh`, `node` or `uv` call that failed, carrying the tool's own words."""
+    """A `gh`, loop or `uv` call that failed, carrying the tool's own words."""
 
 
 def version_of(text: str) -> tuple[int, int, int] | None:
@@ -77,7 +77,7 @@ def candidates(tags: list[str]) -> list[str]:
 
 
 def branch_name(version: str) -> str:
-    """`chore/release-X-Y-Z`. `cos.mjs check-branch` is asked about it before it is cut."""
+    """`chore/release-X-Y-Z`. `check-branch` is asked about it before it is cut."""
     return BRANCH_PREFIX + version.replace(".", "-")
 
 
@@ -162,7 +162,6 @@ def refusal(
     active: bool,
     phase: str,
     open_release_pr: dict | None,
-    has_script: bool,
     check_version: tuple[int, str],
     version_problem_: str,
     state: str,
@@ -177,8 +176,6 @@ def refusal(
         return "a release is already running for this workspace"
     if phase == "prepare" and open_release_pr is not None:
         return f"a release pull request is already open: #{open_release_pr.get('number')}"
-    if not has_script:
-        return f"this workspace has no {SCRIPT.as_posix()}"
     if unreadable:
         return f"the release could not be read: {unreadable}"
     code, said = check_version
@@ -422,7 +419,7 @@ def set_version_text(name: str, text: str, old: str, new: str) -> str:
         if name == "package-lock.json":
             found.append(((data.get("packages") or {}).get("") or {}).get("version"))
         if n != want or any(v != new for v in found):
-            raise ReleaseError(f'{name} does not carry "version": "{old}" where cos.mjs reads it')
+            raise ReleaseError(f'{name} does not carry "version": "{old}" where the loop reads it')
         return out
     raise ReleaseError(f"not a version file: {name}")
 
@@ -553,13 +550,17 @@ async def release_status(root: str, tag: str) -> dict[str, str]:
 
 
 async def cos(where: Path, *args: str, timeout: float = COS_TIMEOUT) -> tuple[int, str]:
-    """`node <where>/.claude/scripts/cos.mjs <args>`, never the packaged copy: the packaged one has
-    no version files beside it. `(exit code, stdout or stderr)`.
+    """`python -m coscc.loop <args>` of this app with `where` as its cwd: the checkout's version
+    files are read, its code is never run. `(exit code, stdout or stderr)`.
     """
-    script = Path(where) / SCRIPT
-    if not script.is_file():
-        return 2, f"no {SCRIPT.as_posix()} in this checkout"
-    return await _run(["node", str(script), *args], Path(where), timeout)
+    try:
+        got = await run.ask(list(args), cwd=Path(where), timeout=timeout)
+    except OSError as e:
+        return 127, f"python -m coscc.loop could not be started: {e}"
+    except TimeoutError:
+        return 124, f"python -m coscc.loop did not finish within {timeout:.0f}s"
+    text = got.out.strip() if got.code == 0 else (got.err.strip() or got.out.strip())
+    return got.code, text
 
 
 async def _run(argv: list[str], cwd: Path, timeout: float) -> tuple[int, str]:

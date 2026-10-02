@@ -14,6 +14,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from coscc import update
 from coscc.update import updater
@@ -197,6 +198,36 @@ class NothingRunningAppliesAtOnce(_Base):
         u = self.make()
         with self.assertRaises(updater.Refused):
             await u.apply("local", "an")
+
+
+class NoNodeIsNoReason(_Base):
+    """The release check does not depend on `node`; `check-tag` is `python -m coscc.loop`."""
+
+    def make_checking(self):
+        empty = Path(self.tmp.name) / "empty-path"
+        empty.mkdir()
+        self.config = Config(data_dir=str(self.data), update_check=True, path_env=str(empty))
+        return updater.Updater(self.config, self.service, me=dict(self.me), start=False)
+
+    async def test_the_checker_starts_on_a_path_with_no_node(self):
+        u = self.make_checking()
+        with mock.patch.object(updater.threading, "Thread") as thread:
+            u.start()
+        thread.return_value.start.assert_called_once_with()
+        self.assertEqual(u.release, {"state": "up-to-date"})
+
+    async def test_check_tag_is_asked_of_the_apps_own_loop(self):
+        u = self.make_checking()
+        self.assertEqual(u._check_tag_with_loop("v0.13.0"), "release")
+        self.assertEqual(u._check_tag_with_loop("v0.13.0-rc.1"), "prerelease")
+        self.assertEqual(u._check_tag_with_loop("v0.13"), "")
+
+    async def test_a_loop_that_cannot_start_is_left_to_the_caller(self):
+        # `update.candidate` reads any exception as "not a release" (tests/update/test_update.py).
+        u = self.make_checking()
+        with mock.patch.object(updater.run, "ask_sync", side_effect=OSError("no python")):
+            with self.assertRaises(OSError):
+                u._check_tag_with_loop("v0.13.0")
 
 
 class ItWaits(_Base):

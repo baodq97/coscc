@@ -86,7 +86,7 @@ def child_env(
         "PATH": harness.clean_path(workspace),
     }
     # This app's settings describe this app, not the workspace. Empty reads as unset to
-    # `coscc/config.py` `from_env` and to `cos.mjs` for `COS_REVIEW_ROUNDS`.
+    # `coscc/config.py` `from_env` and to `coscc/loop` for `COS_REVIEW_ROUNDS`.
     env.update({name: "" for name in os.environ if name.startswith(("COS_", "__REFLEX_"))})
     env["COS_DATA_DIR"] = data_dir
     env[cfg.PROTECTED_DB_VAR] = cfg.protect(app_db)
