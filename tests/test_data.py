@@ -22,6 +22,8 @@ from unittest import mock
 
 from coscc.config import PROTECTED_DB_VAR
 from coscc.data import SCHEMA_VERSION, Busy, Data, Incompatible, Protected
+from coscc.github import prmachine
+from coscc.units.history import History
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -219,7 +221,6 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
     def test_a_v6_database_rises_to_7_and_its_old_transitions_say_no_guard_is_known(self):
         """7 adds four columns to `transitions`, two to `step_runs` and the tables a submitted
         object lands in."""
-        self.assertEqual(SCHEMA_VERSION, 7)
         new = {"stage_results", "review_rounds", "review_findings", "impl_claims", "pull_requests"}
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
@@ -238,7 +239,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 )
                 conn.execute("PRAGMA user_version=6")
 
-            self.assertEqual(data.version(), 7)
+            self.assertEqual(data.version(), SCHEMA_VERSION)
             with data.connect() as conn:
                 tables = {
                     row["name"]
@@ -251,6 +252,32 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual(new - tables, set())
             self.assertEqual(tuple(row), ("unknown", "unknown", "unknown", "{}"))
             self.assertLessEqual({"head", "revisions"}, runs)
+
+    def test_a_v7_database_rises_to_8_and_its_pull_requests_gain_the_ci_columns(self):
+        """8 adds the four `ci` columns to `pull_requests`. They were added at 7 without moving the
+        number, so a database already at 7 never got them: `no such column: ci` on every read."""
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            history = History(Path(d) / "work", data)
+            with data.connect() as conn:
+                for column in ("ci", "ci_head", "ci_checks", "ci_at"):
+                    conn.execute(f"ALTER TABLE pull_requests DROP COLUMN {column}")
+                conn.execute(
+                    "INSERT INTO pull_requests (root, workspace, unit, number, head, files, "
+                    "merge_commit, at) VALUES (?, 'p', '0001_x', 7, 'abc', '[\"a.py\"]', '', 't')",
+                    (str(history.working_dir),),
+                )
+                conn.execute("PRAGMA user_version=7")
+
+            self.assertIsNone(prmachine.ci_held(history, "p", 7, "abc"))
+            self.assertEqual(data.version(), 8)
+            with data.connect() as conn:
+                row = conn.execute(
+                    "SELECT unit, files, ci, ci_head, ci_checks, ci_at FROM pull_requests"
+                ).fetchall()
+            self.assertEqual(
+                [tuple(r) for r in row], [("0001_x", '["a.py"]', "pending", "", None, "")]
+            )
 
     def test_a_newer_database_is_still_refused(self):
         """Was `version_5`, then `version_6`: it follows `SCHEMA_VERSION`, so a newer number is
