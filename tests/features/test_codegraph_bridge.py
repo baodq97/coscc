@@ -293,8 +293,9 @@ CALLER_NODE = {
 }
 
 
+@unittest.skipUnless(NODE, "the bridge source runs only under a `node` on PATH")
 class TheBridgeSource(Work):
-    """Runs the bridge with the `node` on PATH, which `npm test` itself needs."""
+    """Runs the bridge with the `node` on PATH; the app needs none, so a machine may lack it."""
 
     def setUp(self):
         super().setUp()

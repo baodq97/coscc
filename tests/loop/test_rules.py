@@ -9,6 +9,7 @@ without git or `gh` is among them.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -502,15 +503,22 @@ def test_next_names_the_branch_it_cannot_read_without_a_repo(world):
 
 def test_next_with_a_repo_that_cannot_answer(world, tmp_path):
     repo = git_repo(tmp_path / "repo")
+    # What a logged-in `gh` says of a repository with no remote, whoever runs the tests.
+    gh = tmp_path / "bin" / "gh"
+    gh.parent.mkdir()
+    gh.write_text("#!/bin/sh\necho 'no git remotes found' >&2\nexit 1\n")
+    gh.chmod(0o755)
+    environ = env(PATH=f"{gh.parent}{os.pathsep}{os.environ['PATH']}")
     for unit in (
         "0030_changes-requested",
         "0028_review-missing",
         "0041_ship-missing",
         "0039_ship-refused",
     ):
-        expect([*world.argv("next", unit), "--repo", str(repo)])
+        expect([*world.argv("next", unit), "--repo", str(repo)], environ=environ)
         for stage in ("review", "ship"):
-            expect([*world.argv("gate", unit, stage, "--json"), "--repo", str(repo)])
+            argv = [*world.argv("gate", unit, stage, "--json"), "--repo", str(repo)]
+            expect(argv, environ=environ)
 
 
 def test_next_with_a_repo_that_is_not_one(world, tmp_path):
