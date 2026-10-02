@@ -33,8 +33,9 @@ from typing import Any, Iterator
 # than this rather than guessing. The refusal runs the other way too: **an older build answers
 # `500` on a database a newer one has touched**, so rolling the app back means rolling the
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
-# number too: a database already at this one never runs `_create` again (8: the `ci` columns).
-SCHEMA_VERSION = 8
+# number too: a database already at this one never runs `_create` again (8: the `ci` columns;
+# 9: `attempts` and `attempt_moves`).
+SCHEMA_VERSION = 9
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -420,6 +421,39 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     PRIMARY KEY (root, workspace, number, head)
 )""",
     """CREATE INDEX IF NOT EXISTS pull_requests_unit ON pull_requests (root, workspace, unit)""",
+    """-- One try at a step, an integration, a hold, a review round or an estimate, from the
+-- click to its end (`coscc/service/attempts.py`). What it is now is its last move, never a
+-- column here; `stop_asked_at` is a Stop recorded, not a state. `workspace` is the journal
+-- key; `run` the step's events once it launched; `road` an integration's, `rebase` or `gebo`.
+-- `started_by`, `rerun` and `note` are what a queued one is launched with, by this process or
+-- the next.
+CREATE TABLE IF NOT EXISTS attempts (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    machine       TEXT NOT NULL,
+    workspace     TEXT NOT NULL,
+    unit          TEXT NOT NULL,
+    stage         TEXT NOT NULL DEFAULT '',
+    slot          TEXT NOT NULL DEFAULT '',
+    started_by    TEXT NOT NULL DEFAULT 'person',
+    rerun         INTEGER NOT NULL DEFAULT 0,
+    note          TEXT NOT NULL DEFAULT '',
+    stop_asked_at TEXT,
+    stop_asked_by TEXT,
+    run           TEXT NOT NULL DEFAULT '',
+    road          TEXT NOT NULL DEFAULT ''
+)""",
+    """CREATE INDEX IF NOT EXISTS attempts_unit ON attempts (workspace, unit)""",
+    """-- Every move of an attempt, in order: the state it `moved_to`. `outcome` is an `ended` move's outcome or a
+-- `refused` move's reason code, `''` for any other.
+CREATE TABLE IF NOT EXISTS attempt_moves (
+    attempt  INTEGER NOT NULL REFERENCES attempts (id),
+    seq      INTEGER NOT NULL,
+    moved_to TEXT NOT NULL,
+    outcome  TEXT NOT NULL DEFAULT '',
+    at       TEXT NOT NULL,
+    PRIMARY KEY (attempt, seq)
+)""",
+    """CREATE INDEX IF NOT EXISTS attempt_moves_to ON attempt_moves (moved_to, attempt)""",
 )
 
 # Columns added to a table that already existed, as `(table, column, declaration)`. `_SCHEMA`

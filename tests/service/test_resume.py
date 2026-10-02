@@ -19,6 +19,7 @@ from coscc.agent.sessions import Refused, Sessions, Suspended
 from coscc.config import Config
 from coscc.service import Service
 from coscc.service import resume as resume_mod
+from coscc.service.attempts import describe
 from tests.service.test_service import create_sync
 from tests.units.test_submit import submits as _submits
 
@@ -307,14 +308,17 @@ class TakingUpAfterAnUpdate(_Base):
         # The `resume` row says what happened, not what was about to.
         steps_seen = self.taken()
         self.paused()
-        self.service.holds.take(self.key, self.unit, "integrate")
+        held = self.service.attempts.open(
+            "integration", self.key, self.unit, "integrate", state="running"
+        )
         [said] = self.up()
         self.assertEqual(steps_seen, [])
         self.assertEqual(said["result"], "failed")
         [row] = self.journal.records(self.key, kind="resume")
         self.assertEqual(row["result"], "failed")
         self.assertEqual(row["detail"], said["detail"])
-        self.assertTrue(row["detail"])
+        # the sentence is the one every busy refusal carries.
+        self.assertEqual(row["detail"], describe(self.unit, held))
         [end] = self.ends()
         self.assertEqual(end["outcome"], "failed")
 
@@ -374,6 +378,27 @@ class TakingUpAfterAnUpdate(_Base):
         self.paused()
         self.up()
         self.assertFalse(self.service.sessions.paused)
+
+    def test_taking_up_again_leaves_a_live_hold_round_or_estimate_to_its_own_task(self):
+        # A failed hand-off: the coroutine that opened each short attempt still runs here and
+        # ends it itself, so Resume must not end it `interrupted` under it.
+        attempts = self.service.attempts
+        live = []
+        for machine, unit in (("hold", self.unit), ("rounds", "other"), ("estimate", "")):
+            live.append(attempts.open(machine, self.key, unit)["id"])
+            attempts.move(live[-1], "running")
+        self.service.sessions.paused = True
+        self.up()
+        self.assertEqual([attempts.get(a)["state"] for a in live], ["running"] * 3)
+
+    def test_a_fresh_start_ends_a_hold_the_last_process_left(self):
+        attempts = self.service.attempts
+        mark = attempts.open("hold", self.key, self.unit)["id"]
+        attempts.move(mark, "running")
+        self.up()
+        self.assertEqual(
+            (attempts.get(mark)["state"], attempts.get(mark)["outcome"]), ("ended", "interrupted")
+        )
 
     def test_a_row_failing_in_the_same_pass_is_not_the_unit_moving_on(self):
         steps_seen = self.taken()
@@ -486,7 +511,7 @@ class TakingUpAfterAnUpdate(_Base):
                 yield
 
         def autopilot_resume():
-            held.append([r.unit for r in self.service.steps.registry.all()])
+            held.append([r["unit"] for r in self.service.attempts.unfinished()])
             gate.set()
             return []
 
@@ -497,7 +522,10 @@ class TakingUpAfterAnUpdate(_Base):
         ):
             self.up()
         self.assertEqual(held, [[self.unit]])
-        self.assertEqual(self.service.steps.registry.all(), [])
+        # paused again, the app is going down, so the attempt is left as it is for the next
+        # start to end; no task of it is left.
+        self.assertEqual([r["unit"] for r in self.service.attempts.unfinished()], [self.unit])
+        self.assertEqual(self.service.steps.tasks, {})
 
     def test_resume_runs_no_git_command_on_the_worktree(self):
         # Nothing reads or cleans the worktree before the session goes on.
@@ -556,7 +584,7 @@ class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
         [end] = self.ends()
         self.assertEqual(end["outcome"], "failed")
         self.assertFalse(self.service.holds.busy(self.key, self.unit))
-        self.assertIsNone(self.service.steps.registry.get(self.key, self.unit))
+        self.assertEqual(self.service.attempts.unfinished(self.key, self.unit), [])
         [facts] = seen
         self.assertTrue(facts.resumed)
         self.assertEqual((facts.unit, facts.stage), (self.unit, "plan"))
@@ -618,7 +646,7 @@ class APausedOwnerEndsNothing(_Base):
                 with self.assertRaises(Suspended):
                     asyncio.run(run())
                 self.assertEqual([e for e in self.ends() if e.get("stage") == name], [])
-                self.assertEqual(self.service.holds.marks, {})
+                self.assertEqual(self.service.attempts.unfinished(), [])
 
 
 if __name__ == "__main__":

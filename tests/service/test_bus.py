@@ -55,7 +55,8 @@ class TheServiceWiresWhoListensToWhat(unittest.TestCase):
         self.ended.assert_not_called()
 
     def test_the_other_endings_wake_only_the_updater(self):
-        for name in ("step.released", "integration.escalated", "retake.ended"):
+        # `step.released` is gone (0150): a step that never ran ends its attempt `step.refused`.
+        for name in ("step.refused", "integration.escalated", "retake.ended", "estimate.ended"):
             with self.subTest(name=name):
                 self.ended.reset_mock()
                 self.service.bus.publish(Event(name, "k", "u"))

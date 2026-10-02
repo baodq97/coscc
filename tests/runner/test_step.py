@@ -1832,7 +1832,7 @@ class RecordingChangesNothing(unittest.TestCase):
             journal = Journal(d, d)
             running = None
             if make_recorder is not None:
-                running = steps.Registry().claim(d, UNIT, "spec")
+                running = steps.Running(d, UNIT, "spec", "")
                 running.handle.recorder = make_recorder(Data(d))
 
             async def go():
@@ -2395,7 +2395,7 @@ class AStepAnUpdatePaused(unittest.TestCase):
             Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS"
         )
         journal = Journal(d, d)
-        running = steps.Registry().claim(d, UNIT, "plan")
+        running = steps.Running(d, UNIT, "plan", "")
 
         async def go():
             out = []

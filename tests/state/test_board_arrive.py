@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import time
 import unittest
 from unittest import mock
 
@@ -23,10 +24,13 @@ class _Frames:
 
     def __init__(self):
         self.sent: list[dict] = []
+        # When each frame of `sent` was handed over, on the monotonic clock.
+        self.at: list[float] = []
 
     async def emit_update(self, update, token):
         if update.delta:
             self.sent.append(update.delta)
+            self.at.append(time.monotonic())
 
     def names(self) -> list[set[str]]:
         return [
@@ -86,6 +90,7 @@ class TheBoardArrives(unittest.TestCase):
                 await scenario(arrive, manager, token, fake, frames, reads)
                 await arrive("/sessions?ws=a", "s9")  # leaves the Board: both loops end
                 await _until(lambda: token not in page._WATCHING, "the board watch to end")
+                await _until(lambda: token not in page.ATTEMPT_WAKES, "the attempt watch to end")
 
         with (
             fake.patches(),
@@ -141,5 +146,66 @@ class TheBoardArrives(unittest.TestCase):
             )
             studio = await _studio(manager, token)
             self.assertEqual([c.id for c in studio.cards], ["0009_x", "0010_y"])
+
+        self._run(scenario)
+
+    def test_a_click_reaches_the_open_tab_within_a_second_without_a_board_read(self):
+        from coscc import state as page
+        from coscc.bus import Event
+
+        def row(**fields) -> dict:
+            return {
+                "unit": "0010_y",
+                "stage": "impl",
+                "started_at": "2026-10-02T10:00:00Z",
+                "state": "queued",
+                "stopping": False,
+                "run": None,
+                "kind": "step",
+                **fields,
+            }
+
+        listed: list[dict] = []
+        moves = (
+            ("step.queued", row()),
+            ("step.preparing", row(state="preparing")),
+            ("step.stop-asked", row(state="preparing", stopping=True)),
+        )
+
+        async def scenario(arrive, manager, token, fake, frames, reads):
+            def when_shown(since: int, want: dict) -> float | None:
+                """When the first frame after the first `since` carries the row as `want`."""
+                for at, delta in zip(frames.at[since:], frames.sent[since:]):
+                    for state in delta.values():
+                        for key, rows in state.items():
+                            if key.removesuffix("_rx_state_") == "running_steps" and any(
+                                r.state == want["state"] and r.stopping == want["stopping"]
+                                for r in rows
+                            ):
+                                return at
+                return None
+
+            await arrive("/board?ws=a", "s1")
+            await _until(lambda: token in page.ATTEMPT_WAKES, "the attempt watch to wait")
+            await asyncio.sleep(0.2)
+            first = len(frames.sent)
+            with mock.patch.object(
+                page.app.SERVICE.steps, "running_steps", lambda cwd: list(listed)
+            ):
+                for name, want in moves:
+                    listed[:] = [want]
+                    since = len(frames.sent)
+                    published = time.monotonic()
+                    page.app.SERVICE.bus.publish(Event(name, "/a", "0010_y"))
+                    await _until(lambda: when_shown(since, want) is not None, f"the {name} frame")
+                    self.assertLess(when_shown(since, want) - published, 1.0, name)
+            # No board read ended, and no card was sent, for any of the three.
+            self.assertTrue(reads.ended.empty())
+            self.assertEqual([f for f in frames.names()[first:] if f & BOARD_VARS], [])
+            studio = await _studio(manager, token)
+            self.assertEqual(
+                [(r.unit, r.state, r.stopping) for r in studio.running_steps],
+                [("0010_y", "preparing", True)],
+            )
 
         self._run(scenario)

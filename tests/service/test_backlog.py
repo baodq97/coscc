@@ -697,4 +697,4 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.assertEqual(self.sessions.calls, 1)
         # An update pauses a running estimate instead of waiting for it.
         self.assertEqual(jobs, [])
-        self.assertEqual(self.service.holds.marks, {})
+        self.assertEqual(self.service.attempts.unfinished(), [])

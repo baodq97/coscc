@@ -16,7 +16,7 @@ from unittest import mock
 
 from coscc.bus import Bus
 from coscc.units import hold
-from coscc.agent import steps
+from coscc.service import attempts
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.data import Data
@@ -27,7 +27,15 @@ from tests.units.test_submit import submits as _submits
 
 SLUG = "proof-of-hold"
 # What `Service` hands `hold.refusal` while a spec step runs on the unit.
-BUSY = steps.describe("0001_x", steps.Mark("step", "spec", "running", "2026-09-24T01:02:03+00:00"))
+BUSY = attempts.describe(
+    "0001_x",
+    {
+        "machine": "step",
+        "stage": "spec",
+        "state": "running",
+        "since": "2026-09-24T01:02:03+00:00",
+    },
+)
 BRANCH = f"feat/{SLUG}"
 PR = 7
 
@@ -153,7 +161,7 @@ class TheRefusals(unittest.TestCase):
             self.assertEqual(hold.refusal(unit_row(), "paused", "r", by, ""), said)
 
     def test_a_running_step_is_refused_and_nothing_is_stopped(self):
-        # The sentence is `steps.describe`'s, and names the Stop and the time.
+        # The sentence is `attempts.describe`'s, and names the Stop and the time.
         self.assertEqual(
             hold.refusal(unit_row(), "dropped", "r", "b", BUSY),
             BUSY + "; a hold does not stop anything itself",
@@ -437,18 +445,19 @@ class HoldThroughTheService(Repo):
         self.assertTrue(dropped.startswith(before))
         self.assertEqual(len(self.records()), 1)
 
-    def test_a_running_step_refuses_and_keeps_its_mark(self):
-        mark = self.service.holds.take(self.key, self.unit, "step", "spec")
-        mark.phase = "running"
+    def test_a_running_step_refuses_and_keeps_its_attempt(self):
+        row = self.service.attempts.open("step", self.key, self.unit, "spec", state="running")
         before = self.intent()
         with self.assertRaises(Invalid) as said:
             self.move("paused")
         self.assertIn("its Stop button on the Board (0034)", str(said.exception))
         self.assertEqual(self.intent(), before)
-        self.assertIs(self.service.holds.marks.get((self.key, self.unit)), mark)
-        self.service.holds.release(self.key, self.unit, mark)
+        held = self.service.attempts.holding(self.key, self.unit)
+        self.assertEqual((held["id"], held["state"]), (row["id"], "running"))
+        self.service.attempts.move(row["id"], "ended", "done")
         self.move("paused")
-        self.assertEqual(self.service.holds.marks, {})
+        # The hold's own attempt is over too: nothing holds the unit.
+        self.assertEqual(self.service.attempts.unfinished(), [])
 
     def test_a_section_after_answers_no_longer_refuses_a_hold(self):
         # It is a row now, and the file is not read for it.

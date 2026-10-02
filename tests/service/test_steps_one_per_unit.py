@@ -130,14 +130,19 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.01)
         self.fail(f"timed out waiting for {what}")
 
+    def nothing_held(self) -> None:
+        """No attempt holds a unit, and nothing live is kept for one."""
+        self.assertEqual(self.service.attempts.unfinished(), [])
+        self.assertEqual(self.service.steps.tasks, {})
+
     async def one_running(self) -> asyncio.Task:
-        """One `spec` step, left waiting in its session once it is listed."""
+        """One `spec` step, left waiting in its session once it is `running`."""
         task = asyncio.create_task(self.post_run())
 
-        async def listed_once():
-            return len(await self.listed()) == 1
+        async def running_once():
+            return [r["state"] for r in await self.listed()] == ["running"]
 
-        await self.until(listed_once, "the step to be listed")
+        await self.until(running_once, "the step to be running")
         return task
 
     def records(self, kind: str) -> list[dict]:
@@ -179,18 +184,19 @@ class TenAtOnce(_OneUnit):
         refused = [r for r in answered if r.status_code == 400]
         self.assertEqual(len(refused), N - 1)
         # The stage, and the one start time the Board lists -- whether the loser met the winner
-        # still preparing or already running (`plan.md` step 3i).
+        # still preparing or already running (`plan.md` step 3i). `unit-busy`, with the
+        # state of the attempt that holds the unit.
         t = listed[0]["started_at"]
         for r in refused:
             said = r.json().get("error", "")
             self.assertTrue(said.startswith(f"{self.unit} is busy: a spec step is "), said)
             self.assertTrue(
-                f"is running since {t};" in said or f"is being prepared since {t} " in said, said
+                f"is running since {t};" in said or f"is being prepared since {t};" in said, said
             )
 
     async def test_losers_run_no_gate_and_no_git(self):
-        """A loser is refused before the worktree, the fetch or the gate: without the mark all three
-        ran ten times for ten requests."""
+        """A loser is refused before the worktree, the fetch or the gate: without the attempt all
+        three ran ten times for ten requests."""
         (Path(self.ws) / ".git").mkdir()
 
         async def fake_worktree(cwd, unit, strict=False):
@@ -238,7 +244,7 @@ class TenAtOnce(_OneUnit):
 class AnyStageOfTheUnit(_OneUnit):
     async def test_another_stage_is_refused_while_the_winner_runs(self):
         """Sequentially: a `plan` whose gate is closed is refused as busy, not by the gate, and the
-        gate is not asked -- the mark is asked first."""
+        gate is not asked -- the attempt is asked first."""
         task = await self.one_running()
         gates = self.calls["gate"]
         refused = await self.post_run("plan")
@@ -249,14 +255,14 @@ class AnyStageOfTheUnit(_OneUnit):
         self.assertEqual((await task).status_code, 200)
 
 
-class TheMarkIsAlwaysReturned(_OneUnit):
+class TheUnitIsAlwaysGivenBack(_OneUnit):
     """Every road out of `run_step` gives the unit back."""
 
     async def test_after_a_gate_refusal(self):
         refused = await self.post_run("plan")
         self.assertEqual(refused.status_code, 400)
         self.assertNotIn("is busy:", refused.json()["error"])
-        self.assertEqual(self.service.holds.marks, {})
+        self.nothing_held()
         self.fake.release.set()
         self.assertEqual((await self.post_run("spec")).status_code, 200)
 
@@ -289,10 +295,27 @@ class TheMarkIsAlwaysReturned(_OneUnit):
             self.assertEqual(hold.status_code, 400)
             self.assertIn(second.json()["error"], hold.json()["error"])
 
+            # The reader going away takes its queue and nothing else: the attempt is still
+            # `preparing`, held, until a Stop ends it.
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-        self.assertEqual(self.service.holds.marks, {})
+            [held] = self.service.attempts.unfinished()
+            self.assertEqual(held["state"], "preparing")
+            self.assertEqual((await self.listed())[0]["state"], "preparing")
+            stop = await self.client.post(
+                "/api/board/stop", json={"cwd": self.ws, "unit": self.unit, "by": "Proof person"}
+            )
+            self.assertEqual(stop.status_code, 200, stop.text)
+
+            async def ended():
+                return self.service.attempts.unfinished() == []
+
+            await self.until(ended, "the stop to end the attempt")
+        # a Stop at `preparing` ends `stopped`.
+        end = self.service.attempts.get(held["id"])
+        self.assertEqual((end["state"], end["outcome"]), ("ended", "stopped"))
+        self.nothing_held()
         self.assertEqual(await self.listed(), [])
 
     async def test_after_an_exception_before_the_step_starts(self):
@@ -303,10 +326,10 @@ class TheMarkIsAlwaysReturned(_OneUnit):
             with self.assertRaises(RuntimeError):
                 async for _ in self.service.steps.run_step(self.ws, self.unit, "spec"):
                     pass
-        self.assertEqual(self.service.holds.marks, {})
+        self.nothing_held()
 
     async def test_after_an_exception_between_the_listing_and_the_hand_over(self):
-        """Past `claim`, the listing and the `holds.running` entry go back too."""
+        """Past the open, the attempt and its live part go back too: it ends `failed`."""
 
         def broken(base):
             raise RuntimeError("stand-in: describing the base broke")
@@ -315,8 +338,7 @@ class TheMarkIsAlwaysReturned(_OneUnit):
             with self.assertRaises(RuntimeError):
                 async for _ in self.service.steps.run_step(self.ws, self.unit, "spec"):
                     pass
-        self.assertEqual(self.service.holds.marks, {})
-        self.assertEqual(self.service.holds.running, {})
+        self.nothing_held()
         self.assertEqual(await self.listed(), [])
         task = await self.one_running()
         self.fake.release.set()
@@ -329,8 +351,9 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         stops: list[asyncio.Task] = []
 
         def stop_first(coro, **kw):
-            # The real Stop, queued ahead of `drive`'s first turn: it finds the row `claim`
-            # just listed, closes a handle with no client yet, and cancels the task.
+            # The real Stop, queued ahead of `drive`'s first turn: it finds the attempt
+            # `_launch` just moved to `running`, closes a handle with no client yet, and
+            # cancels the task.
             if getattr(coro, "__name__", "") == "drive":
                 stops.append(
                     real_create_task(
@@ -349,8 +372,7 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         self.assertEqual(len(stops), 1)
         self.assertEqual((await stops[0])["stopped_by"], "Proof person")
         self.assertIn("before it began", str(said.exception))
-        self.assertEqual(self.service.holds.marks, {})
-        self.assertEqual(self.service.holds.running, {})
+        self.nothing_held()
         self.assertEqual(await self.listed(), [])
         self.assertEqual(self.records("start"), [])
         task = await self.one_running()
@@ -364,30 +386,34 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         )
         self.assertEqual(stop.status_code, 200, stop.text)
         await task
-        self.assertEqual(self.service.holds.marks, {})
+        self.nothing_held()
         self.assertNotIn("is busy:", (await self.post_run("plan")).text)
 
         task = await self.one_running()
         self.fake.release.set()
         self.assertEqual((await task).status_code, 200)
-        self.assertEqual(self.service.holds.marks, {})
+        self.nothing_held()
         self.assertNotIn("is busy:", (await self.post_run("plan")).text)
 
 
 class WhatElseHoldsTheUnit(_OneUnit):
     async def test_a_step_is_refused_while_a_hold_or_an_integration_holds_the_unit(self):
         """A hold or an integration refuses a step, before the gate."""
-        for kind, said in (
-            ("hold", "a hold is being recorded since "),
-            ("integrate", "it is being integrated since "),
+        for machine, stage, said in (
+            ("hold", "", "a hold is being recorded since "),
+            ("integration", "integrate", "it is being integrated since "),
         ):
-            with self.subTest(kind=kind):
-                mark = self.service.holds.take(self.key, self.unit, kind)
+            with self.subTest(kind=machine):
+                held = self.service.attempts.open(
+                    machine, self.key, self.unit, stage, state="running"
+                )
                 refused = await self.post_run("spec")
                 self.assertEqual(refused.status_code, 400)
-                self.assertIn(said + mark.started_at, refused.json()["error"])
-                self.assertIs(self.service.holds.marks.get((self.key, self.unit)), mark)
-                self.service.holds.release(self.key, self.unit, mark)
+                self.assertIn(said + held["since"], refused.json()["error"])
+                self.assertEqual(
+                    self.service.attempts.holding(self.key, self.unit)["id"], held["id"]
+                )
+                self.service.attempts.move(held["id"], "ended", "done")
         self.assertEqual(self.calls["gate"], 0)
 
 

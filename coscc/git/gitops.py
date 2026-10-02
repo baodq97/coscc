@@ -163,6 +163,10 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 # # - `worktree add` a unit's tree outside the workspace (detached at a full SHA or on an
 # #   existing branch), `worktree list --porcelain`, and `worktree remove` **never** with
 # #   `--force`, so a tree with changes stays.
+# # - `worktree_discard`, only of a tree that `worktrees.ensure` half made (cancelled or failed
+# #   in `worktree add`, or killed with it): `worktree remove` without `--force`, and when git
+# #   refuses (a half-made tree is locked), the tree's directory and its admin directory under
+# #   `<git dir>/worktrees/` deleted, then `worktree prune`. Nothing else is ever deleted.
 # # - `status --porcelain` to know whether a tree is clean.
 # # - `switch main` in the workspace itself, only when clean; the page is told whenever it
 # #   happens.
@@ -429,9 +433,11 @@ async def worktree_add(
 
 
 async def worktree_list(root: Path, timeout: float = BRANCH_TIMEOUT) -> list[dict[str, str]]:
-    """Every working tree of `root`'s repository, the main one first: path, branch, head.
+    """Every working tree of `root`'s repository, the main one first: path, branch, head, locked.
 
-    `branch` is the short name, or empty on a detached HEAD.
+    `branch` is the short name, or empty on a detached HEAD. `locked` is empty for a tree that
+    is not locked and git's reason otherwise (`initializing` while `worktree add` runs, and
+    after it was killed); a lock with no reason reads `locked`.
     """
     _require_repo(root)
     out = await _run(["git", "-C", str(root), "worktree", "list", "--porcelain"], timeout)
@@ -445,12 +451,53 @@ async def worktree_list(root: Path, timeout: float = BRANCH_TIMEOUT) -> list[dic
             continue
         word, _, rest = line.partition(" ")
         if word == "worktree":
-            current = {"path": rest, "branch": "", "head": ""}
+            current = {"path": rest, "branch": "", "head": "", "locked": ""}
         elif word == "HEAD":
             current["head"] = rest
         elif word == "branch":
             current["branch"] = rest.removeprefix("refs/heads/")
+        elif word == "locked":
+            current["locked"] = rest or "locked"
     return trees
+
+
+async def worktree_admin_dir(
+    root: Path, path: Path, timeout: float = BRANCH_TIMEOUT
+) -> Path | None:
+    """`<git dir>/worktrees/<name>` of the linked tree at `path`, or None when git has none.
+
+    Found by the `gitdir` file each holds, not by name: git suffixes a name that is taken. One
+    with no `gitdir` yet (`worktree add` killed that early) is taken by the tree's own name.
+    """
+    _require_repo(root)
+    admins = (await common_dir(root, timeout)) / "worktrees"
+    where = Path(path).resolve()
+    try:
+        names = sorted(admins.iterdir())
+    except OSError:
+        return None
+    for admin in names:
+        try:
+            pointed = Path((admin / "gitdir").read_text(encoding="utf-8").strip())
+        except OSError:
+            if admin.name == where.name:
+                return admin
+            continue
+        if pointed.parent.resolve() == where:
+            return admin
+    return None
+
+
+async def worktree_half_made(
+    root: Path, tree: dict[str, str], timeout: float = BRANCH_TIMEOUT
+) -> bool:
+    """Whether a `worktree_list` entry is a tree whose `worktree add` never finished: git still
+    reports it `locked initializing`, or its admin directory still holds `index.lock`.
+    """
+    if tree.get("locked") == "initializing":
+        return True
+    admin = await worktree_admin_dir(root, Path(tree["path"]), timeout)
+    return admin is not None and (admin / "index.lock").exists()
 
 
 async def worktree_remove(root: Path, path: Path, timeout: float = WORKTREE_TIMEOUT) -> str:
@@ -459,6 +506,35 @@ async def worktree_remove(root: Path, path: Path, timeout: float = WORKTREE_TIME
     if Path(path).resolve() == Path(root).resolve():
         raise GitError("the workspace's own working tree is never removed")
     return await _run(["git", "-C", str(root), "worktree", "remove", "--", str(path)], timeout)
+
+
+async def worktree_discard(root: Path, path: Path, timeout: float = WORKTREE_TIMEOUT) -> None:
+    """Remove a tree whose `worktree add` was cancelled, failed or was killed part-way.
+
+    `worktree remove` without `--force` first. Git refuses a locked tree (which a half-made one
+    is), so then the directory and the admin directory are deleted and `worktree prune` run;
+    the deletion is why a caller may only name a tree it knows is half made. Raises `GitError`
+    when the directory is still there afterwards.
+    """
+    _require_repo(root)
+    where = Path(path).resolve()
+    here = Path(root).resolve()
+    if where == here or where in here.parents:
+        raise GitError("the workspace's own working tree is never removed")
+    admin = await worktree_admin_dir(root, where, timeout)
+    if admin is None and not where.exists():
+        return
+    try:
+        await _run(["git", "-C", str(root), "worktree", "remove", "--", str(where)], timeout)
+        return
+    except GitError:
+        pass
+    shutil.rmtree(where, ignore_errors=True)
+    if admin is not None:
+        shutil.rmtree(admin, ignore_errors=True)
+    await _run(["git", "-C", str(root), "worktree", "prune"], timeout)
+    if where.exists():
+        raise GitError(f"could not remove the half-made tree {where}")
 
 
 async def delete_merged_branch(

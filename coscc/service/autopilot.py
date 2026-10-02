@@ -248,12 +248,9 @@ class Autopilot:
     def _running(self, key: str) -> list[dict[str, Any]]:
         """What runs in this workspace now, by unit, a person's steps included."""
         out: dict[str, dict[str, Any]] = {}
-        for (k, unit), mark in self.holds.marks.items():
-            if k == key:
-                out[unit] = {
-                    "unit": unit,
-                    "stage": "integrate" if mark.kind == "integrate" else mark.stage,
-                }
+        for row in self.holds.attempts.unfinished(key):
+            if row["unit"]:
+                out[row["unit"]] = {"unit": row["unit"], "stage": row["stage"] or row["machine"]}
         for unit, (stage, task) in (self.runs.get(key) or {}).items():
             if not task.done() and unit not in out:
                 out[unit] = {"unit": unit, "stage": stage}
@@ -272,11 +269,12 @@ class Autopilot:
         now = datetime.now().astimezone()
         spent = autopilot.spent_today(records, now)
         active = {
-            (k, unit): "integrate" if mark.kind == "integrate" else mark.stage
-            for (k, unit), mark in self.holds.marks.items()
+            (row["workspace"], row["unit"]): row["stage"] or row["machine"]
+            for row in self.holds.attempts.unfinished()
+            if row["unit"]
         }
-        # A launch holds no mark until `run_step` or `integrate` takes one (`integrate` only after its
-        # fetch and `gh` reads) and is counted from the moment it was chosen.
+        # A launch has no attempt until `run_step` or `integrate` opens one, and is counted
+        # from the moment it was chosen.
         for k, runs in self.runs.items():
             for unit, (stage, task) in runs.items():
                 if not task.done():

@@ -798,6 +798,41 @@ RUNNING_POLL = 5
 # page state: a state var would outlive its loop across a restart and the Board would never ask again.
 _POLLING: set[str] = set()
 
+# The tabs (client tokens) with a `watch_attempts` loop alive in this process, each with the loop
+# it runs on and the event the bus wakes it by. Kept here for the same reason as `_POLLING`.
+ATTEMPT_WAKES: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Event]] = {}
+
+# The attempt moves a tab's running list shows: a step's and an integration's, and a Stop asked.
+ATTEMPT_MOVES = (
+    *(f"step.{m}" for m in ("queued", "preparing", "running", "ending", "ended", "refused")),
+    *(f"integration.{m}" for m in ("queued", "running", "ending", "ended", "refused")),
+    "step.stop-asked",
+    "integration.stop-asked",
+)
+
+# The buses `_wake_attempt_watches` is already subscribed to, so one bus is listened to once.
+_LISTENING: list = []
+
+
+def _wake_attempt_watches(_event) -> None:
+    """The bus handler: set every tab's event, on the loop that tab waits on. Quick, and it
+    reads nothing: the loop that wakes reads the attempts."""
+    for loop, woken in list(ATTEMPT_WAKES.values()):
+        try:
+            loop.call_soon_threadsafe(woken.set)
+        except RuntimeError:
+            continue  # that tab's loop is closed; its watch ends with it
+
+
+def listen_to_attempts(bus) -> None:
+    """Subscribe `_wake_attempt_watches` to every attempt move of `bus`, once."""
+    if any(b is bus for b in _LISTENING):
+        return
+    _LISTENING.append(bus)
+    for name in ATTEMPT_MOVES:
+        bus.subscribe(name, _wake_attempt_watches)
+
+
 # How many asks in a row must find the tab's token unmapped before its loop ends. Reflex
 # unmaps a token on every socket drop and maps it again on reconnect, so one miss is often
 # a flaky network, not a closed tab.
@@ -912,15 +947,16 @@ class AutopilotStop:
 
 @dataclasses.dataclass
 class RunningStep:
-    """One board step running now, as `Steps.running_steps` lists it."""
+    """One board step or integration not yet ended, as `Steps.running_steps` lists it."""
 
     unit: str = ""
     stage: str = ""
     started_at: str = ""
+    # `queued`, `preparing`, `running` or `ending`; `stopping` is a Stop recorded on any of them.
+    state: str = "running"
     stopping: bool = False
-    # What the watch pane opens.
+    # What the watch pane opens; empty until the session starts, and for an integration.
     run: str = ""
-    # `integration` has no watch pane and no Stop.
     kind: str = "step"
 
 

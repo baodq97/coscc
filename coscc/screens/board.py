@@ -266,9 +266,10 @@ def _start_idea() -> rx.Component:
 
 
 def _running_steps() -> rx.Component:
-    """Every step running in this workspace, one Stop each, and every integration, with none.
+    """Every step and integration not yet ended in this workspace, one Stop each.
 
-    The list is re-read on each board load and after each Stop, never on a timer.
+    A row says `queued`, `preparing` or `ending` beside its stage, and `stopping` once a Stop is
+    recorded. The list is re-read when an attempt moves (`watch_attempts`) and after each Stop.
     """
     return rx.cond(
         P.running_steps.length() > 0,
@@ -279,12 +280,17 @@ def _running_steps() -> rx.Component:
                 lambda r: rx.hstack(
                     s.text(r.unit, size="1", font_family="ui-monospace, monospace"),
                     s.badge(r.stage, "iris"),
+                    rx.cond(
+                        r.stopping,
+                        s.badge("stopping", "amber"),
+                        rx.cond(r.state != "running", s.badge(r.state, "gray")),
+                    ),
                     s.text(r.started_at, size="1"),
                     rx.spacer(),
-                    # Watching changes nothing; Stop, beside it, is what acts.
-                    rx.cond(
-                        r.kind == "step",
-                        rx.hstack(
+                    rx.hstack(
+                        # Watching changes nothing, and needs a session; Stop, beside it, acts.
+                        rx.cond(
+                            r.run != "",
                             rx.button(
                                 rx.icon("eye", size=13),
                                 "Watch",
@@ -293,19 +299,19 @@ def _running_steps() -> rx.Component:
                                 variant="soft",
                                 size="1",
                             ),
-                            rx.button(
-                                rx.icon("square", size=13),
-                                rx.cond(r.stopping, "Stopping", "Stop"),
-                                id="stop-step",
-                                on_click=P.stop_step(r.unit),
-                                disabled=r.stopping,
-                                color_scheme="red",
-                                variant="soft",
-                                size="1",
-                            ),
-                            spacing="3",
-                            align="center",
                         ),
+                        rx.button(
+                            rx.icon("square", size=13),
+                            rx.cond(r.stopping, "Stopping", "Stop"),
+                            id="stop-step",
+                            on_click=P.stop_step(r.unit),
+                            disabled=r.stopping,
+                            color_scheme="red",
+                            variant="soft",
+                            size="1",
+                        ),
+                        spacing="3",
+                        align="center",
                     ),
                     width="100%",
                     align="center",

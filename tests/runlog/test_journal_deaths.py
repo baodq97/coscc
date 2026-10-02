@@ -79,9 +79,8 @@ class EveryWayAStepDies(unittest.TestCase):
         self._tmp.cleanup()
 
     def _step(self, then, act=None):
-        """Run the step to its end; `act(registry, running, sessions)` runs once it has begun."""
-        registry = steps.Registry()
-        running = registry.claim(self.d, UNIT, "spec")
+        """Run the step to its end; `act(running, sessions)` runs once it has begun."""
+        running = steps.Running(self.d, UNIT, "spec", "")
         recorder = events.Recorder(
             "run-1", self.data, str(self.journal.working_dir), self.d, UNIT, "spec"
         )
@@ -109,7 +108,7 @@ class EveryWayAStepDies(unittest.TestCase):
             while not out:
                 await asyncio.sleep(0)
             if act is not None:
-                await act(registry, running, sessions)
+                await act(running, sessions)
             await running.task
 
         asyncio.run(go())
@@ -162,8 +161,9 @@ class EveryWayAStepDies(unittest.TestCase):
         self._says_what_the_end_says(end, cost_known=False)
 
     def test_b_stop(self):
-        async def stop(registry, running, sessions):
-            registry.request_stop(running.workspace, running.unit, "owner")
+        async def stop(running, sessions):
+            # What `Steps.stop_running` sets with the attempt's `stop_asked_at`.
+            running.stop_requested, running.stopped_by = True, "owner"
             await running.handle.close()
             running.task.cancel()
 

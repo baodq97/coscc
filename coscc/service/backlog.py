@@ -3,6 +3,7 @@ and a unit's history."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -25,7 +26,6 @@ from coscc.agent import models
 from coscc.runner.attempt import Denials, permission_gate
 from coscc.runner.reply import CEILING_MARKERS
 from coscc.agent.sessions import StepHandle, Suspended
-from coscc.agent import steps as steps_mod
 from coscc.service.resume import nothing, resume_kwargs
 from coscc import units
 from coscc.units import worktrees
@@ -292,7 +292,7 @@ class Backlog:
         """One paid session proposes estimates and relations for the whole backlog.
 
         Refused before anything is spent while another proposal of this workspace runs: the
-        unit `""` in `holds.marks`, which no real unit is called. Streams like `integrate`.
+        unit `""`'s attempt, which no real unit is called. Streams like `integrate`.
         Writes `start`/`end` (stage `estimate`, unit `""`) so Activity counts the money, one
         `estimate` record, and each valid part of the reply through `append_checked`. A
         session over a ceiling, or one that handed back no object through `submit`, writes
@@ -306,15 +306,10 @@ class Backlog:
                 "no working folder is set, so a proposal cannot be recorded — set COS_WORKING_DIR"
             )
         key = self.ws.key(cwd)
-        held = self.holds.marks.get((key, ""))
-        if held is not None:
-            raise Invalid(
-                f"a proposal for this workspace is already running since {held.started_at}; wait for it to end"
-            )
-        mark = steps_mod.Mark("estimate", "estimate", "")
-        self.holds.marks[(key, "")] = mark
-        rid = self.holds.mark_running(key, "", "estimate", "estimate")
+        attempt = self.holds.attempts.open("estimate", key, "", "estimate")["id"]
+        self.holds.attempts.move(attempt, "running")
         started = ended = False
+        outcome = "failed"
         try:
             try:
                 data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
@@ -516,7 +511,11 @@ class Backlog:
                 summary = journal.append(summary)
             except BadRecord, Busy:
                 pass
+            outcome = "done"
             yield ("done", {"estimate": summary})
+        except asyncio.CancelledError:
+            outcome = "interrupted"
+            raise
         finally:
             if started and not ended:
                 try:
@@ -529,10 +528,7 @@ class Backlog:
                     )
                 except BadRecord, Busy:
                     pass
-            if self.holds.marks.get((key, "")) is mark:
-                del self.holds.marks[(key, "")]
-            self.holds.running.pop(rid, None)
-            self.bus.publish(Event("estimate.ended", key))
+            self.holds.attempts.move(attempt, "ended", outcome)
 
     async def start_branch(self, cwd: str, unit: str) -> Cut:
         """Cut this unit's branch in the workspace and switch to it.

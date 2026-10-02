@@ -497,6 +497,7 @@ class Updater:
         channel = (self.pending or {}).get("channel")
         self.state, self.pending = "idle", None
         self._record("cancelled", name, channel=channel)
+        self.service.update_over()
         return self.status()
 
     def _begin(self, channel: str, by: str) -> None:
@@ -513,6 +514,8 @@ class Updater:
             "log": str(log or ""),
             "log_tail": update.tail(log, LOG_TAIL) if log else "",
         }
+        # Nothing queued began from the press of Apply on; it may now.
+        self.service.update_over()
 
     async def _apply(self, channel: str, by: str) -> None:
         me = self.me()

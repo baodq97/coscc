@@ -38,6 +38,7 @@ from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service.update import refuse_while_updating, refuse_mechanical_while_updating
+from coscc.service.attempts import MACHINES, STOPPABLE, Attempt, describe
 from coscc.service.common import (
     open_prs_once,
     BRANCH_REMOTE,
@@ -197,6 +198,10 @@ def _answers_before(stage: str, directory: Path, row: dict[str, Any]) -> bytes |
 CI_REFRESH = 60.0
 
 
+class _Stopped(Exception):
+    """A Stop an integration read at one of its stop points."""
+
+
 class Steps:
     def __init__(
         self,
@@ -234,9 +239,13 @@ class Steps:
         # on by a board read.
         self.ci: dict[tuple[str, str], dict[str, Any]] = {}
         self.ci_asks: dict[tuple[str, str], asyncio.Task] = {}
-        # Board steps running now, each its own task, so a departing reader does not take the
-        # step with it and a Stop has something to cancel.
-        self.registry = steps_mod.Registry()
+        # The live part of each launched or queued attempt, by attempt id: what a Stop closes
+        # and cancels, and the readers its items go to. Decides nothing, shows nothing.
+        self.tasks: dict[int, steps_mod.Running] = {}
+        # The click's own `Running`, while `open` may hand its attempt to the scheduler.
+        self._opening: steps_mod.Running | None = None
+        holds.attempts.launchers["step"] = self._launch_step
+        holds.attempts.launchers["integration"] = self._launch_integration
         # The recorder of every running board step, by `run`: what `events_page` reads and
         # `follow_events` subscribes to. A step leaves it when `drive` ends; then the tables answer.
         self.recorders: dict[str, events.Recorder] = {}
@@ -457,7 +466,7 @@ class Steps:
             "consequence": CONSEQUENCE["integrate"],
         }
 
-    async def integrate(  # noqa: C901, PLR0915 - still to split
+    async def integrate(
         self,
         cwd: str,
         unit: str,
@@ -482,6 +491,9 @@ class Steps:
         A local head that is not the pull request's is read against it: `behind` follows it
         with no session; `ahead` or `diverged` opens Gebo to push what was never pushed, in
         every state.
+
+        The press is an attempt in `queued`, run by `_integration` once the workspace's one
+        slot for heavy work is free; this frame only reads, as `run_step`'s does.
         """
         try:
             check_started_by(started_by)
@@ -489,15 +501,88 @@ class Steps:
             raise Invalid(str(e)) from e
         self.ws.check(cwd)
         refuse_while_updating(self.updater)
-        journal = self.ws.journal()
-        if journal is None:
+        if self.ws.journal() is None:
             raise Refused(
                 "no working folder is set, so an integration cannot be recorded — set COS_WORKING_DIR",
                 ("no-run-log",),
             )
         if not unit:
             raise Invalid("name a work unit")
+        self.ws.unit_dir(cwd, unit)
+        key = self.ws.key(cwd)
+        running = steps_mod.Running(workspace=key, unit=unit, stage="integrate", started_at=_now())
+        running.cwd = cwd
+        queue: asyncio.Queue = asyncio.Queue()
+        running.listeners.add(queue)
+        self._opening = running
+        try:
+            row = self.holds.attempts.open(
+                "integration", key, unit, "integrate", started_by=started_by
+            )
+        finally:
+            self._opening = None
+        if not running.attempt:
+            running.attempt, running.started_at = row["id"], row["since"]
+            self.tasks[row["id"]] = running
+        async for item in self._follow(running, queue):
+            yield item
+
+    def _launch_integration(self, row: Attempt) -> None:
+        """The scheduler's launcher of an integration: `_integration` as the attempt's task."""
+        running = self._live(row)
+        running.task = asyncio.get_running_loop().create_task(self._integration(running, row))
+
+    def _stop_point(self, running: steps_mod.Running, last: bool = False) -> None:
+        """Between two mechanical steps of an integration: a Stop recorded on its attempt ends
+        it here, never inside a `git` or `gh`. The `last` one, before the push or Gebo, moves
+        the attempt to `ending`: a Stop after it is recorded as `stop_late`."""
+        row = self.holds.attempts.get(running.attempt)
+        if row is not None and row["stop_asked_at"]:
+            raise _Stopped(
+                f"{running.unit}'s integration was stopped by {row['stop_asked_by']} before it pushed anything"
+            )
+        if last:
+            self.holds.attempts.move(running.attempt, "ending")
+
+    async def _integration(self, running: steps_mod.Running, asked: Attempt) -> None:
+        """An integration from `running` to its end, its items told to its readers."""
+        outcome = "done"
+        try:
+            async for item in self._integrate_body(
+                running, running.cwd or asked["workspace"], asked["unit"], asked["started_by"]
+            ):
+                self._tell(running, item)
+        except _Stopped as e:
+            self._tell(running, ("raise", Invalid(str(e))))
+            outcome = "stopped"
+        except asyncio.CancelledError:
+            # The app going down: the next start ends the attempt.
+            if self.tasks.get(running.attempt) is running:
+                del self.tasks[running.attempt]
+            raise
+        except Exception as e:  # noqa: BLE001 - the reader raises it, as it always did
+            self._close(running, e, "failed")
+            return
+        if self.tasks.get(running.attempt) is running:
+            del self.tasks[running.attempt]
+        self.end_attempt(running.attempt, outcome)
+
+    async def _integrate_body(  # noqa: C901, PLR0915 - still to split
+        self,
+        running: steps_mod.Running,
+        cwd: str,
+        unit: str,
+        started_by: str,
+    ) -> AsyncIterator[tuple[str, Any]]:
+        """`integrate`'s work, in its attempt's task."""
+        journal = self.ws.journal()
+        if journal is None:
+            raise Refused(
+                "no working folder is set, so an integration cannot be recorded — set COS_WORKING_DIR",
+                ("no-run-log",),
+            )
         directory = self.ws.unit_dir(cwd, unit)
+        self._stop_point(running)
         try:
             data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
         except Unavailable as e:
@@ -518,6 +603,7 @@ class Steps:
             "completion": None,
         }
         if found.get("between_pr_and_ship") and found.get("pr"):
+            self._stop_point(running)
             try:
                 seen["fetch"] = await fetches.fetch(root, BRANCH_REMOTE, BRANCH_TRUNK)
             except GitError as e:
@@ -563,17 +649,16 @@ class Steps:
             except BadRecord, Busy:
                 return rec
 
+        self._stop_point(running)
         lock = self._integrate_locks.setdefault(key, asyncio.Lock())
         async with lock:  # noqa: PLR1702 - still to split
-            busy = self.holds.busy(key, unit)
+            # The attempt is what holds the unit, and it was refused `unit-busy` if another did.
+            busy = ""
             cut = None
-            if not busy and tree is not None:
+            if tree is not None:
                 try:
-                    here = any(
-                        e["workspace"] == key and e["unit"] == unit
-                        for e in self.holds.running.values()
-                    )
-                    cut = integrate.cut_integration(journal.records(key, unit=unit), unit, here)
+                    # Nothing else runs for the unit in this process: its attempt holds it.
+                    cut = integrate.cut_integration(journal.records(key, unit=unit), unit, False)
                 except Busy:
                     cut = None
                 if cut is not None:
@@ -691,61 +776,56 @@ class Steps:
                 # An Apply waits for a mechanical integration, so none begins once
                 # one is pressed.
                 refuse_mechanical_while_updating(self.updater)
-            mark = self.holds.take(key, unit, "integrate")
             # Commits never pushed go to Gebo whatever the state.
             completing = how in integrate.COMPLETION
             # Gebo shows as running under its agent name; a mechanical rebase has no agent and
             # shows as rebasing. The same condition as below.
-            rid = self.holds.mark_running(
-                key, unit, "integrate", "rebase" if state == "behind" and not completing else "gebo"
+            self.holds.attempts.set_road(
+                running.attempt, "rebase" if state == "behind" and not completing else "gebo"
             )
-        try:
-            assert tree is not None
-            assert pr is not None
-            refused_update = None
-            if state == "behind" and not completing:
-                rec, refused_update = await self._integrate_mechanical(
-                    key,
-                    unit,
-                    int(pr),
-                    tree,
-                    branch,
-                    pr_head,
-                    origin_sha,
-                    seen,
-                )
-                if rec is not None:
-                    rec = write(rec)
-                    yield ("done", {"integration": rec})
-                    return
-                # GitHub refused the rebase, and the press agreed to Gebo for that. The board shows Gebo from here on, not a rebase.
-                self.holds.running[rid]["kind"] = "gebo"
-                # An update waits for a mechanical integration, and a Gebo session is
-                # paused instead, so one waiting on this can go ahead.
-                self.bus.publish(Event("integration.escalated", key, unit))
-            async for item in self.integrate_gebo(
-                cwd,
+            self._stop_point(running, last=True)
+        assert tree is not None
+        assert pr is not None
+        refused_update = None
+        if state == "behind" and not completing:
+            rec, refused_update = await self._integrate_mechanical(
                 key,
                 unit,
-                directory,
-                data,
-                info,
                 int(pr),
                 tree,
                 branch,
                 pr_head,
                 origin_sha,
-                journal,
-                write,
                 seen,
-                refused_update,
-                completion=seen["completion"] if completing else None,
-            ):
-                yield item
-        finally:
-            self.holds.release(key, unit, mark)
-            self.holds.running.pop(rid, None)
-            self.bus.publish(Event("integration.ended", key, unit))
+            )
+            if rec is not None:
+                rec = write(rec)
+                yield ("done", {"integration": rec})
+                return
+            # GitHub refused the rebase, and the press agreed to Gebo for that. The board shows Gebo from here on, not a rebase.
+            self.holds.attempts.set_road(running.attempt, "gebo")
+            # An update waits for a mechanical integration, and a Gebo session is
+            # paused instead, so one waiting on this can go ahead.
+            self.bus.publish(Event("integration.escalated", key, unit))
+        async for item in self.integrate_gebo(
+            cwd,
+            key,
+            unit,
+            directory,
+            data,
+            info,
+            int(pr),
+            tree,
+            branch,
+            pr_head,
+            origin_sha,
+            journal,
+            write,
+            seen,
+            refused_update,
+            completion=seen["completion"] if completing else None,
+        ):
+            yield item
 
     async def _integrate_mechanical(
         self,
@@ -1295,27 +1375,122 @@ class Steps:
             raise Invalid(str(e)) from e
         self.ws.check(cwd)
         refuse_while_updating(self.updater)
-        journal = self.ws.journal()
-        if journal is None:
+        if self.ws.journal() is None:
             raise Refused(
                 "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR",
                 ("no-run-log",),
             )
-
-        # The unit is held from here, before the first `await`: a second request
-        # for any stage of it is refused before it reads the board, opens a worktree, runs
-        # the gate or fetches. Until the step is handed to `drive` the mark is this frame's
-        # to return, on every road out: a refusal, an exception, or a cancel when the client
-        # goes away.
+        # The click is an attempt in `queued`, or `unit-busy` when the unit has one already.
+        # The scheduler launches `_prepare` once a slot is free; this frame only reads. A
+        # reader that goes away -- a closed tab, a dropped NDJSON client -- takes its queue
+        # with it and nothing else; stopping it is `stop_step`, and only that.
         key = self.ws.key(cwd)
-        mark = self.holds.take(key, unit, "step", stage)
-        handed = False
-        running: steps_mod.Running | None = None
-        rid: str | None = None
+        running = steps_mod.Running(workspace=key, unit=unit, stage=stage, started_at=_now())
+        running.cwd = cwd
+        queue: asyncio.Queue = asyncio.Queue()
+        running.listeners.add(queue)
+        self._opening = running
         try:
+            row = self.holds.attempts.open(
+                "step",
+                key,
+                unit,
+                stage,
+                started_by=started_by,
+                rerun=rerun,
+                note=str(note or "").strip(),
+            )
+        finally:
+            self._opening = None
+        if not running.attempt:
+            # Still queued: the scheduler finds it here once a slot is free.
+            running.attempt, running.started_at = row["id"], row["since"]
+            self.tasks[row["id"]] = running
+        async for item in self._follow(running, queue):
+            yield item
+
+    async def _follow(
+        self, running: steps_mod.Running, queue: asyncio.Queue
+    ) -> AsyncIterator[tuple[str, Any]]:
+        """What one reader of an attempt streams, to its `done` or what it raised."""
+        try:
+            while True:
+                kind, payload = await queue.get()
+                if kind == "raise":
+                    raise payload
+                yield (kind, payload)
+                if kind == "done":
+                    return
+        finally:
+            running.listeners.discard(queue)
+
+    @staticmethod
+    def _tell(running: steps_mod.Running, item: tuple[str, Any]) -> None:
+        for q in list(running.listeners):
+            q.put_nowait(item)
+
+    def _live(self, row: Attempt) -> steps_mod.Running:
+        """The `Running` of an attempt the scheduler moved on: the one its click made, or, for
+        one queued before a restart, a new one with no reader."""
+        running = self._opening if self._opening is not None and not self._opening.attempt else None
+        if running is None or (running.workspace, running.unit) != (row["workspace"], row["unit"]):
+            running = self.tasks.get(row["id"]) or steps_mod.Running(
+                workspace=row["workspace"],
+                unit=row["unit"],
+                stage=row["stage"],
+                started_at=row["since"],
+            )
+        running.attempt, running.started_at = row["id"], row["since"]
+        self.tasks[row["id"]] = running
+        return running
+
+    def _launch_step(self, row: Attempt) -> None:
+        """The scheduler's launcher of a step: `_prepare` as the attempt's task."""
+        running = self._live(row)
+        running.task = asyncio.get_running_loop().create_task(self._prepare(running, row))
+
+    def _close(self, running: steps_mod.Running, error: BaseException | None, outcome: str) -> None:
+        """End an attempt that was not handed to `drive`: `refused` with the refusal's code where
+        its machine allows it, else `ended(outcome)`. Tells its readers, and forgets it."""
+        attempts = self.holds.attempts
+        row = attempts.get(running.attempt)
+        if self.tasks.get(running.attempt) is running:
+            del self.tasks[running.attempt]
+        if error is not None:
+            self._tell(running, ("raise", error))
+        if row is None or row["state"] in ("ended", "refused"):
+            return
+        code = ""
+        if isinstance(error, Refused):
+            code = error.reasons[0] if error.reasons else "refused"
+        elif isinstance(error, Invalid):
+            code = "invalid"
+        if code and outcome != "stopped" and "refused" in MACHINES[row["machine"]][row["state"]]:
+            attempts.move(running.attempt, "refused", code)
+        else:
+            attempts.move(
+                running.attempt,
+                "ended",
+                "stop_late" if row["stop_asked_at"] and outcome != "stopped" else outcome,
+            )
+
+    async def _prepare(self, running: steps_mod.Running, asked: Attempt) -> None:
+        """A step from `preparing` to `drive`: the board read, the tree, the gate and the inputs,
+        nothing spent until the gate is open. A Stop cancels it; `gitops` kills the `git` it
+        was in and `worktrees.ensure` removes the tree it left half made."""
+        key, unit, stage = asked["workspace"], asked["unit"], asked["stage"]
+        cwd = running.cwd or key
+        started_by, rerun, note = asked["started_by"], bool(asked["rerun"]), asked["note"]
+        handed = False
+        try:
+            journal = self.ws.journal()
+            if journal is None:
+                raise Refused(
+                    "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR",
+                    ("no-run-log",),
+                )
             # Refuse, or find what the step runs on: nothing is spent until the gate is open.
             data, found, row = await self._find_stage(cwd, unit, stage)
-            note = str(note or "").strip()
             rerun_block = await self._ask_rerun(cwd, unit, stage, started_by, note) if rerun else ""
             tree, work = await self._open_tree(cwd, unit, stage)
             base = await self._tree_base(cwd, unit, tree)
@@ -1337,16 +1512,19 @@ class Steps:
             if refusal:
                 raise Refused(refusal, ("feature-refused",))
 
-            # `pr` and `ship` run no session: the PR machine pushes, opens or
-            # merges, and records each move through its guard. The mark is this frame's, as for
-            # any refusal above, and is given back by the `finally` below.
+            # `pr` and `ship` run no session: the PR machine pushes, opens or merges, and
+            # records each move through its guard. `ending` from the start: a Stop after
+            # this point never cuts a push halfway.
             if stage in prmachine.STAGES:
-                yield (
-                    "done",
-                    await self._run_mechanical(
-                        cwd, key, unit, stage, tree, started_by, rerun, rerun_block, answer
-                    ),
+                self.holds.attempts.move(running.attempt, "running")
+                self.holds.attempts.move(running.attempt, "ending")
+                done = await self._run_mechanical(
+                    cwd, key, unit, stage, tree, started_by, rerun, rerun_block, answer
                 )
+                self._tell(running, ("done", done))
+                handed = True
+                outcome = done.get("outcome") if isinstance(done, dict) else None
+                self._close(running, None, str(outcome or "done"))
                 return
 
             # What the step is handed.
@@ -1401,19 +1579,8 @@ class Steps:
 
             # Launch.
             runner = Runner(self.sessions, journal, app=self.app_identity(), hooks=self.hooks)
-            # The registry is what the page lists and what a Stop finds; the mark
-            # taken above is what everything else asks. The same start time for both, and no
-            # `await` between the listing and the phase.
-            try:
-                running = self.registry.claim(key, unit, stage, started_at=mark.started_at)
-            except steps_mod.Busy as e:
-                raise Refused(str(e), ("unit-busy",)) from e
-            mark.phase = "running"
-            rid = self.holds.mark_running(key, unit, stage, "step")
-            queue = self._launch(
+            self._launch(
                 running=running,
-                mark=mark,
-                rid=rid,
                 runner=runner,
                 cwd=cwd,
                 key=key,
@@ -1429,40 +1596,26 @@ class Steps:
                 answers_before=answers_before,
             )
             handed = True
-        finally:
+        except asyncio.CancelledError:
+            if not running.stop_requested:
+                # The app going down: the attempt stays `preparing`, and the next start
+                # removes what this left.
+                if self.tasks.get(running.attempt) is running:
+                    del self.tasks[running.attempt]
+                raise
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
+            self._close(
+                running,
+                Invalid(f"{unit}'s {stage} step was stopped before it began; nothing ran"),
+                "stopped",
+            )
+        except Exception as e:
             if not handed:
-                self._give_back(key, unit, mark, rid, running)
-        # Only the reader lives here. A reader that goes away -- a closed
-        # tab, a dropped NDJSON client -- takes its queue with it and nothing else: the
-        # step runs on to its own end in `drive`. Stopping it is `stop_step`, and only that.
-        try:
-            while True:
-                kind, payload = await queue.get()
-                if kind == "raise":
-                    raise payload
-                yield (kind, payload)
-                if kind == "done":
-                    return
-        finally:
-            running.listeners.discard(queue)
-
-    def _give_back(
-        self,
-        key: str,
-        unit: str,
-        mark: steps_mod.Mark,
-        rid: str | None,
-        running: steps_mod.Running | None,
-    ) -> None:
-        """Return what a step that was not handed to `drive` holds. Past `claim`, the listing
-        and the `holds.running` entry are this frame's to return too, or `/api/board/steps`
-        keeps a step that never started and the next request gets past the mark to `claim` again."""
-        self.holds.release(key, unit, mark)
-        if rid is not None:
-            self.holds.running.pop(rid, None)
-        if running is not None:
-            self.registry.release(running)
-            self.bus.publish(Event("step.released", key, unit))
+                self._close(running, e, "failed")
+            else:
+                raise
 
     async def _find_stage(
         self, cwd: str, unit: str, stage: str
@@ -1857,8 +2010,6 @@ class Steps:
         self,
         *,
         running: steps_mod.Running,
-        mark: steps_mod.Mark,
-        rid: str,
         runner: Runner,
         cwd: str,
         key: str,
@@ -1872,10 +2023,8 @@ class Steps:
         scratch: Path | None,
         kwargs: dict[str, Any],
         answers_before: bytes | None,
-    ) -> asyncio.Queue:
-        """Start `drive` as the step's own task, and return the queue its reader streams from."""
-        queue: asyncio.Queue = asyncio.Queue()
-        running.listeners.add(queue)
+    ) -> None:
+        """Start `drive` as the step's own task, its attempt `running`."""
         # The step's `run` and recorder, from here to the task with no `await`
         # between, so every list that names the step names its `run` too.
         run = uuid.uuid4().hex
@@ -1890,11 +2039,11 @@ class Steps:
         running.run = run
         running.handle.recorder = recorder
         self.recorders[run] = recorder
-        self.holds.running[rid]["run"] = run
+        self.holds.attempts.move(running.attempt, "running", run=run)
+        self.seal_attempt(running)
         running.task = asyncio.create_task(
             self.drive(
                 running,
-                mark,
                 runner,
                 cwd,
                 unit,
@@ -1903,14 +2052,20 @@ class Steps:
                 directory,
                 base,
                 rounds_before,
-                rid,
                 scratch,
                 kwargs,
                 answers_before=answers_before,
             )
         )
-        running.task.add_done_callback(lambda _task: self.never_driven(running, mark, rid))
-        return queue
+        running.task.add_done_callback(lambda _task: self.never_driven(running))
+
+    def seal_attempt(self, running: steps_mod.Running) -> None:
+        """What `steps_mod.seal` calls: the attempt is `ending` from the artifact's first byte."""
+
+        def on_seal() -> None:
+            self.holds.attempts.move(running.attempt, "ending")
+
+        running.on_seal = on_seal
 
     async def retake_screens(
         self,
@@ -1976,34 +2131,32 @@ class Steps:
             raise Invalid(RETAKE_REFUSED)
         return retake.describe_for_review(old, result.get("manifest_after") or {})
 
-    def never_driven(self, running: steps_mod.Running, mark: steps_mod.Mark, rid: str) -> None:
-        """A task cancelled before its first turn -- a Stop queued
-        ahead of it, or an update's `shutdown` -- never enters `drive`, so its `finally` never runs.
-        That `finally` is the only thing that frees the mark once the step is handed over, so
-        a mark still held when the task is done means the body never ran: give back what it
-        would have, and tell the reader instead of leaving it waiting."""
-        if self.holds.marks.get((running.workspace, running.unit)) is not mark:
+    def never_driven(self, running: steps_mod.Running) -> None:
+        """A task cancelled before its first turn -- a Stop queued ahead of it, or an update's
+        `shutdown` -- never enters `drive`, so its `finally` never runs. That `finally` is what
+        forgets the step, so one still in `tasks` when the task is done never ran: a Stop's
+        attempt ends `stopped`, the app going down leaves it to the next start, and the
+        reader is told instead of left waiting."""
+        if self.tasks.get(running.attempt) is not running:
             return
-        self.holds.release(running.workspace, running.unit, mark)
-        self.holds.running.pop(rid, None)
+        del self.tasks[running.attempt]
         # Never started, so it wrote nothing and has nothing to say.
         self.recorders.pop(running.run, None)
-        self.registry.release(running)
-        self.bus.publish(Event("step.released", running.workspace, running.unit))
-        for q in list(running.listeners):
-            q.put_nowait(
-                (
-                    "raise",
-                    Invalid(
-                        f"{running.unit}'s {running.stage} step was cancelled before it began; nothing ran"
-                    ),
-                )
-            )
+        if running.stop_requested:
+            self.holds.attempts.move(running.attempt, "ended", "stopped")
+        self._tell(
+            running,
+            (
+                "raise",
+                Invalid(
+                    f"{running.unit}'s {running.stage} step was cancelled before it began; nothing ran"
+                ),
+            ),
+        )
 
     async def drive(  # noqa: C901, PLR0915 - still to split
         self,
         running: steps_mod.Running,
-        mark: steps_mod.Mark,
         runner: Runner,
         cwd: str,
         unit: str,
@@ -2012,7 +2165,6 @@ class Steps:
         directory: Path,
         base: dict[str, Any] | None,
         rounds_before: set[Any] | None,
-        rid: str,
         scratch: Path | None,
         kwargs: dict[str, Any],
         answers_before: bytes | None = None,
@@ -2029,10 +2181,11 @@ class Steps:
         """
 
         def tell(item: tuple[str, Any]) -> None:
-            for q in list(running.listeners):
-                q.put_nowait(item)
+            self._tell(running, item)
 
         told_done = False
+        # What the attempt ends with.
+        outcome = "failed"
         # `after_end` runs last, only on this.
         ended_done = False
         recorder = running.handle.recorder
@@ -2074,6 +2227,7 @@ class Steps:
                     ):
                         item = ("done", {**item[1], "answers_lost": True})
                     told_done = True
+                    outcome = str(item[1].get("outcome") or "done")
                 tell(item)
                 if item[0] == "done" and item[1].get("outcome") == "done":
                     ended_done = True
@@ -2105,21 +2259,29 @@ class Steps:
                         ),
                     )
                 )
-            self.holds.release(running.workspace, running.unit, mark)
-            entry = self.holds.running.pop(rid, None)
+            if self.tasks.get(running.attempt) is running:
+                del self.tasks[running.attempt]
             task = asyncio.current_task()
-            if entry is not None and task is not None:
-                # Off the board from here, and until this task
-                # ends -- its recorder, `after_end` -- an Apply's settle still waits for it.
-                self.holds.finishing[rid] = (entry, task)
+            if task is not None:
+                # Until this task ends -- its recorder, `after_end` -- an Apply's settle and
+                # `shutdown` wait for it.
+                self.holds.finishing[running.attempt] = (
+                    {
+                        "workspace": running.workspace,
+                        "unit": running.unit,
+                        "stage": stage,
+                        "started": running.started_at,
+                    },
+                    task,
+                )
             try:
                 if scratch is not None and not suspended:
                     shutil.rmtree(scratch, ignore_errors=True)
-                self.registry.release(running)
-                # After the mark is gone, so the pass sees the unit free.
-                self.bus.publish(
-                    Event("step.ended", running.workspace, running.unit, going_down=going_down)
-                )
+                if not going_down:
+                    # Ended before the board read `after_end` costs, so the pass it wakes and
+                    # the reader's `done` find the unit free. The app going down leaves the
+                    # attempt as it is, for the next start to take up or end.
+                    self.end_attempt(running.attempt, outcome)
                 if recorder is not None and not recorder.closed:
                     # The runner closes it on every road that writes an `end`. Left open means the
                     # app is going down -- what can be written is, with no `end` -- or the
@@ -2131,12 +2293,21 @@ class Steps:
                 if recorder is not None:
                     self.recorders.pop(recorder.run, None)
                 if ended_done and not going_down and stage not in autopilot.NOT_STEPS:
-                    # After the runner's `end`, which it writes before it yields
-                    # `done`, and after the mark is given back: the board read it costs holds
-                    # neither the reader's `done` nor the unit.
+                    # After the runner's `end`, which it writes before it yields `done`, and
+                    # after the attempt ended: the board read it costs holds neither the
+                    # reader's `done` nor the unit.
                     await self.after_end(cwd, unit, stage, running.workspace)
             finally:
-                self.holds.finishing.pop(rid, None)
+                self.holds.finishing.pop(running.attempt, None)
+
+    def end_attempt(self, attempt: int, outcome: str) -> None:
+        """`ended(outcome)`; `stop_late` for a step that a Stop reached once it was `ending`."""
+        row = self.holds.attempts.get(attempt)
+        if row is None or row["state"] in ("ended", "refused"):
+            return
+        if row["stop_asked_at"] and row["state"] == "ending" and outcome != "stopped":
+            outcome = "stop_late"
+        self.holds.attempts.move(attempt, "ended", outcome)
 
     def pr_machine(self) -> prmachine.Machine:
         """The PR machine over the same history and run log as every other transition."""
@@ -2321,44 +2492,70 @@ class Steps:
         return await self.stop_running(self.ws.key(cwd), unit, name)
 
     async def stop_running(self, key: str, unit: str, by: str) -> dict[str, Any]:
-        """The Stop itself: an `end` record with `stopped` and `stopped_by`, or none for a
-        step cancelled before its first turn."""
-        # An integration is listed beside the steps but has no Stop; say what
-        # holds the unit rather than that nothing runs.
-        mark = self.holds.marks.get((key, unit))
-        if mark is not None and mark.kind == "integrate":
-            raise Invalid(steps_mod.describe(unit, mark))
-        try:
-            running = self.registry.request_stop(key, unit, by)
-        except (steps_mod.NotRunning, steps_mod.Finishing) as e:
-            raise Invalid(str(e)) from e
+        """The Stop itself, recorded on the unit's attempt whatever its state:
+
+        - `queued`: `ended(stopped)` now, with no git and no session touched;
+        - `preparing`: its task is cancelled, which kills the `git` it was in;
+        - a step `running`: its session is closed and its task cancelled, an `end` record
+          with `stopped` and `stopped_by` -- or none for one cancelled before its first turn;
+        - a step `ending`: it runs to its end, which records `stop_late`;
+        - an integration `running`: it stops between two mechanical steps, never in one.
+        """
+        attempts = self.holds.attempts
+        row = attempts.holding(key, unit)
+        if row is None:
+            raise Invalid(f"{unit} has no step running")
+        if row["machine"] not in STOPPABLE:
+            raise Invalid(describe(unit, row))
+        row = attempts.ask_stop(row["id"], by)
+        running = self.tasks.get(row["id"])
+        said = {"unit": unit, "stage": row["stage"], "stopped_by": row["stop_asked_by"]}
+        state = row["state"]
+        if state == "queued":
+            if running is not None:
+                del self.tasks[row["id"]]
+                self._tell(
+                    running,
+                    (
+                        "raise",
+                        Invalid(
+                            f"{unit}'s {row['stage']} step was stopped before it began; nothing ran"
+                        ),
+                    ),
+                )
+            attempts.move(row["id"], "ended", "stopped")
+            return said
+        if running is None or row["machine"] == "integration" or state == "ending":
+            # Read at the next safe point, or recorded as `stop_late` when it ends.
+            return said
+        if not running.stop_requested:
+            # The first name stays: two presses are one stop, with one person behind it.
+            running.stop_requested = True
+            running.stopped_by = row["stop_asked_by"] or by
         await running.handle.close()
         if running.task is not None:
             running.task.cancel()
-        return {"unit": running.unit, "stage": running.stage, "stopped_by": running.stopped_by}
+        return said
 
     def running_steps(self, cwd: str) -> list[dict[str, Any]]:
-        """The board steps running now in this workspace. This process only.
-
-        Also every integration, from its `holds.running` entry to the `finally` that
-        pops it, with `kind: "integration"` and no `run`; a step is `kind: "step"`. A restart
-        that asks this sees an integration it would cut."""
+        """The board steps and integrations of this workspace not yet ended, read from their
+        attempts: `state` is `queued`, `preparing`, `running` or `ending`, and `stopping` a
+        Stop recorded on it. A step is `kind: "step"`, an integration `kind: "integration"`
+        with no `run`."""
         self.ws.check(cwd)
-        key = self.ws.key(cwd)
-        rows = [{**r, "kind": "step"} for r in self.registry.listing(key)]
-        rows += [
+        return [
             {
-                "unit": e["unit"],
-                "stage": "integrate",
-                "started_at": e["started"],
-                "stopping": False,
-                "run": None,
-                "kind": "integration",
+                "unit": r["unit"],
+                "stage": r["stage"],
+                "started_at": r["since"],
+                "state": r["state"],
+                "stopping": bool(r["stop_asked_at"]),
+                "run": r["run"] if r["machine"] == "step" else None,
+                "kind": r["machine"],
             }
-            for e in self.holds.running.values()
-            if e["workspace"] == key and e["stage"] == "integrate"
+            for r in self.holds.attempts.unfinished(self.ws.key(cwd))
+            if r["machine"] in STOPPABLE
         ]
-        return sorted(rows, key=lambda r: r["started_at"])
 
     def app_identity(self) -> dict[str, str]:
         """The running build's version and commit, for a step's `start` row.

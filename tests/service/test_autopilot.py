@@ -139,8 +139,8 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 
         async def busy():
             return (
-                self.service.holds.marks
-                or self.service.holds.running
+                self.service.attempts.unfinished()
+                or self.service.steps.tasks
                 or self.service.holds.finishing
                 or any(
                     not t.done()
@@ -423,8 +423,7 @@ class OnTheRealLoop(_Base):
         # The step writes `impl.md` with its own tools, so a block appended now could be written
         # over and nothing would say so.
         unit, d, before = await self.impl_asks("impl-busy")
-        mark = self.service.holds.take(self.key, unit, "step", "impl")
-        mark.phase = "running"
+        row = self.service.attempts.open("step", self.key, unit, "impl", state="running")
         with self.assertRaisesRegex(
             Invalid, r"^impl\.md cannot be answered while the impl step that writes it is running"
         ):
@@ -433,7 +432,7 @@ class OnTheRealLoop(_Base):
         self.assertEqual(self.answers(), [])
         # Another artifact of the same unit is not the step's to write.
         await self.service.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
-        self.service.holds.release(self.key, unit, mark)
+        self.service.attempts.move(row["id"], "ended", "done")
         await self.service.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
         self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md", "impl.md"])
 
@@ -441,11 +440,11 @@ class OnTheRealLoop(_Base):
         # A prose stage's artifact is written by the app, which reads `## Answers` on disk as it
         # writes, so an answer given meanwhile is kept.
         unit, d, before = await self.impl_asks("intent-busy")
-        mark = self.service.holds.take(self.key, unit, "step", "intent")
+        row = self.service.attempts.open("step", self.key, unit, "intent", state="running")
         try:
             await self.service.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
         finally:
-            self.service.holds.release(self.key, unit, mark)
+            self.service.attempts.move(row["id"], "ended", "done")
         self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md"])
 
 
@@ -497,8 +496,15 @@ class Scripted(_Base):
 
         def fake(kind):
             async def go(cwd, unit, stage="integrate", started_by="person"):
-                mark = self.service.holds.take(
-                    self.key, unit, "integrate" if kind == "integrate" else "step", stage
+                # Held from the start, as the attempt the real step opens: opened running, so
+                # the scheduler does not launch it again.
+                row = self.service.attempts.open(
+                    "integration" if kind == "integrate" else "step",
+                    self.key,
+                    unit,
+                    "integrate" if kind == "integrate" else stage,
+                    started_by=started_by,
+                    state="running",
                 )
                 self.launched.append((unit, stage, started_by))
                 self.began.add(asyncio.current_task())
@@ -507,7 +513,7 @@ class Scripted(_Base):
                     await self.release.wait()
                     yield ("done", {"outcome": "done"})
                 finally:
-                    self.service.holds.release(self.key, unit, mark)
+                    self.service.attempts.move(row["id"], "ended", "done")
 
             return go
 
@@ -524,6 +530,13 @@ class Scripted(_Base):
         self.service.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
         self.service.autopilot.cwds[self.key] = self.ws
         self.addCleanup(self.release.set)
+        # The stand-in steps end their attempt on the bus like the real ones, which wakes the
+        # autopilot; here each pass is asked for, so that wake is not taken. The pull request
+        # reader's (which names its causes) still is.
+        nudge = self.service.autopilot.nudge
+        self.service.autopilot.nudge = lambda key, woken_by=None: (
+            nudge(key, woken_by) if woken_by else None
+        )
 
     def add(self, name, stage, action="", plan=None, reasons=(), **unit):
         self.units[name] = {
@@ -1032,7 +1045,7 @@ class Scripted(_Base):
             between_pr_and_ship=True,
         )
         await self.pass_()
-        self.assertNotIn((self.key, "0001_a"), self.service.holds.marks)
+        self.assertEqual(self.service.attempts.unfinished(self.key, "0001_a"), [])
         self.assertEqual(self.service.autopilot.cap([], 100.0)["running"], need)
         self.add("0002_b", "spec")
         self.listed()

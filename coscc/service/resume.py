@@ -8,22 +8,25 @@ Nothing here runs git on a session's worktree: not to read it, not to clean it.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from coscc.agent import transcript
 from coscc.agent import steps as steps_mod
-from coscc.data import Data
+from coscc.data import Data, now as _now
 from coscc.hooks import facts as facts_of
 from coscc.runlog import events
 from coscc.runlog.journal import BadRecord
 from coscc.runner.step import Runner
 from coscc.data import Busy
 from coscc.service.update import refuse_while_updating
+from coscc.service.attempts import Attempt, describe
 from coscc.service.common import Invalid
+from coscc.units import worktrees
 from coscc.service.sessions import CHAT_TURNS
-from coscc.bus import Bus, Event
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.agent.sessions import Sessions
 from coscc.update.updater import Updater
@@ -136,6 +139,9 @@ def moved_on(journal: Any, row: dict[str, Any]) -> str:
     return ""
 
 
+log = logging.getLogger(__name__)
+
+
 def _spawn(coro: Any) -> asyncio.Task:
     task = asyncio.ensure_future(coro)
     _TASKS.add(task)
@@ -206,10 +212,15 @@ class Resume:
         """
         # The pause is over once its rows are taken up, here after a failed hand-off; a new
         # process never had it.
+        handoff = self.sessions.paused
         self.sessions.paused = False
+        # `shutdown` closed the queue before a hand-off that failed; this process goes on.
+        self.holds.attempts.closed = False
+        await self._recover(handoff)
         journal = self.ws.journal()
         if journal is None:
             # No working folder: `suspend_sessions` wrote no row, so there is none to take up.
+            self._end_unclaimed(handoff)
             await self.steps.reconcile_prs()
             self.autopilot.resume()
             return []
@@ -233,13 +244,8 @@ class Resume:
                 # What the claim would refuse, asked before the `resume` row
                 # so that row says what happened. Nothing awaits from here to the claim.
                 key, unit = str(owner.get("workspace") or ""), str(owner.get("unit") or "")
-                held = self.steps.registry.get(key, unit)
-                problem = self.holds.busy(key, unit) or (
-                    steps_mod.describe(
-                        unit, steps_mod.Mark("step", held.stage, "running", held.started_at)
-                    )
-                    if held is not None
-                    else ""
+                problem = self._unadoptable(
+                    "integration" if kind == "integrate" else "step", key, unit
                 )
                 if not problem and kind in STEP_KINDS:
                     problem = self._feature_refuses(owner)
@@ -284,6 +290,7 @@ class Resume:
         for start in starts:
             if start is not None:
                 _spawn(start)
+        self._end_unclaimed(handoff)
         # A merge asked for before the app went down is recorded before the
         # autopilot could ask for it again.
         await self.steps.reconcile_prs()
@@ -300,10 +307,72 @@ class Resume:
             refuse_while_updating(self.updater)
         except Invalid as e:
             return str(e)
-        held = self.holds.marks.get((key, "")) if kind == "estimate" else None
-        if held is not None:
-            return f"a proposal for this workspace is already running since {held.started_at}; wait for it to end"
-        return ""
+        held = self.holds.attempts.holding(key, "") if kind == "estimate" else None
+        return describe("", held) if held is not None else ""
+
+    def _live_here(self, row: Attempt, handoff: bool) -> bool:
+        """Whether a task of this process still holds `row`, after a hand-off that failed: a
+        step or integration in `Steps.tasks`, or any hold, review round or estimate, whose
+        coroutine ends its own attempt."""
+        return row["id"] in self.steps.tasks or (
+            handoff and row["machine"] not in ("step", "integration")
+        )
+
+    async def _recover(self, handoff: bool = False) -> None:
+        """At start-up, before Resume: what a process that went down left unfinished.
+        `queued` stays queued; one a Stop reached ends `stopped`; `preparing` and `ending`
+        end `interrupted`, the tree `preparing` left half made removed first; a hold, a
+        review round or an estimate ends `interrupted`. A `running` step or integration
+        waits for Resume, and `_end_unclaimed` ends it once Resume did not take it up."""
+        for row in self.holds.attempts.unfinished():
+            if row["state"] == "queued" or self._live_here(row, handoff):
+                continue
+            if row["stop_asked_at"]:
+                outcome = "stopped"
+            elif row["state"] == "running" and row["machine"] in ("step", "integration"):
+                continue
+            else:
+                outcome = "interrupted"
+            if row["state"] == "preparing":
+                try:
+                    await worktrees.discard_half(
+                        row["workspace"], row["unit"], self.config.data_dir
+                    )
+                except Exception:
+                    # A start-up is never stopped by this; the next click's `ensure` asks again.
+                    log.exception("the half-made tree of %s was not removed", row["unit"])
+            self.holds.attempts.move(row["id"], "ended", outcome)
+
+    def _end_unclaimed(self, handoff: bool = False) -> None:
+        """After Resume: a `running` attempt no task of this process holds ends `interrupted`,
+        and the queue moves on."""
+        for row in self.holds.attempts.unfinished():
+            if row["state"] != "queued" and not self._live_here(row, handoff):
+                self.holds.attempts.move(row["id"], "ended", "interrupted")
+        self.holds.attempts.wake_all()
+
+    def _unadoptable(self, machine: str, key: str, unit: str) -> str:
+        """Why the unit's attempt cannot be taken up by a resumed `machine`, or `""`: none, or
+        the one the last process left `running`, is what Resume takes up."""
+        row = self.holds.attempts.holding(key, unit)
+        if row is None or (
+            row["machine"] == machine
+            and row["state"] == "running"
+            and row["id"] not in self.steps.tasks
+        ):
+            return ""
+        return describe(unit, row)
+
+    def _adopt(self, machine: str, key: str, unit: str, stage: str) -> int:
+        """The attempt a resumed step or integration goes on in: the one left `running`, or a
+        new one in `running` when the process that went down had none (an older build)."""
+        problem = self._unadoptable(machine, key, unit)
+        if problem:
+            raise Invalid(problem)
+        row = self.holds.attempts.holding(key, unit)
+        if row is not None:
+            return int(row["id"])
+        return int(self.holds.attempts.open(machine, key, unit, stage, state="running")["id"])
 
     def _end_unresumed(self, journal: Any, row: dict[str, Any], kind: str, problem: str) -> None:
         """The step, integration or estimate ends `failed` and waits for a rerun; a
@@ -351,21 +420,19 @@ class Resume:
         if journal is None:
             raise Invalid("no working folder is set, so nothing can be taken up")
         directory = self.ws.unit_dir(cwd, unit)
-        mark = self.holds.take(key, unit, "step", stage)
-        try:
-            running = self.steps.registry.claim(key, unit, stage, started_at=mark.started_at)
-        except steps_mod.Busy as e:
-            self.holds.release(key, unit, mark)
-            raise Invalid(str(e)) from e
-        mark.phase = "running"
-        rid = self.holds.mark_running(key, unit, stage, "step")
+        attempt = self._adopt("step", key, unit, stage)
+        running = steps_mod.Running(
+            workspace=key, unit=unit, stage=stage, started_at=_now(), attempt=attempt, cwd=cwd
+        )
+        self.steps.tasks[attempt] = running
+        self.steps.seal_attempt(running)
         run = uuid.uuid4().hex
         recorder = events.Recorder(
             run, Data(self.config.data_dir), str(journal.working_dir), key, unit, stage
         )
         running.run, running.handle.recorder = run, recorder
         self.steps.recorders[run] = recorder
-        self.holds.running[rid]["run"] = run
+        self.holds.attempts.set_run(attempt, run)
         rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
         end_fields = None
         if rounds is not None:
@@ -408,7 +475,6 @@ class Resume:
         running.task = asyncio.create_task(
             self.steps.drive(
                 running,
-                mark,
                 Runner(
                     self.sessions,
                     journal,
@@ -422,13 +488,12 @@ class Resume:
                 directory,
                 None,
                 rounds,
-                rid,
                 scratch,
                 kwargs,
                 resumed=True,
             )
         )
-        running.task.add_done_callback(lambda _task: self.steps.never_driven(running, mark, rid))
+        running.task.add_done_callback(lambda _task: self.steps.never_driven(running))
         return running
 
     def resume_integration(self, record: dict[str, Any]) -> Any:
@@ -439,8 +504,12 @@ class Resume:
         journal = self.ws.journal()
         if journal is None:
             raise Invalid("no working folder is set, so nothing can be taken up")
-        mark = self.holds.take(key, unit, "integrate")
-        rid = self.holds.mark_running(key, unit, "integrate", "gebo")
+        attempt = self._adopt("integration", key, unit, "integrate")
+        self.holds.attempts.set_road(attempt, "gebo")
+        running = steps_mod.Running(
+            workspace=key, unit=unit, stage="integrate", started_at=_now(), attempt=attempt, cwd=cwd
+        )
+        self.steps.tasks[attempt] = running
 
         def write(rec: dict[str, Any]) -> dict[str, Any]:
             try:
@@ -449,6 +518,8 @@ class Resume:
                 return rec
 
         async def go() -> None:
+            running.task = asyncio.current_task()
+            outcome = "failed"
             try:
                 async for _ in self.steps.integrate_gebo(
                     cwd,
@@ -470,10 +541,14 @@ class Resume:
                     resume=record,
                 ):
                     pass
+                outcome = "done"
+            except asyncio.CancelledError:
+                # The app going down: the next start ends the attempt.
+                self.steps.tasks.pop(attempt, None)
+                raise
             finally:
-                self.holds.release(key, unit, mark)
-                self.holds.running.pop(rid, None)
-                self.bus.publish(Event("integration.ended", key, unit))
+                if self.steps.tasks.pop(attempt, None) is not None:
+                    self.steps.end_attempt(attempt, outcome)
 
         return go()
 
