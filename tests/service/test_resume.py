@@ -379,6 +379,27 @@ class TakingUpAfterAnUpdate(_Base):
         self.up()
         self.assertFalse(self.service.sessions.paused)
 
+    def test_taking_up_again_leaves_a_live_hold_round_or_estimate_to_its_own_task(self):
+        # A failed hand-off: the coroutine that opened each short attempt still runs here and
+        # ends it itself, so Resume must not end it `interrupted` under it.
+        attempts = self.service.attempts
+        live = []
+        for machine, unit in (("hold", self.unit), ("rounds", "other"), ("estimate", "")):
+            live.append(attempts.open(machine, self.key, unit)["id"])
+            attempts.move(live[-1], "running")
+        self.service.sessions.paused = True
+        self.up()
+        self.assertEqual([attempts.get(a)["state"] for a in live], ["running"] * 3)
+
+    def test_a_fresh_start_ends_a_hold_the_last_process_left(self):
+        attempts = self.service.attempts
+        mark = attempts.open("hold", self.key, self.unit)["id"]
+        attempts.move(mark, "running")
+        self.up()
+        self.assertEqual(
+            (attempts.get(mark)["state"], attempts.get(mark)["outcome"]), ("ended", "interrupted")
+        )
+
     def test_a_row_failing_in_the_same_pass_is_not_the_unit_moving_on(self):
         steps_seen = self.taken()
         got: list[dict] = []

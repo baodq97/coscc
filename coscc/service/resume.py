@@ -22,7 +22,7 @@ from coscc.runlog.journal import BadRecord
 from coscc.runner.step import Runner
 from coscc.data import Busy
 from coscc.service.update import refuse_while_updating
-from coscc.service.attempts import describe
+from coscc.service.attempts import Attempt, describe
 from coscc.service.common import Invalid
 from coscc.units import worktrees
 from coscc.service.sessions import CHAT_TURNS
@@ -212,12 +212,13 @@ class Resume:
         """
         # The pause is over once its rows are taken up, here after a failed hand-off; a new
         # process never had it.
+        handoff = self.sessions.paused
         self.sessions.paused = False
-        await self._recover()
+        await self._recover(handoff)
         journal = self.ws.journal()
         if journal is None:
             # No working folder: `suspend_sessions` wrote no row, so there is none to take up.
-            self._end_unclaimed()
+            self._end_unclaimed(handoff)
             await self.steps.reconcile_prs()
             self.autopilot.resume()
             return []
@@ -287,7 +288,7 @@ class Resume:
         for start in starts:
             if start is not None:
                 _spawn(start)
-        self._end_unclaimed()
+        self._end_unclaimed(handoff)
         # A merge asked for before the app went down is recorded before the
         # autopilot could ask for it again.
         await self.steps.reconcile_prs()
@@ -307,15 +308,22 @@ class Resume:
         held = self.holds.attempts.holding(key, "") if kind == "estimate" else None
         return describe("", held) if held is not None else ""
 
-    async def _recover(self) -> None:
+    def _live_here(self, row: Attempt, handoff: bool) -> bool:
+        """Whether a task of this process still holds `row`, after a hand-off that failed: a
+        step or integration in `Steps.tasks`, or any hold, review round or estimate, whose
+        coroutine ends its own attempt."""
+        return row["id"] in self.steps.tasks or (
+            handoff and row["machine"] not in ("step", "integration")
+        )
+
+    async def _recover(self, handoff: bool = False) -> None:
         """At start-up, before Resume: what a process that went down left unfinished.
         `queued` stays queued; one a Stop reached ends `stopped`; `preparing` and `ending`
         end `interrupted`, the tree `preparing` left half made removed first; a hold, a
         review round or an estimate ends `interrupted`. A `running` step or integration
         waits for Resume, and `_end_unclaimed` ends it once Resume did not take it up."""
         for row in self.holds.attempts.unfinished():
-            if row["state"] == "queued" or row["id"] in self.steps.tasks:
-                # Queued, or live in this process (a hand-off that failed).
+            if row["state"] == "queued" or self._live_here(row, handoff):
                 continue
             if row["stop_asked_at"]:
                 outcome = "stopped"
@@ -333,11 +341,11 @@ class Resume:
                     log.exception("the half-made tree of %s was not removed", row["unit"])
             self.holds.attempts.move(row["id"], "ended", outcome)
 
-    def _end_unclaimed(self) -> None:
+    def _end_unclaimed(self, handoff: bool = False) -> None:
         """After Resume: a `running` attempt no task of this process holds ends `interrupted`,
         and the queue moves on."""
         for row in self.holds.attempts.unfinished():
-            if row["state"] != "queued" and row["id"] not in self.steps.tasks:
+            if row["state"] != "queued" and not self._live_here(row, handoff):
                 self.holds.attempts.move(row["id"], "ended", "interrupted")
         self.holds.attempts.wake_all()
 
