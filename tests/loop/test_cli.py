@@ -81,7 +81,7 @@ def test_a_snapshot_on_stdin_is_read_and_a_flag_it_does_not_apply_to_refused(tmp
 
 
 def test_check_version_reads_the_checkout_of_the_cwd_not_the_installed_package(tmp_path):
-    # R8: a checkout outside this tree, at 9.9.9; the package's own checkout is not at 9.9.9.
+    # A checkout outside this tree, at 9.9.9; the package's own checkout is not at 9.9.9.
     repo = git_repo(tmp_path / "elsewhere")
     for name, text in at_version("9.9.9").items():
         (repo / name).write_text(text)

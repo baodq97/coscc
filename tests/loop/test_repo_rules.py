@@ -1171,7 +1171,7 @@ def test_ship_gate_a_round_the_app_keeps_without_its_commit(sc):
     assert "names no reviewed commit" in text_of(ship)
 
 
-# The script the loop was before `0153`, spelled so no search for it finds this file.
+# The script the loop was before it moved to Python, spelled so no search for it finds this file.
 OLD = "cos" + ".mjs"
 
 
@@ -1187,7 +1187,7 @@ OLD = "cos" + ".mjs"
     ],
 )
 def test_branch_checks_knows_the_loop_command_and_not_the_old_script(run, found):
-    """R9: the job whose `run:` calls `coscc.loop check-branch` is found; the deleted
+    """The job whose `run:` calls `coscc.loop check-branch` is found; the deleted
     script's no longer is."""
     text = workflow(step=f"      - run: {run}")
     assert branch_checks([{"path": ".github/workflows/ci.yml", "text": text}]) == found

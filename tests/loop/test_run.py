@@ -25,7 +25,7 @@ def _vietnamese(store: UnitStore) -> None:
 
 
 def test_status_answers_the_same_bytes_under_the_app_env_with_vietnamese_prose(store):
-    # R5: `child_env` sets `LC_ALL=C`; the snapshot goes in on stdin, the answer comes back
+    # `child_env` sets `LC_ALL=C`; the snapshot goes in on stdin, the answer comes back
     # byte for byte what the golden holds.
     _vietnamese(store)
     argv = ["status", "--json", "--root", str(store.root), "--state", "-"]

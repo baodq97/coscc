@@ -201,7 +201,7 @@ class NothingRunningAppliesAtOnce(_Base):
 
 
 class NoNodeIsNoReason(_Base):
-    """R12: the release check does not depend on `node`; `check-tag` is `python -m coscc.loop`."""
+    """The release check does not depend on `node`; `check-tag` is `python -m coscc.loop`."""
 
     def make_checking(self):
         empty = Path(self.tmp.name) / "empty-path"

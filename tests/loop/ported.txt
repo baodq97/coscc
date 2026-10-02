@@ -62,7 +62,7 @@ a numbered item is a question only when it asks one → tests/loop/test_model.py
 the ? must be in the first paragraph of the item → tests/loop/test_model.py::test_the_question_mark_must_be_in_the_first_paragraph
 a numbered note still ends the question above it and keeps its number → tests/loop/test_model.py::test_a_numbered_note_ends_the_question_above_it
 a note keeps no answer, a question keeps its own, and a heading with none is counted → tests/loop/test_model.py::test_a_note_keeps_no_answer_and_a_heading_with_none_is_counted
-the notes of 0107 and 0054 are not questions → tests/loop/test_model.py::test_the_notes_of_0107_and_0054_are_not_questions
+the notes of 0107 and 0054 are not questions → tests/loop/test_model.py::test_the_notes_of_a_hold_and_a_rerun_are_not_questions
 no Open questions section is not the same as an empty one → tests/loop/test_model.py::test_no_open_questions_section_is_not_an_empty_one
 three questions and no answers is three open → tests/loop/test_model.py::test_three_questions_and_no_answers_is_three_open
 one answer leaves two open, and carries who gave it → tests/loop/test_model.py::test_one_answer_leaves_two_open_and_says_who_gave_it

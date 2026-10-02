@@ -1,4 +1,4 @@
-"""R6: every `test(` call of the loop's former JavaScript suite has a Python test, or a reason.
+"""Every `test(` call of the loop's former JavaScript suite has a Python test, or a reason.
 
 `ported.txt` holds one line per call, in the order of that suite at `4858236`:
 `<name> → tests/loop/<file>.py::<function>` or `<name> → dropped: <reason>`. A target's

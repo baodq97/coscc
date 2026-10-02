@@ -745,7 +745,7 @@ def test_a_note_keeps_no_answer_and_a_heading_with_none_is_counted(tmp_path):
     assert u["open"] == 0
 
 
-def test_the_notes_of_0107_and_0054_are_not_questions():
+def test_the_notes_of_a_hold_and_a_rerun_are_not_questions():
     s0107 = "\n".join(
         [
             "## Open questions",
@@ -1384,8 +1384,8 @@ def round3(f3="needs-person", extra=()):
     )
 
 
-def tree0028(tmp_path, review, impl=None):
-    """The state of `0017` right after its review round 2, as files on disk."""
+def tree_after_round_two(tmp_path, review, impl=None):
+    """A unit right after its second review round, as files on disk."""
     _, u = question_tree(
         tmp_path / str(len(list(tmp_path.iterdir()))),
         {
@@ -1469,14 +1469,14 @@ def test_a_needs_person_round_is_not_counted_toward_the_limit():
 
 
 def test_every_open_finding_claimed_and_unconfirmed_is_review(tmp_path):
-    n = next_step(tree0028(tmp_path, R12), green_probe())
+    n = next_step(tree_after_round_two(tmp_path, R12), green_probe())
     assert n["stage"] == "review"
     assert "claimed in impl.md ## Needs a person — review confirms or rejects each" in n["action"]
     assert "waiting" not in n
 
 
 def test_both_claims_confirmed_names_a_person(tmp_path):
-    u = tree0028(tmp_path, f"{R12}\n{round3()}")
+    u = tree_after_round_two(tmp_path, f"{R12}\n{round3()}")
     n = next_step(u, green_probe())
     assert n["stage"] == ""
     assert n["blocked"] is True
@@ -1491,7 +1491,7 @@ def test_both_claims_confirmed_names_a_person(tmp_path):
 
 
 def test_one_answered_one_not_still_waits_for_the_other(tmp_path):
-    u = tree0028(tmp_path, f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}")
+    u = tree_after_round_two(tmp_path, f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}")
     n = next_step(u, green_probe())
     assert n["stage"] == ""
     assert n["action"].startswith("needs a person — F3: the grant holds no gh")
@@ -1499,7 +1499,9 @@ def test_one_answered_one_not_still_waits_for_the_other(tmp_path):
 
 
 def test_both_answered_review_reads_the_answers(tmp_path):
-    u = tree0028(tmp_path, f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}{f_block('F3')}")
+    u = tree_after_round_two(
+        tmp_path, f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}{f_block('F3')}"
+    )
     n = next_step(u, green_probe())
     assert n["stage"] == "review"
     assert "a person answered F2, F3 in review.md" in n["action"]
@@ -1513,12 +1515,12 @@ def test_an_open_finding_impl_did_not_claim_is_impl(tmp_path):
         "changes-requested",
         [f"- F1 [fixed {FIX}] a", "- F2 [open] b", "- F3 [open] c", "- F4 [open] d"],
     )
-    u = tree0028(tmp_path, f"{REVIEW_HEAD}{ROUND1}\n{r2}")
+    u = tree_after_round_two(tmp_path, f"{REVIEW_HEAD}{ROUND1}\n{r2}")
     assert next_step(u, green_probe())["stage"] == "impl"
 
 
 def test_a_rejected_claim_is_impl(tmp_path):
-    u = tree0028(tmp_path, f"{R12}\n{round3('claim-rejected')}")
+    u = tree_after_round_two(tmp_path, f"{R12}\n{round3('claim-rejected')}")
     assert next_step(u, green_probe())["stage"] == "impl"
     assert u["personFindings"] == []
     r3cr = round_(
@@ -1526,7 +1528,10 @@ def test_a_rejected_claim_is_impl(tmp_path):
         "changes-requested",
         [f"- F1 [fixed {FIX}] a", "- F2 [needs-person] b", "- F3 [claim-rejected] c"],
     )
-    assert next_step(tree0028(tmp_path, f"{R12}\n{r3cr}"), green_probe(), 4)["stage"] == "impl"
+    assert (
+        next_step(tree_after_round_two(tmp_path, f"{R12}\n{r3cr}"), green_probe(), 4)["stage"]
+        == "impl"
+    )
 
 
 def test_answered_but_kept_open_is_impl_not_review_again(tmp_path):
@@ -1534,7 +1539,7 @@ def test_answered_but_kept_open_is_impl_not_review_again(tmp_path):
         4, "changes-requested", [f"- F1 [fixed {FIX}] a", "- F2 [answered] b", "- F3 [open] c"]
     )
     review = f"{R12}\n{round3()}\n{r4}\n## Answers\n{f_block('F2')}{f_block('F3')}"
-    n = next_step(tree0028(tmp_path, review), green_probe(), 4)
+    n = next_step(tree_after_round_two(tmp_path, review), green_probe(), 4)
     assert n["stage"] == "impl"
     assert "claimed in impl.md ## Needs a person" not in n["action"]
     r4b = round_(
@@ -1545,21 +1550,21 @@ def test_answered_but_kept_open_is_impl_not_review_again(tmp_path):
         "changes-requested",
         [f"- F1 [fixed {FIX}] a", "- F2 [open] b", "- F3 [claim-rejected] c"],
     )
-    u = tree0028(tmp_path, f"{R12}\n{r3cr}\n{r4b}")
+    u = tree_after_round_two(tmp_path, f"{R12}\n{r3cr}\n{r4b}")
     assert next_step(u, green_probe(), 5)["stage"] == "impl"
 
 
 def test_a_needs_person_verdict_written_wrong_falls_back(tmp_path):
-    a = tree0028(tmp_path, f"{R12}\n{round3('needs-person', ['- F4 [open] d'])}")
+    a = tree_after_round_two(tmp_path, f"{R12}\n{round3('needs-person', ['- F4 [open] d'])}")
     assert next_step(a, green_probe())["stage"] == "impl"
     assert "waiting" not in next_step(a, green_probe())
-    b = tree0028(tmp_path, f"{R12}\n{round3('answered')}")
+    b = tree_after_round_two(tmp_path, f"{R12}\n{round3('answered')}")
     assert next_step(b, green_probe())["stage"] == "impl"
     assert b["personFindings"] == []
 
 
 def test_an_impl_with_no_needs_a_person_section_changes_nothing(tmp_path):
-    n = next_step(tree0028(tmp_path, R12, impl_text("")), green_probe())
+    n = next_step(tree_after_round_two(tmp_path, R12, impl_text("")), green_probe())
     assert n["stage"] == "impl"
     assert "nothing outside .cos/0001_q/ has reached #7" in n["action"]
 
@@ -1618,7 +1623,7 @@ def test_next_step_never_offers_a_closed_gate_in_the_person_states(tmp_path):
     ]
     for probe in probes:
         for review in reviews:
-            u = tree0028(tmp_path, review)
+            u = tree_after_round_two(tmp_path, review)
             stage = next_step(u, probe)["stage"]
             if stage:
                 assert check_gate(u, stage, probe)["ok"] is True, stage

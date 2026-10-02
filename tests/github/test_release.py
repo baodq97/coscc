@@ -304,7 +304,7 @@ class EditingVersions(unittest.TestCase):
 
 
 class AskingTheLoop(unittest.TestCase):
-    """`release.cos` runs this app's `python -m coscc.loop` with the checkout as cwd (R8)."""
+    """`release.cos` runs this app's `python -m coscc.loop` with the checkout as cwd."""
 
     def checkout(self, tmp: str, version: str) -> Path:
         tree = Path(tmp)
