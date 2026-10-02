@@ -135,17 +135,13 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         await self.settled()
 
     async def settled(self) -> None:
-        """Every pass, launch and step the autopilot started has ended."""
+        """Every pass the autopilot ran and every attempt it queued has ended."""
 
         async def busy():
             return (
                 self.service.attempts.unfinished()
                 or self.service.steps.tasks
                 or self.service.holds.finishing
-                or any(
-                    not t.done()
-                    for _, t in (self.service.autopilot.runs.get(self.key) or {}).values()
-                )
                 or self.service.autopilot.pending
                 or self.service.autopilot.locks.get(self.key, asyncio.Lock()).locked()
             )
@@ -480,9 +476,15 @@ class Scripted(_Base):
         await super().asyncSetUp()
         self.units: dict[str, dict] = {}
         self.nexts: dict[str, dict] = {}
+        # What the scheduler launched, `(unit, stage, started_by)`: the autopilot only queues, and
+        # the stand-in launchers below are all that runs.
         self.launched: list[tuple[str, str, str]] = []
-        # The launch tasks that reached the step's stand-in.
+        # The attempt rows they were launched with, for `note` and `note_by`.
+        self.launch_rows: list[dict] = []
+        # The tasks of the launched attempts, and the refusals a unit is to get from the gate:
+        # `{unit: code}`.
         self.began: set[asyncio.Task] = set()
+        self.refuse: dict[str, str] = {}
         self.asked: list[str] = []
         self.shortlisted = False
         self.release = asyncio.Event()
@@ -494,35 +496,31 @@ class Scripted(_Base):
             self.asked.append(unit)
             return self.nexts[unit]
 
-        def fake(kind):
-            async def go(cwd, unit, stage="integrate", started_by="person"):
-                # Held from the start, as the attempt the real step opens: opened running, so
-                # the scheduler does not launch it again.
-                row = self.service.attempts.open(
-                    "integration" if kind == "integrate" else "step",
-                    self.key,
-                    unit,
-                    "integrate" if kind == "integrate" else stage,
-                    started_by=started_by,
-                    state="running",
-                )
-                self.launched.append((unit, stage, started_by))
-                self.began.add(asyncio.current_task())
-                try:
-                    yield ("chunk", "x")
-                    await self.release.wait()
-                    yield ("done", {"outcome": "done"})
-                finally:
-                    self.service.attempts.move(row["id"], "ended", "done")
+        async def run(row):
+            """The attempt the scheduler moved on: running until `release`, then ended `done`, or
+            refused with the code the test gave its unit."""
+            attempts = self.service.attempts
+            try:
+                code = self.refuse.get(row["unit"])
+                if code:
+                    attempts.move(row["id"], "refused", code)
+                    return
+                if row["machine"] == "step":
+                    attempts.move(row["id"], "running")
+                await self.release.wait()
+                attempts.move(row["id"], "ended", "done")
+            finally:
+                self.service.steps.tasks.pop(row["id"], None)
 
-            return go
+        def launcher(row):
+            self.launched.append((row["unit"], row["stage"], row["started_by"]))
+            self.launch_rows.append(row)
+            self.began.add(asyncio.get_running_loop().create_task(run(row)))
 
+        self.service.attempts.launchers["step"] = launcher
+        self.service.attempts.launchers["integration"] = launcher
         self.service.boards.read = board
         self.service.steps.next_step = next_step
-        self.service.steps.run_step = fake("step")
-        self.service.steps.integrate = lambda cwd, unit, started_by="person": fake("integrate")(
-            cwd, unit, started_by=started_by
-        )
         self.service.autopilot.cwds[self.key] = self.ws
         self.service.autopilot.set_setting(self.ws, "autopilot", True)
         self.service.autopilot.stop(self.key)
@@ -571,14 +569,9 @@ class Scripted(_Base):
         await self.started()
 
     async def started(self):
-        """Every launch of the last pass has started its step, or ended without one."""
-        await self.until(
-            lambda: all(
-                t in self.began or t.done()
-                for _, t in (self.service.autopilot.runs.get(self.key) or {}).values()
-            ),
-            "the launches to start",
-        )
+        """The attempts the last pass queued were launched by the scheduler at once, with the
+        queue; this lets what that started take its first turn."""
+        await asyncio.sleep(0)
 
     def picks(self) -> list[dict]:
         return Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-pick")
@@ -637,13 +630,19 @@ class Scripted(_Base):
         await self.started()
         self.assertEqual((self.launched, self.stops()), ([], {}))
 
-    async def test_turned_off_before_a_launch_runs_starts_nothing(self):
+    async def test_turned_off_after_a_pass_queued_a_step_that_step_runs_on_and_nothing_more_queues(
+        self,
+    ):
         self.add("0001_a", "spec")
-        self.listed()
-        await self.service.autopilot.run_pass(self.key)
+        self.add("0002_b", "spec")
+        self.service.autopilot.set_setting(self.ws, "max_parallel", 1)
+        await self.pass_()
         self.service.autopilot.set_setting(self.ws, "autopilot", False)
-        await self.started()
-        self.assertEqual(self.launched, [])
+        self.release.set()
+        await self.settled()
+        await self.service.autopilot.run_pass(self.key)
+        self.assertEqual(self.launched, [("0001_a", "spec", "autopilot")])
+        self.assertEqual(len(self.picks()), 1)
 
     async def test_one_ship_at_a_time_and_only_when_allowed(self):
         self.add("0001_a", "ship")
@@ -1020,17 +1019,10 @@ class Scripted(_Base):
     async def test_still_red_and_conflicting_after_impl_stops(self):
         await self._still_red_once_main_moved("conflicting")
 
-    async def test_an_integration_before_its_mark_is_counted_against_the_cap(self):
+    async def test_an_integration_queued_and_not_yet_started_is_counted_against_the_cap(self):
         reading = asyncio.Event()
         self.addCleanup(reading.set)
 
-        async def slow(cwd, unit, started_by="person"):
-            # `integrate` fetches and asks `gh` before it takes its mark.
-            self.began.add(asyncio.current_task())
-            await reading.wait()
-            yield ("done", {})
-
-        self.service.steps.integrate = slow
         need = autopilot.reservation("integrate")
         self.service.autopilot.set_setting(
             self.ws, "daily_cap_usd", need + autopilot.reservation("spec") / 2
@@ -1045,12 +1037,19 @@ class Scripted(_Base):
             between_pr_and_ship=True,
         )
         await self.pass_()
-        self.assertEqual(self.service.attempts.unfinished(self.key, "0001_a"), [])
+        # Queued, and counted from then on, with no `start` in the run log yet.
+        self.assertEqual(
+            [r["stage"] for r in self.service.attempts.unfinished(self.key, "0001_a")],
+            ["integrate"],
+        )
         self.assertEqual(self.service.autopilot.cap([], 100.0)["running"], need)
         self.add("0002_b", "spec")
         self.listed()
         await self.pass_()
-        self.assertEqual((self.launched, self.stops()), ([], {"0002_b": "cap"}))
+        self.assertEqual(
+            (self.launched, self.stops()),
+            ([("0001_a", "integrate", "autopilot")], {"0002_b": "cap"}),
+        )
 
     async def test_an_unknown_cost_is_estimated_not_the_cap_reached(self):
         Journal(self.config.working_dir, self.config.data_dir).finished(
@@ -1110,63 +1109,396 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {}))
 
-    async def test_a_gate_refusal_is_a_stop_f_with_its_words(self):
-        async def refused(cwd, unit, stage, started_by="person"):
-            raise Invalid("blocked: plan.md is draft")
-            yield  # pragma: no cover
+    def refused(self) -> list[tuple[str, str]]:
+        """`(unit, code)` of the attempts the gate refused, oldest first."""
+        with self.service.attempts.data.connect() as conn:
+            return [
+                (r["unit"], r["outcome"])
+                for r in conn.execute(
+                    "SELECT a.unit, m.outcome FROM attempts a JOIN attempt_moves m "
+                    "ON m.attempt = a.id AND m.seq = "
+                    "(SELECT MAX(seq) FROM attempt_moves WHERE attempt = a.id) "
+                    "WHERE m.moved_to = 'refused' ORDER BY a.id"
+                )
+            ]
 
-        self.service.steps.run_step = refused
-        self.add("0001_a", "impl", plan="- `a/b.py`")
-        await self.pass_()
+    def queued(self) -> list[tuple[str, str, str, str]]:
+        """`(unit, stage, state, started_by)` of every attempt not ended, oldest first."""
+        return [
+            (r["unit"], r["stage"], r["state"], r["started_by"])
+            for r in self.service.attempts.unfinished(self.key)
+        ]
+
+    async def test_a_pass_queues_one_attempt_for_each_unit_it_picks_and_starts_nothing_itself(self):
+        # The scheduler is shut: whatever is queued stays queued, and nothing else could start it.
+        self.service.attempts.admitting = lambda: False
+        behind = (
+            "#7 is 2 commit(s) behind origin/main — integrate, then review again; "
+            "a round that passes does not count toward the limit"
+        )
+        for name in ("0001_a", "0002_b", "0003_c"):
+            self.add(name, "spec")
+        self.add(
+            "0004_d",
+            "",
+            action=behind,
+            integration={"state": "behind"},
+            rounds=[],
+            between_pr_and_ship=True,
+        )
+        with (
+            mock.patch.object(self.service.steps, "run_step") as run,
+            mock.patch.object(self.service.steps, "integrate") as integrate,
+        ):
+            await self.pass_()
         self.assertEqual(
-            self.service.autopilot.stops[self.key]["0001_a"],
-            {"unit": "0001_a", "kind": "f", "reason": "blocked: plan.md is draft"},
+            self.queued(),
+            [
+                ("0001_a", "spec", "queued", "autopilot"),
+                ("0002_b", "spec", "queued", "autopilot"),
+                ("0003_c", "spec", "queued", "autopilot"),
+                ("0004_d", "integrate", "queued", "autopilot"),
+            ],
+        )
+        self.assertEqual(
+            [r["machine"] for r in self.service.attempts.unfinished(self.key)],
+            ["step", "step", "step", "integration"],
+        )
+        self.assertEqual((run.call_count, integrate.call_count, self.launched), (0, 0, []))
+        # Written before the pass returned, and nothing of the autopilot's is left running.
+        self.assertEqual(len(self.picks()), 4)
+        self.assertEqual(self.service.autopilot.pending, set())
+        self.assertFalse(hasattr(self.service.autopilot, "runs"))
+
+    async def test_a_held_database_on_one_unit_is_no_stop_and_the_next_is_still_queued(self):
+        self.service.attempts.admitting = lambda: False
+        self.add("0001_a", "spec")
+        self.add("0002_b", "spec")
+        enqueue = self.service.steps.enqueue_step
+
+        def held_once(cwd, unit, stage, note=""):
+            if unit == "0001_a":
+                raise Busy("cos.db was held")
+            return enqueue(cwd, unit, stage, note)
+
+        with mock.patch.object(self.service.steps, "enqueue_step", side_effect=held_once):
+            await self.pass_()
+        self.assertEqual(self.queued(), [("0002_b", "spec", "queued", "autopilot")])
+        self.assertEqual(self.stops(), {})
+        # The next pass asks again.
+        await self.pass_()
+        self.assertEqual([q[0] for q in self.queued()], ["0002_b", "0001_a"])
+
+    async def test_two_passes_with_no_end_between_queue_nothing_twice(self):
+        self.service.attempts.admitting = lambda: False
+        self.add("0001_a", "spec")
+        self.add("0002_b", "spec")
+        await self.pass_()
+        first = self.queued()
+        await self.pass_()
+        await self.pass_()
+        self.assertEqual((self.queued(), len(self.picks())), (first, 2))
+        self.assertEqual(self.stops(), {})
+
+    async def test_a_queued_attempt_holds_max_parallel_and_the_overlap_and_the_cap(self):
+        self.service.attempts.admitting = lambda: False
+        self.service.autopilot.set_setting(self.ws, "max_parallel", 2)
+        self.add("0001_a", "impl", plan="- `coscc/x.py`")
+        self.add("0002_b", "impl", plan="- `coscc/x.py`")
+        self.add("0003_c", "spec")
+        self.add("0004_d", "spec")
+        await self.pass_()
+        # The second impl overlaps the queued one, the next spec takes the second place, the last finds none.
+        self.assertEqual([q[0] for q in self.queued()], ["0001_a", "0003_c"])
+        self.assertEqual(self.service.autopilot.held[self.key]["0002_b"], ("overlap", "0001_a"))
+        await self.pass_()
+        self.assertEqual([q[0] for q in self.queued()], ["0001_a", "0003_c"])
+        self.assertEqual(
+            self.service.autopilot.cap([], 100.0)["running"],
+            autopilot.reservation("impl") + autopilot.reservation("spec"),
         )
 
-    async def test_a_gate_refusal_on_ci_pending_is_quiet_by_its_code_not_its_words(self):
-        words = "blocked: review cannot proceed for 0001_a\n  - CI has not finished on #3: t — wait, then ask again"
-        for error, stops in (
-            (Refused("blocked: the words changed", ("ci-pending",)), {}),
-            (Invalid(words), {"0001_a": "f"}),
-        ):
+    async def test_wakes_are_one_pass_and_a_wake_during_a_pass_is_one_more(self):
+        autopilot_ = self.service.autopilot
+        # `Scripted` takes the bus's wakes away, since it asks for each pass itself; this one wants them.
+        nudge = type(autopilot_).nudge.__get__(autopilot_)
+        reads: list[int] = []
+        go_on = asyncio.Event()
+        self.addCleanup(go_on.set)
 
-            async def refused(cwd, unit, stage, started_by="person", error=error):
-                raise error
-                yield  # pragma: no cover
+        async def board(cwd):
+            reads.append(1)
+            await go_on.wait()
+            return {"units": []}
 
-            self.service.steps.run_step = refused
-            self.service.autopilot.stops.pop(self.key, None)
-            self.add("0001_a", "review")
-            await self.pass_()
-            self.assertEqual(self.stops(), stops, error)
+        self.service.boards.read = board
+        self.add("0001_a", "spec")
+        self.listed()
+        for _ in range(3):
+            nudge(self.key)
+        go_on.set()
+        await self.settled()
+        self.assertEqual(len(reads), 1)
+        # A pass that is running: many wakes during it are exactly one pass after it.
+        go_on.clear()
+        nudge(self.key)
+        await self.until(lambda: len(reads) == 2, "the pass to begin")
+        for _ in range(5):
+            nudge(self.key, [{"unit": "0001_a", "transition": "green"}])
+        self.assertEqual(len(reads), 2)
+        go_on.set()
+        await self.settled()
+        self.assertEqual(len(reads), 3)
+        self.assertEqual(autopilot_.waiting, {})
+        # And one more when nothing runs.
+        nudge(self.key)
+        await self.settled()
+        self.assertEqual(len(reads), 4)
 
-    async def test_a_race_at_launch_leaves_no_stop_and_another_refusal_leaves_its_code(self):
-        for error, stops in (
-            (Refused("busy", ("unit-busy",)), {}),
-            (Refused("updating", ("updating",)), {}),
-            (Refused("no tree", ("no-worktree",)), {"0001_a": "f"}),
-        ):
+    async def test_a_wake_that_a_pass_off_cannot_use_does_not_swallow_the_next(self):
+        nudge = type(self.service.autopilot).nudge.__get__(self.service.autopilot)
+        self.add("0001_a", "spec")
+        self.listed()
+        self.service.autopilot.set_setting(self.ws, "autopilot", False)
+        nudge(self.key)
+        self.assertEqual(self.service.autopilot.waiting, {})
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
+        self.service.autopilot.stop(self.key)
+        self.service.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
+        self.release.set()
+        nudge(self.key)
+        await self.settled()
+        self.assertEqual(self.launched, [("0001_a", "spec", "autopilot")])
 
-            async def refused(cwd, unit, stage, started_by="person", error=error):
-                raise error
-                yield  # pragma: no cover
+    # --- the cases that used to wait for a person ---------------------------------------------
 
-            self.service.steps.run_step = refused
-            self.service.autopilot.stops.pop(self.key, None)
-            self.add("0001_a", "impl", plan="- `a/b.py`")
-            await self.pass_()
-            self.assertEqual(self.stops(), stops, error)
-        self.assertEqual(self.service.autopilot.stops[self.key]["0001_a"]["code"], "no-worktree")
+    def a_draft_impl(self, name="0001_a"):
+        """`next` names no stage and says the unit's `impl` is still a draft: go on with it."""
+        self.add(name, "", action="impl.md is still a draft", reasons=["draft"])
+        self.nexts[name]["continue"] = "impl"
 
-    async def test_a_bare_invalid_at_launch_has_no_code(self):
-        async def refused(cwd, unit, stage, started_by="person"):
-            raise Invalid("name a work unit")
-            yield  # pragma: no cover
+    def a_red_ci(self, name="0001_a"):
+        self.add(
+            name,
+            "impl",
+            action="CI is red on #7: tests — back to impl: fix on the branch and push",
+            plan="- `a/b.py`",
+            reasons=["changes-requested", "ci-red"],
+            rounds=[{"verdict": "changes-requested"}],
+        )
 
-        self.service.steps.run_step = refused
+    def reads(self, head, checks=()):
+        """The PR machine has read `checks` for the unit's pull request at `head`."""
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(
+            prmachine, "state", return_value={"state": "open", "number": 7, "head": head}
+        ).start()
+        mock.patch.object(
+            prmachine,
+            "ci_held",
+            return_value={"head": head, "ci": "red", "checks": list(checks), "at": "now"},
+        ).start()
+
+    async def test_a_draft_impl_is_queued_again_with_a_note_of_the_apps_own(self):
+        self.a_draft_impl()
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
+        [row] = self.launch_rows
+        self.assertEqual(
+            (row["note"], row["note_by"]), ("impl.md is still a draft: go on with it", "app")
+        )
+        [pick] = self.picks()
+        self.assertEqual((pick["stage"], pick["continued"]), ("impl", True))
+        self.assertNotIn("ci_note", pick)
+        self.assertEqual(self.stops(), {})
+
+    async def test_a_draft_that_next_names_no_continue_for_is_still_the_stop_f(self):
+        self.add("0001_a", "", action="plan.md is draft", reasons=["draft"])
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "f"}))
+
+    async def _tries(self, unit, stage, head_of):
+        """Pass, let the attempt end, and write the `start` the real step would have: each on the
+        head `head_of()` gives. Returns once the attempts of the pass ended."""
+        await self.pass_()
+        self.release.set()
+        await self.settled()
+        self.release.clear()
+        if self.launched and self.launched[-1][:2] == (unit, stage):
+            Journal(self.config.working_dir, self.config.data_dir).started(
+                self.key, unit, stage, "autonomous", started_by="autopilot", head=head_of()
+            )
+
+    async def test_a_draft_impl_is_continued_twice_on_one_head_and_the_third_is_stop_e(self):
+        self.a_draft_impl()
+        for _ in range(2):
+            await self._tries("0001_a", "impl", lambda: "h1")
+        self.assertEqual((len(self.launched), self.stops()), (2, {}))
+        await self.pass_()
+        self.assertEqual((len(self.launched), self.stops()), (2, {"0001_a": "e"}))
+        self.assertIn("2 times", self.service.autopilot.stops[self.key]["0001_a"]["reason"])
+        # The head moved: nothing was tried on it yet.
+        Journal(self.config.working_dir, self.config.data_dir).started(
+            self.key, "0001_a", "impl", "autonomous", started_by="person", head="h2"
+        )
+        await self.pass_()
+        self.assertEqual((len(self.launched), self.stops()), (3, {}))
+
+    async def test_a_red_ci_queues_impl_with_a_note_that_names_the_checks_and_the_head(self):
+        self.a_red_ci()
+        self.reads(
+            "abc1234567890",
+            [{"name": "tests", "bucket": "fail"}, {"name": "lint", "bucket": "pass"}],
+        )
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
+        [row] = self.launch_rows
+        self.assertEqual(row["note_by"], "app")
+        self.assertEqual(row["note"], "CI is red at abc123456789: tests failed. Fix them and push.")
+        [pick] = self.picks()
+        self.assertEqual(pick["ci_note"], row["note"])
+        self.assertNotIn("continued", pick)
+
+    async def test_a_red_ci_is_tried_twice_on_one_head_and_the_third_is_stop_e(self):
+        self.a_red_ci()
+        head = ["h1"]
+        mock.patch.object(
+            prmachine,
+            "state",
+            side_effect=lambda *_: {"state": "open", "number": 7, "head": head[0]},
+        ).start()
+        mock.patch.object(
+            prmachine,
+            "ci_held",
+            side_effect=lambda *_: {
+                "head": head[0],
+                "ci": "red",
+                "checks": [{"name": "tests", "bucket": "fail"}],
+                "at": "now",
+            },
+        ).start()
+        self.addCleanup(mock.patch.stopall)
+        for _ in range(2):
+            await self._tries("0001_a", "impl", lambda: head[0])
+        await self.pass_()
+        self.assertEqual((len(self.launched), self.stops()), (2, {"0001_a": "e"}))
+        self.assertIn("2 times", self.service.autopilot.stops[self.key]["0001_a"]["reason"])
+        head[0] = "h2"
+        await self.pass_()
+        self.assertEqual((len(self.launched), self.stops()), (3, {}))
+
+    async def test_a_red_ci_with_no_read_of_the_checks_still_queues_impl_with_a_note(self):
+        self.a_red_ci()
+        await self.pass_()
+        [row] = self.launch_rows
+        self.assertEqual(
+            (row["note"], row["note_by"]),
+            ("CI is red: the required checks failed. Fix them and push.", "app"),
+        )
+
+    async def test_review_offered_again_for_its_screens_is_queued(self):
+        Journal(self.config.working_dir, self.config.data_dir).finished(
+            self.key, "0001_a", "review", "done"
+        )
+        self.add(
+            "0001_a",
+            "review",
+            action="review again: the Screens section is missing",
+            rounds=[{"verdict": "pass"}],
+        )
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "review", "autopilot")])
+        self.assertEqual(self.stops(), {})
+        [row] = self.launch_rows
+        self.assertEqual(row["note"], "")
+
+    async def test_changes_requested_sends_the_unit_back_to_impl_like_any_stage(self):
+        Journal(self.config.working_dir, self.config.data_dir).finished(
+            self.key, "0001_a", "review", "done"
+        )
+        self.add(
+            "0001_a",
+            "impl",
+            action="fix the open findings of review round 1 on the branch",
+            plan="- `a/b.py`",
+            reasons=["changes-requested"],
+            rounds=[{"verdict": "changes-requested"}],
+        )
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
+        [pick] = self.picks()
+        self.assertNotIn("ci_note", pick)
+        self.assertNotIn("continued", pick)
+
+    async def test_a_gate_refusal_is_a_stop_f_with_its_code_on_the_next_pass(self):
+        """A gate closed after the pass picked: the attempt is `refused`, and the pass after it
+        says so once and queues nothing again, however many follow."""
+        self.refuse["0001_a"] = "no-worktree"
         self.add("0001_a", "impl", plan="- `a/b.py`")
         await self.pass_()
+        self.assertEqual((self.refused(), self.stops()), ([("0001_a", "no-worktree")], {}))
+        for _ in range(4):
+            await self.pass_()
+        self.assertEqual(
+            self.service.autopilot.stops[self.key]["0001_a"],
+            {
+                "unit": "0001_a",
+                "kind": "f",
+                "reason": "impl was refused: no-worktree",
+                "code": "no-worktree",
+            },
+        )
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
+        self.assertEqual(len(self.picks()), 1)
+        [logged] = Journal(self.config.working_dir, self.config.data_dir).records(
+            kind="autopilot-stop"
+        )
+        self.assertEqual((logged["unit"], logged["stop"]), ("0001_a", "f"))
+
+    async def test_a_refusal_of_a_race_is_no_stop_and_waits_out_a_hold_by_its_code(self):
+        """`ci-pending`, `updating` and `unit-busy` are no stop. The first two hold the unit for
+        `REFUSAL_HOLD` unless a read of the pull requests woke the pass; `unit-busy` never does."""
+        for code, held in (("ci-pending", True), ("updating", True), ("unit-busy", False)):
+            self.units.clear()
+            self.launched.clear()
+            self.refuse.clear()
+            self.refuse["0001_a"] = code
+            self.add("0001_a", "review")
+            self.shortlisted = False
+            await self.pass_()
+            await self.pass_()
+            self.assertEqual(self.stops(), {}, code)
+            self.assertEqual(len(self.launched), 1 if held else 2, code)
+            if held:
+                await self.service.autopilot.run_pass(self.key, [{"unit": "0001_a"}])
+                self.assertEqual(len(self.launched), 2, code)
+            self.refuse.clear()
+            self.release.set()
+            await self.settled()
+            self.release.clear()
+            if held:
+                [_, again] = self.picks()[-2:]
+                self.assertEqual(again["woken_by"], [{"unit": "0001_a"}], code)
+
+    async def test_a_refusal_of_a_stage_is_not_the_stop_of_another_stage(self):
+        self.refuse["0001_a"] = "no-worktree"
+        self.add("0001_a", "review")
+        await self.pass_()
+        self.nexts["0001_a"]["stage"] = "impl"
+        self.refuse.clear()
+        await self.pass_()
+        self.assertEqual(
+            (self.launched, self.stops()),
+            ([("0001_a", "review", "autopilot"), ("0001_a", "impl", "autopilot")], {}),
+        )
+
+    async def test_a_refusal_that_is_not_a_gate_code_has_no_code_in_its_stop(self):
+        self.refuse["0001_a"] = "invalid"
+        self.add("0001_a", "impl", plan="- `a/b.py`")
+        await self.pass_()
+        await self.pass_()
         self.assertNotIn("code", self.service.autopilot.stops[self.key]["0001_a"])
+        self.assertEqual(self.stops(), {"0001_a": "f"})
 
     async def test_a_race_at_next_passes_the_unit_over_and_starts_the_next(self):
         for code, passed in (
@@ -1194,6 +1526,29 @@ class Scripted(_Base):
             self.release.set()
             await self.settled()
             self.release.clear()
+
+    async def test_a_refusal_while_queueing_logs_one_line_and_a_race_only_at_info(self):
+        self.service.attempts.admitting = lambda: False
+        for code, level, stop in (
+            ("unit-busy", "INFO", {}),
+            ("ci-pending", "INFO", {}),
+            ("gate-closed", "WARNING", {"0001_a": "f"}),
+        ):
+            self.service.autopilot.stops.pop(self.key, None)
+            self.units.clear()
+            self.add("0001_a", "spec")
+
+            def refuse(cwd, unit, stage, note="", code=code):
+                raise Refused("refused", (code,))
+
+            with (
+                mock.patch.object(self.service.steps, "enqueue_step", side_effect=refuse),
+                self.assertLogs("coscc.service.autopilot", "INFO") as logged,
+            ):
+                await self.pass_()
+            [record] = [r for r in logged.records if "queue" in r.getMessage()]
+            self.assertEqual((record.levelname, record.exc_info), (level, None), code)
+            self.assertEqual(self.stops(), stop, code)
 
     async def test_a_coded_refusal_at_next_is_a_stop_with_its_code(self):
         self.add("0001_a", "spec")
@@ -1387,13 +1742,10 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {}))
 
-        async def refused(cwd, unit, stage, started_by="person"):
-            raise Invalid("blocked: plan.md is draft")
-            yield  # pragma: no cover
-
-        self.service.steps.run_step = refused
+        self.refuse["0002_b"] = "draft"
         self.add("0002_b", "impl", plan="- `a/b.py`")
         self.listed()
+        await self.pass_()
         await self.pass_()
         self.assertEqual(self.stops(), {"0002_b": "f"})
 
@@ -1443,16 +1795,13 @@ class Scripted(_Base):
         self.assertEqual((self.asked, [u for u, _, _ in self.launched]), (["0002_b"], ["0002_b"]))
 
     async def test_a_closed_gate_is_still_a_stop_f(self):
-        async def refused(cwd, unit, stage, started_by="person"):
-            raise Invalid("blocked: idea.md is draft")
-            yield  # pragma: no cover
-
-        self.service.steps.run_step = refused
+        self.refuse["0001_a"] = "draft"
         self.add_rerun("0001_a")
+        await self.pass_()
         await self.pass_()
         self.assertEqual(
             self.service.autopilot.stops[self.key]["0001_a"],
-            {"unit": "0001_a", "kind": "f", "reason": "blocked: idea.md is draft"},
+            {"unit": "0001_a", "kind": "f", "reason": "intent was refused: draft", "code": "draft"},
         )
 
     async def test_two_reruns_after_answers_stop_it(self):
@@ -1632,19 +1981,16 @@ class Scripted(_Base):
             "date": "2026-09-27",
         }
 
-        async def refused(cwd, unit, stage, started_by="person"):
-            raise Invalid("blocked: plan.md is draft")
-            yield  # pragma: no cover
-
-        self.service.steps.run_step = refused
+        self.refuse["0002_b"] = "draft"
         self.ran_out("0002_b", "impl")
         self.add("0002_b", "impl", plan="- `a/b.py`")
+        await self.pass_()
         await self.pass_()
         self.assertEqual([p["unit"] for p in self.picks()], ["0002_b"])
         self.assertEqual(self.stops(), {"0002_b": "f"})
         self.assertEqual(
             self.service.autopilot.stops[self.key]["0002_b"],
-            {"unit": "0002_b", "kind": "f", "reason": "blocked: plan.md is draft"},
+            {"unit": "0002_b", "kind": "f", "reason": "impl was refused: draft", "code": "draft"},
         )
 
     async def test_the_rerun_branch_passes_the_count_too_when_it_ran_out(self):

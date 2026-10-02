@@ -10,13 +10,16 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+import unittest
+from pathlib import Path
 
 import pytest
 
 from coscc.loop import STAGE_NAMES
 from coscc.loop.model import above_answers, read_unit
 from coscc.loop.rules import gate_answer, next_answer
-from tests.loop.conftest import UnitStore, entry, env, git_repo, expect
+from tests.loop.conftest import UnitStore, entry, env, expect, git_repo, python
 
 KIND = {
     "idea.md": "Idea",
@@ -576,3 +579,95 @@ def test_gate_json_codes_are_the_ones_the_words_explain(world, unit, stage, code
     r = expect(world.argv("gate", unit, stage, "--json"))
     got = json.loads(r.out)["reasons"]
     assert got == list(dict.fromkeys(codes))
+
+
+# --- an impl left in draft ----------------------------------------------------------------
+
+ASKED_ENTRY = {"questions": [{"n": 1, "text": "Ai chịu trách nhiệm cho phần này?"}]}
+
+
+class AnImplLeftInDraftIsToBeContinued(unittest.TestCase):
+    """`next` adds `continue: "impl"` to the `draft` answer only when impl itself has more to write."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.store = UnitStore(Path(self._dir.name) / "store")
+
+    def _next(self, name: str) -> dict:
+        state = json.loads(self.store.state().read_text())
+        unit = read_unit(str(self.store.cos / name), name, state)
+        return next_answer(unit)
+
+    def test_a_draft_impl_with_no_question_and_no_claim_is_continued(self):
+        put(self.store, "0001_a", accepted("plan.md", **{"impl.md": "draft"}))
+        answer = self._next("0001_a")
+        self.assertEqual((answer["stage"], answer["reasons"]), ("", ["draft"]))
+        self.assertEqual(answer["continue"], "impl")
+        self.assertNotIn("rerun", answer)
+
+    def test_a_draft_impl_whose_result_claims_nothing_is_continued(self):
+        put(
+            self.store,
+            "0001_a",
+            accepted("plan.md", **{"impl.md": "draft"}),
+            impl_md={"result": {"needs_person": []}},
+        )
+        self.assertEqual(self._next("0001_a")["continue"], "impl")
+
+    def test_next_prints_continue_as_the_name_of_the_stage(self):
+        put(self.store, "0001_a", accepted("plan.md", **{"impl.md": "draft"}))
+        body = json.loads(python(self.store.argv("next", "0001_a")).out)
+        self.assertEqual(
+            (body["stage"], body["continue"], body["reasons"]), ("", "impl", ["draft"])
+        )
+
+    def test_an_open_question_of_impl_is_not_continued(self):
+        put(
+            self.store,
+            "0001_a",
+            accepted("plan.md", **{"impl.md": "draft"}),
+            texts={"impl.md": text("impl.md", "draft", body=ASKED)},
+            impl_md=ASKED_ENTRY,
+        )
+        self.assertNotIn("continue", self._next("0001_a"))
+
+    def test_impl_questions_all_answered_are_a_rerun_and_not_a_continue(self):
+        answer = {**ANSWER, "artifact": "impl.md"}
+        put(
+            self.store,
+            "0001_a",
+            accepted("plan.md", **{"impl.md": "draft"}),
+            texts={"impl.md": text("impl.md", "draft", body=ASKED)},
+            impl_md=ASKED_ENTRY,
+            answers=[answer],
+        )
+        got = self._next("0001_a")
+        self.assertEqual(got["rerun"], "impl")
+        self.assertNotIn("continue", got)
+
+    def test_an_impl_that_hands_a_finding_to_a_person_is_not_continued(self):
+        put(
+            self.store,
+            "0001_a",
+            accepted("plan.md", **{"impl.md": "draft"}),
+            impl_md={"result": {"needs_person": ["F1"]}},
+        )
+        self.assertNotIn("continue", self._next("0001_a"))
+
+    def test_a_draft_plan_is_never_continued(self):
+        put(self.store, "0001_a", accepted("spec.md", **{"plan.md": "draft"}))
+        got = self._next("0001_a")
+        self.assertEqual(got["reasons"], ["draft"])
+        self.assertNotIn("continue", got)
+
+    def test_an_impl_not_yet_run_or_accepted_is_not_continued(self):
+        put(self.store, "0001_a", accepted("plan.md"))
+        put(self.store, "0002_b", accepted("impl.md"))
+        for name in ("0001_a", "0002_b"):
+            self.assertNotIn("continue", self._next(name), name)
+
+    def test_the_status_listing_does_not_carry_continue(self):
+        put(self.store, "0001_a", accepted("plan.md", **{"impl.md": "draft"}))
+        units = json.loads(python(self.store.argv("status", "--json")).out)["units"]
+        self.assertNotIn("continue", units[0]["next"])

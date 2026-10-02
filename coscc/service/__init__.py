@@ -111,7 +111,9 @@ class Service:
             self.bus.subscribe(name, lambda _: self.updater.job_ended())
         for name in (
             "step.ended",
+            "step.refused",
             "integration.ended",
+            "integration.refused",
             "answer.written",
             "shortlist.saved",
             "hold.moved",

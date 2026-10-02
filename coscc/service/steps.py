@@ -1294,6 +1294,8 @@ class Steps:
             # The stage a fully answered draft would run again; only the autopilot
             # reads it.
             "rerun": str(found.get("rerun") or ""),
+            # `impl` when it left its file a draft asking nothing; only the autopilot reads it.
+            "continue": str(found.get("continue") or ""),
             # The codes the autopilot branches on, copied from `coscc.loop next`.
             "reasons": list(found.get("reasons") or []),
         }
@@ -1362,7 +1364,9 @@ class Steps:
         than the one the page is showing.
 
         `started_by` is `autopilot` only when the autopilot calls this; no route
-        passes it, so a request cannot say it is the autopilot.
+        passes it, so a request cannot say it is the autopilot. The autopilot queues with
+        `enqueue_step`: a note sent here is a person's, and one that says it is the
+        autopilot's is refused.
 
         `rerun` runs an accepted stage again, with a person's `note`. Whether the
         stage may, and the `### Rerun` block appended to `intent.md` before the session
@@ -1373,6 +1377,8 @@ class Steps:
             check_started_by(started_by)
         except ValueError as e:
             raise Invalid(str(e)) from e
+        if started_by != "person" and str(note or "").strip():
+            raise Invalid("the app's note reaches a step only through the autopilot's queue")
         self.ws.check(cwd)
         refuse_while_updating(self.updater)
         if self.ws.journal() is None:
@@ -1408,6 +1414,47 @@ class Steps:
             self.tasks[row["id"]] = running
         async for item in self._follow(running, queue):
             yield item
+
+    def enqueue_step(self, cwd: str, unit: str, stage: str, note: str = "") -> int:
+        """The autopilot's step: `run_step`'s first half with no reader. An attempt in `queued`,
+        `started_by=autopilot`, its id returned at once; the scheduler launches `_prepare`,
+        which asks the gate, and `drive` ends it and runs `after_end` with nobody reading, as
+        it does for one queued before a restart. `note` is the app's own (`note_by=app`): the
+        prompt puts it apart from a person's. `unit-busy` and the update are refused here."""
+        note = note.strip()
+        return self._enqueue(
+            cwd, unit, "step", stage, note=note, note_by="app" if note else "person"
+        )
+
+    def enqueue_integration(self, cwd: str, unit: str) -> int:
+        """The autopilot's integration: `integrate`'s first half with no reader, as
+        `enqueue_step`."""
+        if not unit:
+            raise Invalid("name a work unit")
+        self.ws.check(cwd)
+        self.ws.unit_dir(cwd, unit)
+        return self._enqueue(cwd, unit, "integration", "integrate")
+
+    def _enqueue(self, cwd: str, unit: str, machine: str, stage: str, **kw: Any) -> int:
+        self.ws.check(cwd)
+        refuse_while_updating(self.updater)
+        if self.ws.journal() is None:
+            raise Refused(
+                "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR",
+                ("no-run-log",),
+            )
+        key = self.ws.key(cwd)
+        running = steps_mod.Running(workspace=key, unit=unit, stage=stage, started_at=_now())
+        running.cwd = cwd
+        self._opening = running
+        try:
+            row = self.holds.attempts.open(machine, key, unit, stage, started_by="autopilot", **kw)
+        finally:
+            self._opening = None
+        if not running.attempt:
+            running.attempt, running.started_at = row["id"], row["since"]
+            self.tasks[row["id"]] = running
+        return row["id"]
 
     async def _follow(
         self, running: steps_mod.Running, queue: asyncio.Queue
@@ -1481,6 +1528,8 @@ class Steps:
         key, unit, stage = asked["workspace"], asked["unit"], asked["stage"]
         cwd = running.cwd or key
         started_by, rerun, note = asked["started_by"], bool(asked["rerun"]), asked["note"]
+        # The autopilot's own note: never a rerun's, never a person's.
+        app_note = note if asked.get("note_by") == "app" and not rerun else ""
         handed = False
         try:
             journal = self.ws.journal()
@@ -1572,6 +1621,7 @@ class Steps:
                 started_by=started_by,
                 rerun=rerun,
                 note=note,
+                app_note=app_note,
                 screens_note=screens_note,
                 rounds_before=rounds_before,
                 inputs=inputs,
@@ -1968,6 +2018,7 @@ class Steps:
         screens_note: str,
         rounds_before: set[Any] | None,
         inputs: dict[str, Any],
+        app_note: str = "",
     ) -> dict[str, Any]:
         """The keyword arguments `Runner.run` is called with: who runs what, where, what the
         gate said, and the `inputs` gathered."""
@@ -1995,6 +2046,8 @@ class Steps:
             **({"started_by": started_by} if started_by != "person" else {}),
             # The same again: only a rerun names them.
             **({"rerun": True, "rerun_note": note} if rerun else {}),
+            # And the autopilot's note, only when it wrote one.
+            **({"app_note": app_note} if app_note else {}),
             # What `resume_step` needs of this step, in its `suspend` row.
             owner_extra={
                 "workspace_dir": cwd,

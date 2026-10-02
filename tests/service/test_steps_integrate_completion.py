@@ -200,13 +200,17 @@ class ACutIntegration(unittest.TestCase):
             )
             self.service.steps.next_step = next_step
             await self.service.autopilot.run_pass(self.key)
-            runs = dict(self.service.autopilot.runs.get(self.key) or {})
+            queued = self.service.attempts.unfinished(self.key)
             self.assertEqual(
-                [stage for stage, _ in runs.values()],
-                ["integrate"],
-                f"the pass did not start integrate: {self.service.autopilot.stops.get(self.key)}",
+                [(r["machine"], r["started_by"]) for r in queued],
+                [("integration", "autopilot")],
+                f"the pass did not queue integrate: {self.service.autopilot.stops.get(self.key)}",
             )
-            await asyncio.gather(*(task for _, task in runs.values()))
+            # No reader: the integration's own task ends its attempt, and the pass it nudges runs.
+            for _ in range(1000):
+                if not self.service.attempts.unfinished(self.key):
+                    break
+                await asyncio.sleep(0.01)
             await asyncio.gather(*list(self.service.autopilot.pending))
             stops = dict(self.service.autopilot.stops.get(self.key) or {})
             self.service.autopilot.stop(self.key)

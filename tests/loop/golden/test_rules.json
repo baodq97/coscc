@@ -6631,7 +6631,7 @@
  ],
  "tests/loop/test_rules.py::test_next_of_every_shape[0062_impl-draft]#1": [
   0,
-  "{\"unit\":\"0062_impl-draft\",\"stage\":\"\",\"action\":\"finish and accept impl.md\",\"blocked\":true,\"reasons\":[\"draft\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0062_impl-draft\",\"stage\":\"\",\"action\":\"finish and accept impl.md\",\"blocked\":true,\"continue\":\"impl\",\"reasons\":[\"draft\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_rules.py::test_next_of_every_shape[0063_pr-draft]#1": [

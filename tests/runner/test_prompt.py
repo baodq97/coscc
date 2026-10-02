@@ -1249,3 +1249,34 @@ class TheFastLaneBlock(unittest.TestCase):
     def test_no_other_stage_is_told(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertNotIn("# The fast lane", self.prompt(d, "spec", "fast"))
+
+
+class TheAppsNoteIsApartFromAPersons(unittest.TestCase):
+    """The autopilot's note (`note_by=app`) has its own heading, never the rerun's: the agent must not read it as a person's wish."""
+
+    HEADING = "# What the app noted"
+
+    def prompt(self, d: str, **kw) -> str:
+        make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+        return build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", **kw)[0]
+
+    def test_the_apps_note_has_its_own_heading_before_the_task(self):
+        note = "APP-NOTE-0154: CI is red on abc1234: tests"
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self.prompt(d, app_note=note)
+        self.assertIn(note, prompt)
+        self.assertIn("not a person's request or decision", prompt)
+        self.assertNotIn("# Why this stage runs again", prompt)
+        self.assertLess(prompt.index(self.HEADING), prompt.index("# Your task"))
+
+    def test_a_reruns_note_stays_out_of_the_apps_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self.prompt(d, rerun=True, rerun_note="PERSON-0154", app_note="APP-0154")
+        rerun = prompt[prompt.index("# Why this stage runs again") : prompt.index("# Your task")]
+        app = prompt[prompt.index(self.HEADING) : prompt.index("# Why this stage runs again")]
+        self.assertNotIn("APP-0154", rerun)
+        self.assertNotIn("PERSON-0154", app)
+
+    def test_no_note_adds_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.prompt(d, app_note="  "), self.prompt(d))
