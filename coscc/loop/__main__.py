@@ -159,7 +159,7 @@ def parse(argv: list[str], err) -> Args | int:
     if said:
         return 2
     if state is None and cmd in STATE_READERS:
-        # R2: the app's database stands in for a snapshot nobody passed.
+        # the app's database stands in for a snapshot nobody passed.
         from coscc.loop.snapshot import from_db
 
         state = from_db(cos_dir)

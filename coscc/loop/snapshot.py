@@ -1,4 +1,4 @@
-"""The app's snapshot of every unit's metadata: from `--state`, or straight from `cos.db` (R2).
+"""The app's snapshot of every unit's metadata: from `--state`, or straight from `cos.db`.
 
 `--state <file|->` is read as `cos.mjs` reads it, with its words when it cannot be. Without it
 the deciding commands build the same dict in this process from the app's database, for the

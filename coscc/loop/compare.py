@@ -1,4 +1,4 @@
-"""`uv run python -m coscc.loop.compare`: R4 of `0151`, the two loops measured on real data.
+"""`uv run python -m coscc.loop.compare`: of, the two loops measured on real data.
 
 For every workspace of the app's config it writes the workspace's snapshot to a file once, then
 runs `node cos.mjs` and `python -m coscc.loop` on the same argv for `status --json`, `gate <unit>

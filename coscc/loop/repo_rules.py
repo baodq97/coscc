@@ -87,7 +87,7 @@ def _lines(text, own=None):
 
 
 def screens_problems(screens, standard_path):
-    """`0083` R10: the one place the words of a passing round's `### Screens` are judged. Returns
+    """the one place the words of a passing round's `### Screens` are judged. Returns
     what is wrong with them, `[]` when nothing is."""
     if not truthy(screens):
         return [
@@ -120,7 +120,7 @@ def screens_problems(screens, standard_path):
 
 
 def screens_needs(unit, probe, last, said):
-    """`0083` R10/R12: asked by `ship_needs` only once every earlier check has passed. With no
+    """asked by `ship_needs` only once every earlier check has passed. With no
     standard, or one with no globs, it asks nothing at all; for a unit that changes no screen it
     asks one `git diff`. `said["screens"]` sends `nextStep` to another review round — except when
     git could not say which files changed, which another round would not cure."""
@@ -167,7 +167,7 @@ def ui_changed(unit, probe, head):
     standard = nullish(ui() if ui else None)
     if not standard or not standard["globs"]:
         return {"changed": [], "standard": standard}
-    # Three dots: from the merge-base, in one command. The gate does not fetch (spec C7).
+    # Three dots: from the merge-base, in one command. The gate does not fetch.
     diff = probe.git("diff", "--name-only", f"origin/main...{js(head)}")
     if diff["code"] != 0:
         local = probe.git("diff", "--name-only", f"main...{js(head)}")
@@ -183,7 +183,7 @@ def ui_changed(unit, probe, head):
 
 
 def screens_answer(unit, probe):
-    """`0111` R1, R2. Whether the app should take a UI unit's screenshots again before `review`:
+    """. Whether the app should take a UI unit's screenshots again before `review`:
     the screens the branch changes, what `.screens/manifest.json` says, and whether its `head` is
     still an ancestor of `HEAD`. Reads only; no gate is opened or closed by it."""
     found = ui_changed(unit, probe, "HEAD")
@@ -241,7 +241,7 @@ def screens_answer(unit, probe):
 
 
 def review_needs(unit, probe, limit, said=None):
-    """`review` may begin only on an open pull request whose required checks are green (`0015`
+    """`review` may begin only on an open pull request whose required checks are green (
     spec, Answers, Câu 2). Nothing green to read is not read as green.
 
     `said["ci"]` records what CI said, once it was asked: `red`, `unfixable`, `pending`, `none`,
@@ -251,7 +251,7 @@ def review_needs(unit, probe, limit, said=None):
     pr = nullish(dig(unit, "artifacts", "pr.md", "pr"))
     if not pr:
         need.append("pr.md names no pull request — the pr stage opens one and writes PR: <url>")
-    # `0049` R5: before `probe`, so a title outside the grammar asks no `gh`.
+    # before `probe`, so a title outside the grammar asks no `gh`.
     need.extend(title_needs(unit))
     if out_of_rounds(unit, limit):
         need.append(needs_a_person(rounds_used(unit), review_limit(unit, limit)))
@@ -264,7 +264,7 @@ def review_needs(unit, probe, limit, said=None):
 
 def ci_needs(probe, pr, said):
     """The required checks of `pr`, read once: `[]` when green, else why not, with `said["ci"]`
-    set. Shared by `review` and, after a clean rebase, `ship` (`0067` R3)."""
+    set. Shared by `review` and, after a clean rebase, `ship`."""
     r = probe.gh("pr", "checks", str(pr["number"]), "--required", "--json", "name,bucket")
     # `gh pr checks` exits non-zero when a check failed or is pending, and still prints the
     # JSON. So the output is read first and the exit code only when there is none.
@@ -276,7 +276,7 @@ def ci_needs(probe, pr, said):
         said["ci"] = "none"
         return [f"#{pr['number']} reports no required checks — nothing green to read is not green"]
     red = [dig(c, "name") for c in checks if dig(c, "bucket") in ("fail", "cancel")]
-    # Before the checks still running: one red check no rerun can fix settles it (`0103` R5).
+    # Before the checks still running: one red check no rerun can fix settles it.
     if any(dig(c, "bucket") in ("fail", "cancel") for c in checks):
         return red_needs(probe, pr, red, said)
     waiting = [dig(c, "name") for c in checks if dig(c, "bucket") not in ("pass", "skipping")]
@@ -290,9 +290,9 @@ def ci_needs(probe, pr, said):
 
 
 def red_needs(probe, pr, red, said):
-    """`0103`: a red check is impl's to fix, unless it is the harness's branch-name check and
-    `check-branch` refuses the head GitHub reports (R2). That one stops for a person, `said["ci"]`
-    `unfixable` (R3). The head is asked for here and only here (R7)."""
+    """a red check is impl's to fix, unless it is the harness's branch-name check and
+    `check-branch` refuses the head GitHub reports. That one stops for a person, `said["ci"]`
+    `unfixable`. The head is asked for here and only here."""
     said["ci"] = "red"
     number, names = pr["number"], _join(red, ", ")
     line = f"CI is red on #{number}: {names} — back to impl: fix on the branch and push"
@@ -329,7 +329,7 @@ def red_needs(probe, pr, red, said):
 def pr_view(probe, pr):
     """The pull request as GitHub reports it, from one `gh pr view`: `{ state, head, merged,
     title }`, `merged` being `{ commit, at }` on a `MERGED` one and `None` otherwise, `title`
-    `None` when gh gave none, or `{ error }` (`0116`, `0049` R6)."""
+    `None` when gh gave none, or `{ error }`."""
     view = probe.gh(
         "pr", "view", str(pr["number"]), "--json", "state,headRefOid,mergeCommit,mergedAt,title"
     )
@@ -375,10 +375,10 @@ def pr_head(probe, pr, view=None):
 
 def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.mjs` `shipNeeds` kept whole
     """`ship` merges. It may do so only after a pass that left nothing open, whose history is
-    intact, and after which no code reached the branch (`0015` spec, R3-R5).
+    intact, and after which no code reached the branch.
 
     `said["head"]` is set to the pull request head the gate checked, so the merge can be pinned
-    to it. `0067`: a ref rewritten after the pass no longer closes the gate by itself when the
+    to it. a ref rewritten after the pass no longer closes the gate by itself when the
     unit's patch there is the reviewed one (`rebase_clean`): it sets `said["rebased"]` then."""
     said = {} if said is None else said
     rounds = review_of(unit)
@@ -392,11 +392,11 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.
             f'review round {last["n"]} has verdict "{verdict}", not pass — '
             "its first line is Reviewed: <sha>. Verdict: pass."
         )
-    # `0028` spec R8: `[answered]` closes a finding only when `review.md ## Answers` holds a
+    # `[answered]` closes a finding only when `review.md ## Answers` holds a
     # block for that id. `[needs-person]` and `[claim-rejected]` never close one.
     answered = person_answers(unit)
-    # `0061` R4: a finding that does not block is left open on purpose; `ship.md` lists it.
-    # A lowered one still blocks, but is named only on its own line below (`0078` R2).
+    # a finding that does not block is left open on purpose; `ship.md` lists it.
+    # A lowered one still blocks, but is named only on its own line below.
     rule = severity_rule(unit)
     passes = {f["id"] for f in [*rule["nonBlocking"], *rule["demoted"]]}
     open_ = [
@@ -423,7 +423,7 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.
             f"review round {last['n']} still has findings not fixed: "
             f"{', '.join(named(f) for f in open_)}"
         )
-    # `0027` R5: `parseReview` worked out what the last round dropped.
+    # `parseReview` worked out what the last round dropped.
     if last.get("dropped"):
         need.append(
             f"review round {last['n']} drops findings an earlier round raised: "
@@ -437,7 +437,7 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.
         )
     if not last["reviewed"]:
         need.append(f"review round {last['n']} names no reviewed commit — Reviewed: <sha>")
-    # `0049` R6: as `review`'s, before `probe` and any `gh`.
+    # as `review`'s, before `probe` and any `gh`.
     need.extend(title_needs(unit))
     if need:
         return need
@@ -449,9 +449,9 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.
     pr = nullish(dig(unit, "artifacts", "pr.md", "pr"))
     if not pr:
         return ["pr.md names no pull request — nothing says what ship would merge"]
-    # `0116`: the pull request is read before the branch is looked for — after
+    # the pull request is read before the branch is looked for — after
     # `--delete-branch` there may be no ref left, and a merged one needs none. Any state but
-    # these two closes the gate as it always did (R3).
+    # these two closes the gate as it always did.
     view = pr_view(probe, pr)
     if "error" in view:
         return [view["error"]]
@@ -471,14 +471,14 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.
 
     # What the merge lands is the pull request's head on GitHub, not a ref here: a push from
     # another checkout moves it and leaves `origin/<branch>` stale, since the gate does not fetch
-    # (`0015` review round 1, F2). So the head is asked for and checked like a ref.
+    # . So the head is asked for and checked like a ref.
     read = pr_head(probe, pr, view)
     if "error" in read:
         return [read["error"]]
     refs.append(read["head"])
     said["head"] = read["head"]
-    # `0067`: the reviewed commit's patch, taken only once a ref is found rewritten, and then
-    # once for all of them — a unit never rebased asks git nothing more (R7).
+    # the reviewed commit's patch, taken only once a ref is found rewritten, and then
+    # once for all of them — a unit never rebased asks git nothing more.
     reviewed_patch = None
     rebased = False
     for ref in refs:
@@ -489,7 +489,7 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.
             continue
         # `said["moved"]`: what the pass reviewed is no longer what would merge. The cure for
         # both is another round, which is what `nextStep` offers when it sees this. A rewrite
-        # that left the unit's patch as it was is not one (`0067` R2).
+        # that left the unit's patch as it was is not one.
         if since["rewritten"]:
             if reviewed_patch is None:
                 reviewed_patch = unit_patch(probe, unit, last["reviewed"])
@@ -516,7 +516,7 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.
             )
     if need:
         return need
-    # `0067` R3: a clean rebase stands in for the round only once CI is green on it — CI is what
+    # a clean rebase stands in for the round only once CI is green on it — CI is what
     # is left to catch a conflict with no conflicting line. Before `behind`: a head just rebased
     # is up to date, and "wait for CI" is then the true reason.
     if rebased:
@@ -524,9 +524,9 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.
         ci = ci_needs(probe, pr, said)
         if ci:
             return ci
-    # `0112` R3: after `moved`, so a head already rebased goes to review rather than here. A pull
+    # after `moved`, so a head already rebased goes to review rather than here. A pull
     # request behind `origin/main` is one GitHub refuses to merge; the gate says so first, off
-    # the ref as it is — it does not fetch, the autopilot does (R4). No `origin/main` here, no
+    # the ref as it is — it does not fetch, the autopilot does. No `origin/main` here, no
     # opinion: GitHub still decides.
     trunk = "refs/remotes/origin/main"
     if (
@@ -550,8 +550,8 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.
     screens = screens_needs(unit, probe, last, said)
     if screens:
         return screens
-    # `0049` R6, last: when this closes the gate it is the only reason, so `nextStep` may offer
-    # `ship`, which the app starts by putting `pr.md` up (R7). `said["title"]` says so.
+    # , last: when this closes the gate it is the only reason, so `nextStep` may offer
+    # `ship`, which the app starts by putting `pr.md` up. `said["title"]` says so.
     mine = trim(unit["artifacts"]["pr.md"]["title"])
     if view["title"] is not None and trim(view["title"]) == mine:
         return []
@@ -572,7 +572,7 @@ def _count(text):
 
 
 def merged_needs(probe, pr, view, said):
-    """`0116`: a pull request already merged — by a `ship` whose `--delete-branch` then exited 1,
+    """a pull request already merged — by a `ship` whose `--delete-branch` then exited 1,
     or by hand — leaves `ship` only its record to write. The gate asks that the merge commit is
     here and on `origin/main`, and nothing else. It sets `said["merged"]` and no `said["head"]`,
     so there is nothing to pin."""
@@ -598,7 +598,7 @@ def merged_needs(probe, pr, view, said):
 
 def merged_line(merged):
     """What the `ship` gate's open line and `next`'s action both say of a merged pull request
-    (`0116`), so the two cannot word it differently."""
+    , so the two cannot word it differently."""
     return (
         f"#{js(merged['number'])} was merged as {js(merged['commit'])} at {js(merged['at'])}: "
         "record it in ship.md; do not merge"
@@ -622,7 +622,7 @@ HUNK_HEAD = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", re.ASCII)
 
 
 def normalize_patch(text):
-    """`0067` R1: a patch with what a rebase alone moves taken out — each `index <blob>..<blob>`
+    """a patch with what a rebase alone moves taken out — each `index <blob>..<blob>`
     line, and the numbers of each `@@ -a,b +c,d @@` — and every other byte kept."""
     kept = [line for line in text.split("\n") if not INDEX_LINE.fullmatch(line)]
     return "\n".join(HUNK_HEAD.sub("@@ @@", line) for line in kept)
@@ -680,7 +680,7 @@ def patch_files(patch):
 
 
 def rebase_clean(probe, unit, reviewed, ref):
-    """`0067` R1, R4: is `ref` a clean rebase of the reviewed commit? `reviewed` is that commit's
+    """is `ref` a clean rebase of the reviewed commit? `reviewed` is that commit's
     `unit_patch`, computed once by the caller for every ref. `{ clean: True }`,
     `{ differs: [files] }` or `{ error }`; what cannot be compared is never clean."""
     if reviewed.get("error"):
@@ -699,7 +699,7 @@ def rebase_clean(probe, unit, reviewed, ref):
 
 def rebase_why(compared):
     """Why a `rebase_clean` answer is not clean, in the words the `ship` gate and `next` both
-    print (`0121` R8)."""
+    print."""
     if compared.get("differs"):
         return f"its patch differs from the reviewed one in {', '.join(compared['differs'])}"
     return f"its patch could not be compared with the reviewed one: {js(compared.get('error'))}"
@@ -709,11 +709,11 @@ def rebase_why(compared):
 
 
 def pass_left_closed(unit, probe, g):
-    """`0125` R3-R5: the one place two questions are answered — does the last pass leave `ship`
+    """the one place two questions are answered — does the last pass leave `ship`
     closed for the one reason another round cures, and was the round before it a pass on the same
     head? `g` is the `ship` gate's `evaluate`: `{ok, need, said}`. `None` when the first answer is
     no. Else `{ last, need, stop }`: `stop` is `None` while the one retry is still to come, or the
-    sentence the unit stops on. No limit is read: one retry is a choice, not a setting (R7)."""
+    sentence the unit stops on. No limit is read: one retry is a choice, not a setting."""
     rounds = review_of(unit)
     last = rounds[-1] if rounds else None
     if last is None or last["verdict"] != "pass":
@@ -751,7 +751,7 @@ def pass_left_closed(unit, probe, g):
             f"is still closed: {'; '.join(g['need'])}"
         )
 
-    # Another round cannot bring back a commit that is not here (spec C3).
+    # Another round cannot bring back a commit that is not here.
     if probe.git("cat-file", "-e", f"{prev['reviewed']}^{{commit}}")["code"] != 0:
         why = (
             f"the reviewed commit {prev['reviewed']} of review round {prev['n']} is not in "
@@ -788,10 +788,10 @@ def _indent(line):
 
 
 def branch_checks(files):
-    """`0103` R2 (a): the check names of the jobs whose `run:` step calls `cos.mjs check-branch`,
+    """the check names of the jobs whose `run:` step calls `cos.mjs check-branch`,
     read from each workflow's text, `{ path, text }`. Not a YAML parser, and not meant to be one:
     a job it cannot read is not found, and a red check not found goes back to impl as it did
-    before (spec C4). The name is the job's own `name:`, else its key; a `name:` built from
+    before. The name is the job's own `name:`, else its key; a `name:` built from
     `${{ }}` is not known here, so that job is not found either. A line that is only a comment
     counts for nothing."""
     found = []

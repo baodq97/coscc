@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.loop.conftest import Store, entry, env, fake_gh, git, git_repo, header, same
+from tests.loop.conftest import UnitStore, entry, env, fake_gh, git, git_repo, header, same
 
 UNIT = "0040_widget"
 BRANCH = "feat/widget"
@@ -102,7 +102,7 @@ class Scene:
 
     def __init__(self, tmp_path: Path, standard: str | None = None, workflows=None):
         self.tmp = tmp_path
-        self.store = Store(tmp_path / "store")
+        self.store = UnitStore(tmp_path / "store")
         self.repo = git_repo(tmp_path / "repo")
         self.bin = tmp_path / "bin"
         if standard is not None:
@@ -188,7 +188,7 @@ class Scene:
         script.chmod(0o755)
 
     def passed(self, *extra: str, sha: str | None = None, screens: str = "") -> str:
-        """A review with one passing round that fixed F1."""
+        """A review with one passing round that fixed."""
         sha = sha or self.reviewed
         fixed = finding(1, f"fixed {sha[:7]}", "high")
         return review_text("accepted", rnd(1, "pass", sha, fixed, *extra, screens=screens))

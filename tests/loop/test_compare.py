@@ -1,4 +1,4 @@
-"""The comparison command of R4: its pairs, its `gh` shim, its verdicts and its printed line."""
+"""The comparison command of its pairs, its `gh` shim, its verdicts and its printed line."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from coscc.loop.compare import (
     run_pairs,
     units_of,
 )
-from tests.loop.conftest import REPO, Store, entry, env, fake_gh, git_repo, header
+from tests.loop.conftest import REPO, UnitStore, entry, env, fake_gh, git_repo, header
 
 
 def _ported() -> bool:
@@ -35,7 +35,7 @@ def _ported() -> bool:
 needs_rules = pytest.mark.skipif(not _ported(), reason="coscc.loop.rules is not ported yet")
 
 
-def two_units(store: Store) -> Store:
+def two_units(store: UnitStore) -> UnitStore:
     for name, status in [("0001_alpha", "accepted"), ("0002_beta", "draft")]:
         store.unit(
             name,

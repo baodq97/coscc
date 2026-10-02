@@ -18,7 +18,7 @@ from typing import Any
 from coscc.loop import JS_SPACE, read_text, split_lines, trim
 
 # The UI standard: its rules for a person to read, and in its front-matter `paths:` the one list
-# of files that count as the app's screens (`0083` R2). Read from the repository being diffed.
+# of files that count as the app's screens. Read from the repository being diffed.
 UI_STANDARD = ".claude/rules/ui-standard.md"
 # Where `scripts/capture_screens.py` writes its manifest, relative to the repository.
 SCREENS_MANIFEST = ".screens/manifest.json"
@@ -140,7 +140,7 @@ class Probe:
         return _spawned("gh", args, self.repo_dir)
 
     def ui(self):
-        """`0083`: the UI standard of that repository, read from its files rather than `git`, or
+        """the UI standard of that repository, read from its files rather than `git`, or
         `None` without one."""
         path = os.path.join(self.repo_dir, UI_STANDARD)
         if not os.path.exists(path):
@@ -148,7 +148,7 @@ class Probe:
         return {"path": UI_STANDARD, "globs": parse_standard(read_text(path))}
 
     def manifest(self) -> Any:
-        """`0111`: what `scripts/capture_screens.py` last wrote in that repository, or `None`
+        """what `scripts/capture_screens.py` last wrote in that repository, or `None`
         with no file there or one that is not JSON."""
         try:
             text = read_text(os.path.join(self.repo_dir, SCREENS_MANIFEST))
@@ -157,7 +157,7 @@ class Probe:
         return parse_json(text)
 
     def workflows(self):
-        """`0103`: every workflow of that repository as `{ path, text }`, `[]` with no
+        """every workflow of that repository as `{ path, text }`, `[]` with no
         `.github/workflows/` or one that cannot be read."""
         folder = os.path.join(self.repo_dir, ".github", "workflows")
         try:

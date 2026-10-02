@@ -1,4 +1,4 @@
-"""`status`, `gate` and `next` print what `cos.mjs` prints, for every shape of unit (R3, R5).
+"""`status`, `gate` and `next` print what `cos.mjs` prints, for every shape of unit.
 
 One store holds a unit for each rule that answers without a repository. Every test asks both
 versions through `same()`, which asserts stdout, stderr and the exit code are alike; the
@@ -15,7 +15,7 @@ import pytest
 from coscc.loop import STAGE_NAMES
 from coscc.loop.model import above_answers, read_unit
 from coscc.loop.rules import gate_answer, next_answer
-from tests.loop.conftest import Store, entry, env, git_repo, same
+from tests.loop.conftest import UnitStore, entry, env, git_repo, same
 
 KIND = {
     "idea.md": "Idea",
@@ -52,7 +52,7 @@ def pr_text(name: str, status: str | None) -> str:
 
 
 def put(
-    s: Store,
+    s: UnitStore,
     name: str,
     arts: dict[str, str | None],
     texts: dict[str, str] | None = None,
@@ -110,7 +110,7 @@ def rerun_block(stage: str, **stale: str) -> str:
     )
 
 
-def build(s: Store) -> None:  # noqa: PLR0915 - one list of units, each a rule
+def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a rule
     put(s, "0001_fresh", {"intent.md": "draft"})
     s.unit(
         "0002_pre-intent",
@@ -282,8 +282,8 @@ def build(s: Store) -> None:  # noqa: PLR0915 - one list of units, each a rule
 
 
 @pytest.fixture(scope="module")
-def world(tmp_path_factory) -> Store:
-    s = Store(tmp_path_factory.mktemp("rules") / "store")
+def world(tmp_path_factory) -> UnitStore:
+    s = UnitStore(tmp_path_factory.mktemp("rules") / "store")
     s.workspaces = ["ws", "other"]
     build(s)
     s.units["other/0001_far"] = entry({"intent.md": "accepted"}, merged=True)

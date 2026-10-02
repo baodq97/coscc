@@ -1,4 +1,4 @@
-"""`rerun` answers alike in `cos.mjs` and `python -m coscc.loop` (R3): the offers, each refusal,
+"""`rerun` answers alike in `cos.mjs` and `python -m coscc.loop`: the offers, each refusal,
 and the `### Rerun` block with the digests of what it makes stale."""
 
 from __future__ import annotations
@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 
 from coscc.loop.model import above_answers
-from tests.loop.conftest import Store, entry, header, same
+from tests.loop.conftest import UnitStore, entry, header, same
 
 UNIT = "0001_x"
 KINDS = {
@@ -21,7 +21,7 @@ KINDS = {
 }
 
 
-def make(store: Store, statuses: dict[str, str], *, unmeasured: bool = False, **fields) -> None:
+def make(store: UnitStore, statuses: dict[str, str], *, unmeasured: bool = False, **fields) -> None:
     """A unit with one file per `statuses` item, the app's snapshot saying the same; with
     `unmeasured`, it says spec.md has an [unmeasured] item, so spike.md is required."""
     files = {f: header("x", s, KINDS[f]) for f, s in statuses.items()}
@@ -30,7 +30,7 @@ def make(store: Store, statuses: dict[str, str], *, unmeasured: bool = False, **
     store.unit(UNIT, files, entry(statuses, **fields))
 
 
-def make_stale(store: Store, file: str, stage: str) -> None:
+def make_stale(store: UnitStore, file: str, stage: str) -> None:
     """A `### Rerun` block in intent.md that makes `file` stale: its digest is `file`'s now."""
     digest = above_answers((store.cos / UNIT / file).read_text())
     intent = store.cos / UNIT / "intent.md"
@@ -41,11 +41,11 @@ def make_stale(store: Store, file: str, stage: str) -> None:
     )
 
 
-def rerun(store: Store, *words: str):
+def rerun(store: UnitStore, *words: str):
     return same(store.argv("rerun", *words))
 
 
-def offered(store: Store) -> list[str]:
+def offered(store: UnitStore) -> list[str]:
     r = rerun(store, UNIT)
     assert r.code == 0
     return [o["stage"] for o in json.loads(r.out)["offers"]]

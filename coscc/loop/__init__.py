@@ -1,7 +1,7 @@
 """The work-unit loop, decided in Python: a port of `.claude/scripts/cos.mjs`, command for command.
 
 `python -m coscc.loop <command>` takes the arguments `cos.mjs` takes and prints what it prints,
-byte for byte (`0151` R3). This module holds what every part shares: the stages and the other
+byte for byte. This module holds what every part shares: the stages and the other
 constants `cos.mjs` defines, and the few helpers that keep JavaScript's semantics where Python's
 differ — `trim`, the `${}` of a template string, `?.` on a dict, `JSON.stringify`.
 """
@@ -75,7 +75,7 @@ NEEDS_STATE = "needs the coscc app: pass --state <file|-> (uv run coscc state <w
 
 
 def code(c: str) -> str:
-    """`cos.mjs` `code`: a reason code, refused here when `REASONS` lacks it (R6)."""
+    """`cos.mjs` `code`: a reason code, refused here when `REASONS` lacks it."""
     if c not in REASONS:
         raise ValueError(f"{c!r} is not in coscc.units.guards.REASONS")
     return c

@@ -1,7 +1,7 @@
 """A unit, as `cos.mjs` `readUnit` builds it: its files' prose and the app's snapshot entry.
 
 Ported 1:1 from `.claude/scripts/cos.mjs`, the parsers above `readUnit` through `entryUnit`, the
-links (`0040`), the lane, and the review-round helpers `readUnit` and the gates share. A unit is
+links, the lane, and the review-round helpers `readUnit` and the gates share. A unit is
 a dict whose keys are inserted in `cos.mjs`'s order, so `status --json` prints it alike. Every
 regex that reads `\\d`, `\\w` or `\\b` is `re.ASCII`, as `cos.mjs`'s carry no `/u` flag.
 """
@@ -841,7 +841,7 @@ def entry_unit(e):
     return unit
 
 
-# --- one idea, several units, several repositories (`0040`) ---------------------------
+# --- one idea, several units, several repositories ---------------------------
 
 WS_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$", A)
 IDEA_FILE_RE = re.compile(r"^(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)\.md$", A)

@@ -1,4 +1,4 @@
-"""Every misuse `cos.mjs` refuses with exit 2 is refused alike by `python -m coscc.loop` (R5)."""
+"""Every misuse `cos.mjs` refuses with exit 2 is refused alike by `python -m coscc.loop`."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def test_a_misuse_is_refused_alike(argv, tmp_path):
 
 @pytest.mark.parametrize("cmd", STATE_READERS)
 def test_a_deciding_command_without_a_snapshot_is_refused_alike(cmd, tmp_path):
-    # No `COS_WORKING_DIR`, so no database stands in for `--state` (R2).
+    # No `COS_WORKING_DIR`, so no database stands in for `--state`.
     r = same([cmd, "0001_x", "--root", str(tmp_path)], cwd=tmp_path)
     assert r.code == 2
     assert "needs the coscc app" in r.err

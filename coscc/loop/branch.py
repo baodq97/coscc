@@ -1,4 +1,4 @@
-"""The commands that name a branch, a pull request's text, a tag or a version (`0151` R3).
+"""The commands that name a branch, a pull request's text, a tag or a version.
 
 Ported 1:1 from `.claude/scripts/cos.mjs`: `TAG_RE` through `versionProblem` (2836-2869), the
 by-hand reading of the version files and the commands from `cmdCheckBranch` to `cmdPrText`

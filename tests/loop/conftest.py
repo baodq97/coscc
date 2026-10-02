@@ -1,7 +1,7 @@
-"""Run `cos.mjs` and `python -m coscc.loop` on the same argv, snapshot, repository and env (R3).
+"""Run `cos.mjs` and `python -m coscc.loop` on the same argv, snapshot, repository and env.
 
 `same(argv, ...)` runs both and asserts stdout, stderr and the exit code are equal, byte for
-byte; it returns the one result. `Store` builds a `--root` with units on disk and the snapshot
+byte; it returns the one result. `UnitStore` builds a `--root` with units on disk and the snapshot
 the app would hand `--state`. `fake_gh` puts a `gh` first on `PATH` that answers from a table.
 """
 
@@ -102,7 +102,7 @@ def header(title: str, status: str, kind: str = "Intent", extra: str = "") -> st
     return f"# {kind}: {title}\n{extra}Author: test. Status: {status}.\n"
 
 
-class Store:
+class UnitStore:
     """A `--root`: `<root>/.cos/<unit>/<file>`, and the snapshot of it, written on `state()`."""
 
     def __init__(self, root: Path, workspace: str = "ws"):
@@ -149,8 +149,8 @@ class Store:
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "store")
+def store(tmp_path: Path) -> UnitStore:
+    return UnitStore(tmp_path / "store")
 
 
 def fake_gh(bin_dir: Path, answers: dict[str, tuple[int, str, str]]) -> dict[str, str]:

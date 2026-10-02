@@ -80,7 +80,7 @@ def next_action(unit, limit=REVIEW_ROUNDS):
 
 
 def decide(unit, limit=REVIEW_ROUNDS):
-    """`nextAction`, plus `why`: which rule answered. `0040` R7: `impl` waits on dependencies."""
+    """`nextAction`, plus `why`: which rule answered. `impl` waits on dependencies."""
     return wait_on_dependencies(unit, decide_files(unit, limit))
 
 
@@ -318,7 +318,7 @@ def check_gate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
 
 
 def gate_answer(unit, stage, probe=None, limit=REVIEW_ROUNDS):
-    """`checkGate`, plus `reasons`, the codes `gate --json` hands out (`0136` R11)."""
+    """`checkGate`, plus `reasons`, the codes `gate --json` hands out."""
     r = evaluate(unit, stage, probe, limit)
     ok, need, said = r["ok"], r["need"], r["said"]
     target = stage_of(stage)
@@ -356,7 +356,7 @@ def _at(name):
 
 
 def gate_reasons(unit, stage, need, said):
-    """`0136` R11: the codes of a closed gate, never none, the first the one fixed first."""
+    """the codes of a closed gate, never none, the first the one fixed first."""
     target = stage_of(stage)
     if not target:
         return [code("unreadable")]
@@ -487,7 +487,7 @@ def next_step(unit, probe=None, limit=REVIEW_ROUNDS):
 
 
 def next_answer(unit, probe=None, limit=REVIEW_ROUNDS):
-    """`nextStep`, plus `reasons`, the codes of what settled it (`0136` R11)."""
+    """`nextStep`, plus `reasons`, the codes of what settled it."""
     seen: dict = {}
     answer = wait_on_dependencies(unit, step_of(unit, probe, limit, seen))
     return {**answer, "reasons": next_reasons(answer, seen)}
@@ -721,7 +721,7 @@ def cell(u, f):
 
 
 def between_pr_and_ship(unit, limit=REVIEW_ROUNDS):
-    """`0035`: an accepted `pr.md` naming a pull request, on a unit neither ended nor held."""
+    """an accepted `pr.md` naming a pull request, on a unit neither ended nor held."""
     if status_of(unit, "pr.md") != "accepted":
         return False
     if not truthy(dig(unit, "artifacts", "pr.md", "pr")):
@@ -730,14 +730,14 @@ def between_pr_and_ship(unit, limit=REVIEW_ROUNDS):
 
 
 def more_rounds(unit, limit=REVIEW_ROUNDS):
-    """`0081` R4: out of review rounds with findings open, and neither ended nor held."""
+    """out of review rounds with findings open, and neither ended nor held."""
     if decide(unit, limit)["why"] in ("finished", "rejected", "paused", "dropped"):
         return False
     return out_of_rounds(unit, limit)
 
 
 def stage_at(unit, next_):
-    """`0100` R2: the stage a unit is at, for a board that draws one column per stage."""
+    """the stage a unit is at, for a board that draws one column per stage."""
     if next_["stage"]:
         return next_["stage"]
     last = [s for s in STAGES if present(unit, s["file"])]

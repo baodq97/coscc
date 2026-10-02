@@ -1,4 +1,4 @@
-"""`rerun`: which accepted stages the board may run again, and the `### Rerun` block (`0054`).
+"""`rerun`: which accepted stages the board may run again, and the `### Rerun` block.
 
 A port of `cos.mjs` `rerunLater`, `rerunClosed`, `rerunRefusal`, `rerunOffers`, `rerunBlock`,
 `cmdRerun` and `localDate`. It reads files and prints; it writes nothing, the app appends the
@@ -27,14 +27,14 @@ from coscc.loop.rules import evaluate
 
 
 def rerun_later(unit, name):
-    """`0054` R2: the stages after `name` in `STAGES` order, those without an artifact included,
+    """the stages after `name` in `STAGES` order, those without an artifact included,
     `idea` never, and `spike` only while it is required."""
     at = next((i for i, s in enumerate(STAGES) if s["name"] == name), -1)
     return [s["name"] for s in STAGES[at + 1 :] if not s.get("optional") and required(unit, s)]
 
 
 def rerun_closed(unit):
-    """R1 (b) and (c): why nothing may be run again on `unit` at all, or `None`."""
+    """and (c): why nothing may be run again on `unit` at all, or `None`."""
     if status_of(unit, "plan.md") == "done":
         return "the unit is finished: plan.md is done"
     rejected = next((s for s in STAGES if status_of(unit, s["file"]) == "rejected"), None)
@@ -46,7 +46,7 @@ def rerun_closed(unit):
 
 
 def rerun_refusal(unit, name, limit=REVIEW_ROUNDS):
-    """`0054` R1: why `name` may not be run again on `unit`, or `None` when it may. Files only:
+    """why `name` may not be run again on `unit`, or `None` when it may. Files only:
     no rerunnable stage's gate needs `--repo`."""
     if name not in RERUNNABLE:
         return f"{name} cannot be run again from the board — only {', '.join(RERUNNABLE)}"
@@ -77,7 +77,7 @@ def rerun_offers(unit, limit=REVIEW_ROUNDS):
 
 
 def rerun_block(unit, name, date, hash_of):
-    """R3: the `### Rerun` block the app appends to `intent.md ## Answers`, whole. `hash_of(file)`
+    """the `### Rerun` block the app appends to `intent.md ## Answers`, whole. `hash_of(file)`
     is `above_answers` of that artifact as it is on disk now."""
     files = [
         f
