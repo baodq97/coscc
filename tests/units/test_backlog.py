@@ -506,6 +506,16 @@ class TheProposal(unittest.TestCase):
         self.assertIn("$1.20, 9 turns", text)
         self.assertNotIn("unknown cost", text)
 
+    def test_the_prompt_names_no_language_but_the_one_the_units_are_written_in(self):
+        text = b.build_prompt(
+            [{"unit": "0001_a", "idea": "words", "problem": "", "outcome": ""}], []
+        )
+        self.assertEqual(text.count("Vietnamese"), 0)
+        phrase = "in the language the listed units are written in"
+        self.assertEqual(text.count(phrase), 2)
+        self.assertIn(f"characters, {phrase}. It must copy", text)
+        self.assertIn(f"`reason` is one line, {phrase}.", text)
+
     def test_the_prompt_and_the_estimate_name_the_units_left_out(self):
         text = b.build_prompt(
             [{"unit": "0001_a", "idea": "words", "problem": "", "outcome": ""}], [], 4

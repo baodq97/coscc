@@ -630,13 +630,13 @@ def build_prompt(
         "the units you name as similar have a recorded cost.",
         f"- `similar`: 0 to {SIMILAR_MAX} names taken only from *Finished units*, the ones closest in size. "
         "Name none when nothing is close, and say why in `basis`.",
-        f"- `basis`: at most {BASIS_MAX} characters, in Vietnamese. It must copy verbatim at least one of: "
+        f"- `basis`: at most {BASIS_MAX} characters, in the language the listed units are written in. It must copy verbatim at least one of: "
         + "; ".join(f'"{g}"' for g in VALUE_GOALS)
         + ". An estimate whose basis names none is dropped.",
         '- `relations`: zero or more, each `{"type", "other", "reason"}`, `type` one of '
         + ", ".join(f'"{r}"' for r in RELATIONS)
         + '. "thay thế" means this unit replaces `other`; "phụ thuộc" means this unit needs `other` done first. '
-        "`reason` is one line.",
+        "`reason` is one line, in the language the listed units are written in.",
         "",
         "Hand your estimate back through the `submit` tool; the app does not read your reply. "
         "The object:",

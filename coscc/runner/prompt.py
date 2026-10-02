@@ -801,7 +801,11 @@ def _unit_files(
     return ["# The unit's files\n\n" + "\n".join(lines) + "\n\n" + UNIT_FILES_ADVICE], pointed
 
 
-_LANGUAGE = "Prose in Vietnamese; filenames and headings in English."
+# The project instructions are already in the prompt; the app does not read them for a language.
+_LANGUAGE = (
+    "Prose in the language the project instructions set (Vietnamese if they set none); "
+    "filenames and headings in English."
+)
 
 
 def _task(
