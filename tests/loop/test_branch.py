@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import subprocess
 
 import pytest
 
 from coscc.loop import js, nullish, stringify
 from coscc.loop.branch import declared_versions, version_problem
-from tests.loop.conftest import COS_MJS, entry, env, expect, git, git_repo, header, python
+from tests.loop.conftest import entry, env, expect, git, git_repo, header, python
 
 UNIT = "0151_the-loop-is-decided"
 
@@ -501,22 +500,120 @@ FILES = [
 ]
 
 
-@pytest.mark.parametrize("files", FILES)
-def test_the_version_files_are_read_alike(files):
-    script = (
-        f"import {{declaredVersions, versionProblem}} from {json.dumps(str(COS_MJS))}\n"
-        "const c = JSON.parse(process.argv[1])\n"
-        "const f = declaredVersions((r) => c[r] ?? '')\n"
-        "console.log(JSON.stringify([f, versionProblem(f),"
-        " Object.entries(f).map(([p, v]) => `${p}: ${v ?? '(unreadable)'}`)]))\n"
-    )
-    r = subprocess.run(
-        ["node", "--input-type=module", "-e", script, json.dumps(files)],
-        capture_output=True,
-        text=True,
-        env=env(),
-        check=True,
-    )
+# What each of `FILES` reads as, as JSON writes it, the problem and the lines: a missing place is
+# left out of the JSON, and a value that is no string is written as JavaScript would.
+LOCK = "package-lock.json packages['']"
+READ = [
+    [
+        {
+            p: "1.2.3"
+            for p in ["pyproject.toml", "package.json", "uv.lock", "package-lock.json", LOCK]
+        },
+        None,
+        [
+            f"{p}: 1.2.3"
+            for p in ["pyproject.toml", "package.json", "uv.lock", "package-lock.json", LOCK]
+        ],
+    ],
+    [
+        {
+            "pyproject.toml": "1.2.3",
+            "package.json": 1,
+            "uv.lock": "1.2.3",
+            "package-lock.json": [1, None],
+            LOCK: {"a": 1},
+        },
+        "pyproject.toml says 1.2.3, but package.json is 1; package-lock.json is 1,; "
+        f"{LOCK} is [object Object]",
+        [
+            "pyproject.toml: 1.2.3",
+            "package.json: 1",
+            "uv.lock: 1.2.3",
+            "package-lock.json: 1,",
+            f"{LOCK}: [object Object]",
+        ],
+    ],
+    [
+        {"pyproject.toml": None, "package.json": None, "uv.lock": None, "package-lock.json": True},
+        "pyproject.toml declares no version",
+        [
+            "pyproject.toml: (unreadable)",
+            "package.json: (unreadable)",
+            "uv.lock: (unreadable)",
+            "package-lock.json: true",
+            f"{LOCK}: (unreadable)",
+        ],
+    ],
+    [
+        {
+            "pyproject.toml": "1.0",
+            "package.json": None,
+            "uv.lock": "1.0",
+            "package-lock.json": 1,
+            LOCK: 0,
+        },
+        f"pyproject.toml says 1.0, but package.json is unreadable; package-lock.json is 1; {LOCK} is 0",
+        [
+            "pyproject.toml: 1.0",
+            "package.json: (unreadable)",
+            "uv.lock: 1.0",
+            "package-lock.json: 1",
+            f"{LOCK}: 0",
+        ],
+    ],
+    [
+        {p: None for p in ["pyproject.toml", "package.json", "uv.lock", "package-lock.json", LOCK]},
+        "pyproject.toml declares no version",
+        [
+            f"{p}: (unreadable)"
+            for p in ["pyproject.toml", "package.json", "uv.lock", "package-lock.json", LOCK]
+        ],
+    ],
+    [
+        {"pyproject.toml": "", "uv.lock": None},
+        "pyproject.toml declares no version",
+        [
+            "pyproject.toml: ",
+            "package.json: (unreadable)",
+            "uv.lock: (unreadable)",
+            "package-lock.json: (unreadable)",
+            f"{LOCK}: (unreadable)",
+        ],
+    ],
+    [
+        {
+            "pyproject.toml": "1",
+            "package.json": None,
+            "uv.lock": "1",
+            "package-lock.json": 1.5,
+            LOCK: 2,
+        },
+        f"pyproject.toml says 1, but package.json is unreadable; package-lock.json is 1.5; {LOCK} is 2",
+        [
+            "pyproject.toml: 1",
+            "package.json: (unreadable)",
+            "uv.lock: 1",
+            "package-lock.json: 1.5",
+            f"{LOCK}: 2",
+        ],
+    ],
+    [
+        {"pyproject.toml": "1", "package.json": None, "uv.lock": "1"},
+        "pyproject.toml says 1, but package.json is unreadable; package-lock.json is unreadable; "
+        f"{LOCK} is unreadable",
+        [
+            "pyproject.toml: 1",
+            "package.json: (unreadable)",
+            "uv.lock: 1",
+            "package-lock.json: (unreadable)",
+            f"{LOCK}: (unreadable)",
+        ],
+    ],
+]
+
+
+@pytest.mark.parametrize(("files", "want"), list(zip(FILES, READ, strict=True)))
+def test_the_version_files_are_read_by_hand(files, want):
     found = declared_versions(lambda rel: files.get(rel, ""))
     lines = [f"{p}: {js(nullish(v, '(unreadable)'))}" for p, v in found.items()]
-    assert [json.loads(stringify(found)), version_problem(found), lines] == json.loads(r.stdout)
+    assert [json.loads(stringify(found)), version_problem(found), lines] == want

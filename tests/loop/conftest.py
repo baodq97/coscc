@@ -1,11 +1,12 @@
-"""Run `python -m coscc.loop` and hold what it says to the golden `cos.mjs` said.
+"""Run `python -m coscc.loop` and hold what it says to a golden.
 
 `expect(argv, ...)` runs it and asserts stdout, stderr and the exit code equal, byte for byte, what
 `tests/loop/golden/<file>.json` holds under `<nodeid>#<n>`, the n-th call of the test, with a
 directory under pytest's tmp, the checkout and today's date read as `<tmp>`, `<repo>` and `<today>`; it
-returns the result. Under `LOOP_GOLDEN=record` it runs `cos.mjs` too, asserts both alike and
-writes what `cos.mjs` said. `UnitStore` builds a `--root` with units on disk and the snapshot the
-app would hand `--state`. `fake_gh` puts a `gh` first on `PATH` that answers from a table.
+returns the result. The goldens were written by the JavaScript loop the Python one replaced, so a
+golden that changes is a decision a reviewer sees in the diff. `UnitStore` builds a `--root` with
+units on disk and the snapshot the app would hand `--state`. `fake_gh` puts a `gh` first on `PATH`
+that answers from a table.
 """
 
 from __future__ import annotations
@@ -23,10 +24,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-COS_MJS = REPO / ".claude" / "scripts" / "cos.mjs"
 GOLDEN = Path(__file__).resolve().parent / "golden"
-# Not `COS_*`: `env()` drops those.
-RECORD = os.environ.get("LOOP_GOLDEN") == "record"
 # A fixed zone, so `rerun`'s local date is one date for every run of a day.
 TZ = "Asia/Ho_Chi_Minh"
 
@@ -46,9 +44,9 @@ def env(**extra: str) -> dict[str, str]:
     return base
 
 
-def _run(cmd: list[str], argv, environ, stdin, cwd) -> Ran:
+def python(argv, *, environ=None, stdin=None, cwd=REPO) -> Ran:
     r = subprocess.run(
-        [*cmd, *argv],
+        [sys.executable, "-m", "coscc.loop", *argv],
         input=stdin.encode() if isinstance(stdin, str) else stdin,
         capture_output=True,
         env=env() if environ is None else environ,
@@ -59,23 +57,12 @@ def _run(cmd: list[str], argv, environ, stdin, cwd) -> Ran:
     return Ran(r.returncode, r.stdout.decode(), r.stderr.decode())
 
 
-def node(argv, *, environ=None, stdin=None, cwd=REPO) -> Ran:
-    return _run(["node", str(COS_MJS)], argv, environ, stdin, cwd)
-
-
-def python(argv, *, environ=None, stdin=None, cwd=REPO) -> Ran:
-    return _run([sys.executable, "-m", "coscc.loop"], argv, environ, stdin, cwd)
-
-
 class _Test:
     """The test running in this process: its id, its tmp path and how many calls it made."""
 
     nodeid = ""
     base: Path | None = None
     calls = 0
-
-
-_recorded: dict[str, dict[str, list]] = {}
 
 
 @pytest.fixture(autouse=True)
@@ -99,42 +86,16 @@ def _golden_file(nodeid: str) -> Path:
 
 
 def expect(argv, *, environ=None, stdin=None, cwd=REPO) -> Ran:
-    """`python -m coscc.loop argv`, asserted equal to what `cos.mjs` said; its result."""
+    """`python -m coscc.loop argv`, asserted equal to its golden; its result."""
     argv = [str(a) for a in argv]
     _Test.calls += 1
     key = f"{_Test.nodeid}#{_Test.calls}"
     got = python(argv, environ=environ, stdin=stdin, cwd=cwd)
-    plain = [got.code, _plain(got.out), _plain(got.err)]
-    if RECORD:
-        said = node(argv, environ=environ, stdin=stdin, cwd=cwd)
-        want = [said.code, _plain(said.out), _plain(said.err)]
-        _recorded.setdefault(str(_golden_file(_Test.nodeid)), {})[key] = want
-    else:
-        path = _golden_file(_Test.nodeid)
-        table = json.loads(path.read_text()) if path.exists() else {}
-        assert key in table, f"no golden for {key}: LOOP_GOLDEN=record uv run pytest tests/loop"
-        want = table[key]
-    assert plain == want, f"argv: {argv}"
+    table = json.loads(_golden_file(_Test.nodeid).read_text())
+    # A new case has no golden to be held to: it asserts fixed values instead.
+    assert key in table, f"no golden for {key}: assert what the command says in the test"
+    assert [got.code, _plain(got.out), _plain(got.err)] == table[key], f"argv: {argv}"
     return got
-
-
-def pytest_sessionfinish(session):
-    """Under `record`, what `cos.mjs` said, merged into the goldens; one process at a time."""
-    if not RECORD or not _recorded:
-        return
-    import fcntl
-
-    GOLDEN.mkdir(exist_ok=True)
-    lock = os.open(GOLDEN, os.O_RDONLY)
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        for name, rows in _recorded.items():
-            path = Path(name)
-            table = json.loads(path.read_text()) if path.exists() else {}
-            table.update(rows)
-            path.write_text(json.dumps(table, ensure_ascii=False, indent=1, sort_keys=True) + "\n")
-    finally:
-        os.close(lock)
 
 
 def entry(
