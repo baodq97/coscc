@@ -121,7 +121,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         done, _ = await asyncio.wait({task}, timeout=0.3)
         return not done
 
-    async def test_r2_a_read_in_its_thread_holds_shutdown_until_the_thread_returned(self):
+    async def test_a_read_in_its_thread_holds_shutdown_until_the_thread_returned(self):
         read = await self.a_read_in_its_thread()
         down = asyncio.ensure_future(self.service.shutdown())
         self.assertTrue(await self.still_running(down))
@@ -130,7 +130,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.running, 0)
         self.assertTrue(read.cancelled())
 
-    async def test_r2_an_autopilot_pass_in_a_board_read_holds_shutdown_too(self):
+    async def test_an_autopilot_pass_in_a_board_read_holds_shutdown_too(self):
         self.service.autopilot.set_setting(self.cwd, "autopilot", True)
         self.assertTrue(await asyncio.to_thread(self.entered.wait, 5))
         [pass_] = self.service.autopilot.tasks.values()
@@ -141,7 +141,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.running, 0)
         self.assertTrue(pass_.cancelled())
 
-    async def test_r2_a_read_cancelled_twice_still_waits_for_its_thread_and_ends_cancelled(self):
+    async def test_a_read_cancelled_twice_still_waits_for_its_thread_and_ends_cancelled(self):
         read = await self.a_read_in_its_thread()
         read.cancel()
         self.assertTrue(await self.still_running(read))
@@ -152,7 +152,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(read, 5)
         self.assertEqual(self.running, 0)
 
-    async def test_r3_a_removal_ends_as_it_would_and_none_starts_once_shutdown_began(self):
+    async def test_a_removal_ends_as_it_would_and_none_starts_once_shutdown_began(self):
         self.boards._remove_later(self.cwd, {"name": "0001_done", "why": "finished"})
         [removal] = self.boards._removing.values()
         down = asyncio.ensure_future(self.service.shutdown())
@@ -166,7 +166,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((self.data_dir / "removed-0001_done").exists())
         self.assertFalse((self.data_dir / "removed-0002_late").exists())
 
-    async def test_r3_no_read_starts_once_shutdown_began(self):
+    async def test_no_read_starts_once_shutdown_began(self):
         self.release.set()
         await self.service.shutdown()
         with self.assertRaises(asyncio.CancelledError):
@@ -174,7 +174,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.entered.is_set())
         self.assertEqual(self.boards.reads, {})
 
-    async def test_r4_a_cancelled_read_kills_and_reaps_its_cos_mjs(self):
+    async def test_a_cancelled_read_kills_and_reaps_its_cos_mjs(self):
         self.release.set()
         children = Children(only="node")
         self.addAsyncCleanup(children.reap)
@@ -187,7 +187,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ProcessLookupError):
             os.kill(proc.pid, 0)
 
-    async def test_r6_nothing_writes_once_shutdown_returned(self):
+    async def test_nothing_writes_once_shutdown_returned(self):
         self.boards._remove_later(self.cwd, {"name": "0001_done", "why": "finished"})
         await self.a_read_in_its_thread()
         down = asyncio.ensure_future(self.service.shutdown())
