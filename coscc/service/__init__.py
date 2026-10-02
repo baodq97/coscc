@@ -273,22 +273,29 @@ class Service:
             raise as_invalid(e) from e
 
     async def shutdown(self) -> None:
-        """Cancel every step, board read and background `gh` ask still running, let every tree
-        removal end as it would, and wait for all of them, 10 seconds at most from the call.
-        Once this returns nothing they started still writes, unless it outlived the 10
-        seconds: each such one is logged by name.
+        """Cancel every autopilot pass, step, board read and background `gh` ask still running,
+        let every tree removal end as it would, and wait for all of them, 10 seconds at most
+        from the call. Once this returns nothing they started still writes, unless it outlived
+        the 10 seconds: each such one is logged by name.
 
         No `end` is written: a step with no `end` is what an app that went down mid-step looks like.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + 10
-        # The autopilot first, so no pass starts a step while the rest go down.
+        # The autopilot first, so no pass starts a step while the rest go down. A pass may be
+        # in a board read's thread, so it is waited for too; taken before `stop` drops it.
+        autopilot = [
+            *((f"autopilot of {k}", t) for k, t in self.autopilot.tasks.items()),
+            *((f"pull request reader of {k}", t) for k, t in self.autopilot.pr_readers.items()),
+            *(("autopilot pass", t) for t in self.autopilot.pending),
+        ]
         for key in list(self.autopilot.tasks):
             self.autopilot.stop(key)
         for t in list(self.autopilot.pending):
             t.cancel()
         # A CI ask and a held `gh` answer hold nothing worth keeping, but their `gh` is reaped.
         cancelled = [
+            *autopilot,
             *((f"CI ask of {u} in {ws}", t) for (ws, u), t in self.steps.ci_asks.items()),
             *((f"gh ask for {' '.join(k)}", t) for k, t in self.boards.prs.asks.items()),
             *((f"release ask for {' '.join(k)}", t) for k, t in self.release.details.asks.items()),

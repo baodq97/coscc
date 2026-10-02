@@ -67,7 +67,11 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         self.data_dir, self.working_dir = root / "data", root / "work"
         self.data_dir.mkdir()
         config = Config(
-            workspaces=(self.cwd,), working_dir=str(self.working_dir), data_dir=str(self.data_dir)
+            workspaces=(self.cwd,),
+            working_dir=str(self.working_dir),
+            data_dir=str(self.data_dir),
+            # The autopilot runs only on a local address.
+            host="127.0.0.1",
         )
         self.service = Service(config, StandIn(None))
         self.boards = self.service.boards
@@ -125,6 +129,17 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(down, 5)
         self.assertEqual(self.running, 0)
         self.assertTrue(read.cancelled())
+
+    async def test_r2_an_autopilot_pass_in_a_board_read_holds_shutdown_too(self):
+        self.service.autopilot.set_setting(self.cwd, "autopilot", True)
+        self.assertTrue(await asyncio.to_thread(self.entered.wait, 5))
+        [pass_] = self.service.autopilot.tasks.values()
+        down = asyncio.ensure_future(self.service.shutdown())
+        self.assertTrue(await self.still_running(down))
+        self.release.set()
+        await asyncio.wait_for(down, 5)
+        self.assertEqual(self.running, 0)
+        self.assertTrue(pass_.cancelled())
 
     async def test_r2_a_read_cancelled_twice_still_waits_for_its_thread_and_ends_cancelled(self):
         read = await self.a_read_in_its_thread()
