@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import os
 import shutil
+import signal
 import sys
 import tempfile
 import threading
@@ -23,18 +24,40 @@ from tests.service.test_steps_integrate import StandIn, git
 
 # A child that outlives any test unless it is killed.
 SLEEPER = [sys.executable, "-c", "import time; time.sleep(60)"]
+# One that starts a `SLEEPER`, as `git fetch` starts `ssh` and `index-pack`, and writes its pid
+# to the file it is given.
+PARENT = [
+    sys.executable,
+    "-c",
+    "import subprocess, sys, time;"
+    " p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+    " open(sys.argv[1], 'w').write(str(p.pid)); time.sleep(60)",
+]
 
 
 def files(*roots: Path) -> list[str]:
     return sorted(str(p) for root in roots for p in root.rglob("*"))
 
 
-class Children:
-    """`asyncio.create_subprocess_exec`, with every child a `SLEEPER` (or only those whose
-    program is `only`) and each one kept, so a test can see whether it was reaped."""
+def gone(pid: int) -> bool:
+    """No such process, or one killed and not yet reaped by whoever inherited it."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].startswith("Z")
+    except OSError:
+        return False
 
-    def __init__(self, only: str | None = None) -> None:
+
+class Children:
+    """`asyncio.create_subprocess_exec`, with every child a `SLEEPER` (or `child`, or only those
+    whose program is `only`) and each one kept, so a test can see whether it was reaped."""
+
+    def __init__(self, only: str | None = None, child: list[str] = SLEEPER) -> None:
         self.only = only
+        self.child = child
         self.procs: list[asyncio.subprocess.Process] = []
         self.started = asyncio.Event()
         self.real = asyncio.create_subprocess_exec
@@ -42,16 +65,18 @@ class Children:
     async def __call__(self, program, *args, **kwargs):
         if self.only is not None and program != self.only:
             return await self.real(program, *args, **kwargs)
-        proc = await self.real(*SLEEPER, **{k: v for k, v in kwargs.items() if k != "cwd"})
+        proc = await self.real(*self.child, **{k: v for k, v in kwargs.items() if k != "cwd"})
         self.procs.append(proc)
         self.started.set()
         return proc
 
     async def reap(self) -> None:
         for proc in self.procs:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(proc.pid, signal.SIGKILL)
             if proc.returncode is None:
                 proc.kill()
-                await proc.wait()
+            await proc.wait()
 
 
 class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
@@ -205,15 +230,20 @@ class ACancelledCallKillsItsChild(unittest.IsolatedAsyncioTestCase):
     """Every runner that starts a child a cancellable task waits on kills and reaps it when
     that task is cancelled."""
 
-    async def cancelled(self, call) -> asyncio.subprocess.Process:
-        children = Children()
+    async def cancelled(
+        self, call, child: list[str] = SLEEPER, ready=lambda: True
+    ) -> asyncio.subprocess.Process:
+        children = Children(child=child)
         self.addAsyncCleanup(children.reap)
         with mock.patch.object(asyncio, "create_subprocess_exec", children):
             task = asyncio.ensure_future(call())
             await asyncio.wait_for(children.started.wait(), 5)
+            for _ in range(100):
+                if ready():
+                    break
+                await asyncio.sleep(0.05)
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            await asyncio.wait({task}, timeout=5)
         self.assertTrue(task.cancelled())
         [proc] = children.procs
         return proc
@@ -234,6 +264,29 @@ class ACancelledCallKillsItsChild(unittest.IsolatedAsyncioTestCase):
 
     async def test_cos_mjs(self):
         self.assertReaped(await self.cancelled(lambda: board_reader._run(["cos.mjs"], 30)))
+
+    async def test_what_the_child_started_is_killed_with_it(self):
+        for call in (
+            lambda: gitops._run(["git", "fetch"], 30),
+            lambda: gitops._run_code(["git", "fetch"], 30),
+            lambda: gh.run(["pr", "list"], "."),
+            lambda: board_reader._run(["cos.mjs"], 30),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                said = Path(tmp) / "pid"
+                proc = await self.cancelled(
+                    call,
+                    child=[*PARENT, str(said)],
+                    # Cancelled only once the child named what it started.
+                    ready=lambda: said.exists() and bool(said.read_text()),
+                )
+                self.assertReaped(proc)
+                grandchild = int(said.read_text())
+                for _ in range(50):
+                    if gone(grandchild):
+                        break
+                    await asyncio.sleep(0.1)
+                self.assertTrue(gone(grandchild))
 
 
 if __name__ == "__main__":
