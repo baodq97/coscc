@@ -1170,6 +1170,25 @@ class Scripted(_Base):
         self.assertEqual(self.service.autopilot.pending, set())
         self.assertFalse(hasattr(self.service.autopilot, "runs"))
 
+    async def test_a_held_database_on_one_unit_is_no_stop_and_the_next_is_still_queued(self):
+        self.service.attempts.admitting = lambda: False
+        self.add("0001_a", "spec")
+        self.add("0002_b", "spec")
+        enqueue = self.service.steps.enqueue_step
+
+        def held_once(cwd, unit, stage, note=""):
+            if unit == "0001_a":
+                raise Busy("cos.db was held")
+            return enqueue(cwd, unit, stage, note)
+
+        with mock.patch.object(self.service.steps, "enqueue_step", side_effect=held_once):
+            await self.pass_()
+        self.assertEqual(self.queued(), [("0002_b", "spec", "queued", "autopilot")])
+        self.assertEqual(self.stops(), {})
+        # The next pass asks again.
+        await self.pass_()
+        self.assertEqual([q[0] for q in self.queued()], ["0002_b", "0001_a"])
+
     async def test_two_passes_with_no_end_between_queue_nothing_twice(self):
         self.service.attempts.admitting = lambda: False
         self.add("0001_a", "spec")

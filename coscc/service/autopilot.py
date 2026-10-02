@@ -734,14 +734,16 @@ class Autopilot:
 
     def _queue(self, key: str, cwd: str, c: dict[str, Any]) -> None:
         """Queue one chosen step or integration, written before the pass returns. A refusal at once
-        is a stop line with the words of the refusal, unless it is a race, which the next pass asks
-        again."""
+        is a stop line with the words of the refusal, unless it is a race or the database was held,
+        which the next pass asks again; the units after it in the pass are queued all the same."""
         unit, stage = c["unit"], c["stage"]
         try:
             if stage == "integrate":
                 self.steps.enqueue_integration(cwd, unit)
             else:
                 self.steps.enqueue_step(cwd, unit, stage, c["note"])
+        except Busy as e:
+            log.warning("the autopilot could not queue %s of %s: %s", stage, unit, e)
         except (Refused, Invalid) as e:
             log.exception("the autopilot could not queue %s of %s", stage, unit)
             if not autopilot.is_waiting(e) and not self.holds.busy(key, unit):
