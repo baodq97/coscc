@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, AsyncIterator, TypedDict
 
@@ -79,7 +80,9 @@ class Cut(TypedDict):
     prepare: dict[str, Any]
 
 
-async def cut_branch(cwd: str, unit: str, data_dir: Path, state: Any) -> Cut:
+async def cut_branch(
+    cwd: str, unit: str, data_dir: str | os.PathLike[str] | None, state: Any
+) -> Cut:
     """Cut the unit's branch in its worktree from the freshly fetched trunk, and prepare it.
 
     One path for the "Cut this unit's branch" button and for an `impl` that starts on a
