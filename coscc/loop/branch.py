@@ -3,8 +3,8 @@
 Ported 1:1 from `.claude/scripts/cos.mjs`: `TAG_RE` through `versionProblem` (2836-2869), the
 by-hand reading of the version files and the commands from `cmdCheckBranch` to `cmdPrText`
 (3054-3218), and the dispatch of `unit-branch`, `pr-text`, `check-branch`, `check-tag` and
-`check-version` (3450-3457). `check-*` read the checkout this package lives in (`ROOT`), never
-a `--root`.
+`check-version` (3450-3457). `check-*` read the checkout the process stands in (`checkout()`), never
+a `--root`, nor where this package is installed.
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ from collections.abc import Callable
 from coscc.loop import (
     BRANCH_TYPES,
     JS_SPACE,
-    ROOT,
     UNDEFINED,
     UNIT_RE,
+    checkout,
     dig,
     js,
     nullish,
@@ -130,7 +130,7 @@ def json_at(text, path):
 
 
 def slurp(rel):
-    path = ROOT / rel
+    path = checkout() / rel
     return read_text(path) if path.exists() else ""
 
 
@@ -153,11 +153,11 @@ def declared_versions(read_file: Callable[[str], str] = slurp):
 
 
 def _git(*args):
-    """`git` run in `ROOT`, its stdout trimmed; `None` when it cannot run or fails."""
+    """`git` run in `checkout()`, its stdout trimmed; `None` when it cannot run or fails."""
     try:
         r = subprocess.run(
             ["git", *args],
-            cwd=ROOT,
+            cwd=checkout(),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

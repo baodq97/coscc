@@ -1,6 +1,6 @@
 """`screens`, and the `review` and `ship` gates that ask git and `gh`, print what `cos.mjs` prints.
 
-Every case runs both versions through `same()` on a real git repository in tmp and a `gh` that
+Every case runs both versions through `expect()` on a real git repository in tmp and a `gh` that
 answers from a table. A case also checks the words or codes it means to reach, so that both
 versions agreeing on a wrong branch cannot pass for coverage. The gates and `next` go through
 `rules.py`; the probe, the pull request and the screens are `repo_rules.py`'s.
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.loop.conftest import UnitStore, entry, env, fake_gh, git, git_repo, header, same
+from tests.loop.conftest import UnitStore, entry, env, fake_gh, git, git_repo, header, expect
 
 UNIT = "0040_widget"
 BRANCH = "feat/widget"
@@ -197,7 +197,7 @@ class Scene:
         argv = self.store.argv(*words)
         if repo:
             argv += ["--repo", str(self.repo)]
-        return same(argv, environ={**fake_gh(self.bin, gh or {}), **extra})
+        return expect(argv, environ={**fake_gh(self.bin, gh or {}), **extra})
 
     def three(self, gh: dict | None = None, **extra: str) -> tuple[dict, dict, str]:
         """`gate ship --json`, `gate review --json`, and `next`, each equal in both versions."""
@@ -369,7 +369,7 @@ def test_screens_without_git_on_the_path(tmp_path):
 
 def test_screens_in_a_repository_that_is_not_there(sc):
     sc.unit()
-    same([*sc.store.argv("screens", UNIT), "--repo", str(sc.tmp / "nowhere")], environ=env())
+    expect([*sc.store.argv("screens", UNIT), "--repo", str(sc.tmp / "nowhere")], environ=env())
 
 
 # --- the review gate: CI ------------------------------------------------------------------
@@ -429,7 +429,7 @@ def test_review_gate_when_gh_cannot_start(tmp_path):
 def test_review_gate_in_a_repository_that_is_not_there(sc):
     sc.unit()
     argv = [*sc.store.argv("gate", UNIT, "review", "--json"), "--repo", str(sc.tmp / "nowhere")]
-    r = same(argv, environ=fake_gh(sc.bin, {CHECKS: (0, GREEN, "")}))
+    r = expect(argv, environ=fake_gh(sc.bin, {CHECKS: (0, GREEN, "")}))
     assert "spawnSync gh ENOENT" in r.out
 
 

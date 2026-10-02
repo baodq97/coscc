@@ -1,0 +1,727 @@
+{
+ "tests/loop/test_branch.py::test_a_misused_root_is_refused_alike[words0]#1": [
+  2,
+  "",
+  "--root needs a directory\n"
+ ],
+ "tests/loop/test_branch.py::test_a_misused_root_is_refused_alike[words1]#1": [
+  2,
+  "",
+  "--root needs a directory\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_beside_other_words#1": [
+  2,
+  "",
+  "usage: cos.mjs [--root <dir>] <command>\n  reading a .cos/ (these take --root):\n    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | meta [<unit> [<artifact>]...]\n    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, the app's snapshot\n  describing this checkout (these do not):\n    check-branch [name] | check-tag <tag> | check-version\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_beside_other_words#2": [
+  0,
+  "feat/x\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_branch_names_the_problem#1": [
+  1,
+  "",
+  "\"feat/a/b\" is not a work branch: the slug carries a second slash\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[/x]#1": [
+  1,
+  "",
+  "\"/x\" is not a work branch: \"\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[Feat/x]#1": [
+  1,
+  "",
+  "\"Feat/x\" is not a work branch: \"Feat\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[]#1": [
+  1,
+  "",
+  "\"\" is not a work branch: no branch name\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/-a]#1": [
+  1,
+  "",
+  "\"feat/-a\" is not a work branch: the slug takes lowercase letters, digits and single hyphens\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/A]#1": [
+  1,
+  "",
+  "\"feat/A\" is not a work branch: the slug takes lowercase letters, digits and single hyphens\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/\\u1ea3]#1": [
+  1,
+  "",
+  "\"feat/ả\" is not a work branch: the slug takes lowercase letters, digits and single hyphens\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/]#1": [
+  1,
+  "",
+  "\"feat/\" is not a work branch: the slug is empty\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/a--b]#1": [
+  1,
+  "",
+  "\"feat/a--b\" is not a work branch: the slug takes lowercase letters, digits and single hyphens\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/a-]#1": [
+  1,
+  "",
+  "\"feat/a-\" is not a work branch: the slug takes lowercase letters, digits and single hyphens\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/a/b]#1": [
+  1,
+  "",
+  "\"feat/a/b\" is not a work branch: the slug carries a second slash\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/a_b]#1": [
+  1,
+  "",
+  "\"feat/a_b\" is not a work branch: the slug takes lowercase letters, digits and single hyphens\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]#1": [
+  1,
+  "",
+  "\"feat/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" is not a work branch: the slug is 61 characters, over the 60 allowed\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/the-loop]#1": [
+  0,
+  "feat/the-loop\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[feat/x\\n]#1": [
+  1,
+  "",
+  "\"feat/x\n\" is not a work branch: the slug takes lowercase letters, digits and single hyphens\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[fix/x]#1": [
+  0,
+  "fix/x\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[main]#1": [
+  1,
+  "",
+  "\"main\" is not a work branch: main is the trunk, not a work branch\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[nothing]#1": [
+  1,
+  "",
+  "\"nothing\" is not a work branch: no type prefix: expected <type>/<slug>, type one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[refactor/a1-b2-c3]#1": [
+  0,
+  "refactor/a1-b2-c3\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[revert/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]#1": [
+  0,
+  "revert/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_branch_with_a_name[wip/x]#1": [
+  1,
+  "",
+  "\"wip/x\" is not a work branch: \"wip\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[ v1.2.3]#1": [
+  1,
+  "",
+  "\" v1.2.3\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[1.2.3]#1": [
+  1,
+  "",
+  "\"1.2.3\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[V1.2.3]#1": [
+  1,
+  "",
+  "\"V1.2.3\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[garbage]#1": [
+  1,
+  "",
+  "\"garbage\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v0.0.0]#1": [
+  0,
+  "release\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v00.0.0]#1": [
+  1,
+  "",
+  "\"v00.0.0\" is not a release tag: \"00\" carries a leading zero\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v01.2.3]#1": [
+  1,
+  "",
+  "\"v01.2.3\" is not a release tag: \"01\" carries a leading zero\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.02.3]#1": [
+  1,
+  "",
+  "\"v1.02.3\" is not a release tag: \"02\" carries a leading zero\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.03]#1": [
+  1,
+  "",
+  "\"v1.2.03\" is not a release tag: \"03\" carries a leading zero\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.3-beta.1]#1": [
+  1,
+  "",
+  "\"v1.2.3-beta.1\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.3-rc.01]#1": [
+  1,
+  "",
+  "\"v1.2.3-rc.01\" is not a release tag: the release candidate number starts at 1\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.3-rc.0]#1": [
+  1,
+  "",
+  "\"v1.2.3-rc.0\" is not a release tag: the release candidate number starts at 1\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.3-rc.1-x]#1": [
+  1,
+  "",
+  "\"v1.2.3-rc.1-x\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.3-rc.12]#1": [
+  0,
+  "prerelease\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.3-rc.1]#1": [
+  0,
+  "prerelease\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.3-rc]#1": [
+  1,
+  "",
+  "\"v1.2.3-rc\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.3.4]#1": [
+  1,
+  "",
+  "\"v1.2.3.4\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.3\\n]#1": [
+  1,
+  "",
+  "\"v1.2.3\n\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2.3]#1": [
+  0,
+  "release\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v1.2]#1": [
+  1,
+  "",
+  "\"v1.2\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v10.20.30]#1": [
+  0,
+  "release\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_tag[v\\u0661.\\u0662.\\u0663]#1": [
+  1,
+  "",
+  "\"v١.٢.٣\" is not a release tag: expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag_says_release_or_prerelease#1": [
+  0,
+  "release\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_tag_says_release_or_prerelease#2": [
+  0,
+  "prerelease\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_check_tag_with_no_tag_is_misuse#1": [
+  2,
+  "",
+  "usage: cos.mjs check-tag <vX.Y.Z | vX.Y.Z-rc.N>\n"
+ ],
+ "tests/loop/test_branch.py::test_check_tag_with_no_tag_is_misuse#2": [
+  2,
+  "",
+  "usage: cos.mjs check-tag <vX.Y.Z | vX.Y.Z-rc.N>\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_against_the_units_type[3-True]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"intent.md declares no Type, so the title's type \\\"feat\\\" cannot be checked against it\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_against_the_units_type[None-True]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"intent.md declares no Type, so the title's type \\\"feat\\\" cannot be checked against it\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_against_the_units_type[feat-False]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"intent.md declares no Type, so the title's type \\\"feat\\\" cannot be checked against it\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_against_the_units_type[feat-True]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_against_the_units_type[fix-True]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title's type is \\\"feat\\\", but intent.md declares Type: fix\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_against_the_units_type[wip-True]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"intent.md declares no Type, so the title's type \\\"feat\\\" cannot be checked against it\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_carries_the_status_the_app_read[None]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"B.\\n\",\"url\":null,\"scope\":null,\"status\":null,\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_carries_the_status_the_app_read[accepted]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"B.\\n\",\"url\":null,\"scope\":null,\"status\":\"accepted\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_carries_the_status_the_app_read[draft]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"B.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_carries_the_status_the_app_read[nonsense]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"B.\\n\",\"url\":null,\"scope\":null,\"status\":\"nonsense\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_of_a_good_title#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body here.\\n\\nPR: https://github.com/o/r/pull/12\\n\",\"url\":\"https://github.com/o/r/pull/12\",\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_of_a_unit_the_app_does_not_know#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"B.\\n\",\"url\":null,\"scope\":null,\"status\":null,\"titleProblem\":\"intent.md declares no Type, so the title's type \\\"feat\\\" cannot be checked against it\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_of_a_unit_with_no_pr#1": [
+  1,
+  "",
+  "0001_x has no pr.md\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_of_an_empty_file#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":null,\"body\":\"\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"pr.md has no title: its # PR: line is missing or empty\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_of_no_unit#1": [
+  1,
+  "",
+  "No such work unit: 0001_x\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_scope_is_read#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port\",\"body\":\"## Scope of the diff\\n\\n2 files, +3/-4\\n\\n- `a.py`\\n- `b.py`\\n\",\"url\":null,\"scope\":{\"files\":2,\"additions\":3,\"deletions\":4,\"paths\":[\"a.py\",\"b.py\"]},\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[#  PR: feat(0151): port]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":null,\"body\":\"#  PR: feat(0151): port\\n\\nBody.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"pr.md has no title: its # PR: line is missing or empty\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR:   ]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":null,\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"pr.md has no title: its # PR: line is missing or empty\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: Feat(0151): port the loop]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"Feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title \\\"Feat(0151): port the loop\\\" is not <type>(<NNNN>): <text>\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151):  two spaces]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151):  two spaces\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): WIP: port]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): WIP: port\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title's text opens with \\\"wip\\\" — it names the change, not how far it got\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): \\u0111\\u1ed5i v\\xf2ng l\\u1eb7p]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): đổi vòng lặp\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title carries \\\"đ\\\", a letter with a diacritic — the title is English\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): ]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151):\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title \\\"feat(0151):\\\" is not <type>(<NNNN>): <text>\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): caf\\xe9]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): café\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title carries \\\"é\\\", a letter with a diacritic — the title is English\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): cafe\\u0301]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): café\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title carries \\\"é\\\", a letter with a diacritic — the title is English\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): port the loop   ]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): port the loop]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): port\\xa0the loop]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): wip port]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): wip port\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title's text opens with \\\"wip\\\" — it names the change, not how far it got\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): wip-port]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): wip-port\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title's text opens with \\\"wip\\\" — it names the change, not how far it got\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0151): wipe the slate]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): wipe the slate\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(0152): port the loop]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0152): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title names unit 0152, not 0151\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: feat(151): port the loop]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title \\\"feat(151): port the loop\\\" is not <type>(<NNNN>): <text>\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: fix(0151): port the loop]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"fix(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title's type is \\\"fix\\\", but intent.md declares Type: feat\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: port the loop]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title \\\"port the loop\\\" is not <type>(<NNNN>): <text>\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR: wip(0151): port the loop]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"wip(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title's type \\\"wip\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR:]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":null,\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"pr.md has no title: its # PR: line is missing or empty\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[# PR:feat(0151): port the loop]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_titles[## PR: feat(0151): port]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":null,\"body\":\"## PR: feat(0151): port\\n\\nBody.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"pr.md has no title: its # PR: line is missing or empty\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_bad_name[../0001_x]#1": [
+  2,
+  "",
+  "Invalid unit name \"../0001_x\": expected NNNN_slug.\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_bad_name[00001_x]#1": [
+  2,
+  "",
+  "Invalid unit name \"00001_x\": expected NNNN_slug.\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_bad_name[0001]#1": [
+  2,
+  "",
+  "Invalid unit name \"0001\": expected NNNN_slug.\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_bad_name[0001_X]#1": [
+  2,
+  "",
+  "Invalid unit name \"0001_X\": expected NNNN_slug.\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_bad_name[0001_x/]#1": [
+  2,
+  "",
+  "Invalid unit name \"0001_x/\": expected NNNN_slug.\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_bad_name[0001_x\\n]#1": [
+  2,
+  "",
+  "Invalid unit name \"0001_x\n\": expected NNNN_slug.\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_bad_name[x]#1": [
+  2,
+  "",
+  "Invalid unit name \"x\": expected NNNN_slug.\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_pr_url#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port\",\"body\":\"PR: https://github.com/o/r/pull/42\\n\",\"url\":\"https://github.com/o/r/pull/42\",\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff   \\n\\n1 files, +1/-0   \\n\\n- `a.py`  \\n\\n## Next\\n\\nMore.\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff   \\n\\n1 files, +1/-0   \\n\\n- `a.py`  \\n\\n## Next\\n\\nMore.\\n\",\"url\":null,\"scope\":{\"files\":1,\"additions\":1,\"deletions\":0,\"paths\":[\"a.py\"]},\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n3 files, +10/-2\\n- `a.py`\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n3 files, +10/-2\\n- `a.py`\\n\",\"url\":null,\"scope\":{\"files\":3,\"additions\":10,\"deletions\":2,\"paths\":[\"a.py\"]},\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n\\n0 files, +0/-0\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n\\n0 files, +0/-0\\n\",\"url\":null,\"scope\":{\"files\":0,\"additions\":0,\"deletions\":0,\"paths\":[]},\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n\\n1 files, +1/-1\\n## Other\\n- `a.py`\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n\\n1 files, +1/-1\\n## Other\\n- `a.py`\\n\",\"url\":null,\"scope\":{\"files\":1,\"additions\":1,\"deletions\":1,\"paths\":[]},\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n\\n1 files, +1/-1\\n\\n- `a.py`\\n\\n## Scope of the diff\\n\\n2 files, +1/-1\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n\\n1 files, +1/-1\\n\\n- `a.py`\\n\\n## Scope of the diff\\n\\n2 files, +1/-1\\n\",\"url\":null,\"scope\":{\"files\":1,\"additions\":1,\"deletions\":1,\"paths\":[\"a.py\"]},\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n\\n3 files, +10/-2\\n\\n- `a.py`\\n- `a.py`\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n\\n3 files, +10/-2\\n\\n- `a.py`\\n- `a.py`\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n\\n3 files, +10/-2\\n\\n- `a.py`\\n- `b/c.py`\\n- `d.md`\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n\\n3 files, +10/-2\\n\\n- `a.py`\\n- `b/c.py`\\n- `d.md`\\n\",\"url\":null,\"scope\":{\"files\":3,\"additions\":10,\"deletions\":2,\"paths\":[\"a.py\",\"b/c.py\",\"d.md\"]},\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n\\n3 files, +10/-2\\n\\n- `a.py`\\n\\n- `b.py`\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n\\n3 files, +10/-2\\n\\n- `a.py`\\n\\n- `b.py`\\n\",\"url\":null,\"scope\":{\"files\":3,\"additions\":10,\"deletions\":2,\"paths\":[\"a.py\"]},\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n\\n3 files, +10/-2\\n\\n\\n- `a.py`\\n- b.py\\n- `c.py`\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n\\n3 files, +10/-2\\n\\n\\n- `a.py`\\n- b.py\\n- `c.py`\\n\",\"url\":null,\"scope\":{\"files\":3,\"additions\":10,\"deletions\":2,\"paths\":[\"a.py\"]},\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n\\nmany files\\n\\n- `a.py`\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n\\nmany files\\n\\n- `a.py`\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_scope_block[## Scope of the diff\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\\n## Scope of the diff\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_title_that_is_not_the_first_line#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Preface\\n\\n\\nBody.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_a_vietnamese_body#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Chuyển vòng lặp sang Python, đầu ra giống từng byte. Ưu điểm: ổn định.\\n\\n- Đã kiểm tra \\\"ngoặc kép\\\" và \\\\ gạch chéo\\n- tab\\there\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_crlf_lines[# PR: feat(0151): port the loop\\rAuthor: t. Status: draft.\\r\\rBody.\\r]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":null,\"body\":\"\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"pr.md has no title: its # PR: line is missing or empty\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_crlf_lines[# PR: feat(0151): port the loop\\r\\nAuthor: t. Status: draft.\\r\\n\\r\\n## Scope of the diff\\r\\n\\r\\n2 files, +3/-4\\r\\n\\r\\n- `a.py`\\r\\n- `b.py`\\r\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"## Scope of the diff\\r\\n\\r\\n2 files, +3/-4\\r\\n\\r\\n- `a.py`\\r\\n- `b.py`\\r\\n\",\"url\":null,\"scope\":{\"files\":2,\"additions\":3,\"deletions\":4,\"paths\":[\"a.py\",\"b.py\"]},\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_crlf_lines[# PR: feat(0151): port the loop\\r\\nAuthor: t. Status: draft.\\r\\n\\r\\nBody.\\r\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\r\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_crlf_lines[# PR: feat(0151): port the loop\\r\\nStatus: draft.\\r\\n\\r\\nPR: https://github.com/o/r/pull/3\\r\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"PR: https://github.com/o/r/pull/3\\r\\n\",\"url\":\"https://github.com/o/r/pull/3\",\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_crlf_lines[\\r\\n\\r\\n# PR: feat(0151): port the loop\\r\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_crlf_lines[\\ufeff# PR: feat(0151): port the loop\\nStatus: draft.\\n]#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":null,\"body\":\"﻿# PR: feat(0151): port the loop\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"pr.md has no title: its # PR: line is missing or empty\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_json_hostile_text#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"quote \\\" slash \\\\ ctrl \\u0001 \\u001f del  nbsp   sep   emoji 😀\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_no_name_is_misuse#1": [
+  2,
+  "",
+  "usage: cos.mjs pr-text <NNNN_slug>\n"
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_no_status_line#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_no_title_line#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":null,\"body\":\"Body only.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"pr.md has no title: its # PR: line is missing or empty\"}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_pr_text_with_two_title_lines#1": [
+  0,
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): one\",\"body\":\"# PR: feat(0151): two\\n\\nBody.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":null}\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_root_is_refused_for_the_checks_in_every_form[argv0]#1": [
+  2,
+  "",
+  "--root does not apply to `check-branch`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+ ],
+ "tests/loop/test_branch.py::test_root_is_refused_for_the_checks_in_every_form[argv1]#1": [
+  2,
+  "",
+  "--root does not apply to `check-branch`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+ ],
+ "tests/loop/test_branch.py::test_root_is_refused_for_the_checks_in_every_form[argv2]#1": [
+  2,
+  "",
+  "--root does not apply to `check-tag`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+ ],
+ "tests/loop/test_branch.py::test_root_is_refused_for_the_checks_in_every_form[argv3]#1": [
+  2,
+  "",
+  "--root does not apply to `check-version`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+ ],
+ "tests/loop/test_branch.py::test_root_is_refused_for_the_checks_in_every_form[argv4]#1": [
+  2,
+  "",
+  "--root does not apply to `check-version`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_cuts_a_long_slug#1": [
+  0,
+  "refactor/word-word-word-word-word-word-word-word-word-word-word-word\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_in_a_workspace_the_state_names#1": [
+  0,
+  "fix/the-loop-is-decided\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_is_type_and_slug[docs]#1": [
+  0,
+  "docs/the-loop-is-decided\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_is_type_and_slug[feat]#1": [
+  0,
+  "feat/the-loop-is-decided\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_is_type_and_slug[fix]#1": [
+  0,
+  "fix/the-loop-is-decided\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_is_type_and_slug[refactor]#1": [
+  0,
+  "refactor/the-loop-is-decided\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_is_type_and_slug[revert]#1": [
+  0,
+  "revert/the-loop-is-decided\n",
+  ""
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_of_a_name_that_is_no_unit#1": [
+  1,
+  "",
+  "\"x\" does not match NNNN_<slug>\n"
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_of_a_name_that_is_no_unit#2": [
+  1,
+  "",
+  "\"0002_Bad\" does not match NNNN_<slug>\n"
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_of_a_unit_the_app_does_not_know#1": [
+  1,
+  "",
+  "0001_x/intent.md declares no Type: — one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_of_no_such_unit#1": [
+  2,
+  "",
+  "No such work unit: 0001_x\n"
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_with_a_bad_type#1": [
+  1,
+  "",
+  "\"wip\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_with_a_path_in_the_name#1": [
+  1,
+  "",
+  "\"nowhere/../0151_the-loop-is-decided\" does not match NNNN_<slug>\n"
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_with_a_path_in_the_name#2": [
+  2,
+  "",
+  "No such work unit: ../store/.cos/0151_the-loop-is-decided\n"
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_with_a_type_that_is_no_string#1": [
+  1,
+  "",
+  "\"3\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_with_no_name_is_misuse#1": [
+  2,
+  "",
+  "usage: cos.mjs unit-branch <NNNN_slug>\n"
+ ],
+ "tests/loop/test_branch.py::test_unit_branch_with_no_type#1": [
+  1,
+  "",
+  "0001_x/intent.md declares no Type: — one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
+ ]
+}

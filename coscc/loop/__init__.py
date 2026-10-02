@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -17,10 +19,24 @@ from coscc.units.guards import REASONS
 
 __all__ = ["REASONS"]
 
-# Where `cos.mjs` sits two levels under: the checkout whose `.cos/` and version files the
-# commands read without `--root`. `coscc/loop/` is two levels under the same place.
-ROOT = Path(__file__).resolve().parents[2]
-COS = ROOT / ".cos"
+
+@cache
+def checkout() -> Path:
+    """The checkout the process stands in, whose `.cos/` and version files the commands read
+    without `--root`: git's toplevel of the cwd, else the cwd. Never where this package is
+    installed, which a wheel puts in `site-packages`."""
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return Path.cwd()
+    top = r.stdout.decode("utf-8", "replace").strip()
+    return Path(top) if r.returncode == 0 and top else Path.cwd()
+
 
 UNIT_RE = re.compile(r"^(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)$", re.ASCII)
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", re.ASCII)
@@ -178,5 +194,5 @@ def read_text(path) -> str:
 
 
 def split_lines(text: str) -> list[str]:
-    """`text.split(/\\r?\\n/)`."""
-    return re.split(r"\r?\n", text)
+    """`text.split(/\\r?\\n/)`, without a regular expression: `re.split` was most of `status`'s time."""
+    return text.replace("\r\n", "\n").split("\n")

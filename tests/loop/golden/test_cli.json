@@ -1,0 +1,197 @@
+{
+ "tests/loop/test_cli.py::test_a_broken_review_limit_is_refused_alike[ ]#1": [
+  2,
+  "",
+  "COS_REVIEW_ROUNDS must be a positive integer, got \" \"\n"
+ ],
+ "tests/loop/test_cli.py::test_a_broken_review_limit_is_refused_alike[-1]#1": [
+  2,
+  "",
+  "COS_REVIEW_ROUNDS must be a positive integer, got \"-1\"\n"
+ ],
+ "tests/loop/test_cli.py::test_a_broken_review_limit_is_refused_alike[0]#1": [
+  2,
+  "",
+  "COS_REVIEW_ROUNDS must be a positive integer, got \"0\"\n"
+ ],
+ "tests/loop/test_cli.py::test_a_broken_review_limit_is_refused_alike[1.5]#1": [
+  2,
+  "",
+  "COS_REVIEW_ROUNDS must be a positive integer, got \"1.5\"\n"
+ ],
+ "tests/loop/test_cli.py::test_a_broken_review_limit_is_refused_alike[abc]#1": [
+  2,
+  "",
+  "COS_REVIEW_ROUNDS must be a positive integer, got \"abc\"\n"
+ ],
+ "tests/loop/test_cli.py::test_a_deciding_command_without_a_snapshot_is_refused_alike[gate]#1": [
+  2,
+  "",
+  "gate needs the coscc app: pass --state <file|-> (uv run coscc state <workspace>)\n"
+ ],
+ "tests/loop/test_cli.py::test_a_deciding_command_without_a_snapshot_is_refused_alike[next]#1": [
+  2,
+  "",
+  "next needs the coscc app: pass --state <file|-> (uv run coscc state <workspace>)\n"
+ ],
+ "tests/loop/test_cli.py::test_a_deciding_command_without_a_snapshot_is_refused_alike[pr-text]#1": [
+  2,
+  "",
+  "pr-text needs the coscc app: pass --state <file|-> (uv run coscc state <workspace>)\n"
+ ],
+ "tests/loop/test_cli.py::test_a_deciding_command_without_a_snapshot_is_refused_alike[rerun]#1": [
+  2,
+  "",
+  "rerun needs the coscc app: pass --state <file|-> (uv run coscc state <workspace>)\n"
+ ],
+ "tests/loop/test_cli.py::test_a_deciding_command_without_a_snapshot_is_refused_alike[screens]#1": [
+  2,
+  "",
+  "screens needs the coscc app: pass --state <file|-> (uv run coscc state <workspace>)\n"
+ ],
+ "tests/loop/test_cli.py::test_a_deciding_command_without_a_snapshot_is_refused_alike[status]#1": [
+  2,
+  "",
+  "status needs the coscc app: pass --state <file|-> (uv run coscc state <workspace>)\n"
+ ],
+ "tests/loop/test_cli.py::test_a_deciding_command_without_a_snapshot_is_refused_alike[unit-branch]#1": [
+  2,
+  "",
+  "unit-branch needs the coscc app: pass --state <file|-> (uv run coscc state <workspace>)\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv0]#1": [
+  2,
+  "",
+  "usage: cos.mjs [--root <dir>] <command>\n  reading a .cos/ (these take --root):\n    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | meta [<unit> [<artifact>]...]\n    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, the app's snapshot\n  describing this checkout (these do not):\n    check-branch [name] | check-tag <tag> | check-version\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv10]#1": [
+  2,
+  "",
+  "--root does not apply to `check-version`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv11]#1": [
+  2,
+  "",
+  "--reserve-from applies only to `new-path`, not to `new-idea`.\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv12]#1": [
+  2,
+  "",
+  "--repo applies only to `gate` and `next`, and to `screens`, not to `meta`.\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv13]#1": [
+  2,
+  "",
+  "--repo applies only to `gate` and `next`, and to `screens`, not to `new-path`.\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv1]#1": [
+  2,
+  "",
+  "usage: cos.mjs [--root <dir>] <command>\n  reading a .cos/ (these take --root):\n    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | meta [<unit> [<artifact>]...]\n    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, the app's snapshot\n  describing this checkout (these do not):\n    check-branch [name] | check-tag <tag> | check-version\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv2]#1": [
+  2,
+  "",
+  "--root needs a directory\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv3]#1": [
+  2,
+  "",
+  "--root needs a directory\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv4]#1": [
+  2,
+  "",
+  "--peer is gone since 0135: --state carries every workspace a link may name\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv5]#1": [
+  2,
+  "",
+  "--repo needs a directory\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv6]#1": [
+  2,
+  "",
+  "--state needs a file, or - for stdin\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv7]#1": [
+  2,
+  "",
+  "--reserve-from needs a directory\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv8]#1": [
+  2,
+  "",
+  "--root does not apply to `check-branch`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+ ],
+ "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv9]#1": [
+  2,
+  "",
+  "--root does not apply to `check-tag`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+ ],
+ "tests/loop/test_cli.py::test_a_snapshot_on_stdin_is_read_and_a_flag_it_does_not_apply_to_refused#1": [
+  2,
+  "",
+  "--state applies only to `status`, `gate`, `next`, `rerun`, `unit-branch`, `pr-text`, `screens`, not to `new-path`.\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[array.json-[]]#1": [
+  2,
+  "",
+  "--state <tmp>/array.json is not a snapshot: it needs \"workspace\" and \"units\"\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[blank.json-  \\n]#1": [
+  2,
+  "",
+  "--state <tmp>/blank.json is not readable JSON: Unexpected end of JSON input\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[cut.json-{\"workspace\": ]#1": [
+  2,
+  "",
+  "--state <tmp>/cut.json is not readable JSON: Unexpected end of JSON input\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[empty.json-]#1": [
+  2,
+  "",
+  "--state <tmp>/empty.json is not readable JSON: Unexpected end of JSON input\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[longtoken.json-{\"workspace\": \"ws\", \"units\": nope, \"ideas\": {}}]#1": [
+  2,
+  "",
+  "--state <tmp>/longtoken.json is not readable JSON: Unexpected token 'o', ...\"\"units\": nope, \"idea\"... is not valid JSON\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[missing.json-None]#1": [
+  2,
+  "",
+  "--state <tmp>/missing.json is not readable JSON: ENOENT: no such file or directory, open '<tmp>/missing.json'\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[nounits.json-{\"workspace\": \"ws\"}]#1": [
+  2,
+  "",
+  "--state <tmp>/nounits.json is not a snapshot: it needs \"workspace\" and \"units\"\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[noworkspace.json-{\"units\": {}}]#1": [
+  2,
+  "",
+  "--state <tmp>/noworkspace.json is not a snapshot: it needs \"workspace\" and \"units\"\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[nullunits.json-{\"workspace\": \"ws\", \"units\": null}]#1": [
+  2,
+  "",
+  "--state <tmp>/nullunits.json is not a snapshot: it needs \"workspace\" and \"units\"\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[number.json-1]#1": [
+  2,
+  "",
+  "--state <tmp>/number.json is not a snapshot: it needs \"workspace\" and \"units\"\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[token.json-not json]#1": [
+  2,
+  "",
+  "--state <tmp>/token.json is not readable JSON: Unexpected token 'o', \"not json\" is not valid JSON\n"
+ ],
+ "tests/loop/test_cli.py::test_a_state_that_is_no_snapshot_is_refused_alike[trailing.json-{\"workspace\": \"ws\", \"units\": {}}\\n x]#1": [
+  2,
+  "",
+  "--state <tmp>/trailing.json is not readable JSON: Unexpected non-whitespace character after JSON at position 34 (line 2 column 2)\n"
+ ]
+}

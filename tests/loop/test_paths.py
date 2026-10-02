@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.loop.conftest import UnitStore, header, same
+from tests.loop.conftest import UnitStore, header, expect
 
 QUESTIONS = """## Open questions
 1. Which database should hold the units?
@@ -39,7 +39,7 @@ Not a block we can read.
 
 
 def run(store: UnitStore, *words: str):
-    return same([*words, "--root", str(store.root)])
+    return expect([*words, "--root", str(store.root)])
 
 
 # --- new-path -----------------------------------------------------------------------------
@@ -73,7 +73,7 @@ def test_new_path_on_an_empty_store(store: UnitStore):
 
 
 def test_new_path_without_a_cos_dir(tmp_path: Path):
-    r = same(["new-path", "first", "--root", str(tmp_path / "nowhere")])
+    r = expect(["new-path", "first", "--root", str(tmp_path / "nowhere")])
     assert r.out == ".cos/0001_first\n"
 
 
@@ -126,7 +126,7 @@ def test_new_path_reserves_from_two_dirs_and_one_without_cos(store: UnitStore, t
 def test_new_path_reserves_from_a_relative_dir(store: UnitStore, tmp_path: Path):
     other = UnitStore(tmp_path / "other")
     other.unit("0020_b", {})
-    r = same(
+    r = expect(
         ["new-path", "x", "--root", str(store.root), "--reserve-from", "other"],
         cwd=tmp_path,
     )
@@ -203,7 +203,7 @@ def test_meta_of_an_empty_store(store: UnitStore):
 
 
 def test_meta_without_a_cos_dir(tmp_path: Path):
-    r = same(["meta", "--root", str(tmp_path / "nowhere")])
+    r = expect(["meta", "--root", str(tmp_path / "nowhere")])
     assert json.loads(r.out) == {"units": {}, "ideas": None}
 
 

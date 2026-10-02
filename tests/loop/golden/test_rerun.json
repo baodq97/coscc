@@ -1,0 +1,132 @@
+{
+ "tests/loop/test_rerun.py::test_a_bad_unit_name_is_refused#1": [
+  2,
+  "",
+  "Invalid unit name \"nope\": expected NNNN_slug.\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_closed_gate_is_refused_with_what_it_needs#1": [
+  1,
+  "",
+  "plan cannot be run again for 0001_x: spec.md is \"draft\", not accepted or skipped\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_draft_is_refused#1": [
+  1,
+  "",
+  "spec cannot be run again for 0001_x: spec.md is \"draft\", not accepted\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_finished_unit_offers_nothing_and_says_why#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"offers\":[],\"why\":\"the unit is finished: plan.md is done\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_a_finished_unit_refuses_a_stage#1": [
+  1,
+  "",
+  "spec cannot be run again for 0001_x: the unit is finished: plan.md is done\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_granted_rerun_digests_the_file_above_its_answers#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"stage\":\"spec\",\"later\":[\"plan\",\"impl\",\"pr\",\"review\",\"ship\"],\"block\":\"### Rerun\\nRequested by: owner. Date: <today>. Via: product.\\nStage: spec.\\nStale: spec.md sha256:6b5c1d2206f6792115cd5d117489d8df2e846267262f033c46d32a5ddcf86263\\n\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_a_granted_rerun_names_only_the_files_that_exist#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"stage\":\"intent\",\"later\":[\"spec\",\"plan\",\"impl\",\"pr\",\"review\",\"ship\"],\"block\":\"### Rerun\\nRequested by: owner. Date: <today>. Via: product.\\nStage: intent.\\nStale: intent.md sha256:87aaf8521439e81bb170c9a801541695cf4928e80f0077e71a40a8bf17835342\\nStale: pr.md sha256:39c2faed93a9dd593ab3ab08e1ee362b2c2b7fdfc6746bcfb8b97446d29a6857\\n\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_a_granted_rerun_prints_the_block_with_a_digest_per_file#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"stage\":\"spec\",\"later\":[\"plan\",\"impl\",\"pr\",\"review\",\"ship\"],\"block\":\"### Rerun\\nRequested by: owner. Date: <today>. Via: product.\\nStage: spec.\\nStale: spec.md sha256:6b5c1d2206f6792115cd5d117489d8df2e846267262f033c46d32a5ddcf86263\\nStale: plan.md sha256:ee8f08b57c5204a8b6758b3ac5f3ac8b4ff0b66c3fdd132cdb1d049c9acb4fe6\\n\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_a_granted_spike_rerun#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"stage\":\"spike\",\"later\":[\"plan\",\"impl\",\"pr\",\"review\",\"ship\"],\"block\":\"### Rerun\\nRequested by: owner. Date: <today>. Via: product.\\nStage: spike.\\nStale: spike.md sha256:2f5e64fc42ae4b11b389ad66cea40061fc3c76ff80f201058c95ac967e182b82\\n\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_a_newline_after_the_name_is_not_a_name#1": [
+  2,
+  "",
+  "Invalid unit name \"0001_x\n\": expected NNNN_slug.\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_paused_unit_offers_nothing_and_says_why#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"offers\":[],\"why\":\"the unit is paused\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_a_paused_unit_refuses_a_stage#1": [
+  1,
+  "",
+  "spec cannot be run again for 0001_x: the unit is paused\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_rejected_unit_offers_nothing_and_says_why#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"offers\":[],\"why\":\"the unit is closed: spec.md is rejected\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_a_spike_nobody_requires_is_refused#1": [
+  1,
+  "",
+  "spike cannot be run again for 0001_x: spike is not required: spec.md has no [unmeasured] item\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_stage_already_stale_is_refused#1": [
+  1,
+  "",
+  "spec cannot be run again for 0001_x: spec.md is already stale — run spec from the next step\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_stage_that_has_not_run_is_refused#1": [
+  1,
+  "",
+  "spec cannot be run again for 0001_x: spec.md does not exist — spec has not run yet\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_stage_the_board_cannot_rerun_is_refused#1": [
+  1,
+  "",
+  "impl cannot be run again for 0001_x: impl cannot be run again from the board — only intent, spec, spike, plan, pr\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_stale_stage_is_not_offered#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"offers\":[{\"stage\":\"intent\",\"later\":[\"spec\",\"plan\",\"impl\",\"pr\",\"review\",\"ship\"]}],\"why\":\"\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_a_unit_that_does_not_exist_is_refused#1": [
+  2,
+  "",
+  "No such work unit: 0002_y\n"
+ ],
+ "tests/loop/test_rerun.py::test_a_unit_with_nothing_accepted_says_so#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"offers\":[],\"why\":\"no accepted stage can be run again now\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_an_alias_is_refused_under_its_own_name#1": [
+  1,
+  "",
+  "implement cannot be run again for 0001_x: implement cannot be run again from the board — only intent, spec, spike, plan, pr\n"
+ ],
+ "tests/loop/test_rerun.py::test_an_unknown_stage_is_refused#1": [
+  2,
+  "",
+  "unknown stage \"nope\" — use one of idea, intent, spec, spike, plan, impl, pr, review, ship\n"
+ ],
+ "tests/loop/test_rerun.py::test_no_unit_name_is_refused#1": [
+  2,
+  "",
+  "usage: cos.mjs rerun <NNNN_slug> [intent|spec|spike|plan|pr]\n"
+ ],
+ "tests/loop/test_rerun.py::test_several_accepted_stages_are_offered_with_what_runs_again#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"offers\":[{\"stage\":\"intent\",\"later\":[\"spec\",\"plan\",\"impl\",\"pr\",\"review\",\"ship\"]},{\"stage\":\"spec\",\"later\":[\"plan\",\"impl\",\"pr\",\"review\",\"ship\"]},{\"stage\":\"plan\",\"later\":[\"impl\",\"pr\",\"review\",\"ship\"]}],\"why\":\"\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_spike_is_not_offered_when_spec_measures_everything#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"offers\":[{\"stage\":\"intent\",\"later\":[\"spec\",\"plan\",\"impl\",\"pr\",\"review\",\"ship\"]},{\"stage\":\"spec\",\"later\":[\"plan\",\"impl\",\"pr\",\"review\",\"ship\"]}],\"why\":\"\"}\n",
+  ""
+ ],
+ "tests/loop/test_rerun.py::test_spike_is_offered_when_spec_is_unmeasured#1": [
+  0,
+  "{\"unit\":\"0001_x\",\"offers\":[{\"stage\":\"intent\",\"later\":[\"spec\",\"spike\",\"plan\",\"impl\",\"pr\",\"review\",\"ship\"]},{\"stage\":\"spec\",\"later\":[\"spike\",\"plan\",\"impl\",\"pr\",\"review\",\"ship\"]},{\"stage\":\"spike\",\"later\":[\"plan\",\"impl\",\"pr\",\"review\",\"ship\"]}],\"why\":\"\"}\n",
+  ""
+ ]
+}

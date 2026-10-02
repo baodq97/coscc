@@ -11,7 +11,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 
-from coscc.loop import COS, LOCAL_ONLY, NEEDS_STATE, ROOT, STATE_READERS
+from coscc.loop import LOCAL_ONLY, NEEDS_STATE, STATE_READERS, checkout
 
 
 @dataclass
@@ -91,7 +91,9 @@ def parse(argv: list[str], err) -> Args | int:
         err("--root needs a directory")
         return 2
     cos_dir = (
-        str(COS) if root_at == -1 else os.path.join(os.path.abspath(argv[root_at + 1]), ".cos")
+        str(checkout() / ".cos")
+        if root_at == -1
+        else os.path.join(os.path.abspath(argv[root_at + 1]), ".cos")
     )
     after_root = (
         argv
@@ -132,7 +134,11 @@ def parse(argv: list[str], err) -> Args | int:
     rest = words[1:]
 
     repo_dir = (
-        os.path.abspath(repo_arg) if repo_arg is not None else str(ROOT) if root_at == -1 else None
+        os.path.abspath(repo_arg)
+        if repo_arg is not None
+        else str(checkout())
+        if root_at == -1
+        else None
     )
 
     from coscc.loop.model import review_rounds

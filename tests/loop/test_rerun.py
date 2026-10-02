@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 
 from coscc.loop.model import above_answers
-from tests.loop.conftest import UnitStore, entry, header, same
+from tests.loop.conftest import UnitStore, entry, header, expect
 
 UNIT = "0001_x"
 KINDS = {
@@ -42,7 +42,7 @@ def make_stale(store: UnitStore, file: str, stage: str) -> None:
 
 
 def rerun(store: UnitStore, *words: str):
-    return same(store.argv("rerun", *words))
+    return expect(store.argv("rerun", *words))
 
 
 def offered(store: UnitStore) -> list[str]:

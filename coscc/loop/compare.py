@@ -29,8 +29,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from coscc.loop import ROOT, STAGE_NAMES
+from coscc.loop import STAGE_NAMES
 
+ROOT = Path(__file__).resolve().parents[2]
 TZ = "Asia/Ho_Chi_Minh"
 TIMEOUT = 120
 WORKERS = 8

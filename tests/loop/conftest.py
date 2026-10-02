@@ -1,24 +1,33 @@
-"""Run `cos.mjs` and `python -m coscc.loop` on the same argv, snapshot, repository and env.
+"""Run `python -m coscc.loop` and hold what it says to the golden `cos.mjs` said.
 
-`same(argv, ...)` runs both and asserts stdout, stderr and the exit code are equal, byte for
-byte; it returns the one result. `UnitStore` builds a `--root` with units on disk and the snapshot
-the app would hand `--state`. `fake_gh` puts a `gh` first on `PATH` that answers from a table.
+`expect(argv, ...)` runs it and asserts stdout, stderr and the exit code equal, byte for byte, what
+`tests/loop/golden/<file>.json` holds under `<nodeid>#<n>`, the n-th call of the test, with a
+directory under pytest's tmp, the checkout and today's date read as `<tmp>`, `<repo>` and `<today>`; it
+returns the result. Under `LOOP_GOLDEN=record` it runs `cos.mjs` too, asserts both alike and
+writes what `cos.mjs` said. `UnitStore` builds a `--root` with units on disk and the snapshot the
+app would hand `--state`. `fake_gh` puts a `gh` first on `PATH` that answers from a table.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 COS_MJS = REPO / ".claude" / "scripts" / "cos.mjs"
-# A fixed zone, so `rerun`'s local date is the same date for both.
+GOLDEN = Path(__file__).resolve().parent / "golden"
+# Not `COS_*`: `env()` drops those.
+RECORD = os.environ.get("LOOP_GOLDEN") == "record"
+# A fixed zone, so `rerun`'s local date is one date for every run of a day.
 TZ = "Asia/Ho_Chi_Minh"
 
 
@@ -58,13 +67,74 @@ def python(argv, *, environ=None, stdin=None, cwd=REPO) -> Ran:
     return _run([sys.executable, "-m", "coscc.loop"], argv, environ, stdin, cwd)
 
 
-def same(argv, *, environ=None, stdin=None, cwd=REPO) -> Ran:
-    """Both, asserted equal; the one result."""
+class _Test:
+    """The test running in this process: its id, its tmp path and how many calls it made."""
+
+    nodeid = ""
+    base: Path | None = None
+    calls = 0
+
+
+_recorded: dict[str, dict[str, list]] = {}
+
+
+@pytest.fixture(autouse=True)
+def _golden_key(request, tmp_path_factory):
+    _Test.nodeid, _Test.base, _Test.calls = request.node.nodeid, tmp_path_factory.getbasetemp(), 0
+    yield
+
+
+def _plain(text: str) -> str:
+    """`text` with what differs between runs read as a placeholder."""
+    if _Test.base is not None:
+        # Each test's or module's own directory under pytest's, whichever process ran it.
+        text = re.sub(re.escape(str(_Test.base)) + r"/[^/\s\"']+", "<tmp>", text)
+    text = text.replace(str(REPO), "<repo>")
+    today = datetime.now(ZoneInfo(TZ)).strftime("%Y-%m-%d")
+    return text.replace(today, "<today>")
+
+
+def _golden_file(nodeid: str) -> Path:
+    return GOLDEN / f"{Path(nodeid.split('::')[0]).stem}.json"
+
+
+def expect(argv, *, environ=None, stdin=None, cwd=REPO) -> Ran:
+    """`python -m coscc.loop argv`, asserted equal to what `cos.mjs` said; its result."""
     argv = [str(a) for a in argv]
-    a = node(argv, environ=environ, stdin=stdin, cwd=cwd)
-    b = python(argv, environ=environ, stdin=stdin, cwd=cwd)
-    assert (b.code, b.out, b.err) == (a.code, a.out, a.err), f"argv: {argv}"
-    return a
+    _Test.calls += 1
+    key = f"{_Test.nodeid}#{_Test.calls}"
+    got = python(argv, environ=environ, stdin=stdin, cwd=cwd)
+    plain = [got.code, _plain(got.out), _plain(got.err)]
+    if RECORD:
+        said = node(argv, environ=environ, stdin=stdin, cwd=cwd)
+        want = [said.code, _plain(said.out), _plain(said.err)]
+        _recorded.setdefault(str(_golden_file(_Test.nodeid)), {})[key] = want
+    else:
+        path = _golden_file(_Test.nodeid)
+        table = json.loads(path.read_text()) if path.exists() else {}
+        assert key in table, f"no golden for {key}: LOOP_GOLDEN=record uv run pytest tests/loop"
+        want = table[key]
+    assert plain == want, f"argv: {argv}"
+    return got
+
+
+def pytest_sessionfinish(session):
+    """Under `record`, what `cos.mjs` said, merged into the goldens; one process at a time."""
+    if not RECORD or not _recorded:
+        return
+    import fcntl
+
+    GOLDEN.mkdir(exist_ok=True)
+    lock = os.open(GOLDEN, os.O_RDONLY)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for name, rows in _recorded.items():
+            path = Path(name)
+            table = json.loads(path.read_text()) if path.exists() else {}
+            table.update(rows)
+            path.write_text(json.dumps(table, ensure_ascii=False, indent=1, sort_keys=True) + "\n")
+    finally:
+        os.close(lock)
 
 
 def entry(
@@ -204,3 +274,15 @@ def git_repo(path: Path) -> Path:
     git(path, "add", "-A")
     git(path, "commit", "-q", "-m", "init")
     return path
+
+
+def at_version(version: str) -> dict[str, str]:
+    """The four files `check-version` reads, each declaring `version`."""
+    return {
+        "pyproject.toml": f'[project]\nname = "elsewhere"\nversion = "{version}"\n',
+        "package.json": json.dumps({"name": "elsewhere", "version": version}),
+        "uv.lock": f'[[package]]\nname = "elsewhere"\nversion = "{version}"\n',
+        "package-lock.json": json.dumps(
+            {"version": version, "packages": {"": {"version": version}}}
+        ),
+    }
