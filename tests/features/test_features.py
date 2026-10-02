@@ -152,6 +152,7 @@ class TurningAFeatureOffForAWorkspace(Setup):
                 got = (await client.get("/api/features", params={"cwd": str(self.ws)})).json()
         self.assertEqual(got["graph"], "off")
         self.assertEqual({got[f.name] for f in features.FEATURES if f.default == "on"}, {"on"})
+        self.assertEqual(got["codegraph"], "off")
 
     def test_an_entry_of_the_older_pref_reads_as_off_until_the_next_write_moves_it(self):
         data = Data(self.config.data_dir)

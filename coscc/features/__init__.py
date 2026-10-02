@@ -1,5 +1,5 @@
 """The features the app carries: add a file here and its `PLUGIN` on one line, delete the line to remove it."""
 
-from coscc.features import notices, parallel, scratch, vault
+from coscc.features import codegraph, notices, parallel, scratch, vault
 
-FEATURES = (notices.PLUGIN, parallel.PLUGIN, scratch.PLUGIN, vault.PLUGIN)
+FEATURES = (codegraph.PLUGIN, notices.PLUGIN, parallel.PLUGIN, scratch.PLUGIN, vault.PLUGIN)

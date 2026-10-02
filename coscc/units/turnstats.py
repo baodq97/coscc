@@ -273,13 +273,11 @@ def changes_requested(text: str) -> int:
     return sum(1 for m in firsts if m and m.group(1) == "changes-requested")
 
 
-def quality_fields(
-    conn: sqlite3.Connection, workspace: str, cos_dir: Path, since: str | None, until: str | None
-) -> dict[str, Any]:
-    """Shipped is a `ship.md` -> `accepted` transition in the window; (a) counts only the
-    `impl` starts in the window, (b) reads `review.md` from the unit store.
-    """
-    shipped = sorted(
+def shipped_units(
+    conn: sqlite3.Connection, workspace: str, since: str | None, until: str | None
+) -> list[str]:
+    """The units with a `ship.md` -> `accepted` transition in the window, sorted."""
+    return sorted(
         {
             unit
             for unit, at in conn.execute(
@@ -290,6 +288,15 @@ def quality_fields(
             if _in(at, since, until)
         }
     )
+
+
+def quality_fields(
+    conn: sqlite3.Connection, workspace: str, cos_dir: Path, since: str | None, until: str | None
+) -> dict[str, Any]:
+    """Shipped is `shipped`; (a) counts only the `impl` starts in the window, (b) reads
+    `review.md` from the unit store.
+    """
+    shipped = shipped_units(conn, workspace, since, until)
     starts: dict[str, int] = {}
     for unit, at in conn.execute(
         "SELECT unit, at FROM runs WHERE workspace = ? AND kind = 'start' AND stage = 'impl'",
