@@ -36,8 +36,10 @@ async def run(argv: list[str], cwd: str, stdin: str | None = None) -> tuple[int,
         out, err = await asyncio.wait_for(
             proc.communicate(stdin.encode() if stdin is not None else None), timeout=TIMEOUT
         )
-    except asyncio.TimeoutError:
-        proc.kill()
+    except asyncio.TimeoutError, asyncio.CancelledError:
+        # A cancelled caller leaves no `gh` behind it either; one that just exited is only reaped.
+        if proc.returncode is None:
+            proc.kill()
         await proc.wait()
         raise
     return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")

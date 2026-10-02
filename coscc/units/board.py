@@ -105,8 +105,11 @@ async def _run(argv: list[str], timeout: float, stdin: str | None = None) -> tup
         out, err = await asyncio.wait_for(
             proc.communicate(None if stdin is None else stdin.encode()), timeout=timeout
         )
-    except asyncio.TimeoutError:
-        proc.kill()
+    except asyncio.TimeoutError, asyncio.CancelledError:
+        # A cancelled caller leaves no `node` behind it either; one that just exited is only
+        # reaped.
+        if proc.returncode is None:
+            proc.kill()
         await proc.wait()
         raise
     return (

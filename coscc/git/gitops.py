@@ -84,6 +84,13 @@ async def _run(argv: list[str], timeout: float, cwd: str | None = None, strip: b
         proc.kill()
         await proc.wait()
         raise GitError(f"git timed out after {timeout:.0f}s: {' '.join(argv[:2])}")
+    except asyncio.CancelledError:
+        # A cancelled caller leaves no `git` behind it: shutdown returns once this has. One
+        # that exited as the cancel came is only reaped.
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+        raise
     text = (out or b"").decode(errors="replace")
     text = text.strip() if strip else text[:-1] if text.endswith("\n") else text
     if proc.returncode != 0:
@@ -110,6 +117,11 @@ async def _run_code(argv: list[str], timeout: float, cwd: str | None = None) -> 
         proc.kill()
         await proc.wait()
         raise GitError(f"git timed out after {timeout:.0f}s: {' '.join(argv[:2])}")
+    except asyncio.CancelledError:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+        raise
     text = (out or b"").decode(errors="replace").strip()
     return proc.returncode or 0, text
 
