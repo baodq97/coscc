@@ -1527,6 +1527,29 @@ class Scripted(_Base):
             await self.settled()
             self.release.clear()
 
+    async def test_a_refusal_while_queueing_logs_one_line_and_a_race_only_at_info(self):
+        self.service.attempts.admitting = lambda: False
+        for code, level, stop in (
+            ("unit-busy", "INFO", {}),
+            ("ci-pending", "INFO", {}),
+            ("gate-closed", "WARNING", {"0001_a": "f"}),
+        ):
+            self.service.autopilot.stops.pop(self.key, None)
+            self.units.clear()
+            self.add("0001_a", "spec")
+
+            def refuse(cwd, unit, stage, note="", code=code):
+                raise Refused("refused", (code,))
+
+            with (
+                mock.patch.object(self.service.steps, "enqueue_step", side_effect=refuse),
+                self.assertLogs("coscc.service.autopilot", "INFO") as logged,
+            ):
+                await self.pass_()
+            [record] = [r for r in logged.records if "queue" in r.getMessage()]
+            self.assertEqual((record.levelname, record.exc_info), (level, None), code)
+            self.assertEqual(self.stops(), stop, code)
+
     async def test_a_coded_refusal_at_next_is_a_stop_with_its_code(self):
         self.add("0001_a", "spec")
 

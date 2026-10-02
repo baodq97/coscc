@@ -745,12 +745,14 @@ class Autopilot:
         except Busy as e:
             log.warning("the autopilot could not queue %s of %s: %s", stage, unit, e)
         except (Refused, Invalid) as e:
-            log.exception("the autopilot could not queue %s of %s", stage, unit)
-            if not autopilot.is_waiting(e) and not self.holds.busy(key, unit):
-                stop = {"unit": unit, "kind": "f", "reason": str(e)}
-                if isinstance(e, Refused) and e.reasons:
-                    stop["code"] = e.reasons[0]
-                self.set_stops(key, {unit: stop}, {unit})
+            if autopilot.is_waiting(e) or self.holds.busy(key, unit):
+                log.info("the autopilot did not queue %s of %s: %s", stage, unit, e)
+                return
+            log.warning("the autopilot could not queue %s of %s: %s", stage, unit, e)
+            stop = {"unit": unit, "kind": "f", "reason": str(e)}
+            if isinstance(e, Refused) and e.reasons:
+                stop["code"] = e.reasons[0]
+            self.set_stops(key, {unit: stop}, {unit})
 
     def _block(self, key: str) -> dict[str, Any]:
         """What the board shows of the autopilot. Display only; decides nothing."""
