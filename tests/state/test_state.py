@@ -188,7 +188,7 @@ class ThePageHoldsNoRunningFlagOfItsOwn(unittest.TestCase):
 
 
 class TheRunButtonHoldsNoCopyOfTheLoop(unittest.TestCase):
-    """The stage the button offers is `cos.mjs next`'s, copied; nothing in the page works it out
+    """The stage the button offers is `coscc.loop next`'s, copied; nothing in the page works it out
     from which artifacts exist."""
 
     def setUp(self):
@@ -1167,7 +1167,7 @@ class TheUnitDialogKnowsMissingAndDropped(unittest.TestCase):
 
 class ADroppedUnitsDialogOffersNothingThatWrites(unittest.TestCase):
     """`verify_0056` sees the run block, Integrate and Outcome absent for its dropped unit, but
-    `cos.mjs` would hide them there anyway; this reads the dialog itself: every control that writes
+    the loop would hide them there anyway; this reads the dialog itself: every control that writes
     sits in the true branch of a `rx.cond(~P.unit_dropped, …)`, and the hold panel's does not."""
 
     WRITES = {

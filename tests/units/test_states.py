@@ -2,7 +2,7 @@
 
 Two of these carry most of the weight and they pull in opposite directions.
 
-`TheDefaultIsTheSetInUseToday` reads `.claude/scripts/cos.mjs` **by running it** and
+`TheDefaultIsTheSetInUseToday` reads the loop's stage table **by running it** and
 compares its stage table to `coscc/units/states.json` field by field. A hand-written expectation
 would keep passing after the two drift apart, which is the failure `tests/units/test_board.py`
 already argues against for the same reason.
@@ -14,12 +14,12 @@ rather than from the file, that test is where it shows."""
 from __future__ import annotations
 
 import json
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from typing import get_args
 
+from tests.units.test_meta import loop
 from coscc.agent import harness
 from coscc.units import states
 from coscc.units.states import BadMachine
@@ -50,24 +50,16 @@ def write(raw: dict, into: Path) -> Path:
 
 
 class TheDefaultIsTheSetInUseToday(unittest.TestCase):
-    def test_it_matches_the_stage_table_cos_mjs_prints(self):
-        # Run rather than parsed. `cos.mjs` is JavaScript and its table is a literal in
-        # the source; asking the program is the only reading that cannot go stale.
-        out = subprocess.run(
-            [
-                "node",
-                str(REPO / ".claude" / "scripts" / "cos.mjs"),
-                "--state",
-                "-",
-                "status",
-                "--json",
-            ],
+    def test_it_matches_the_stage_table_the_loop_prints(self):
+        # Run rather than parsed. The loop's table is a literal in its source; asking the
+        # program is the only reading that cannot go stale.
+        out = loop(
+            "--state",
+            "-",
+            "status",
+            "--json",
             # The stage table needs no unit, so an empty snapshot.
             input='{"workspace": "", "units": {}}',
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            check=True,
         ).stdout
         theirs = json.loads(out)["stages"]
         machine = states.default()
@@ -89,8 +81,8 @@ class TheDefaultIsTheSetInUseToday(unittest.TestCase):
         ]
         self.assertEqual(set(get_args(states.StageName)), set(names))
 
-    def test_settled_means_what_cos_mjs_means_by_it(self):
-        # `.claude/scripts/cos.mjs:123`. Counted on this, so a disagreement here moves
+    def test_settled_means_what_the_loop_means_by_it(self):
+        # `coscc/loop/model.py` `settled`. Counted on this, so a disagreement here moves
         # 0013's whole number.
         machine = states.default()
         for state in ("accepted", "skipped", "done"):

@@ -219,27 +219,24 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
     def _both(self) -> tuple[dict, dict]:
         """The unit as `status --json` printed it, and as `coscc/units/board.py` handed it on."""
         import asyncio
-        import subprocess
         import tempfile
 
+        from coscc.loop import run as loop
         from coscc.units import board as _board
         from tests.units.test_meta import WithSnapshot
 
         board = WithSnapshot(_board)
-        from coscc.agent import harness
 
         with tempfile.TemporaryDirectory() as d:
             unit = Path(d) / ".cos" / "0001_q"
             unit.mkdir(parents=True)
             (unit / "intent.md").write_text(self.TEXT, encoding="utf-8")
-            raw = subprocess.run(
-                ["node", str(harness.script()), "--root", d, "--state", "-", "status", "--json"],
-                input=json.dumps(snapshot_of(d)),
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout
-            [from_script] = json.loads(raw)["units"]
+            asked = loop.ask_sync(
+                ["--root", d, "--state", "-", "status", "--json"],
+                stdin=json.dumps(snapshot_of(d)),
+            )
+            self.assertEqual(asked.code, 0, asked.err)
+            [from_script] = json.loads(asked.out)["units"]
             [through_board] = asyncio.run(board.read(d))["units"]
         return from_script, through_board
 
@@ -268,7 +265,7 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
 
 
 class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
-    """The card's hold is `cos.mjs`'s; the handler calls `SERVICE.answers.hold` and never a step."""
+    """The card's hold is the loop's; the handler calls `SERVICE.answers.hold` and never a step."""
 
     TEXT = (
         "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n## Answers\n\n"
@@ -375,7 +372,7 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
 
 
 class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
-    """The unit's `more_rounds` is `cos.mjs`'s; the handler calls `SERVICE.answers.more_rounds` and never a
+    """The unit's `more_rounds` is the loop's; the handler calls `SERVICE.answers.more_rounds` and never a
     step."""
 
     def test_the_more_rounds_handler_calls_the_service_and_no_step(self):
@@ -400,7 +397,7 @@ class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
 
     def test_more_rounds_is_copied_onto_the_unit(self):
         """The expression `_load_board` gives `Unit(more_rounds=…)`, run on a real board read:
-        a unit `cos.mjs` calls out of rounds, and one it does not."""
+        a unit the loop calls out of rounds, and one it does not."""
         import asyncio
         import os
         import tempfile
@@ -454,8 +451,8 @@ class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
 
 
 class AnAskOutlivesItsWaiter(unittest.TestCase):
-    """A navigation cancels the `load_next` an arrival chained; the `cos.mjs next` it was waiting on
-    must not be cancelled with it — its `node` and `gh` would run on unread — and the next waiter at
+    """A navigation cancels the `load_next` an arrival chained; the `coscc.loop next` it was waiting on
+    must not be cancelled with it — its loop child and `gh` would run on unread — and the next waiter at
     that unit takes its answer."""
 
     def test_a_cancelled_waiter_leaves_the_ask_to_finish_and_be_joined(self):
@@ -533,7 +530,7 @@ class RunTargetCopies(unittest.TestCase):
 
 
 class FindingsAwaitingAPersonAreCopied(unittest.TestCase):
-    """The Questions tab lists `cos.mjs`'s `personFindings`, and the run frame shows `cos.mjs
+    """The Questions tab lists the loop's `personFindings`, and the run frame shows `coscc.loop
     next`'s `waiting`; the page derives neither."""
 
     UNIT = {

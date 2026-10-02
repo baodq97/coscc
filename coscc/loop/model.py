@@ -1,9 +1,9 @@
-"""A unit, as `cos.mjs` `readUnit` builds it: its files' prose and the app's snapshot entry.
+"""A unit, as `read_unit` builds it: its files' prose and the app's snapshot entry.
 
-Ported 1:1 from `.claude/scripts/cos.mjs`, the parsers above `readUnit` through `entryUnit`, the
+The parsers above `read_unit` through `entry_unit`, the
 links, the lane, and the review-round helpers `readUnit` and the gates share. A unit is
-a dict whose keys are inserted in `cos.mjs`'s order, so `status --json` prints it alike. Every
-regex that reads `\\d`, `\\w` or `\\b` is `re.ASCII`, as `cos.mjs`'s carry no `/u` flag.
+a dict whose keys are inserted in a fixed order, so `status --json` prints them alike. Every
+regex that reads `\\d`, `\\w` or `\\b` is `re.ASCII`, as the loop's regexes always have.
 """
 
 from __future__ import annotations
@@ -902,7 +902,7 @@ def store_of(ws, repo, state):
     return {"why": f"the app has no workspace named {ws}"}
 
 
-# `cos.mjs` `LINKS`, a `WeakMap`: what `read_unit` learned of a unit's links, kept off the unit
+# `LINKS`: what `read_unit` learned of a unit's links, kept off the unit
 # so `status --json` carries `idea`, `repo` and `dependsOn` alone. Keyed by `id`, the unit kept
 # beside its entry so the id is never reused while the entry stands.
 LINKS: dict[int, tuple[object, dict]] = {}
@@ -1467,8 +1467,8 @@ def _artifact(unit, known, file, text):
         a["questions"] = questions
 
 
-def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - a port of `cos.mjs` `readUnit`
-    """`cos.mjs` `readUnit`: `state` is the snapshot; the files are read for what it does not keep."""
+def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
+    """`readUnit`: `state` is the snapshot; the files are read for what it does not keep."""
     unit: dict[str, Any] = {"name": name, "artifacts": {}, "problems": []}
     known = nullish(entry_of(state, state["workspace"], name), NO_ENTRY)
     intent_text = None
@@ -1578,7 +1578,7 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - a port of `cos.mjs` `
 
 
 def read_all(cos_dir, state):
-    """`cos.mjs` `readAll`: every directory under `cos_dir` but `ideas/`, by name."""
+    """`readAll`: every directory under `cos_dir` but `ideas/`, by name."""
     if not os.path.exists(cos_dir):
         return []
     with os.scandir(cos_dir) as it:

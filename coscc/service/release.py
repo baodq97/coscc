@@ -1,6 +1,6 @@
 """Cutting a release: the board's *Release* block and its two presses.
 
-`coscc/github/release.py` holds the pure decisions and the `gh`/`node`/`uv` calls, `coscc/git/gitops.py` the git ones.
+`coscc/github/release.py` holds the pure decisions and the `gh`, loop and `uv` calls, `coscc/git/gitops.py` the git ones.
 """
 
 from __future__ import annotations
@@ -82,10 +82,6 @@ class Release:
         is `unknown` or `nothing` carries only its reason. `prs` is awaited only once a release tag
         is found, so a workspace never released asks `gh` nothing here.
         """
-        if not (root / release.SCRIPT).is_file():
-            return _empty_block(
-                "unknown", "this workspace has no cos.mjs, so it is not released from here"
-            )
         try:
             origin = await gitops.rev_parse(root, "refs/remotes/origin/main")
             tags = await gitops.release_tags(root, origin)
@@ -201,7 +197,7 @@ class Release:
     ) -> dict[str, Any] | None:
         """The board's `release` block, or None for a workspace that is not a git checkout.
 
-        Costs, at most: `git` reads, one `node cos.mjs check-tag` per candidate tag, and once a
+        Costs, at most: `git` reads, one `coscc.loop check-tag` per candidate tag, and once a
         release tag is found the board's shared `gh pr list`, then `gh pr checks` on an open release
         pull request or `gh release view` and `gh run list` after a tag this app pushed; each `gh`
         answer is held, and waited on only the first time or when `fresh`. No fetch.
@@ -255,7 +251,7 @@ class Release:
         version: str,
     ) -> tuple[Journal, str, Path, dict[str, Any], Path, str, Callable[..., dict[str, Any]]]:
         """Everything asked before a press changes anything: the fetch, the facts, the release tree at
-        `origin/main` and `cos.mjs` there. Refuses with one `refused` record.
+        `origin/main` and the loop there. Refuses with one `refused` record.
         """
         journal, key, root = self._release_start(cwd)
         version = str(version or "").strip()
@@ -276,7 +272,6 @@ class Release:
                 active=True,
                 phase=phase,
                 open_release_pr=None,
-                has_script=True,
                 check_version=(0, ""),
                 version_problem_="",
                 state="",
@@ -304,12 +299,11 @@ class Release:
                 commits=facts["unmatched"],
             )
             open_rel = release.release_prs(prs) if isinstance(prs, list) else []
-            has_script = (root / release.SCRIPT).is_file()
             tree: Path | None = None
             # Asked in the tree below; `unreadable` refuses first when there is none.
             check_version = (1, "")
             problem = ""
-            if has_script and facts["state"] != "unknown":
+            if facts["state"] != "unknown":
                 try:
                     tree = await self._release_tree_fresh(cwd, root, facts["origin_sha"])
                 except GitError as e:
@@ -330,7 +324,6 @@ class Release:
                 active=False,
                 phase=phase,
                 open_release_pr=open_rel[0] if open_rel else None,
-                has_script=has_script,
                 check_version=check_version,
                 version_problem_=problem,
                 state=facts["state"],

@@ -14,8 +14,8 @@ later a rewrite.
 re-read or re-verify them. A question with a block under `## Answers` is decided: cite it as
 `<artifact> ## Answers, câu N`, quote the person, never re-ask, never write into that section.
 
-Gate: from the board it was asked (the prompt says so); at a terminal ask `cos.mjs gate <unit> spec`
-first and stop on non-zero.
+Gate: from the board it was asked (the prompt says so); at a terminal ask
+`uv run python -m coscc.loop gate <unit> spec` first and stop on non-zero.
 
 ## Steps
 
@@ -45,7 +45,7 @@ Intent: intent.md. Author: <name>. Status: accepted.
 ## Open questions
 ````
 
-## Lines the app and `cos.mjs` read
+## Lines the app and the loop read
 
 - `- [unmeasured] U1. <question>` at column 0 under `## Concerns`; list the ids in `unmeasured`
   of `submit`. It sends the unit to `spike`. The id is the question's identity: keep it across

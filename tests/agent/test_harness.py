@@ -33,7 +33,6 @@ def _wheel(path: Path, names, stamp: str = GOOD_STAMP) -> Path:
 RUNNABLE = (
     f"coscc/_web/{frontend._LAYOUT.as_posix()}/index.html",
     f"coscc/_web/{frontend.MARKER.as_posix()}",
-    "coscc/_harness/scripts/cos.mjs",
     "coscc/_harness/skills/write-spec/SKILL.md",
     # Committed rather than generated, unlike the four above, and checked anyway: an installed copy
     # cannot tell how a missing file came to be missing.
@@ -48,14 +47,13 @@ RUNNABLE = (
 
 
 class TheCheckoutFindsItsOwnRules(unittest.TestCase):
-    def test_this_checkout_resolves_cos_mjs_and_every_skill(self):
+    def test_this_checkout_resolves_every_skill(self):
         # Running from a checkout, `root()` is `.claude/`. If this fails, the fallback is
         # broken and every developer's Board is broken with it.
-        self.assertTrue(harness.script().is_file(), harness.script())
         found = sorted(p.parent.name for p in harness.skills_dir().glob(f"*/{harness.SKILL_FILE}"))
         self.assertIn("write-spec", found)
 
-    def test_with_no_packaged_tree_it_resolves_the_script_the_repo_commits(self):
+    def test_with_no_packaged_tree_it_resolves_the_skills_the_repo_commits(self):
         # `PACKAGE_HARNESS` is blanked rather than trusted to be absent. This test failed
         # the first time it ran for exactly that reason: a wheel had been built in this
         # checkout, `coscc/_harness/` was still on disk, and the packaged copy won -- which
@@ -65,7 +63,9 @@ class TheCheckoutFindsItsOwnRules(unittest.TestCase):
         original = harness.PACKAGE_HARNESS
         harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
         try:
-            self.assertEqual(harness.script(), REPO / ".claude" / "scripts" / "cos.mjs")
+            self.assertFalse(harness.is_packaged())
+            self.assertEqual(harness.root(), REPO / ".claude")
+            self.assertEqual(harness.skills_dir(), REPO / ".claude" / "skills")
         finally:
             harness.PACKAGE_HARNESS = original
 
@@ -90,33 +90,46 @@ class RulesThatCannotBeFoundStopTheStep(unittest.TestCase):
 
 
 class ThePackagedCopyWins(unittest.TestCase):
-    def test_root_prefers_the_package_when_cos_mjs_is_there(self):
+    def packaged_as(self, packaged: Path):
+        original = harness.PACKAGE_HARNESS
+        harness.PACKAGE_HARNESS = packaged
+        self.addCleanup(setattr, harness, "PACKAGE_HARNESS", original)
+
+    def test_root_prefers_the_package_when_its_skills_are_there(self):
         with tempfile.TemporaryDirectory() as tmp:
             packaged = Path(tmp) / "_harness"
-            (packaged / "scripts").mkdir(parents=True)
-            (packaged / "scripts" / "cos.mjs").write_text("// packaged", encoding="utf-8")
-            original = harness.PACKAGE_HARNESS
-            harness.PACKAGE_HARNESS = packaged
-            try:
-                self.assertTrue(harness.is_packaged())
-                self.assertEqual(harness.root(), packaged)
-                self.assertEqual(harness.script().read_text(encoding="utf-8"), "// packaged")
-            finally:
-                harness.PACKAGE_HARNESS = original
+            (packaged / "skills" / "write-spec").mkdir(parents=True)
+            (packaged / "skills" / "write-spec" / "SKILL.md").write_text(
+                "# packaged", encoding="utf-8"
+            )
+            self.packaged_as(packaged)
+            self.assertTrue(harness.STATES_PATH.is_file())
+            self.assertTrue(harness.is_packaged())
+            self.assertEqual(harness.root(), packaged)
+            self.assertEqual(harness.read_skill("write-spec"), "# packaged")
 
-    def test_a_package_without_cos_mjs_falls_back_rather_than_half_resolving(self):
+    def test_a_package_without_skills_falls_back_rather_than_half_resolving(self):
         # A packaged tree that exists but is empty must not win. Half a harness resolving
         # is worse than none: it would find no skills and blame the checkout.
         with tempfile.TemporaryDirectory() as tmp:
             empty = Path(tmp) / "_harness"
             empty.mkdir()
-            original = harness.PACKAGE_HARNESS
-            harness.PACKAGE_HARNESS = empty
-            try:
-                self.assertFalse(harness.is_packaged())
-                self.assertEqual(harness.root(), harness.CHECKOUT_HARNESS)
-            finally:
-                harness.PACKAGE_HARNESS = original
+            self.packaged_as(empty)
+            self.assertFalse(harness.is_packaged())
+            self.assertEqual(harness.root(), harness.CHECKOUT_HARNESS)
+
+    def test_a_script_alone_does_not_make_a_package(self):
+        # A wheel of an older release carried a script under `scripts/`; the marker is the skills now.
+        with tempfile.TemporaryDirectory() as tmp:
+            old = Path(tmp) / "_harness"
+            (old / "scripts").mkdir(parents=True)
+            (old / "scripts" / "old.mjs").write_text("// old", encoding="utf-8")
+            self.packaged_as(old)
+            self.assertFalse(harness.is_packaged())
+
+    def test_there_is_no_script_to_locate(self):
+        self.assertFalse(hasattr(harness, "script"))
+        self.assertFalse(hasattr(harness, "SCRIPT_NAME"))
 
 
 class AWheelIsChecked(unittest.TestCase):
@@ -132,9 +145,15 @@ class AWheelIsChecked(unittest.TestCase):
             names = [n for n in RUNNABLE if "_harness" not in n]
             wheel = _wheel(Path(tmp) / "v022.whl", names)
             complaints = harness.wheel_complaints(wheel)
-            self.assertEqual(len(complaints), 2, complaints)
-            self.assertTrue(any("cos.mjs" in c for c in complaints), complaints)
-            self.assertTrue(any("SKILL.md" in c for c in complaints), complaints)
+            self.assertEqual(len(complaints), 1, complaints)
+            self.assertIn("SKILL.md", complaints[0])
+
+    def test_a_wheel_is_not_asked_for_a_loop_script(self):
+        # The loop is `coscc/loop/`, inside the package; no copy of it sits in `_harness/`.
+        with tempfile.TemporaryDirectory() as tmp:
+            wheel = _wheel(Path(tmp) / "ok.whl", RUNNABLE)
+            self.assertFalse(any(".mjs" in n for n in zipfile.ZipFile(wheel).namelist()))
+            self.assertEqual(harness.wheel_complaints(wheel), [])
 
     def test_a_wheel_without_the_state_set_is_caught(self):
         # `coscc/units/states.py` has nothing to validate a transition against, so the log can

@@ -1,7 +1,7 @@
 """Where a unit's working tree is, and the one place that makes, prepares and removes it.
 
 Each unit gets a `git worktree` outside the workspace; **the workspace itself stays on
-`main` and is never worked in**. Artifacts stay in the store, so `cos.mjs` is asked with
+`main` and is never worked in**. Artifacts stay in the store, so the loop is asked with
 `--root <store> --repo <worktree>`. The tree is `<data root>/worktrees/<slot>/<unit>`, a
 pure function of workspace and unit, found again through `git worktree list`. What
 preparing it said is `<tree>.prepare.json`, beside the tree so it is not in `git status`.
@@ -504,7 +504,7 @@ async def remove_if_finished(
 
     All four must hold, or nothing is touched:
 
-    1. `cos.mjs` says the unit is `finished` (read from `board_unit`, never inferred);
+    1. The loop says the unit is `finished` (read from `board_unit`, never inferred);
     2. `gh pr view` in the worktree says the pull request is `MERGED`;
     3. the worktree is clean;
     4. where the local branch still exists, it points at the head GitHub merged.

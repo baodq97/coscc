@@ -121,7 +121,7 @@ def _rounds_before(found: dict[str, Any], row: dict[str, Any]) -> set[Any] | Non
 def _round_kwargs(
     found: dict[str, Any], row: dict[str, Any], stage: str, rounds_before: set[Any] | None
 ) -> dict[str, Any]:
-    """From the same board: a last round `cos.mjs` read as unfinished, and the ids it dropped,
+    """From the same board: a last round the loop read as unfinished, and the ids it dropped,
     for the review that runs again. Whether it counts is not asked here."""
     last_round = (found.get("rounds") or [None])[-1] if row["file"] == "review.md" else None
     kw: dict[str, Any] = (
@@ -1197,7 +1197,7 @@ class Steps:
         open questions, and after `ship` a `ship` record saying whether it merged. Never raises,
         like `cleanup`: a record that cannot be written changes nothing about the step.
 
-        `why` is `decide`'s, read off the files by `cos.mjs status` as `board.read` copies it,
+        `why` is `decide`'s, read off the files by `coscc.loop status` as `board.read` copies it,
         without asking `gh` as `next` would, so `ship-refused` can also be a merge whose branch
         deletion failed."""
         try:
@@ -1240,7 +1240,7 @@ class Steps:
             return
 
     async def next_step(self, cwd: str, unit: str) -> dict[str, Any]:
-        """The one stage the run button may offer, and why -- `cos.mjs next`'s answer.
+        """The one stage the run button may offer, and why -- `coscc.loop next`'s answer.
 
         Read with the same store and the same `repo=cwd` that `run_step` hands the gate, so
         the stage offered and the gate that will be asked read one checkout. Nothing here chooses a stage.
@@ -1268,7 +1268,7 @@ class Steps:
                 "reasons": list(held.get("reasons") or []),
             }
         # The unit's worktree is the checkout its branch and pull request are read
-        # from. None when there is none to open, and `cos.mjs` then keeps `review` and
+        # from. None when there is none to open, and the loop then keeps `review` and
         # `ship` closed rather than read the workspace's branch, which is not this unit's.
         # A workspace that is not a git repository has no worktrees, and is read as it
         # always was — the same fallback `run_step` takes, so the two read one checkout.
@@ -1287,20 +1287,20 @@ class Steps:
             "cwd": cwd,
             "unit": unit,
             **{k: found[k] for k in ("stage", "action", "blocked")},
-            # The findings a person is awaited on, copied from `cos.mjs next`.
+            # The findings a person is awaited on, copied from `coscc.loop next`.
             "waiting": list(found.get("waiting") or []),
-            # The ids the last review round left out, copied from `cos.mjs next`.
+            # The ids the last review round left out, copied from `coscc.loop next`.
             "dropped": list(found.get("dropped") or []),
             # The stage a fully answered draft would run again; only the autopilot
             # reads it.
             "rerun": str(found.get("rerun") or ""),
-            # The codes the autopilot branches on, copied from `cos.mjs next`.
+            # The codes the autopilot branches on, copied from `coscc.loop next`.
             "reasons": list(found.get("reasons") or []),
         }
 
     async def rerun_offers(self, cwd: str, unit: str) -> dict[str, Any]:
         """The accepted stages `unit` may run again, each with the stages that
-        then run again after it -- `cos.mjs rerun`'s answer, copied: `{unit, offers: [{stage,
+        then run again after it -- `coscc.loop rerun`'s answer, copied: `{unit, offers: [{stage,
         later}], why}`. Files only: no worktree is opened and no `gh` is asked. Nothing here
         chooses a stage."""
         self.ws.check(cwd)
@@ -1366,7 +1366,7 @@ class Steps:
 
         `rerun` runs an accepted stage again, with a person's `note`. Whether the
         stage may, and the `### Rerun` block appended to `intent.md` before the session
-        starts, are `cos.mjs rerun`'s. Refused for the autopilot and for a note over
+        starts, are `coscc.loop rerun`'s. Refused for the autopilot and for a note over
         `RERUN_NOTE_MAX`; an empty note is not refused.
         """
         try:
@@ -1635,7 +1635,7 @@ class Steps:
             raise Refused(
                 f"no such stage: {stage} (use one of {', '.join(data['stages'])})", ("no-stage",)
             )
-        # `cos.mjs`'s own field, read before any worktree is opened — the gate
+        # the loop's own field, read before any worktree is opened — the gate
         # below would refuse too, but only after `worktree` had reopened a dropped tree.
         held = found.get("hold")
         if held:
@@ -1648,7 +1648,7 @@ class Steps:
     async def _ask_rerun(self, cwd: str, unit: str, stage: str, started_by: str, note: str) -> str:
         """The `### Rerun` block for running `stage` again, asked before a worktree is opened or
         the gate asked. Whether `stage` may run again, and the block that says so, are
-        `cos.mjs`'s; its refusal is passed on."""
+        the loop's; its refusal is passed on."""
         if started_by != "person":
             raise Refused(
                 "a stage is run again only by a person, from the board, never by the autopilot",
@@ -1724,7 +1724,7 @@ class Steps:
         return ""
 
     async def _ask_gate(self, cwd: str, unit: str, stage: str, work: str) -> board_reader.Gate:
-        """`cos.mjs gate` is asked here, not left to the skill: a session often cannot run
+        """`coscc.loop gate` is asked here, not left to the skill: a session often cannot run
         a command. Here rather than in `Runner` because a refusal must arrive before any
         money is spent, and `run_step` is the last place that is still true."""
         # `pr.md`'s title and body go up before the `ship` gate compares the
@@ -2076,7 +2076,7 @@ class Steps:
         work: str,
         started_by: str,
     ) -> str:
-        """Ask `cos.mjs screens`; when it says to, take the screenshots again under
+        """Ask `coscc.loop screens`; when it says to, take the screenshots again under
         `_screens_lock`, judge the result and record it. Returns the section for the `review`
         prompt, `""` when nothing was taken. A retake that fails raises `Invalid` with
         `RETAKE_REFUSED`; what went wrong is only in its record. No tracked file is put back;
@@ -2572,7 +2572,7 @@ class Steps:
             return {"version": "", "commit": ""}
 
     def _write_step_state(self, cwd: str, unit: str) -> str:
-        """The snapshot a step that runs `cos.mjs` itself hands `--state` — the `pr`
+        """The snapshot a step that runs the loop itself hands `--state` — the `pr`
         step's `pr-text`, the `ship` step's gate — which refuse to decide without one. Written
         as the step begins, under the data root beside `spikes/`, never in a store, and
         replaced by the next step of the unit. `""` when it could not be written: the step

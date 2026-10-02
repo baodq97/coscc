@@ -185,7 +185,7 @@ async def answer_question(request: Request) -> Any:
     under a name they chose, and the next stage reads them as a person's decision.
 
     `question` may also be `"F<n>"` with `artifact` `review.md`: a finding the last
-    review round confirmed needs a person. That appends `### F<n>`; `cos.mjs next` reads
+    review round confirmed needs a person. That appends `### F<n>`; `coscc.loop next` reads
     it to offer `review` again, and the `ship` gate counts an `[answered]` finding as closed.
 
     An optional `delegation: "D<n>"` writes the answer as one an agent gave under a
@@ -235,7 +235,7 @@ async def hold_unit(request: Request) -> Any:
     """Pause, drop or resume a unit: body `{cwd, unit, to, reason, by}`.
 
     Appends a `### Paused|Dropped|Resumed` block under `intent.md ## Answers` and a
-    `hold` row to the run log; `cos.mjs` then offers no stage and closes every gate.
+    `hold` row to the run log; the loop then offers no stage and closes every gate.
     **Whoever holds the password or a session can pause every unit**, and `to: "dropped"`
     closes the unit's open pull request **with this machine's `gh` login** and removes its
     worktree. It starts nothing, a resume included.
@@ -250,7 +250,7 @@ async def hold_unit(request: Request) -> Any:
 async def more_rounds(request: Request) -> Any:
     """Allow one more review round to a unit out of rounds: body `{cwd, unit, by?}`.
 
-    Appends a `### More rounds` block under `review.md ## Answers`; `cos.mjs` then adds
+    Appends a `### More rounds` block under `review.md ## Answers`; the loop then adds
     one round to the limit and opens the `review` gate again. **Whoever holds the password
     or a session can open a paid review round**; the route starts nothing itself, but
     with the autopilot on its next sweep will.
@@ -364,7 +364,7 @@ async def get_board_running(request: Request) -> Any:
 
 @router.get("/api/units/next")
 async def get_next(request: Request) -> Any:
-    """The one stage the run button may offer for a unit, as `cos.mjs next` answered it:
+    """The one stage the run button may offer for a unit, as `coscc.loop next` answered it:
     `{stage, action, blocked}`. Asks `gh`, so it can wait up to 60s. It starts nothing;
     `/api/board/run` still asks the gate."""
     return await _service(request).steps.next_step(

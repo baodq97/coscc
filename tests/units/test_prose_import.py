@@ -49,7 +49,7 @@ class TheRoundsOnlyTheProseHoldsAreImportedOnce(_Review):
         self.service.ws.imported.clear()
 
     def rounds(self) -> list[dict]:
-        """`cos.mjs`'s rounds, two things aside that every row carries apart from the file,
+        """The loop's rounds, two things aside that every row carries apart from the file,
         a submitted round's as much as an imported one's: the screens' raw header line, which
         a row has none of, and a finding's `rule`, which `reviewFrom` adds and nothing reads."""
         out = []

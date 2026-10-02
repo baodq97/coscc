@@ -392,8 +392,8 @@ def ingest_fixture(
 
 
 def fixture_state(store: Path, where: Path) -> Path:
-    """`0135`: the snapshot `cos.mjs --state` decides on, for a store a proof wrote by hand and
-    reads with `node cos.mjs --root <store>`. Imported into a `cos.db` of its own under
+    """`0135`: the snapshot the loop's `--state` decides on, for a store a proof wrote by hand and
+    reads with `python -m coscc.loop --root <store>`. Imported into a `cos.db` of its own under
     `where`, as the app imports a store on its first read, and written to `where/state.json`
     for `--state`. Made again from nothing on every call, so a unit written since is in it."""
     import json

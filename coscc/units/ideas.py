@@ -1,7 +1,7 @@
 """An idea several units share, each unit in its own repository's workspace.
 
-`.cos/ideas/NNNN_<slug>.md` in the store of the workspace it was started in. `cos.mjs
-new-idea` allocates the number; this module writes the file and appends one line under
+`.cos/ideas/NNNN_<slug>.md` in the store of the workspace it was started in. The loop's
+`new-idea` allocates the number; this module writes the file and appends one line under
 `## Units` per unit opened from it. Nothing above `## Units` is ever rewritten.
 """
 
@@ -25,7 +25,7 @@ IDEA_REF_RE = re.compile(rf"({_WS})/{IDEAS_DIR}/({_ID})\.md")
 UNIT_REF_RE = re.compile(rf"({_WS})/(\d{{4}}_[a-z0-9]+(?:-[a-z0-9]+)*)")
 _OWN_WORDS = "## In their own words"
 _UNITS = "## Units"
-# The line `append_unit` writes, read back by `read_units` and by `cos.mjs` `parseIdea`.
+# The line `append_unit` writes, read back by `read_units` and by the loop's `parseIdea`.
 _UNIT_LINE = re.compile(r"- (\S+?)(?:\. Depends on: (.+?))?\.?")
 
 
@@ -65,7 +65,7 @@ def create_idea(
     brief: str,
     data_dir: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
-    """Allocate the number with `cos.mjs new-idea`, then write the file with an empty `## Units`.
+    """Allocate the number with the loop's `new-idea`, then write the file with an empty `## Units`.
 
     The printed path is checked the way `units.create` checks `new-path`'s: joined to the
     store, it must stay inside `ideas/`, and name a file that does not exist yet.
@@ -74,7 +74,7 @@ def create_idea(
     if not text:
         raise CannotCreate("an idea needs a brief: the originator's own words are the idea")
     if any(line.rstrip() == _UNITS for line in text.splitlines()):
-        # `cos.mjs` and `read_units` take the first such line for the app's own section.
+        # The loop and `read_units` take the first such line for the app's own section.
         raise CannotCreate(
             f"a brief may not hold the line {_UNITS!r}: the idea's units are listed under it"
         )
@@ -83,7 +83,7 @@ def create_idea(
     printed = _cos(store, "new-idea", str(slug or "").strip())
     relative = printed.splitlines()[-1].strip() if printed else ""
     if not relative:
-        raise CannotCreate("cos.mjs new-idea printed nothing")
+        raise CannotCreate("coscc.loop new-idea printed nothing")
     path = (store / relative).resolve()
     ideas = (store / COS_DIR / IDEAS_DIR).resolve()
     if (
@@ -91,7 +91,7 @@ def create_idea(
         or not path.name.endswith(".md")
         or not IDEA_ID_RE.fullmatch(path.name[:-3])
     ):
-        raise CannotCreate(f"cos.mjs named something that is not an idea: {relative}")
+        raise CannotCreate(f"coscc.loop named something that is not an idea: {relative}")
     ideas.mkdir(parents=True, exist_ok=True)
     idea_id = path.name[:-3]
     title = idea_id.split("_", 1)[-1].replace("-", " ")
@@ -135,7 +135,7 @@ def read_text(path: str | os.PathLike[str]) -> str:
 def read_units(text: str) -> list[dict[str, Any]]:
     """The units listed under `## Units`, `{ref, depends_on: [...]}`, in the file's order.
 
-    A line it cannot read is left out; `cos.mjs status` reports it.
+    A line it cannot read is left out; the loop's `status` reports it.
     """
     out: list[dict[str, Any]] = []
     inside = False

@@ -342,7 +342,7 @@ def beyond_reading(grant: Grant) -> tuple[str, ...]:
 
 # The stages whose run hands back an object through `submit`: a stage result, or `review`'s
 # round. `coscc/units/submit.py` holds the same stages as `STAGE_RESULT` and `ROUND`;
-# `policy_test` pins the two. A set, not the loop's order: that is `cos.mjs`'s alone.
+# `policy_test` pins the two. A set, not the loop's order: that is the loop's alone.
 SUBMITTING = ("idea", "impl", "intent", "plan", "review", "spec", "spike")
 # The fewest turns such a step gets: a call to `submit` ends a turn, and a refused object is
 # submitted again after one more turn, so four holds a call, a refusal, a second call and the

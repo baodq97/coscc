@@ -1,4 +1,4 @@
-"""`new-path`, `new-idea` and `meta` print what `cos.mjs` prints (, "Ghi đường dẫn")."""
+"""`new-path`, `new-idea` and `meta` print what the goldens hold (, "Ghi đường dẫn")."""
 
 from __future__ import annotations
 

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from coscc.service.attempts import Attempts
 
 
-# The stage names, in stage order, from the state set `cos.mjs` is checked against: a copy
+# The stage names, in stage order, from the state set the loop is checked against: a copy
 # kept here by hand once left `spike` out, and the unit's detail could not open `spike.md`.
 STAGE_FILES = states.default().stage_names
 
@@ -221,7 +221,7 @@ def describe_base(base: dict[str, Any] | None) -> str:
 
 
 # The three results a `### Outcome` block may carry, as a person types them, and the word
-# `cos.mjs` `parseOutcome` reads each one as.
+# the loop's `parseOutcome` reads each one as.
 OUTCOME_RESULTS = {"đạt": "met", "trượt": "missed", "không đo được": "unmeasurable"}
 # A line for the board to show on a missed outcome, no action.
 MISSED_HINT = "cân nhắc bỏ hoặc làm lại"
@@ -232,7 +232,7 @@ def outcome_label(
 ) -> dict[str, Any] | None:
     """What the board shows for one unit's outcome, or None for no label.
 
-    `outcome` is what `board._outcome_of` copied from `cos.mjs`. `today` is a parameter so the
+    `outcome` is what `board._outcome_of` copied from the loop. `today` is a parameter so the
     deadline branch is testable without a clock. `counted` is whether the unit has a result
     (`không đo được` is shown but is not one). `form` is whether the board offers to record one:
     only on a finished unit, the one `record_outcome` accepts.

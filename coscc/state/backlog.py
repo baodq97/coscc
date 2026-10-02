@@ -189,7 +189,7 @@ class BacklogMixin(rx.State, mixin=True):
 
     @rx.event
     async def create_unit(self):
-        """Start a work unit from the page. The slug grammar and number come back from `cos.mjs`."""
+        """Start a work unit from the page. The slug grammar and number come back from the loop."""
         slug = self.new_slug.strip()
         if not slug:
             self.notice = "Give the work a short name, like `board-cannot-say-what-happened`."

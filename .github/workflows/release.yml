@@ -1,13 +1,14 @@
 # A tag push is what makes a release; nothing here decides the version. The tag grammar is
-# not reimplemented in YAML either — `cos.mjs check-tag` prints `prerelease` or `release`,
+# not reimplemented in YAML either — `coscc.loop check-tag` prints `prerelease` or `release`,
 # and this file reads that. Two copies of a grammar drift, and the one in a workflow drifts
 # unobserved because nobody runs it locally.
 #
 # `contents: write` is the narrowest thing that can create a release, and it is the only
 # permission granted. Building the wheel needs `uv` — the one third-party action here,
-# pinned the same way `pr.yml` pins its — but not Node: Reflex downloads its own Node/Bun to
-# export the frontend, so the runner needs no JavaScript toolchain preinstalled. `gh` is
-# preinstalled, so attaching the built assets to the release needs nothing further.
+# pinned the same way `pr.yml` pins its, and the one that runs the loop's two checks — but
+# not Node: Reflex downloads its own Node/Bun to export the frontend, so the runner needs no
+# JavaScript toolchain preinstalled. `gh` is preinstalled, so attaching the built assets to
+# the release needs nothing further.
 #
 # A wheel with no `coscc/_web/` in it still builds, still installs, and just has no
 # frontend: `uv build` does not know that directory is supposed to exist, and
@@ -31,29 +32,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: '3.14'
+
       - name: The tag follows the grammar, and says which kind it is
         id: kind
         run: |
           set -euo pipefail
-          kind=$(node .claude/scripts/cos.mjs check-tag "$GITHUB_REF_NAME")
+          kind=$(uv run python -m coscc.loop check-tag "$GITHUB_REF_NAME")
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
 
       # A release built from a tag that disagrees with pyproject.toml would ship a number
-      # nothing else in the repository carries. This step still only asks `cos.mjs`; it adds
-      # nothing more than reading the version back out of what `cos.mjs` already printed, so
+      # nothing else in the repository carries. This step still only asks `coscc.loop`; it adds
+      # nothing more than reading the version back out of what `coscc.loop` already printed, so
       # later steps that need the plain X.Y.Z (to name the wheel, and to bake into
       # install.sh) do not parse the tag or pyproject.toml a second time.
       - name: The tag agrees with the five declared versions
         id: version
         run: |
           set -euo pipefail
-          out=$(node .claude/scripts/cos.mjs check-version)
+          out=$(uv run python -m coscc.loop check-version)
           echo "$out"
           echo "version=${out%% *}" >> "$GITHUB_OUTPUT"
-
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
-        with:
-          python-version: '3.14'
 
       # The recipe itself lives in `scripts/build_wheel.sh`, with the reasons for each copy
       # step beside it: the board's *Build local* button runs the same file on `origin/main`

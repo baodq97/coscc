@@ -1,0 +1,371 @@
+parseStatus takes the first Status line, whatever prose surrounds it → tests/loop/test_model.py::test_parse_status_takes_the_first_status_line
+a later Status mention in the body cannot shadow the real one → tests/loop/test_model.py::test_a_later_status_mention_cannot_shadow_the_real_one
+parseStatus returns null rather than guessing → tests/loop/test_model.py::test_parse_status_returns_none_rather_than_guessing
+parseSkipReason reads the reason out of the plan header → tests/loop/test_model.py::test_parse_skip_reason_reads_the_plan_header
+spec gate needs an accepted intent → tests/loop/test_model.py::test_spec_gate_needs_an_accepted_intent
+plan gate accepts a skipped spec but not a missing one → tests/loop/test_model.py::test_plan_gate_accepts_a_skipped_spec_but_not_a_missing_one
+implement gate needs the whole chain accepted → tests/loop/test_model.py::test_implement_gate_needs_the_whole_chain_accepted
+a blocked gate says what is missing → tests/loop/test_model.py::test_a_blocked_gate_says_what_is_missing
+an unknown stage is refused, not treated as open → tests/loop/test_model.py::test_an_unknown_stage_is_refused
+nextAction names one action per state → tests/loop/test_model.py::test_next_action_names_one_action_per_state
+a rejected artifact closes the unit instead of blocking it → tests/loop/test_model.py::test_a_rejected_artifact_closes_the_unit
+a done plan is finished, not awaiting anything → tests/loop/test_model.py::test_a_done_plan_is_finished
+nextNumber counts from the highest, not from the count → tests/loop/test_model.py::test_next_number_counts_from_the_highest
+nextNumber survives a directory that failed to parse → dropped: JavaScript's `{ number: undefined }` of an unparsed directory has no Python form; `next_number` takes the ints `new-path` and `new-idea` parsed, so none is ever missing
+an unreadable artifact is distinguished from a missing one → tests/loop/test_model.py::test_an_unreadable_artifact_is_not_a_missing_one
+every stage name opens a gate, and a tenth does not → tests/loop/test_model.py::test_every_stage_name_opens_a_gate_and_a_tenth_does_not
+implement still names the impl stage, because a skill still says it → tests/loop/test_model.py::test_implement_still_names_the_impl_stage
+idea gates nothing — every unit on disk was opened without one → tests/loop/test_model.py::test_idea_gates_nothing
+a later stage needs the earlier ones behind it → tests/loop/test_model.py::test_a_later_stage_needs_the_earlier_ones_behind_it
+a done artifact is behind us, not in the way → tests/loop/test_model.py::test_a_done_artifact_is_not_in_the_way
+nextAction walks past an accepted plan into the new stages → tests/loop/test_model.py::test_next_action_walks_past_an_accepted_plan
+a rejection in a late stage closes the unit, same as an early one → tests/loop/test_model.py::test_a_late_rejection_closes_the_unit
+the six new artifacts are read, not reported as unexpected files → tests/loop/test_model.py::test_the_nine_artifacts_are_read_not_reported_as_unexpected
+a unit whose intent declares no Type is a problem, and the message says which → tests/loop/test_model.py::test_an_intent_with_no_type_is_a_problem
+a Type outside the ten is a different problem from a missing one → tests/loop/test_model.py::test_a_type_outside_the_ten_is_another_problem
+a Type inside the ten is recorded on the unit and reports nothing → tests/loop/test_model.py::test_a_type_inside_the_ten_is_recorded
+a missing intent.md reports that, and not a missing Type on top of it → tests/loop/test_model.py::test_a_missing_intent_is_not_also_a_missing_type
+a unit holding only a valid idea is pre-intent and reports nothing → tests/loop/test_model.py::test_a_unit_holding_only_a_valid_idea_is_pre_intent
+an idea with a later artifact and no intent is still a problem → tests/loop/test_model.py::test_an_idea_with_a_later_artifact_and_no_intent_is_a_problem
+an idea with no Status line is not pre-intent → tests/loop/test_model.py::test_an_idea_with_no_status_line_is_not_pre_intent
+a unit with an intent is started → tests/loop/test_model.py::test_a_unit_with_an_intent_is_started
+reporting a Type problem does not close any gate → tests/loop/test_model.py::test_a_type_problem_closes_no_gate
+branchProblem: ${name || '(empty)'} → tests/loop/test_model.py::test_branch_problem
+the type set is the ten of Conventional Commits, and it is closed → tests/loop/test_model.py::test_the_type_set_is_the_ten_of_conventional_commits
+a slug over sixty characters is refused, and the message says how long it was → tests/loop/test_model.py::test_a_slug_over_sixty_characters_is_refused
+a name with no slash is told what shape to take → tests/loop/test_model.py::test_a_name_with_no_slash_is_told_its_shape
+tagProblem: ${name} → tests/loop/test_model.py::test_tag_problem
+a leading zero is refused so one release has one spelling → tests/loop/test_model.py::test_a_leading_zero_is_refused
+prerelease is decided by the same grammar that validates the tag → tests/loop/test_model.py::test_prerelease_is_decided_by_the_tag_grammar
+tagVersion strips the v and the candidate suffix, or refuses → tests/loop/test_model.py::test_tag_version_strips_the_v_and_the_candidate
+pyproject.toml is the source, and the message says which one is right → tests/loop/test_model.py::test_pyproject_is_the_version_source
+a place that could not be read is named, not skipped → tests/loop/test_model.py::test_a_version_place_that_could_not_be_read_is_named
+parseType reads the header field beside Author and Status → tests/loop/test_model.py::test_parse_type_reads_the_header_field
+the branch name is derived from the unit and its type → tests/loop/test_model.py::test_the_branch_name_is_derived_from_the_unit_and_its_type
+a derived name that no grammar would accept cannot be produced → tests/loop/test_model.py::test_a_derived_name_no_grammar_accepts_cannot_be_produced
+every name unit-branch gives passes check-branch, whatever the slug length → tests/loop/test_model.py::test_every_name_unit_branch_gives_passes_check_branch
+a slug over the limit is cut at its last hyphen, and one within it is left alone → tests/loop/test_model.py::test_a_long_slug_is_cut_at_its_last_hyphen
+--root is refused by ${args[0]} → tests/loop/test_model.py::test_root_is_refused_by_the_checkout_commands
+--root still reaches the command that reads a .cos/ → tests/loop/test_model.py::test_root_still_reaches_the_command_that_reads_a_cos
+an unknown command prints both halves of the boundary → tests/loop/test_model.py::test_an_unknown_command_prints_both_halves_of_the_boundary
+new-path counts the numbers taken in a reserved directory → tests/loop/test_model.py::test_new_path_counts_the_numbers_of_a_reserved_directory
+new-path takes the highest of root and reserve, and still writes nothing → tests/loop/test_model.py::test_new_path_takes_the_highest_and_writes_nothing
+a reserved directory with no .cos/ contributes nothing → tests/loop/test_model.py::test_a_reserved_directory_with_no_cos_contributes_nothing
+--reserve-from is repeatable → tests/loop/test_model.py::test_reserve_from_is_repeatable
+--reserve-from is refused by ${args[0]} → tests/loop/test_model.py::test_reserve_from_is_refused_by_the_others
+--reserve-from with no directory is misuse → tests/loop/test_model.py::test_reserve_from_with_no_directory_is_misuse
+new-path refuses a slug longer than a branch allows, and makes nothing → tests/loop/test_model.py::test_new_path_refuses_a_slug_longer_than_a_branch_allows
+status and unit-branch name the same shortened branch → tests/loop/test_model.py::test_status_and_unit_branch_name_the_same_shortened_branch
+questions are the numbered items under Open questions and nowhere else → tests/loop/test_model.py::test_questions_are_the_numbered_items_under_open_questions
+a bullet is never a question, even when nothing is numbered → tests/loop/test_model.py::test_a_bullet_is_never_a_question
+a numbered item is a question only when it asks one → tests/loop/test_model.py::test_a_numbered_item_is_a_question_only_when_it_asks_one
+the ? must be in the first paragraph of the item → tests/loop/test_model.py::test_the_question_mark_must_be_in_the_first_paragraph
+a numbered note still ends the question above it and keeps its number → tests/loop/test_model.py::test_a_numbered_note_ends_the_question_above_it
+a note keeps no answer, a question keeps its own, and a heading with none is counted → tests/loop/test_model.py::test_a_note_keeps_no_answer_and_a_heading_with_none_is_counted
+the notes of 0107 and 0054 are not questions → tests/loop/test_model.py::test_the_notes_of_0107_and_0054_are_not_questions
+no Open questions section is not the same as an empty one → tests/loop/test_model.py::test_no_open_questions_section_is_not_an_empty_one
+three questions and no answers is three open → tests/loop/test_model.py::test_three_questions_and_no_answers_is_three_open
+one answer leaves two open, and carries who gave it → tests/loop/test_model.py::test_one_answer_leaves_two_open_and_says_who_gave_it
+two blocks for one number: the last is the one in force → tests/loop/test_model.py::test_of_two_blocks_for_one_number_the_last_is_in_force
+a block with no header line is not an answer → tests/loop/test_model.py::test_a_block_with_no_header_line_is_not_an_answer
+Answers is never read as questions, and the Status line survives it → tests/loop/test_model.py::test_answers_are_never_read_as_questions
+only the latest artifact with questions is counted, but every question is listed → tests/loop/test_model.py::test_only_the_latest_artifact_with_questions_is_counted
+a unit with no Open questions anywhere has nothing open → tests/loop/test_model.py::test_a_unit_with_no_open_questions_has_nothing_open
+an open question does not close a gate → tests/loop/test_model.py::test_an_open_question_closes_no_gate
+status --json over 64 KiB reaches a pipe whole → tests/loop/test_model.py::test_status_json_over_64_kib_reaches_a_pipe_whole
+status --json carries questions and open for each unit → tests/loop/test_model.py::test_status_json_carries_questions_and_open
+parseStatus reads a hyphenated status whole → tests/loop/test_model.py::test_parse_status_reads_a_hyphenated_status_whole
+parsePr reads the pull request from the header, or returns null → tests/loop/test_model.py::test_parse_pr_reads_the_pull_request_or_none
+parseReview reads rounds, verdicts and labelled findings, and stops at Answers → tests/loop/test_model.py::test_parse_review_reads_rounds_verdicts_and_findings
+parseReview gives each round its text verbatim, bounded by the next ## heading → tests/loop/test_model.py::test_parse_review_gives_each_round_its_text_verbatim
+R1: the review gate is closed while pr.md names no pull request → tests/loop/test_model.py::test_the_review_gate_is_closed_while_pr_md_names_no_pull_request
+R2: changes-requested and rejected lead to different places → tests/loop/test_model.py::test_changes_requested_and_rejected_lead_to_different_places
+changes-requested closes the ship gate but leaves the review gate open → tests/loop/test_model.py::test_changes_requested_closes_ship_but_not_review
+CI decides whether review may begin → tests/loop/test_model.py::test_ci_decides_whether_review_may_begin
+F4: the three closed cases, in the shapes gh pr checks --required --json name,bucket gives them → tests/loop/test_model.py::test_the_three_closed_ci_cases_in_the_shapes_gh_gives_them
+the round limit stops the loop and says it needs a person → tests/loop/test_model.py::test_the_round_limit_stops_the_loop_for_a_person
+reviewRounds reads COS_REVIEW_ROUNDS and refuses what is not a positive integer → tests/loop/test_model.py::test_review_rounds_reads_the_variable_and_refuses_what_is_no_positive_integer
+R3: an accepted review with a finding still open cannot ship, and names it → tests/loop/test_model.py::test_an_accepted_review_with_a_finding_open_cannot_ship
+R4: an earlier round survives, a dropped finding or a renumbered round is caught → tests/loop/test_model.py::test_an_earlier_round_survives_and_a_dropped_or_renumbered_one_is_caught
+R5: code after the reviewed commit closes the ship gate; the unit's own files do not → tests/loop/test_model.py::test_code_after_the_reviewed_commit_closes_ship_and_the_units_files_do_not
+F2: ship reads the pull request head, not only the refs here, and pins the merge to it → tests/loop/test_model.py::test_ship_reads_the_pull_request_head_and_pins_the_merge_to_it
+F3: pass, then rebase, closes ship; another passing round opens it and costs no round → tests/loop/test_model.py::test_a_rebase_after_the_pass_closes_ship_and_another_pass_opens_it
+a review.md with no rounds cannot ship → tests/loop/test_model.py::test_a_review_md_with_no_rounds_cannot_ship
+--repo belongs to gate and nothing else → tests/loop/test_model.py::test_repo_belongs_to_gate_and_nothing_else
+a bad COS_REVIEW_ROUNDS is misuse, and names the variable → tests/loop/test_model.py::test_a_bad_review_round_limit_is_misuse_and_names_the_variable
+with --root and no --repo, review says there is no repository instead of reading this one → tests/loop/test_model.py::test_with_root_and_no_repo_review_says_there_is_no_repository
+nextAction.stage names the missing stage, and nothing where the files do not settle it → tests/loop/test_model.py::test_next_action_stage_names_the_missing_stage_or_nothing
+0024 a: a missing stage that needs no git is offered as it was → tests/loop/test_model.py::test_a_missing_stage_that_needs_no_git_is_offered_as_it_was
+0024 b: changes asked, nothing new on the pull request: impl, though impl.md exists → tests/loop/test_model.py::test_changes_asked_and_nothing_new_on_the_pull_request_is_impl
+0024 c: changes asked, a fix is on the head and CI is green: review, though review.md exists → tests/loop/test_model.py::test_changes_asked_and_a_fix_on_a_green_head_is_review
+0024 d: the fix is on the head but CI runs, or failed → tests/loop/test_model.py::test_a_fix_on_the_head_while_ci_runs_or_failed
+0024 e: pr is open, no review yet: review on green, impl on red, nothing while it runs → tests/loop/test_model.py::test_an_open_pull_request_with_no_review_goes_by_ci
+0024 f: the round limit used up offers nothing and says needs a person → tests/loop/test_model.py::test_the_round_limit_used_up_offers_nothing
+0024 g: the last round passed and the ship gate is open: ship, pinned → tests/loop/test_model.py::test_a_pass_with_the_ship_gate_open_is_ship_pinned
+0024 h: a done plan offers nothing, whatever the later files say → tests/loop/test_model.py::test_a_done_plan_offers_nothing_whatever_the_later_files_say
+0024 i: the branch moved after the pass: review again, not ship → tests/loop/test_model.py::test_a_branch_moved_after_the_pass_is_review_again
+0024: with no repository, the three git cases offer nothing and say --repo → tests/loop/test_model.py::test_with_no_repository_the_git_cases_offer_nothing_and_say_repo
+0024: nextStep never offers a stage whose gate is closed → tests/loop/test_model.py::test_next_step_never_offers_a_stage_whose_gate_is_closed
+coscc.loop next prints one JSON line, and misuse is exit 2 → tests/loop/test_model.py::test_next_prints_one_json_line_and_misuse_is_exit_2
+status --json carries next.stage for each unit → tests/loop/test_model.py::test_status_json_carries_next_stage
+0028 R1: impl.md ## Needs a person reads well-formed lines, skips others, stops at Answers → tests/loop/test_model.py::test_needs_a_person_reads_well_formed_lines_and_stops_at_answers
+0028 R7: parseAnswers reads Câu N and F<n> blocks side by side, the last per id in force → tests/loop/test_model.py::test_parse_answers_reads_numbered_and_finding_blocks_side_by_side
+0028 R3/R4: the three new labels and the needs-person verdict are read; others stay unreadable → tests/loop/test_model.py::test_the_person_labels_and_the_needs_person_verdict_are_read
+0028 R5: a needs-person round is not counted toward the limit → tests/loop/test_model.py::test_a_needs_person_round_is_not_counted_toward_the_limit
+0028 R10 S0: every open finding claimed, no review has confirmed it: review, not impl → tests/loop/test_model.py::test_every_open_finding_claimed_and_unconfirmed_is_review
+0028 R10 S1: the review confirmed both claims: nothing to run, a person is named → tests/loop/test_model.py::test_both_claims_confirmed_names_a_person
+0028 R10 S2: one answered, one not: still waiting, for the other → tests/loop/test_model.py::test_one_answered_one_not_still_waits_for_the_other
+0028 R10 S3: both answered: review reads the answers → tests/loop/test_model.py::test_both_answered_review_reads_the_answers
+0028 R10 escape F4: one open finding impl did not claim sends the unit to impl → tests/loop/test_model.py::test_an_open_finding_impl_did_not_claim_is_impl
+0028 R10 escape claim-rejected: a rejected claim sends the unit to impl → tests/loop/test_model.py::test_a_rejected_claim_is_impl
+0028 answered but not settled: a finding a round kept [open] after its answer goes to impl, not review again → tests/loop/test_model.py::test_answered_but_kept_open_is_impl_not_review_again
+0028: a needs-person verdict written wrong falls back to the old path → tests/loop/test_model.py::test_a_needs_person_verdict_written_wrong_falls_back
+0028: an impl.md with no Needs a person section changes nothing → tests/loop/test_model.py::test_an_impl_with_no_needs_a_person_section_changes_nothing
+0028 R8: ship closes a finding marked answered only when review.md holds its answer → tests/loop/test_model.py::test_ship_closes_an_answered_finding_only_with_its_answer
+0028: coscc.loop next prints waiting only when a person is awaited → tests/loop/test_model.py::test_next_prints_waiting_only_when_a_person_is_awaited
+0028: nextStep never offers a stage whose gate is closed, in any of the new states → tests/loop/test_model.py::test_next_step_never_offers_a_closed_gate_in_the_person_states
+0035: betweenPrAndShip is true only on an accepted pr.md naming a pull request, unfinished → tests/loop/test_model.py::test_between_pr_and_ship_only_on_an_accepted_pr_naming_a_pull_request
+0035: status --json carries betweenPrAndShip for every unit; gate and next do not change → tests/loop/test_model.py::test_status_json_carries_between_pr_and_ship_and_gate_and_next_do_not_change
+0033 R11: the plan's Impl: label opens and closes no gate, and moves no next → tests/loop/test_model.py::test_the_plans_impl_label_opens_and_closes_no_gate_and_moves_no_next
+0047: the deadline is the first real date under Proposed outcome, or null → tests/loop/test_model.py::test_the_deadline_is_the_first_real_date_under_proposed_outcome
+0047: a valid block needs a known result, Measured by, and Source or Reason by result → tests/loop/test_model.py::test_a_valid_outcome_block_needs_a_result_measured_by_and_source_or_reason
+0047: with no block, every field but deadline and invalid is null → tests/loop/test_model.py::test_with_no_outcome_block_every_field_but_deadline_and_invalid_is_none
+0047 R6: an Outcome block ends the answer above it and is not an answer itself → tests/loop/test_model.py::test_an_outcome_block_ends_the_answer_above_it_and_is_no_answer
+0047 R5: an outcome block changes nothing but outcome, for next and every gate → tests/loop/test_model.py::test_an_outcome_block_changes_nothing_but_outcome
+parseUnmeasured reads [unmeasured] U<n> items under ## Concerns only (R1) → tests/loop/test_model.py::test_parse_unmeasured_reads_items_under_concerns_only
+an [unmeasured] item with no id, or an id twice, is a problem that closes plan (R2) → tests/loop/test_model.py::test_an_unmeasured_item_with_no_id_or_twice_is_a_problem_that_closes_plan
+parseSpike reads verdicts and blocks per U<n>, and stops at ## Answers (R6) → tests/loop/test_model.py::test_parse_spike_reads_verdicts_and_blocks_and_stops_at_answers
+0136 R4: a stage result decides the spec's U<n> and the spike's verdicts, not the files → tests/loop/test_model.py::test_a_stage_result_decides_the_specs_ids_and_the_spikes_verdicts
+0136 R5, R6: a round and the claims the app holds decide, not review.md and impl.md → tests/loop/test_model.py::test_a_round_and_the_claims_the_app_holds_decide
+parseSpike reads Round: from the header line only, never from a fenced block → tests/loop/test_model.py::test_parse_spike_reads_round_from_the_header_line_only
+a unit with no [unmeasured] item walks the loop as if spike did not exist (R4) → tests/loop/test_model.py::test_a_unit_with_nothing_unmeasured_walks_as_if_spike_did_not_exist
+a skipped spec never needs a spike, even beside a stray spike.md (R5) → tests/loop/test_model.py::test_a_skipped_spec_never_needs_a_spike
+an unmeasured spec sends the unit to spike, and closes plan until every U<n> holds (R7) → tests/loop/test_model.py::test_an_unmeasured_spec_sends_the_unit_to_spike_and_closes_plan
+spec → spike (U2 fails) → spec again → spike → plan (R8, the Design flow) → tests/loop/test_model.py::test_spec_spike_spec_again_spike_plan
+fails ahead of missing: spec is rewritten before the spike is redone (R8) → tests/loop/test_model.py::test_fails_ahead_of_missing
+a question still failing at round 2 needs a person → tests/loop/test_model.py::test_a_question_still_failing_at_the_last_spike_round_needs_a_person
+a spec rewritten without its questions no longer needs the spike beside it (0136 R14) → tests/loop/test_model.py::test_a_spec_rewritten_without_its_questions_needs_no_spike
+0136 R14: a skip an agent wrote, or one whose author the app does not know, stops the unit for a person → tests/loop/test_model.py::test_a_skip_no_person_decided_stops_the_unit_for_a_person
+0136 R14: a skip a person or their delegate decided opens plan, with or without a spec.md → tests/loop/test_model.py::test_a_skip_a_person_decided_opens_plan_with_or_without_a_file
+with a spike required, impl opens only on a plan that cites spike.md (R9) → tests/loop/test_model.py::test_with_a_spike_required_impl_opens_only_on_a_plan_citing_it
+0045 R9: a hold block ends the answer before it, and is never an answer → tests/loop/test_model.py::test_a_hold_block_ends_the_answer_before_it
+0045 R1: no hold block is hold null and the active moves → tests/loop/test_model.py::test_no_hold_block_is_no_hold_and_the_active_moves
+0045 R9: blocks are read in order and the last valid one decides → tests/loop/test_model.py::test_hold_blocks_are_read_in_order_and_the_last_valid_one_decides
+0045 R9: an invalid move is ignored and reported → tests/loop/test_model.py::test_an_invalid_hold_move_is_ignored_and_reported
+0045 R9: a block without a well-formed Decided by line is not counted → tests/loop/test_model.py::test_a_hold_block_without_a_decided_by_line_is_not_counted
+0045 R3: next offers no stage and asks no probe, for paused and dropped → tests/loop/test_model.py::test_next_offers_no_stage_and_asks_no_probe_when_held
+0045 R4: every gate is closed on a held unit, and says why → tests/loop/test_model.py::test_every_gate_is_closed_on_a_held_unit_and_says_why
+0045 R2: status --json carries hold and holdMoves, and the table says paused — → tests/loop/test_model.py::test_status_json_carries_hold_and_hold_moves_and_the_table_says_paused
+0045 R5: a done plan or a rejection wins over a hold, and the block is reported → tests/loop/test_model.py::test_a_done_plan_or_a_rejection_wins_over_a_hold
+0045: a unit with no intent has nowhere to hold → tests/loop/test_model.py::test_a_unit_with_no_intent_has_nowhere_to_hold
+0045 R1: next on an unheld unit carries no hold field → tests/loop/test_model.py::test_next_on_an_unheld_unit_carries_no_hold_field
+0045 R1: every unit in this repository reads unheld and answers as it did → tests/loop/test_model.py::test_every_unit_of_this_repository_reads_unheld
+0061 R2: severity is read only between two em dashes right after the location → tests/loop/test_model.py::test_severity_is_read_only_between_two_em_dashes_after_the_location
+0061 R3: an open low does not block, unless an earlier round rated the id higher → tests/loop/test_model.py::test_an_open_low_does_not_block_unless_rated_higher_before
+0061 R10: status --json carries nonBlocking for each unit and severity for each finding → tests/loop/test_model.py::test_status_json_carries_non_blocking_and_each_findings_severity
+0061 R4: ship lets an open low through, and nothing else → tests/loop/test_model.py::test_ship_lets_an_open_low_through_and_nothing_else
+0061 R5: a severity lowered between rounds closes ship and says so → tests/loop/test_model.py::test_a_severity_lowered_between_rounds_closes_ship
+0078 R1: the pass round of 0050, with F4 its only open finding, opens ship → pending: line 2010 of the old suite, not ported yet
+0078 R2: a lowered finding is named once, on its own line, not among the findings not fixed → pending: line 2025 of the old suite, not ported yet
+0061 R12: three counted rounds of prose severities, then a pass of lows: ship opens at the default limit → pending: line 2038 of the old suite, not ported yet
+0061 R8: a needs-person round beside an open low is still a wait for a person → pending: line 2045 of the old suite, not ported yet
+0061 R8: every blocking finding claimed, one low unclaimed: review, not impl → pending: line 2054 of the old suite, not ported yet
+0061 R7: a pass that leaves lows open costs no round → pending: line 2063 of the old suite, not ported yet
+0055 R1 (a): the template gives a body without the header or the title line → pending: line 2087 of the old suite, not ported yet
+0055 R1 (b): a later Status: in the body stays in the body → pending: line 2098 of the old suite, not ported yet
+0055 R1 (c): no # PR: line, or an empty one, is a null title → pending: line 2103 of the old suite, not ported yet
+0055 R1 (d): the same input gives the same output → pending: line 2112 of the old suite, not ported yet
+0055 R1 (e): a file with \r\n keeps \r\n on the lines it keeps → pending: line 2116 of the old suite, not ported yet
+0055: a header on the title line itself drops only that one line → pending: line 2123 of the old suite, not ported yet
+0055 R2: pr-text prints what prText reads, with the unit and its status → pending: line 2137 of the old suite, not ported yet
+0055 R2: no unit or no pr.md is 1; a missing or malformed name is 2 → pending: line 2147 of the old suite, not ported yet
+0055 R2: --repo and --reserve-from are refused by pr-text → pending: line 2159 of the old suite, not ported yet
+0055 R2: pr-text writes nothing and leaves status as it was → pending: line 2167 of the old suite, not ported yet
+0122 R3: a scope written to its grammar is read as counts and paths → pending: line 2185 of the old suite, not ported yet
+0122 R3: no Scope of the diff heading is a null scope → pending: line 2192 of the old suite, not ported yet
+0122 R3: the old git diff --stat line is a null scope → pending: line 2200 of the old suite, not ported yet
+0122 R3: a path listed twice is a null scope → pending: line 2209 of the old suite, not ported yet
+0122 R3: prose after the list is not a path, and the body is kept byte for byte → pending: line 2213 of the old suite, not ported yet
+0122 R3: a file with \r\n reads the same scope → pending: line 2220 of the old suite, not ported yet
+0122 R3: pr-text prints scope beside title, body, url and status → pending: line 2226 of the old suite, not ported yet
+0083 R2: parseStandard reads the globs under paths: in the front-matter, and nothing else → pending: line 2240 of the old suite, not ported yet
+0083 R3: globMatch — ** crosses directories, * and ? stay inside one → pending: line 2248 of the old suite, not ported yet
+0083 R2: every glob of this checkout's standard names a file git tracks → pending: line 2264 of the old suite, not ported yet
+0083 R2: no other tracked file holds a copy of the list → pending: line 2273 of the old suite, not ported yet
+0083 R9: parseReview reads ### Screens, and a round without one reads null → pending: line 2292 of the old suite, not ported yet
+0083 R10: screensProblems names each thing wrong with the words → pending: line 2313 of the old suite, not ported yet
+0083 R11: an open low against the standard blocks; one that is not still does not → pending: line 2323 of the old suite, not ported yet
+0083 R12: a unit that changes no screen reads exactly as with no standard → pending: line 2340 of the old suite, not ported yet
+0083 R10: a UI unit whose pass has no ### Screens cannot ship, and next offers review → pending: line 2353 of the old suite, not ported yet
+0083 R10: each condition, broken once, closes ship and says which → pending: line 2364 of the old suite, not ported yet
+0083 R10: valid ### Screens on a UI unit opens ship, pinned to the head → pending: line 2382 of the old suite, not ported yet
+0083 C7: neither origin/main nor main readable closes ship, and no round is offered → pending: line 2388 of the old suite, not ported yet
+0083 R12: no standard asks git nothing more; a standard and no screen, one diff more → pending: line 2400 of the old suite, not ported yet
+0085 R8 a: an incomplete round is read as one, with its verdict → pending: line 2428 of the old suite, not ported yet
+0085 R8 b: draft over an incomplete round offers review on green, impl on red → pending: line 2434 of the old suite, not ported yet
+0085 R9 c: an incomplete round never changes how many rounds are used → pending: line 2456 of the old suite, not ported yet
+0085 R8 d: a draft whose last round is not incomplete is still finished by hand → pending: line 2475 of the old suite, not ported yet
+0027 R1: a round that omits an earlier id is unfinished only under changes-requested → pending: line 2495 of the old suite, not ported yet
+0027 R2 b: a changes-requested round that carries every earlier id counts exactly one more → pending: line 2524 of the old suite, not ported yet
+0027 R3: an unfinished last round sends next to review with its ids, CI permitting, and leaves the review gate open → pending: line 2534 of the old suite, not ported yet
+0027 R3: an unfinished round at the limit still stops at needs a person → pending: line 2558 of the old suite, not ported yet
+0027 R2: an incomplete round 1 then an unfinished round 2 uses no round → pending: line 2568 of the old suite, not ported yet
+0027 R2 a: 0017's round 2 adds no round to the count → pending: line 2599 of the old suite, not ported yet
+0027 R4: reading 0017's rounds leaves review.md byte for byte → pending: line 2621 of the old suite, not ported yet
+0027 R5: the ship gate names the same dropped ids, in the same words → pending: line 2633 of the old suite, not ported yet
+0100: stageAt is the stage next names, else the last artifact on disk, else the first stage → pending: line 2643 of the old suite, not ported yet
+0100: status --json carries at and next.why for every unit → pending: line 2654 of the old suite, not ported yet
+0100: the line coscc.loop next prints carries no why → pending: line 2673 of the old suite, not ported yet
+0054 R4: the hash above ## Answers does not move when an answer is appended → pending: line 2720 of the old suite, not ported yet
+0054: a ### Rerun block ends the answer before it and is never an answer → pending: line 2730 of the old suite, not ported yet
+0054: a malformed ### Rerun block is ignored and reported → pending: line 2740 of the old suite, not ported yet
+0054 R1, R2: a unit up to a passed review is offered intent, spec, plan and pr → pending: line 2748 of the old suite, not ported yet
+0054 R3: the block names the stage, owner and a hash per artifact, and no approval → pending: line 2762 of the old suite, not ported yet
+0054 R5, R10: rerunning pr closes ship until pr and then review are written again → pending: line 2781 of the old suite, not ported yet
+0054 R5: a stale artifact before the target closes its gate, and names the stage run again → pending: line 2814 of the old suite, not ported yet
+0054 R4: a changes-requested review and a spike the spec no longer needs are never stale → pending: line 2831 of the old suite, not ported yet
+0054 R1: nothing is offered on a finished, held or closed unit → pending: line 2844 of the old suite, not ported yet
+0054 R1: only an accepted artifact is offered, spike only when the spec needs one → pending: line 2861 of the old suite, not ported yet
+0054: rerun refuses a stage it does not offer, an unknown one, and --repo → pending: line 2882 of the old suite, not ported yet
+0106 R1: a draft intent with every question answered is rerun: intent, and nothing else changes → pending: line 2907 of the old suite, not ported yet
+0106 R1: one question left unanswered is no rerun → pending: line 2912 of the old suite, not ported yet
+0106 R1: a held unit is no rerun, even with every question answered → pending: line 2918 of the old suite, not ported yet
+0106 R1: a draft with no questions is no rerun → pending: line 2925 of the old suite, not ported yet
+0106 R1: a spec draft answered in full is rerun: spec → pending: line 2929 of the old suite, not ported yet
+0106 R1: status --json and nextAction never carry rerun → pending: line 2937 of the old suite, not ported yet
+0115 R1: a draft impl with an open question is listed and counted → pending: line 2954 of the old suite, not ported yet
+0115 R3: a draft impl answered in full is rerun: impl → pending: line 2966 of the old suite, not ported yet
+0115 R3: a draft impl with one question unanswered is no rerun → pending: line 2971 of the old suite, not ported yet
+0115 R3: a draft impl with no questions is no rerun → pending: line 2978 of the old suite, not ported yet
+0115 R3: a paused or dropped unit with an answered draft impl is no rerun → pending: line 2982 of the old suite, not ported yet
+0115 R3: plan.md draft keeps the impl gate closed → pending: line 2992 of the old suite, not ported yet
+0115 R4: status --json names the stages an answered draft runs again → pending: line 2999 of the old suite, not ported yet
+0111 R1, R2: a UI unit whose clean manifest names a rewritten head is taken again → pending: line 3028 of the old suite, not ported yet
+0111 R2: each condition, broken once, is no retake and says which → pending: line 3038 of the old suite, not ported yet
+0111 R1: no standard, or one with no globs, is ui [] and asks git no diff → pending: line 3063 of the old suite, not ported yet
+0111 R1: git that cannot diff is no retake, and why is its error; main alone is enough → pending: line 3072 of the old suite, not ported yet
+0111 R9: screensAnswer and the ship gate leave out the same files → pending: line 3081 of the old suite, not ported yet
+0111 R1: coscc.loop screens, on a real repository → pending: line 3090 of the old suite, not ported yet
+0112 R5: parseShip reads Round from the header and the first Refused line of What went out → pending: line 3153 of the old suite, not ported yet
+0112 R5: readUnit attaches ship only to a ship.md that says something → pending: line 3161 of the old suite, not ported yet
+0112 R3: a pull request behind origin/main closes ship, says by how much, and names no full sha → pending: line 3171 of the old suite, not ported yet
+0112 R3: no origin/main here, or origin/main an ancestor of the head: ship opens as before → pending: line 3182 of the old suite, not ported yet
+0112 R3: a head already rebased goes to review, not to the behind reason → pending: line 3189 of the old suite, not ported yet
+0112 R6 a: a draft ship.md from an older round is a missing one: ship, review, or the gate's reason → pending: line 3198 of the old suite, not ported yet
+0112 R6 b: a draft ship.md from the last round asks the gate, and an open one stops on the Refused line → pending: line 3214 of the old suite, not ported yet
+0112 R6 c: a draft ship.md with no Round stops as it always did → pending: line 3229 of the old suite, not ported yet
+0112 R2: a pass, then a rebase, with no ship.md, is review — not a draft stop → pending: line 3235 of the old suite, not ported yet
+0112 review F1: status offers no acceptance of a ship.md naming its Round, and still does of one naming none → pending: line 3249 of the old suite, not ported yet
+0067 R1: normalizePatch drops index lines and hunk numbers, and keeps every other byte → pending: line 3299 of the old suite, not ported yet
+0067 R1: a merge-base that names no commit is an error, never a clean rebase → pending: line 3317 of the old suite, not ported yet
+0067 R2: a rewritten ref whose patch is unchanged opens ship once CI is green, and the gate names both commits → pending: line 3337 of the old suite, not ported yet
+0067 review F1: a branch ref rewritten clean while the pull request head is still the reviewed commit names no rebase → pending: line 3350 of the old suite, not ported yet
+0067 R3: red, pending, none or unreadable CI on a clean rebase closes ship with said.ci and never said.moved → pending: line 3364 of the old suite, not ported yet
+0067 R4: a patch that differs names its files, one that cannot be compared quotes git, and both still ask for a round → pending: line 3387 of the old suite, not ported yet
+0067 R7: a unit not rebased asks git no merge-base to trunk, no patch diff and gh no checks → pending: line 3408 of the old suite, not ported yet
+0067 R5: next offers ship on a green clean rebase, impl on red, nothing while CI runs or reports none — never review → pending: line 3421 of the old suite, not ported yet
+0067 R5: a ship refused as not up to date and then rebased clean is offered ship again; another refusal still stops → pending: line 3432 of the old suite, not ported yet
+0067 R6: gate prints a second line naming the reviewed commit and the new head, with no full sha → pending: line 3445 of the old suite, not ported yet
+0067 R9: main inserts a line far from the hunk — a clean rebase, ship opens on green, next offers ship → pending: line 3508 of the old suite, not ported yet
+0067 R9: main changes a line of the 3-line context — not clean, next offers review → pending: line 3521 of the old suite, not ported yet
+0067 R9: a conflict resolved on the adjacent line — not clean → pending: line 3533 of the old suite, not ported yet
+0067 R9: a binary file the unit changes comes out different while the text is identical — not clean, and the file is named → pending: line 3545 of the old suite, not ported yet
+0067 R9: red, pending or none on a clean rebase closes ship, and next never offers review → pending: line 3558 of the old suite, not ported yet
+0067 R9: a head that differs only under .cos/<unit>/ is clean → pending: line 3570 of the old suite, not ported yet
+0121 R1: changes asked, then only a clean rebase — next offers impl and asks gh no checks → pending: line 3590 of the old suite, not ported yet
+0121 R1: the 0115 case on a real repository — round 2 asked for changes, main moved, the branch was rebased, CI is green: impl → pending: line 3603 of the old suite, not ported yet
+0121 R2: a rebase with a fix commit on top goes to review on green, impl on red, nothing while CI runs → pending: line 3615 of the old suite, not ported yet
+0121 R2: a rebase whose patch differs in one file names it and goes to review → pending: line 3630 of the old suite, not ported yet
+0121 R3: a rewrite that cannot be compared goes to review on green and says why → pending: line 3637 of the old suite, not ported yet
+0121 R4: a head that was not rewritten asks git for no patch and no merge-base to trunk → pending: line 3646 of the old suite, not ported yet
+0125 R1: a screenshot line may carry a parenthesised note after its size, and size drops it → pending: line 3680 of the old suite, not ported yet
+0125 R2: 0120's five passing rounds with "1440×900 (full page)" open ship → pending: line 3686 of the old suite, not ported yet
+0125 R3: one pass the ship gate stays closed on sends next to review, and the review gate names why → pending: line 3698 of the old suite, not ported yet
+0125 R3: the review gate adds nothing when the stop has come, when ship would open, or when the last round did not pass → pending: line 3709 of the old suite, not ported yet
+0125 R4: a second pass on the same head that leaves ship closed stops, with the gate's reasons → pending: line 3721 of the old suite, not ported yet
+0125 R4: the same stop in the ship-refused branch → pending: line 3729 of the old suite, not ported yet
+0125 R4: two passes on different heads do not stop → pending: line 3736 of the old suite, not ported yet
+0125 R4: a round whose reviewed commit is not here stops and says so → pending: line 3748 of the old suite, not ported yet
+0125 review F2: where git cannot compare the two rounds, the stop does not say they share a head → pending: line 3758 of the old suite, not ported yet
+0125 review F1: a pull request behind the reviewed commit gets one retry, then stops → pending: line 3768 of the old suite, not ported yet
+0125 R6: a commit outside .cos/ on the pull request head, or a rejected review, is the way out → pending: line 3789 of the old suite, not ported yet
+0125 R7: the one retry does not read COS_REVIEW_ROUNDS → pending: line 3799 of the old suite, not ported yet
+0116 R1: a merged pull request opens ship to record it when its branch is gone, local and origin → pending: line 3826 of the old suite, not ported yet
+0116 R1: a merged pull request opens ship to record it while its branch is still here → pending: line 3838 of the old suite, not ported yet
+0116 R1: the open line names the pull request, the merge commit and when it merged, and no --match-head-commit → pending: line 3861 of the old suite, not ported yet
+0116 R2: a merge commit that cannot be read, is not here, or is not on origin/main closes ship: fetch, then ask again → pending: line 3868 of the old suite, not ported yet
+0116 R3: a pull request closed without merging still closes ship with the old sentence, and the unit is not finished → pending: line 3887 of the old suite, not ported yet
+0116 R4: next offers ship for a merged pull request when ship.md is missing, stale or a refused draft, and never says MERGED, not open → pending: line 3896 of the old suite, not ported yet
+0116 R5: an accepted ship.md is finished for a merged pull request without asking gh, with or without a repository → pending: line 3910 of the old suite, not ported yet
+0081 R3: a more rounds block lifts the review limit of its unit alone → pending: line 3936 of the old suite, not ported yet
+0081 R7: a unit that used its granted round needs a person again at the new limit → pending: line 3949 of the old suite, not ported yet
+0081 R2: a more rounds block with no Decided by or no Rounds line is not counted and is reported → pending: line 3958 of the old suite, not ported yet
+0081 R2: a more rounds block is never an answer and never the tail of an F answer → pending: line 3975 of the old suite, not ported yet
+0081 R4: moreRounds is attached only to a unit out of rounds and neither field to any other unit → pending: line 3985 of the old suite, not ported yet
+0081 R9: a more rounds block changes no answer of the ship gate → pending: line 4011 of the old suite, not ported yet
+0103 R8: #97 — branch-name red while tests pend: next stops, needs a person, with the check and check-branch's line → pending: line 4065 of the old suite, not ported yet
+0103 R8: a code failure goes back to impl with the red line byte for byte → pending: line 4078 of the old suite, not ported yet
+0103 R4 a: a red branch-name check on a valid head goes to impl, saying why cannot be told from here → pending: line 4084 of the old suite, not ported yet
+0103 R4 b, c: a bad head no red check runs check-branch for, or a head gh cannot read, goes to impl with the line kept and a clause after it → pending: line 4093 of the old suite, not ported yet
+0103 R3: every branch of next that reads CI stops on the same line, and the review and ship gates close on it → pending: line 4115 of the old suite, not ported yet
+0136 R11: next and gate name CI, a person, a merge made and a closed unit by code → pending: line 4138 of the old suite, not ported yet
+0136 R11: every closed gate names at least one code → pending: line 4160 of the old suite, not ported yet
+0136 R11: gate --json prints the lines it prints without it, its codes, and the same exit → pending: line 4171 of the old suite, not ported yet
+0103 R7: a red read asks gh once more for the head, a green read never does → pending: line 4184 of the old suite, not ported yet
+0103 R2 a: branchChecks finds the job whose run step calls coscc.loop check-branch, by its name or its key, and nothing else → pending: line 4199 of the old suite, not ported yet
+0103: makeProbe reads the workflows of the repository it is given, and none when it has none → pending: line 4226 of the old suite, not ported yet
+0103: check-branch prints notAWorkBranch's line unchanged → pending: line 4238 of the old suite, not ported yet
+0040 R1: new-idea gives 0001 then 0002 and leaves new-path numbering alone → pending: line 4273 of the old suite, not ported yet
+0040 R1: new-idea refuses a bad slug with exit 2 → pending: line 4285 of the old suite, not ported yet
+0040 R2, R3: a store with ideas/ reports no problem about it → pending: line 4294 of the old suite, not ported yet
+0040 R2: status --json without ideas/ is byte-identical → pending: line 4309 of the old suite, not ported yet
+0040 R4: a child unit carries idea, repo and dependsOn in status --json → pending: line 4328 of the old suite, not ported yet
+0040 R4: a unit without those headers has none of the keys → pending: line 4337 of the old suite, not ported yet
+0040 R4: the header fields read to whitespace, less the closing dot, and a list splits on commas → pending: line 4343 of the old suite, not ported yet
+0040 R3: a line under ## Units that is not the grammar is a problem of that idea → pending: line 4355 of the old suite, not ported yet
+0040 R6: a missing peer, a missing idea file and an unlisted unit each land in problems → pending: line 4362 of the old suite, not ported yet
+0040 R5, since 0135: --peer exits 2 wherever it is given → pending: line 4379 of the old suite, not ported yet
+0040 R7: impl gate stays shut while the dependency's ship.md is not accepted → pending: line 4389 of the old suite, not ported yet
+0139 R5: a dependency opens on the merged row, not on ship.md → pending: line 4402 of the old suite, not ported yet
+0040 R7: next says why dependency and names the ref → pending: line 4421 of the old suite, not ported yet
+0040 R8: impl gate opens once the dependency's ship.md is accepted → pending: line 4430 of the old suite, not ported yet
+0040 R7: a workspace the snapshot does not name shuts impl and says so → pending: line 4439 of the old suite, not ported yet
+0040 R9: a Depends on that differs from the idea's line shuts impl → pending: line 4446 of the old suite, not ported yet
+0040 R7: a dropped dependency shuts impl and says dropped → pending: line 4467 of the old suite, not ported yet
+0144 R9: a backlog relation to a unit not shipped shuts impl, and merged opens it → pending: line 4487 of the old suite, not ported yet
+0144 R10: a backlog relation to a rejected or dropped unit holds nothing → pending: line 4497 of the old suite, not ported yet
+0144: status carries the source of a backlog dependency, and a unit with none carries no source → pending: line 4506 of the old suite, not ported yet
+0040 R9: an unreadable Idea: shuts impl but no other gate → pending: line 4518 of the old suite, not ported yet
+0040 R7: a red check that sends the work back to impl waits on the dependency too → pending: line 4530 of the old suite, not ported yet
+0049 R3: titleProblem refuses the titles the spec names and passes the one it names → pending: line 4544 of the old suite, not ported yet
+0049 R3: an em dash passes and a decomposed Vietnamese letter does not → pending: line 4564 of the old suite, not ported yet
+0049 R3: a unit with no type is named as the reason → pending: line 4571 of the old suite, not ported yet
+0049 R4: pr-text prints titleProblem beside the fields it printed before, and its exit code is unchanged → pending: line 4577 of the old suite, not ported yet
+0049 R5: the review gate is closed on a title outside the grammar, before gh is asked → pending: line 4599 of the old suite, not ported yet
+0049 R5: next names no stage for a unit whose pr.md title is outside the grammar → pending: line 4618 of the old suite, not ported yet
+0049 R6: the ship gate is closed on a title outside the grammar, before gh is asked → pending: line 4629 of the old suite, not ported yet
+0049 R6: the ship gate is closed when the open pull request's title differs from pr.md, and names both → pending: line 4637 of the old suite, not ported yet
+0049 R6: titles that differ only in surrounding whitespace pass → pending: line 4652 of the old suite, not ported yet
+0049 R6: a merged pull request's title is not compared → pending: line 4658 of the old suite, not ported yet
+0049 R6: the title is read from the one gh pr view the ship gate already asks → pending: line 4663 of the old suite, not ported yet
+0049: next offers ship when a differing title is the only thing closing its gate → pending: line 4672 of the old suite, not ported yet
+0049 R1: no skill opens a pull request with --fill → pending: line 4696 of the old suite, not ported yet
+0139 R12: next never names write-pr or write-ship → pending: line 4704 of the old suite, not ported yet
+meta prints every field status reads, from the same parsers → pending: line 4725 of the old suite, not ported yet
+meta of one unit reads only the artifacts named, and intent.md brings its header → pending: line 4748 of the old suite, not ported yet
+0135 R6: stripping Status, Type, Idea, Depends on, Open questions and Answers lines leaves status, next and gate unchanged → pending: line 4781 of the old suite, not ported yet
+0135 R6: a deciding command without --state exits 2 and says it needs the app → pending: line 4810 of the old suite, not ported yet
+0135 R6: changing a status in the snapshot changes the output → pending: line 4822 of the old suite, not ported yet
+status --json of the fixture store is what it was before meta existed → pending: line 4833 of the old suite, not ported yet
+next, status --json and gate at every stage answer every fixture unit as before lanes → pending: line 4865 of the old suite, not ported yet
+a fix with its reproduction, a cited expected result and the actual one is in the fast lane → pending: line 4913 of the old suite, not ported yet
+a unit that is not a fix is in the full lane, and nothing is missing for it → pending: line 4919 of the old suite, not ported yet
+a fix missing one mark is in the full lane, and laneMissing names that mark → pending: line 4924 of the old suite, not ported yet
+the expected result cites one relative path outside .cos/, and says something besides → pending: line 4941 of the old suite, not ported yet
+a spec, a plan or Lane: full in the impl header keeps a fix in the full lane, and it still entered → pending: line 4953 of the old suite, not ported yet
+a fix in the fast lane goes from its accepted intent to impl, and spec, spike and plan are not its stages → pending: line 4974 of the old suite, not ported yet
+a fix in the fast lane still waits on its intent being accepted → pending: line 4991 of the old suite, not ported yet
+gate impl in the fast lane stays shut while the intent is stale, the unit is held, or a dependency is not merged → pending: line 4997 of the old suite, not ported yet
+a fix whose intent cites no source walks the full lane from spec → pending: line 5021 of the old suite, not ported yet
+review and ship ask a fix in the fast lane what they ask one in the full lane → pending: line 5029 of the old suite, not ported yet
+an impl that takes a fix out of the fast lane sends it to spec, and impl runs again after the plan → pending: line 5053 of the old suite, not ported yet

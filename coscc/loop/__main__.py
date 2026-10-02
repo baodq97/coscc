@@ -1,6 +1,6 @@
-"""`python -m coscc.loop <command>`: `cos.mjs`'s command line, read the way it reads it.
+"""`python -m coscc.loop <command>`: the loop's command line.
 
-Flags sit anywhere (`.claude/scripts/cos.mjs:3370-3510`); every misuse prints `cos.mjs`'s words
+Flags sit anywhere (`parse`); every misuse prints its words
 and exits 2. Each command is a module's `run(args, out, err) -> int`, imported only when asked.
 """
 
@@ -45,7 +45,7 @@ COMMANDS = {
 }
 
 USAGE = [
-    "usage: cos.mjs [--root <dir>] <command>",
+    "usage: python -m coscc.loop [--root <dir>] <command>",
     "  reading a .cos/ (these take --root):",
     "    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | "
     "new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | "
@@ -66,12 +66,12 @@ def _line(stream):
 
 
 def _misuse(cmd, rooted: bool, reserve_from: list[str], repo_arg, state) -> list[str]:
-    """The lines a flag given to a command that takes none of it says, in `cos.mjs`'s order."""
+    """The lines a flag given to a command that takes none of it says, in the loop's order."""
     if cmd not in COMMANDS:
         return USAGE
     if rooted and cmd in LOCAL_ONLY:
         return [
-            f"--root does not apply to `{cmd}`: it reports on the checkout this script lives in,",
+            f"--root does not apply to `{cmd}`: it reports on the checkout of the working directory,",
             "  not on a .cos/ somewhere else. Run it from the repository you mean.",
         ]
     if reserve_from and cmd != "new-path":

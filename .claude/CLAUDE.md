@@ -1,13 +1,13 @@
 # coscc
 
-A local SDLC harness. `cos.mjs` decides every gate; each stage's rules live in its skill.
+A local SDLC harness. `coscc.loop` decides every gate; each stage's rules live in its skill.
 
 ## Commands
 
 ```
 npm test        # lint, then every test
 uv run ruff format && uv run ruff check --fix  # before commit
-node .claude/scripts/cos.mjs <command>:
+uv run python -m coscc.loop <command>:
   status [--json] · gate <unit> <stage> [--json]   # 0 open, 1 blocked with reasons, 2 misuse
   next <unit> · new-path <slug> · new-idea <slug> · unit-branch <unit>
   pr-text <unit> · rerun <unit> [<stage>] · check-branch [name] · check-tag <tag> · check-version
@@ -37,12 +37,12 @@ on their words.
 ## Architecture
 
 A unit is `.cos/NNNN_<slug>/` holding its artifacts; its state is in the app's `cos.db`.
-`cos.mjs` is the one definition of the loop. The app runs every stage.
+`coscc.loop` is the one definition of the loop. The app runs every stage.
 `Status: accepted` is the agent's judgement, not a person's approval.
 
 ## Things agents get wrong
 
-- Re-asking a gate the prompt answered; at a terminal, ask `cos.mjs gate` and stop on non-zero.
+- Re-asking a gate the prompt answered; at a terminal, ask `uv run python -m coscc.loop gate` and stop on non-zero.
 - No code while `plan.md` is `draft` (accept it in its own commit), or in the `fast` lane while
   `gate <unit> impl` is closed; there the first commit is the failing test.
 - `plan.md: done` is terminal: set it only after the proof command passed.

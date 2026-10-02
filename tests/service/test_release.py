@@ -115,10 +115,6 @@ class Fixture:
             check=True,
             capture_output=True,
         )
-        (self.seed / ".claude" / "scripts").mkdir(parents=True)
-        shutil.copy(
-            REPO / ".claude" / "scripts" / "cos.mjs", self.seed / ".claude" / "scripts" / "cos.mjs"
-        )
         (self.seed / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
         (self.seed / "package.json").write_text(PACKAGE, encoding="utf-8")
         (self.seed / "package-lock.json").write_text(LOCK, encoding="utf-8")
@@ -233,7 +229,7 @@ def press(service: Service, phase: str, cwd: str, version: str) -> dict:
     return asyncio.run(go())
 
 
-@unittest.skipUnless(shutil.which("uv") and shutil.which("node"), "uv and node are needed")
+@unittest.skipUnless(shutil.which("uv"), "uv is needed")
 class ReleasingThroughTheService(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -268,7 +264,7 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertEqual((got["button"], got["enabled"]), ("prepare", True))
 
     def test_a_workspace_never_released_asks_gh_nothing(self):
-        # `gh pr list` ran on every read of a workspace with `cos.mjs`, tag or none. A fixture of
+        # `gh pr list` ran on every read of a workspace, tag or none. A fixture of
         # its own: the shared one's units sit between `pr` and `ship`, and the integration block
         # asks `gh` for them.
         fx = Fixture(Path(self._tmp.name) / "untagged")

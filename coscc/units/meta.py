@@ -1,14 +1,14 @@
-"""A unit's metadata, kept in `cos.db`, and the snapshot `cos.mjs --state` reads.
+"""A unit's metadata, kept in `cos.db`, and the snapshot `coscc.loop --state` reads.
 
 Four writers and one reader:
 
-- `import_store`, once per store: everything `cos.mjs meta` reads off its markdown, in one
+- `import_store`, once per store: everything the loop's `meta` reads off its markdown, in one
   `Data.write()` keyed in `migrations`, so it can neither run twice nor stop halfway.
 - `ingest`, at the end of every step that finished: what changed in one unit's files.
 - `add_answer` and `add_hold`: a person's answer or hold, which no file carries.
 - `snapshot`: the JSON `--state` reads, from the tables and the fold over `transitions`.
 
-There is no parser here: every read of a file is `cos.mjs meta`.
+There is no parser here: every read of a file is the loop's `meta`.
 """
 
 from __future__ import annotations
@@ -16,13 +16,12 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-import subprocess
 from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import harness
 from coscc.data import Data, now
+from coscc.loop import run
 from coscc.runlog.journal import Journal
 from coscc.units import backlog
 from coscc.units.history import History
@@ -46,26 +45,21 @@ _ONE = "root = ? AND workspace = ? AND unit = ?"
 
 
 class MetaError(RuntimeError):
-    """`cos.mjs meta` gave no answer, carrying what it said."""
+    """The loop's `meta` gave no answer, carrying what it said."""
 
 
 def read(store: str | Path, *args: str) -> dict[str, Any]:
-    """`cos.mjs --root <store> meta [args]`, parsed, using this app's copy of the script."""
-    argv = ["node", str(harness.script()), "--root", str(store), "meta", *args]
+    """`python -m coscc.loop --root <store> meta [args]`, parsed, using this app's own loop."""
     try:
-        done = subprocess.run(
-            argv, env=harness.child_env(), capture_output=True, text=True, timeout=TIMEOUT
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        raise MetaError(f"cos.mjs meta did not run: {e}") from e
-    if done.returncode != 0:
-        raise MetaError(
-            (done.stderr or done.stdout).strip() or f"cos.mjs meta exited {done.returncode}"
-        )
+        done = run.ask_sync(["--root", str(store), "meta", *args], timeout=TIMEOUT)
+    except (OSError, TimeoutError) as e:
+        raise MetaError(f"coscc.loop meta did not run: {e}") from e
+    if done.code != 0:
+        raise MetaError((done.err or done.out).strip() or f"coscc.loop meta exited {done.code}")
     try:
-        return json.loads(done.stdout)
+        return json.loads(done.out)
     except ValueError as e:
-        raise MetaError(f"cos.mjs meta printed no JSON: {e}") from e
+        raise MetaError(f"coscc.loop meta printed no JSON: {e}") from e
 
 
 def _no_status(artifact: str, raw: str | None, machine: Machine) -> str:
@@ -171,7 +165,7 @@ class UnitMeta:
         wrote: str | None = None,
         decided: Collection[str] = (),
     ) -> list[dict[str, Any]]:
-        """Read one unit's files through `cos.mjs meta`, and write what changed.
+        """Read one unit's files through the loop's `meta`, and write what changed.
 
         Only an artifact whose text differs from the last one read (`unit_seen`) is written:
         a transition when the fold differs from its status, its questions, and from
@@ -575,7 +569,7 @@ class UnitMeta:
         via: str,
         conn: sqlite3.Connection | None = None,
     ) -> None:
-        """`state` is `paused`, `dropped` or `active`; `cos.mjs` folds the rows."""
+        """`state` is `paused`, `dropped` or `active`; the loop folds the rows."""
         if conn is not None:
             return self._hold(conn, workspace, unit, state, reason, by, date, via)
         with self.data.write() as c:
@@ -601,7 +595,7 @@ class UnitMeta:
         """`{(workspace, unit): [other]}` for each `phụ thuộc` relation of the backlog in force.
 
         The relations are `relation` records of the run log, folded by `backlog.relations_of`;
-        `cos.mjs` holds `impl` for the unit they name like a `Depends on:`.
+        The loop holds `impl` for the unit they name like a `Depends on:`.
         """
         journal = Journal(self.root, self.data)
         out: dict[tuple[str, str], list[str]] = {}
@@ -614,7 +608,7 @@ class UnitMeta:
     def snapshot(  # noqa: C901, PLR0915 - still to split
         self, own: str, names: Mapping[str, str], units_: Iterable[str] | None = None
     ) -> dict[str, Any]:
-        """What `cos.mjs --state` reads, for the store `own` and every workspace `names` maps a name to.
+        """What `coscc.loop --state` reads, for the store `own` and every workspace `names` maps a name to.
 
         One query per table. Units are keyed `<name>/<unit>`; `own`'s name is the one `names`
         gives it, or `""`. `not started` is no status at all here. `units_` narrows it to those
@@ -690,7 +684,7 @@ class UnitMeta:
                 a = artifact(r)
                 if a is not None and r["to_state"] != self.machine.absent:
                     a["status"] = r["to_state"]
-                    # Whose skip it was: `cos.mjs` stops the unit unless a person's or their delegate's.
+                    # Whose skip it was: the loop stops the unit unless a person's or their delegate's.
                     if r["to_state"] == "skipped":
                         a["authority"] = r["authority"]
             # Whether the unit is merged: the machine's own fold where it moved the unit, else a ship recorded outside it.
@@ -713,7 +707,7 @@ class UnitMeta:
                     e["merged"] = (
                         r["to_state"] == "accepted" and r["source"] in SHIPPED_BEFORE_THE_MACHINE
                     )
-            # The last stage result of each stage, which `cos.mjs` reads a spec's `U<n>` and a spike's verdicts from.
+            # The last stage result of each stage, which the loop reads a spec's `U<n>` and a spike's verdicts from.
             for r in rows(
                 "SELECT workspace, unit, stage, object FROM stage_results WHERE id IN "
                 "(SELECT MAX(id) FROM stage_results WHERE {where} GROUP BY workspace, unit, stage)"

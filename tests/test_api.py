@@ -891,7 +891,7 @@ REVIEW_STUCK = "# Review: q\nAuthor: t. Status: changes-requested.\n" + "".join(
 
 class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
     """`POST /api/units/more-rounds` appends one block to the one unit named, or answers 400 and
-    writes nothing; `cos.mjs` reads the block, and only it."""
+    writes nothing; the loop reads the block, and only it."""
 
     _answering_setup = AnsweringAQuestionOverHttp.asyncSetUp
     asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
@@ -945,7 +945,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
             # `append_to_answers` opens the section first when the file has none.
             self.assertEqual(after[len(before) :].decode("utf-8"), "\n## Answers\n" + added)
             self.assertEqual(second.read_bytes(), other)
-            # The real `cos.mjs`, no `--repo`: past the limit, the gate stops at the repository.
+            # The real the loop, no `--repo`: past the limit, the gate stops at the repository.
             allowed, said = await board.gate(
                 str(self.root), self.first.name, "review", state=snapshot_of(self.root)
             )
@@ -1266,7 +1266,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
 
 
 class TheNextStageOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`GET /api/units/next` is `cos.mjs next`'s answer, and it starts nothing."""
+    """`GET /api/units/next` is `coscc.loop next`'s answer, and it starts nothing."""
 
     # The fixture of `AnsweringAQuestionOverHttp`, borrowed so its tests run once.
     asyncSetUp = AnsweringAQuestionOverHttp.asyncSetUp
@@ -1355,7 +1355,7 @@ class IntegratingOverHttp(PostingAReviewRoundOverHttp):
     `next` offers."""
 
     async def test_a_unit_outside_the_window_is_a_400_and_leaves_a_record(self):
-        # A draft pr.md: `cos.mjs` says the unit is not between pr and ship, so no gh is asked.
+        # A draft pr.md: the loop says the unit is not between pr and ship, so no gh is asked.
         pr_md = Path(self.app.state.service.ws.unit_dir(self.cwd, self.unit)) / "pr.md"
         pr_md.write_text(f"# PR\nStatus: draft.\nPR: {self.PR_URL}\n", encoding="utf-8")
         got = await self.client.post(
@@ -1910,7 +1910,7 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page["brief"], "backend adds, frontend calls")
 
 
-@unittest.skipUnless(shutil.which("uv") and shutil.which("node"), "uv and node are needed")
+@unittest.skipUnless(shutil.which("uv"), "uv is needed")
 class ReleasingOverHttp(unittest.IsolatedAsyncioTestCase):
     """Over HTTP: a refusal is a 400 before any line of output, with one record."""
 

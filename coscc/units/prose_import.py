@@ -18,7 +18,7 @@ from coscc.units.submit import Verdict
 SOURCE = "prose-import"
 LABELS = ("open", "fixed", "needs-person", "claim-rejected", "answered")
 
-# `cos.mjs` `SEVERITY`, whole: the location is one token.
+# The loop's `SEVERITY`, whole: the location is one token.
 _FINDING_TEXT = re.compile(r"(\S+)\s+—\s+(high|medium|low)\s+—\s+(.*)", re.IGNORECASE | re.DOTALL)
 _LOCATION = re.compile(r"(.+?):(\d[\d,\-–]*)")
 _RULE = re.compile(r"(S\d+)\s+(.*)", re.DOTALL)

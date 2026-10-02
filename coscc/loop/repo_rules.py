@@ -1,8 +1,7 @@
 """The rules that ask the repository: `review`, `ship`, and `screens`.
 
-A port of `.claude/scripts/cos.mjs` 1809-1902 (the screens a unit changes), 1947-2322 (what the
-gate asks git and gh), 2447-2478 (`passLeftClosed`), 2775-2834 (`branchChecks`) and `cmdScreens`
-(3260-3284). Everything here asks the `probe` (`coscc.loop.probe`) and nothing else outside the
+The screens a unit changes, what the gate asks git and gh, `pass_left_closed`,
+`branch_checks` and `run` (`screens`). Everything here asks the `probe` (`coscc.loop.probe`) and nothing else outside the
 unit's files; `said` is the dict the gate fills in for `nextStep` to read, mutated in place.
 """
 
@@ -320,7 +319,7 @@ def red_needs(probe, pr, red, said):
         ]
     if problem:
         return [
-            f"{line} — {not_a_work_branch(head, problem)}, but no red check runs cos.mjs "
+            f"{line} — {not_a_work_branch(head, problem)}, but no red check runs coscc.loop "
             "check-branch in .github/workflows/, so whether that is why cannot be told from here"
         ]
     return [line]
@@ -373,7 +372,7 @@ def pr_head(probe, pr, view=None):
     return {"head": view["head"]}
 
 
-def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - a port of `cos.mjs` `shipNeeds` kept whole
+def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - `shipNeeds` kept whole
     """`ship` merges. It may do so only after a pass that left nothing open, whose history is
     intact, and after which no code reached the branch.
 
@@ -768,7 +767,7 @@ def pass_left_closed(unit, probe, g):
 
 # --- the checks a workflow names ---------------------------------------------------------
 
-CALLS = re.compile(f"\\bcos\\.mjs{S}+check-branch\\b", re.ASCII)
+CALLS = re.compile(f"\\bcoscc\\.loop{S}+check-branch\\b", re.ASCII)
 JOBS_LINE = re.compile(f"jobs:{S}*(#{DOT}*)?")
 DOUBLE_QUOTED = re.compile(f'"([^"]*)"{S}*(#{DOT}*)?')
 SINGLE_QUOTED = re.compile(f"'([^']*)'{S}*(#{DOT}*)?")
@@ -788,7 +787,8 @@ def _indent(line):
 
 
 def branch_checks(files):
-    """the check names of the jobs whose `run:` step calls `cos.mjs check-branch`,
+    """the check names of the jobs whose `run:` step calls `coscc.loop check-branch`
+    (`uv run python -m coscc.loop check-branch`),
     read from each workflow's text, `{ path, text }`. Not a YAML parser, and not meant to be one:
     a job it cannot read is not found, and a red check not found goes back to impl as it did
     before. The name is the job's own `name:`, else its key; a `name:` built from
@@ -861,7 +861,7 @@ def run(args, out, err):
     as one line of JSON. Exit 0 whatever it says; exit 2 is misuse."""
     unit_name = args.rest[0] if args.rest else None
     if not unit_name:
-        err("usage: cos.mjs screens <NNNN_slug> [--repo <dir>]")
+        err("usage: python -m coscc.loop screens <NNNN_slug> [--repo <dir>]")
         return 2
     if not UNIT_RE.fullmatch(unit_name):
         err(f'Invalid unit name "{unit_name}": expected NNNN_slug.')

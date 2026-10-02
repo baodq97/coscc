@@ -522,7 +522,7 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         [line] = [m for m in logs.output if " read in " in m]
         for part in (
             "snapshot",
-            "cos.mjs",
+            "loop",
             "import",
             "run log",
             "worktree",

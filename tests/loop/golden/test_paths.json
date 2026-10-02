@@ -307,12 +307,12 @@
  "tests/loop/test_paths.py::test_new_idea_refuses_a_slug_alike[words0]#1": [
   2,
   "",
-  "usage: cos.mjs new-idea <slug>\n"
+  "usage: python -m coscc.loop new-idea <slug>\n"
  ],
  "tests/loop/test_paths.py::test_new_idea_refuses_a_slug_alike[words1]#1": [
   2,
   "",
-  "usage: cos.mjs new-idea <slug>\n"
+  "usage: python -m coscc.loop new-idea <slug>\n"
  ],
  "tests/loop/test_paths.py::test_new_idea_refuses_a_slug_alike[words2]#1": [
   2,
@@ -367,7 +367,7 @@
  "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words0]#1": [
   2,
   "",
-  "usage: cos.mjs new-path <slug>\n"
+  "usage: python -m coscc.loop new-path <slug>\n"
  ],
  "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words10]#1": [
   2,
@@ -377,7 +377,7 @@
  "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words1]#1": [
   2,
   "",
-  "usage: cos.mjs new-path <slug>\n"
+  "usage: python -m coscc.loop new-path <slug>\n"
  ],
  "tests/loop/test_paths.py::test_new_path_refuses_a_slug_alike[words2]#1": [
   2,

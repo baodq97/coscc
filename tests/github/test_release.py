@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 from coscc.github import release
+from coscc.loop import run
 
 UNITS = [
     {"name": "0001_a", "type": "feat", "pr": {"number": 11}},
@@ -86,7 +87,6 @@ class Refusing(unittest.TestCase):
             active=True,
             phase="prepare",
             open_release_pr={"number": 5},
-            has_script=False,
             unreadable="gh: offline",
             check_version=(1, "off"),
             version_problem_="too low",
@@ -95,7 +95,6 @@ class Refusing(unittest.TestCase):
         expected = [
             "already running",
             "already open: #5",
-            "no .claude/scripts/cos.mjs",
             "the release could not be read: gh: offline",
             "check-version on origin/main failed: off",
             "too low",
@@ -104,7 +103,6 @@ class Refusing(unittest.TestCase):
         keys = (
             "active",
             "open_release_pr",
-            "has_script",
             "unreadable",
             "check_version",
             "version_problem_",
@@ -116,7 +114,6 @@ class Refusing(unittest.TestCase):
             base[key] = {
                 "active": False,
                 "open_release_pr": None,
-                "has_script": True,
                 "unreadable": "",
                 "check_version": (0, "0.1.0"),
                 "version_problem_": "",
@@ -130,7 +127,6 @@ class Refusing(unittest.TestCase):
             active=False,
             phase="prepare",
             open_release_pr=None,
-            has_script=True,
             check_version=(1, ""),
             version_problem_="",
             state="unknown",
@@ -146,7 +142,6 @@ class Refusing(unittest.TestCase):
                 active=False,
                 phase="publish",
                 open_release_pr={"number": 5},
-                has_script=True,
                 check_version=(0, "0.1.0"),
                 version_problem_="",
                 state="pr-open",
@@ -306,6 +301,58 @@ class EditingVersions(unittest.TestCase):
             asyncio.run(release.set_versions(tree, "0.1.0", "0.2.0"))
             lock = (tree / "uv.lock").read_text(encoding="utf-8")
             self.assertIn('name = "fixture"\nversion = "0.2.0"', lock)
+
+
+class AskingTheLoop(unittest.TestCase):
+    """`release.cos` runs this app's `python -m coscc.loop` with the checkout as cwd (R8)."""
+
+    def checkout(self, tmp: str, version: str) -> Path:
+        tree = Path(tmp)
+        (tree / "pyproject.toml").write_text(
+            f'[project]\nname = "fixture"\nversion = "{version}"\n', encoding="utf-8"
+        )
+        (tree / "package.json").write_text(
+            json.dumps({"name": "fixture", "version": version}), encoding="utf-8"
+        )
+        (tree / "uv.lock").write_text(
+            f'version = 1\n\n[[package]]\nname = "fixture"\nversion = "{version}"\n',
+            encoding="utf-8",
+        )
+        (tree / "package-lock.json").write_text(
+            json.dumps(
+                {
+                    "name": "fixture",
+                    "version": version,
+                    "lockfileVersion": 3,
+                    "packages": {"": {"name": "fixture", "version": version}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return tree
+
+    def test_a_checkout_outside_this_tree_answers_with_its_own_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = self.checkout(tmp, "9.9.9")
+            by_hand = run.ask_sync(["check-version"], cwd=tree)
+            self.assertEqual((by_hand.code, by_hand.out.strip()), (0, "9.9.9"), by_hand.err)
+            self.assertEqual(asyncio.run(release.cos(tree, "check-version")), (0, "9.9.9"))
+
+    def test_the_checkouts_disagreement_is_its_own_words_and_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = self.checkout(tmp, "9.9.9")
+            (tree / "package.json").write_text(
+                json.dumps({"name": "fixture", "version": "9.9.8"}), encoding="utf-8"
+            )
+            code, said = asyncio.run(release.cos(tree, "check-version"))
+            self.assertNotEqual(code, 0)
+            self.assertIn("9.9.8", said)
+
+    def test_a_checkout_without_a_loop_script_is_asked_all_the_same(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = self.checkout(tmp, "9.9.9")
+            self.assertFalse((tree / ".claude").exists())
+            self.assertEqual(asyncio.run(release.cos(tree, "check-tag", "v9.9.9")), (0, "release"))
 
 
 if __name__ == "__main__":

@@ -476,23 +476,23 @@
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a comment only]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a comment only]#2": [
   1,
   "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
+  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a dedented job]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a dedented job]#2": [
   1,
   "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
+  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a folded run]#1": [
   1,
@@ -556,23 +556,23 @@
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a workflow that is a directory]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a workflow that is a directory]#2": [
   1,
   "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
+  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-another script]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-another script]#2": [
   1,
   "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
+  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-crlf]#1": [
   1,
@@ -586,13 +586,13 @@
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-jobs ends at a top key]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-jobs ends at a top key]#2": [
   1,
   "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
+  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-name then a plain comment]#1": [
   1,
@@ -606,23 +606,23 @@
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named by a block]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named by a block]#2": [
   1,
   "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
+  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named from a matrix]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named from a matrix]#2": [
   1,
   "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
+  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named single quoted]#1": [
   1,
@@ -656,13 +656,13 @@
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-no jobs]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-no jobs]#2": [
   1,
   "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
+  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-plain]#1": [
   1,
@@ -1037,7 +1037,7 @@
  "tests/loop/test_repo_rules.py::test_screens_is_refused_without_what_it_needs#1": [
   2,
   "",
-  "usage: cos.mjs screens <NNNN_slug> [--repo <dir>]\n"
+  "usage: python -m coscc.loop screens <NNNN_slug> [--repo <dir>]\n"
  ],
  "tests/loop/test_repo_rules.py::test_screens_is_refused_without_what_it_needs#2": [
   2,

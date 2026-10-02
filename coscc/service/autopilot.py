@@ -1,4 +1,4 @@
-"""The autopilot: the loop that asks `cos.mjs next` and starts the stages it names.py`)."""
+"""The autopilot: the loop that asks `coscc.loop next` and starts the stages it names.py`)."""
 
 from __future__ import annotations
 

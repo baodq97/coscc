@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 # # An artifact has to carry one of these on its first line, or the gate cannot read it and
-# # `cos.mjs` reports the unit as broken.
+# # the loop reports the unit as broken.
 STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+)")
 
 
@@ -31,7 +31,7 @@ class _Stopped(Exception):
     """A Stop came before `steps.seal`, so the artifact is not to be written."""
 
 
-# # A status as `cos.mjs` `parseStatus` reads it: the first `Status:` in the file, hyphenated
+# # A status as the loop's `parseStatus` reads it: the first `Status:` in the file, hyphenated
 # # words as one. Only the first: a later round or finding quoting "Status: changes-requested"
 # # must not send a passed review back to `impl`.
 HEADER_STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+(?:-[A-Za-z]+)*)")

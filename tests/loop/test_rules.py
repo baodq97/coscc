@@ -1,8 +1,8 @@
-"""`status`, `gate` and `next` print what `cos.mjs` prints, for every shape of unit.
+"""`status`, `gate` and `next` print what the goldens hold, for every shape of unit.
 
 One store holds a unit for each rule that answers without a repository. Every test asks both
 versions through `expect()`, which asserts stdout, stderr and the exit code are alike; the
-coverage test then reads the codes each unit gets and checks every one `cos.mjs` can hand out
+coverage test then reads the codes each unit gets and checks every one the loop can hand out
 without git or `gh` is among them.
 """
 
@@ -517,7 +517,7 @@ def test_next_with_a_repo_that_is_not_one(world, tmp_path):
     expect([*world.argv("next", "0028_review-missing"), "--repo", str(tmp_path / "nowhere")])
 
 
-# --- every code `cos.mjs` hands out without a repository --------------------------------
+# --- every code the loop hands out without a repository --------------------------------
 
 # `next`'s `why`, and a gate's codes, that files alone settle. `ci-*`, `recording-ship` and the
 # ones that read git are the probe's, in `test_repo_rules.py`.

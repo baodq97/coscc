@@ -1,4 +1,4 @@
-"""`screens`, and the `review` and `ship` gates that ask git and `gh`, print what `cos.mjs` prints.
+"""`screens`, and the `review` and `ship` gates that ask git and `gh`, print what the goldens hold.
 
 Every case runs both versions through `expect()` on a real git repository in tmp and a `gh` that
 answers from a table. A case also checks the words or codes it means to reach, so that both
@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from coscc.loop.repo_rules import branch_checks
 from tests.loop.conftest import UnitStore, entry, env, fake_gh, git, git_repo, header, expect
 
 UNIT = "0040_widget"
@@ -456,7 +457,8 @@ def test_review_gate_out_of_rounds_and_granted_more(sc):
 
 
 def workflow(
-    job: str = "branch-name", step: str = "      - run: node .claude/scripts/cos.mjs check-branch"
+    job: str = "branch-name",
+    step: str = '      - run: uv run python -m coscc.loop check-branch "$HEAD_REF"',
 ) -> str:
     return (
         f"name: ci\non: [push]\njobs:\n  {job}:\n    runs-on: ubuntu-latest\n    steps:\n{step}\n"
@@ -483,22 +485,26 @@ WORKFLOWS = {
     },
     "a block run": {
         "ci.yml": workflow(
-            step="      - run: |\n          echo hi\n          node .claude/scripts/cos.mjs check-branch"
+            step="      - run: |\n          echo hi\n          uv run python -m coscc.loop check-branch"
         )
     },
     "a folded run": {
-        "ci.yml": workflow(step="      - run: >\n          node cos.mjs check-branch")
+        "ci.yml": workflow(step="      - run: >\n          python -m coscc.loop check-branch")
     },
     "a run on the next line": {
-        "ci.yml": workflow(step="      - run:\n          node cos.mjs check-branch")
+        "ci.yml": workflow(step="      - run:\n          python -m coscc.loop check-branch")
     },
     "a run key, no dash": {
-        "ci.yml": workflow(step="      - name: x\n        run: node cos.mjs   check-branch main")
+        "ci.yml": workflow(
+            step="      - name: x\n        run: python -m coscc.loop   check-branch main"
+        )
     },
     "a comment only": {
-        "ci.yml": workflow(step="      # - run: node cos.mjs check-branch\n      - run: echo hi")
+        "ci.yml": workflow(
+            step="      # - run: python -m coscc.loop check-branch\n      - run: echo hi"
+        )
     },
-    "another script": {"ci.yml": workflow(step="      - run: node cos.mjs check-tag")},
+    "another script": {"ci.yml": workflow(step="      - run: python -m coscc.loop check-tag")},
     "quoted key": {"ci.yml": workflow(job='"branch-name"')},
     "single quoted key": {"ci.yml": workflow(job="'branch-name'")},
     "a key with a comment": {"ci.yml": workflow().replace("branch-name:", "branch-name: # why")},
@@ -510,7 +516,7 @@ WORKFLOWS = {
     "two files": {"a.yml": "name: a\n", "b.yaml": workflow(), "c.txt": workflow(job="never")},
     "a second job": {"ci.yml": workflow() + "  other:\n    steps:\n      - run: echo hi\n"},
     "a dedented job": {
-        "ci.yml": "jobs:\n    a:\n        runs-on: x\n  b:\n    steps:\n      - run: cos.mjs check-branch\n"
+        "ci.yml": "jobs:\n    a:\n        runs-on: x\n  b:\n    steps:\n      - run: coscc.loop check-branch\n"
     },
     "a workflow that is a directory": {"dir.yml/x": "1\n"},
     "a job line that is no key": {
@@ -1163,3 +1169,25 @@ def test_ship_gate_a_round_the_app_keeps_without_its_commit(sc):
     sc.unit(sc.passed(), rows=[row])
     ship, _, _ = sc.three(open_pr(sc.reviewed))
     assert "names no reviewed commit" in text_of(ship)
+
+
+# The script the loop was before `0153`, spelled so no search for it finds this file.
+OLD = "cos" + ".mjs"
+
+
+@pytest.mark.parametrize(
+    ("run", "found"),
+    [
+        ('uv run python -m coscc.loop check-branch "$HEAD_REF"', ["branch-name"]),
+        ("python -m coscc.loop   check-branch", ["branch-name"]),
+        (f"node .claude/scripts/{OLD} check-branch", []),
+        (f"node {OLD} check-branch", []),
+        ("uv run python -m coscc.loop check-tag v1.0.0", []),
+        ("uv run python -m coscc.loopy check-branch", []),
+    ],
+)
+def test_branch_checks_knows_the_loop_command_and_not_the_old_script(run, found):
+    """R9: the job whose `run:` calls `coscc.loop check-branch` is found; the deleted
+    script's no longer is."""
+    text = workflow(step=f"      - run: {run}")
+    assert branch_checks([{"path": ".github/workflows/ci.yml", "text": text}]) == found

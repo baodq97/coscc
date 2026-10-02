@@ -1,5 +1,5 @@
-"""Where the rules this app runs live (`cos.mjs`, the skills, `states.json`), and the refusal
-when they are not there.
+"""Where the rules this app runs live (the skills, `states.json`), and the refusal when they are
+not there. The loop that decides on them is `coscc.loop`, code of the package itself.
 
 `root()` prefers the packaged copy (`coscc/_harness/`, generated at release and gitignored)
 and falls back to the checkout's `.claude/`. Nothing here looks inside a workspace: a path
@@ -32,9 +32,7 @@ PACKAGE_HARNESS = _HERE / "_harness"
 # The checkout's own copy, one level up beside `coscc/`.
 CHECKOUT_HARNESS = _HERE.parent / ".claude"
 
-_SCRIPTS = Path("scripts")
 _SKILLS = Path("skills")
-SCRIPT_NAME = "cos.mjs"
 SKILL_FILE = "SKILL.md"
 
 
@@ -46,7 +44,7 @@ class MissingRules(RuntimeError):
 
 
 def child_env() -> dict[str, str]:
-    """The environment `cos.mjs` runs in. Built up, never filtered down (see
+    """The environment the loop child (`python -m coscc.loop`, see `coscc.loop.run`) runs in. Built up, never filtered down (see
     `gitops.child_env`): it needs no secret, so it is given none.
     """
     env = {
@@ -55,7 +53,7 @@ def child_env() -> dict[str, str]:
         "LC_ALL": "C",
         "NO_COLOR": "1",
     }
-    # Passed only when set, so an unset variable keeps meaning "the default in `cos.mjs`".
+    # Passed only when set, so an unset variable keeps meaning "the loop's own default".
     # The `review` and `ship` gates run `git` and `gh`; `gh` finds its login through `HOME`, so a
     # machine logging in with `GH_TOKEN` alone sees those gates closed. No secret is passed down.
     rounds = os.environ.get("COS_REVIEW_ROUNDS")
@@ -84,18 +82,14 @@ def clean_path(workspace: str | os.PathLike[str] | None) -> str:
 
 
 def is_packaged() -> bool:
-    """Whether this install carries its own harness."""
-    return (PACKAGE_HARNESS / _SCRIPTS / SCRIPT_NAME).is_file()
+    """Whether this install carries its own harness: the packaged `skills/` directory and the
+    state set the wheel check (`wheel_complaints`) also asks for. Half a harness does not count."""
+    return (PACKAGE_HARNESS / _SKILLS).is_dir() and STATES_PATH.is_file()
 
 
 def root() -> Path:
     """The `.claude`-shaped directory this app reads its rules from."""
     return PACKAGE_HARNESS if is_packaged() else CHECKOUT_HARNESS
-
-
-def script() -> Path:
-    """`cos.mjs`. May not exist -- callers say so in their own vocabulary."""
-    return root() / _SCRIPTS / SCRIPT_NAME
 
 
 def skills_dir() -> Path:
@@ -133,8 +127,7 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     """Everything wrong with `wheel`, as sentences. Empty means it would run.
 
     Each entry names a wheel that installs cleanly and then fails differently: no frontend
-    (page 404s), no compile marker (service is `active` and serves nothing), no `cos.mjs`
-    (Board answers 400), no skills, no `states.json`, no build stamp with a 40-hex commit.
+    (page 404s), no compile marker (service is `active` and serves nothing), no skills, no `states.json`, no build stamp with a 40-hex commit.
     The stamp is checked though committed: whether a file arrives by `git` or by a copy step
     is invisible to the installed copy. Skills are counted, not listed by name.
     """
@@ -147,7 +140,6 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
 
     index = _posix(_WEB, frontend._LAYOUT, "index.html")
     marker = _posix(_WEB, frontend.MARKER)
-    cos = _posix(_HARNESS, _SCRIPTS, SCRIPT_NAME)
     skills_prefix = _posix(_HARNESS, _SKILLS) + "/"
     state_set = _posix(STATES_PATH.relative_to(_HERE))
 
@@ -156,8 +148,6 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
         out.append(f"no {index} — it would install and serve no page")
     if marker not in names:
         out.append(f"no {marker} — it would report active and never serve")
-    if cos not in names:
-        out.append(f"no {cos} — the Board would answer 400 on every read")
     found = sum(1 for n in names if n.startswith(skills_prefix) and n.endswith("/" + SKILL_FILE))
     if not found:
         out.append(f"no {skills_prefix}*/{SKILL_FILE} — every step would refuse to run")

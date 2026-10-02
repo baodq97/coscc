@@ -32,7 +32,7 @@ class TheSecuritySurfaceIsOneConstant(unittest.TestCase):
             (
                 "coscc/agent/policy.py",
                 "coscc/agent/sessions.py",
-                ".claude/scripts/cos.mjs",
+                "coscc/loop/rules.py",
                 ".claude/settings.json",
             ),
         )

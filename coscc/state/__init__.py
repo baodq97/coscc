@@ -229,14 +229,14 @@ class StudioState(
     log_unit: str = ""
     # Which *Details* are open, by key. Closed, their content is not in the DOM.
     open_details: list[str] = []
-    # The stage `cos.mjs next` names for the open unit, and what it said. Set only by
+    # The stage `coscc.loop next` names for the open unit, and what it said. Set only by
     # `load_next`, from `_run_target`.
     run_stage: str = ""
     run_said: str = ""
-    # The findings `cos.mjs next` says a person is awaited on; set only by `load_next`.
+    # The findings `coscc.loop next` says a person is awaited on; set only by `load_next`.
     # Non-empty means the button offers nothing and the page points at the Questions tab.
     run_waiting: list[str] = []
-    # The ids `cos.mjs next` says the last review round left out; set only by `load_next`.
+    # The ids `coscc.loop next` says the last review round left out; set only by `load_next`.
     run_dropped: list[str] = []
 
     # -- sessions
@@ -472,7 +472,7 @@ class StudioState(
 
     @rx.var
     def next_stage(self) -> str:
-        """The stage the run button would run: the one `cos.mjs next` named."""
+        """The stage the run button would run: the one `coscc.loop next` named."""
         return self.run_stage
 
     @rx.var
@@ -824,7 +824,7 @@ class StudioState(
             started = len([c for c in cells if c.started])
             stage = _current_stage(u, self.stages)
             count, shown = _tokens(u.get("cost") or {})
-            # The file-only stage `cos.mjs` names, not the one the run button asks for: that
+            # The file-only stage the loop names, not the one the run button asks for: that
             # one can cost two `gh` calls, and this runs for every card.
             nxt = next((c for c in cells if c.stage == (u.get("next_stage") or "")), None)
             mode = nxt.mode if nxt is not None else "manual"
@@ -1685,7 +1685,7 @@ class StudioState(
 
     @rx.event(background=True)
     async def load_next(self):
-        """Ask `cos.mjs next` which stage the run button may offer for the open unit.
+        """Ask `coscc.loop next` which stage the run button may offer for the open unit.
 
         In the background because the answer can wait on `gh` for up to 60s (two calls,
         `board.GATE_TIMEOUT` each), and a handler holding the page's lock that long freezes
@@ -1698,7 +1698,7 @@ class StudioState(
             self.run_stage = ""
             self.run_waiting = []
             self.run_dropped = []
-            self.run_said = "Asking cos.mjs what comes next…"
+            self.run_said = "Asking the loop what comes next…"
             self.rerun_stages, self.rerun_confirming = [], False
             if self._asked != unit:
                 # A note written for another unit is not this one's.

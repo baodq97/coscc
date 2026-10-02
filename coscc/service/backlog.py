@@ -151,7 +151,7 @@ class Backlog:
     # -- backlog --------------------------------------------------------------
 
     async def _backlog_context(self, cwd: str) -> tuple[Journal, str, dict[str, Any]]:
-        """The run log, its key and one board read. The read is `node`, so it happens before any
+        """The run log, its key and one board read. The read is the loop, so it happens before any
         transaction is opened; only the run log's part of a check is read inside one."""
         self.ws.check(cwd)
         journal = self.ws.journal()
@@ -533,7 +533,7 @@ class Backlog:
     async def start_branch(self, cwd: str, unit: str) -> Cut:
         """Cut this unit's branch in the workspace and switch to it.
 
-        The name is not the caller's: `cos.mjs unit-branch` reads the `Type:` the intent
+        The name is not the caller's: `coscc.loop unit-branch` reads the `Type:` the intent
         declared and prints `<type>/<slug>`. `coscc/git/gitops.py` lists what the app may do
         with it.
 
@@ -595,7 +595,7 @@ class Backlog:
     def unit_history(self, cwd: str, unit: str) -> dict[str, Any]:
         """Everything the log knows about one unit.
 
-        **Beside the board, not instead of it.** `board()` still asks `cos.mjs` and reads state
+        **Beside the board, not instead of it.** `board()` still asks the loop and reads state
         out of the `Status:` line on disk; this answers from the transition log. Two sources
         is deliberate and has a cost.
 

@@ -1,7 +1,6 @@
 """`new-path`, `new-idea` and `meta`: where a unit or an idea goes, and what a store's files say.
 
-A port of `.claude/scripts/cos.mjs` (`unitMeta`, `parseIdea`, `readIdeas`, `nextNumber`,
-`cmdMeta`, `cmdNewPath`, `refuseSlug`, `cmdNewIdea`), line for line. Nothing here writes a file
+`unit_meta`, `parse_idea`, `read_ideas`, `next_number` and the three commands. Nothing here writes a file
 or decides a stage: `new-path` and `new-idea` print a path, `meta` prints what the parsers read.
 """
 
@@ -231,7 +230,7 @@ def cmd_meta(unit_name: str | None, files: list[str], cos_dir: str, out: Out, er
 def refuse_slug(slug: str | None, cmd: str, err: Out) -> bool:
     """Whether `slug` was refused, having said why. `new-path` and `new-idea` hold one rule."""
     if not slug:
-        err(f"usage: cos.mjs {cmd} <slug>")
+        err(f"usage: python -m coscc.loop {cmd} <slug>")
         return True
     if not SLUG_RE.fullmatch(slug):
         err(f'Invalid slug "{slug}".')

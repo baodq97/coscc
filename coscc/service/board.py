@@ -50,7 +50,7 @@ UNKNOWN_END_FOR = timedelta(hours=24)
 
 
 def waits_for(unit: dict[str, Any]) -> list[str]:
-    """The units `impl` waits on, when `cos.mjs` said it waits; else none."""
+    """The units `impl` waits on, when the loop said it waits; else none."""
     if unit.get("why") != "dependency":
         return []
     return [d["ref"] for d in unit.get("depends_on") or [] if d.get("merged") is not True]
@@ -282,7 +282,7 @@ class Board:
             data = await board_reader.read(self.ws.units_root(cwd), state=state)
         except Unavailable as e:
             raise Invalid(str(e)) from e
-        lap("cos.mjs")
+        lap("loop")
         await self._import_rounds(cwd, data["units"])
         # What the import read the whole text for; the board carries none of it.
         _brief_rounds(data["units"])
@@ -466,7 +466,7 @@ class Board:
         entry has no other `start` open in this process — only one another process wrote,
         and that one is shown as ended.
 
-        Reads memory and the run log, nothing else: no `git`, no `gh`, no `cos.mjs`, and
+        Reads memory and the run log, nothing else: no `git`, no `gh`, no loop, and
         writes nothing. A busy run log is a `note`, not a refusal — the board asks this
         every few seconds, and a lock someone else holds must not break the board.
         """

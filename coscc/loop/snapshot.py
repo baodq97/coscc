@@ -1,6 +1,6 @@
 """The app's snapshot of every unit's metadata: from `--state`, or straight from `cos.db`.
 
-`--state <file|->` is read as `cos.mjs` reads it, with its words when it cannot be. Without it
+`--state <file|->` is read here, with words that say why when it cannot be. Without it
 the deciding commands build the same dict in this process from the app's database, for the
 workspace whose store `--root` names: `UnitMeta.snapshot`, as `coscc state <workspace>` prints it.
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 class StateError(Exception):
-    """`--state` named something that is not a snapshot; the message is `cos.mjs`'s."""
+    """`--state` named something that is not a snapshot; the message says why."""
 
 
 def _node_message(arg: str, e: OSError) -> str:
@@ -59,7 +59,7 @@ def _json_message(text: str, e: json.JSONDecodeError) -> str:
 
 
 def load(arg: str):
-    """The snapshot `--state <arg>` names (`-` for stdin), or `StateError` with `cos.mjs`'s words."""
+    """The snapshot `--state <arg>` names (`-` for stdin), or `StateError` with words that say why."""
     try:
         raw = sys.stdin.buffer.read() if arg == "-" else Path(arg).read_bytes()
     except OSError as e:

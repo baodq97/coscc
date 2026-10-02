@@ -1,4 +1,4 @@
-"""Every misuse `cos.mjs` refuses with exit 2 is refused alike by `python -m coscc.loop`."""
+"""Every misuse `python -m coscc.loop` refuses with exit 2, as its goldens hold."""
 
 from __future__ import annotations
 

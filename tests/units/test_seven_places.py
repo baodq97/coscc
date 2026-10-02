@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,7 +17,7 @@ from unittest import mock
 
 from tests.units.test_submit import a_head, finding, submits
 from coscc.bus import Bus
-from coscc.agent import harness
+from coscc.loop import run as loop_run
 from tests.github.test_prmachine import HEAD, FakeGh, run
 from tests.github.test_prmachine import Fixture as _PrFixture
 from coscc.config import Config
@@ -114,7 +115,7 @@ class Place1(unittest.TestCase):
         self.assertTrue(self._plan_gate())
 
     def test_the_spec_needs_a_spike_for_the_u_ids_its_object_names_not_its_file(self):
-        """The `U<n>` of the stage result, carried to `cos.mjs` in the snapshot."""
+        """The `U<n>` of the stage result, carried to the loop in the snapshot."""
 
         class Replies:
             bus = Bus()
@@ -247,11 +248,10 @@ class _Review(unittest.TestCase):
         return u
 
     def _status(self) -> dict:
-        """The unit as `cos.mjs status --json` reads it from the app's snapshot."""
+        """The unit as `coscc.loop status --json` reads it from the app's snapshot."""
         repo = str(self.repo)
         source, stdin = board_reader._source(self.service.ws.snapshot(repo, [self.unit]))
         argv = [
-            str(harness.script()),
             "--root",
             str(self.service.ws.units_root(repo)),
             *source,
@@ -531,24 +531,36 @@ class Place6(_PrFixture):
 
 
 class Place7(unittest.TestCase):
-    """§6, 7: "The autopilot matches English substrings of `cos.mjs`'s messages." Now `next` and the
+    """§6, 7: "The autopilot matches English substrings of the loop's messages." Now `next` and the
     gate hand out codes from `guards.REASONS` beside their words, and the autopilot branches on the
-    codes. Here `cos.mjs` rewords a reason, and the autopilot still reads the unit as it did."""
+    codes. Here the loop rewords a reason, and the autopilot still reads the unit as it did."""
 
     ROW = {"name": "0001_x", "questions": []}
 
+    # A stand-in for `python -m coscc.loop`: the same package, its `rules` module read with
+    # `old` reworded, so the child's words change and its codes do not.
+    REWORDED = (
+        "import importlib.util, runpy, sys\n"
+        "old, new = sys.argv.pop(1), sys.argv.pop(1)\n"
+        "spec = importlib.util.find_spec('coscc.loop.rules')\n"
+        "text = spec.loader.get_source('coscc.loop.rules')\n"
+        "assert old in text, old\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "sys.modules[spec.name] = module\n"
+        "exec(compile(text.replace(old, new), spec.origin, 'exec'), module.__dict__)\n"
+        "runpy.run_module('coscc.loop', run_name='__main__')\n"
+    )
+
     def _next(self, files: dict[str, str], old: str, new: str) -> dict:
-        """`next` for one unit, asked of a copy of the harness script with `old` reworded."""
+        """`next` for one unit, asked of the loop with `old` reworded in its rules."""
         with tempfile.TemporaryDirectory() as d:
-            text = harness.script().read_text(encoding="utf-8")
-            self.assertIn(old, text)
-            script = Path(d) / "harness" / "cos.mjs"
-            script.parent.mkdir()
-            script.write_text(text.replace(old, new), encoding="utf-8")
+            wrapper = Path(d) / "reworded.py"
+            wrapper.write_text(self.REWORDED, encoding="utf-8")
             store = Path(d) / "store"
             _store(store, {"0001_x": files})
             state = snapshot_of(store)
-            with mock.patch.object(harness, "script", lambda: script):
+            argv = lambda args: [sys.executable, "-P", str(wrapper), old, new, *args]
+            with mock.patch.object(loop_run, "argv", argv):
                 return asyncio.run(board_reader.next_step(store, "0001_x", state=state))
 
     def _read_as(self, nxt: dict, reason: str) -> None:
@@ -564,8 +576,8 @@ class Place7(unittest.TestCase):
                 "intent.md": "# I\nType: feat. Status: accepted.\n",
                 "spec.md": "# S\nStatus: rejected.\n",
             },
-            "`closed — ${s.name} rejected`",
-            "`shut: ${s.name} was turned down`",
+            "f\"closed — {s['name']} rejected\"",
+            "f\"shut: {s['name']} was turned down\"",
         )
         self.assertEqual((nxt["stage"], nxt["action"]), ("", "shut: spec was turned down"))
         self.assertIn("closed", nxt["reasons"])
@@ -577,8 +589,8 @@ class Place7(unittest.TestCase):
                 "intent.md": "# I\nType: feat. Status: accepted.\n",
                 "plan.md": "# P\nStatus: done.\n",
             },
-            "action: 'finished'",
-            "action: 'all done'",
+            '"action": "finished"',
+            '"action": "all done"',
         )
         self.assertEqual(
             (nxt["stage"], nxt["action"], nxt["reasons"]), ("", "all done", ["finished"])

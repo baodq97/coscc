@@ -2,7 +2,7 @@
 
 Units live under the app's data root, never in the repository: the repository receives only
 the branch, a step's own code commits, the pull request body and one review comment per round.
-`cos.mjs` stays the one place the loop is defined; `create` is a shell around `new-path`, and
+`coscc.loop` stays the one place the loop is defined; `create` is a shell around `new-path`, and
 `unit_dir` is the one function that answers where a unit's directory is.
 """
 
@@ -12,22 +12,21 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 from pathlib import Path
 from typing import Any, Sequence
 
-from coscc.agent import harness
 from coscc.data import Data
+from coscc.loop import run
 
-# The directory `cos.mjs` reads, inside whatever root it is given.
+# The directory the loop reads, inside whatever root it is given.
 COS_DIR = ".cos"
 
 UNITS_DIR = "units"
 
-# `NNNN_slug`: the only shape `cos.mjs new-path` produces and the only one accepted back.
+# `NNNN_slug`: the only shape `new-path` produces and the only one accepted back.
 UNIT_RE = re.compile(r"\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*")
 
-# Turns a hung `cos.mjs` child into an error; it does not bound the work.
+# Turns a hung `coscc.loop` child into an error; it does not bound the work.
 TIMEOUT = 10.0
 
 # Hex characters of the workspace path digest kept in the directory name (48 bits).
@@ -39,7 +38,7 @@ class BadUnit(ValueError):
 
 
 class CannotCreate(RuntimeError):
-    """A unit that could not be started, carrying what `cos.mjs` or the disk said."""
+    """A unit that could not be started, carrying what the loop or the disk said."""
 
 
 def key(workspace: str | os.PathLike[str]) -> str:
@@ -57,7 +56,7 @@ def slot(workspace: str | os.PathLike[str]) -> str:
 
 
 def root(workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None) -> Path:
-    """The directory to hand `cos.mjs --root`. Its `.cos/` holds this workspace's units."""
+    """The directory to hand `coscc.loop --root`. Its `.cos/` holds this workspace's units."""
     return Data(data_dir).root / UNITS_DIR / slot(workspace)
 
 
@@ -86,33 +85,20 @@ def unit_dir(
 
 
 def _cos(root_path: Path, *args: str, stdin: str | None = None) -> str:
-    """Run `cos.mjs` against a root and return its stdout, or raise `CannotCreate`.
+    """Run `python -m coscc.loop` against a root and return its stdout, or raise `CannotCreate`.
 
-    Always this app's copy of the script, never one found inside a workspace.
+    Always this app's loop, never code found inside a workspace.
     """
-    script = harness.script()
-    if not script.exists():
-        raise CannotCreate(f"the harness script is missing: {script}")
-    argv = ["node", str(script), "--root", str(root_path), *args]
     try:
-        done = subprocess.run(
-            argv,
-            env=harness.child_env(),
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT,
-            input=stdin,
-        )
-    except FileNotFoundError as e:
-        raise CannotCreate(
-            f"could not run node: {e} — PATH was {harness.child_env()['PATH']}"
-        ) from e
-    except subprocess.TimeoutExpired as e:
-        raise CannotCreate(f"cos.mjs {' '.join(args)} did not finish in {TIMEOUT:.0f}s") from e
-    if done.returncode != 0:
+        done = run.ask_sync(["--root", str(root_path), *args], stdin=stdin, timeout=TIMEOUT)
+    except TimeoutError as e:
+        raise CannotCreate(f"coscc.loop {' '.join(args)} did not finish in {TIMEOUT:.0f}s") from e
+    except OSError as e:
+        raise CannotCreate(f"could not run coscc.loop: {e}") from e
+    if done.code != 0:
         # Its words, not ours: `new-path` explains a malformed slug better than a second validator.
-        raise CannotCreate((done.stderr or done.stdout or "").strip() or "cos.mjs refused")
-    return done.stdout.strip()
+        raise CannotCreate((done.err or done.out or "").strip() or "coscc.loop refused")
+    return done.out.strip()
 
 
 def branch_name(
@@ -121,7 +107,7 @@ def branch_name(
     data_dir: str | os.PathLike[str] | None = None,
     state: dict[str, Any] | None = None,
 ) -> str:
-    """The branch this unit's `Type:` implies, from `cos.mjs unit-branch`.
+    """The branch this unit's `Type:` implies, from the loop's `unit-branch`.
 
     `state` is the app's snapshot, where the `Type:` is; `intent.md` must be on disk too.
     """
@@ -129,7 +115,7 @@ def branch_name(
     if not directory.is_dir():
         raise CannotCreate(f"no such work unit in this workspace: {unit}")
     if not (directory / "intent.md").is_file():
-        # `cos.mjs unit-branch` says `No such work unit` here, false of the unit; say what is missing.
+        # The loop's `unit-branch` says `No such work unit` here, false of the unit; say what is missing.
         raise CannotCreate(
             f"{unit} has no intent.md yet, and the branch name comes from the Type: "
             "declared in it — run the intent stage first"
@@ -169,16 +155,16 @@ def create(
     printed = _cos(store, *reserve, "new-path", str(slug or "").strip())
     relative = printed.splitlines()[-1].strip() if printed else ""
     if not relative:
-        raise CannotCreate("cos.mjs new-path printed nothing")
+        raise CannotCreate("coscc.loop new-path printed nothing")
 
     # `new-path` prints a path relative to the root; check the join stays inside the store.
     directory = (store / relative).resolve()
     if store.resolve() not in directory.parents:
-        raise CannotCreate(f"cos.mjs named a path outside the store: {relative}")
+        raise CannotCreate(f"coscc.loop named a path outside the store: {relative}")
 
     unit = directory.name
     if not UNIT_RE.fullmatch(unit):
-        raise CannotCreate(f"cos.mjs named something that is not a unit: {unit}")
+        raise CannotCreate(f"coscc.loop named something that is not a unit: {unit}")
 
     directory.mkdir(parents=True, exist_ok=False)
     text = str(brief or "").strip()

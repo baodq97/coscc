@@ -3,7 +3,7 @@
 The intent's outcome, measured in `npm test`: ten `POST /api/board/run` at the same moment,
 one process, one `(workspace, unit, stage)`, the gate open — one step starts, nine are
 refused with a reason, and the run log has one `start`. Driven in-process over ASGI, the
-way `scripts/verify_0034.py` drives it; the gate is the real `cos.mjs`, and only the session
+way `scripts/verify_0034.py` drives it; the gate is the real the loop, and only the session
 is a stand-in. Two processes are not measured here, and nothing claims they are
 (`intent.md ## Answers`, câu 4)."""
 

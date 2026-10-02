@@ -1,7 +1,6 @@
 """The probe: the one way `review`, `ship` and `screens` reach outside the unit's own files.
 
-A port of `.claude/scripts/cos.mjs` 1751-1808 (the UI standard and its globs) and 1903-1946
-(`makeProbe`). The probe runs `git` and `gh` through `PATH` in the repository the unit's code
+The UI standard and its globs, and `make_probe`. The probe runs `git` and `gh` through `PATH` in the repository the unit's code
 lives in, and reads three files of it; a test hands the rules a fake with the same five calls.
 Each command answers `{"code", "out", "err"}`; a command that could not start is code -1.
 """
@@ -100,7 +99,7 @@ def _refuse(name):
 
 
 def parse_json(text):
-    """`JSON.parse(text)`, or `None` where it throws: what `cos.mjs` does in its `try`/`catch`."""
+    """`JSON.parse(text)`, or `None` where it throws: what a `try`/`catch` around it gives."""
     try:
         return json.loads(text, parse_float=_number, parse_constant=_refuse)
     except ValueError, RecursionError:
@@ -128,7 +127,7 @@ def _spawned(cmd, args, repo_dir):
 
 
 class Probe:
-    """`git`, `gh`, `ui`, `manifest` and `workflows` of one repository (`cos.mjs` `makeProbe`)."""
+    """`git`, `gh`, `ui`, `manifest` and `workflows` of one repository (`makeProbe`)."""
 
     def __init__(self, repo_dir):
         self.repo_dir = repo_dir

@@ -21,7 +21,7 @@ class RerunMixin(rx.State, mixin=True):
     def unit_tree(self) -> str:
         return self._trees.get(self.unit_id, "")
 
-    # The accepted stages `cos.mjs rerun` says may run again, and for each the stages that
+    # The accepted stages `coscc.loop rerun` says may run again, and for each the stages that
     # then run after it. Set only by `load_next`; the rest is what a person chose.
     rerun_stages: list[str] = []
     rerun_later: dict[str, list[str]] = {}
@@ -31,7 +31,7 @@ class RerunMixin(rx.State, mixin=True):
 
     @rx.var
     def rerun_after(self) -> list[str]:
-        """The stages that run again after the chosen one, as `cos.mjs` listed them."""
+        """The stages that run again after the chosen one, as the loop listed them."""
         return self.rerun_later.get(self.rerun_stage, [])
 
     # -- running an accepted stage again -----------------------------

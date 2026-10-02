@@ -1,8 +1,8 @@
 """A person runs `pr` again from the board, in-process, spending nothing.
 
 The chain the spec's outcome names: the stages offered, a rerun of `pr` with a note, a `pr`
-session that ends `done`, then `cos.mjs next` naming the review and the `ship` gate closed.
-`cos.mjs` is the real one, asked through `coscc/units/board.py` as the app asks it; only the
+session that ends `done`, then `coscc.loop next` naming the review and the `ship` gate closed.
+the loop is the real one, asked through `coscc/units/board.py` as the app asks it; only the
 worktree, the sync onto GitHub and `Runner` itself stand in."""
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
     def ask(self, coro):
         return asyncio.run(coro)
 
-    def test_the_offers_are_cos_mjs_answer(self):
+    def test_the_offers_are_the_loops_answer(self):
         offers = self.ask(self.service.steps.rerun_offers(self.cwd, self.unit))
         self.assertEqual([o["stage"] for o in offers["offers"]], ["intent", "spec", "plan", "pr"])
         self.assertEqual(

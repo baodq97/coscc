@@ -62,7 +62,7 @@ def running_version() -> str:
 def public(version: str) -> tuple[int, int, int] | None:
     """`X.Y.Z` of a version, local part dropped, as numbers. `None` when not that shape.
 
-    A tag has passed `cos.mjs check-tag`, so every release is `X.Y.Z`; three integers are all the PEP 440 this needs.
+    A tag has passed `python -m coscc.loop check-tag`, so every release is `X.Y.Z`; three integers are all the PEP 440 this needs.
     """
     m = _PUBLIC.fullmatch(version.split("+", 1)[0])
     return (int(m[1]), int(m[2]), int(m[3])) if m else None

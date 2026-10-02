@@ -39,7 +39,7 @@ STAGE_RESULT: tuple[ResultStage, ...] = get_args(ResultStage)
 ROUND = "review"
 
 # What a round's `verdict` puts on `review.md`. `needs-person` keeps it `changes-requested`:
-# the unit is not finished, and `cos.mjs` reads the round's verdict for the wait.
+# the unit is not finished, and the loop reads the round's verdict for the wait.
 Verdict = Literal["pass", "changes-requested", "needs-person"]
 ROUND_STATES = {
     "pass": "accepted",
@@ -105,7 +105,7 @@ def stage_result_schema(stage: str) -> dict[str, Any]:
     }
 
 
-# The labels a finding may carry, `cos.mjs`'s own: `open`, `fixed` in a commit, or what the
+# The labels a finding may carry, the loop's own: `open`, `fixed` in a commit, or what the
 # review made of impl's claim or of a person's answer.
 FINDING_STATES: tuple[FindingState, ...] = get_args(FindingState)
 
@@ -249,7 +249,7 @@ def schema_for(stage: str) -> dict[str, Any] | None:
 
 def round_problem(obj: Mapping[str, Any]) -> str:
     """What a review round says that its schema cannot rule out, `""` when nothing: an id
-    given twice, or a `fixed` with no commit, which `cos.mjs` would read as neither."""
+    given twice, or a `fixed` with no commit, which the loop would read as neither."""
     ids = [f["id"] for f in obj.get("findings") or ()]
     twice = sorted({i for i in ids if ids.count(i) > 1})
     if twice:

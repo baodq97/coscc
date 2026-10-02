@@ -1,15 +1,15 @@
 """Tests for where a workspace's units live, and for starting one.
 
-`cos.mjs` is run for real here rather than stubbed. What is under test is an agreement
-with that script — the shape it prints, the path it prints it relative to, what it says
+`python -m coscc.loop` is run for real here rather than stubbed. What is under test is an agreement
+with the loop — the shape it prints, the path it prints it relative to, what it says
 about a bad slug — and a stub agrees with whatever it was told. `tests/units/test_board.py:1-7`
-makes the same argument for the same script.
+makes the same argument for the same loop.
 """
 
 from __future__ import annotations
 
 import json
-
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,7 +63,7 @@ class OneFunctionAnswersWhereUnitsLive(Fixture):
 
 
 class StartingAUnit(Fixture):
-    def test_the_number_comes_from_cos_mjs_and_counts_up(self):
+    def test_the_number_comes_from_the_loop_and_counts_up(self):
         first = units.create(WS, "a-first-problem", "", self.data)
         second = units.create(WS, "a-second-problem", "", self.data)
         self.assertEqual(first["unit"], "0001_a-first-problem")
@@ -124,21 +124,23 @@ class NumbersTakenInTheHostRepositoryCount(Fixture):
         host = self._host("0014_n")
         self.assertEqual(units.create(host, "fresh", "", self.data)["unit"], "0001_fresh")
 
-    def test_the_number_is_whatever_cos_mjs_prints(self):
-        """The number is whatever `cos.mjs` prints: if Python worked it out itself, it would not be
-        the fake script's."""
+    def test_the_number_is_whatever_the_loop_prints(self):
+        """The number is whatever the loop prints: if Python worked it out itself, it would not be
+        the fake loop's."""
         from unittest import mock
 
-        fake = Path(self.data) / "fake-cos.mjs"
+        fake = Path(self.data) / "fake_loop.py"
         seen = Path(self.data) / "argv.json"
         fake.write_text(
-            "import { writeFileSync } from 'node:fs'\n"
-            f"writeFileSync({str(seen)!r}, JSON.stringify(process.argv.slice(2)))\n"
-            "console.log('.cos/0042_fixed')\n",
+            "import json, sys\n"
+            f"open({str(seen)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+            "print('.cos/0042_fixed')\n",
             encoding="utf-8",
         )
         host = self._host("0014_n")
-        with mock.patch("coscc.agent.harness.script", return_value=fake):
+        with mock.patch(
+            "coscc.loop.run.argv", lambda args: [sys.executable, "-P", str(fake), *args]
+        ):
             made = units.create(host, "anything", "", self.data, reserve_from=[host])
         self.assertEqual(made["unit"], "0042_fixed")
 
@@ -147,7 +149,7 @@ class NumbersTakenInTheHostRepositoryCount(Fixture):
         argv = json.loads(seen.read_text(encoding="utf-8"))
         at = argv.index("--reserve-from")
         self.assertEqual(argv[at + 1], str(host.resolve()))
-        # Before the command, so an older script refuses instead of ignoring it (plan Risk 3).
+        # Before the command, so an older loop refuses instead of ignoring it (plan Risk 3).
         self.assertLess(at, argv.index("new-path"))
 
 
@@ -182,7 +184,7 @@ class TheBriefBecomesTheIdea(Fixture):
         self.assertIn("Status: accepted.", text)
 
     def test_the_loop_reads_it_back_as_an_accepted_idea(self):
-        # The only check that matters: `cos.mjs` has to agree it is a readable artifact,
+        # The only check that matters: the loop has to agree it is a readable artifact,
         # because a file it calls broken blocks the unit rather than helping it.
         made = units.create(WS, "a-problem", "some words", self.data)
         store = units.root(WS, self.data)
@@ -199,7 +201,7 @@ class TheBriefBecomesTheIdea(Fixture):
 
 class TheBranchNameComesFromTheIntent(Fixture):
     def test_it_refuses_before_the_intent_stage_has_run_and_says_which_file_is_missing(self):
-        # `cos.mjs unit-branch` says `No such work unit` here, which is true of the file
+        # The loop's `unit-branch` says `No such work unit` here, which is true of the file
         # it reads and false of the unit. Measured 2026-09-22.
         made = units.create(WS, "a-problem", "", self.data)
         with self.assertRaises(CannotCreate) as caught:

@@ -1,6 +1,6 @@
 """What the autopilot decides, with no I/O: every function here is pure.
 
-The autopilot starts the stage `cos.mjs next` names through the same `Steps.run_step` a
+The autopilot starts the stage the loop's `next` names through the same `Steps.run_step` a
 person's press goes through, which still asks the gate. What it decides is where it must
 stop for a person, whether the day's money allows one more step, and which candidate steps
 may start now. Starting a step is not a person's approval of anything.
@@ -117,7 +117,7 @@ PR_MACHINE = "prmachine"
 
 
 def is_step(record: dict[str, Any]) -> bool:
-    """False for a line of a session that is no stage of `cos.mjs`'s loop (`NOT_STEPS`)."""
+    """False for a line of a session that is no stage of the loop (`NOT_STEPS`)."""
     return record.get("stage") not in NOT_STEPS
 
 
@@ -126,7 +126,7 @@ def _stop(kind: str, reason: str) -> dict[str, str]:
 
 
 def open_questions(unit_row: dict[str, Any]) -> list[dict[str, Any]]:
-    """Every unanswered question of the counted artifact (`cos.mjs` `unitQuestions`): the stop `a`,
+    """Every unanswered question of the counted artifact (the loop's `unitQuestions`): the stop `a`,
     and the `questions` record a step that ends `done` leaves."""
     return [
         q for q in unit_row.get("questions") or [] if q.get("counted") and not q.get("answered")
@@ -250,7 +250,7 @@ def stop_for(
         return None
     # f. Nothing to run, and not because CI is still running.
     if not stage and not is_ci_pending(nxt):
-        return _stop("f", action or "cos.mjs next named no stage")
+        return _stop("f", action or "the loop named no stage for next")
     return None
 
 
@@ -649,7 +649,7 @@ def answered_since_start(
     records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str
 ) -> bool:
     """Whether an `answer` record of `stage` on `unit` came after its last `start`. A run
-    again that ends `draft` keeps its answered questions' numbers, so `cos.mjs next` can say
+    again that ends `draft` keeps its answered questions' numbers, so the loop's `next` can say
     `rerun` with no new answer behind it; without this the autopilot would rerun on every pass."""
     fresh = False
     for r in records:

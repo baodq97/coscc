@@ -1,8 +1,8 @@
-"""The work-unit loop, decided in Python: a port of `.claude/scripts/cos.mjs`, command for command.
+"""The work-unit loop, decided in Python, command by command.
 
-`python -m coscc.loop <command>` takes the arguments `cos.mjs` takes and prints what it prints,
-byte for byte. This module holds what every part shares: the stages and the other
-constants `cos.mjs` defines, and the few helpers that keep JavaScript's semantics where Python's
+`python -m coscc.loop <command>` takes the loop's arguments and prints its answers,
+byte for byte as the app reads them. This module holds what every part shares: the stages and the other
+constants the loop defines, and the few helpers that keep JavaScript's semantics where Python's
 differ — `trim`, the `${}` of a template string, `?.` on a dict, `JSON.stringify`.
 """
 
@@ -41,7 +41,7 @@ def checkout() -> Path:
 UNIT_RE = re.compile(r"^(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)$", re.ASCII)
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", re.ASCII)
 
-# `cos.mjs` `STAGES`, in order and with the same keys, so `status --json` prints them alike.
+# The loop's `STAGES`, in order and with the same keys, so `status --json` prints them alike.
 STAGES: list[dict[str, Any]] = [
     {"name": "idea", "file": "idea.md", "optional": True, "hint": "write-idea",
      "statuses": ["draft", "accepted", "rejected"]},
@@ -71,13 +71,13 @@ SPIKE = next(s for s in STAGES if s.get("when") == "unmeasured")
 
 
 def stage_of(name):
-    """`cos.mjs` `stageOf`: the stage named, through `STAGE_ALIAS`, or `None`."""
+    """`stageOf`: the stage named, through `STAGE_ALIAS`, or `None`."""
     want = STAGE_ALIAS.get(name, name) if isinstance(name, str) else name
     return next((s for s in STAGES if s["name"] == want), None)
 
 
 RERUNNABLE = ["intent", "spec", "spike", "plan", "pr"]
-# `cos.mjs` `RERUN_STAGES`: what `status --json` carries as `afterAnswers`.
+# `RERUN_STAGES`: what `status --json` carries as `afterAnswers`.
 RERUN_STAGES = ["intent", "spec", "spike", "plan", "impl"]
 SPIKE_ROUNDS = 2
 REVIEW_ROUNDS = 3
@@ -91,7 +91,7 @@ NEEDS_STATE = "needs the coscc app: pass --state <file|-> (uv run coscc state <w
 
 
 def code(c: str) -> str:
-    """`cos.mjs` `code`: a reason code, refused here when `REASONS` lacks it."""
+    """`code`: a reason code, refused here when `REASONS` lacks it."""
     if c not in REASONS:
         raise ValueError(f"{c!r} is not in coscc.units.guards.REASONS")
     return c

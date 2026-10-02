@@ -12,7 +12,7 @@
  "tests/loop/test_branch.py::test_check_branch_beside_other_words#1": [
   2,
   "",
-  "usage: cos.mjs [--root <dir>] <command>\n  reading a .cos/ (these take --root):\n    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | meta [<unit> [<artifact>]...]\n    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, the app's snapshot\n  describing this checkout (these do not):\n    check-branch [name] | check-tag <tag> | check-version\n"
+  "usage: python -m coscc.loop [--root <dir>] <command>\n  reading a .cos/ (these take --root):\n    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | meta [<unit> [<artifact>]...]\n    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, the app's snapshot\n  describing this checkout (these do not):\n    check-branch [name] | check-tag <tag> | check-version\n"
  ],
  "tests/loop/test_branch.py::test_check_branch_beside_other_words#2": [
   0,
@@ -247,12 +247,12 @@
  "tests/loop/test_branch.py::test_check_tag_with_no_tag_is_misuse#1": [
   2,
   "",
-  "usage: cos.mjs check-tag <vX.Y.Z | vX.Y.Z-rc.N>\n"
+  "usage: python -m coscc.loop check-tag <vX.Y.Z | vX.Y.Z-rc.N>\n"
  ],
  "tests/loop/test_branch.py::test_check_tag_with_no_tag_is_misuse#2": [
   2,
   "",
-  "usage: cos.mjs check-tag <vX.Y.Z | vX.Y.Z-rc.N>\n"
+  "usage: python -m coscc.loop check-tag <vX.Y.Z | vX.Y.Z-rc.N>\n"
  ],
  "tests/loop/test_branch.py::test_pr_text_against_the_units_type[3-True]#1": [
   0,
@@ -597,7 +597,7 @@
  "tests/loop/test_branch.py::test_pr_text_with_no_name_is_misuse#1": [
   2,
   "",
-  "usage: cos.mjs pr-text <NNNN_slug>\n"
+  "usage: python -m coscc.loop pr-text <NNNN_slug>\n"
  ],
  "tests/loop/test_branch.py::test_pr_text_with_no_status_line#1": [
   0,
@@ -617,27 +617,27 @@
  "tests/loop/test_branch.py::test_root_is_refused_for_the_checks_in_every_form[argv0]#1": [
   2,
   "",
-  "--root does not apply to `check-branch`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+  "--root does not apply to `check-branch`: it reports on the checkout of the working directory,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
  ],
  "tests/loop/test_branch.py::test_root_is_refused_for_the_checks_in_every_form[argv1]#1": [
   2,
   "",
-  "--root does not apply to `check-branch`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+  "--root does not apply to `check-branch`: it reports on the checkout of the working directory,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
  ],
  "tests/loop/test_branch.py::test_root_is_refused_for_the_checks_in_every_form[argv2]#1": [
   2,
   "",
-  "--root does not apply to `check-tag`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+  "--root does not apply to `check-tag`: it reports on the checkout of the working directory,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
  ],
  "tests/loop/test_branch.py::test_root_is_refused_for_the_checks_in_every_form[argv3]#1": [
   2,
   "",
-  "--root does not apply to `check-version`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+  "--root does not apply to `check-version`: it reports on the checkout of the working directory,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
  ],
  "tests/loop/test_branch.py::test_root_is_refused_for_the_checks_in_every_form[argv4]#1": [
   2,
   "",
-  "--root does not apply to `check-version`: it reports on the checkout this script lives in,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
+  "--root does not apply to `check-version`: it reports on the checkout of the working directory,\n  not on a .cos/ somewhere else. Run it from the repository you mean.\n"
  ],
  "tests/loop/test_branch.py::test_unit_branch_cuts_a_long_slug#1": [
   0,
@@ -717,7 +717,7 @@
  "tests/loop/test_branch.py::test_unit_branch_with_no_name_is_misuse#1": [
   2,
   "",
-  "usage: cos.mjs unit-branch <NNNN_slug>\n"
+  "usage: python -m coscc.loop unit-branch <NNNN_slug>\n"
  ],
  "tests/loop/test_branch.py::test_unit_branch_with_no_type#1": [
   1,

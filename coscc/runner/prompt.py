@@ -5,6 +5,7 @@ adds to them.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -161,7 +162,7 @@ def with_rows(raw: bytes, artifact: str, meta: dict[str, Any] | None) -> str:
 
 def _open_questions(text: str) -> str:
     """The `## Open questions` section of an artifact, verbatim: from that heading to the next
-    `## ` heading or the end of the file. Mirrors `cos.mjs`'s `section()`; the numbers are what
+    `## ` heading or the end of the file. Mirrors the loop's `section()`; the numbers are what
     `### Câu N` in the Answers section refers back to.
     """
     lines = text.splitlines()
@@ -269,18 +270,21 @@ SESSION_ENDS_ADVICE = (
     "never end it saying you will wait for something or come back."
 )
 
-# The step's `cos.mjs` is this app's copy, not the skills' path; the app says where it is.
-HARNESS_HEADING = "# The harness script"
+# The step's loop is this app's copy, not the worktree's; the app says how to run it.
+HARNESS_HEADING = "# The loop"
 
 
 def harness_advice(directory: Path, state_file: str | Path | None = None) -> str:
-    """Where `cos.mjs` is and which `--root` a unit in `directory` takes, and the snapshot file its
-    deciding commands read, which `cos.mjs` refuses to decide without.
+    """How to run the loop and which `--root` a unit in `directory` takes, and the snapshot file its
+    deciding commands read, which the loop refuses to decide without.
+
+    `sys.executable` is this app's interpreter, so the app's copy of the loop runs; `-P` keeps the
+    working directory, the unit's worktree with a `coscc/` of its own, off `sys.path`.
     """
     said = (
-        f"Where your rules say `node .claude/scripts/cos.mjs <command>`, run "
-        f"`node {harness.script()} <command> --root {directory.parent.parent}`. That is this "
-        "app's copy and this unit's store; no other copy is the one the app reads. Do not "
+        "Where your rules say `uv run python -m coscc.loop <command>`, run "
+        f"`{sys.executable} -P -m coscc.loop <command> --root {directory.parent.parent}`. That is "
+        "this app's copy and this unit's store; no other copy is the one the app reads. Do not "
         "search the filesystem for it."
     )
     if state_file:
@@ -367,12 +371,12 @@ def _opening(stage: str, agent: dict[str, Any] | None) -> list[str]:
 def _already_asked(gate_said: str, base_note: str, drift_note: str) -> list[str]:
     """What the app checked before it started the step, and the answer it got."""
     blocks: list[str] = []
-    # The rules tell a stage to run `cos.mjs gate`, which a toolless stage cannot; the app asked, so
+    # The rules tell a stage to run `coscc.loop gate`, which a toolless stage cannot; the app asked, so
     # a running step has an open gate.
     if gate_said:
         blocks.append(
             "# The gate, already asked\n\n"
-            "The app ran `cos.mjs gate` for this stage before starting this step, and it "
+            "The app ran `coscc.loop gate` for this stage before starting this step, and it "
             "is open. It would not have started otherwise. This is what the gate said:\n\n"
             f"    {gate_said}\n\n"
             "Do not ask it again and do not treat it as unasked — you may have no tools "
@@ -643,11 +647,11 @@ def _rounds_so_far(stage: str, directory: Path, review: str, included: list[str]
 def _unfinished_round(
     stage: str, unfinished_round: dict[str, Any] | None, included: list[str]
 ) -> list[str]:
-    """`review` only: why it runs again after a round `cos.mjs` did not count.
+    """`review` only: why it runs again after a round the loop did not count.
 
-    The last round asked for changes but dropped ids an earlier round raised, so `cos.mjs` does
+    The last round asked for changes but dropped ids an earlier round raised, so the loop does
     not count it and sent the unit here again. The block above may say nothing is left open;
-    this says why the review runs anyway. The ids are `cos.mjs`'s, carried by
+    this says why the review runs anyway. The ids are the loop's, carried by
     `service.steps.run_step`.
     """
     if stage != "review" or not unfinished_round:
@@ -658,7 +662,7 @@ def _unfinished_round(
     return [
         "# The round that did not count\n\n"
         f"Round {number} asked for changes but does not list {dropped}, which an earlier "
-        "round raised, so `cos.mjs` does not count it against `COS_REVIEW_ROUNDS` and "
+        "round raised, so the loop does not count it against `COS_REVIEW_ROUNDS` and "
         f"this review runs again. Write Round {number + 1} as a full round for the commit "
         "named below. List every finding of every earlier round with its label, "
         f"{dropped} among them."
@@ -876,7 +880,7 @@ def compose_prompt(
     sibling checkouts `impl` may read (`impl` only). `rerun` is true only for a stage a person
     ran again from the board, with `rerun_note` their note. `plan_map` is what `planmap.for_step` built and
     `commands` the words of the step's grant (`impl` only). `unfinished_round` is
-    `{"n", "dropped"}` of a last round `cos.mjs` read as unfinished (`review` only).
+    `{"n", "dropped"}` of a last round the loop read as unfinished (`review` only).
     `runs_commands` is true when the step's grant holds `Bash`. `unit_meta` is the unit's entry
     in the snapshot: its answers and holds, rendered where the file's `## Answers` blocks were.
 

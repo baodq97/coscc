@@ -1,7 +1,7 @@
 """Integrating a unit whose pull request fell behind `main`.
 
-Not a stage. It runs only on a unit `cos.mjs` says sits between `pr` and ship
-(`betweenPrAndShip`), only when a person presses the button, and it writes no artifact. Each
+Not a stage. It runs only on a unit the loop says sits between `pr` and ship
+(`between_pr_and_ship`), only when a person presses the button, and it writes no artifact. Each
 attempt leaves one `integration` record in the run log.
 
 Two roads:
@@ -253,7 +253,7 @@ def warnings(
     out: list[str] = []
     # The app cannot tell "behind but mergeable", so the page says when integrating a passed unit
     # is worth another round, and leaves it to a person. Only a rebase that changes the unit's patch
-    # costs that round; `cos.mjs` decides which, and this only says so. After changes were asked,
+    # costs that round; the loop decides which, and this only says so. After changes were asked,
     # the same test decides between impl and a round that counts.
     if rounds and str(rounds[-1].get("verdict") or "") == "pass":
         out.append(
@@ -268,7 +268,7 @@ def warnings(
     if review_status == "changes-requested":
         out.append(
             "review.md asks for changes. If integrating leaves the unit's patch unchanged — "
-            "the same added, removed and context lines — cos.mjs next still offers impl, and "
+            "the same added, removed and context lines — the loop's next still offers impl, and "
             "no review round is spent. If it changes the patch, next offers review once CI is "
             "green, and that round counts toward COS_REVIEW_ROUNDS."
         )
@@ -658,7 +658,7 @@ async def open_prs(root: str) -> list[dict]:
 
 
 async def required_checks(tree: str, n: int) -> list[dict]:
-    """The same call the `review` gate makes (`cos.mjs`, `pr checks --required`)."""
+    """The same call the `review` gate makes (the loop, `pr checks --required`)."""
     code, out, err = await _gh(
         ["pr", "checks", str(int(n)), "--required", "--json", "name,bucket"], tree
     )

@@ -1,4 +1,4 @@
-"""An idea several units share, each unit in its own workspace. What an idea *means* to a gate is `cos.mjs`'s; this module writes
+"""An idea several units share, each unit in its own workspace. What an idea *means* to a gate is the loop's; this module writes
 the file, links a unit to it, and gathers what the `/idea` page and a step's prompt show.
 """
 
@@ -101,7 +101,7 @@ class Ideas:
     def _idea_of(self, cwd: str, unit: str) -> dict[str, Any] | None:
         """The idea that lists `<cwd's name>/<unit>` under `## Units`, with that line, or None.
 
-        Read off the files in each store, never `cos.mjs`: which idea a unit was opened from is the
+        Read off the files in each store, never the loop: which idea a unit was opened from is the
         app's own record, and asking the script would read every workspace's board.
         """
         name = self.ws.name(cwd)
@@ -244,7 +244,7 @@ class Ideas:
 
     def refresh_ideas(self, cwd: str) -> None:
         """`cwd`'s ideas into `cos.db` again, after the app wrote one. A failure is left to
-        the board: `cos.mjs` then reports the idea link it cannot find."""
+        the board: the loop then reports the idea link it cannot find."""
         try:
             self.ws.unit_meta().refresh_ideas(self.ws.key(cwd), self.ws.units_root(cwd))
         except MetaError, Busy, sqlite3.Error, OSError:

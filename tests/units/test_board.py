@@ -1,7 +1,7 @@
 """Tests for the board, run against the only real set of work units there is.
 
 This repository's own `.cos/` is the fixture. That is deliberate: the thing most likely to break
-here is not the parsing but the *agreement* between this module and `.claude/scripts/cos.mjs`, and a
+here is not the parsing but the *agreement* between this module and `coscc.loop`, and a
 hand-built fixture would keep passing after the two drift apart."""
 
 from __future__ import annotations
@@ -10,16 +10,18 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.units.test_meta import WithSnapshot, snapshot_of
+from tests.units.test_meta import WithSnapshot, loop, snapshot_of
 from coscc.units import board as _board
 
 board = WithSnapshot(_board)
 from coscc.agent import harness
+from coscc.loop import run as loop_run
 from coscc.units.board import Unavailable
 
 REPO = Path(__file__).resolve().parents[2]
@@ -44,25 +46,17 @@ class TheRepositoryReadsAsABoard(unittest.TestCase):
             got = [row["stage"] for row in unit["stages"]]
             self.assertEqual(got, STAGES, f"{unit['name']} is missing a stage")
 
-    def test_the_type_is_cos_mjs_s_verbatim(self):
+    def test_the_type_is_the_loops_verbatim(self):
         # Copied from `status --json`, never read from `intent.md` here.
         data = run(board.read(REPO))
-        out = subprocess.run(
-            [
-                "node",
-                str(harness.script()),
-                "--root",
-                str(REPO),
-                "--state",
-                "-",
-                "status",
-                "--json",
-            ],
+        out = loop(
+            "--root",
+            str(REPO),
+            "--state",
+            "-",
+            "status",
+            "--json",
             input=json.dumps(snapshot_of(REPO)),
-            capture_output=True,
-            text=True,
-            check=True,
-            env=harness.child_env(),
         ).stdout
         want = {u["name"]: str(u.get("type") or "") for u in json.loads(out)["units"]}
         self.assertEqual({u["name"]: u["type"] for u in data["units"]}, want)
@@ -102,8 +96,8 @@ class TheStageListNeedsNoWorkspace(unittest.TestCase):
         self.assertEqual(run(board.stages()), run(board.read(REPO))["stages"])
         self.assertEqual(run(board.stages()), STAGES)
 
-    def test_no_node_is_unavailable_not_a_crash(self):
-        with mock.patch.object(board, "_run", side_effect=OSError("no node")):
+    def test_a_loop_that_cannot_start_is_unavailable_not_a_crash(self):
+        with mock.patch.object(board, "_run", side_effect=OSError("cannot start")):
             with self.assertRaises(Unavailable):
                 run(board.stages())
 
@@ -125,7 +119,7 @@ class ThePhaseIsCarriedFromTheScript(unittest.TestCase):
 
 
 class QuestionsAreCarriedFromTheScript(unittest.TestCase):
-    """The board forwards what `cos.mjs` decided and recounts nothing."""
+    """The board forwards what the loop decided and recounts nothing."""
 
     TEXT = (
         "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n"
@@ -155,7 +149,7 @@ class QuestionsAreCarriedFromTheScript(unittest.TestCase):
             self.assertEqual((u["open"], u["questions"], u["counted"]), (0, [], ""))
 
     def test_who_answered_and_every_answer_in_force_are_copied(self):
-        """`by` on each question and `answers` on the unit, from the joined answer `cos.mjs` sent;
+        """`by` on each question and `answers` on the unit, from the joined answer the loop sent;
         the last block for a number is the one in force."""
         text = (
             self.TEXT
@@ -302,14 +296,15 @@ class TheStageAtAndWhyAreCarriedFromTheScript(unittest.TestCase):
                 unit.mkdir(parents=True)
                 for f, text in files.items():
                     (unit / f).write_text(text, encoding="utf-8")
-            script = REPO / ".claude" / "scripts" / "cos.mjs"
             said = json.loads(
-                subprocess.run(
-                    ["node", str(script), "--root", d, "--state", "-", "status", "--json"],
+                loop(
+                    "--root",
+                    d,
+                    "--state",
+                    "-",
+                    "status",
+                    "--json",
                     input=json.dumps(snapshot_of(d)),
-                    capture_output=True,
-                    text=True,
-                    check=True,
                 ).stdout
             )
             got = run(board.read(d))["units"]
@@ -355,59 +350,65 @@ class AnEmptyWorkspaceIsAnAnswerNotAFailure(unittest.TestCase):
         self.assertIsNone(data["empty_because"])
 
 
-class TheWorkspaceCopyOfTheHarnessIsNeverRun(unittest.TestCase):
-    def test_a_script_planted_in_the_workspace_is_ignored(self):
-        """A workspace is a cloned repository, so its `.claude/` is someone else's code.
+class TheWorkspaceCopyOfTheLoopIsNeverRun(unittest.TestCase):
+    def test_a_loop_planted_in_the_workspace_is_ignored(self):
+        """A workspace is a cloned repository, so a `coscc/` in it is someone else's code.
 
-        The planted script writes a file and exits non-zero. If the board ever ran the
-        copy it found in the workspace, both the marker and the failure would show.
+        The planted package writes a file and exits non-zero. The board runs with the
+        workspace as its working directory, where a bare `python -m coscc.loop` would find the
+        planted copy first; if the board ever ran it, both the marker and the failure would show.
         """
         with tempfile.TemporaryDirectory() as d:
-            workspace = Path(d)
-            scripts = workspace / ".claude" / "scripts"
-            scripts.mkdir(parents=True)
+            workspace = Path(d).resolve()
+            planted = workspace / "coscc" / "loop"
+            planted.mkdir(parents=True)
             marker = workspace / "PLANTED"
-            (scripts / "cos.mjs").write_text(
-                "import { writeFileSync } from 'node:fs'\n"
-                f"writeFileSync({str(marker)!r}, 'ran')\n"
-                "process.exit(3)\n"
+            (workspace / "coscc" / "__init__.py").write_text("")
+            (planted / "__init__.py").write_text("")
+            (planted / "__main__.py").write_text(
+                f"import sys\nopen({str(marker)!r}, 'w').write('ran')\nsys.exit(3)\n"
             )
             (workspace / ".cos").mkdir()
 
-            data = run(board.read(workspace))
+            here = os.getcwd()
+            os.chdir(workspace)
+            try:
+                data = run(board.read(workspace))
+            finally:
+                os.chdir(here)
 
-            self.assertFalse(marker.exists(), "the workspace's own cos.mjs was executed")
+            self.assertFalse(marker.exists(), "the workspace's own coscc/loop was executed")
             self.assertEqual(data["units"], [])
             self.assertIn("holds no work units", data["empty_because"])
 
 
 class AnUnreadableBoardRaisesRatherThanReturningEmpty(unittest.TestCase):
-    def test_a_missing_harness_script_is_not_reported_as_an_empty_board(self):
+    def test_a_loop_that_cannot_start_is_not_reported_as_an_empty_board(self):
         # "No units" and "I could not look" are different answers, and a page that shows
         # the first when it means the second is the failure this test names.
-        # Both roots are moved, not just one: `harness.root()` falls back to the
-        # checkout, so blanking only the packaged side would still find a real script.
-        originals = (harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS)
-        harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
-        harness.CHECKOUT_HARNESS = Path("/nonexistent/checkout")
-        try:
+        with mock.patch.object(loop_run, "argv", return_value=["/nonexistent/python", "-m", "x"]):
             with self.assertRaises(Unavailable) as caught:
                 run(board.read(REPO))
-            self.assertIn("harness script is missing", str(caught.exception))
-        finally:
-            harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS = originals
+        self.assertIn("could not run coscc.loop", str(caught.exception))
+
+    def test_a_loop_that_does_not_answer_is_unavailable_not_an_empty_board(self):
+        hang = [sys.executable, "-c", "import time; time.sleep(60)"]
+        with mock.patch.object(loop_run, "argv", return_value=hang):
+            with self.assertRaises(Unavailable) as caught:
+                run(board.read(REPO, timeout=0.5))
+        self.assertIn("timed out", str(caught.exception))
 
     def test_the_child_environment_carries_no_secrets(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("COS_REVIEW_ROUNDS", None)
-            env = board._child_env()
+            env = harness.child_env()
         self.assertEqual(set(env), {"PATH", "HOME", "LC_ALL", "NO_COLOR"})
 
     def test_the_review_round_limit_is_the_one_setting_passed_down(self):
-        """`COS_REVIEW_ROUNDS` reaches `cos.mjs`, and nothing else new does."""
+        """`COS_REVIEW_ROUNDS` reaches the loop, and nothing else new does."""
         extra = {"COS_REVIEW_ROUNDS": "5", "GH_TOKEN": "secret", "COS_MODEL": "m"}
         with mock.patch.dict(os.environ, extra):
-            env = board._child_env()
+            env = harness.child_env()
         self.assertEqual(env["COS_REVIEW_ROUNDS"], "5")
         self.assertEqual(set(env), {"PATH", "HOME", "LC_ALL", "NO_COLOR", "COS_REVIEW_ROUNDS"})
 
@@ -420,7 +421,7 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
     """`.claude/CLAUDE.md` invariant 2, which this app walked past until 2026-09-23.
 
     The fixture is this repository's own `.cos/`, for the reason in the module docstring:
-    what breaks here is agreement with `.claude/scripts/cos.mjs`, and a hand-built unit
+    what breaks here is agreement with `coscc.loop`, and a hand-built unit
     would keep passing after the two drift apart.
     """
 
@@ -488,24 +489,19 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
         self.assertEqual(argv[argv.index("--repo") + 1], str(Path(tmp).resolve()))
         self.assertEqual(seen["timeout"], board.GATE_TIMEOUT)
 
-    def test_a_missing_script_is_unavailable_not_a_closed_gate(self):
+    def test_a_loop_that_cannot_start_is_unavailable_not_a_closed_gate(self):
         """A gate that cannot be asked must not read as a gate that said no.
 
         The two are opposite instructions to a caller: one is "fix the install", the other
         is "finish the earlier stage".
         """
-        with tempfile.TemporaryDirectory() as tmp:
-            original = harness.script
-            harness.script = lambda: Path(tmp) / "not-here.mjs"
-            try:
-                with self.assertRaises(Unavailable):
-                    run(board.gate(REPO, "0001_no-session-management", "spec"))
-            finally:
-                harness.script = original
+        with mock.patch.object(loop_run, "argv", return_value=["/nonexistent/python", "-m", "x"]):
+            with self.assertRaises(Unavailable):
+                run(board.gate(REPO, "0001_no-session-management", "spec"))
 
 
 class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
-    """The run button's stage is `cos.mjs next`'s answer, copied through."""
+    """The run button's stage is the loop's `next` answer, copied through."""
 
     def _unit(self, tmp: str, files: dict[str, str]) -> str:
         name = "0001_what-comes-next"
@@ -517,14 +513,9 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
 
     def _script_says(self, tmp: str, name: str, *extra: str) -> dict:
         import json
-        import subprocess
 
-        out = subprocess.run(
-            ["node", str(harness.script()), "--root", tmp, "--state", "-", "next", name, *extra],
-            input=json.dumps(snapshot_of(tmp)),
-            capture_output=True,
-            text=True,
-            check=True,
+        out = loop(
+            "--root", tmp, "--state", "-", "next", name, *extra, input=json.dumps(snapshot_of(tmp))
         ).stdout
         return json.loads(out)
 
@@ -612,7 +603,7 @@ AWAITING_PERSON = {
 
 
 class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
-    """`waiting` and `personFindings` are `cos.mjs`'s, copied and nothing more."""
+    """`waiting` and `personFindings` are the loop's, copied and nothing more."""
 
     _unit = TheNextStageIsAskedNotWorkedOut._unit
     _script_says = TheNextStageIsAskedNotWorkedOut._script_says
@@ -696,7 +687,7 @@ OUTCOME_INTENT = (
 
 
 class TheOutcomeIsCopiedFromTheScript(unittest.TestCase):
-    """The board forwards `cos.mjs` `unitOutcome`; it reads no block itself."""
+    """The board forwards the loop `unitOutcome`; it reads no block itself."""
 
     def _read(self, files: dict[str, str]):
         with tempfile.TemporaryDirectory() as d:
@@ -743,7 +734,7 @@ PAUSED_INTENT = (
 
 
 class TheHoldIsCarriedFromTheScript(unittest.TestCase):
-    """`hold` and `hold_moves` are `cos.mjs`'s, copied and nothing more."""
+    """`hold` and `hold_moves` are the loop's, copied and nothing more."""
 
     _unit = TheNextStageIsAskedNotWorkedOut._unit
 
@@ -780,7 +771,7 @@ _MORE_ROUNDS = "\n## Answers\n\n### More rounds\nDecided by: owner. Date: 2026-0
 
 
 class MoreRoundsAreCarriedFromTheScript(unittest.TestCase):
-    """`more_rounds` and `rounds_granted` are `cos.mjs`'s, copied and nothing more."""
+    """`more_rounds` and `rounds_granted` are the loop's, copied and nothing more."""
 
     def _stuck(self, tmp: str, name: str, review: str) -> None:
         d = Path(tmp) / ".cos" / name
@@ -814,7 +805,7 @@ class MoreRoundsAreCarriedFromTheScript(unittest.TestCase):
 
 
 class TheStagesAnAnsweredDraftRunsAgainAreCarriedFromTheScript(unittest.TestCase):
-    """`afterAnswers` is `cos.mjs`'s, copied onto the read and onto each unit."""
+    """`afterAnswers` is the loop's, copied onto the read and onto each unit."""
 
     def test_every_unit_carries_the_stages_an_answered_draft_runs_again(self):
         data = run(board.read(REPO))
@@ -840,7 +831,7 @@ PR_MD = (
 
 
 class ThePrTextIsCopiedFromTheScript(unittest.TestCase):
-    """The title and body come from `cos.mjs` `prText`; this module cuts nothing."""
+    """The title and body come from the loop `prText`; this module cuts nothing."""
 
     def test_a_unit_with_pr_md_gets_its_title_body_and_url(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -869,17 +860,17 @@ class ThePrTextIsCopiedFromTheScript(unittest.TestCase):
         self.assertEqual(got["code"], 1)
         self.assertIn("has no pr.md", got["error"])
 
-    def test_no_node_is_unavailable(self):
-        async def no_node(argv, timeout, stdin=None):
-            raise FileNotFoundError("node")
+    def test_a_loop_that_cannot_start_is_unavailable(self):
+        async def cannot_start(argv, timeout, stdin=None):
+            raise FileNotFoundError("python")
 
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", no_node):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", cannot_start):
             with self.assertRaises(Unavailable):
                 run(board.pr_text(tmp, "0001_a"))
 
 
 class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
-    """`board.screens` runs the app's `cos.mjs screens` against a real git repository and store, and
+    """`board.screens` runs the app's the loop's `screens` against a real git repository and store, and
     hands back what it printed."""
 
     def _repo(self, tmp: str) -> tuple[Path, Path, str]:
@@ -966,15 +957,15 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
         self.assertEqual(argv[argv.index("--repo") + 1], str(Path(tmp).resolve()))
         self.assertEqual(seen["timeout"], board.GATE_TIMEOUT)
 
-    def test_misuse_and_no_node_are_unavailable(self):
+    def test_misuse_and_a_loop_that_cannot_start_are_unavailable(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(Unavailable):
                 run(board.screens(tmp, "0009_not-here", tmp))
 
-        async def no_node(argv, timeout, stdin=None):
-            raise FileNotFoundError("node")
+        async def cannot_start(argv, timeout, stdin=None):
+            raise FileNotFoundError("python")
 
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", no_node):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", cannot_start):
             with self.assertRaises(Unavailable):
                 run(board.screens(tmp, "0001_x", tmp))
 
@@ -1023,7 +1014,7 @@ class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):
 
 
 class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
-    """Another workspace's units reach `cos.mjs` in the snapshot, under their workspace's name."""
+    """Another workspace's units reach the loop in the snapshot, under their workspace's name."""
 
     def test_a_dependency_is_read_across_workspaces_and_copied(self):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:

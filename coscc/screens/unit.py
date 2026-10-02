@@ -230,7 +230,7 @@ def _questions_tab() -> rx.Component:
 
 
 def _integration_panel() -> rx.Component:
-    """A separate component from the run button, which still offers only the stage `cos.mjs next` names. Hidden for a unit outside the window."""
+    """A separate component from the run button, which still offers only the stage `coscc.loop next` names. Hidden for a unit outside the window."""
     u = P.current_unit
     return rx.cond(
         u.integration_state != "",
@@ -403,7 +403,7 @@ def _outcome_panel() -> rx.Component:
     )
 
 
-# The button each move gets, keyed by the value `cos.mjs` puts in `holdMoves`.
+# The button each move gets, keyed by the value the loop puts in `holdMoves`.
 # Resume first: on a paused unit it is the way on, and Drop the way out.
 _HOLD_BUTTONS = (
     ("active", "Resume", "play"),
@@ -413,7 +413,7 @@ _HOLD_BUTTONS = (
 
 
 def _rerun_panel() -> rx.Component:
-    """Run an accepted stage again, apart from the main *Run*. The stages offered and what runs again after each are `cos.mjs rerun`'s. Nothing runs until the confirming button."""
+    """Run an accepted stage again, apart from the main *Run*. The stages offered and what runs again after each are `coscc.loop rerun`'s. Nothing runs until the confirming button."""
     return rx.vstack(
         rx.heading("Run an earlier stage again", size="4", weight="medium"),
         rx.hstack(
@@ -495,7 +495,7 @@ def _rerun_panel() -> rx.Component:
 
 
 def _hold_panel() -> rx.Component:
-    """The unit's hold as `cos.mjs` read it, and one button per move it allows.
+    """The unit's hold as the loop read it, and one button per move it allows.
 
     A button shows only when its value is in `hold_moves`. The *Drop* sentence is on screen before the button, because a drop closes a pull request with this machine's `gh` login. No name is asked.
     """
@@ -559,7 +559,7 @@ def _hold_panel() -> rx.Component:
 
 
 def _rounds_panel() -> rx.Component:
-    """Shown only when `cos.mjs` says the unit used its review rounds with findings still open. One sentence and one button."""
+    """Shown only when the loop says the unit used its review rounds with findings still open. One sentence and one button."""
     return s.panel(
         s.eyebrow("REVIEW ROUNDS"),
         s.text(
@@ -893,7 +893,7 @@ def _detail_dialog() -> rx.Component:
                                     ),
                                 ),
                                 rx.heading("The next step", size="4", weight="medium"),
-                                # What `cos.mjs next` said about this unit, verbatim. The stage below is its answer; the page works nothing out itself.
+                                # What `coscc.loop next` said about this unit, verbatim. The stage below is its answer; the page works nothing out itself.
                                 rx.hstack(
                                     s.text(
                                         P.run_said,
@@ -917,7 +917,7 @@ def _detail_dialog() -> rx.Component:
                                 ),
                                 # A paused unit's one way on, beside the line that says it is paused.
                                 rx.cond(_paused(), _hold_panel()),
-                                # `cos.mjs next` named findings a person must act on, and offers no stage. Say which; the button below opens them.
+                                # `coscc.loop next` named findings a person must act on, and offers no stage. Say which; the button below opens them.
                                 rx.cond(
                                     (P.next_stage == "") & (P.run_waiting.length() > 0),
                                     # The findings as a list, not a comma run.
@@ -1068,7 +1068,7 @@ def _detail_dialog() -> rx.Component:
                                 rx.cond(~P.unit_dropped, _integration_panel()),
                                 rx.cond(~P.unit_dropped, _outcome_panel()),
                                 _unit_cost(),
-                                # Kept for a dropped unit: its one move (`paused`, `cos.mjs` `HOLD_MOVES`) is the board's way back.
+                                # Kept for a dropped unit: its one move (`paused`, the loop's `HOLD_MOVES`) is the board's way back.
                                 rx.cond(~P.current_unit.more_rounds & ~_paused(), _hold_panel()),
                                 rx.cond(
                                     P.log_here,

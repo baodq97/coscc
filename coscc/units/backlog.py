@@ -1,6 +1,6 @@
 """Which units are waiting, what each is worth and costs, and the order to take them.
 
-Display only: nothing here reaches `cos.mjs`, a gate, `next` or the run button. It reads the
+Display only: nothing here reaches the loop, a gate, `next` or the run button. It reads the
 board's units and four kinds of run-log record and returns a fold of them; the last record
 wins. Every function is pure. A record that does not parse is skipped and named in
 `problems`; nothing raises on data, because `fold` runs on every board read.

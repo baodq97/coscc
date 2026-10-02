@@ -4,7 +4,7 @@ A plan's header declares `Impl: routine` or `Impl: novel`; this turns that into 
 effective label and its source: `forced` (`## Files that change` names a `SECURITY_SURFACE`
 file), `missing` (nothing usable declared; run as `novel`), `escalated` (a `routine` plan
 whose earlier `impl` stopped at `max_turns`; a budget stop does not escalate), `declared`.
-The label picks a model and effort in `models.py`; `cos.mjs` never reads it. Nothing raises.
+The label picks a model and effort in `models.py`; the loop never reads it. Nothing raises.
 """
 
 from __future__ import annotations
@@ -16,11 +16,12 @@ from typing import Any, Iterable
 log = logging.getLogger(__name__)
 
 # The files where a mistake costs the most. `coscc/agent/sessions.py` stands for `_options`
-# (a list of files cannot name a function). Pinned by `tests/agent/test_labels.py`.
+# (a list of files cannot name a function), `coscc/loop/rules.py` for the gates that decide a
+# unit. Pinned by `tests/agent/test_labels.py`.
 SECURITY_SURFACE = (
     "coscc/agent/policy.py",
     "coscc/agent/sessions.py",
-    ".claude/scripts/cos.mjs",
+    "coscc/loop/rules.py",
     ".claude/settings.json",
 )
 

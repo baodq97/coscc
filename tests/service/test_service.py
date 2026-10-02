@@ -6,7 +6,6 @@ as a missing test rather than as a bug only one entry point has."""
 from __future__ import annotations
 
 import asyncio
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -214,13 +213,12 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
     `run_step` maps this layer's refusals with one `except RunError`. 0012 introduced a
     second exception type on that path -- `harness.MissingRules`, raised when a stage's
     rules cannot be found -- and for one commit it escaped: measured 2026-09-22, a
-    workspace whose harness had `cos.mjs` but no skills produced an unhandled
+    workspace whose harness had no skills produced an unhandled
     `MissingRules` where a 400 was intended, so the page would have shown a 500 for the
     exact failure 0012 was built to report clearly.
 
-    The scenario is not hypothetical: it is a release whose copy step took `scripts/` and
-    not `skills/`, which is one of the four things `harness.wheel_complaints` exists to
-    refuse.
+    The scenario is not hypothetical: it is a release whose copy step left out `skills/`, which is one of the things
+    `harness.wheel_complaints` exists to refuse.
     """
 
     def test_a_stage_whose_rules_are_missing_is_invalid_not_an_escaped_exception(self):
@@ -235,12 +233,9 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             (unit / "intent.md").write_text("Status: accepted.\nI", encoding="utf-8")
             (unit / "spec.md").write_text("Status: accepted.\nS", encoding="utf-8")
 
-            # A harness carrying cos.mjs and no skills: the Board reads, every Run refuses.
+            # A harness carrying no skills: the Board reads, every Run refuses.
             half = root / "half"
-            (half / "scripts").mkdir(parents=True)
-            shutil.copy(
-                Path(REPO) / ".claude" / "scripts" / "cos.mjs", half / "scripts" / "cos.mjs"
-            )
+            half.mkdir()
             (half / "skills").mkdir()
 
             config = Config(

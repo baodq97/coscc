@@ -28,8 +28,8 @@ through `questions` as the prompt says, and never re-ask a question that has a b
 
 ## Write it
 
-`cos.mjs new-path <slug>` allocates the directory (slug lowercase-hyphenated, names the
-problem). Write `intent.md` there, at most 2 KB, in their words where they decided something. No
+`uv run python -m coscc.loop new-path <slug>` allocates the directory (slug
+lowercase-hyphenated, names the problem). Write `intent.md` there, at most 2 KB, in their words where they decided something. No
 solution design: the spec decides how. `Type` is a conventional-commit type.
 
 ````markdown

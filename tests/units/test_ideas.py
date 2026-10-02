@@ -1,6 +1,6 @@
 """Tests for an idea several units share.
 
-`cos.mjs new-idea` is run for real, for the reason `tests/units/test_units.py:1-7` gives."""
+The loop's `new-idea` is run for real, for the reason `tests/units/test_units.py:1-7` gives."""
 
 from __future__ import annotations
 

@@ -48,7 +48,7 @@ class TheVersionAnswer(unittest.TestCase):
     """The only thing that separates an update from an apparent update."""
 
     def test_it_matches_the_version_the_repository_declares(self):
-        # `cos.mjs check-version` keeps pyproject in step with four other places, so
+        # `coscc.loop check-version` keeps pyproject in step with four other places, so
         # agreeing with pyproject is agreeing with all of them.
         import re
         from pathlib import Path
@@ -114,21 +114,20 @@ class ResetPassword(unittest.TestCase):
 
 
 class TheStateCommand(unittest.TestCase):
-    """The snapshot at a terminal, so `cos.mjs gate` can still be asked there."""
+    """The snapshot at a terminal, so `coscc.loop gate` can still be asked there."""
 
-    def test_coscc_state_prints_what_cos_mjs_state_reads(self):
+    def test_coscc_state_prints_what_the_loop_state_reads(self):
         import contextlib
         import io
         import json
         import shutil
-        import subprocess
         import tempfile
         from pathlib import Path
         from unittest import mock
 
         from coscc import units
-        from coscc.agent import harness
         from coscc.data import Data
+        from coscc.loop import run as loop
 
         fixture = Path(__file__).resolve().parent / "units" / "testdata" / "meta_store"
         with tempfile.TemporaryDirectory() as d:
@@ -153,25 +152,12 @@ class TheStateCommand(unittest.TestCase):
             self.assertEqual(done.exception.code, 0)
             snapshot = json.loads(out.getvalue())
             self.assertEqual(snapshot["workspace"], "proj")
-            gate = subprocess.run(
-                [
-                    "node",
-                    str(harness.script()),
-                    "--root",
-                    str(store),
-                    "--state",
-                    "-",
-                    "gate",
-                    "0013_open-question",
-                    "plan",
-                ],
-                input=out.getvalue(),
-                capture_output=True,
-                text=True,
-                env=harness.child_env(),
+            gate = loop.ask_sync(
+                ["--root", str(store), "--state", "-", "gate", "0013_open-question", "plan"],
+                stdin=out.getvalue(),
             )
-            self.assertEqual(gate.returncode, 1)
-            self.assertIn("spec.md", gate.stderr)
+            self.assertEqual(gate.code, 1)
+            self.assertIn("spec.md", gate.err)
             with (
                 mock.patch.dict("os.environ", env),
                 contextlib.redirect_stderr(io.StringIO()),
@@ -228,28 +214,13 @@ class TheSkipCommand(unittest.TestCase):
         return done.exception.code, out.getvalue(), err.getvalue()
 
     def gate_plan(self):
-        import subprocess
-
-        from coscc.agent import harness
+        from coscc.loop import run as loop
 
         code, snapshot, _ = self.coscc("state", "proj")
         self.assertEqual(code, 0)
-        return subprocess.run(
-            [
-                "node",
-                str(harness.script()),
-                "--root",
-                str(self.store),
-                "--state",
-                "-",
-                "gate",
-                self.UNIT,
-                "plan",
-            ],
-            input=snapshot,
-            capture_output=True,
-            text=True,
-            env=harness.child_env(),
+        return loop.ask_sync(
+            ["--root", str(self.store), "--state", "-", "gate", self.UNIT, "plan"],
+            stdin=snapshot,
         )
 
     def spec_rows(self):
@@ -259,7 +230,7 @@ class TheSkipCommand(unittest.TestCase):
         return [r for r in rows if r["artifact"] == "spec.md"]
 
     def test_a_persons_skip_opens_plan_through_the_skip_decision_guard(self):
-        self.assertEqual(self.gate_plan().returncode, 1)
+        self.assertEqual(self.gate_plan().code, 1)
         code, out, _ = self.coscc("skip", "proj", self.UNIT, "spec", "one", "file,", "no", "schema")
         self.assertEqual(code, 0)
         self.assertIn("skipped by person", out)
@@ -272,14 +243,14 @@ class TheSkipCommand(unittest.TestCase):
             json.loads(row["inputs"]), {"authority": "person", "reason": "one file, no schema"}
         )
         gate = self.gate_plan()
-        self.assertEqual(gate.returncode, 0, gate.stderr)
+        self.assertEqual(gate.code, 0, gate.err)
 
     def test_delegated_says_whose_it_is(self):
         self.assertEqual(
             self.coscc("skip", "proj", self.UNIT, "spec", "--delegated", "asked to")[0], 0
         )
         self.assertEqual(self.spec_rows()[-1]["authority"], "delegated")
-        self.assertEqual(self.gate_plan().returncode, 0)
+        self.assertEqual(self.gate_plan().code, 0)
 
     def test_a_skip_no_person_recorded_keeps_plan_shut(self):
         from coscc.units.history import History
@@ -300,10 +271,8 @@ class TheSkipCommand(unittest.TestCase):
             ]
         )
         gate = self.gate_plan()
-        self.assertEqual(gate.returncode, 1)
-        self.assertIn(
-            "spec.md is skipped by unknown, not by a person or their delegate", gate.stderr
-        )
+        self.assertEqual(gate.code, 1)
+        self.assertIn("spec.md is skipped by unknown, not by a person or their delegate", gate.err)
 
     def test_what_it_refuses(self):
         for args in (

@@ -1,4 +1,4 @@
-"""`rerun` answers alike in `cos.mjs` and `python -m coscc.loop`: the offers, each refusal,
+"""`rerun` answers as its goldens hold in `python -m coscc.loop`: the offers, each refusal,
 and the `### Rerun` block with the digests of what it makes stale."""
 
 from __future__ import annotations
@@ -57,7 +57,9 @@ def offered(store: UnitStore) -> list[str]:
 def test_no_unit_name_is_refused(store):
     r = rerun(store)
     assert r.code == 2
-    assert r.err.startswith("usage: cos.mjs rerun <NNNN_slug> [intent|spec|spike|plan|pr]")
+    assert r.err.startswith(
+        "usage: python -m coscc.loop rerun <NNNN_slug> [intent|spec|spike|plan|pr]"
+    )
 
 
 def test_a_bad_unit_name_is_refused(store):

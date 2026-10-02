@@ -13,11 +13,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-# The closed table. First group: the `why` column `cos.mjs next` writes; second: codes `cos.mjs`
+# The closed table. First group: the `why` column the loop's `next` writes; second: codes the loop
 # hands out as `reasons` beside its words (`test_guards.py` reads them back out of it); third:
 # what the guards below refuse with; fourth: what the app refuses a step with before any spend.
 REASONS = (
-    # `cos.mjs next`'s `why`, and a hold's move.
+    # The `why` the loop's `next` gives, and a hold's move.
     "dependency",
     "unreadable",
     "finished",
@@ -220,7 +220,7 @@ def run_submitted(inputs: Mapping[str, Any]) -> Verdict:
 
 
 def branch_named(inputs: Mapping[str, Any]) -> Verdict:
-    """`branch_ok`: what `cos.mjs check-branch` said of the unit's branch."""
+    """`branch_ok`: what the loop's `check-branch` said of the unit's branch."""
     return OPEN if inputs.get("branch_ok") else _closed("bad-branch")
 
 

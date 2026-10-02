@@ -1,26 +1,22 @@
 """The stages of a workspace's work units, read without a second parser.
 
-The rules that decide what a status means live in `.claude/scripts/cos.mjs`; this module
-runs that script and reads its JSON rather than re-reading the Markdown.
+The rules that decide what a status means live in `coscc/loop/`; this module runs
+`python -m coscc.loop <command>` and reads its JSON rather than re-reading the Markdown.
 
 **Which copy it runs is the security decision here.** A workspace is a cloned repository, so
-its own `.claude/scripts/cos.mjs` is a file that repository controls; running it would hand
-that repo everything this process has. This module runs the copy that ships with the app,
-pointed at the workspace's `.cos/` with `--root` (`coscc/agent/harness.py` locates it).
-The board reports; it never writes.
+any code in it is a file that repository controls; running it would hand that repo everything
+this process has. This module runs the loop that ships with the app, with this process's own
+interpreter and `-P` (a workspace's `coscc/` is never put on `sys.path`), pointed at the
+workspace's `.cos/` with `--root` (`coscc/loop/run.py` starts it). The board reports; it never writes.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from typing import Any
 
-# Which copy of the harness, and where, is `coscc/agent/harness.py`'s question.
-from coscc.agent import harness
-from coscc.agent.harness import child_env as _child_env
-from coscc.git.gitops import kill_group
+from coscc.loop import run
 from coscc.units import guards
 
 # Turns a hung child into an error rather than bounding the work (like `store.LOCK_TIMEOUT`).
@@ -66,7 +62,7 @@ def _codes(data: dict[str, Any]) -> tuple[str, ...]:
     unknown = [c for c in codes if c not in guards.REASONS]
     if unknown:
         raise Unavailable(
-            f"the harness script handed out a reason code the app does not know: {', '.join(unknown)}"
+            f"the loop handed out a reason code the app does not know: {', '.join(unknown)}"
         )
     return codes
 
@@ -89,33 +85,15 @@ def _stage_rows(stages: list[dict[str, Any]], artifacts: dict[str, Any]) -> list
 
 
 async def _run(argv: list[str], timeout: float, stdin: str | None = None) -> tuple[int, str, str]:
-    """One `cos.mjs` invocation: its exit code and both streams, decoded.
+    """One `python -m coscc.loop` invocation (`argv` is the loop's own): its exit code and both
+    streams, decoded.
 
-    The returncode is left to the caller: `read` treats non-zero as a failure, `gate` treats
-    exit 1 as the answer ("blocked, and here are the reasons").
+    The exit code is left to the caller: `read` treats non-zero as a failure, `gate` treats
+    exit 1 as the answer ("blocked, and here are the reasons"). A child that cannot start
+    raises `OSError`, one that does not answer in `timeout` seconds `TimeoutError`.
     """
-    proc = await asyncio.create_subprocess_exec(
-        "node",
-        *argv,
-        env=_child_env(),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        stdin=asyncio.subprocess.DEVNULL if stdin is None else asyncio.subprocess.PIPE,
-        process_group=0,
-    )
-    try:
-        out, err = await asyncio.wait_for(
-            proc.communicate(None if stdin is None else stdin.encode()), timeout=timeout
-        )
-    except asyncio.TimeoutError, asyncio.CancelledError:
-        # A cancelled caller leaves no `node` behind it either, nor what `node` started.
-        await kill_group(proc)
-        raise
-    return (
-        proc.returncode or 0,
-        out.decode(errors="replace"),
-        err.decode(errors="replace"),
-    )
+    got = await run.ask(argv, stdin=stdin, timeout=timeout)
+    return got.code, got.out, got.err
 
 
 # The snapshot of a store with no units, for a question that needs none: `stages`.
@@ -123,7 +101,7 @@ EMPTY_STATE: dict[str, Any] = {"workspace": "", "workspaces": [], "units": {}, "
 
 
 def _source(state: dict[str, Any] | None) -> tuple[list[str], str | None]:
-    """A unit's metadata is the app's snapshot (`coscc/units/meta.py`), handed to `cos.mjs` on
+    """A unit's metadata is the app's snapshot (`coscc/units/meta.py`), handed to the loop on
     stdin as `--state -`. Without one, the deciding commands refuse with exit 2."""
     if state is None:
         return [], None
@@ -136,7 +114,7 @@ async def _ask(argv: list[str], timeout: float, stdin: str | None) -> tuple[int,
 
 
 def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each `{ref, merged, why}` of the unit's `Depends on:`, as `cos.mjs` resolved it."""
+    """Each `{ref, merged, why}` of the unit's `Depends on:`, as the loop resolved it."""
     return [
         {"ref": str(d.get("ref") or ""), "merged": d.get("merged"), "why": str(d.get("why") or "")}
         for d in u.get("dependsOn") or []
@@ -170,37 +148,30 @@ async def read(
     """Every unit under `units_root`, each with its stages.
 
     `units_root` is the product's own store for the workspace, not the workspace itself.
-    Raises `Unavailable` only when the answer is unknown (node missing, script gone, a child
+    Raises `Unavailable` only when the answer is unknown (the loop cannot start, a child
     that failed or hung). A root with no `.cos/` is a known answer: no units.
     """
     path = Path(units_root)
-    script = harness.script()
-    if not script.exists():
-        raise Unavailable(f"the harness script is missing: {script}")
-
     source, stdin = _source(state)
     try:
         code, out_text, err_text = await _ask(
-            [str(script), "--root", str(path), *source, "status", "--json"], timeout, stdin
+            ["--root", str(path), *source, "status", "--json"], timeout, stdin
         )
-    except (OSError, ValueError) as e:
-        # No node on PATH is the ordinary case (a systemd user service has no nvm); name the
-        # PATH it looked on. `docs/install.md` carries the fix.
-        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
-
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise Unavailable(f"reading the board timed out after {timeout:.0f}s") from None
+    except (OSError, ValueError) as e:
+        raise Unavailable(f"could not run coscc.loop: {e}") from e
 
     if code != 0:
-        raise Unavailable((err_text or out_text).strip() or f"the harness script exited {code}")
+        raise Unavailable((err_text or out_text).strip() or f"the loop exited {code}")
 
     try:
         data = json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
-        raise Unavailable(f"the harness script did not return JSON: {e}") from e
+        raise Unavailable(f"the loop did not return JSON: {e}") from e
 
     stages = data.get("stages") or []
-    # The stages whose answered draft runs again, as `cos.mjs` lists them; the app keeps no copy.
+    # The stages whose answered draft runs again, as the loop lists them; the app keeps no copy.
     after_answers = [str(s) for s in data.get("afterAnswers") or []]
     units = [
         {
@@ -217,9 +188,9 @@ async def read(
             "at": str(u.get("at") or ""),
             "why": str((u.get("next") or {}).get("why") or ""),
             "problems": u.get("problems") or [],
-            # `pre-intent` or `started`, decided by `cos.mjs` `readUnit`.
+            # `pre-intent` or `started`, decided by the loop's `readUnit`.
             "phase": u.get("phase") or "",
-            # The intent's `Type:`, as `cos.mjs` read it.
+            # The intent's `Type:`, as the loop read it.
             "type": str(u.get("type") or ""),
             # Which items under `## Open questions` a person has answered, and how many are still open; copied, never recounted.
             "questions": _questions_of(u),
@@ -236,7 +207,7 @@ async def read(
             "between_pr_and_ship": bool(u.get("betweenPrAndShip")),
             # The ids `next` says a person is awaited on.
             "waiting": [str(x) for x in ((u.get("next") or {}).get("waiting") or [])],
-            # The outcome deadline and the last valid `### Outcome` block, as `cos.mjs` `unitOutcome` read them.
+            # The outcome deadline and the last valid `### Outcome` block, as the loop's `unitOutcome` read them.
             "outcome": _outcome_of(u),
             # The hold a person set (`{state, reason, by, date}`, or None) and the moves allowed from it.
             "hold": u.get("hold") or None,
@@ -248,7 +219,7 @@ async def read(
             ),
             # On each row too, so whoever holds one row from this read sees the same list.
             "after_answers": list(after_answers),
-            # The idea the unit was opened from, its `Repo:`, and each dependency as `cos.mjs` resolved it.
+            # The idea the unit was opened from, its `Repo:`, and each dependency as the loop resolved it.
             "idea": str(u.get("idea") or ""),
             "repo": str(u.get("repo") or ""),
             "depends_on": _depends_on_of(u),
@@ -269,9 +240,9 @@ async def read(
 
 
 async def stages(timeout: float = TIMEOUT) -> list[str]:
-    """The stage names `cos.mjs` defines, in its order, with no workspace needed.
+    """The stage names the loop defines, in its order, with no workspace needed.
 
-    Asks the script at an empty temporary root: `status --json` sends the stage list whether
+    Asks the loop at an empty temporary root: `status --json` sends the stage list whether
     or not any unit exists. Raises `Unavailable` as `read` does.
     """
     import tempfile
@@ -293,37 +264,33 @@ async def gate(
     timeout: float = GATE_TIMEOUT,
     state: dict[str, Any] | None = None,
 ) -> Gate:
-    """Ask `cos.mjs gate --json` whether one stage of one unit may proceed.
+    """Ask `python -m coscc.loop gate --json` whether one stage of one unit may proceed.
 
     `repo` is the git checkout the unit's code lives in, passed as `--repo`; it is not
     `units_root`, which has no git. Without it the `review` and `ship` gates stay closed.
 
     Returns `(open, what it said)`, with the codes as `.reasons` (`Gate`). Exit 0 is open;
     exit 1 is blocked and carries the reasons; exit 2 is misuse, reported with what the
-    script printed.
+    loop printed.
     """
     path = Path(units_root)
-    script = harness.script()
-    if not script.exists():
-        raise Unavailable(f"the harness script is missing: {script}")
-
     try:
         source, stdin = _source(state)
-        argv = [str(script), "--root", str(path), *source, "gate", unit, stage, "--json"]
+        argv = ["--root", str(path), *source, "gate", unit, stage, "--json"]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
         code, out_text, err_text = await _ask(argv, timeout, stdin)
-    except (OSError, ValueError) as e:
-        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise Unavailable(f"asking the gate timed out after {timeout:.0f}s") from None
+    except (OSError, ValueError) as e:
+        raise Unavailable(f"could not run coscc.loop: {e}") from e
 
     if code in (0, 1):
         try:
             data = json.loads(out_text)
             lines = [str(line) for line in data["lines"]]
         except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
-            raise Unavailable(f"the harness script did not return JSON: {e}") from e
+            raise Unavailable(f"the loop did not return JSON: {e}") from e
         said = "\n".join(lines).strip()
         return Gate(
             code == 0,
@@ -342,34 +309,30 @@ async def next_step(
     timeout: float = GATE_TIMEOUT,
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Ask `cos.mjs next` which one stage the run button may offer for `unit`.
+    """Ask the loop's `next` which one stage the run button may offer for `unit`.
 
     Returns `{"stage": <name or "">, "action": <why>, "blocked": <bool>}`; nothing here reads
     `action` to decide anything. `repo` is passed as `--repo` as `gate` does. It costs up to
     two `gh` calls, so only the open unit asks and `read` does not.
     """
     path = Path(units_root)
-    script = harness.script()
-    if not script.exists():
-        raise Unavailable(f"the harness script is missing: {script}")
-
     try:
         source, stdin = _source(state)
-        argv = [str(script), "--root", str(path), *source, "next", unit]
+        argv = ["--root", str(path), *source, "next", unit]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
         code, out_text, err_text = await _ask(argv, timeout, stdin)
-    except (OSError, ValueError) as e:
-        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise Unavailable(f"asking what comes next timed out after {timeout:.0f}s") from None
+    except (OSError, ValueError) as e:
+        raise Unavailable(f"could not run coscc.loop: {e}") from e
 
     if code != 0:
-        raise Unavailable((err_text or out_text).strip() or f"the harness script exited {code}")
+        raise Unavailable((err_text or out_text).strip() or f"the loop exited {code}")
     try:
         data = json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
-        raise Unavailable(f"the harness script did not return JSON: {e}") from e
+        raise Unavailable(f"the loop did not return JSON: {e}") from e
     return {
         "unit": str(data.get("unit") or unit),
         "stage": str(data.get("stage") or ""),
@@ -397,20 +360,15 @@ async def screens(
     timeout: float = GATE_TIMEOUT,
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Ask `cos.mjs screens` whether `unit`'s screenshots in `repo` must be taken again.
+    """Ask the loop's `screens` whether `unit`'s screenshots in `repo` must be taken again.
 
     `repo` is the unit's worktree. Returns `{unit, ui, manifest, rewritten, retake, why}` as
-    `cos.mjs` printed it. Any exit but 0 raises `Unavailable`. It asks `git` only, never `gh`.
+    the loop printed it. Any exit but 0 raises `Unavailable`. It asks `git` only, never `gh`.
     """
     path = Path(units_root)
-    script = harness.script()
-    if not script.exists():
-        raise Unavailable(f"the harness script is missing: {script}")
-
     try:
         source, stdin = _source(state)
         argv = [
-            str(script),
             "--root",
             str(path),
             *source,
@@ -420,52 +378,48 @@ async def screens(
             str(Path(repo).expanduser().resolve()),
         ]
         code, out_text, err_text = await _ask(argv, timeout, stdin)
-    except (OSError, ValueError) as e:
-        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise Unavailable(f"asking about the screenshots timed out after {timeout:.0f}s") from None
+    except (OSError, ValueError) as e:
+        raise Unavailable(f"could not run coscc.loop: {e}") from e
 
     if code != 0:
-        raise Unavailable((err_text or out_text).strip() or f"the harness script exited {code}")
+        raise Unavailable((err_text or out_text).strip() or f"the loop exited {code}")
     try:
         return json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
-        raise Unavailable(f"the harness script did not return JSON: {e}") from e
+        raise Unavailable(f"the loop did not return JSON: {e}") from e
 
 
 async def pr_text(
     units_root: str | Path, unit: str, timeout: float = TIMEOUT, state: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Ask `cos.mjs pr-text` for the title and body `unit`'s `pr.md` puts on its pull request.
+    """Ask the loop's `pr-text` for the title and body `unit`'s `pr.md` puts on its pull request.
 
     Returns `{unit, title, body, url, scope, status}` on exit 0, and
-    `{"error": <what cos.mjs said>, "code": n}` otherwise (exit 1 is an answer, not a failure).
+    `{"error": <what the loop said>, "code": n}` otherwise (exit 1 is an answer, not a failure).
     Raises `Unavailable` as `read` does.
     """
     path = Path(units_root)
-    script = harness.script()
-    if not script.exists():
-        raise Unavailable(f"the harness script is missing: {script}")
-
     try:
         source, stdin = _source(state)
         code, out_text, err_text = await _ask(
-            [str(script), "--root", str(path), *source, "pr-text", unit], timeout, stdin
+            ["--root", str(path), *source, "pr-text", unit], timeout, stdin
         )
-    except (OSError, ValueError) as e:
-        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise Unavailable(f"reading pr.md timed out after {timeout:.0f}s") from None
+    except (OSError, ValueError) as e:
+        raise Unavailable(f"could not run coscc.loop: {e}") from e
 
     if code != 0:
         return {
-            "error": (err_text or out_text).strip() or f"the harness script exited {code}",
+            "error": (err_text or out_text).strip() or f"the loop exited {code}",
             "code": code,
         }
     try:
         return json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
-        raise Unavailable(f"the harness script did not return JSON: {e}") from e
+        raise Unavailable(f"the loop did not return JSON: {e}") from e
 
 
 async def rerun(
@@ -475,38 +429,32 @@ async def rerun(
     timeout: float = TIMEOUT,
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Ask `cos.mjs rerun` which accepted stages of `unit` may run again, or, with `stage`,
+    """Ask the loop's `rerun` which accepted stages of `unit` may run again, or, with `stage`,
     for the `### Rerun` block to append before running it.
 
     Returns `{unit, offers, why}` without `stage`, `{unit, stage, later, block}` with one, and
-    `{"error": <what cos.mjs said>, "code": n}` when it exits non-zero (exit 1 is "not
+    `{"error": <what the loop said>, "code": n}` when it exits non-zero (exit 1 is "not
     offered", an answer). Takes no `--repo`. Raises `Unavailable` as `read` does.
     """
     path = Path(units_root)
-    script = harness.script()
-    if not script.exists():
-        raise Unavailable(f"the harness script is missing: {script}")
-
     try:
         source, stdin = _source(state)
-        argv = [str(script), "--root", str(path), *source, "rerun", unit] + (
-            [stage] if stage else []
-        )
+        argv = ["--root", str(path), *source, "rerun", unit] + ([stage] if stage else [])
         code, out_text, err_text = await _ask(argv, timeout, stdin)
-    except (OSError, ValueError) as e:
-        raise Unavailable(f"could not run node: {e} — PATH was {_child_env()['PATH']}") from e
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise Unavailable(f"asking what may run again timed out after {timeout:.0f}s") from None
+    except (OSError, ValueError) as e:
+        raise Unavailable(f"could not run coscc.loop: {e}") from e
 
     if code != 0:
         return {
-            "error": (err_text or out_text).strip() or f"the harness script exited {code}",
+            "error": (err_text or out_text).strip() or f"the loop exited {code}",
             "code": code,
         }
     try:
         return json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
-        raise Unavailable(f"the harness script did not return JSON: {e}") from e
+        raise Unavailable(f"the loop did not return JSON: {e}") from e
 
 
 def _answer_of(unit: dict[str, Any], artifact: str, n: Any) -> dict[str, Any] | None:
@@ -517,7 +465,7 @@ def _answer_of(unit: dict[str, Any], artifact: str, n: Any) -> dict[str, Any] | 
 
 
 def _questions_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """`questions` as `cos.mjs` sent them, each with `by` added: who gave the answer in force, `""` when none."""
+    """`questions` as the loop sent them, each with `by` added: who gave the answer in force, `""` when none."""
     out = []
     for q in unit.get("questions") or []:
         if not isinstance(q, dict):
@@ -552,7 +500,7 @@ def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _person_findings_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """`[{id, reason, answered}]` as `cos.mjs` `readUnit` put them in `personFindings`."""
+    """`[{id, reason, answered}]` as the loop's `readUnit` put them in `personFindings`."""
     out = []
     for p in unit.get("personFindings") or []:
         if not isinstance(p, dict) or not p.get("id"):
@@ -580,7 +528,7 @@ _OUTCOME_FIELDS = (
 
 
 def _outcome_of(unit: dict[str, Any]) -> dict[str, Any] | None:
-    """`cos.mjs` `unitOutcome`, keys in this file's snake_case, or None when it sent none."""
+    """The loop's `unitOutcome`, keys in this file's snake_case, or None when it sent none."""
     o = unit.get("outcome")
     if not isinstance(o, dict):
         return None
@@ -593,7 +541,7 @@ def _outcome_of(unit: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
-    """`{url, number}` from `pr.md`'s `PR:` line as `cos.mjs` `parsePr` read it, or None."""
+    """`{url, number}` from `pr.md`'s `PR:` line as the loop's `parsePr` read it, or None."""
     pr = ((unit.get("artifacts") or {}).get("pr.md") or {}).get("pr")
     if not isinstance(pr, dict) or not pr.get("url"):
         return None
@@ -601,7 +549,7 @@ def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each round of `review.md`: its number, verdict and text, as `cos.mjs` split them.
+    """Each round of `review.md`: its number, verdict and text, as the loop split them.
 
     `findings` and `findings_open` are counted off `parseReview`'s own list; `dropped` and
     `unfinished` are carried as it set them.

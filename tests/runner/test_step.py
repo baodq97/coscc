@@ -11,12 +11,13 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.agent import harness, modeltrial, policy
+from coscc.agent import modeltrial, policy
 from coscc.hooks import Facts, Hooks, Parts, Tool
 from coscc.runlog.journal import Journal
 from coscc.agent.policy import decide, grant_for
@@ -582,9 +583,9 @@ if __name__ == "__main__":
 
 
 class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
-    """Its `plan.md` opened with *"Tôi đang đọc code để viết plan — xong `cos.mjs`..."* run
+    """Its `plan.md` opened with *"Tôi đang đọc code để viết plan — xong the loop..."* run
     into the title with no newline between them. The file no longer began with `# Plan:`
-    and `Status:` was no longer its second line. `cos.mjs` read it anyway — it looks for
+    and `Status:` was no longer its second line. the loop read it anyway — it looks for
     `Status:` anywhere in the file — so this corrupted every plan the board produced
     without ever failing a gate.
 
@@ -669,7 +670,7 @@ class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
 
 class ReviewRoundsAccumulate(unittest.TestCase):
     """The app writes `review.md` from the reply, and the reply carried only what that run
-    had to say. Round 1 and its five findings were gone, and so was the count `cos.mjs`
+    had to say. Round 1 and its five findings were gone, and so was the count the loop
     reads to stop after N rounds and ask for a person -- a limit that resets every run is
     one that never arrives."""
 
@@ -2276,8 +2277,8 @@ class TheLastTurnEndsTheSession(unittest.TestCase):
 
 
 class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
-    """A step with `Bash` is handed this app's `cos.mjs` and its unit's `--root`, so it never
-    goes looking for them (2026-09-28: `find /` held a step seven minutes)."""
+    """A step with `Bash` is handed the command that runs this app's loop and its unit's `--root`,
+    so it never goes looking for them (a `find /` once held a step seven minutes)."""
 
     def test_the_path_and_root_are_in_the_prompt_of_every_stage_with_bash(self):
         from coscc.runner.prompt import HARNESS_HEADING
@@ -2295,7 +2296,9 @@ class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
                     runs_commands=True,
                 )[0]
                 self.assertEqual(prompt.count(HARNESS_HEADING), 1)
-                self.assertIn(f"`node {harness.script()} <command> --root {root}`", prompt)
+                self.assertIn(
+                    f"`{sys.executable} -P -m coscc.loop <command> --root {root}`", prompt
+                )
 
     def test_the_snapshot_file_is_named_for_the_deciding_commands(self):
         """`gate`, `pr-text` and the rest exit 2 without `--state`; the step is told its file."""

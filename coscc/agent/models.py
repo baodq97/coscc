@@ -1,6 +1,6 @@
 """Which model, and which effort, a stage or chat runs on, resolved in one place.
 
-Each row (every stage `cos.mjs` names, then `chat`) resolves override first (a `model:<name>`
+Each row (every stage the loop names, then `chat`) resolves override first (a `model:<name>`
 row in `prefs`), then default (`models.json`, shipped with the package; no `chat` key), then
 `COS_MODEL` (`Config.model`, handed in; this module never reads the environment). If none
 answers the model is `None` and the SDK default applies.
@@ -12,7 +12,7 @@ effort are looked up separately, variant first. `max` is taken only from an over
 `resolve` may be handed a `trial_model`: lookup is then override, `COS_MODEL`, trial, default.
 Only a routine `impl` board step hands one in; `table` never does.
 
-The list of stages is `cos.mjs`'s and the caller passes it in; a key here that `cos.mjs` does
+The list of stages is the loop's and the caller passes it in; a key here that the loop does
 not name is reported as a problem. Bad data never raises: it is skipped and named in `problems`.
 """
 
