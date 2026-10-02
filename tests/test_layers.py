@@ -16,6 +16,8 @@ text or a listing, so a test can feed it a planted case.
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -265,6 +267,25 @@ class PackagesSitInLayers(unittest.TestCase):
             {top for _, top, _ in _imported(tree) if LAYER.get(top, -1) <= LAYER["units"]}
         )
         self.assertEqual(above, [])
+
+    def test_the_loop_child_loads_neither_the_database_nor_the_helper_that_started_it(self):
+        # `coscc.loop` reaches `coscc.units.guards`, which runs `coscc/units/__init__.py`: had
+        # that imported `coscc.loop.run`, the package would come back to itself half-loaded.
+        heavy = ("coscc.data", "coscc.loop.run", "asyncio")
+        child = (
+            "import importlib, pkgutil, sys, coscc.loop\n"
+            "for m in pkgutil.iter_modules(coscc.loop.__path__):\n"
+            "    if m.name != 'run': importlib.import_module('coscc.loop.' + m.name)\n"
+            f"print([m for m in {heavy!r} if m in sys.modules])"
+        )
+        done = subprocess.run(
+            [sys.executable, "-P", "-c", child],
+            cwd=ROOT.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual((done.returncode, done.stdout.strip(), done.stderr), (0, "[]", ""))
 
     def test_no_module_and_a_module_of_its_package_import_each_other(self):
         self.assertEqual(import_cycles(), [])
