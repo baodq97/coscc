@@ -64,6 +64,8 @@ camera starts real steps**, sessions that spend quota.
 
 For example `/board`, `/settings`, or `/unit?ws=proj&id=0002_open-question&tab=questions`
 (`tab` is one of `coscc/state/place.py`'s `TABS`, lowercase; any other value opens `overview`).
+An address ending in `#<id>` of a closed part (`<details>`) is taken with that part open:
+`/board#guide-lists` opens the autopilot's *running* and *needs you* lists.
 The fixture's paths live under `/tmp/`, so a screen that shows the workspace's path today
 hits the standard on every run; say so rather than hide it.
 
@@ -136,6 +138,7 @@ SIZES = ((1440, 900), (390, 844))  # the two sizes measured before
 MAX_ADDRESSES = 6  # 6 × 2 sizes = 12 images, the ceiling (chosen, not measured)
 PAGE_TIMEOUT_MS = 20_000
 SETTLE_MS = 1_500  # for the socket to fill the page after `#studio-shell` shows
+OPEN_MS = 300  # for a closed part opened by the address to lay out (chosen, not measured)
 
 # What the standard forbids that a pattern can find in visible text.
 PATTERNS = (
@@ -579,6 +582,16 @@ def shoot(
                 f"{address} at {size[0]}x{size[1]}: landed on the login page, {page.url}"
             )
         page.wait_for_timeout(SETTLE_MS)
+        part = address.partition("#")[2]
+        if part:
+            try:
+                page.wait_for_selector(f"#{part}", state="attached", timeout=PAGE_TIMEOUT_MS)
+            except Exception as e:
+                raise RuntimeError(
+                    f"{address} at {size[0]}x{size[1]}: no #{part} within {PAGE_TIMEOUT_MS // 1000}s"
+                ) from e
+            page.evaluate("id => { document.getElementById(id).open = true; }", part)
+            page.wait_for_timeout(OPEN_MS)
         path = out / f"{slug(address)}-{size[0]}x{size[1]}.png"
         full = page.locator("[role=dialog]").count() == 0
         page.screenshot(path=str(path), full_page=full)
