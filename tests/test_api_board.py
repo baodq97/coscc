@@ -11,6 +11,7 @@ from pathlib import Path
 
 import httpx
 
+import coscc.coscc as composed  # at collection: Reflex registers its states in the main context
 from coscc.api import build
 from coscc.config import Config
 
@@ -89,7 +90,7 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post("/api/board/mode", json=payload)
         self.assertEqual(r.status_code, 200, r.text)
 
-        body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
+        body = (await self.client.get("/api/board", params={"cwd": str(REPO), "fresh": "1"})).json()
         unit = next(u for u in body["units"] if u["name"] == payload["unit"])
         by_stage = {r["stage"]: r["mode"] for r in unit["stages"]}
         self.assertEqual(by_stage["impl"], "autonomous")
@@ -121,7 +122,8 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(r.status_code, 200, r.text)
         after = pr_row(
-            (await self.client.get("/api/board", params={"cwd": str(REPO)})).json(), name
+            (await self.client.get("/api/board", params={"cwd": str(REPO), "fresh": "1"})).json(),
+            name,
         )
 
         self.assertEqual(before["mode"], "manual")
@@ -164,6 +166,66 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
         self.assertTrue(body["recording"])
         self.assertIsNone(body["read_only_because"])
+
+
+class TheHeldBoard(unittest.IsolatedAsyncioTestCase):
+    """`/api/board` answers what the last read held; `?fresh=1` waits for a new one."""
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.app = build(Config(workspaces=(str(REPO),), data_dir=self._tmp.name))
+        self.store = seed_store(self._tmp.name)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        self.addAsyncCleanup(self.client.aclose)
+
+    async def get(self, **params):
+        r = await self.client.get("/api/board", params={"cwd": str(REPO), **params})
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    async def test_the_board_says_when_it_was_read(self):
+        self.assertTrue((await self.get())["read_at"])
+
+    async def test_a_change_outside_the_app_shows_on_a_fresh_read_only(self):
+        first = await self.get()
+        (self.store / "9999_made-outside").mkdir()
+        (self.store / "9999_made-outside" / "intent.md").write_text("# made outside\n")
+
+        held = await self.get()
+        self.assertEqual(held["read_at"], first["read_at"])
+        self.assertEqual(held["count"], first["count"])
+
+        fresh = await self.get(fresh="1")
+        self.assertGreaterEqual(fresh["read_at"], first["read_at"])
+        self.assertEqual(fresh["count"], first["count"] + 1)
+        self.assertIn("9999_made-outside", [u["name"] for u in fresh["units"]])
+
+
+class TheBoardIsReadWhenTheAppStarts(unittest.TestCase):
+    """The Reflex lifespan task, since the real stack never runs `api.py`'s. Synchronous:
+    Reflex registers its states in a context an async test's task lacks."""
+
+    def test_the_first_board_opened_finds_one_held(self):
+        import asyncio
+
+        from coscc.state.app import API
+
+        self.assertIn(composed.warm_boards, composed.app._lifespan_tasks)
+        with tempfile.TemporaryDirectory() as tmp:
+            service = build(Config(workspaces=(str(REPO),), data_dir=tmp)).state.service
+            seed_store(tmp)
+            real = API.state.service
+            API.state.service = service
+            try:
+                asyncio.run(composed.warm_boards())
+            finally:
+                API.state.service = real
+            held = service.boards.held[service.ws.key(str(REPO))]
+            self.assertTrue(held["read_at"])
+            self.assertEqual(held["data"]["stages"], STAGES)
 
 
 class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):

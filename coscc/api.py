@@ -344,8 +344,13 @@ async def start_branch(request: Request) -> Any:
 
 @router.get("/api/board")
 async def get_board(request: Request) -> Any:
-    """Every unit of one workspace, with all eight stages on each."""
-    return await _service(request).board(_cwd(request))
+    """Every unit of one workspace, with all eight stages on each.
+
+    Answers the board held from the last read, at once, and starts the next read in the
+    background; `read_at` says when the answer was read. Only a workspace never read waits.
+    `?fresh=1` waits for a read begun now, which asks `gh` anew."""
+    fresh = request.query_params.get("fresh") == "1"
+    return await _service(request).board(_cwd(request), "new" if fresh else "held")
 
 
 @router.get("/api/board/running")
