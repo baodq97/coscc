@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -118,6 +119,13 @@ def log_setting(journal: Journal | None, key: str, old: Any, new: Any) -> None:
         raise Invalid(f"the setting was saved but not logged: {e}") from e
 
 
+async def _open_prs(cwd: str) -> list[dict[str, Any]] | str:
+    try:
+        return await integrate.open_prs(str(Path(cwd).expanduser().resolve()))
+    except integrate.IntegrateError as e:
+        return str(e)
+
+
 def open_prs_once(cwd: str):
     """`integrate.open_prs` for `cwd`, asked at most once however often it is awaited;
     `gh`'s error as a string."""
@@ -125,13 +133,78 @@ def open_prs_once(cwd: str):
 
     async def prs() -> list[dict[str, Any]] | str:
         if not held:
-            try:
-                held.append(await integrate.open_prs(str(Path(cwd).expanduser().resolve())))
-            except integrate.IntegrateError as e:
-                held.append(str(e))
+            held.append(await _open_prs(cwd))
         return held[0]
 
     return prs
+
+
+def open_prs_held(asked: Asked, cwd: str, fresh: bool = False):
+    """`open_prs_once`, answered from what `asked` holds for `cwd`: `gh` is waited on only
+    when nothing is held yet, or when `fresh`."""
+    got: list[Any] = []
+
+    async def prs():
+        if not got:
+            got.append(await asked.get((cwd, "prs"), lambda: _open_prs(cwd), fresh))
+        return got[0]
+
+    return prs
+
+
+class Asked:
+    """What a slow read (`gh`) last answered, by a key whose first part is the workspace,
+    with when; and the one background ask running for each key. This process only.
+
+    `get` answers from memory and starts the next ask in the background, so a board read
+    never waits on the network once a key was answered once; only the first `get` of a key
+    waits, or a `fresh` one. An ask that brings a different answer tells `changed` its key.
+    `fn` never raises: an error is its answer, as a string.
+    """
+
+    def __init__(self, changed: Callable[[tuple[str, ...]], None] | None = None) -> None:
+        self.held: dict[tuple[str, ...], tuple[Any, str]] = {}
+        self.asks: dict[tuple[str, ...], asyncio.Task] = {}
+        self.changed = changed
+
+    def ask(
+        self, key: tuple[str, ...], fn: Callable[[], Awaitable[Any]], tell: bool = True
+    ) -> asyncio.Task:
+        """The ask running for `key`, or a new one. A new one that is waited on (`tell`
+        off) tells `changed` nothing: whoever waits reads its answer."""
+        loop = asyncio.get_running_loop()
+        task = self.asks.get(key)
+        if task is not None and not task.done() and task.get_loop() is loop:
+            return task
+
+        async def run() -> Any:
+            value = await fn()
+            before = self.held.get(key)
+            self.held[key] = (value, _now())
+            if tell and before is not None and before[0] != value and self.changed is not None:
+                self.changed(key)
+            return value
+
+        task = loop.create_task(run())
+        self.asks[key] = task
+        task.add_done_callback(
+            lambda t: self.asks.pop(key, None) if self.asks.get(key) is t else None
+        )
+        return task
+
+    async def get(
+        self, key: tuple[str, ...], fn: Callable[[], Awaitable[Any]], fresh: bool = False
+    ) -> Any:
+        held = self.held.get(key)
+        if fresh:
+            # An ask begun before this call may predate what it is asked for.
+            running = self.asks.get(key)
+            if running is not None and running.get_loop() is asyncio.get_running_loop():
+                await asyncio.shield(running)
+        if held is None or fresh:
+            return await asyncio.shield(self.ask(key, fn, tell=False))
+        self.ask(key, fn)
+        return held[0]
 
 
 class Updating(Refused):

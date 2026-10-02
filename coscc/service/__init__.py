@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from coscc.bus import Event
 from coscc.config import Config
@@ -105,6 +105,8 @@ class Service:
             "hold.moved",
         ):
             self.bus.subscribe(name, self._wake_autopilot)
+        for name in ("step.ended", "integration.ended", "answer.written", "hold.moved", "mode.set"):
+            self.bus.subscribe(name, self._read_board_again)
         self.resume = Resume(
             self.config,
             self.ws,
@@ -124,11 +126,43 @@ class Service:
         if not event.going_down:
             self.autopilot.nudge(event.workspace)
 
-    async def board(self, cwd: str) -> dict[str, Any]:
-        """The board of `cwd` as `boards.read` returns it, with what the autopilot shows on it."""
-        data = await self.boards.read(cwd)
-        self.autopilot.show(self.ws.key(cwd), data)
+    def _read_board_again(self, event: Event) -> None:
+        """A change the app made reads that workspace's board again, once one was read."""
+        if event.going_down or event.workspace not in self.boards.held:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self.boards.refresh(self.boards.held[event.workspace]["cwd"], again=True)
+
+    async def board(
+        self, cwd: str, which: Literal["new", "held", "next"] = "new"
+    ) -> dict[str, Any]:
+        """The board of `cwd` as `boards.read` returns it, with what the autopilot shows on it.
+
+        `new` waits for a read begun after this call, which asks `gh` anew. `held` answers with the last read and
+        starts the next, so it waits only while nothing was read yet: what the page and
+        `/api/board` ask. `next` waits for the next read to end and starts none: what a tab
+        that shows the board waits on. Every workspace has one read running at most.
+        """
+        self.ws.check(cwd)
+        key = self.ws.key(cwd)
+        if which == "next":
+            await self.boards.next_read(cwd)
+            data = self.boards.held[key]["data"]
+        else:
+            kept = self.boards.held.get(key) if which == "held" else None
+            task = self.boards.refresh(cwd, again=which == "new", fresh=which == "new")
+            data = kept["data"] if kept is not None else await asyncio.shield(task)
+        self.autopilot.show(key, data)
         return data
+
+    async def warm_boards(self) -> None:
+        """Every listed workspace's board read once, so the first page opened finds it held. A
+        first read waits on its workspace's open pull requests, so the board it holds has them."""
+        cwds = [w["path"] for w in self.ws.all()["workspaces"] if not w.get("missing")]
+        await asyncio.gather(*(self.boards.refresh(c) for c in cwds), return_exceptions=True)
 
     # -- updating the app -----------------------------------------------------
     #
@@ -245,8 +279,13 @@ class Service:
             self.autopilot.stop(key)
         for t in list(self.autopilot.pending):
             t.cancel()
-        # A CI ask holds nothing worth waiting for.
-        for t in list(self.steps.ci_asks.values()):
+        # A CI ask, a board read and a held `gh` answer hold nothing worth waiting for.
+        for t in [
+            *self.steps.ci_asks.values(),
+            *self.boards.reads.values(),
+            *self.boards.prs.asks.values(),
+            *self.release.details.asks.values(),
+        ]:
             t.cancel()
         tasks = [
             r.task for r in self.steps.registry.all() if r.task is not None and not r.task.done()

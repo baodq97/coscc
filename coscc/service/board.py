@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -15,13 +17,14 @@ from coscc.git import gitops
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import last_runs, timelines_of, totals_of
-from coscc.data import Busy
+from coscc.data import Busy, now
 from coscc.agent.policy import grant_for
 from coscc import units
 from coscc.units import scratch, worktrees
 from coscc.units import BadUnit
 from coscc.service.common import (
-    open_prs_once,
+    Asked,
+    open_prs_held,
     CONSEQUENCE,
     Invalid,
     _younger_than,
@@ -77,6 +80,16 @@ def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, 
             )
 
 
+def _brief_rounds(units_: list[dict[str, Any]]) -> None:
+    """Every review round without its text or its findings' text: what reads the whole text
+    (an import, a comment, an impl's claim) reads it from the store, never from the board."""
+    for u in units_:
+        for rnd in u.get("rounds") or []:
+            rnd.pop("text", None)
+            for f in rnd.get("found") or []:
+                f.pop("text", None)
+
+
 def answerable(unit: dict[str, Any]) -> bool:
     """Whether the board invites an answer on this unit: not once it is finished, closed or
     dropped."""
@@ -102,6 +115,74 @@ class Board:
         self.agents = agents
         self.release = release
         self.steps = steps
+        # By journal key: the last board read, `{cwd, data, read_at}`; the one read running;
+        # the keys a change came to while it ran, so it reads once more; and what waits for
+        # the next read to end. This process only.
+        self.held: dict[str, dict[str, Any]] = {}
+        self.reads: dict[str, asyncio.Task] = {}
+        self._again: dict[str, bool] = {}
+        self._ended: dict[str, asyncio.Future] = {}
+        # The open pull requests of each workspace, as `gh` last answered; an answer that
+        # changed reads the board again, and so does a held release answer.
+        self.prs = Asked(self._changed)
+        self.release.details.changed = self._changed
+        # A finished unit's tree being removed, by `(cwd, unit)`: never waited on by a read.
+        self._removing: dict[tuple[str, str], asyncio.Task] = {}
+
+    # -- the held board ---------------------------------------------------------
+
+    def refresh(self, cwd: str, again: bool = False, fresh: bool = False) -> asyncio.Task:
+        """The read of `cwd` running now, or a new one: one per workspace at a time. With
+        `again`, a read already running reads once more when it ends, so what the task
+        returns was read after this call. A `fresh` read waits on `gh` anew (`read`). Its
+        end is held in `held`."""
+        key = self.ws.key(cwd)
+        loop = asyncio.get_running_loop()
+        task = self.reads.get(key)
+        if task is not None and not task.done() and task.get_loop() is loop:
+            if again:
+                self._again[key] = self._again.get(key, False) or fresh
+            return task
+        task = loop.create_task(self._read_held(cwd, key, fresh))
+        self.reads[key] = task
+        task.add_done_callback(lambda t: self._read_ended(key, t))
+        return task
+
+    async def next_read(self, cwd: str) -> None:
+        """Until the next read of `cwd` ends well, which leaves its board in `held`. Starts no
+        read."""
+        key = self.ws.key(cwd)
+        loop = asyncio.get_running_loop()
+        waiting = self._ended.get(key)
+        if waiting is None or waiting.done() or waiting.get_loop() is not loop:
+            waiting = self._ended[key] = loop.create_future()
+        return await asyncio.shield(waiting)
+
+    async def _read_held(self, cwd: str, key: str, fresh: bool) -> dict[str, Any]:
+        while True:
+            data = await self.read(cwd, fresh)
+            self.held[key] = {"cwd": cwd, "data": data, "read_at": data["read_at"]}
+            waiting = self._ended.pop(key, None)
+            if waiting is not None and not waiting.done():
+                waiting.set_result(None)
+            if key not in self._again:
+                return data
+            fresh = self._again.pop(key)
+
+    def _read_ended(self, key: str, task: asyncio.Task) -> None:
+        if self.reads.get(key) is task:
+            del self.reads[key]
+            self._again.pop(key, None)
+        if not task.cancelled() and task.exception() is not None:
+            # Whoever waited was told; a read nobody waited for is only logged.
+            log.warning("the board of %s could not be read: %s", key, task.exception())
+
+    def _changed(self, asked: tuple[str, ...]) -> None:
+        """Something a read shows changed under `asked[0]`: read its board again, once one
+        was read."""
+        found = self.held.get(self.ws.key(asked[0]))
+        if found is not None:
+            self.refresh(found["cwd"], again=True)
 
     # -- board --------------------------------------------------------------
 
@@ -109,11 +190,11 @@ class Board:
         """The review rounds only the prose of a store holds, into `cos.db`, on the
         first board read that finds the store unimported (`coscc/units/prose_import.py`). The
         board this read shows is the same either way. One that cannot write goes to the log and
-        is tried on the next read."""
+        is tried on the next read. Its `cos.db` work runs off the event loop."""
         meta = self.ws.unit_meta()
         key = self.ws.key(cwd)
         try:
-            if meta.data.has_run(prose_import.key(meta.root, key)):
+            if await asyncio.to_thread(meta.data.has_run, prose_import.key(meta.root, key)):
                 return
             root = Path(cwd).expanduser().resolve()
             heads: dict[str, str] = {}
@@ -127,26 +208,47 @@ class Board:
                     heads[sha] = await gitops.rev_parse(root, sha)
                 except GitError:
                     pass
-            prose_import.import_rounds(meta, key, units_, heads)
+            await asyncio.to_thread(prose_import.import_rounds, meta, key, units_, heads)
         except (Busy, sqlite3.Error, OSError) as e:
             log.warning("the review rounds of %s could not be imported: %s", key, e)
 
-    async def read(self, cwd: str) -> dict[str, Any]:  # noqa: PLR0915 - still to split
+    async def read(self, cwd: str, fresh: bool = False) -> dict[str, Any]:  # noqa: PLR0915 - still to split
         """Every unit in this workspace, each with its eight stages, modes and cost.
 
         The status of a stage comes from the artifact and the mode comes from the journal,
         and they are joined here rather than stored together. Storing them together is how
         a board starts disagreeing with the files it claims to describe.
+
+        Waits on no network once the workspace's open pull requests were asked once: `gh` is
+        answered from what is held and asked again in the background. A `fresh` read waits on
+        those asks instead, for whoever needs the state as it is now. What reads `cos.db` runs
+        off the event loop. One `log.info` line says how long each part took.
         """
         self.ws.check(cwd)
-        peers, peer_problems = self.ws.peer_table()
+        read_at = now()
+        took: dict[str, float] = {}
+        last = start = time.monotonic()
+
+        def lap(part: str) -> None:
+            nonlocal last
+            took[part], last = time.monotonic() - last, time.monotonic()
+
+        def _snapshot() -> tuple[dict[str, Any], list[str]]:
+            peers, problems = self.ws.peer_table()
+            return self.ws.snapshot(cwd, peers=peers), problems
+
+        state, peer_problems = await asyncio.to_thread(_snapshot)
+        lap("snapshot")
         try:
-            data = await board_reader.read(
-                self.ws.units_root(cwd), state=self.ws.snapshot(cwd, peers=peers)
-            )
+            data = await board_reader.read(self.ws.units_root(cwd), state=state)
         except Unavailable as e:
             raise Invalid(str(e)) from e
+        lap("cos.mjs")
         await self._import_rounds(cwd, data["units"])
+        # What the import read the whole text for; the board carries none of it.
+        _brief_rounds(data["units"])
+        lap("import")
+        data["read_at"] = read_at
         # Only when there is something to say.
         if peer_problems:
             data["peer_problems"] = peer_problems
@@ -180,16 +282,18 @@ class Board:
         ranking: list[dict[str, Any]] = []
         if journal is not None:
             try:
-                modes = journal.modes(key)
                 # One read for every unit's cost, comment attempts and the backlog's
                 # records. Asking `totals` per unit re-scanned the
                 # working folder N times for the rows this already has.
-                rows = journal.records(key)
+                modes, rows = await asyncio.to_thread(
+                    lambda: (journal.modes(key), journal.records(key))
+                )
             except Busy as e:
                 raise Invalid(str(e)) from e
             timelines = timelines_of(rows)
             comments = [r for r in rows if r.get("kind") == "pr-comment"]
             ranking = [r for r in rows if r.get("kind") in backlog.KINDS]
+        lap("run log")
         _attach_comment_state(data["units"], comments)
         # Display only: nothing below reads it, and `next`/`blocked` are untouched.
         folded = backlog.fold(
@@ -239,11 +343,17 @@ class Board:
             unit["answerable"] = answerable(unit)
             unit["attention_reason"] = attention_reason(unit)
 
+        lap("fold")
         await self._attach_worktrees(cwd, data["units"])
-        # One `gh pr list` for the whole read, asked only by whichever block needs it.
-        prs = open_prs_once(cwd)
-        asks = await self.steps.attach_integration(cwd, data["units"], journal, key, prs)
-        data["release"] = await self.release.attach_release(cwd, data["units"], journal, key, prs)
+        lap("worktree")
+        # One held `gh pr list` for the whole read, asked only by whichever block needs it.
+        prs = open_prs_held(self.prs, cwd, fresh)
+        asks = await self.steps.attach_integration(cwd, data["units"], journal, key, prs, fresh)
+        lap("integration")
+        data["release"] = await self.release.attach_release(
+            cwd, data["units"], journal, key, prs, fresh
+        )
+        lap("release")
         for unit in data["units"]:
             # From the timelines read above: no second scan of the run log.
             ended = [r for r in timelines.get(unit["name"], []) if r.get("ended") is not None]
@@ -266,8 +376,15 @@ class Board:
                 "host": units.key(cwd),
                 "host_units": units.host_unit_count(cwd),
             }
-        # Started last and never awaited: their answers count from the next read.
-        self.steps.ask_ci(asks)
+        # Started last and never awaited: their answers count from the next read, which
+        # each answer starts.
+        self.steps.ask_ci(asks, ended=lambda tree: self._changed((tree,)))
+        log.info(
+            "board %s read in %.2fs: %s",
+            key,
+            time.monotonic() - start,
+            ", ".join(f"{part} {s:.2f}s" for part, s in took.items()),
+        )
         return data
 
     def running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -346,12 +463,13 @@ class Board:
         """Give every unit `worktree: {path, branch, prepare}`, or `None`.
 
         One `git worktree list` for the whole board. A `finished` unit that still has a tree
-        is cleaned up here, so a unit shipped at a terminal is cleaned up too — at the
-        cost of a `gh pr view` (up to 30s) on **every** board read for as long as the tree
-        stays: once, when the removal succeeds; on each read after, when it does not
-        (`gh` failing, the pull request not merged, the local branch off the merged head).
-        Nothing remembers a refusal, so a transient `gh` error is retried rather than
-        believed. A dirty tree is refused before `gh` is asked.
+        is cleaned up from here, so a unit shipped at a terminal is cleaned up too — at the
+        cost of a `gh pr view` (up to 30s) started in the background by **every** board read
+        for as long as the tree stays, one per unit at a time, and never waited on: the
+        read shows the tree, and the removal reads the board again. Nothing remembers a
+        refusal (`gh` failing, the pull request not merged, the local branch off the merged
+        head), so a transient `gh` error is retried rather than believed. A dirty tree is
+        refused before `gh` is asked.
         """
         root = Path(cwd).expanduser().resolve()
         try:
@@ -374,11 +492,32 @@ class Board:
             if found is None:
                 continue
             if u.get("why") == "finished":
-                done = await worktrees.remove_if_finished(cwd, u["name"], u, self.config.data_dir)
-                if done.get("removed"):
-                    continue
+                self._remove_later(cwd, dict(u))
             u["worktree"] = {
                 "path": str(where),
                 "branch": found.get("branch") or "",
                 "prepare": worktrees.read_prepare(where),
             }
+
+    def _remove_later(self, cwd: str, unit: dict[str, Any]) -> None:
+        slot = (cwd, unit["name"])
+        if slot in self._removing:
+            return
+
+        async def remove() -> None:
+            try:
+                done = await worktrees.remove_if_finished(
+                    cwd, unit["name"], unit, self.config.data_dir
+                )
+            except Exception:
+                # A background removal never raises.
+                log.exception("the tree of %s could not be removed", unit["name"])
+                return
+            if done.get("removed"):
+                self._changed((cwd,))
+
+        task = asyncio.get_running_loop().create_task(remove())
+        self._removing[slot] = task
+        task.add_done_callback(
+            lambda t: self._removing.pop(slot, None) if self._removing.get(slot) is t else None
+        )

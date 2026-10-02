@@ -547,6 +547,8 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         def strip(data):
             data = json.loads(json.dumps(data))
             data.pop("backlog")
+            # When the read was made, not what it found.
+            data.pop("read_at")
             for u in data["units"]:
                 u.pop("backlog")
             return data
