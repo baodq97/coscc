@@ -1,0 +1,260 @@
+"""`rerun` answers alike in `cos.mjs` and `python -m coscc.loop`: the offers, each refusal,
+and the `### Rerun` block with the digests of what it makes stale."""
+
+from __future__ import annotations
+
+import json
+
+from coscc.loop.model import above_answers
+from tests.loop.conftest import UnitStore, entry, header, same
+
+UNIT = "0001_x"
+KINDS = {
+    "intent.md": "Intent",
+    "spec.md": "Spec",
+    "spike.md": "Spike",
+    "plan.md": "Plan",
+    "impl.md": "Impl",
+    "pr.md": "PR",
+    "review.md": "Review",
+    "ship.md": "Ship",
+}
+
+
+def make(store: UnitStore, statuses: dict[str, str], *, unmeasured: bool = False, **fields) -> None:
+    """A unit with one file per `statuses` item, the app's snapshot saying the same; with
+    `unmeasured`, it says spec.md has an [unmeasured] item, so spike.md is required."""
+    files = {f: header("x", s, KINDS[f]) for f, s in statuses.items()}
+    if unmeasured:
+        fields["spec_md"] = {"result": {"unmeasured": ["U1"]}}
+    store.unit(UNIT, files, entry(statuses, **fields))
+
+
+def make_stale(store: UnitStore, file: str, stage: str) -> None:
+    """A `### Rerun` block in intent.md that makes `file` stale: its digest is `file`'s now."""
+    digest = above_answers((store.cos / UNIT / file).read_text())
+    intent = store.cos / UNIT / "intent.md"
+    intent.write_text(
+        intent.read_text()
+        + "\n## Answers\n\n### Rerun\nRequested by: owner. Date: 2026-09-01. Via: product.\n"
+        + f"Stage: {stage}.\nStale: {file} sha256:{digest}\n"
+    )
+
+
+def rerun(store: UnitStore, *words: str):
+    return same(store.argv("rerun", *words))
+
+
+def offered(store: UnitStore) -> list[str]:
+    r = rerun(store, UNIT)
+    assert r.code == 0
+    return [o["stage"] for o in json.loads(r.out)["offers"]]
+
+
+# --- misuse ------------------------------------------------------------------------------
+
+
+def test_no_unit_name_is_refused(store):
+    r = rerun(store)
+    assert r.code == 2
+    assert r.err.startswith("usage: cos.mjs rerun <NNNN_slug> [intent|spec|spike|plan|pr]")
+
+
+def test_a_bad_unit_name_is_refused(store):
+    r = rerun(store, "nope")
+    assert r.code == 2
+    assert "Invalid unit name" in r.err
+
+
+def test_a_newline_after_the_name_is_not_a_name(store):
+    assert rerun(store, f"{UNIT}\n").code == 2
+
+
+def test_a_unit_that_does_not_exist_is_refused(store):
+    r = rerun(store, "0002_y")
+    assert r.code == 2
+    assert "No such work unit" in r.err
+
+
+def test_an_unknown_stage_is_refused(store):
+    make(store, {"intent.md": "accepted"})
+    r = rerun(store, UNIT, "nope")
+    assert r.code == 2
+    assert "unknown stage" in r.err
+
+
+# --- the offers --------------------------------------------------------------------------
+
+
+def test_several_accepted_stages_are_offered_with_what_runs_again(store):
+    make(store, {"intent.md": "accepted", "spec.md": "accepted", "plan.md": "accepted"})
+    r = rerun(store, UNIT)
+    assert r.code == 0
+    said = json.loads(r.out)
+    assert [o["stage"] for o in said["offers"]] == ["intent", "spec", "plan"]
+    assert said["why"] == ""
+
+
+def test_a_stale_stage_is_not_offered(store):
+    make(store, {"intent.md": "accepted", "spec.md": "accepted"})
+    make_stale(store, "spec.md", "spec")
+    assert offered(store) == ["intent"]
+
+
+def test_a_finished_unit_offers_nothing_and_says_why(store):
+    make(store, {"intent.md": "accepted", "spec.md": "accepted", "plan.md": "done"})
+    r = rerun(store, UNIT)
+    assert json.loads(r.out) == {
+        "unit": UNIT,
+        "offers": [],
+        "why": "the unit is finished: plan.md is done",
+    }
+
+
+def test_a_rejected_unit_offers_nothing_and_says_why(store):
+    make(store, {"intent.md": "accepted", "spec.md": "rejected"})
+    assert "spec.md is rejected" in json.loads(rerun(store, UNIT).out)["why"]
+
+
+def test_a_paused_unit_offers_nothing_and_says_why(store):
+    hold = {"state": "paused", "reason": "waiting", "by": "person", "date": "2026-10-01"}
+    make(store, {"intent.md": "accepted", "spec.md": "accepted"}, holds=[hold])
+    assert json.loads(rerun(store, UNIT).out)["why"] == "the unit is paused"
+
+
+def test_a_unit_with_nothing_accepted_says_so(store):
+    make(store, {"intent.md": "draft"})
+    assert json.loads(rerun(store, UNIT).out)["why"] == ("no accepted stage can be run again now")
+
+
+def test_spike_is_offered_when_spec_is_unmeasured(store):
+    make(
+        store,
+        {"intent.md": "accepted", "spec.md": "accepted", "spike.md": "accepted"},
+        unmeasured=True,
+    )
+    said = json.loads(rerun(store, UNIT).out)
+    assert [o["stage"] for o in said["offers"]] == ["intent", "spec", "spike"]
+    assert said["offers"][0]["later"][:2] == ["spec", "spike"]
+
+
+def test_spike_is_not_offered_when_spec_measures_everything(store):
+    make(store, {"intent.md": "accepted", "spec.md": "accepted", "spike.md": "accepted"})
+    said = json.loads(rerun(store, UNIT).out)
+    assert [o["stage"] for o in said["offers"]] == ["intent", "spec"]
+    assert "spike" not in said["offers"][0]["later"]
+
+
+# --- the refusals ------------------------------------------------------------------------
+
+
+def test_a_stage_the_board_cannot_rerun_is_refused(store):
+    make(store, {"intent.md": "accepted", "impl.md": "accepted"})
+    r = rerun(store, UNIT, "impl")
+    assert r.code == 1
+    assert "impl cannot be run again from the board" in r.err
+
+
+def test_an_alias_is_refused_under_its_own_name(store):
+    make(store, {"intent.md": "accepted"})
+    r = rerun(store, UNIT, "implement")
+    assert r.code == 1
+    assert "implement cannot be run again" in r.err
+
+
+def test_a_stage_that_has_not_run_is_refused(store):
+    make(store, {"intent.md": "accepted"})
+    r = rerun(store, UNIT, "spec")
+    assert r.code == 1
+    assert "does not exist — spec has not run yet" in r.err
+
+
+def test_a_spike_nobody_requires_is_refused(store):
+    make(store, {"intent.md": "accepted", "spec.md": "accepted"})
+    r = rerun(store, UNIT, "spike")
+    assert r.code == 1
+    assert "spike is not required" in r.err
+
+
+def test_a_draft_is_refused(store):
+    make(store, {"intent.md": "accepted", "spec.md": "draft"})
+    r = rerun(store, UNIT, "spec")
+    assert r.code == 1
+    assert 'spec.md is "draft", not accepted' in r.err
+
+
+def test_a_stage_already_stale_is_refused(store):
+    make(store, {"intent.md": "accepted", "spec.md": "accepted"})
+    make_stale(store, "spec.md", "spec")
+    r = rerun(store, UNIT, "spec")
+    assert r.code == 1
+    assert "spec.md is already stale — run spec from the next step" in r.err
+
+
+def test_a_closed_gate_is_refused_with_what_it_needs(store):
+    make(store, {"intent.md": "accepted", "spec.md": "draft", "plan.md": "accepted"})
+    r = rerun(store, UNIT, "plan")
+    assert r.code == 1
+    assert r.err.startswith(f"plan cannot be run again for {UNIT}: ")
+
+
+def test_a_finished_unit_refuses_a_stage(store):
+    make(store, {"intent.md": "accepted", "spec.md": "accepted", "plan.md": "done"})
+    r = rerun(store, UNIT, "spec")
+    assert r.code == 1
+    assert "plan.md is done" in r.err
+
+
+def test_a_paused_unit_refuses_a_stage(store):
+    hold = {"state": "paused", "reason": "waiting", "by": "person", "date": "2026-10-01"}
+    make(store, {"intent.md": "accepted", "spec.md": "accepted"}, holds=[hold])
+    r = rerun(store, UNIT, "spec")
+    assert r.code == 1
+    assert "the unit is paused" in r.err
+
+
+# --- a granted rerun ---------------------------------------------------------------------
+
+
+def test_a_granted_rerun_prints_the_block_with_a_digest_per_file(store):
+    make(store, {"intent.md": "accepted", "spec.md": "accepted", "plan.md": "accepted"})
+    r = rerun(store, UNIT, "spec")
+    assert r.code == 0
+    said = json.loads(r.out)
+    assert said["later"] == ["plan", "impl", "pr", "review", "ship"]
+    lines = said["block"].split("\n")
+    assert lines[0] == "### Rerun"
+    assert lines[2] == "Stage: spec."
+    assert [line.split(" sha256:")[0] for line in lines[3:5]] == [
+        "Stale: spec.md",
+        "Stale: plan.md",
+    ]
+    assert all(len(line.split("sha256:")[1]) == 64 for line in lines[3:5])
+    assert said["block"].endswith("\n")
+
+
+def test_a_granted_rerun_digests_the_file_above_its_answers(store):
+    make(store, {"intent.md": "accepted", "spec.md": "accepted"})
+    spec = store.cos / UNIT / "spec.md"
+    spec.write_text(spec.read_text() + "\n## Answers\n\n### Q1\nA: yes\n")
+    r = rerun(store, UNIT, "spec")
+    assert f"sha256:{above_answers(spec.read_text())}" in json.loads(r.out)["block"]
+
+
+def test_a_granted_rerun_names_only_the_files_that_exist(store):
+    make(store, {"intent.md": "accepted", "pr.md": "accepted"})
+    said = json.loads(rerun(store, UNIT, "intent").out)
+    assert said["later"] == ["spec", "plan", "impl", "pr", "review", "ship"]
+    assert [line.split(" sha256:")[0] for line in said["block"].split("\n")[3:-1]] == [
+        "Stale: intent.md",
+        "Stale: pr.md",
+    ]
+
+
+def test_a_granted_spike_rerun(store):
+    make(
+        store,
+        {"intent.md": "accepted", "spec.md": "accepted", "spike.md": "accepted"},
+        unmeasured=True,
+    )
+    assert rerun(store, UNIT, "spike").code == 0

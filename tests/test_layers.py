@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1] / "coscc"
 
 LAYERS = (
-    ("coscc", "run"),
+    ("coscc", "run", "loop"),
     ("screens",),
     ("state",),
     ("api",),
