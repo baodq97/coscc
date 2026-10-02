@@ -427,10 +427,14 @@ class Board:
     def running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         """`running`'s `running`, from memory alone: what `guide_block` reads too."""
         running: dict[str, list[dict[str, Any]]] = {}
-        for entry in self.holds.running.values():
-            if entry["workspace"] != key:
+        for entry in self.holds.attempts.unfinished(key):
+            if entry["machine"] not in ("step", "integration", "estimate"):
                 continue
-            kind = entry["kind"]
+            kind = (
+                (entry["road"] or "rebase")
+                if entry["machine"] == "integration"
+                else entry["machine"]
+            )
             row = None if kind == "rebase" else agents.agent_for(entry["stage"], overrides)
             agent = {"glyph": row["glyph"], "name": row["name"]} if row else None
             running.setdefault(entry["unit"], []).append(
@@ -438,11 +442,14 @@ class Board:
                     "kind": kind,
                     "stage": entry["stage"],
                     "agent": agent,
-                    "started": entry["started"],
-                    "turns": entry["turns"],
-                    "cost_usd": entry["cost_usd"],
+                    "started": entry["since"],
+                    # `queued`, `preparing`, `running` or `ending`, and a Stop recorded on it.
+                    "state": entry["state"],
+                    "stopping": bool(entry["stop_asked_at"]),
+                    "turns": None,
+                    "cost_usd": None,
                     # A board step's events; `""` for an integration or an estimate.
-                    "run": entry.get("run", ""),
+                    "run": entry["run"] if entry["machine"] == "step" else "",
                 }
             )
         return running
@@ -450,11 +457,12 @@ class Board:
     def running(self, cwd: str) -> dict[str, Any]:
         """What has an agent working in this workspace now, and what ended unseen.
 
-        `running` is `holds.running` for this workspace, one element per entry, by unit.
+        `running` is this workspace's unfinished attempts of steps, integrations and estimates,
+        one element per attempt, by unit.
         `unknown_end` is every `start` the run log holds without an `end` that no entry
         accounts for: the unit has nothing running here, no later `start` of the unit
         retired it, and it is younger than `UNKNOWN_END_FOR`. Matched by
-        unit, not by session: `holds.marks` allows one per unit per process, so a unit with an
+        unit, not by session: an attempt allows one per unit, so a unit with an
         entry has no other `start` open in this process — only one another process wrote,
         and that one is shown as ended.
 

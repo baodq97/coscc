@@ -19,7 +19,8 @@ from coscc.update import updater as updater_mod
 from coscc.service.activity import Activity
 from coscc.service.agents import Agents
 from coscc.service.answers import Answers
-from coscc.service.autopilot import Autopilot
+from coscc.service.attempts import Attempts
+from coscc.service.autopilot import Autopilot, autopilot_values
 from coscc.service.backlog import Backlog
 from coscc.service.board import Board
 from coscc.service.common import Holds
@@ -51,13 +52,14 @@ class Service:
     def __post_init__(self) -> None:
         # Which workspaces there are, and where each keeps its units.
         self.ws = Workspaces(self.config, self.sessions)
-        # What holds each unit now, and what the board lists as running.
-        self.holds = Holds()
         # One question, asked in two places. See `Sessions.membership`.
         self.sessions.membership = self.ws.is_member
         # Told of every step, integration and chat turn that ends.
         self.updater = updater_mod.Updater(self.config, self)
         self.bus = self.sessions.bus
+        # What holds each unit now: its attempt, and the scheduler that launches them.
+        self.attempts = Attempts(self.config.data_dir, self.bus, self._capacity)
+        self.holds = Holds(self.attempts)
         # The parts below `Service`, each given what it reads.
         self.agents = Agents(self.config, self.ws)
         self.models = Models(self.config, self.ws)
@@ -96,11 +98,13 @@ class Service:
         # is going down.
         for name in (
             "step.ended",
-            "step.released",
+            "step.refused",
             "integration.ended",
+            "integration.refused",
             "integration.escalated",
             "retake.ended",
             "estimate.ended",
+            "estimate.refused",
             "chat-turn.ended",
         ):
             self.bus.subscribe(name, lambda _: self.updater.job_ended())
@@ -112,7 +116,15 @@ class Service:
             "hold.moved",
         ):
             self.bus.subscribe(name, self._wake_autopilot)
-        for name in ("step.ended", "integration.ended", "answer.written", "hold.moved", "mode.set"):
+        for name in (
+            "step.ended",
+            "step.refused",
+            "integration.ended",
+            "integration.refused",
+            "answer.written",
+            "hold.moved",
+            "mode.set",
+        ):
             self.bus.subscribe(name, self._read_board_again)
         self.resume = Resume(
             self.config,
@@ -128,6 +140,12 @@ class Service:
             self.autopilot,
             self.bus,
         )
+
+    def _capacity(self, workspace: str, slot: str) -> int:
+        """Agent sessions at once: the workspace's `max_parallel`. Heavy work: one."""
+        if slot == "agent":
+            return int(autopilot_values(self.config, workspace)["max_parallel"])
+        return 1
 
     def _wake_autopilot(self, event: Event) -> None:
         if not event.going_down:
@@ -181,16 +199,20 @@ class Service:
         Gebo sessions, steps, estimates and chat are paused by `suspend_sessions`; what of
         them had no session open gets `settle_after_suspend`'s bounded wait."""
         jobs: list[dict[str, Any]] = []
-        for entry in self.holds.running.values():
-            if entry["stage"] == "integrate" and entry.get("kind") != "gebo":
+        for row in self.attempts.unfinished():
+            if (
+                row["machine"] == "integration"
+                and row["state"] != "queued"
+                and row["road"] != "gebo"
+            ):
                 jobs.append(
                     {
                         "kind": "integration",
-                        "id": f"integration:{entry['workspace']}:{entry['unit']}",
-                        "workspace": entry["workspace"],
-                        "unit": entry["unit"],
+                        "id": f"integration:{row['workspace']}:{row['unit']}",
+                        "workspace": row["workspace"],
+                        "unit": row["unit"],
                         "stage": "integrate",
-                        "started": entry["started"],
+                        "started": row["since"],
                     }
                 )
         for entry in self.steps.retakes.values():
@@ -239,19 +261,32 @@ class Service:
         the PR or syncing `pr.md` after its `end`, or a Gebo reading the PR's head after its
         session, had none. Each gets `within` seconds to finish (no new session may open
         meanwhile) and what still runs is returned, for the updater to name in a `cut` row
-        before `shutdown` cancels it. A step past its `holds.running` entry, writing its `questions`
+        before `shutdown` cancels it. A step in its attempt's `ending`, writing its `questions`
         or `ship` record, counts as `after-end` until its task ends.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + within
-        while (self.holds.running or self.holds.finishing) and loop.time() < deadline:
+        while (self._launched() or self.holds.finishing) and loop.time() < deadline:
             await asyncio.sleep(SETTLE_POLL)
-        left = list(self.holds.running.values())
-        left += [{**entry, "kind": "after-end"} for entry, _task in self.holds.finishing.values()]
-        return [
-            {k: entry.get(k) for k in ("kind", "workspace", "unit", "stage", "started")}
-            for entry in left
+        left = [
+            {
+                "kind": (row["road"] or "rebase")
+                if row["machine"] == "integration"
+                else row["machine"],
+                "workspace": row["workspace"],
+                "unit": row["unit"],
+                "stage": row["stage"],
+                "started": row["since"],
+            }
+            for row in self._launched()
+            if row["id"] not in self.holds.finishing
         ]
+        left += [{**entry, "kind": "after-end"} for entry, _task in self.holds.finishing.values()]
+        return left
+
+    def _launched(self) -> list[dict[str, Any]]:
+        """The attempts past `queued` and not ended, of every workspace."""
+        return [r for r in self.attempts.unfinished() if r["state"] != "queued"]
 
     def update_status(self) -> dict[str, Any]:
         """`Updater.status`, unchanged, with `line`, `local_line` and `actions`."""
@@ -308,10 +343,16 @@ class Service:
             t.cancel()
         # A CI ask and a held `gh` answer hold nothing worth keeping, but their `gh` is reaped.
         cancelled = [*autopilot, *self._asks()]
+        # An integration is waited for, not cancelled: it stops between two `git`s or not at all.
+        integrations = [
+            (f"integration of {r.unit} in {r.workspace}", r.task)
+            for r in self.steps.tasks.values()
+            if r.stage == "integrate" and r.task is not None and not r.task.done()
+        ]
         steps = [
             (f"{r.stage} step of {r.unit} in {r.workspace}", r.task)
-            for r in self.steps.registry.all()
-            if r.task is not None and not r.task.done()
+            for r in self.steps.tasks.values()
+            if r.stage != "integrate" and r.task is not None and not r.task.done()
         ]
         # A step's task past `steps.release`, still in its `after_end`.
         steps += [
@@ -323,7 +364,7 @@ class Service:
         for _label, t in cancelled:
             t.cancel()
         # Board reads are cancelled there, and tree removals left to end.
-        waited = cancelled + await self.boards.stop()
+        waited = cancelled + integrations + await self.boards.stop()
         while True:
             left = {t for _label, t in waited if not t.done()}
             if left:
@@ -336,6 +377,12 @@ class Service:
             waited += late
             if not late or loop.time() >= deadline:
                 break
+        late_integrations = [t for _label, t in integrations if not t.done()]
+        for t in late_integrations:
+            # Past the deadline: its `git` is killed rather than an update held up.
+            t.cancel()
+        if late_integrations:
+            await asyncio.wait(late_integrations, timeout=1.0)
         for label, t in waited:
             if not t.done():
                 log.warning(

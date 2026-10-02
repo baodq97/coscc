@@ -414,10 +414,10 @@ async def stop_step(request: Request) -> Any:
 
 @router.get("/api/board/steps")
 async def running_steps(request: Request) -> Any:
-    """The board steps running now in one workspace, as the registry a Stop reads holds
-    them, and the integrations beside them, which no Stop reaches (`kind: "integration"`
-    beside a step's `kind: "step"`, so whatever restarts the app on an empty list sees
-    them). This process only. Not `/api/board/running`, which is the display."""
+    """The steps and integrations of one workspace not yet ended, read from their attempts
+    in `cos.db` (`state`: `queued`, `preparing`, `running` or `ending`; `stopping` once a Stop
+    is recorded), `kind: "integration"` beside a step's `kind: "step"`, so whatever restarts
+    the app on an empty list sees them. Not `/api/board/running`, which is the display."""
     return _service(request).steps.running_steps(_cwd(request))
 
 

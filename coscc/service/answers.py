@@ -27,12 +27,12 @@ from coscc.runlog.journal import BadRecord, Journal
 from coscc.data import Busy, Unusable
 from coscc.units import submit
 from coscc.units import transitions
-from coscc.agent import steps as steps_mod
+from coscc.service.attempts import describe
 from coscc import units
 from coscc.units import scratch, worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
 from coscc.service.autopilot import autopilot_values
-from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
+from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER, Refused
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces
 from coscc.service.common import Holds
@@ -774,12 +774,18 @@ class Answers:
         # A stage outside the prose ones writes its artifact with its own tools whenever it
         # likes, so the questions may be renumbered while it runs. Checked with no `await`
         # before the write, like `Holds.take`.
-        mark = self.holds.marks.get((self.ws.key(cwd), unit))
-        if mark is not None and mark.kind == "step" and not policy.is_prose_stage(mark.stage):
-            row = next((r for r in found.get("stages") or [] if r.get("stage") == mark.stage), None)
+        held = self.holds.attempts.holding(self.ws.key(cwd), unit)
+        if (
+            held is not None
+            and held["machine"] == "step"
+            and not policy.is_prose_stage(held["stage"])
+        ):
+            row = next(
+                (r for r in found.get("stages") or [] if r.get("stage") == held["stage"]), None
+            )
             if row is not None and row.get("file") == artifact:
                 raise Invalid(
-                    f"{artifact} cannot be answered while the {mark.stage} step that writes it "
+                    f"{artifact} cannot be answered while the {held['stage']} step that writes it "
                     "is running; answer it once the step ends"
                 )
         if delegation:
@@ -1106,20 +1112,18 @@ class Answers:
         by = str(by or "").strip() or OWNER
         self.ws.unit_dir(cwd, unit)
         key = self.ws.key(cwd)
-        # No `await` between the check and the take: the same mark `run_step` and
-        # `integrate` take, so neither starts while this writes. When the unit is already
-        # held, the board is still read, so a move refused for another reason says that one.
-        held = self.holds.marks.get((key, unit))
-        mark = self.holds.take(key, unit, "hold") if held is None else None
+        # Checked and taken in one transaction: an attempt of its own, so no step or
+        # integration starts while this writes. When the unit is already held, the board is
+        # still read, so a move refused for another reason says that one.
+        held, mark = self._short_attempt("hold", key, unit)
+        outcome = "failed"
         try:
             try:
                 data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
-            said = hold_rules.refusal(
-                found, to, reason, by, steps_mod.describe(unit, held) if held else ""
-            )
+            said = hold_rules.refusal(found, to, reason, by, describe(unit, held) if held else "")
             if said:
                 raise Invalid(said)
             assert found is not None
@@ -1162,9 +1166,10 @@ class Answers:
                 done = "; ".join(f"{x['effect']}: {x['result']}" for x in effects)
                 log.warning("the hold of %s was not recorded: %s", unit, e)
                 raise Invalid("the hold was not recorded" + (f" ({done})" if done else "")) from e
+            outcome = "done"
         finally:
             if mark is not None:
-                self.holds.release(key, unit, mark)
+                self.holds.attempts.move(mark, "ended", outcome)
         self.bus.publish(Event("hold.moved", key, unit))
         return {
             "unit": unit,
@@ -1175,6 +1180,18 @@ class Answers:
             "date": today,
             "effects": effects,
         }
+
+    def _short_attempt(
+        self, machine: str, key: str, unit: str
+    ) -> tuple[dict[str, Any] | None, int | None]:
+        """`(what holds the unit, None)`, or `(None, id)` of this hold's or round's own attempt,
+        `running` from here: queued and moved on at once, with no slot."""
+        try:
+            attempt = self.holds.attempts.open(machine, key, unit)["id"]
+        except Refused:
+            return self.holds.attempts.holding(key, unit), None
+        self.holds.attempts.move(attempt, "running")
+        return None, attempt
 
     async def more_rounds(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """A person allows one more review round to a unit that used all of its.
@@ -1191,25 +1208,24 @@ class Answers:
         by = str(by or "").strip() or OWNER
         directory = self.ws.unit_dir(cwd, unit)
         key = self.ws.key(cwd)
-        # No `await` between the check and the take, as in `hold`.
-        held = self.holds.marks.get((key, unit))
-        mark = self.holds.take(key, unit, "more-rounds") if held is None else None
+        # Checked and taken in one transaction, as in `hold`.
+        held, mark = self._short_attempt("rounds", key, unit)
+        outcome = "failed"
         try:
             try:
                 data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
-            said = more_rounds_rules.refusal(
-                found, by, steps_mod.describe(unit, held) if held else ""
-            )
+            said = more_rounds_rules.refusal(found, by, describe(unit, held) if held else "")
             if said:
                 raise Invalid(said)
             today = date.today().isoformat()
             await self.append_to_answers(
                 directory / "review.md", more_rounds_rules.block(by, today), "a round"
             )
+            outcome = "done"
         finally:
             if mark is not None:
-                self.holds.release(key, unit, mark)
+                self.holds.attempts.move(mark, "ended", outcome)
         return {"unit": unit, "by": by, "date": today, "rounds": 1}
