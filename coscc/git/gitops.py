@@ -346,10 +346,14 @@ def _require_repo(path: Path) -> None:
         raise GitError(f"not a git repository: {path}")
 
 
-async def is_clean(path: Path, timeout: float = BRANCH_TIMEOUT) -> bool:
-    """True when `status --porcelain` prints nothing: no change, staged or not, no new file."""
+async def is_clean(path: Path, timeout: float = BRANCH_TIMEOUT, *, untracked: bool = True) -> bool:
+    """True when `status --porcelain` prints nothing: no change, staged or not, no new file.
+    `untracked=False` counts only changes to tracked files."""
     _require_repo(path)
-    out = await _run(["git", "-C", str(path), "status", "--porcelain"], timeout)
+    cmd = ["git", "-C", str(path), "status", "--porcelain"]
+    if not untracked:
+        cmd.append("--untracked-files=no")
+    out = await _run(cmd, timeout)
     return not out.strip()
 
 
@@ -375,14 +379,17 @@ async def switch_existing(tree: Path, name: str, timeout: float = BRANCH_TIMEOUT
     return await _run(["git", "-C", str(tree), "switch", name], timeout)
 
 
-async def advance_detached(tree: Path, sha: str, timeout: float = BRANCH_TIMEOUT) -> str:
+async def advance_detached(
+    tree: Path, sha: str, timeout: float = BRANCH_TIMEOUT, *, untracked: bool = True
+) -> str:
     """Move a unit's detached worktree to `sha`, refusing rather than guessing. Never `--force`.
 
     Checked together so no caller can skip one; any failure raises `GitError` naming which and
     leaves the tree where it was:
 
     - the tree carries no branch of its own (`current_branch` is empty);
-    - the tree is clean;
+    - the tree is clean (with `untracked=False`, of tracked changes only: an untracked file
+      the move would overwrite still makes `switch` refuse);
     - the tree's HEAD is an ancestor of `sha`, so a commit made on the tree is never left behind.
     """
     _require_repo(tree)
@@ -391,7 +398,7 @@ async def advance_detached(tree: Path, sha: str, timeout: float = BRANCH_TIMEOUT
     branch = await current_branch(tree, timeout)
     if branch:
         raise GitError(f"{tree} is on {branch}, not detached, so it was not moved")
-    if not await is_clean(tree, timeout):
+    if not await is_clean(tree, timeout, untracked=untracked):
         raise GitError(f"{tree} has uncommitted changes, so it was not moved")
     head = await _run(["git", "-C", str(tree), "rev-parse", "HEAD"], timeout)
     if not await is_ancestor(tree, head, sha, timeout):

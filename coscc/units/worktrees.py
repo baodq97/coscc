@@ -90,8 +90,9 @@ async def main_tree(
 ) -> tuple[Path, str]:
     """`(main_path, sha)`: the tree made, or moved, detached at the fetched `origin/main`.
 
-    Moved only by `advance_detached`, so a tree someone committed on or left dirty raises
-    `GitError` and stays where it was; a fetch that fails raises too.
+    Moved only by `advance_detached`, so a tree someone committed on or changed a tracked file
+    of raises `GitError` and stays where it was; a fetch that fails raises too. Untracked files
+    are the features' own data (an index beside the code) and do not stop the move.
     """
     root = Path(units.key(workspace))
     where = main_path(workspace, data_dir)
@@ -101,7 +102,7 @@ async def main_tree(
         where.parent.mkdir(parents=True, exist_ok=True)
         await gitops.worktree_add(root, where, sha)
     elif await gitops.rev_parse(where, "HEAD") != sha:
-        await gitops.advance_detached(where, sha)
+        await gitops.advance_detached(where, sha, untracked=False)
     return where, sha
 
 

@@ -577,6 +577,19 @@ class AdvancingADetachedWorktree(unittest.TestCase):
         self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), self.main)
         self.assertTrue((self.tree / "dirty.txt").exists())
 
+    def test_an_untracked_file_is_allowed_only_when_asked_and_a_changed_tracked_one_never(self):
+        new = self._commit(self.seed, "two")
+        asyncio.run(gitops.fetch(self.tree))
+        (self.tree / "data.db").write_text("x\n", encoding="utf-8")
+        (self.tree / "f.txt").write_text("changed\n", encoding="utf-8")
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.advance_detached(self.tree, new, untracked=False))
+        self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), self.main)
+        self._git(self.tree, "checkout", "--", "f.txt")
+        asyncio.run(gitops.advance_detached(self.tree, new, untracked=False))
+        self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), new)
+        self.assertTrue((self.tree / "data.db").exists())
+
     def test_a_head_that_is_not_an_ancestor_of_the_target_is_refused(self):
         # A commit made directly on the detached tree: unpushed, and not on the remote.
         (self.tree / "local.txt").write_text("mine\n", encoding="utf-8")

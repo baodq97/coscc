@@ -140,6 +140,22 @@ class TheMainTree(Repo):
             asyncio.run(worktrees.main_tree(self.repo, self.data))
         self.assertEqual(git(where, "rev-parse", "HEAD"), self.main)
 
+    def test_a_features_untracked_index_does_not_stop_the_move(self):
+        where, _ = asyncio.run(worktrees.main_tree(self.repo, self.data))
+        # What the codegraph library leaves after its first build: a `.gitignore` that ignores
+        # everything in the directory but itself, so `status` shows `?? .codegraph/`.
+        index = where / ".codegraph"
+        index.mkdir()
+        (index / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
+        (index / "codegraph.db").write_bytes(b"db")
+        self.assertIn(".codegraph/", git(where, "status", "--porcelain"))
+        new = self._advance_remote()
+        with mock.patch.object(fetches, "shared", fetches.Fetches()):
+            self.assertEqual(asyncio.run(worktrees.main_tree(self.repo, self.data))[1], new)
+        self.assertEqual(git(where, "rev-parse", "HEAD"), new)
+        self.assertEqual((index / "codegraph.db").read_bytes(), b"db")
+        self.assertFalse((self.repo / ".git" / "info" / "exclude").read_text().count("codegraph"))
+
     def test_inside_the_workspace_or_the_package_is_refused(self):
         with self.assertRaises(BadUnit):
             worktrees.main_path(self.repo, self.repo / "data")
