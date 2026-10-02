@@ -253,7 +253,7 @@ COMMANDS_ADVICE = (
     "Every segment of a command line, each part after `;`, `&&`, `||` or `|`, must open with "
     "one of these words; any other is refused, `cd` and `timeout` among them. To read part of "
     "a file, use `Read` with `offset` and `limit`. A redirect that writes a file, anywhere but "
-    "`/dev/null` or under a `/tmp` directory named after this unit, is refused, and so is a "
+    "`/dev/null`, `$COS_SCRATCH_RAM` or `$COS_SCRATCH_DISK`, is refused, and so is a "
     "command or process substitution (`$(…)`, backticks, `<(…)`): write with `Write` or "
     "`Edit` instead."
 )

@@ -2197,13 +2197,36 @@ class TheCommandsAStepMayRun(unittest.TestCase):
             "diff <(ls) f",
         ):
             with self.subTest(line=line):
-                self.assertNotEqual(policy.check_command(grant, line, unit=UNIT), "")
+                self.assertNotEqual(policy.check_command(grant, line), "")
 
     def test_what_it_says_may_run_runs(self):
         grant = policy.grant_for_step("impl", None)
         for line in ("echo a > /dev/null", "git status && npm test", "ls | wc -l"):
             with self.subTest(line=line):
-                self.assertEqual(policy.check_command(grant, line, unit=UNIT), "")
+                self.assertEqual(policy.check_command(grant, line), "")
+
+    def test_a_step_makes_its_scratch_and_stops_on_one_it_may_not_use(self):
+        import os
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d).resolve()
+            (base / "tmp").mkdir()
+            fake = SimpleNamespace(sessions=SimpleNamespace(config=SimpleNamespace(data_dir=base)))
+            with mock.patch.object(tempfile, "tempdir", str(base / "tmp")):
+                ram, disk = Runner._scratch(fake, str(base / "repo"), UNIT)  # type: ignore[arg-type]
+                self.assertTrue(ram.is_dir() and disk.is_dir())
+                os.chmod(ram.parent.parent, 0o755)
+                with self.assertRaisesRegex(RunError, "did not start.*0755"):
+                    Runner._scratch(fake, str(base / "repo"), UNIT)  # type: ignore[arg-type]
+
+    def test_what_it_says_may_go_to_scratch_does(self):
+        grant = policy.grant_for_step("impl", None)
+        with tempfile.TemporaryDirectory() as ram, tempfile.TemporaryDirectory() as disk:
+            for line in ("echo a > $COS_SCRATCH_RAM/f", "npm test > $COS_SCRATCH_DISK/log 2>&1"):
+                with self.subTest(line=line):
+                    said = policy.check_command(grant, line, None, (ram, disk), 2**20)
+                    self.assertEqual(said, "")
 
     def test_the_words_an_impl_step_gets_are_its_grant(self):
         from coscc.runner.prompt import COMMANDS_HEADING

@@ -227,14 +227,190 @@ class OnlyImplStartsHelpers(unittest.TestCase):
         )
 
 
-class WritesUnderTheUnitsTmpDirectory(unittest.TestCase):
-    UNIT_DIR = "/tmp/data/units/ws-abc/.cos/0001_a-problem"
+# What the app bounds a unit's ram directory to (`coscc.units.scratch.RAM_CAP`).
+CAP = 64 * 2**20
 
-    def test_impl_may_write_where_a_redirect_may_and_nowhere_else_in_tmp(self):
-        for path, allowed in (("/tmp/0001_a-problem/x", True), ("/tmp/other/x", False)):
-            with self.subTest(path=path):
-                got = decide(IMPL, "Write", {"file_path": path}, "/tmp/ws", self.UNIT_DIR)
-                self.assertEqual(got == "", allowed, got)
+
+class WritesBelowTheUnitsScratch(unittest.TestCase):
+    """Outside its worktree a step may write only into its unit's ram and disk directories."""
+
+    UNIT = "0060_x"
+    WS = "/tmp/ws"
+    UNIT_DIR = "/tmp/data/units/ws-abc/.cos/0060_x"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.ram, self.disk, self.other = (self.root / n for n in ("ram", "disk", "other"))
+        for d in (self.ram, self.disk, self.other):
+            d.mkdir()
+        self.scratch = (str(self.ram), str(self.disk))
+
+    def bash(self, line, grant=IMPL, scratch="own", cap=CAP):
+        scratch = self.scratch if scratch == "own" else scratch
+        return decide(
+            grant, "Bash", {"command": line}, self.WS, self.UNIT_DIR, scratch=scratch, ram_cap=cap
+        )
+
+    def write(self, path, grant=IMPL, tool="Write", scratch="own", cap=CAP):
+        scratch = self.scratch if scratch == "own" else scratch
+        return decide(
+            grant,
+            tool,
+            {"file_path": str(path)},
+            self.WS,
+            self.UNIT_DIR,
+            scratch=scratch,
+            ram_cap=cap,
+        )
+
+    def test_a_tmp_directory_naming_the_unit_is_no_longer_a_place_to_write(self):
+        d = Path(tempfile.mkdtemp(dir="/tmp", prefix=f"coscc-{self.UNIT}-"))
+        self.addCleanup(d.rmdir)
+        self.assertIn("redirecting into a file", self.bash(f"echo a > {d}/f"))
+        self.assertIn("redirecting into a file", self.bash(f"echo a > {d}/f", scratch=None))
+        self.assertIn("outside the workspace", self.write(d / "f"))
+        self.assertIn("outside the workspace", self.write(d / "f", scratch=None))
+
+    def test_a_redirect_and_a_write_tool_may_write_below_either_directory(self):
+        for where in (self.ram, self.disk):
+            with self.subTest(where=where.name):
+                self.assertEqual(self.bash(f"echo a > {where}/f"), "")
+                self.assertEqual(self.bash(f"echo a >> {where}/sub/f"), "")
+                for tool in ("Write", "Edit", "NotebookEdit"):
+                    self.assertEqual(self.write(where / "f", tool=tool, grant=IMPL), "", tool)
+
+    def test_the_directory_itself_and_what_expands_are_refused(self):
+        for line in (
+            f"echo a > {self.ram}",
+            f"echo a > {self.ram}/*",
+            f"echo a > {self.ram}/$F",
+            f"echo a > {self.ram}/../other/f",
+            "echo a > $HOME/f",
+            "echo a > $COS_SCRATCH_RAMX/f",
+            "echo a > ${COS_SCRATCH_RAM:-/etc}/f",
+            "echo a > $COS_SCRATCH_RAM/$F",
+            "echo a > $COS_SCRATCH_RAM/*",
+            "echo a > '$COS_SCRATCH_RAM'/f",
+        ):
+            with self.subTest(line=line):
+                self.assertIn("redirecting into a file", self.bash(line))
+
+    def test_the_variables_naming_the_directories_may_be_written_below(self):
+        for line in (
+            "echo a > $COS_SCRATCH_RAM/f",
+            'echo a > "${COS_SCRATCH_RAM}/sub/f"',
+            "echo a > $COS_SCRATCH_DISK/f",
+            "npm test > $TMPDIR/log 2>&1",
+            "echo $COS_SCRATCH_DISK > $COS_SCRATCH_DISK/where",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+        self.assertIn("redirecting", self.bash("echo a > $COS_SCRATCH_RAM/f", scratch=None))
+
+    def test_a_variable_the_line_could_point_elsewhere_is_refused(self):
+        for line in (
+            "COS_SCRATCH_RAM=/etc; echo a > $COS_SCRATCH_RAM/f",
+            "export TMPDIR=/etc && echo a > $TMPDIR/f",
+            "read COS_SCRATCH_DISK; echo a > $COS_SCRATCH_DISK/f",
+            "printf -v COS_SCRATCH_RAM /etc; echo a > ${COS_SCRATCH_RAM}/f",
+        ):
+            with self.subTest(line=line):
+                self.assertIn("redirecting into a file", self.bash(line))
+
+    def test_a_full_ram_directory_refuses_its_variable_too(self):
+        with (self.ram / "big").open("wb") as f:
+            f.truncate(CAP)
+        self.assertIn(str(self.disk), self.bash("echo a > $COS_SCRATCH_RAM/x"))
+        self.assertEqual(self.bash("echo a > $COS_SCRATCH_DISK/x"), "")
+
+    def test_a_step_without_exec_tools_may_not_write_there(self):
+        # Holds `Write` and no command tool: the step may read its scratch and not write it.
+        grant = Grant(tools=("Write", "Read"))
+        self.assertIn("outside the workspace", self.write(self.disk / "f", grant=grant))
+        self.assertIn("outside the workspace", self.write(self.ram / "f", grant=grant))
+        self.assertEqual(self.write(self.disk / "f", grant=IMPL), "")
+
+    def test_without_scratch_nothing_outside_the_workspace_may_be_written(self):
+        self.assertIn("redirecting", self.bash(f"echo a > {self.disk}/f", scratch=None))
+        self.assertIn("outside the workspace", self.write(self.disk / "f", scratch=None))
+
+    def test_another_units_scratch_is_refused(self):
+        self.assertIn("redirecting", self.bash(f"echo a > {self.other}/f"))
+        self.assertIn("outside the workspace", self.write(self.other / "f"))
+        sibling = self.ram.parent / (self.ram.name + "-2")
+        self.assertIn("redirecting", self.bash(f"echo a > {sibling}/f"))
+
+    def test_a_symlink_inside_scratch_pointing_out_is_refused(self):
+        for where in (self.ram, self.disk):
+            with self.subTest(where=where.name):
+                link = where / "out"
+                link.symlink_to(self.other)
+                self.assertIn("redirecting", self.bash(f"echo a > {link}/f"))
+                self.assertIn("outside the workspace", self.write(link / "f"))
+                self.assertIn("outside the workspace", self.write(link))
+        link = self.ram / "plain"
+        link.symlink_to(self.disk)
+        self.assertEqual(self.bash(f"echo a > {link}/f"), "")
+
+    def test_a_full_ram_directory_is_refused_and_names_the_disk_one(self):
+        cap = CAP
+        big = self.ram / "sub" / "big"
+        big.parent.mkdir()
+        with big.open("wb") as f:
+            f.truncate(CAP)
+        for reason in (
+            self.bash(f"echo a > {self.ram}/x", cap=cap),
+            self.write(self.ram / "x", cap=cap),
+        ):
+            self.assertIn(str(self.disk), reason)
+            self.assertIn("COS_SCRATCH_DISK", reason)
+        self.assertEqual(self.bash(f"echo a > {self.disk}/x", cap=cap), "")
+        self.assertEqual(self.write(self.disk / "x", cap=cap), "")
+
+    def test_a_ram_directory_just_under_the_cap_still_takes_a_write(self):
+        cap = CAP
+        with (self.ram / "big").open("wb") as f:
+            f.truncate(cap - 2**20)
+        self.assertEqual(self.bash(f"echo a > {self.ram}/x", cap=cap), "")
+        self.assertEqual(self.write(self.ram / "x", cap=cap), "")
+
+    def test_a_symlink_in_ram_is_not_followed_when_the_size_is_counted(self):
+        cap = 2**20
+        with (self.disk / "big").open("wb") as f:
+            f.truncate(10 * cap)
+        (self.ram / "ln").symlink_to(self.disk / "big")
+        self.assertEqual(self.bash(f"echo a > {self.ram}/x", cap=cap), "")
+
+    def test_the_refusal_names_where_a_redirect_may_go(self):
+        reason = self.bash("echo a > /tmp/elsewhere/f")
+        for fragment in ("$COS_SCRATCH_RAM", "$COS_SCRATCH_DISK", str(self.ram), str(self.disk)):
+            self.assertIn(fragment, reason)
+        self.assertNotIn("/tmp/<directory", reason)
+
+    def test_every_step_may_read_its_scratch(self):
+        (self.ram / "f").write_text("x")
+        (self.disk / "f").write_text("x")
+        reads = (
+            ("Read", {"file_path": "{}/f"}),
+            ("Glob", {"pattern": "{}/*"}),
+            ("Grep", {"pattern": "x", "path": "{}"}),
+        )
+        for grant in (IMPL, Grant(tools=READ_TOOLS)):
+            for where in (self.ram, self.disk):
+                for tool, args in reads:
+                    given = {k: v.format(where) for k, v in args.items()}
+                    with self.subTest(tool=tool, where=where.name):
+                        got = decide(grant, tool, given, self.WS, scratch=self.scratch)
+                        self.assertEqual(got, "")
+        refused = decide(
+            IMPL, "Read", {"file_path": str(self.other / "f")}, self.WS, scratch=self.scratch
+        )
+        self.assertIn("outside the workspace", refused)
+        self.assertIn(
+            "outside the workspace", decide(IMPL, "Read", {"file_path": f"{self.disk}/f"}, self.WS)
+        )
 
 
 class AToolNobodyGrantedIsRefused(unittest.TestCase):
@@ -836,25 +1012,22 @@ class TheShellIsReadAsTheShellReadsIt(unittest.TestCase):
     """On this set, the refusals naming a command that is not one, and the refusals of `${…}` or a
     backtick in single quotes, are zero."""
 
-    UNIT = "0060_x"
-
     # Each must pass under `impl`.
     PASS = (
-        ("grep -E 'a|b' f", ""),
-        ('rg "def |class " coscc', ""),
-        ('git commit -m "fix: a; b && c"', ""),
-        ('git commit -m "first line\n\nsecond; line | with && ops"', ""),
-        ("ls # a; curl x", ""),
-        ("cat <<'EOF'\nfail) ^ | def\nEOF", ""),
-        ('echo "${PIPESTATUS[0]}"', ""),
-        ("echo ${PIPESTATUS[0]}", ""),
-        ("npm ${X}", ""),
-        ("grep '\\`x\\`' f", ""),
-        ("cat <<'EOF'\nrun `whoami` and $(date)\nEOF", ""),
-        ("npm test > /dev/null 2>&1", UNIT),
-        ("npm test 2>/dev/null", UNIT),
-        ("npm test &>/dev/null", UNIT),
-        ("npm test > /tmp/coscc-0060_x/out.txt", UNIT),
+        "grep -E 'a|b' f",
+        'rg "def |class " coscc',
+        'git commit -m "fix: a; b && c"',
+        'git commit -m "first line\n\nsecond; line | with && ops"',
+        "ls # a; curl x",
+        "cat <<'EOF'\nfail) ^ | def\nEOF",
+        'echo "${PIPESTATUS[0]}"',
+        "echo ${PIPESTATUS[0]}",
+        "npm ${X}",
+        "grep '\\`x\\`' f",
+        "cat <<'EOF'\nrun `whoami` and $(date)\nEOF",
+        "npm test > /dev/null 2>&1",
+        "npm test 2>/dev/null",
+        "npm test &>/dev/null",
     )
 
     # Each refused, the reason carrying the fragment named.
@@ -886,23 +1059,23 @@ class TheShellIsReadAsTheShellReadsIt(unittest.TestCase):
         "echo x >",
     )
 
-    def check(self, command, unit=""):
-        return check_command(IMPL, command, None, unit)
+    def check(self, command):
+        return check_command(IMPL, command)
 
     def test_every_sample_that_should_pass_passes(self):
-        for command, unit in self.PASS:
+        for command in self.PASS:
             with self.subTest(command=command):
-                self.assertEqual(self.check(command, unit), "")
+                self.assertEqual(self.check(command), "")
 
     def test_the_two_counts_the_intent_names_are_zero(self):
-        reasons = [self.check(command, unit) for command, unit in self.PASS]
+        reasons = [self.check(command) for command in self.PASS]
         self.assertEqual(sum("may not run" in r for r in reasons), 0)
         self.assertEqual(sum("substitution" in r for r in reasons), 0)
 
     def test_every_sample_that_should_be_refused_is_refused_for_its_own_reason(self):
         for command, why in self.REFUSE:
             with self.subTest(command=command):
-                self.assertIn(why, self.check(command, self.UNIT))
+                self.assertIn(why, self.check(command))
 
     def test_a_line_that_cannot_be_read_is_refused_not_guessed(self):
         for command in self.UNREADABLE:
@@ -957,38 +1130,6 @@ class TheShellIsReadAsTheShellReadsIt(unittest.TestCase):
     def test_a_separator_inside_a_heredoc_body_starts_no_command(self):
         self.assertEqual(self.check("cat <<EOF\nx; curl y\nEOF\nls"), "")
         self.assertIn("may not run 'curl'", self.check("cat <<EOF\nx\nEOF\ncurl y"))
-
-    def test_the_tmp_directory_needs_a_unit(self):
-        """No unit, no directory: `"" in name` is always true."""
-        self.assertIn("no /tmp directory", self.check("npm test > /tmp/coscc-0060_x/o", ""))
-        self.assertIn("redirect", self.check("npm test > /tmp/coscc-0060_x/o", "not-a-unit"))
-
-    def test_the_tmp_directory_itself_and_what_expands_are_refused(self):
-        for command in (
-            "npm test > /tmp/coscc-0060_x",
-            "npm test > /tmp/coscc-0060_x/*",
-            "npm test > ~/o",
-            "npm test > /tmp/coscc-0060_x/$F",
-        ):
-            with self.subTest(command=command):
-                self.assertIn("redirect", self.check(command, self.UNIT))
-
-    def test_a_symlink_out_of_the_tmp_directory_is_refused(self):
-        d = tempfile.mkdtemp(dir="/tmp", prefix="coscc-0060_x-")
-        try:
-            link = Path(d) / "out"
-            link.symlink_to(Path.home())
-            self.assertIn("redirect", self.check(f"npm test > {link}/f", self.UNIT))
-            self.assertEqual(self.check(f"npm test > {d}/plain.txt", self.UNIT), "")
-        finally:
-            (Path(d) / "out").unlink(missing_ok=True)
-            Path(d).rmdir()
-
-    def test_decide_takes_the_unit_from_its_own_directory(self):
-        ws, unit_dir = "/tmp/ws", "/tmp/data/units/ws-abc/.cos/0060_x"
-        call = {"command": "npm test > /tmp/coscc-0060_x/o"}
-        self.assertEqual(decide(IMPL, "Bash", call, ws, unit_dir), "")
-        self.assertIn("redirect", decide(IMPL, "Bash", call, ws, None))
 
 
 class TheReaderFollowsBash(unittest.TestCase):

@@ -256,7 +256,6 @@ def _preflight(
     store: Store,
     grant: Grant,
     command: str,
-    unit: str,
     uses: Sequence[Use],
     workspace: str,
     stage: str,
@@ -264,7 +263,7 @@ def _preflight(
     """`(why the line is refused, the refused secrets)`; both empty when the call may go on. The
     store's own paths are refused on top of what `grant` holds."""
     protected = tuple(dict.fromkeys((*grant.protected, *store.protected())))
-    refused = check_command(replace(grant, protected=protected), command, unit=unit)
+    refused = check_command(replace(grant, protected=protected), command)
     if refused:
         return refused, ()
     refusals = _refusals(store, uses, workspace, stage)
@@ -321,7 +320,7 @@ def run(
             **fields,
         )
 
-    refused, refusals = _preflight(store, grant, command, unit, uses, workspace, stage)
+    refused, refusals = _preflight(store, grant, command, uses, workspace, stage)
     if refused or refusals:
         logged(refused=refused, codes=[c for _, c, _ in refusals])
         return Result(None, "", "", {}, refusals, refused, 0)

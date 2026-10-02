@@ -1052,7 +1052,11 @@ def check_push(words: list[str], branch: str, lease_head: str) -> str:
 
 
 def check_command(
-    grant: Grant, command: str, lease: tuple[str, str] | None = None, unit: str = ""
+    grant: Grant,
+    command: str,
+    lease: tuple[str, str] | None = None,
+    scratch: tuple[str, str] | None = None,
+    ram_cap: int = 0,
 ) -> str:
     """ "" if the command may run, else why not.
 
@@ -1063,9 +1067,9 @@ def check_command(
 
     The line is read as bash reads it (`_read`) and checked in this order: a line that cannot
     be read, a lone `&`, a substitution in effect, a redirect that writes, then every simple
-    command. `unit` is the step's own unit, `NNNN_<slug>`: a redirect may write under a `/tmp`
-    directory naming it (`_redirect_refused`). **That write is outside the write boundary
-    `decide` keeps**, and nothing creates or removes the directory.
+    command. `scratch` is the unit's `(ram, disk)` directories: a redirect may write below
+    either (`_redirect_refused`), the ram one only while its files add up to less than
+    `ram_cap` bytes. **That write is outside the write boundary `decide` keeps.**
     """
     text = (command or "").strip()
     if not text:
@@ -1086,7 +1090,7 @@ def check_command(
         return f"{kind} substitution is not allowed: {token}"
     for simple in parsed.commands:
         for redirect in simple.redirects:
-            reason = _redirect_refused(redirect, unit)
+            reason = _redirect_refused(redirect, scratch, ram_cap, text)
             if reason:
                 return reason
     for simple in parsed.commands:
@@ -1207,59 +1211,131 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
 # Redirection into a file, which is a write that no write-tool check would ever see: a redirect
 # writes a file without any write tool being called, so the path check in `decide` never sees it.
 #
-# Safe: `> /dev/null`, `2>&1`, and writes to the step's own temp directory (under /tmp, its name
-# carrying the unit). Writing a file in the worktree stays refused: use Write/Edit.
+# Safe: `> /dev/null`, `2>&1`, and writes below the unit's two scratch directories (`_scratch_of`).
+# Writing a file in the worktree stays refused: use Write/Edit.
 _READ_REDIRECTS = frozenset({"<", "<<", "<<-", "<<<", "<&"})
 _DESCRIPTOR = re.compile(r"\d*-?")
-# Copied from `coscc/units/__init__.py:53`, not imported: this module depends on no other of the app.
-_UNIT_NAME = re.compile(r"\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
-def _redirect_refused(redirect: _Redirect, unit: str) -> str:
-    """ "" if the redirect may happen, else why not."""
+def _redirect_refused(
+    redirect: _Redirect, scratch: tuple[str, str] | None = None, ram_cap: int = 0, line: str = ""
+) -> str:
+    """ "" if the redirect may happen, else why not. `line` is the whole command line."""
     if redirect.op in _READ_REDIRECTS:
         return ""
     if redirect.op == ">&" and redirect.target and _DESCRIPTOR.fullmatch(redirect.target):
         # `2>&1`, `>&2`, `3>&-`: between descriptors, touching no file. `>&word` is `&>word`.
         return ""
     allowed = "a redirect may go only to /dev/null or to another descriptor (2>&1)"
-    if _UNIT_NAME.fullmatch(unit or ""):
+    if scratch:
         allowed = (
             "a redirect may go only to /dev/null, to another descriptor (2>&1), "
-            f"or under a /tmp/<directory naming {unit}>/"
+            f"or below $COS_SCRATCH_RAM ({scratch[0]}) or $COS_SCRATCH_DISK ({scratch[1]})"
         )
-    else:
-        allowed += ": this step has no /tmp directory of its own"
     if redirect.op == "<>":
         return f"redirecting into a file is not allowed: {redirect.target} (<> opens it for writing) — use the write tools; {allowed}"
     if redirect.target == "/dev/null" and not redirect.expanded:
         return ""
-    if _in_step_tmp(redirect, unit):
-        return ""
+    target = (
+        _scratch_named(redirect.target, scratch, line) if redirect.expanded else redirect.target
+    )
+    if target:
+        full = _scratch_refused(target, scratch, ram_cap)
+        if full is not None:
+            return full
     return f"redirecting into a file is not allowed: {redirect.target} — use the write tools; {allowed}"
 
 
-def _in_step_tmp(redirect: _Redirect, unit: str) -> bool:
-    """Whether the target, symlinks resolved now, lies below a directory directly under `/tmp`
-    whose name carries `unit`, and is not that directory itself.
+# What a session's environment names the scratch directories (`sessions.child_env`): ram, disk, disk.
+_SCRATCH_VARS = ("COS_SCRATCH_RAM", "COS_SCRATCH_DISK", "TMPDIR")
+_LEADING_VAR = re.compile(r"\$(?:\{(\w+)\}|(\w+))((?:/[^$`*?\[]*)?)")
 
-    Resolved when `decide` runs, not when bash opens the file: a directory swapped for a symlink
-    in between is not seen. `/tmp` is shared, so anyone can make a directory carrying a unit's
-    name before the step does.
+
+def _scratch_named(target: str, scratch: tuple[str, str] | None, line: str) -> str:
+    """`target` with a leading `$COS_SCRATCH_RAM`, `$COS_SCRATCH_DISK` or `$TMPDIR` (braced or
+    not) replaced by the path the session's environment holds, or "" when it is anything else.
+
+    Only when `line` names that variable nowhere but as `$NAME` or `${NAME}`: an assignment,
+    `export` or `read` on the same line could point it elsewhere before bash opens the file.
+    """
+    found = _LEADING_VAR.fullmatch(target)
+    if not scratch or not found:
+        return ""
+    name = found.group(1) or found.group(2)
+    values = dict(zip(_SCRATCH_VARS, (scratch[0], scratch[1], scratch[1])))
+    if name not in values:
+        return ""
+    if re.search(rf"\b{name}\b", re.sub(rf"\$(?:\{{{name}\}}|{name}\b)", "", line)):
+        return ""
+    return values[name] + found.group(3)
+
+
+def _scratch_of(raw: str, scratch: tuple[str, str] | None) -> int | None:
+    """Which of `scratch` (0 the ram directory, 1 the disk one) the absolute path `raw` lies
+    below, and is not the directory itself; `None` for neither.
+
+    Both sides are resolved when `decide` runs, not when bash opens the file: a directory
+    swapped for a symlink in between is not seen. A symlink inside either directory that points
+    out of it resolves out, so it is not a way to write elsewhere.
     """
     from pathlib import Path
 
-    # `"" in name` is always true, so a step with no unit must never get this far.
-    if not _UNIT_NAME.fullmatch(unit or ""):
-        return False
-    if redirect.expanded or not redirect.target.startswith("/"):
-        return False
+    if not scratch or not raw.startswith("/"):
+        return None
     try:
-        tmp = Path("/tmp").resolve()
-        rel = Path(redirect.target).resolve().relative_to(tmp)
-    except OSError, RuntimeError, ValueError:
-        return False
-    return len(rel.parts) >= 2 and unit in rel.parts[0]
+        target = Path(raw).resolve()
+        for i, root in enumerate(scratch):
+            if root and Path(root).resolve() in target.parents:
+                return i
+    except OSError, RuntimeError:
+        return None
+    return None
+
+
+def _listed(where: str) -> list:
+    """The entries directly in `where`, none when it cannot be read."""
+    import os
+
+    try:
+        with os.scandir(where) as entries:
+            return list(entries)
+    except OSError:
+        return []
+
+
+def _ram_bytes(ram: str) -> int:
+    """The sizes of the files below `ram` added up, symlinks counted as themselves and not
+    followed. What cannot be read counts as nothing."""
+    import stat
+
+    total, pending = 0, [ram]
+    while pending:
+        for entry in _listed(pending.pop()):
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                pending.append(entry.path)
+            else:
+                total += st.st_size
+    return total
+
+
+def _scratch_refused(raw: str, scratch: tuple[str, str] | None, ram_cap: int) -> str | None:
+    """`None` when `raw` is not below a scratch directory (the caller refuses it); "" when it is
+    and may be written; else why not: the ram directory is full, and the disk one is named."""
+    where = _scratch_of(raw, scratch)
+    if where is None or not scratch:
+        return None
+    if where == 0:
+        used = _ram_bytes(scratch[0])
+        if used >= ram_cap:
+            return (
+                f"the ram scratch directory {scratch[0]} holds {used} bytes, its cap is {ram_cap}: "
+                f"write below {scratch[1]} ($COS_SCRATCH_DISK) instead"
+            )
+    return ""
 
 
 # Flags `gh` reads a value after, anywhere on the line. Their values are dropped with them, so
@@ -1329,6 +1405,8 @@ def decide(
     read_also: tuple[str, ...] = (),
     lease: tuple[str, str] | None = None,
     agent_id: str | None = None,
+    scratch: tuple[str, str] | None = None,
+    ram_cap: int = 0,
 ) -> str:
     """ "" if this call may proceed, else the reason it may not.
 
@@ -1347,6 +1425,13 @@ def decide(
     root, the shape every prose stage runs with (they hold no write tools).
 
     The same two roots bound `Read`, `Glob` and `Grep` too.
+
+    **`scratch` is the unit's `(ram, disk)` directories, and widens the write boundary by those
+    two**, for a step whose grant holds an exec tool: a redirect or a write tool may write
+    below either, and a write below the ram one is refused once its files add up to `ram_cap`
+    bytes, the reason naming the disk one. Every step may read both. The paths are the app's
+    (`coscc/units/scratch.py`), passed in because this module imports nothing of it; `None`
+    means no scratch.
 
     `read_also` widens **reading only**, by an explicit list of paths the app built from the
     data root (Gebo's own unit folder and the intent/spec/plan of the related units). Writing
@@ -1377,14 +1462,9 @@ def decide(
         # background without asking, which is what `sessions.FOREGROUND_ENV` closes.
         if tool_input.get("run_in_background"):
             return f"run_in_background is refused: {BACKGROUND_REFUSAL}"
-        # The unit's name opens a `/tmp` directory to redirects. Writes there are outside the
-        # boundary the write tools are held to below.
-        from pathlib import Path
-
-        unit = Path(unit_dir).name if unit_dir else ""
         command = str(tool_input.get("command", ""))
         reason = (
-            check_command(grant, command, lease, unit)
+            check_command(grant, command, lease, scratch, ram_cap)
             or _git_into(command, workspace, read_also)
             or _helper_git(command, agent_id)
         )
@@ -1397,15 +1477,11 @@ def decide(
         roots, reason = _roots(workspace, unit_dir)
         if reason:
             return reason
-        # Where a redirect may write (`_in_step_tmp`), the write tools may too, for a step that can run commands.
-        from pathlib import Path
-
-        unit = Path(unit_dir).name if unit_dir and any(t in grant.tools for t in EXEC_TOOLS) else ""
-        for raw in _paths_in(tool_input):
-            if not _inside(raw, roots, None) and not _in_step_tmp(
-                _Redirect(">", "", raw, False), unit
-            ):
-                return f"writing outside the workspace is not allowed: {raw}"
+        # Where a redirect may write (`_scratch_of`), the write tools may too, for a step that can run commands.
+        own = scratch if any(t in grant.tools for t in EXEC_TOOLS) else None
+        reason = _write_refused(tool_input, roots, own, ram_cap)
+        if reason:
+            return reason
 
     if tool in READ_TOOLS:
         # Reading is held to the same two roots as writing, or a step that could `Read` could read
@@ -1417,7 +1493,7 @@ def decide(
             return reason
         from pathlib import Path
 
-        for extra in read_also:
+        for extra in (*read_also, *(p for p in scratch or () if p)):
             try:
                 roots.append(Path(extra).expanduser().resolve())
             except OSError:
@@ -1427,6 +1503,21 @@ def decide(
                 return f"reading outside the workspace is not allowed: {tool_input.get('pattern')}"
             if not _inside(raw, roots, roots[0]):
                 return f"reading outside the workspace is not allowed: {raw}"
+    return ""
+
+
+def _write_refused(
+    tool_input: dict, roots: list, scratch: tuple[str, str] | None, ram_cap: int
+) -> str:
+    """Why a write tool's paths may not be written, or "": each lies in `roots` or below `scratch`."""
+    for raw in _paths_in(tool_input):
+        if _inside(raw, roots, None):
+            continue
+        full = _scratch_refused(raw, scratch, ram_cap)
+        if full is None:
+            return f"writing outside the workspace is not allowed: {raw}"
+        if full:
+            return full
     return ""
 
 

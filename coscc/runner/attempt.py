@@ -76,12 +76,14 @@ def permission_gate(
     unit_dir: str | None = None,
     read_also: tuple[str, ...] = (),
     lease: tuple[str, str] | None = None,
+    scratch: tuple[str, str] | None = None,
+    ram_cap: int = 0,
 ):
     """The callback the SDK asks before every tool call.
 
     Separate from the tool list on purpose: the list does not cover every source of
-    capability. `read_also` and `lease` are passed to `decide` unchanged, and so is the context's
-    `agent_id`, which the CLI sets on a helper's call.
+    capability. `read_also`, `lease`, `scratch` and `ram_cap` are passed to `decide` unchanged,
+    and so is the context's `agent_id`, which the CLI sets on a helper's call.
     """
 
     async def can_use_tool(tool: str, tool_input: dict, context: Any):
@@ -94,6 +96,8 @@ def permission_gate(
             read_also,
             lease,
             getattr(context, "agent_id", None),
+            scratch,
+            ram_cap,
         )
         if reason:
             denials.record(tool, reason, tool_input)
