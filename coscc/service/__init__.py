@@ -287,8 +287,9 @@ class Service:
     async def shutdown(self) -> None:
         """Cancel every autopilot pass, step, board read and background `gh` ask still running,
         let every tree removal end as it would, and wait for all of them, `SHUTDOWN_WITHIN`
-        seconds at most from the call. Once this returns nothing they started still writes,
-        unless it outlived the deadline: each such one is logged by name.
+        seconds at most from the call. An ask a request begins meanwhile is cancelled and
+        waited for too. Once this returns nothing they started still writes, unless it
+        outlived the deadline: each such one is logged by name.
 
         No `end` is written: a step with no `end` is what an app that went down mid-step looks like.
         """
@@ -323,9 +324,18 @@ class Service:
             t.cancel()
         # Board reads are cancelled there, and tree removals left to end.
         waited = cancelled + await self.boards.stop()
-        left = {t for _label, t in waited if not t.done()}
-        if left:
-            await asyncio.wait(left, timeout=max(0.0, deadline - loop.time()))
+        while True:
+            left = {t for _label, t in waited if not t.done()}
+            if left:
+                await asyncio.wait(left, timeout=max(0.0, deadline - loop.time()))
+            # Only the board has a door: an ask a request began meanwhile is cancelled here.
+            seen = {t for _label, t in waited}
+            late = [(label, t) for label, t in self._asks() if t not in seen and not t.done()]
+            for _label, t in late:
+                t.cancel()
+            waited += late
+            if not late or loop.time() >= deadline:
+                break
         for label, t in waited:
             if not t.done():
                 log.warning(

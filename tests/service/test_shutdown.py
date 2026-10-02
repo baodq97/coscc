@@ -212,6 +212,17 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ProcessLookupError):
             os.kill(proc.pid, 0)
 
+    async def test_an_ask_begun_while_shutdown_waits_is_cancelled_and_waited_for(self):
+        await self.a_read_in_its_thread()
+        down = asyncio.ensure_future(self.service.shutdown())
+        self.assertTrue(await self.still_running(down))
+        # What a request the server still took starts: the release panel's `gh`, held.
+        never = asyncio.Event()
+        ask = self.service.release.details.ask((self.cwd, "status", "v0.1.0"), never.wait)
+        self.release.set()
+        await asyncio.wait_for(down, 5)
+        self.assertTrue(ask.cancelled())
+
     async def test_what_outlives_the_deadline_is_logged_by_name(self):
         await self.a_read_in_its_thread()
         with (
