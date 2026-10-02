@@ -9,7 +9,8 @@ A Stop is the `stop_asked_at` column, recorded through `ask_stop`, which publish
 
 The scheduler is here too: one per process, woken by `*.queued`, `*.ended` and `*.refused`,
 it counts the slots held by reading the rows and moves the oldest queued attempt of each kind
-of slot on, then calls the launcher its machine registered. Nothing else launches.
+of slot on, then calls the launcher its machine registered. Nothing else launches. While an
+update is under way, and once the process goes down, it moves nothing on.
 """
 
 from __future__ import annotations
@@ -153,6 +154,11 @@ class Attempts:
         self.capacity = capacity
         # By machine: what the scheduler calls with the row it moved on. Set by the runner.
         self.launchers: dict[str, Callable[[Attempt], None]] = {}
+        # Whether a queued attempt may be moved on now: not while an update is under way. Set
+        # by the service; `closed` from the moment the process goes down until a start reopens
+        # it. Either way a queued attempt stays in the queue, for this process or the next.
+        self.admitting: Callable[[], bool] = lambda: True
+        self.closed = False
         self._waking = False
         self._again: set[str] = set()
         # Every move of every machine: a slot is freed by an end, wanted by a `queued`, and a
@@ -354,6 +360,8 @@ class Attempts:
             self.wake(workspace)
 
     def _admit(self, workspace: str) -> None:
+        if self.closed or not self.admitting():
+            return
         rows = self.unfinished(workspace)
         for slot in set(SLOTS.values()):
             held = sum(1 for r in rows if r["slot"] == slot and r["state"] in HOLDING)

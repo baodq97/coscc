@@ -59,6 +59,7 @@ class Service:
         self.bus = self.sessions.bus
         # What holds each unit now: its attempt, and the scheduler that launches them.
         self.attempts = Attempts(self.config.data_dir, self.bus, self._capacity)
+        self.attempts.admitting = self._admitting
         self.holds = Holds(self.attempts)
         # The parts below `Service`, each given what it reads.
         self.agents = Agents(self.config, self.ws)
@@ -146,6 +147,15 @@ class Service:
         if slot == "agent":
             return int(autopilot_values(self.config, workspace)["max_parallel"])
         return 1
+
+    def _admitting(self) -> bool:
+        """No queued attempt is moved on from the press of Apply until the update goes no
+        further: what began then would be refused `updating`, or cut by the hand-off."""
+        return not self.updater.window and self.updater.state not in ("pending", "applying")
+
+    def update_over(self) -> None:
+        """Told by the updater once a cancel or a failure left it idle: the queue moves on."""
+        self.attempts.wake_all()
 
     def _wake_autopilot(self, event: Event) -> None:
         if not event.going_down:
@@ -330,7 +340,10 @@ class Service:
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + SHUTDOWN_WITHIN
-        # The autopilot first, so no pass starts a step while the rest go down. A pass may be
+        # The queue first: an integration waited for below frees its slot, and what is queued
+        # stays queued for the next start rather than begin in a process going down.
+        self.attempts.closed = True
+        # The autopilot next, so no pass starts a step while the rest go down. A pass may be
         # in a board read's thread, so it is waited for too; taken before `stop` drops it.
         autopilot = [
             *((f"autopilot of {k}", t) for k, t in self.autopilot.tasks.items()),

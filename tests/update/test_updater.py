@@ -66,6 +66,8 @@ class StandIn:
         self.order: list[str] = []
         self.sessions = _Sessions(self.order)
         self.shut = 0
+        # How often the updater said a cancel or a failure left it idle.
+        self.over = 0
         # `Service.resume`, the part that takes the paused sessions up again.
         self.resume = self
 
@@ -89,6 +91,9 @@ class StandIn:
     async def resume_after_update(self):
         self.order.append("take_up")
         return []
+
+    def update_over(self):
+        self.over += 1
 
     def events(self):
         return [r["event"] for r in self.rows]
@@ -227,6 +232,8 @@ class ItWaits(_Base):
         self.assertEqual(u.state, "idle")
         self.assertEqual(self.service.rows[-1]["event"], "cancelled")
         self.assertEqual(self.service.rows[-1]["by"], "bo")
+        # The queue held from the press of Apply moves on.
+        self.assertEqual(self.service.over, 1)
         self.service.jobs = []
         u.job_ended()
         await self.settle()
@@ -395,6 +402,7 @@ class TheSequence(_Base):
         self.assertEqual(u.state, "idle")
         self.assertIn("trial install", u.error["message"])
         self.assertIn("tool install", u.error["log_tail"])
+        self.assertEqual(self.service.over, 1)
         self.assertFalse(self.server.should_exit)
         self.assertEqual(list((self.root / "tmp").iterdir()), [])
 

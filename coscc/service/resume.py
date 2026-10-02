@@ -214,6 +214,8 @@ class Resume:
         # process never had it.
         handoff = self.sessions.paused
         self.sessions.paused = False
+        # `shutdown` closed the queue before a hand-off that failed; this process goes on.
+        self.holds.attempts.closed = False
         await self._recover(handoff)
         journal = self.ws.journal()
         if journal is None:

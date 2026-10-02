@@ -122,6 +122,53 @@ class TheSchedulerNeverHoldsMoreThanNSlots(_Store):
         asyncio.run(go())
 
 
+class NothingQueuedBeginsWhileTheAppUpdatesOrGoesDown(unittest.IsolatedAsyncioTestCase):
+    """A slot freed while an update waits, or while the process goes down, is not taken: the
+    queued attempt stays queued, neither refused `updating` nor cut by the hand-off."""
+
+    async def asyncSetUp(self):
+        from coscc.api import build
+        from coscc.config import Config
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.service = build(Config(workspaces=(), data_dir=self._tmp.name)).state.service
+        self.attempts = self.service.attempts
+        self.launched: list[int] = []
+        self.attempts.launchers["integration"] = lambda row: self.launched.append(row["id"])
+        self.x = self.attempts.open("integration", "/w", "0001_x", "integrate")["id"]
+        self.y = self.attempts.open("integration", "/w", "0002_y", "integrate")["id"]
+
+    async def asyncTearDown(self):
+        self._tmp.cleanup()
+
+    def state(self, attempt: int) -> str:
+        return self.attempts.get(attempt)["state"]
+
+    async def test_an_update_holds_the_queue_until_it_goes_no_further(self):
+        x, y = self.x, self.y
+        for n, (state, window) in enumerate((("pending", False), ("applying", True))):
+            with self.subTest(state=state):
+                self.assertEqual((self.launched[-1], self.state(y)), (x, "queued"))
+                self.service.updater.state, self.service.updater.window = state, window
+                # The integration Apply waited for ends: its slot is not taken.
+                self.attempts.move(x, "ended", "done")
+                self.assertEqual((self.launched[-1], self.state(y)), (x, "queued"))
+                # A cancel or a failure leaves the updater idle and tells the service.
+                self.service.updater.state, self.service.updater.window = "idle", False
+                self.service.update_over()
+                self.assertEqual((self.launched[-1], self.state(y)), (y, "running"))
+                # The next state, with `y` holding the slot and another queued behind it.
+                x, y = y, self.attempts.open("integration", "/w", f"001{n}_z", "integrate")["id"]
+
+    async def test_shutdown_leaves_the_queue_for_the_next_start(self):
+        await self.service.shutdown()
+        self.attempts.move(self.x, "ended", "done")
+        self.assertEqual((self.launched, self.state(self.y)), ([self.x], "queued"))
+        # A start, or a hand-off that failed, opens the queue again and moves it on.
+        await self.service.resume.resume_after_update()
+        self.assertEqual((self.launched, self.state(self.y)), ([self.x, self.y], "running"))
+
+
 class AStepIsStoppedAtEveryState(unittest.IsolatedAsyncioTestCase):
     """Through `Steps.stop_running`, on attempts the scheduler does not launch."""
 
