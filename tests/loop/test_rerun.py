@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 
 from coscc.loop.model import above_answers
-from tests.loop.conftest import UnitStore, entry, expect, header, python
+from tests.loop.conftest import UnitStore, entry, header, expect
 
 UNIT = "0001_x"
 KINDS = {
@@ -260,61 +260,3 @@ def test_a_granted_spike_rerun(store):
         unmeasured=True,
     )
     assert rerun(store, UNIT, "spike").code == 0
-
-
-# --- the app's rerun of an outdated spec or plan --------------------------------------------
-
-A, B = "a" * 40, "b" * 40
-OUTDATED = {
-    "spec": {
-        "decisions": [{"id": "C1", "authority": "person"}, {"id": "C3", "authority": "agent"}],
-        "main": {"from_sha": A, "main_sha": B, "paths": ["coscc/x.py"], "checked": True},
-    }
-}
-
-
-def make_outdated(store: UnitStore, outdated: dict) -> None:
-    statuses = {"intent.md": "accepted", "spec.md": "accepted", "plan.md": "accepted"}
-    files = {f: header("x", s, KINDS[f]) for f, s in statuses.items()}
-    store.unit(UNIT, files, {**entry(statuses), "outdated": outdated})
-
-
-def test_the_apps_block_names_the_app_each_decision_and_both_commits(store):
-    make_outdated(store, OUTDATED)
-    r = python(store.argv("rerun", UNIT, "spec", "app"))
-    assert r.code == 0, r.err
-    lines = json.loads(r.out)["block"].split("\n")
-    assert lines[1].startswith("Requested by: app. Date: ")
-    assert lines[2:6] == [
-        "Stage: spec.",
-        "Decisions: C1 (person), C3 (agent).",
-        f"Main: {A}..{B}.",
-        f"Changed: coscc/x.py `git diff {A}..{B} -- coscc/x.py`",
-    ]
-    assert [line.split(" sha256:")[0] for line in lines[6:8]] == [
-        "Stale: spec.md",
-        "Stale: plan.md",
-    ]
-
-
-def test_the_app_is_refused_a_stage_nothing_made_outdated_and_a_person_is_not(store):
-    make_outdated(store, {"plan": {"decisions": [], "main": {"paths": []}}})
-    refused = python(store.argv("rerun", UNIT, "spec", "app"))
-    assert refused.code == 1
-    assert "spec.md is not outdated" in refused.err
-    assert python(store.argv("rerun", UNIT, "spec")).code == 0
-    assert python(store.argv("rerun", UNIT, "spec", "someone")).code == 2
-
-
-def test_a_persons_block_on_an_outdated_stage_names_the_same_cause(store):
-    make_outdated(store, OUTDATED)
-    block = json.loads(python(store.argv("rerun", UNIT, "spec")).out)["block"]
-    assert "Requested by: owner." in block
-    assert "Decisions: C1 (person), C3 (agent)." in block
-    assert f"Changed: coscc/x.py `git diff {A}..{B} -- coscc/x.py`" in block
-
-
-def test_a_persons_block_on_a_stage_nothing_made_outdated_names_no_cause(store):
-    make_outdated(store, {"plan": {"decisions": [], "main": {"paths": []}}})
-    block = json.loads(python(store.argv("rerun", UNIT, "spec")).out)["block"]
-    assert "Decisions:" not in block and "Main:" not in block

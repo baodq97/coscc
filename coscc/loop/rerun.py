@@ -1,7 +1,7 @@
 """`rerun`: which accepted stages the board may run again, and the `### Rerun` block.
 
-`rerun_later`, `rerun_closed`, `rerun_refusal`, `rerun_offers`, `rerun_block`, `cause_lines`,
-`cmd_rerun` and `local_date`. It reads files and prints; it writes nothing, the app appends the
+`rerun_later`, `rerun_closed`, `rerun_refusal`, `rerun_offers`, `rerun_block`, `cmd_rerun`
+and `local_date`. It reads files and prints; it writes nothing, the app appends the
 block.
 """
 
@@ -23,10 +23,7 @@ from coscc.loop import (
     truthy,
 )
 from coscc.loop.model import above_answers, present, read_unit, required, status_of, unmeasured_of
-from coscc.loop.rules import evaluate, outdated_of
-
-# Who asks for a rerun: a person from the board, or the app on an outdated spec or plan.
-REQUESTERS = ("owner", "app")
+from coscc.loop.rules import evaluate
 
 
 def rerun_later(unit, name):
@@ -79,11 +76,9 @@ def rerun_offers(unit, limit=REVIEW_ROUNDS):
     ]
 
 
-def rerun_block(unit, name, date, hash_of, by="owner"):
+def rerun_block(unit, name, date, hash_of):
     """the `### Rerun` block the app appends to `intent.md ## Answers`, whole. `hash_of(file)`
-    is `above_answers` of that artifact as it is on disk now. On an outdated `name`, whoever
-    asks (`by`, `owner` or `app`), it also names what made it so: each decision with its
-    authority, and each path main changed with the command that shows how."""
+    is `above_answers` of that artifact as it is on disk now."""
     files = [
         f
         for f in (stage_of(n)["file"] for n in [name, *rerun_later(unit, name)])
@@ -92,29 +87,12 @@ def rerun_block(unit, name, date, hash_of, by="owner"):
     return "\n".join(
         [
             "### Rerun",
-            f"Requested by: {by}. Date: {date}. Via: product.",
+            f"Requested by: owner. Date: {date}. Via: product.",
             f"Stage: {name}.",
-            *cause_lines(outdated_of(unit, name)),
             *[f"Stale: {f} sha256:{hash_of(f)}" for f in files],
             "",
         ]
     )
-
-
-def cause_lines(outdated):
-    """The lines of a `### Rerun` block the app asked for that say why: none without a cause."""
-    if not outdated:
-        return []
-    lines = []
-    if outdated["decisions"]:
-        named = ", ".join(f"{d['id']} ({d.get('authority') or '?'})" for d in outdated["decisions"])
-        lines.append(f"Decisions: {named}.")
-    main = outdated["main"]
-    if main:
-        a, b = main.get("from_sha"), main.get("main_sha")
-        lines.append(f"Main: {a}..{b}.")
-        lines += [f"Changed: {p} `git diff {a}..{b} -- {p}`" for p in main["paths"]]
-    return lines
 
 
 def local_date(d=None):
@@ -123,15 +101,11 @@ def local_date(d=None):
     return f"{d.year:04d}-{d.month:02d}-{d.day:02d}"
 
 
-def cmd_rerun(unit_name, stage, cos_dir, limit, today, state, out, err, by="owner"):
+def cmd_rerun(unit_name, stage, cos_dir, limit, today, state, out, err):
     """`cmdRerun`: `{unit, offers, why}` with no `stage`, else `{unit, stage, later, block}`
-    and exit 0, or the reason and exit 1. Exit 2 is misuse, as `gate`'s. `by` is `app` only for
-    a stage `decide` names outdated; for any other it is refused."""
+    and exit 0, or the reason and exit 1. Exit 2 is misuse, as `gate`'s."""
     if not unit_name:
         err(f"usage: python -m coscc.loop rerun <NNNN_slug> [{'|'.join(RERUNNABLE)}]")
-        return 2
-    if by not in REQUESTERS:
-        err(f'unknown requester "{by}" — use one of {", ".join(REQUESTERS)}')
         return 2
     if not UNIT_RE.fullmatch(unit_name):
         err(f'Invalid unit name "{unit_name}": expected NNNN_slug.')
@@ -152,13 +126,11 @@ def cmd_rerun(unit_name, stage, cos_dir, limit, today, state, out, err, by="owne
         err(f'unknown stage "{stage}" — use one of {", ".join(STAGE_NAMES)}')
         return 2
     refused = rerun_refusal(unit, stage, limit)
-    if not refused and by == "app" and not outdated_of(unit, stage):
-        refused = f"{stage_of(stage)['file']} is not outdated — only a person runs it again"
     if refused:
         err(f"{stage} cannot be run again for {unit_name}: {refused}")
         return 1
     block = rerun_block(
-        unit, stage, today, lambda f: above_answers(read_text(os.path.join(dir_, f))), by
+        unit, stage, today, lambda f: above_answers(read_text(os.path.join(dir_, f)))
     )
     out(
         stringify(
@@ -179,5 +151,4 @@ def run(args, out, err) -> int:
         args.state,
         out,
         err,
-        rest[2] if len(rest) > 2 else "owner",
     )

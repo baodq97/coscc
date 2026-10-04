@@ -29,9 +29,6 @@ REASONS = (
     "missing",
     "rejected",
     "stale",
-    # An accepted spec or plan a decision, or a change of `main` to a path it cites, came after.
-    "outdated-decision",
-    "outdated-main",
     "review-incomplete",
     "ship-refused",
     "ship-merging",

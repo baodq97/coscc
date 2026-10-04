@@ -68,7 +68,6 @@ from coscc.service.models import Models
 from coscc.service.ideas import Ideas
 from coscc.service.answers import Answers
 from coscc.service.backlog import cut_branch
-from coscc.service import outdated
 from collections.abc import Awaitable, Callable
 
 log = logging.getLogger(__name__)
@@ -1300,8 +1299,6 @@ class Steps:
         if not unit:
             raise Invalid("name a work unit")
         self.ws.unit_dir(cwd, unit)
-        # What came after its accepted spec or plan, into the snapshot both asks below read.
-        await outdated.refresh(self.ws, cwd, [unit])
         # Asked first with no `--repo`, which reads files only: a held unit is
         # answered here, before `worktree` could reopen the tree a drop just removed.
         try:
@@ -1344,11 +1341,9 @@ class Steps:
             "waiting": list(found.get("waiting") or []),
             # The ids the last review round left out, copied from `coscc.loop next`.
             "dropped": list(found.get("dropped") or []),
-            # The stage a fully answered draft, or an outdated spec or plan, would run again;
-            # only the autopilot and the board's rewrite button read it.
+            # The stage a fully answered draft would run again; only the autopilot
+            # reads it.
             "rerun": str(found.get("rerun") or ""),
-            # `{stage: {decisions, main}}` of what made a stage outdated, from the snapshot.
-            "outdated": dict(self.ws.meta_of(cwd, unit).get("outdated") or {}),
             # `impl` when it left its file a draft asking nothing; only the autopilot reads it.
             "continue": str(found.get("continue") or ""),
             # The codes the autopilot branches on, copied from `coscc.loop next`.
@@ -1470,18 +1465,15 @@ class Steps:
         async for item in self._follow(running, queue):
             yield item
 
-    def enqueue_step(
-        self, cwd: str, unit: str, stage: str, note: str = "", rerun: bool = False
-    ) -> int:
+    def enqueue_step(self, cwd: str, unit: str, stage: str, note: str = "") -> int:
         """The autopilot's step: `run_step`'s first half with no reader. An attempt in `queued`,
         `started_by=autopilot`, its id returned at once; the scheduler launches `_prepare`,
         which asks the gate, and `drive` ends it and runs `after_end` with nobody reading, as
         it does for one queued before a restart. `note` is the app's own (`note_by=app`): the
-        prompt puts it apart from a person's. `unit-busy` and the update are refused here.
-        `rerun` runs an outdated spec or plan again, with no note: `_ask_rerun` refuses any other."""
+        prompt puts it apart from a person's. `unit-busy` and the update are refused here."""
         note = note.strip()
         return self._enqueue(
-            cwd, unit, "step", stage, note=note, note_by="app" if note else "person", rerun=rerun
+            cwd, unit, "step", stage, note=note, note_by="app" if note else "person"
         )
 
     def enqueue_integration(self, cwd: str, unit: str) -> int:
@@ -1599,13 +1591,6 @@ class Steps:
             # Refuse, or find what the step runs on: nothing is spent until the gate is open.
             data, found, row = await self._find_stage(cwd, unit, stage)
             rerun_block = await self._ask_rerun(cwd, unit, stage, started_by, note) if rerun else ""
-            # What made the stage outdated, for its `start`, whoever ran it again: the main it
-            # was handed is the main it read up to.
-            cause = (
-                outdated.cause_of((self.ws.meta_of(cwd, unit).get("outdated") or {}).get(stage))
-                if rerun
-                else None
-            )
             tree, work = await self._open_tree(cwd, unit, stage)
             base = await self._tree_base(cwd, unit, tree)
             answer = await self._ask_gate(cwd, unit, stage, work)
@@ -1660,7 +1645,6 @@ class Steps:
                 tree=tree,
                 work=work,
                 rounds_before=rounds_before,
-                cause=cause,
             )
             if rerun:
                 await self.answers.append_to_answers(
@@ -1764,45 +1748,25 @@ class Steps:
     async def _ask_rerun(self, cwd: str, unit: str, stage: str, started_by: str, note: str) -> str:
         """The `### Rerun` block for running `stage` again, asked before a worktree is opened or
         the gate asked. Whether `stage` may run again, and the block that says so, are
-        the loop's; its refusal is passed on. The app's own (`started_by` not `person`) only for
-        a stage `coscc.loop next` names outdated, and with no note. Either names what made the
-        stage outdated, from `outdated` worked out again here."""
-        by = "owner"
-        await outdated.refresh(self.ws, cwd, [unit])
+        the loop's; its refusal is passed on."""
         if started_by != "person":
-            if note.strip() or not await self._outdated_rerun(cwd, unit, stage):
-                raise Refused(
-                    "a stage is run again only by a person, from the board, never by the autopilot"
-                    " unless a decision or main made it outdated, and then with no note",
-                    ("rerun-by-person",),
-                )
-            by = "app"
+            raise Refused(
+                "a stage is run again only by a person, from the board, never by the autopilot",
+                ("rerun-by-person",),
+            )
         if len(note) > RERUN_NOTE_MAX:
             raise Invalid(
                 f"the note is {len(note)} characters, over the {RERUN_NOTE_MAX} a rerun takes"
             )
         try:
             asked = await board_reader.rerun(
-                self.ws.units_root(cwd), unit, stage, state=self.ws.snapshot(cwd, [unit]), by=by
+                self.ws.units_root(cwd), unit, stage, state=self.ws.snapshot(cwd, [unit])
             )
         except Unavailable as e:
             raise Refused(str(e), ("unavailable",)) from e
         if "error" in asked:
             raise Invalid(str(asked["error"]))
         return str(asked.get("block") or "")
-
-    async def _outdated_rerun(self, cwd: str, unit: str, stage: str) -> bool:
-        """Whether `coscc.loop next`, files only, names `stage` to run again for an
-        `outdated-*` code."""
-        try:
-            found = await board_reader.next_step(
-                self.ws.units_root(cwd), unit, repo=None, state=self.ws.snapshot(cwd, [unit])
-            )
-        except Unavailable as e:
-            raise Refused(str(e), ("unavailable",)) from e
-        return found.get("rerun") == stage and bool(
-            set(found.get("reasons") or ()) & {"outdated-decision", "outdated-main"}
-        )
 
     async def _open_tree(
         self, cwd: str, unit: str, stage: str
@@ -1968,24 +1932,15 @@ class Steps:
         tree: dict[str, Any] | None,
         work: str,
         rounds_before: set[Any] | None,
-        cause: outdated.Cause | None = None,
     ) -> tuple[dict[str, Any], bytes | None]:
         """What the stage is handed beyond who runs it and where: keyword arguments for
         `Runner.run`, and `## Answers` as the artifact had it. Only a busy run log refuses
-        the step here; every other read that fails is recorded as the reason. A `spec` or
-        `plan` start also carries the decisions it takes and the app's `cause`, through
-        `trial_record`, which `Runner` puts into the `start` as it stands."""
+        the step here; every other read that fails is recorded as the reason."""
         mode = journal.modes(key).get((unit, stage), "manual")
         round_kw = _round_kwargs(found, row, stage, rounds_before)
         config, failed = await self._stage_config(
             cwd, key, journal, unit, stage, stages, directory, work
         )
-        try:
-            taking = outdated.start_fields(journal.records(key, unit), stage, cause)
-        except Busy as e:
-            raise Refused(str(e), ("unavailable",)) from e
-        if taking:
-            config["trial_record"] = {**(config.get("trial_record") or {}), **taking}
         integration_note = self._integration_note(journal, key, unit, stage)
         plan_drift = await _plan_drift(journal, key, unit, stage, directory, tree)
         # The files the plan names, as they stand in the tree the step runs

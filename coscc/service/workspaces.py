@@ -78,10 +78,6 @@ class Workspaces:
         # Journal keys whose `cos.db` store was imported: an import is never undone, so
         # `snapshot` stops asking once it is.
         self.imported: set[str] = set()
-        # `"<workspace>/<unit>"` to `{stage: {decisions, main}}`, as `outdated.refresh` last found
-        # it, and when it last read a whole workspace (`time.monotonic`). Per process.
-        self.outdated: dict[str, dict[str, Any]] = {}
-        self.outdated_at: dict[str, float] = {}
 
     # -- the list -------------------------------------------------------------
 
@@ -379,17 +375,12 @@ class Workspaces:
                     self.imported.add(key)
                 else:
                     self._import(meta, key)
-            snap = meta.snapshot(own, names, units_)
+            return meta.snapshot(own, names, units_)
         except (Busy, sqlite3.Error, OSError) as e:
             log.warning("the units of %s could not be read: %s", own, e)
             raise Invalid(
                 f"the units of {self.name(own) or 'a workspace'} could not be read"
             ) from e
-        # The app's own finding, which no store holds: what came after an accepted spec or plan.
-        for at, entry in snap["units"].items():
-            if at in self.outdated:
-                entry["outdated"] = self.outdated[at]
-        return snap
 
     def meta_of(self, cwd: str, unit: str) -> dict[str, Any]:
         """`unit`'s entry in the snapshot, `{}` when the app has none."""

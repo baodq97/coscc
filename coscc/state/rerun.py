@@ -5,23 +5,11 @@ Handlers call `app.SERVICE`.
 
 from __future__ import annotations
 
-import dataclasses
-
 import reflex as rx
 
 from coscc.service.common import Invalid
 from coscc.state import app
 from coscc.service.common import describe_base
-
-
-@dataclasses.dataclass
-class Rewrite:
-    """A unit whose accepted spec or plan the loop calls outdated: the stage to write again and
-    the line that says why."""
-
-    unit: str = ""
-    stage: str = ""
-    label: str = ""
 
 
 class RerunMixin(rx.State, mixin=True):
@@ -40,17 +28,6 @@ class RerunMixin(rx.State, mixin=True):
     rerun_stage: str = ""
     rerun_note: str = ""
     rerun_confirming: bool = False
-
-    # The board's outdated units, as the board read named them; the page lists them with a button.
-    rewrites: list[Rewrite] = []
-
-    def _show_rewrites(self, data: dict) -> None:
-        """Put one board read's `rewrite` rows on the page; nothing is worked out here."""
-        self.rewrites = [
-            Rewrite(unit=u["name"], stage=u["rewrite"]["stage"], label=u["rewrite"]["label"])
-            for u in data.get("units") or []
-            if u.get("rewrite")
-        ]
 
     @rx.var
     def rerun_after(self) -> list[str]:
@@ -86,26 +63,6 @@ class RerunMixin(rx.State, mixin=True):
             if not (unit and stage and cwd):
                 self.notice = "Choose a stage to run again."
                 return
-        await self._run_again(unit, stage, cwd, note)
-        return self.__class__.load_next
-
-    @rx.event(background=True)
-    async def rewrite_outdated(self, unit: str):
-        """Write again the spec or plan the board names for `unit`: one press, no note."""
-        async with self:
-            found = next((r for r in self.rewrites if r.unit == unit), None)
-            cwd = self.cwd
-            if found is None or not cwd:
-                self.notice = "That unit has nothing to rewrite."
-                return
-            stage = found.stage
-        await self._run_again(unit, stage, cwd, "")
-        return self.__class__.load_next
-
-    async def _run_again(self, unit: str, stage: str, cwd: str, note: str) -> None:
-        """Run `stage` of `unit` again as a person's rerun, streaming into the run log, then read
-        the board and the open unit again."""
-        async with self:
             self.run_log = ""
             self.log_unit = unit
             self.error = ""
@@ -113,14 +70,12 @@ class RerunMixin(rx.State, mixin=True):
         listed = False
         try:  # noqa: PLR1702 - still to split
             async for kind, payload in app.SERVICE.steps.run_step(
-                cwd, unit, stage, started_by="person", rerun=True, note=note
+                cwd, unit, stage, rerun=True, note=note
             ):
                 async with self:
                     if not listed:
                         listed = True
-                        # The note in the box belongs to the open unit's dialog, not to a press on a row.
-                        if note:
-                            self.rerun_note = ""
+                        self.rerun_note = ""
                         self._load_running()
                     if kind == "chunk" and self.log_unit == unit:
                         self.run_log += payload
@@ -147,3 +102,4 @@ class RerunMixin(rx.State, mixin=True):
                 self._load_timeline()
                 self._load_artifact()
                 self._load_activity()
+        return self.__class__.load_next
