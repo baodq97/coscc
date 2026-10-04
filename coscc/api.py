@@ -45,6 +45,7 @@ from coscc.bus import Event
 from coscc.service.agents import AgentPage
 from coscc.service.board import Cards, Detail, cards, detail
 from coscc.service.steps import NextStep
+from coscc.service.watch import EventsPage
 from coscc.service.workspaces import WorkspaceList
 
 log = logging.getLogger(__name__)
@@ -548,6 +549,71 @@ async def get_unit(name: str, request: Request) -> Detail:
         await asyncio.to_thread(journal.timeline, service.ws.key(cwd), name) if journal else []
     )
     return detail(unit, timeline)
+
+
+def _number(request: Request, name: str) -> int | None:
+    value = request.query_params.get(name, "")
+    if not value:
+        return None
+    if not value.isdigit():
+        raise Invalid(f"{name} must be a whole number")
+    return int(value)
+
+
+@router.get("/api/units/{name}/runs/{run}", response_model=EventsPage)
+async def get_run_events(name: str, run: str, request: Request) -> Any:
+    """The last `limit` events one run of a unit recorded, oldest first; `before` pages back,
+    `seq` reads one event whole. Everything the step saw: commands, paths, thoughts, output."""
+    limit = _number(request, "limit")
+    return _service(request).watch.events_page(
+        _cwd(request),
+        name,
+        run,
+        before=_number(request, "before"),
+        seq=_number(request, "seq"),
+        **({"limit": limit} if limit else {}),
+    )
+
+
+@router.get("/api/units/{name}/runs/{run}/follow")
+async def follow_run(name: str, run: str, request: Request) -> StreamingResponse:
+    """The events of a running run past `after` as server-sent events, a batch a message, until
+    its `end`; then `event: done`. `event: status` (the page) when it is not running here, `event:
+    cut` (`{from}`) when this reader fell behind. Ends like `/api/stream` after
+    `STREAM_LIFETIME_SECONDS` with `event: end`, and the page follows again from what it has."""
+    loop = asyncio.get_running_loop()
+    follow = _service(request).watch.follow_events(
+        _cwd(request), name, run, after=_number(request, "after") or 0, gather=0.3
+    )
+
+    async def events() -> AsyncIterator[str]:
+        ends = loop.time() + STREAM_LIFETIME_SECONDS
+        try:
+            yield "retry: 1000\n: open\n\n"
+            while loop.time() < ends:
+                try:
+                    kind, value = await anext(follow)
+                except StopAsyncIteration:
+                    yield "event: done\ndata: {}\n\n"
+                    return
+                if kind == "events" and value:
+                    yield f"data: {json.dumps(value, ensure_ascii=False, default=str)}\n\n"
+                elif kind == "events":
+                    yield ": ping\n\n"
+                elif kind == "cut":
+                    yield f"event: cut\ndata: {json.dumps({'from': value})}\n\n"
+                    return
+                else:
+                    yield f"event: status\ndata: {json.dumps(value, default=str)}\n\n"
+            yield "event: end\ndata: {}\n\n"
+        finally:
+            await follow.aclose()
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/api/board/mode")

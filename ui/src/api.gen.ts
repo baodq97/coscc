@@ -199,6 +199,19 @@ export type Detail = {
   "hold_moves": string[];
 };
 
+export type EventsPage = {
+  "run": string;
+  "unit": string;
+  "stage": string;
+  "status": string;
+  "events": StepEvent[];
+  "first_seq": number | null;
+  "has_older": boolean;
+  "last_at": number | null;
+  "events_lost": number;
+  "purged_at": string | null;
+};
+
 export type GrantView = {
   "tools": string[];
   "commands": string[];
@@ -358,6 +371,37 @@ export type StageView = {
   "last_run": LastRun | null;
 };
 
+export type StepEvent = {
+  "run": string;
+  "seq": number;
+  "at": number;
+  "kind": string;
+  "role"?: string;
+  "text"?: string;
+  "thinking"?: string;
+  "id"?: string;
+  "name"?: string;
+  "input"?: unknown;
+  "tool_use_id"?: string;
+  "is_error"?: boolean;
+  "content"?: unknown;
+  "tool"?: string;
+  "reason"?: string;
+  "n"?: number;
+  "model"?: string | null;
+  "effort"?: string | null;
+  "num_turns"?: number;
+  "cost_usd"?: number | null;
+  "duration_ms"?: number;
+  "terminal_reason"?: string | null;
+  "outcome"?: string;
+  "detail"?: string;
+  "subtype"?: string | null;
+  "truncated"?: boolean;
+  "length"?: number;
+  "truncated_fields"?: string[];
+};
+
 export type UnitRun = {
   "stage": string;
   "agent": string;
@@ -430,6 +474,7 @@ export type Get = {
   "/api/units": Cards;
   "/api/units/next": NextStep;
   "/api/units/{name}": Detail;
+  "/api/units/{name}/runs/{run}": EventsPage;
   "/api/update": UpdateStatus;
   "/api/vault/leaks": Leaks;
   "/api/vault/secrets": Secrets;

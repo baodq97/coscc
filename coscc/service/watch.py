@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 from coscc.runlog import events
 from coscc.data import Data
@@ -13,6 +13,53 @@ from coscc.data import Busy
 from coscc.kernel import Invalid
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces
+
+
+class StepEvent(TypedDict):
+    """One recorded event. The first four fields are every event's; the rest are its kind's
+    (`runlog/events.py`), and a field cut at `events.FIELD_MAX` is named in `truncated_fields`."""
+
+    run: str
+    seq: int
+    at: int
+    kind: str
+    role: NotRequired[str]
+    text: NotRequired[str]
+    thinking: NotRequired[str]
+    id: NotRequired[str]
+    name: NotRequired[str]
+    input: NotRequired[Any]
+    tool_use_id: NotRequired[str]
+    is_error: NotRequired[bool]
+    content: NotRequired[Any]
+    tool: NotRequired[str]
+    reason: NotRequired[str]
+    n: NotRequired[int]
+    model: NotRequired[str | None]
+    effort: NotRequired[str | None]
+    num_turns: NotRequired[int]
+    cost_usd: NotRequired[float | None]
+    duration_ms: NotRequired[int]
+    terminal_reason: NotRequired[str | None]
+    outcome: NotRequired[str]
+    detail: NotRequired[str]
+    subtype: NotRequired[str | None]
+    truncated: NotRequired[bool]
+    length: NotRequired[int]
+    truncated_fields: NotRequired[list[str]]
+
+
+class EventsPage(TypedDict):
+    run: str
+    unit: str
+    stage: str
+    status: str
+    events: list[StepEvent]
+    first_seq: int | None
+    has_older: bool
+    last_at: int | None
+    events_lost: int
+    purged_at: str | None
 
 
 class Watch:

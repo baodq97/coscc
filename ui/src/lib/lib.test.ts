@@ -5,6 +5,7 @@ import { unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { fill } from "./api";
 import { slugOf } from "../screens/NewWork";
+import { merged, toolSummary } from "../screens/RunLog";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -96,5 +97,16 @@ describe("new work", () => {
     const name = slugOf("word ".repeat(30));
     expect(name.length).toBeLessThanOrEqual(60);
     expect(name.endsWith("word")).toBe(true);
+  });
+});
+
+describe("run log", () => {
+  it("reads a tool call as its command or file", () => {
+    expect(toolSummary({ command: "npm test\nmore", description: "x" })).toBe("npm test");
+    expect(toolSummary({ file_path: "a.py", old_string: "x" })).toBe("a.py");
+  });
+  it("adds events in order, none twice", () => {
+    const e = (seq: number) => ({ run: "r", seq, at: 0, kind: "text" });
+    expect(merged([e(1), e(3)], [e(2), e(3)]).map((x) => x.seq)).toEqual([1, 2, 3]);
   });
 });
