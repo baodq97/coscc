@@ -503,3 +503,13 @@ table.t th.r { text-align: right; }
 .dsbox .list .lrow { padding: 0 8px; }
 body:has(.phone-stage) .toasts { bottom: 100px; right: auto; left: 50%; transform: translateX(-50%); }
 body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
+
+/* A run's log: one line an event, tools in mono, failures red. */
+.rl { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2, var(--hover)); max-height: 420px; overflow: auto; display: flex; flex-direction: column; gap: 3px; }
+.rl-l { font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.rl-say { color: var(--text-2); }
+.rl-tool { color: var(--accent); font-weight: 500; }
+.rl-bad { color: var(--red); }
+.rl-note { font-size: 12px; margin-top: 6px; }
+.link-btn { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.link-btn:hover { color: var(--text); }

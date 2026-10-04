@@ -1,0 +1,142 @@
+// What one run did, call by call: the agent's words, each tool it used and on what, what was
+// refused or failed, and how it ended. A running run is followed live; an ended one is read once.
+
+import { useEffect, useRef, useState } from "react";
+import type { EventsPage, StepEvent } from "../api.gen";
+import { api } from "../lib/api";
+import { money } from "../lib/format";
+import { Button, ErrorState, SkeletonRows } from "../components/ui";
+
+const PAGE = "200";
+
+/** The one line a tool call reads as: its command, file, pattern or description. */
+export function toolSummary(input: unknown): string {
+  if (!input || typeof input !== "object") return String(input ?? "");
+  const i = input as Record<string, unknown>;
+  for (const key of ["command", "file_path", "path", "pattern", "url", "query", "description", "prompt"]) {
+    if (typeof i[key] === "string" && i[key]) return (i[key] as string).split("\n")[0];
+  }
+  return JSON.stringify(input).slice(0, 160);
+}
+
+/** `events` with `more` added in order, none twice. */
+export function merged(events: StepEvent[], more: StepEvent[]): StepEvent[] {
+  const seen = new Set(events.map((e) => e.seq));
+  return [...events, ...more.filter((e) => !seen.has(e.seq))].sort((a, b) => a.seq - b.seq);
+}
+
+function firstLine(content: unknown): string {
+  const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((c) => (c && typeof c === "object" && "text" in c ? String(c.text) : "")).join(" ") : "";
+  return text.trim().split("\n")[0].slice(0, 200);
+}
+
+export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; run: string; live: boolean }) {
+  const [page, setPage] = useState<EventsPage | null>(null);
+  const [events, setEvents] = useState<StepEvent[]>([]);
+  const [error, setError] = useState<Error | null>(null);
+  const [following, setFollowing] = useState(live);
+
+  useEffect(() => {
+    api
+      .get("/api/units/{name}/runs/{run}", { cwd, name: unit, run, limit: PAGE })
+      .then((p) => {
+        setPage(p);
+        setEvents((now) => merged(p.events, now));
+        setFollowing(p.status === "running");
+      })
+      .catch(setError);
+  }, [cwd, unit, run]);
+
+  const last = useRef(0);
+  last.current = events.length ? events[events.length - 1].seq : 0;
+  const [round, setRound] = useState(0);
+  const ready = page !== null;
+  useEffect(() => {
+    if (!following || !ready) return;
+    const query = new URLSearchParams({ cwd, after: String(last.current) });
+    const source = new EventSource(`/api/units/${encodeURIComponent(unit)}/runs/${encodeURIComponent(run)}/follow?${query}`);
+    source.onmessage = (m) => setEvents((now) => merged(now, JSON.parse(m.data) as StepEvent[]));
+    // The server ends each stream after a while, or cuts a reader that fell behind: follow again
+    // from what has arrived. `done` and `status` mean the run is no longer running here.
+    const again = () => {
+      source.close();
+      setRound((r) => r + 1);
+    };
+    const over = () => {
+      source.close();
+      setFollowing(false);
+    };
+    source.addEventListener("end", again);
+    source.addEventListener("cut", again);
+    source.addEventListener("done", over);
+    source.addEventListener("status", over);
+    return () => source.close();
+  }, [following, ready, round, cwd, unit, run]);
+
+  const older = async () => {
+    try {
+      const p = await api.get("/api/units/{name}/runs/{run}", { cwd, name: unit, run, limit: PAGE, before: String(events[0]?.seq ?? "") });
+      setEvents((now) => merged(p.events, now));
+      setPage((was) => (was ? { ...was, has_older: p.has_older } : p));
+    } catch (e) {
+      setError(e as Error);
+    }
+  };
+
+  if (error) return <ErrorState error={error} />;
+  if (!page) return <SkeletonRows rows={3} />;
+  if (page.status === "purged") return <div className="faint rl-note">The events of this run were cleared on {page.purged_at?.slice(0, 10)}.</div>;
+  if (!events.length) return <div className="faint rl-note">{page.status === "none" ? "This run recorded nothing: the app went down before its first event." : "No events yet."}</div>;
+  return (
+    <div className="rl">
+      {page.has_older && (
+        <Button size="sm" kind="ghost" onClick={older}>
+          Earlier events
+        </Button>
+      )}
+      {events.map((e) => (
+        <Line key={e.seq} event={e} />
+      ))}
+      {following && <div className="faint rl-note">Following…</div>}
+      {page.events_lost > 0 && <div className="faint rl-note">{page.events_lost} events were not recorded.</div>}
+    </div>
+  );
+}
+
+function Line({ event: e }: { event: StepEvent }) {
+  switch (e.kind) {
+    case "config":
+      return <div className="rl-l faint">opened with {[e.model, e.effort].filter(Boolean).join(" · ") || "the defaults"}</div>;
+    case "text":
+      return e.role === "user" ? null : <div className="rl-l rl-say">{e.text}</div>;
+    case "tool_use":
+      return (
+        <div className="rl-l mono">
+          <span className="rl-tool">{e.name?.replace(/^mcp__\w+?__/, "")}</span> {toolSummary(e.input)}
+        </div>
+      );
+    case "tool_result":
+      return e.is_error ? <div className="rl-l mono rl-bad">failed: {firstLine(e.content)}</div> : null;
+    case "denied":
+      return (
+        <div className="rl-l mono rl-bad">
+          refused {e.tool}: {e.reason}
+        </div>
+      );
+    case "result":
+      return (
+        <div className="rl-l faint">
+          {[e.num_turns != null ? `${e.num_turns} turns` : "", e.cost_usd != null ? money(e.cost_usd) : "", e.terminal_reason].filter(Boolean).join(" · ")}
+        </div>
+      );
+    case "end":
+      return (
+        <div className={`rl-l ${e.outcome === "done" ? "faint" : "rl-bad"}`}>
+          ended: {e.outcome}
+          {e.detail ? ` · ${e.detail}` : ""}
+        </div>
+      );
+    default:
+      return null;
+  }
+}

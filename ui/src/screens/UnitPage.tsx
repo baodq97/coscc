@@ -11,6 +11,7 @@ import { AgentAvatar, Icon, LeifMark } from "../lib/icons";
 import { unitState } from "../lib/model";
 import { Link } from "../lib/router";
 import { Button, Chip, Dot, Empty, ErrorState, Meter, SkeletonRows } from "../components/ui";
+import { RunLog } from "./RunLog";
 
 const TRACK = ["intent", "spec", "plan", "impl", "pr", "review", "ship"];
 const GROUP: Record<string, string> = { intent: "Shape", spec: "Shape", plan: "Shape", impl: "Build", pr: "Check", review: "Check", ship: "Ship" };
@@ -95,7 +96,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         ) : !d ? (
           <SkeletonRows rows={4} />
         ) : (
-          <Timeline detail={d} names={names} live={running?.stage} />
+          <Timeline detail={d} names={names} live={running?.stage} cwd={placed.workspace.path} unit={placed.name} />
         )}
       </div>
       <aside className="props">
@@ -217,9 +218,9 @@ export function Track({ stages, now, done, waiting }: { stages: StageView[]; now
 
 type Item = { at: string; key: string; node: ReactNode };
 
-function Timeline({ detail, names, live }: { detail: Detail; names: Record<string, string>; live?: string }) {
+function Timeline({ detail, names, live, cwd, unit }: { detail: Detail; names: Record<string, string>; live?: string; cwd: string; unit: string }) {
   const items: Item[] = [
-    ...detail.runs.map((r, i) => ({ at: r.ended || r.started, key: `run-${i}`, node: <RunItem run={r} name={names[r.stage] ?? r.stage} live={!r.ended && r.stage === live} /> })),
+    ...detail.runs.map((r, i) => ({ at: r.ended || r.started, key: `run-${i}`, node: <RunItem run={r} name={names[r.stage] ?? r.stage} live={!r.ended && r.stage === live} cwd={cwd} unit={unit} /> })),
     ...answeredGroups(detail.answers).map((g, i) => ({ at: g.date, key: `ans-${i}`, node: <AnswerItem group={g} /> })),
   ].sort((a, b) => b.at.localeCompare(a.at));
   if (!items.length)
@@ -237,7 +238,8 @@ function Timeline({ detail, names, live }: { detail: Detail; names: Record<strin
   );
 }
 
-function RunItem({ run, name, live }: { run: UnitRun; name: string; live: boolean }) {
+function RunItem({ run, name, live, cwd, unit }: { run: UnitRun; name: string; live: boolean; cwd: string; unit: string }) {
+  const [shown, setShown] = useState(live);
   const stopped = run.ended && run.outcome !== "done";
   const verb = live ? "is working on" : stopped ? run.outcome : "finished";
   return (
@@ -259,6 +261,12 @@ function RunItem({ run, name, live }: { run: UnitRun; name: string; live: boolea
           {[run.turns != null ? `${run.turns} turns` : "", run.model ? modelName(run.model) : "", run.artifact].filter(Boolean).join(" · ")}
         </div>
         {stopped && run.detail && <div className="muted" style={{ marginTop: 2 }}>{run.detail}</div>}
+        {run.run && (
+          <button className="link-btn faint" style={{ fontSize: 12, marginTop: 4 }} onClick={() => setShown(!shown)}>
+            {shown ? "Hide what it did" : "What it did"}
+          </button>
+        )}
+        {run.run && shown && <RunLog cwd={cwd} unit={unit} run={run.run} live={live} />}
       </div>
     </div>
   );

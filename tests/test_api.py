@@ -443,6 +443,59 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
 
+class WatchingARunOverHttp(unittest.IsolatedAsyncioTestCase):
+    """The routes translate `Watch.events_page` and `.follow_events`; the reads are tested there."""
+
+    async def asyncSetUp(self):
+        from coscc.runlog.events import Recorder
+
+        self.app = build(_tmp_config(self))
+        self.service = self.app.state.service
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        key = self.service.ws.key("/tmp")
+        self.recorder = Recorder("r1", None, "/tmp", key, "0001_a", "impl")
+        for i in range(3):
+            self.recorder.denied("Bash", {"command": f"c{i}"}, "not granted")
+        self.service.watch.recorders["r1"] = self.recorder
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_a_page_is_the_last_events_oldest_first(self):
+        r = await self.client.get("/api/units/0001_a/runs/r1", params={"cwd": "/tmp", "limit": "2"})
+        self.assertEqual(r.status_code, 200)
+        page = r.json()
+        self.assertEqual(
+            (page["status"], page["stage"], page["has_older"]), ("running", "impl", True)
+        )
+        self.assertEqual([e["seq"] for e in page["events"]], [2, 3])
+        self.assertEqual(page["events"][0]["input"], {"command": "c1"})
+        self.assertEqual(page["events"][0]["reason"], "not granted")
+
+    async def test_a_run_of_another_unit_or_a_bad_number_is_a_400(self):
+        other = await self.client.get("/api/units/0002_b/runs/r1", params={"cwd": "/tmp"})
+        self.assertEqual(other.status_code, 400)
+        bad = await self.client.get(
+            "/api/units/0001_a/runs/r1", params={"cwd": "/tmp", "before": "x"}
+        )
+        self.assertEqual(bad.status_code, 400)
+
+    async def test_following_gives_what_is_past_after_then_says_it_is_over(self):
+        self.recorder.closed = True
+        r = await self.client.get(
+            "/api/units/0001_a/runs/r1/follow", params={"cwd": "/tmp", "after": "1"}
+        )
+        self.assertEqual(r.headers["content-type"].split(";")[0], "text/event-stream")
+        blocks = r.text.split("\n\n")
+        [batch] = [b for b in blocks if b.startswith("data: ")]
+        self.assertEqual([e["seq"] for e in json.loads(batch[6:])], [2, 3])
+        self.assertIn("event: status", r.text)
+        self.assertTrue(r.text.rstrip().startswith("retry: 1000"))
+        self.assertIn("event: done", blocks[-2])
+
+
 if __name__ == "__main__":
     unittest.main()
 
