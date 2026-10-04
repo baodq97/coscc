@@ -1572,6 +1572,12 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
         if by:
             unit["artifacts"][file]["stale"] = {"stage": by["stage"], "date": by["date"]}
 
+    # The app's `{stage: {decisions, main}}` for an accepted spec or plan something came after;
+    # only when there is one, so `status --json` of every other unit stays as it was.
+    outdated = dig(known, "outdated")
+    if isinstance(outdated, dict) and outdated:
+        unit["outdated"] = outdated
+
     if intent_text is not None:
         resolve_links(unit, nullish(dig(known, "links"), NO_ENTRY["links"]), state)
     return unit

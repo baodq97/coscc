@@ -430,9 +430,11 @@ async def rerun(
     stage: str | None = None,
     timeout: float = TIMEOUT,
     state: dict[str, Any] | None = None,
+    by: str = "owner",
 ) -> dict[str, Any]:
     """Ask the loop's `rerun` which accepted stages of `unit` may run again, or, with `stage`,
-    for the `### Rerun` block to append before running it.
+    for the `### Rerun` block to append before running it. `by="app"` asks for the block of an
+    outdated stage, which the loop refuses for any other.
 
     Returns `{unit, offers, why}` without `stage`, `{unit, stage, later, block}` with one, and
     `{"error": <what the loop said>, "code": n}` when it exits non-zero (exit 1 is "not
@@ -442,6 +444,7 @@ async def rerun(
     try:
         source, stdin = _source(state)
         argv = ["--root", str(path), *source, "rerun", unit] + ([stage] if stage else [])
+        argv += [by] if stage and by != "owner" else []
         code, out_text, err_text = await _ask(argv, timeout, stdin)
     except TimeoutError:
         raise Unavailable(f"asking what may run again timed out after {timeout:.0f}s") from None

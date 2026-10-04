@@ -282,6 +282,72 @@ class ComputingOnARealRepository(unittest.TestCase):
         self.assertIsNone(got["main_sha"])
         self.assertIn("origin/main", got["reason"])
 
+    def _stage(self, records, text="We change `src/a.py`.\n", repo="repo") -> dict:
+        repo = self.repo if repo == "repo" else repo
+        return asyncio.run(drift.compute_stage(records, "spec", text, repo))
+
+    def test_a_stage_sees_the_cited_paths_main_changed_since_its_run(self):
+        b = self._merge("src/a.py", "src/b.py")
+        got = self._stage([spec_start(self.a), spec_end()])
+        self.assertEqual(got["paths"], ["src/a.py"])
+        self.assertEqual((got["from_sha"], got["main_sha"]), (self.a, b))
+        self.assertTrue(got["checked"])
+
+    def test_the_main_a_run_was_handed_counts_as_read(self):
+        b = self._merge("src/a.py")
+        told = spec_start(self.a, cause={"main_sha": b})
+        self.assertEqual(self._stage([told, spec_end()])["paths"], [])
+
+    def test_a_branch_of_its_own_commits_is_not_main(self):
+        self._git("checkout", "-q", "-b", "unit")
+        (self.repo / "src/a.py").write_text("mine\n", encoding="utf-8")
+        self._git("commit", "-qam", "own")
+        own = self._git("rev-parse", "HEAD").strip()
+        got = self._stage([spec_start(own), spec_end()])
+        self.assertEqual((got["paths"], got["from_sha"]), ([], self.a))
+
+    def test_a_check_that_cannot_be_made_is_unchecked_and_names_no_path(self):
+        self._merge("src/a.py")
+        for name, kw in {
+            "no run": dict(records=[]),
+            "unknown commit": dict(records=[spec_start("0" * 40), spec_end()]),
+            "no repository": dict(records=[spec_start(self.a), spec_end()], repo=None),
+        }.items():
+            got = self._stage(**kw)
+            self.assertFalse(got["checked"], name)
+            self.assertIsNone(got["paths"], name)
+            self.assertTrue(got["reason"], name)
+
+
+def spec_start(head: str, **kw) -> dict:
+    return {"kind": "start", "stage": "spec", "head": head, **kw}
+
+
+def spec_end() -> dict:
+    return {"kind": "end", "stage": "spec", "outcome": "done"}
+
+
+class WhatAnArtifactCites(unittest.TestCase):
+    PATHS = ["coscc/loop/rules.py", "coscc/loop/__init__.py", "coscc/git/drift.py", "README.md"]
+
+    def test_a_whole_path_a_package_and_a_dotted_module_each_count(self):
+        self.assertEqual(drift.cited("Edit `coscc/git/drift.py:51`.", self.PATHS), [self.PATHS[2]])
+        self.assertEqual(
+            drift.cited("Everything under `coscc/loop/`.", self.PATHS), sorted(self.PATHS[:2])
+        )
+        self.assertEqual(drift.cited("`coscc.loop.rules` decides.", self.PATHS), [self.PATHS[0]])
+        self.assertEqual(drift.cited("Ask coscc.loop.", self.PATHS), [self.PATHS[1]])
+
+    def test_a_longer_name_does_not_cite_a_shorter_one(self):
+        self.assertEqual(
+            drift.cited("`coscc.loop.rules_extra` and xcoscc/git/drift.py", self.PATHS), []
+        )
+        self.assertEqual(drift.cited("`coscc.loop.rules` alone", ["coscc/loop.py"]), [])
+
+    def test_only_the_part_above_answers_counts(self):
+        text = "## Design\n\nnothing\n\n## Answers\n\n`coscc/git/drift.py` and `coscc/loop/`\n"
+        self.assertEqual(drift.cited(text, self.PATHS), [])
+
 
 if __name__ == "__main__":
     unittest.main()

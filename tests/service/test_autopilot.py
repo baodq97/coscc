@@ -653,6 +653,68 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [("0001_a", "ship", "autopilot")])
 
+    async def test_an_outdated_spec_runs_again_once_per_input_and_max_reruns_since_a_person(self):
+        """Queued as a rerun with no note; the same decisions and commits never start a second
+        run; `MAX_RERUNS` app runs since a person's stop the unit; a person's run lifts it."""
+        journal = Journal(self.config.working_dir, self.config.data_dir)
+        self.release.set()
+
+        def outdated_by(*ids: str) -> None:
+            entry = {
+                "decisions": [{"id": c, "authority": "person"} for c in ids],
+                "main": {"paths": None, "checked": False},
+            }
+            self.add("0001_a", "", action="spec.md is outdated", reasons=("outdated-decision",))
+            self.nexts["0001_a"].update(rerun="spec", outdated={"spec": entry})
+
+        def ran(*ids: str, by: str = "autopilot") -> None:
+            cause = {"kinds": ["decision"], "decisions": list(ids), "from_sha": None}
+            journal.append(
+                {
+                    "kind": "start",
+                    "workspace": self.key,
+                    "unit": "0001_a",
+                    "stage": "spec",
+                    "started_by": by,
+                    "decisions": list(ids),
+                    **(
+                        {"cause": {**cause, "main_sha": None, "paths": []}}
+                        if by != "person"
+                        else {}
+                    ),
+                }
+            )
+            journal.finished(self.key, "0001_a", "spec", "done")
+
+        async def pass_and_end():
+            await self.pass_()
+            await asyncio.gather(*self.began)
+
+        outdated_by("C1")
+        await pass_and_end()
+        self.assertEqual(self.launched, [("0001_a", "spec", "autopilot")])
+        self.assertEqual((self.launch_rows[-1]["rerun"], self.launch_rows[-1]["note"]), (1, ""))
+        ran("C1")
+        # The same input again: a stop, nothing queued.
+        await pass_and_end()
+        self.assertEqual((len(self.launched), self.stops()), (1, {"0001_a": "reruns"}))
+        self.assertIn("same decisions", self.service.autopilot.stops[self.key]["0001_a"]["reason"])
+        outdated_by("C1", "C2")
+        await pass_and_end()
+        self.assertEqual(len(self.launched), 2)
+        ran("C1", "C2")
+        # A third input, past `MAX_RERUNS` app runs since a person's.
+        outdated_by("C1", "C2", "C3")
+        await pass_and_end()
+        self.assertEqual((len(self.launched), self.stops()), (2, {"0001_a": "reruns"}))
+        self.assertIn(
+            "ran again 2 times", self.service.autopilot.stops[self.key]["0001_a"]["reason"]
+        )
+        ran("C1", "C2", by="person")
+        outdated_by("C1", "C2", "C3")
+        await pass_and_end()
+        self.assertEqual(len(self.launched), 3)
+
     async def test_b_and_d_stop(self):
         self.add("0001_a", "", action="answer F1")
         self.nexts["0001_a"]["waiting"] = ["F1"]

@@ -24,7 +24,11 @@ from coscc.loop.model import (
 )
 from coscc.loop.probe import UI_STANDARD
 from coscc.loop.repo_rules import screens_answer, screens_needs
+<<<<<<< HEAD
 from coscc.loop.rules import check_gate, decide, next_action, next_answer, next_step, stage_at
+=======
+from coscc.loop.rules import check_gate, next_action, next_answer, next_step, stage_at
+>>>>>>> 2d70b72 (feat(0159): an outdated spec or plan runs again through the loop)
 from tests.loop.conftest import TZ, git
 from tests.loop.test_model_links import MERGE, merged_probe
 from tests.loop.test_model import (
@@ -984,3 +988,61 @@ def test_status_offers_no_acceptance_of_a_ship_md_naming_its_round_only(tmp_path
     # With no repository, `next` says it needs one, as the gate does.
     assert next_step(u)["stage"] == ""
     assert "--repo" in next_step(u)["action"]
+
+
+# --- an accepted spec or plan a decision or main came after ------------------------------------
+
+ACCEPTED_TO_PLAN = {
+    "intent.md": "# I\nType: feat. Status: accepted.\n",
+    "spec.md": "# S\nIntent: intent.md. Status: accepted.\n\nWe change `coscc/x.py`.\n",
+    "plan.md": "# P\nIntent: intent.md. Status: accepted.\n\n## Files that change\n- coscc/x.py\n",
+}
+DECIDED = {"decisions": [{"id": "C2", "authority": "person"}], "main": None}
+MOVED = {"decisions": [], "main": {"from_sha": "a" * 40, "main_sha": "b" * 40, "paths": ["x"]}}
+
+
+def outdated_unit(tmp_path: Path, outdated: dict) -> dict:
+    _, d = tree(tmp_path, ACCEPTED_TO_PLAN)
+    return {**read(d, "0001_q"), "outdated": outdated}
+
+
+def test_an_outdated_spec_runs_again_before_an_outdated_plan_and_says_why(tmp_path):
+    u = outdated_unit(tmp_path, {"plan": MOVED, "spec": DECIDED})
+    got = next_answer(u)
+    assert (got["stage"], got["rerun"], got["reasons"]) == ("", "spec", ["outdated-decision"])
+    assert "spec.md is outdated — 1 new decision(s)" in got["action"]
+    assert "rerun" not in next_action(u)
+
+
+def test_main_alone_is_outdated_main_and_a_decision_with_it_is_outdated_decision(tmp_path):
+    got = next_answer(outdated_unit(tmp_path, {"plan": MOVED}))
+    assert (got["rerun"], got["reasons"]) == ("plan", ["outdated-main"])
+    assert "main changed 1 path(s) it cites" in got["action"]
+    both = next_answer(
+        outdated_unit(tmp_path, {"plan": {**MOVED, "decisions": DECIDED["decisions"]}})
+    )
+    assert both["reasons"] == ["outdated-decision"]
+
+
+def test_nothing_new_or_a_stage_no_rewrite_reaches_is_not_outdated(tmp_path):
+    for outdated in (
+        {"plan": {"decisions": [], "main": {"paths": []}}},
+        {"intent": DECIDED},
+        {"impl": DECIDED},
+    ):
+        got = next_answer(outdated_unit(tmp_path, outdated))
+        assert "rerun" not in got and not {"outdated-decision", "outdated-main"} & set(
+            got["reasons"]
+        ), outdated
+
+
+def test_a_plan_a_spec_rewrite_made_stale_runs_as_stale_not_a_second_time_as_outdated(tmp_path):
+    root, d = tree(tmp_path, ACCEPTED_TO_PLAN)
+    digest = above_answers((d / "plan.md").read_text())
+    (d / "intent.md").write_text(
+        ACCEPTED_TO_PLAN["intent.md"]
+        + "\n## Answers\n\n### Rerun\nRequested by: app. Date: 2026-10-04. Via: product.\n"
+        + f"Stage: spec.\nDecisions: C2 (person).\nStale: plan.md sha256:{digest}\n"
+    )
+    got = next_answer({**read(d, "0001_q"), "outdated": {"plan": DECIDED}})
+    assert (got["stage"], got.get("rerun"), got["reasons"]) == ("plan", None, ["stale"])

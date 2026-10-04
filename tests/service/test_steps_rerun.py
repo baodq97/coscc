@@ -256,6 +256,81 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.assertNotIn("answers_lost", self.items[-1][1])
 
 
+SPEC_AGAIN = "# Spec: x\nIntent: intent.md. Status: accepted.\n\nR1. C1 đã vào.\n"
+
+
+class TheAppRunsAnOutdatedSpecAgain(unittest.TestCase):
+    """A decision row in the run log makes the accepted spec outdated: the app may run it again
+    with no note, and its `### Rerun` block and `start` say why. Any other run of the app is
+    refused `rerun-by-person`; a person's run takes the decision too."""
+
+    setUp = APrRunAgainClosesShipUntilAReview.setUp
+    run_step = APrRunAgainClosesShipUntilAReview.run_step
+    intent = APrRunAgainClosesShipUntilAReview.intent
+
+    def decide(self, n: int = 1, authority: str = "person") -> None:
+        self.service.ws.journal().append(
+            {
+                "kind": "decision",
+                "workspace": self.service.ws.key(self.cwd),
+                "unit": self.unit,
+                "id": f"C{n}",
+                "authority": authority,
+            }
+        )
+
+    def ask_rerun(self, started_by: str, note: str = "", stage: str = "spec") -> str:
+        return asyncio.run(
+            self.service.steps._ask_rerun(self.cwd, self.unit, stage, started_by, note)
+        )
+
+    def test_the_apps_rerun_names_the_decision_in_the_block_and_the_start(self):
+        self.decide(1, "person")
+        self.run_step("spec", write=SPEC_AGAIN, file="spec.md", started_by="autopilot", rerun=True)
+        self.assertEqual(self.items[-1][1]["outcome"], "done")
+        text = self.intent()
+        self.assertIn("Requested by: app.", text)
+        self.assertIn("Decisions: C1 (person).", text)
+        record = self.seen[-1]["trial_record"]
+        self.assertEqual(record["decisions"], ["C1"])
+        self.assertEqual(
+            record["cause"],
+            {
+                "kinds": ["decision"],
+                "decisions": ["C1"],
+                "from_sha": None,
+                "main_sha": None,
+                "paths": [],
+            },
+        )
+        self.assertEqual(self.seen[-1]["rerun_note"], "")
+
+    def test_the_app_with_a_note_or_with_nothing_outdated_is_refused(self):
+        for note, decided in (("", False), ("đưa C1 vào", True)):
+            with self.subTest(note=note):
+                if decided:
+                    self.decide(1)
+                with self.assertRaises(Refused) as refused:
+                    self.ask_rerun("autopilot", note)
+                self.assertEqual(refused.exception.reasons, ("rerun-by-person",))
+        self.assertEqual(self.intent(), ARTIFACTS["intent.md"])
+
+    def test_a_persons_run_with_a_note_still_takes_every_live_decision(self):
+        self.decide(1)
+        self.decide(2, "agent")
+        self.service.ws.journal().append(
+            {
+                "kind": "decision-withdrawn",
+                "workspace": self.service.ws.key(self.cwd),
+                "unit": self.unit,
+                "id": "C1",
+            }
+        )
+        self.run_step("spec", write=SPEC_AGAIN, file="spec.md", rerun=True, note="đọc lại")
+        self.assertEqual(self.seen[-1]["trial_record"], {"decisions": ["C2"]})
+        self.assertIn("Requested by: owner.", self.intent())
+
+
 IMPL_DRAFT = "# Impl: x\nStatus: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
 
 

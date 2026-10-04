@@ -28,6 +28,7 @@ from coscc.service.common import (
     shown_state,
 )
 from coscc.service.workspaces import Workspaces
+from coscc.service import outdated
 from coscc.service.common import Holds
 from coscc.service.agents import Agents
 
@@ -558,7 +559,22 @@ class Autopilot:
                 # an answer given since its last run; with none, it is a stop. Before `reason`, which raises on
                 # no stage and no stop.
                 rerun = False
-                if stop is None and not stage and nxt.get("rerun"):
+                # An accepted spec or plan a decision or `main` came after runs again through `rerun`,
+                # with no note, once per set of inputs and `MAX_RERUNS` times since a person's run.
+                rewrite = False
+                if stop is None and not stage and nxt.get("rerun") and autopilot.is_outdated(nxt):
+                    why_not = autopilot.outdated_refusal(
+                        records,
+                        key,
+                        name,
+                        nxt["rerun"],
+                        outdated.cause_of((nxt.get("outdated") or {}).get(nxt["rerun"])),
+                    )
+                    if why_not:
+                        stop = autopilot.outdated_stop(f"{nxt['rerun']}.md", why_not)
+                    else:
+                        stage, rewrite = nxt["rerun"], True
+                elif stop is None and not stage and nxt.get("rerun"):
                     if (
                         autopilot.reruns_of(records, key, name, nxt["rerun"])
                         >= autopilot.MAX_RERUNS
@@ -646,6 +662,7 @@ class Autopilot:
                         "rank": rank,
                         "need": autopilot.reservation(stage, budget),
                         "rerun": rerun,
+                        "outdated": rewrite,
                         "note": app_note,
                         "extra": extra,
                         "past_exhausted": {"at": last[name].get("at")} if skipped else None,
@@ -753,7 +770,9 @@ class Autopilot:
             if stage == "integrate":
                 self.steps.enqueue_integration(cwd, unit)
             else:
-                self.steps.enqueue_step(cwd, unit, stage, c["note"])
+                self.steps.enqueue_step(
+                    cwd, unit, stage, c["note"], **({"rerun": True} if c.get("outdated") else {})
+                )
         except Busy as e:
             log.warning("the autopilot could not queue %s of %s: %s", stage, unit, e)
         except (Refused, Invalid) as e:

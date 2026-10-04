@@ -17,7 +17,9 @@ Read this before adding a route, a button or a grant.
   comment, an integration, a hold, a stop, a release, a setting, a shortlist and turning a
   feature off each write a row and start no other stage. The autopilot, when a workspace turns
   it on, starts the next stage through the same gate, never releases, and is refused beyond
-  loopback.
+  loopback. It runs an accepted spec or plan again only when a recorded decision or a change of
+  `main` to a path it cites came after it: with no note, once per set of inputs, and a few times
+  at most before a person's run. A decision an agent records reaches that rewrite unconfirmed.
 - **Answers reach gates.** An answer is a row rendered into the next prompt. A finding answer
   and a delegation also feed a gate, so one agent's round plus an answer anyone with the
   password can write is part of what opens a merge.

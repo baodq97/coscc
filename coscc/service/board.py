@@ -36,6 +36,7 @@ from coscc.service.common import (
 )
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces
+from coscc.service import outdated
 from coscc.service.common import Holds
 from coscc.service.agents import Agents
 from coscc.service.release import Release
@@ -276,6 +277,9 @@ class Board:
             peers, problems = self.ws.peer_table()
             return self.ws.snapshot(cwd, peers=peers), problems
 
+        # What came after each accepted spec or plan, kept for the snapshot; at most every 30 s.
+        await outdated.refresh(self.ws, cwd)
+        lap("outdated")
         state, peer_problems = await _in_thread(_snapshot)
         lap("snapshot")
         try:
