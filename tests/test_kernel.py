@@ -6,8 +6,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from coscc import hooks
-from coscc.hooks import Hooks, Parts, Tool
+from coscc import kernel
+from coscc.kernel import Hooks, Parts, Tool
 
 
 def tool(server="fake", names=("ping",), stages=("impl",)) -> Tool:
@@ -32,9 +32,9 @@ class AToolNamesItsServerAndItsNamesInTheKernelsSpelling(unittest.TestCase):
         tool(names=("ping_2",))
 
     def test_granted_derives_the_full_names_in_order(self):
-        got = hooks.granted((tool(names=("a", "b_c")), tool(server="other-x", names=("z",))))
+        got = kernel.granted((tool(names=("a", "b_c")), tool(server="other-x", names=("z",))))
         self.assertEqual(got, ("mcp__fake__a", "mcp__fake__b_c", "mcp__other-x__z"))
-        self.assertEqual(hooks.granted(()), ())
+        self.assertEqual(kernel.granted(()), ())
 
 
 class HooksKeepOnlyWhatIsOnAndMeantForTheStage(unittest.TestCase):
@@ -68,7 +68,7 @@ class AToolIsGrantedOnlyToARunItsWhenLetsThrough(unittest.TestCase):
         odd = FactsFollowTheRunsTree._facts(None, None, unit="0003_u", stage="impl")
         self.assertEqual(h.tools_for(even), (armed, plain))
         self.assertEqual(h.tools_for(odd), (plain,))
-        self.assertEqual(hooks.granted(h.tools_for(odd)), ("mcp__plain__ping",))
+        self.assertEqual(kernel.granted(h.tools_for(odd)), ("mcp__plain__ping",))
 
     def test_a_tool_off_for_the_workspace_is_not_asked(self):
         asked = []
@@ -84,7 +84,7 @@ def _even(facts) -> bool:
 
 class FactsFollowTheRunsTree(unittest.TestCase):
     def _facts(self, watch, unit="0001_u", stage="spike"):
-        return hooks.facts(
+        return kernel.facts(
             workspace="/w",
             workspace_key="k",
             unit=unit,

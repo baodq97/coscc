@@ -6,7 +6,7 @@ the workspace's folder name and never carries a `reason`, `detail`, path, SHA or
 reason can hold any of them, or `gh`'s words). The whole record goes out beside it as `record`.
 
 `Notices` holds only the `Ctx`; it reads and writes nothing but the lines it hands out. The file
-ends in `PLUGIN`: the route, and the script that shows the notices on the page.
+ends in `FEATURE`: the route, and the script that shows the notices on the page.
 """
 
 from __future__ import annotations
@@ -22,9 +22,8 @@ from starlette.routing import BaseRoute
 
 from coscc.auth import WS_RECHECK
 from coscc.data import Busy
-from coscc.plugin import Ctx, Plugin, line
+from coscc.kernel import Ctx, Feature, Invalid, line
 from coscc.runlog.journal import BELL
-from coscc.service.common import Invalid
 from coscc.units import autopilot
 
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
@@ -349,7 +348,7 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
     return router.routes
 
 
-PLUGIN = Plugin(
+FEATURE = Feature(
     "notices",
     routes=routes,
     scripts=(_NOTICE_JS,),

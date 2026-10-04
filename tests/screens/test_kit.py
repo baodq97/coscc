@@ -8,7 +8,8 @@ import unittest
 from unittest import mock
 
 from coscc import features, screens
-from coscc.plugin import KIT_JS, Page, Plugin
+from coscc.plugin import KIT_JS
+from coscc.kernel import Feature, Page
 
 
 class TheShellCarriesTheKit(unittest.TestCase):
@@ -35,7 +36,7 @@ class TheShellCarriesTheKit(unittest.TestCase):
 class AFeaturesPageIsInTheFrame(unittest.TestCase):
     def test_a_page_gets_a_sidebar_entry_on_both_navigations_and_a_frame(self):
         page = Page("Planted", "key-round", "/planted")
-        planted = Plugin("planted", routes=lambda ctx: (), page=page)
+        planted = Feature("planted", routes=lambda ctx: (), page=page)
         with mock.patch.object(features, "FEATURES", (*features.FEATURES, planted)):
             shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
         self.assertIn("nav-feature-planted", shell)

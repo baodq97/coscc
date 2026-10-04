@@ -37,9 +37,7 @@ from coscc.features.codegraph.graph import (
     old_hunks,
     review_map,
 )
-from coscc.hooks import Block, Facts, Parts, Tool
-from coscc.plugin import Ctx, Plugin, State
-from coscc.service.common import Invalid
+from coscc.kernel import Block, Ctx, Facts, Feature as Feature, Invalid, Parts, State, Tool
 from coscc.units import turnstats
 from coscc.units.autopilot import files_of
 from dataclasses import dataclass, replace
@@ -474,7 +472,7 @@ def report(
     )
 
 
-FEATURE = "codegraph"
+NAME = "codegraph"
 # Each impl or review run of a workspace not `off`: which arm it was in and what it got.
 RUNS_TABLE = (
     "CREATE TABLE IF NOT EXISTS codegraph_runs (run TEXT PRIMARY KEY, workspace TEXT NOT NULL, "
@@ -493,7 +491,7 @@ _running: set[asyncio.Task[Any]] = set()
 
 @functools.cache
 def _indexes(ctx: Ctx) -> Indexes:
-    return Indexes(ctx, ctx.data.root / FEATURE, install, installed, call)
+    return Indexes(ctx, ctx.data.root / NAME, install, installed, call)
 
 
 def _where(ctx: Ctx, key: str) -> tuple[str, str] | None:
@@ -528,7 +526,7 @@ def _record(ctx: Ctx, row: Row) -> None:
 
 def _map(ctx: Ctx, facts: Facts, binary: Path, ready: Ready) -> str:
     """The map for this run: blocking, run in a thread."""
-    home = ctx.data.root / FEATURE
+    home = ctx.data.root / NAME
 
     def ask(op: str, args: Mapping[str, object]) -> object:
         return call(home, binary, op, ready.root, args, QUERY_S)
@@ -543,7 +541,7 @@ def _map(ctx: Ctx, facts: Facts, binary: Path, ready: Ready) -> str:
 
 async def _render(ctx: Ctx, facts: Facts) -> str:
     """The map for the `on` arm, nothing for the `off` one; either way one record of the run."""
-    arm = ctx.arm(FEATURE, facts.workspace, facts.unit)
+    arm = ctx.arm(NAME, facts.workspace, facts.unit)
     idx = _indexes(ctx)
     if facts.stage not in MAP_STAGES or arm is None or idx.lock():
         return ""
@@ -575,7 +573,7 @@ async def _render(ctx: Ctx, facts: Facts) -> str:
 def _ready_for(ctx: Ctx, facts: Facts) -> bool:
     """The tools go to an `on`-arm impl run while the index is ready and the engine not found
     broken. The engine is checked at the first call, so a resumed run gets them too."""
-    if ctx.arm(FEATURE, facts.workspace, facts.unit) != "on" or _indexes(ctx).lock():
+    if ctx.arm(NAME, facts.workspace, facts.unit) != "on" or _indexes(ctx).lock():
         return False
     return _where(ctx, facts.workspace_key) is not None
 
@@ -591,7 +589,7 @@ def _text(text: str, error: bool = False) -> Reply:
 
 def build_tools(ctx: Ctx, facts: Facts) -> list[SdkMcpTool[Any]]:
     """The run's three tools; each reads the index there is now and never waits for a sync."""
-    home = ctx.data.root / FEATURE
+    home = ctx.data.root / NAME
 
     async def answer(make: Callable[[Callable[..., object], str, set[str]], str]) -> Reply:
         where, binary = _where(ctx, facts.workspace_key), await _indexes(ctx)._engine()
@@ -659,19 +657,19 @@ def build_tools(ctx: Ctx, facts: Facts) -> list[SdkMcpTool[Any]]:
 
 def agent(ctx: Ctx) -> Parts:
     def make(facts: Facts) -> McpServerConfig:
-        return create_sdk_mcp_server(FEATURE, "1.0.0", build_tools(ctx, facts))
+        return create_sdk_mcp_server(NAME, "1.0.0", build_tools(ctx, facts))
 
     def ended(event: Event) -> None:
         with ctx.data.connect() as conn:
             found = conn.execute(
                 "SELECT path FROM codegraph_index WHERE workspace = ?", (event.workspace,)
             ).fetchone()
-        if found and ctx.enabled(FEATURE, found[0]):
+        if found and ctx.enabled(NAME, found[0]):
             _indexes(ctx).schedule(event.workspace)
 
     ctx.bus.subscribe("integration.ended", ended)
     return Parts(
-        tools=(Tool(FEATURE, TOOL_NAMES, TOOL_STAGES, make, when=lambda f: _ready_for(ctx, f)),),
+        tools=(Tool(NAME, TOOL_NAMES, TOOL_STAGES, make, when=lambda f: _ready_for(ctx, f)),),
         blocks=(Block("codegraph-map", lambda facts: _render(ctx, facts)),),
     )
 
@@ -682,7 +680,7 @@ def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
     why = idx.lock()
     if why:
         return why, False
-    state = ctx.state(FEATURE, workspace)
+    state = ctx.state(NAME, workspace)
     if state == "off":
         return "Off in this workspace.", True
     key = ctx.workspace_key(workspace)
@@ -741,7 +739,7 @@ def measured(ctx: Ctx, key: str, window: tuple[str | None, str | None]) -> Repor
         rows = _rows(conn, key)
         pairs = turnstats.pairs(conn, key, None, None)
         runs = [str(p["end"].get("run") or "") for p in pairs]
-        chars = turnstats.read_chars(conn, runs, FEATURE)
+        chars = turnstats.read_chars(conn, runs, NAME)
         rounds = _rounds(conn, ctx, key, window)
     steps = [
         Step(
@@ -774,8 +772,8 @@ def routes(ctx: Ctx) -> list[BaseRoute]:
     return router.routes
 
 
-PLUGIN = Plugin(
-    FEATURE,
+FEATURE = Feature(
+    NAME,
     routes,
     tables=(INDEX_TABLE, RUNS_TABLE),
     agent=agent,

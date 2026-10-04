@@ -17,7 +17,7 @@ from coscc import units
 from coscc.git import gitops
 from coscc.units import worktrees
 from coscc.config import Config
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from tests.service.test_service import REPO, _service, create_sync

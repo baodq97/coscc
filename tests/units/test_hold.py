@@ -22,7 +22,7 @@ from coscc.config import Config
 from coscc.data import Data
 from coscc.runlog.journal import Journal
 from coscc.service import Service
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
 
 SLUG = "proof-of-hold"

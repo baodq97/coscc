@@ -10,7 +10,7 @@ from typing import Any
 from coscc.runlog import events
 from coscc.data import Data
 from coscc.data import Busy
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces
 

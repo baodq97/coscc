@@ -14,7 +14,7 @@ from coscc.config import Config
 from coscc.data import Busy, Data
 from coscc.service import Service
 from coscc.service.agents import chip_of
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)

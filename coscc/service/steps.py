@@ -18,7 +18,7 @@ from coscc.units import board as board_reader
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc.agent import agents, harness, modeltrial
-from coscc.hooks import Facts, Hooks, facts as facts_of
+from coscc.kernel import Facts, Hooks, Invalid, facts as facts_of
 from coscc.units import submit as submit_mod
 from coscc.github import integrate, prmachine
 from coscc.units import planmap, retake
@@ -50,7 +50,6 @@ from coscc.service.common import (
     BRANCH_REMOTE,
     BRANCH_TRUNK,
     CONSEQUENCE,
-    Invalid,
     OWNER,
     Refused,
     _younger_than,

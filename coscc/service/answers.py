@@ -32,7 +32,8 @@ from coscc import units
 from coscc.units import scratch, worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
 from coscc.service.autopilot import autopilot_values
-from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER, Refused
+from coscc.service.common import OUTCOME_RESULTS, OWNER, Refused
+from coscc.kernel import Invalid
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces
 from coscc.service.common import Holds

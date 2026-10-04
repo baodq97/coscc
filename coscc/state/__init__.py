@@ -25,7 +25,7 @@ from coscc.state import app, place, present
 from coscc.service.agents import AgentPage
 from coscc.service.common import COLLAPSED_STATES
 from coscc.service.common import FOLDED_STATES
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.service.common import describe_base
 
 # Re-exported so `coscc.state.<name>` resolves; a patch reaches only the module that looks it up.

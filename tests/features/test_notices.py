@@ -20,7 +20,7 @@ from coscc.features import notices
 from coscc.config import Config
 from coscc.runlog.journal import BELL, Journal
 from coscc.service import Service
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 
 BEAT = 0.3
@@ -206,7 +206,7 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_workspace_with_notices_off_is_passed_over_and_another_still_arrives(self):
         ctx = plugin.ctx_of(self.service)
-        plugin.set_state(self.service, ctx, [notices.PLUGIN], "notices", str(self.other), "off")
+        plugin.set_state(self.service, ctx, [notices.FEATURE], "notices", str(self.other), "off")
         other = self.service.ws.key(str(self.other))
         self.append(stop(other))
         mine = self.append(stop(self.key))

@@ -15,7 +15,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
-from coscc import auth, plugin, screens, vault
+from coscc import kernel
+from coscc import auth, screens, vault
 from coscc.agent import policy
 from coscc.features import vault as feature
 from coscc.features.vault import page
@@ -437,14 +438,14 @@ class NoRouteGivesAValueBack(Http):
 
 class TheSlots(unittest.TestCase):
     def test_the_script_draws_a_line_on_a_unit_and_names_only(self):
-        script = feature.PLUGIN.scripts[0]
+        script = feature.FEATURE.scripts[0]
         self.assertNotIn("slot-topbar", script)
         self.assertIn('window.coscc.slot("slot-unit"', script)
         self.assertIn("/api/vault/leaks", script)
         self.assertNotIn("innerHTML", script)
 
     def test_the_sidebar_entry_frames_the_page(self):
-        self.assertEqual(feature.PLUGIN.page, plugin.Page("Vault", "key-round", "/vault"))
+        self.assertEqual(feature.FEATURE.page, kernel.Page("Vault", "key-round", "/vault"))
 
     def test_the_shell_carries_it_once_and_the_slots_are_there(self):
         shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
@@ -454,9 +455,9 @@ class TheSlots(unittest.TestCase):
 
 class ThePlugin(unittest.TestCase):
     def test_it_owns_the_store_s_tables_and_names_its_routes(self):
-        self.assertEqual(feature.PLUGIN.name, "vault")
-        self.assertEqual(feature.PLUGIN.tables, vault.TABLES)
-        self.assertIsNotNone(feature.PLUGIN.agent)
+        self.assertEqual(feature.FEATURE.name, "vault")
+        self.assertEqual(feature.FEATURE.tables, vault.TABLES)
+        self.assertIsNotNone(feature.FEATURE.agent)
 
 
 if __name__ == "__main__":

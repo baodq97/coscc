@@ -1,7 +1,8 @@
-"""The core's door for a feature: what it gets of the running app, and what it hands back.
+"""How the core hosts features: their state per workspace, the `Ctx` each gets, their tables,
+agent parts and schedules, and the Settings panel's view of them. A feature itself sees only
+`coscc/kernel.py`.
 
-A feature (`coscc/features/<name>.py`) ends in one `PLUGIN` and reaches the app only through a
-`Ctx`. Its state per workspace, `off`, `pilot` or `on`, is the pref `features.state`,
+A feature's state per workspace, `off`, `pilot` or `on`, is the pref `features.state`,
 `{feature: {workspace key: state}}`; a feature with no entry there has its `default`. An entry
 of the older pref `features.off`, `{feature: [workspace keys]}`, still reads as `off` until the
 next write for that pair moves it.
@@ -10,25 +11,29 @@ next write for that pair moves it.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, get_args
-
-from fastapi import Request
-from fastapi.responses import StreamingResponse
-from starlette.routing import BaseRoute
+from typing import Any
 
 from coscc.agent.policy import is_prose_stage
 from coscc.agent.sessions import Suspended
-from coscc.bus import Bus
 from coscc.data import Data
-from coscc.hooks import Hooks, Parts
-from coscc.runlog.journal import Intervention, Journal
+from coscc.runlog.journal import Intervention
+from coscc.kernel import (
+    STATES,
+    Arm,
+    Ctx,
+    Feature,
+    Hooks,
+    Invalid,
+    Parts,
+    State,
+    Submitted,
+    arm_of,
+)
 from coscc.service import Service
-from coscc.service.common import Invalid, Submitted
 from coscc.service.interventions import interventions
 from coscc.service.update import refuse_while_updating
 from coscc.service.workspaces import Workspaces
@@ -41,103 +46,7 @@ SCHEDULE_PREF = "features.schedule"
 TICK_SECONDS = 300.0
 CREATE_TABLE = re.compile(r"\s*CREATE TABLE IF NOT EXISTS\s+\w+", re.IGNORECASE)
 
-State = Literal["off", "pilot", "on"]
-STATES: tuple[State, ...] = get_args(State)
-Arm = Literal["on", "off"]
-
 log = logging.getLogger(__name__)
-
-
-def arm_of(state: State, unit: str) -> Arm | None:
-    """The branch a run belongs to: none when `off`; under `pilot` a unit whose `NNNN` is even is
-    `on` and an odd one `off`; under `on` every unit is `on`."""
-    if state == "off":
-        return None
-    if state == "on":
-        return "on"
-    number = unit[:4]
-    return "on" if number.isdigit() and int(number) % 2 == 0 else "off"
-
-
-def _on(_feature: str, _workspace: str) -> State:
-    return "on"
-
-
-def _arm(_feature: str, _workspace: str, unit: str) -> Arm | None:
-    return arm_of("on", unit)
-
-
-async def _no_main_tree(workspace: str) -> tuple[str, str]:
-    raise Invalid(f"no main tree for {workspace} here")
-
-
-def _no_interventions(_workspace: str, _after: str, _limit: int) -> list[Intervention]:
-    return []
-
-
-async def _no_session(_workspace: str, kind: str, _prompt: str) -> Submitted:
-    raise Invalid(f"no {kind} session here")
-
-
-async def _no_unit(_workspace: str, slug: str, _brief: str) -> str:
-    raise Invalid(f"no unit {slug} can be made here")
-
-
-def _no_schedule(_feature: str, _workspace: str) -> int:
-    return 0
-
-
-def _set_no_schedule(feature: str, _workspace: str, _hours: int) -> None:
-    raise Invalid(f"{feature} has no schedule here")
-
-
-@dataclass(frozen=True)
-class Ctx:
-    journal: Callable[[], Journal | None]
-    # Checks the workspace, raising `Invalid`, and returns how the run log names it.
-    workspace_key: Callable[[str], str]
-    # `(feature, workspace path)`: `state` is not `off`.
-    enabled: Callable[[str, str], bool]
-    bus: Bus
-    data: Data
-    # `(feature, workspace path)`: what a person chose there, else the feature's `default`; a
-    # workspace the app does not know counts as the default.
-    state: Callable[[str, str], State] = _on
-    # `(feature, workspace path, unit)`: `arm_of` the state now.
-    arm: Callable[[str, str, str], Arm | None] = _arm
-    # `(workspace path)`: the workspace's own detached tree, made or moved to the fetched
-    # `origin/main`, as `(path, sha)`. Raises `GitError` when git refuses, `Invalid` when the
-    # workspace is not known.
-    main_tree: Callable[[str], Awaitable[tuple[str, str]]] = _no_main_tree
-    # `(workspace path, after, limit)`: every time a person stepped in there past the time
-    # `after` (`""`: from the first), oldest first (`coscc/service/interventions.py`). Blocking.
-    interventions: Callable[[str, str, int], list[Intervention]] = _no_interventions
-    # `(workspace path, kind, prompt)`: one paid session under the grant `kind` that hands its
-    # object back through `submit`, recorded in the run log as the estimate is. `Invalid` while
-    # another such session of the workspace runs or an update is under way. One an update
-    # paused hands back no cost: the run log's `end` holds it.
-    session: Callable[[str, str, str], Awaitable[Submitted]] = _no_session
-    # `(workspace path, slug, brief)`: a new unit, made as `POST /api/units` makes one, and its
-    # name. It touches no shortlist.
-    create_unit: Callable[[str, str, str], Awaitable[str]] = _no_unit
-    # `(feature, workspace path)`: the hours of its `schedule` there, `0` for off.
-    schedule: Callable[[str, str], int] = _no_schedule
-    # `(feature, workspace path, hours)`: set them, one of its `schedule.hours`.
-    set_schedule: Callable[[str, str, int], None] = _set_no_schedule
-
-
-@dataclass(frozen=True)
-class Schedule:
-    """How often the core asks a feature to run on its own in a workspace where it is not `off`."""
-
-    # What Settings offers, in hours, `0` being off. Each workspace's choice is the pref
-    # `features.schedule`, `{feature: {workspace key: hours}}`.
-    hours: tuple[int, ...]
-    # The choice of a workspace nobody chose one for.
-    default: int
-    # `(ctx, workspace path, hours)`: asked every `TICK_SECONDS` while the choice is not `0`;
-    # the feature decides whether that many hours passed since its last run.
-    tick: Callable[[Ctx, str, int], Awaitable[None]]
 
 
 # The page kit: one script the shell injects once, before every feature script. `window.coscc`:
@@ -220,41 +129,6 @@ KIT_JS = r"""
 
 
 @dataclass(frozen=True)
-class Page:
-    """A sidebar entry whose screen frames the feature's own `GET path?cwd=<workspace>`."""
-
-    label: str
-    # A lucide icon name, as the sidebar's own entries use.
-    icon: str
-    path: str
-
-
-@dataclass(frozen=True)
-class Plugin:
-    name: str
-    routes: Callable[[Ctx], Sequence[BaseRoute]]
-    scripts: tuple[str, ...] = ()
-    # `CREATE TABLE IF NOT EXISTS ...` statements, run once at build through `Data.write()`.
-    tables: tuple[str, ...] = ()
-    # What the feature hands the agent's steps, called once at build like `routes`.
-    agent: Callable[[Ctx], Parts] | None = None
-    page: Page | None = None
-    # The state of a workspace nobody chose one for: `on` or `off`.
-    default: State = "on"
-    # Whether `pilot` may be chosen: half the units get the feature (`arm_of`).
-    pilot: bool = False
-    # `(ctx, workspace path)`: one sentence for Settings, and whether `pilot` or `on` may be
-    # chosen there now. Quick: it is asked on every read of the panel.
-    status: Callable[[Ctx, str], tuple[str, bool]] | None = None
-    # `(ctx, workspace path, state)`: told once a person set a state. Quick: it schedules long
-    # work and returns.
-    on_set: Callable[[Ctx, str, State], None] | None = None
-    schedule: Schedule | None = None
-    # One fixed sentence, 100 characters at most: what the feature does, shown under its name.
-    summary: str = ""
-
-
-@dataclass(frozen=True)
 class Shown:
     """A feature as Settings and `GET /api/features` show it for one workspace."""
 
@@ -270,48 +144,7 @@ class Shown:
     summary: str = ""
 
 
-async def body(request: Request) -> dict[str, Any]:
-    """The request's JSON object; anything else is the caller's mistake."""
-    try:
-        parsed = await request.json()
-    except json.JSONDecodeError, ValueError:
-        parsed = None
-    if not isinstance(parsed, dict):
-        raise Invalid("send a JSON object")
-    return parsed
-
-
-def line(obj: dict[str, Any]) -> bytes:
-    return json.dumps(obj).encode() + b"\n"
-
-
-async def ndjson(stream: AsyncIterator[tuple[str, Any]], what: str) -> StreamingResponse:
-    """`(kind, payload)` items as NDJSON: a `chunk` line per text, then one `done`.
-
-    The first item is pulled here, so a refusal before any output is still a status code; a
-    failure after it arrives as an `error` line, and the caller must read to the last line.
-    """
-    try:
-        first = await anext(stream)
-    except StopAsyncIteration:
-        raise Invalid(f"{what} produced nothing") from None
-
-    def out(kind: str, payload: Any) -> bytes:
-        return line({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
-
-    async def lines() -> AsyncIterator[bytes]:
-        try:
-            yield out(*first)
-            async for kind, payload in stream:
-                yield out(kind, payload)
-        except Exception as e:
-            log.exception("the stream of %s failed", what)
-            yield line({"type": "error", "error": f"{type(e).__name__}: {e}"})
-
-    return StreamingResponse(lines(), media_type="application/x-ndjson")
-
-
-def tables_of(features: Sequence[Plugin]) -> tuple[str, ...]:
+def tables_of(features: Sequence[Feature]) -> tuple[str, ...]:
     """Every feature's `tables`; a statement that is not `CREATE TABLE IF NOT EXISTS` is refused."""
     for f in features:
         for statement in f.tables:
@@ -329,7 +162,7 @@ def create_tables(ctx: Ctx, tables: Sequence[str]) -> None:
             conn.execute(statement)
 
 
-def hooks_of(features: Sequence[Plugin], ctx: Ctx) -> Hooks:
+def hooks_of(features: Sequence[Feature], ctx: Ctx) -> Hooks:
     """Every feature's agent parts, tagged with its name; a clash or a tool on a prose stage is
     a `ValueError` naming the feature."""
     parts: list[tuple[str, Parts]] = []
@@ -380,7 +213,7 @@ def state_of(data: Data, feature: str, key: str, default: State) -> State:
     return "off" if isinstance(off, list) and key in off else default
 
 
-def ctx_of(service: Service, features: Sequence[Plugin] = ()) -> Ctx:
+def ctx_of(service: Service, features: Sequence[Feature] = ()) -> Ctx:
     """The `Ctx` every feature gets; `features` gives their `default` states."""
     data = Data(service.config.data_dir)
     defaults: dict[str, State] = {f.name: f.default for f in features}
@@ -474,7 +307,7 @@ def ctx_of(service: Service, features: Sequence[Plugin] = ()) -> Ctx:
     )
 
 
-def schedule_of(data: Data, plugin: Plugin, key: str) -> int:
+def schedule_of(data: Data, plugin: Feature, key: str) -> int:
     """The hours chosen for `(plugin, workspace key)`, else its schedule's `default`."""
     if plugin.schedule is None:
         return 0
@@ -486,7 +319,7 @@ def schedule_of(data: Data, plugin: Plugin, key: str) -> int:
 
 
 def set_schedule_of(
-    service: Service, features: Sequence[Plugin], feature: str, cwd: str, hours: object
+    service: Service, features: Sequence[Feature], feature: str, cwd: str, hours: object
 ) -> int:
     """Set `feature`'s schedule for the workspace `cwd`. `Invalid`: a feature or workspace not
     known, one without a schedule, or hours it does not offer."""
@@ -507,7 +340,7 @@ def set_schedule_of(
     return hours
 
 
-async def tick(service: Service, ctx: Ctx, features: Sequence[Plugin]) -> None:
+async def tick(service: Service, ctx: Ctx, features: Sequence[Feature]) -> None:
     """One round of every scheduled feature, in each listed workspace where it is not `off` and
     its schedule is not `0`. A tick that fails is logged and the next still runs."""
     for f in features:
@@ -523,7 +356,7 @@ async def tick(service: Service, ctx: Ctx, features: Sequence[Plugin]) -> None:
                 log.exception("the scheduled run of %s in %s failed", f.name, cwd)
 
 
-def shown(ctx: Ctx, features: Sequence[Plugin], cwd: str) -> list[Shown]:
+def shown(ctx: Ctx, features: Sequence[Feature], cwd: str) -> list[Shown]:
     """Each feature for the workspace `cwd`; one whose `status` forbids choosing shows `off`."""
     out = []
     for f in features:
@@ -549,7 +382,7 @@ def shown(ctx: Ctx, features: Sequence[Plugin], cwd: str) -> list[Shown]:
 
 
 def set_state(
-    service: Service, ctx: Ctx, features: Sequence[Plugin], feature: str, cwd: str, state: str
+    service: Service, ctx: Ctx, features: Sequence[Feature], feature: str, cwd: str, state: str
 ) -> State:
     """Set `feature`'s state for the workspace `cwd`, then tell the feature. `Invalid`: a feature,
     workspace or state not known, `pilot` for a feature without it, or `pilot`/`on` while its

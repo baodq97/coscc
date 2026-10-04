@@ -10,12 +10,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import features, hooks
+from coscc import features, kernel
 from coscc.bus import Bus, Event
 from coscc.data import Data, now
 from coscc.features import codegraph
 from coscc.features.codegraph import Ready, Status
-from coscc.plugin import Ctx, arm_of, create_tables
+from coscc.plugin import create_tables
+from coscc.kernel import Ctx, arm_of
 
 SHA = "a" * 40
 KEY = "/w/proj"
@@ -66,14 +67,14 @@ class Setup(unittest.IsolatedAsyncioTestCase):
             lambda f, w: self.state,
             lambda f, w, unit: arm_of(self.state, unit),
         )
-        create_tables(self.ctx, codegraph.PLUGIN.tables)
+        create_tables(self.ctx, codegraph.FEATURE.tables)
         self.idx = FakeIndexes(self.root / "data" / "codegraph")
         patch = mock.patch.object(codegraph, "_indexes", return_value=self.idx)
         patch.start()
         self.addCleanup(patch.stop)
 
-    def facts(self, unit: str, stage: str = "impl", run: str = "r1") -> hooks.Facts:
-        return hooks.facts(
+    def facts(self, unit: str, stage: str = "impl", run: str = "r1") -> kernel.Facts:
+        return kernel.facts(
             workspace="/w/proj",
             workspace_key=KEY,
             unit=unit,
@@ -210,8 +211,8 @@ class SettingsSaysOneSentence(Setup):
         self.assertEqual(codegraph.status(self.ctx, "/w/proj"), (codegraph.NO_NPM, False))
 
     def test_the_feature_is_off_by_default_and_offers_a_pilot(self):
-        self.assertIn(codegraph.PLUGIN, features.FEATURES)
-        self.assertEqual((codegraph.PLUGIN.default, codegraph.PLUGIN.pilot), ("off", True))
+        self.assertIn(codegraph.FEATURE, features.FEATURES)
+        self.assertEqual((codegraph.FEATURE.default, codegraph.FEATURE.pilot), ("off", True))
 
 
 class AtPilotTheSentenceTellsTheSplit(Setup):

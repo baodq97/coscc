@@ -224,8 +224,8 @@ DICT_ANY: set[str] = {
     "coscc.github.prscope:read",
     "coscc.github.release:classify",
     "coscc.github.release:record",
-    "coscc.plugin:body",
-    "coscc.plugin:line",
+    "coscc.kernel:body",
+    "coscc.kernel:line",
     "coscc.runlog.events:Recorder.subscribe",
     "coscc.runlog.events:collapse",
     "coscc.runlog.events:full_text",
@@ -695,7 +695,7 @@ class EveryTableHasOneOwner(unittest.TestCase):
         trees = {
             "coscc/data.py": ast.parse("pass\n"),
             "coscc/features/x.py": ast.parse(
-                'PLUGIN = Plugin(tables=("CREATE TABLE IF NOT EXISTS t (a INTEGER)",))\n'
+                'FEATURE = Feature(tables=("CREATE TABLE IF NOT EXISTS t (a INTEGER)",))\n'
             ),
             "coscc/other.py": ast.parse('q = "SELECT a FROM t"\n'),
         }

@@ -19,14 +19,8 @@ from coscc.runlog.journal import BadRecord
 from coscc.data import Busy
 from coscc.config import LOOPBACK, Config
 from coscc.data import Data
-from coscc.service.common import (
-    BRANCH_REMOTE,
-    BRANCH_TRUNK,
-    Invalid,
-    Refused,
-    log_setting,
-    shown_state,
-)
+from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Refused, log_setting, shown_state
+from coscc.kernel import Invalid
 from coscc.service.workspaces import Workspaces
 from coscc.service.common import Holds
 from coscc.service.agents import Agents

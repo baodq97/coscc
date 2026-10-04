@@ -573,7 +573,7 @@ class TheImportReport(unittest.TestCase):
 
     def test_an_import_that_fails_names_the_workspace_and_logs_the_error(self):
         from coscc.data import Busy
-        from coscc.service.common import Invalid
+        from coscc.kernel import Invalid
 
         shutil.copytree(FIXTURE, self.store)
         busy = Busy(self.service.config.data_dir + "/cos.db")

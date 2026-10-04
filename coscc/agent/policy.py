@@ -54,7 +54,7 @@ class Grant:
     # grant's list `decide` lets through. It writes nothing and runs nothing, and is not in
     # `tools`: `--tools` names the built-in set, and an SDK server's tool reaches the session anyway.
     submits: bool = False
-    # Full names of MCP tools a feature's server holds, derived by `coscc/hooks.py`. Not in `tools`
+    # Full names of MCP tools a feature's server holds, derived by `coscc/kernel.py`. Not in `tools`
     # (`--tools` names the built-in set) and not in `opens_anything`.
     mcp: tuple[str, ...] = ()
     # Paths no word of a command may point into (`protected_paths`), whatever `commands` holds.

@@ -26,7 +26,7 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from coscc import hooks as hooks_mod
+from coscc import kernel
 from coscc.agent import agents, instructions, models, modeltrial, steps, transcript
 from coscc.agent import sessions as sessions_mod
 from coscc.agent.helpers import DEFINITIONS, PROTOCOL, Helpers
@@ -1379,7 +1379,7 @@ class Runner:
         sessions: Sessions,
         journal: Journal | None,
         app: dict | None = None,
-        hooks: hooks_mod.Hooks = hooks_mod.Hooks(),
+        hooks: kernel.Hooks = kernel.Hooks(),
     ):
         self.sessions = sessions
         self.hooks = hooks
@@ -1436,13 +1436,13 @@ class Runner:
         watch: str | None,
         directory: Path,
         resumed: bool,
-    ) -> tuple[Any, hooks_mod.Facts, tuple[tuple[str, str], ...], Helpers | None]:
+    ) -> tuple[Any, kernel.Facts, tuple[tuple[str, str], ...], Helpers | None]:
         """The step's recorder, when `Steps.run_step` gave it one (its `run` goes into `start` and
         `end`, and it is closed, everything on disk, before `end` is written); this run as the
         features see it; the prompt blocks they add; and the run's helpers (`_helpers_of`). A step
         taken up again composes no prompt, so it has no block."""
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
-        facts = hooks_mod.facts(
+        facts = kernel.facts(
             workspace=workspace,
             workspace_key=journal_key,
             unit=unit,
@@ -1463,7 +1463,7 @@ class Runner:
         self,
         grant: Grant,
         channel: submit_mod.Channel | None,
-        facts: hooks_mod.Facts,
+        facts: kernel.Facts,
         ledger: Helpers | None = None,
     ) -> tuple[Grant, dict[str, Any]]:
         """The grant with the MCP names features' tools add, and the `mcp_servers` argument holding
@@ -1475,11 +1475,11 @@ class Runner:
         )
         tools = self.hooks.tools_for(facts)
         if tools:
-            grant = replace(grant, mcp=hooks_mod.granted(tools))
+            grant = replace(grant, mcp=kernel.granted(tools))
             servers.update({t.server: t.make(facts) for t in tools})
         return grant, ({"mcp_servers": servers} if servers else {})
 
-    async def _blocks(self, facts: hooks_mod.Facts) -> tuple[tuple[str, str], ...]:
+    async def _blocks(self, facts: kernel.Facts) -> tuple[tuple[str, str], ...]:
         """The prompt blocks features add to this run, in order, those with words only."""
         out = []
         for b in self.hooks.for_step(facts.stage, facts.workspace).blocks:

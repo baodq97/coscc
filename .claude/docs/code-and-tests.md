@@ -31,21 +31,21 @@ the code, not the list.
 
 ## Adding a feature
 
-New work is `coscc/features/<name>.py` ending in one `PLUGIN`, a line in `FEATURES`, and its
-test; it reaches the app only through `Ctx` (`coscc/plugin.py`). Copy `notices`. A need no
-extension point serves is a kernel change, planned first.
+New work is `coscc/features/<name>.py` ending in one `FEATURE`, a line in `FEATURES`, and its
+test. It imports only `coscc/kernel.py`, the one module that hands on names it does not define;
+`KERNEL_GAPS` in `tests/test_layers.py` lists what the kernel does not give yet and only shrinks.
+Copy `notices`. A need no extension point serves is a kernel change, planned first.
 
 - Extension points: `routes`, `scripts`, `tables`, `agent` giving `Parts` of `Tool`, `Guard`
   (`check(Facts)` returns words to deny, or `None`; asked before every step and integration) and `Block` (`render(Facts)` adds prompt
   text); slots `slot-topbar` and `slot-unit`; `page=Page(label, icon, path)`, a sidebar entry
   whose screen frames the feature's own `GET path?cwd=<workspace>`.
-- Building blocks: `plugin.body/line/ndjson`, `Ctx`, `window.coscc.api/stream/every/ago/slot`.
+- Building blocks: `kernel.body/line/ndjson`, `Ctx`, `window.coscc.api/stream/every/ago/slot`.
 
 ```python
 """Bookmarks: a note per unit."""
 
-from coscc.hooks import Facts, Guard, Parts
-from coscc.plugin import Ctx, Plugin, body
+from coscc.kernel import Ctx, Facts, Feature, Guard, Parts, body
 from fastapi import APIRouter, Request
 
 TABLE = "CREATE TABLE IF NOT EXISTS bookmarks (unit TEXT PRIMARY KEY, note TEXT NOT NULL)"
@@ -70,7 +70,7 @@ def no_ship(facts: Facts) -> str | None:
     return "no ship yet" if facts.stage == "ship" else None
 
 
-PLUGIN = Plugin(
+FEATURE = Feature(
     "bookmarks", routes, tables=(TABLE,), agent=lambda _: Parts(guards=(Guard("b", no_ship),))
 )
 ```

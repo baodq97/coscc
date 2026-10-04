@@ -10,7 +10,7 @@ from coscc.runlog.journal import BadRecord
 from coscc.data import Busy
 from coscc.agent import models
 from coscc.service.update import refuse_while_updating
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 
 # A chat turn's ceiling: `Sessions.stream`'s default, since chat names none, and no budget.
 CHAT_TURNS = 1

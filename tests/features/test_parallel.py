@@ -9,7 +9,7 @@ from unittest import mock
 
 from coscc import features
 from coscc.features import parallel
-from coscc.hooks import Facts
+from coscc.kernel import Facts
 
 THREE = """# Plan: x
 Intent: intent.md. Status: accepted.
@@ -103,9 +103,9 @@ class TheBlockIsImplsAndOnlyForTwoStepsOrMore(unittest.TestCase):
 
 class TheFeatureIsListed(unittest.TestCase):
     def test_features_carries_it_with_its_block(self):
-        self.assertIn(parallel.PLUGIN, features.FEATURES)
-        assert parallel.PLUGIN.agent is not None
-        parts = parallel.PLUGIN.agent(mock.Mock())
+        self.assertIn(parallel.FEATURE, features.FEATURES)
+        assert parallel.FEATURE.agent is not None
+        parts = parallel.FEATURE.agent(mock.Mock())
         self.assertEqual([b.name for b in parts.blocks], ["parallel"])
         self.assertEqual((parts.tools, parts.guards), ((), ()))
 

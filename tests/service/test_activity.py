@@ -10,7 +10,7 @@ from pathlib import Path
 from coscc.agent.sessions import Sessions
 from coscc.config import Config
 from coscc.service import Service
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.units import states
 from tests.service.test_service import _service, create_sync
 

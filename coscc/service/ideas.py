@@ -11,7 +11,8 @@ from typing import Any
 from coscc.git import gitops
 from coscc.git.gitops import GitError
 from coscc.data import Busy
-from coscc.service.common import Invalid, unit_state
+from coscc.service.common import unit_state
+from coscc.kernel import Invalid
 from coscc.units.meta import MetaError
 from coscc.service.store import valid_name
 from coscc.units import CannotCreate, ideas

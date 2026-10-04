@@ -1,4 +1,4 @@
-"""`coscc/features/__init__.py` and `coscc/plugin.py`: the list is the only place a feature is named."""
+"""`coscc/features/__init__.py`, `coscc/kernel.py` and `coscc/plugin.py`: the list is the only place a feature is named."""
 
 from __future__ import annotations
 
@@ -16,15 +16,11 @@ from starlette.routing import Route
 from coscc import screens
 from coscc.data import Data
 from coscc import features
-from coscc.hooks import Block, Guard, Parts, Tool
+from coscc.kernel import Block, Ctx, Feature, Guard, Parts, Schedule, Tool, arm_of
 from coscc.plugin import (
     OFF_PREF,
     SCHEDULE_PREF,
     STATE_PREF,
-    Ctx,
-    Plugin,
-    Schedule,
-    arm_of,
     create_tables,
     ctx_of,
     hooks_of,
@@ -83,8 +79,8 @@ def start(api) -> None:
 
 
 class ATableIsCreatedAtStartup(Setup):
-    def fake(self, *tables: str) -> Plugin:
-        return Plugin("fake", lambda _ctx: [], tables=tables)
+    def fake(self, *tables: str) -> Feature:
+        return Feature("fake", lambda _ctx: [], tables=tables)
 
     def test_build_opens_no_database_and_startup_makes_the_table_twice_harmlessly(self):
         fake = self.fake("CREATE TABLE IF NOT EXISTS fake_things (id INTEGER PRIMARY KEY)")
@@ -151,7 +147,7 @@ class TurningAFeatureOffForAWorkspace(Setup):
             self.assertEqual(got.json()["notices"], "on")
 
     async def test_a_feature_with_a_default_of_off_starts_off_and_the_rest_on(self):
-        fake = Plugin("graph", lambda _ctx: [], default="off", pilot=True)
+        fake = Feature("graph", lambda _ctx: [], default="off", pilot=True)
         with mock.patch("coscc.features.FEATURES", (*features.FEATURES, fake)):
             async with self.client() as client:
                 got = (await client.get("/api/features", params={"cwd": str(self.ws)})).json()
@@ -193,7 +189,7 @@ class TurningAFeatureOffForAWorkspace(Setup):
     def test_the_arm_follows_the_state_and_the_units_number(self):
         service = mock.Mock(config=self.config)
         service.ws.check.side_effect = lambda cwd: cwd
-        graph = Plugin("graph", lambda _ctx: [], default="off", pilot=True)
+        graph = Feature("graph", lambda _ctx: [], default="off", pilot=True)
         ctx = ctx_of(service, (graph,))
         ws = str(self.ws)
         want = {"off": (None, None), "pilot": ("on", "off"), "on": ("on", "on")}
@@ -220,11 +216,11 @@ def _server(_facts):
 
 def fake_feature(
     name="fake", server="fake", stages=("impl",), guard="g", block="b", route=True
-) -> Plugin:
+) -> Feature:
     async def ping(_request):
         return PlainTextResponse("pong")
 
-    return Plugin(
+    return Feature(
         name,
         lambda _ctx: [Route(f"/api/{name}/ping", ping)] if route else [],
         scripts=(f"window.__{name} = 1;",),
@@ -282,11 +278,11 @@ class AFeatureHandsTheAgentItsParts(Setup):
 class AScheduledFeatureRunsOnItsOwn(Setup):
     """The pref `features.schedule`, its door, and the core's tick."""
 
-    def scheduled(self, ticked: list) -> Plugin:
+    def scheduled(self, ticked: list) -> Feature:
         async def tick(_ctx, cwd: str, hours: int) -> None:
             ticked.append((cwd, hours))
 
-        return Plugin("timed", lambda _ctx: [], schedule=Schedule((0, 12, 24), 24, tick))
+        return Feature("timed", lambda _ctx: [], schedule=Schedule((0, 12, 24), 24, tick))
 
     async def test_the_door_writes_the_pref_and_settings_reads_it_back(self):
         timed = self.scheduled([])

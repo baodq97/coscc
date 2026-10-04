@@ -57,7 +57,7 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
         from unittest import mock
 
         from coscc import state
-        from coscc.service.common import Invalid
+        from coscc.kernel import Invalid
 
         from tests.screens.test_screens import VIETNAMESE
 
@@ -243,7 +243,7 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
         self.assertEqual(page.answering_key, "")
 
     def test_a_refusal_is_shown_verbatim_and_the_text_is_kept(self):
-        from coscc.service.common import Invalid
+        from coscc.kernel import Invalid
 
         async def refuse(*args):
             raise Invalid("say who is answering, on one line")

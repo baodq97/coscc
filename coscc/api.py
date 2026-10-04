@@ -31,10 +31,12 @@ from typing import Any, AsyncIterator
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from coscc import kernel
 from coscc import features, plugin, studio
 from coscc.config import Config, from_env
 from coscc.service import Service
-from coscc.service.common import Invalid, NotUpdatable, Updating
+from coscc.service.common import NotUpdatable, Updating
+from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 
 log = logging.getLogger(__name__)
@@ -72,7 +74,7 @@ async def add_workspace(request: Request) -> Any:
 
     The working folder comes from the environment only; a body naming one is ignored.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).ws.add(
         str(body.get("name", "")),
         label=str(body.get("label", "") or ""),
@@ -100,7 +102,7 @@ async def set_agent_field(request: Request) -> Any:
     It decides what every step spends: whoever holds the password or a session can move any
     agent's model or raise its ceilings. The trace is an `agent-setting` record in the run log.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return _service(request).agents.set_agent_field(
         body.get("key"), body.get("field"), body.get("value")
     )
@@ -120,7 +122,7 @@ async def set_autopilot(request: Request) -> Any:
     let it ship to `main` under this machine's `gh` login. Turning it on is refused while
     the app listens beyond loopback. The trace is a `setting` record.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return _service(request).autopilot.set_setting(
         str(body.get("cwd", "")), body.get("name"), body.get("value")
     )
@@ -130,7 +132,7 @@ async def set_autopilot(request: Request) -> Any:
 async def create_unit(request: Request) -> Any:
     """Start a work unit. `brief` is the originator's own words and becomes the unit's
     `idea.md`, which the intent step reads."""
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).answers.create_unit(
         str(body.get("cwd") or ""),
         str(body.get("slug") or ""),
@@ -144,7 +146,7 @@ async def create_unit(request: Request) -> Any:
 @router.post("/api/ideas")
 async def create_idea(request: Request) -> Any:
     """Start an idea several units share, in the store of `cwd`. Writes only into the app's own store."""
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return _service(request).ideas.create_idea(
         str(body.get("cwd") or ""),
         str(body.get("slug") or ""),
@@ -167,7 +169,7 @@ async def answer_question(request: Request) -> Any:
     An optional `delegation: "D<n>"` writes the answer as one an agent gave under a
     delegation entered on Settings (`delegated`). What it `covers` is not checked.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).answers.answer(
         str(body.get("cwd") or ""),
         str(body.get("unit") or ""),
@@ -188,7 +190,7 @@ async def record_outcome(request: Request) -> Any:
     a session can record `đạt`**, under any name. No gate reads the block; the board
     shows it as the ground for keeping or dropping a unit.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).answers.record_outcome(
         *(
             str(body.get(k) or "")
@@ -216,7 +218,7 @@ async def hold_unit(request: Request) -> Any:
     closes the unit's open pull request **with this machine's `gh` login** and removes its
     worktree. It starts nothing, a resume included.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).answers.hold(
         *(str(body.get(k) or "") for k in ("cwd", "unit", "to", "reason", "by"))
     )
@@ -231,7 +233,7 @@ async def more_rounds(request: Request) -> Any:
     or a session can open a paid review round**; the route starts nothing itself, but
     with the autopilot on its next sweep will.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).answers.more_rounds(
         *(str(body.get(k) or "") for k in ("cwd", "unit", "by"))
     )
@@ -243,7 +245,7 @@ async def backlog_estimate(request: Request) -> Any:
 
     A new `estimate-value` row in the run log; no file is written and no gate reads it.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).backlog.record_estimate(
         str(body.get("cwd") or ""),
         str(body.get("unit") or ""),
@@ -257,7 +259,7 @@ async def backlog_estimate(request: Request) -> Any:
 @router.post("/api/backlog/relation")
 async def backlog_relation(request: Request) -> Any:
     """Add or remove one relation: `{cwd, unit, other, type, op, reason, by}`. A `relation` row in the run log, nothing else."""
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).backlog.record_relation(
         *(str(body.get(k) or "") for k in ("cwd", "unit", "other", "type", "op", "reason", "by"))
     )
@@ -270,7 +272,7 @@ async def backlog_shortlist(request: Request) -> Any:
     A `shortlist` row in the run log; every later board step's `start` row reads it.
     Nothing runs because of it, and no gate or `next` reads it.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).backlog.record_shortlist(
         str(body.get("cwd") or ""),
         body.get("units"),
@@ -284,8 +286,8 @@ async def backlog_propose(request: Request) -> Any:
     """**Opens one paid session** proposing estimates: `{cwd}`. Streams NDJSON like
     `/api/board/run`. A second press while one runs is a 400.
     """
-    body = await plugin.body(request)
-    return await plugin.ndjson(
+    body = await kernel.body(request)
+    return await kernel.ndjson(
         _service(request).backlog.propose_estimates(str(body.get("cwd") or "")), "the proposal"
     )
 
@@ -299,7 +301,7 @@ async def post_review_comment(request: Request) -> Any:
     choose the words. A round already on the pull request comes back `already`. A failure
     is a 200 with `state: failed` and gh's reason, because the request was valid.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).answers.post_review_comment(
         str(body.get("cwd") or ""), str(body.get("unit") or ""), body.get("round")
     )
@@ -312,7 +314,7 @@ async def start_branch(request: Request) -> Any:
     The only route that writes to somebody else's git; `coscc/git/gitops.py` lists what
     that may be, because this runs with the app's own authority, not a session's policy.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).backlog.start_branch(
         str(body.get("cwd") or ""), str(body.get("unit") or "")
     )
@@ -351,7 +353,7 @@ async def get_next(request: Request) -> Any:
 @router.post("/api/board/mode")
 async def set_board_mode(request: Request) -> Any:
     """The only thing the board writes, and it writes it to the journal."""
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).steps.set_mode(
         *(str(body.get(k, "")) for k in ("cwd", "unit", "stage", "mode"))
     )
@@ -364,14 +366,14 @@ async def run_step(request: Request) -> Any:
     Anything decidable before output is a status code; a refusal after streaming starts
     arrives as an `error` line.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     # `rerun` only when the body says `true` itself.
     rerun = body.get("rerun") is True
     extra = {"rerun": True, "note": str(body.get("note") or "")} if rerun else {}
     stream = _service(request).steps.run_step(
         str(body.get("cwd", "")), str(body.get("unit", "")), str(body.get("stage", "")), **extra
     )
-    return await plugin.ndjson(stream, "the step")
+    return await kernel.ndjson(stream, "the step")
 
 
 @router.post("/api/board/stop")
@@ -382,7 +384,7 @@ async def stop_step(request: Request) -> Any:
     record's `stopped_by` says (nothing when the cancel lands before the first turn) and
     is a claim, not an identity. It opens no gate and starts nothing.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return await _service(request).steps.stop_step(
         *(str(body.get(k, "")) for k in ("cwd", "unit", "by"))
     )
@@ -404,9 +406,9 @@ async def integrate_unit(request: Request) -> Any:
     Whoever holds the password or a session can make this machine's `gh` login rebase a
     unit's pull request, or open a paid Gebo session. A refusal is a 400 before anything changes.
     """
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     stream = _service(request).steps.integrate(str(body.get("cwd", "")), str(body.get("unit", "")))
-    return await plugin.ndjson(stream, "the integration")
+    return await kernel.ndjson(stream, "the integration")
 
 
 @router.post("/api/release/prepare")
@@ -416,11 +418,11 @@ async def release_prepare(request: Request) -> Any:
     Whoever holds the password or a session can make this machine's `gh` login commit,
     push a branch and open a pull request. A refusal is a 400 before anything changes;
     every press leaves one `release` record."""
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     stream = _service(request).release.release_prepare(
         str(body.get("cwd", "")), str(body.get("version", ""))
     )
-    return await plugin.ndjson(stream, "the release")
+    return await kernel.ndjson(stream, "the release")
 
 
 @router.post("/api/release/publish")
@@ -431,11 +433,11 @@ async def release_publish(request: Request) -> Any:
     Whoever holds the password or a session can make this machine's `gh` login merge into
     `main` and push a tag no ruleset protects. A refusal is a 400 before anything changes;
     every press leaves one `release` record."""
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     stream = _service(request).release.release_publish(
         str(body.get("cwd", "")), str(body.get("version", ""))
     )
-    return await plugin.ndjson(stream, "the release")
+    return await kernel.ndjson(stream, "the release")
 
 
 @router.get("/api/features")
@@ -462,7 +464,7 @@ async def set_feature(request: Request) -> Any:
     `{cwd, name, schedule}` instead sets how many hours apart a feature with a `schedule` runs
     on its own there, `0` for never: the pref `features.schedule`. A scheduled run may open a
     paid session (the `scan` feature's), so this is a spending choice."""
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     if "schedule" in body and "state" not in body and "on" not in body:
         hours = plugin.set_schedule_of(
             _service(request),
@@ -476,7 +478,7 @@ async def set_feature(request: Request) -> Any:
     if state is None and isinstance(on, bool):
         state = "on" if on else "off"
     if not isinstance(state, str):
-        raise Invalid(f"state must be one of {', '.join(plugin.STATES)}")
+        raise Invalid(f"state must be one of {', '.join(kernel.STATES)}")
     chosen = plugin.set_state(
         _service(request),
         request.app.state.ctx,
@@ -500,7 +502,7 @@ async def set_command_lists(request: Request) -> Any:
     """`{cwd, allow, block}` replaces both lists; a name that is not a command's is a 400. Whoever
     holds the password or a session can widen what `impl` runs in that workspace: `curl` or
     `ssh` there reach the network through `Bash`, outside every filter."""
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return _service(request).ws.set_command_lists(
         str(body.get("cwd") or ""), body.get("allow"), body.get("block")
     )
@@ -515,7 +517,7 @@ async def set_command_lists(request: Request) -> Any:
 
 
 async def _update_body(request: Request) -> dict[str, str]:
-    body = await plugin.body(request)
+    body = await kernel.body(request)
     return {k: str(body.get(k, "") or "") for k in ("channel", "by")}
 
 

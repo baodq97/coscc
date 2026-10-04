@@ -11,7 +11,7 @@ from pathlib import Path
 from coscc.bus import Bus
 from coscc.config import Config
 from coscc.service import Service
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.units import board as _board
 from tests.units.test_meta import WithSnapshot
 

@@ -13,7 +13,7 @@ from unittest import mock
 from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.github import integrate
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
