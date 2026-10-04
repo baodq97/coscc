@@ -134,6 +134,31 @@ export type Ceilings = {
   "max_budget_source": string;
 };
 
+export type ChatHistory = {
+  "session_id": string;
+  "messages": ChatMessage[];
+};
+
+export type ChatMessage = {
+  "role": string;
+  "text": string;
+  "uuid": string;
+};
+
+export type ChatSession = {
+  "session_id": string;
+  "summary": string;
+  "last_modified": number;
+  "created_at": number | null;
+  "git_branch": string | null;
+  "resumable": boolean;
+};
+
+export type ChatSessions = {
+  "cwd": string;
+  "sessions": ChatSession[];
+};
+
 export type ConfigRow = {
   "key": string;
   "fields": string[];
@@ -515,6 +540,8 @@ export type Worktree = {
 export type Get = {
   "/api/agents": AgentPage;
   "/api/backlog": UpNext;
+  "/api/chat/history": ChatHistory;
+  "/api/chat/sessions": ChatSessions;
   "/api/codegraph/report": Report;
   "/api/decided": Decided[];
   "/api/decisions": DecisionTable;
