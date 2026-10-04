@@ -50,6 +50,22 @@ export const api = {
     return call<Get[P]>("GET", qs ? `${url.path}?${qs}` : url.path);
   },
   post: <T>(path: string, body: unknown) => call<T>("POST", path, body),
+  /**
+   * Start something whose route streams until it ends (a step): wait only for the answer that
+   * it began or was refused, then let go. Letting go stops nothing; stopping is its own route.
+   */
+  start: async (path: string, body: unknown): Promise<void> => {
+    const res = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (res.status === 401) {
+      location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
+      throw new ApiError(401, "signed out");
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new ApiError(res.status, (data && data.error) || res.statusText);
+    }
+    await res.body?.cancel();
+  },
 };
 
 export type Resource<T> =

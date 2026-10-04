@@ -141,6 +141,7 @@ export type Detail = {
   "depends_on": Dependency[];
   "runs": UnitRun[];
   "worktree": Worktree | null;
+  "hold_moves": string[];
 };
 
 export type GrantView = {

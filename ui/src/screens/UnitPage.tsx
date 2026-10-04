@@ -1,15 +1,16 @@
 // One unit: what it is, where it stands, what happened on it and what happens next. The side
 // panel holds the facts; the timeline holds every run and answer, newest first.
 
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import type { Answer, Detail, StageView, UnitRun } from "../api.gen";
-import { useResource } from "../lib/api";
+import { api, useResource } from "../lib/api";
+import type { PlacedUnit } from "../lib/boards";
 import { allUnits, useBoards } from "../lib/boards";
 import { STAGE_LABEL, ago, modelName, money, unitCode, unitTitle } from "../lib/format";
 import { AgentAvatar, Icon, LeifMark } from "../lib/icons";
 import { unitState } from "../lib/model";
 import { Link } from "../lib/router";
-import { Chip, Dot, Empty, ErrorState, Meter, SkeletonRows } from "../components/ui";
+import { Button, Chip, Dot, Empty, ErrorState, Meter, SkeletonRows } from "../components/ui";
 
 const TRACK = ["intent", "spec", "plan", "impl", "pr", "review", "ship"];
 const GROUP: Record<string, string> = { intent: "Shape", spec: "Shape", plan: "Shape", impl: "Build", pr: "Check", review: "Check", ship: "Ship" };
@@ -146,6 +147,17 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
             <div className="faint" style={{ fontSize: 12.5, wordBreak: "break-all" }}>{d.worktree.branch}</div>
           </>
         )}
+        <h3>Actions</h3>
+        <Actions
+          unit={placed}
+          running={Boolean(running)}
+          stage={next.data && !next.data.blocked ? next.data.stage ?? "" : ""}
+          moves={d?.hold_moves ?? []}
+          onDone={() => {
+            detail.reload();
+            next.reload();
+          }}
+        />
         <h3>Depends on</h3>
         <div className="col gap4">
           {d?.depends_on.length ? (
@@ -293,6 +305,78 @@ function AnswerItem({ group }: { group: AnswerGroup }) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * What a person may do to the unit now. A paid or lasting action asks once more before it acts:
+ * a step spends quota, a drop closes the pull request.
+ */
+function Actions({ unit, running, stage, moves, onDone }: { unit: PlacedUnit; running: boolean; stage: string; moves: string[]; onDone: () => void }) {
+  const [asking, setAsking] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const at = { cwd: unit.workspace.path, unit: unit.name };
+
+  const act = async (what: string, run: () => Promise<unknown>) => {
+    if (asking !== what) return setAsking(what);
+    setBusy(true);
+    setError(null);
+    try {
+      await run();
+      setAsking("");
+      setReason("");
+      onDone();
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const hold = (to: string) => api.post("/api/units/hold", { ...at, to, reason: reason.trim() });
+
+  return (
+    <div className="col gap6">
+      {running ? (
+        <Button icon="x" disabled={busy} onClick={() => act("stop", () => api.post("/api/board/stop", { ...at, by: "owner" }))}>
+          {asking === "stop" ? "Stop it? Nothing is pushed" : "Stop the run"}
+        </Button>
+      ) : stage ? (
+        <Button kind="primary" icon="arrow" disabled={busy} title="Runs a real Claude session and spends account quota." onClick={() => act("run", () => api.start("/api/board/run", { ...at, stage }))}>
+          {asking === "run" ? `Spend quota on ${STAGE_LABEL[stage] ?? stage}?` : `Run ${STAGE_LABEL[stage] ?? stage}`}
+        </Button>
+      ) : null}
+      {moves.includes("active") && (
+        <Button icon="refresh" disabled={busy} onClick={() => act("active", () => hold("active"))}>
+          {asking === "active" ? "Resume it? Nothing starts by itself" : "Resume"}
+        </Button>
+      )}
+      {moves.includes("paused") && (
+        <Button icon="pause" disabled={busy} onClick={() => act("paused", () => hold("paused"))}>
+          {asking === "paused" ? "Pause it?" : "Pause"}
+        </Button>
+      )}
+      {moves.includes("dropped") &&
+        (asking === "dropped" ? (
+          <>
+            <textarea className="ta" rows={2} style={{ fontSize: 12.5 }} placeholder="Why drop it? (kept with the unit)" value={reason} onChange={(e) => setReason(e.target.value)} />
+            <Button kind="danger" disabled={busy || !reason.trim()} onClick={() => act("dropped", () => hold("dropped"))}>
+              Drop, and close its pull request
+            </Button>
+          </>
+        ) : (
+          <Button kind="ghost" icon="x" disabled={busy} onClick={() => setAsking("dropped")}>
+            Drop…
+          </Button>
+        ))}
+      {asking && !busy && (
+        <button className="btn ghost sm" onClick={() => setAsking("")}>
+          Cancel
+        </button>
+      )}
+      {error && <div style={{ color: "var(--red)", fontSize: 12.5 }}>{error.message}</div>}
     </div>
   );
 }

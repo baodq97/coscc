@@ -267,6 +267,8 @@ class Detail(TypedDict):
     depends_on: list[Dependency]
     runs: list[UnitRun]
     worktree: Worktree | None
+    # The holds the loop allows now: `paused`, `dropped`, `active` (a resume).
+    hold_moves: list[str]
 
 
 def _text(v: Any) -> str:
@@ -373,6 +375,7 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
         "worktree": {"branch": _text(tree.get("branch")), "path": _text(tree.get("path"))}
         if tree
         else None,
+        "hold_moves": [str(m) for m in unit.get("hold_moves") or []],
     }
 
 
