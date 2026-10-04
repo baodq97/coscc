@@ -31,7 +31,7 @@ from dataclasses import asdict
 from typing import Any, AsyncIterator, NotRequired, TypedDict
 
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from coscc import kernel
 from coscc import features, plugin, studio
@@ -794,6 +794,32 @@ async def get_features(request: Request) -> Any:
     return {f.name: f.state for f in rows}
 
 
+class FeaturePage(TypedDict):
+    """A feature's own page, which the studio frames at `/feature/<name>`."""
+
+    name: str
+    label: str
+    icon: str
+    path: str
+
+
+@router.get("/api/features/pages")
+async def get_feature_pages(request: Request) -> list[FeaturePage]:
+    return [
+        {"name": name, "label": p.label, "icon": p.icon, "path": p.path}
+        for name, p in request.app.state.pages.items()
+    ]
+
+
+@router.get("/api/features/scripts")
+async def get_feature_scripts(request: Request) -> Response:
+    """The page kit (`plugin.KIT_JS`) and every feature's scripts, which the studio loads once.
+    A script draws into a slot (`slot-topbar`, `slot-unit`, `slot-backlog`) whose element
+    carries `data-cwd` and, on a unit, `data-unit`."""
+    body = "\n".join((plugin.KIT_JS, *request.app.state.scripts))
+    return Response(body, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
 @router.get("/api/features/shown")
 async def get_features_shown(request: Request) -> list[plugin.Shown]:
     """Each feature as Settings shows it for one workspace: its state, whether `pilot` may be
@@ -930,6 +956,7 @@ def build(config: Config | None = None) -> FastAPI:
     # import `features`.
     api.state.features = tuple(f.name for f in features.FEATURES)
     api.state.pages = {f.name: f.page for f in features.FEATURES if f.page}
+    api.state.scripts = tuple(js for f in features.FEATURES for js in f.scripts)
     # The one `Ctx` and the plugins themselves, for the Settings panel's states.
     api.state.ctx = ctx
     api.state.plugins = features.FEATURES

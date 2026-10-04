@@ -92,13 +92,13 @@ button.danger-btn { background: var(--r3); color: var(--r11); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 """
 
-# Before the first paint: the studio's choice (`localStorage.theme`, `light`/`dark`/`system`) as
+# Before the first paint: the studio's choice (`localStorage["cos-theme"]`, `light` or `dark`) as
 # the class Radix reads, followed again when the studio changes it.
 _MODE_JS = """
 (function () {
   function apply() {
     var t = null;
-    try { t = localStorage.getItem("theme"); } catch (e) {}
+    try { t = localStorage.getItem("cos-theme"); } catch (e) {}
     if (t !== "light" && t !== "dark")
       t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     document.documentElement.classList.remove("light", "dark");

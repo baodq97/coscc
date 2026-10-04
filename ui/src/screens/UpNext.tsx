@@ -129,6 +129,8 @@ function Project({ workspace }: { workspace: Workspace }) {
         {!v.order.length && <div className="card-b faint">Nothing estimated waits outside the shortlist.</div>}
       </div>
 
+      {/* A feature's part of the backlog (scan: its proposals), drawn by its script. */}
+      <div id="slot-backlog" key={cwd} data-cwd={cwd} data-workspace={workspace.name} style={{ marginTop: 20 }} />
       {v.unestimated.length > 0 && (
         <>
           <div className="sec-h">

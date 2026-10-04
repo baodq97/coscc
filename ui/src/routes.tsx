@@ -14,6 +14,7 @@ import { NewWork } from "./screens/NewWork";
 import { UpNext } from "./screens/UpNext";
 import { Talk } from "./screens/Talk";
 import { Insights } from "./screens/Insights";
+import { Feature } from "./screens/Feature";
 import { Decided } from "./screens/Decided";
 
 export type Screen = {
@@ -81,5 +82,6 @@ export const SCREENS: Screen[] = [
     keys: "G K",
     render: () => <MayDo />,
   },
+  { path: "/feature/:name", title: "Feature", crumbs: (p) => [p.name.charAt(0).toUpperCase() + p.name.slice(1)], render: (p) => <Feature name={p.name} /> },
   { path: "/system", title: "Design system", render: () => <System /> },
 ];

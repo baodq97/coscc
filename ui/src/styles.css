@@ -523,3 +523,13 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
 .days .day { flex: 1; height: 100%; display: flex; align-items: flex-end; }
 .days .day i { display: block; width: 100%; min-height: 1px; background: var(--accent); border-radius: 2px 2px 0 0; opacity: .85; }
 .days .day:hover i { opacity: 1; }
+
+/* The colour names feature scripts draw with (`plugin.KIT_JS`), in the studio's own tokens. */
+:root {
+  --default-font-family: var(--font);
+  --gray-1: var(--panel); --gray-2: var(--bg-sunk); --gray-3: var(--hover); --gray-4: var(--line);
+  --gray-5: var(--line); --gray-6: var(--line-2); --gray-11: var(--text-3); --gray-12: var(--text);
+  --red-3: var(--red-soft); --red-11: var(--red);
+  --amber-3: var(--amber-soft); --amber-11: var(--amber);
+  --grass-3: var(--green-soft); --grass-11: var(--green);
+}
