@@ -525,7 +525,8 @@ _JS = """
   }
   function row(w, unit, d, by) {
     var p = document.createElement("div");
-    p.style.cssText = "display:flex;gap:8px;align-items:baseline;margin:2px 0;overflow-wrap:anywhere";
+    p.style.cssText = "display:flex;flex-wrap:wrap;gap:0 8px;align-items:baseline;margin:2px 0;" +
+      "overflow-wrap:anywhere";
     if (d.withdrawn) p.style.opacity = "0.55";
     var head = document.createElement("strong");
     head.textContent = d.id;
@@ -533,7 +534,8 @@ _JS = """
     who.style.cssText = "color:var(--gray-11);font-size:12px";
     who.textContent = label(d);
     var text = document.createElement("span");
-    text.style.cssText = "flex:1;min-width:0;white-space:pre-wrap";
+    // On a narrow screen the text takes a line of its own rather than a thin column.
+    text.style.cssText = "flex:1 1 14em;min-width:0;white-space:pre-wrap";
     if (d.withdrawn) text.style.textDecoration = "line-through";
     text.textContent = d.text;
     p.appendChild(head);
