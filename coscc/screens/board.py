@@ -557,7 +557,11 @@ def _guide_list(title: str, items, empty: str, testid: str) -> rx.Component:
 
 
 def _guide_panel() -> rx.Component:
-    """What runs, what needs you and what is held back, under the day's cap line, and a sentence with the way to Backlog when no unit is on the shortlist. Off, one sentence and the way to Settings."""
+    """What runs, what needs you and what is held back, under the day's cap line.
+
+    With no unit on the shortlist, a sentence and the way to Backlog. Off, one sentence and the
+    way to Settings.
+    """
     return rx.cond(
         P.autopilot_on,
         rx.vstack(
