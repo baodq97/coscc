@@ -11,13 +11,12 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-import re
 import shutil
 import sqlite3
 import threading
 import time
 from claude_agent_sdk import McpServerConfig, SdkMcpTool, create_sdk_mcp_server, tool
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from coscc import units
 from coscc.agent import policy
 from coscc.bus import Event
@@ -25,9 +24,11 @@ from coscc.data import now
 from coscc.features.codegraph.graph import (
     BridgeError,
     GitError,
+    ago,
     call,
     callers,
     changed_files,
+    failure_sentence,
     find,
     impact,
     impl_map,
@@ -42,7 +43,7 @@ from coscc.service.common import Invalid
 from coscc.units import turnstats
 from coscc.units.autopilot import files_of
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import date
 from fastapi import APIRouter, Request
 from pathlib import Path
 from starlette.routing import BaseRoute
@@ -67,7 +68,6 @@ DB_FILE = Path(".codegraph") / "codegraph.db"
 # call. Chosen, not measured: a sync is seconds, a first build of a large tree minutes.
 WAIT_S = 60.0
 CALL_S = 1800.0
-SHA = re.compile(r"\b[0-9a-f]{40}\b")
 
 
 class Ready(NamedTuple):
@@ -94,15 +94,6 @@ class IndexRow(NamedTuple):
     sha: str
     at: str
     reason: str
-
-
-def _sentence(error: BaseException, *hide: str) -> str:
-    """One line of what went wrong, with no path and no full SHA: it is shown to a person."""
-    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
-    for secret in filter(None, hide):
-        text = text.replace(secret, "the workspace")
-    text = SHA.sub("main", text)[:200].rstrip(" .")
-    return f"The code index could not be brought up to date: {text}."
 
 
 class Indexes:
@@ -264,7 +255,7 @@ class Indexes:
             self._put(key, path, "ready", root=root, sha=sha)
         except Exception as error:
             log.exception("codegraph index of %s failed", key)
-            self._put(key, path, "failed", reason=_sentence(error, root, path))
+            self._put(key, path, "failed", reason=failure_sentence(error, root, path))
 
     def _task(self, key: str, path: str) -> asyncio.Task[None]:
         """The refresh of this workspace, started if none is running: two askers share one."""
@@ -331,6 +322,7 @@ ARMS: tuple[str, ...] = get_args(Arm)
 # characters read per impl step of at least this share against the off arm.
 MIN_UNITS = 5
 READ_DROP = 0.30
+SCORING_DAY = date(2026, 11, 15)  # the owner scores the pilot then; no committed file says it
 
 
 @dataclass(frozen=True)
@@ -439,6 +431,14 @@ def _missed(on: ArmStats, off: ArmStats) -> list[str]:
     return out
 
 
+def units_by_arm(pairs: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
+    """The units of `(unit, arm)` records per arm; one in both says nothing, so is in neither."""
+    seen: dict[str, set[str]] = {}
+    for unit, arm in pairs:
+        seen.setdefault(unit, set()).add(arm)
+    return {a: {u for u, arms in seen.items() if arms == {a}} for a in ARMS}
+
+
 def report(
     rows: list[Row],
     steps: list[Step],
@@ -449,11 +449,8 @@ def report(
     inside = [
         r for r in rows if (since is None or r.at >= since) and (until is None or r.at < until)
     ]
-    # A unit that ran in both arms says nothing about either: its runs leave both.
-    seen: dict[str, set[str]] = {}
-    for r in inside:
-        seen.setdefault(r.unit, set()).add(r.arm)
-    mixed = {u for u, arms in seen.items() if len(arms) > 1}
+    alone = units_by_arm((r.unit, r.arm) for r in inside)
+    mixed = {r.unit for r in inside} - alone["on"] - alone["off"]
     impl = {r.run: r for r in inside if r.stage == "impl"}
 
     kept: dict[str, list[Step]] = {a: [] for a in ARMS}
@@ -507,6 +504,15 @@ def _where(ctx: Ctx, key: str) -> tuple[str, str] | None:
             (key,),
         ).fetchone()
     return (found[0], found[1]) if found and found[0] and found[1] else None
+
+
+def _rows(conn: sqlite3.Connection, key: str) -> list[Row]:
+    found = conn.execute(
+        "SELECT run, workspace, unit, stage, arm, sha, map_chars, wait_ms, error, at "
+        "FROM codegraph_runs WHERE workspace = ?",
+        (key,),
+    ).fetchall()
+    return [Row(*r) for r in found if r[4] in ARMS]
 
 
 def _record(ctx: Ctx, row: Row) -> None:
@@ -670,36 +676,36 @@ def agent(ctx: Ctx) -> Parts:
     )
 
 
-def _ago(at: str) -> str:
-    try:
-        then = datetime.fromisoformat(at)
-    except ValueError:
-        return "a while ago"
-    s = max(0.0, (datetime.now(timezone.utc) - then).total_seconds())
-    if s < 60:
-        return "just now"
-    if s < 3600:
-        return f"{int(s // 60)} min ago"
-    if s < 86400:
-        return f"{int(s // 3600)} h ago"
-    return then.strftime("%b %-d")
-
-
 def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
     """One sentence for the Settings row, and whether `pilot` and `on` may be chosen."""
     idx = _indexes(ctx)
     why = idx.lock()
     if why:
         return why, False
-    if ctx.state(FEATURE, workspace) == "off":
+    state = ctx.state(FEATURE, workspace)
+    if state == "off":
         return "Off in this workspace.", True
-    s = idx.status(ctx.workspace_key(workspace))
-    return {
+    key = ctx.workspace_key(workspace)
+    s = idx.status(key)
+    index = {
         "installing": "Installing the code index engine, about 290 MB, once.",
         "building": "Building the index of main.",
-        "ready": f"Ready: the index of main is from {_ago(s.at)}.",
+        "ready": f"Ready: the index of main is from {ago(s.at)}.",
         "failed": f"Failed: {s.reason}",
-    }.get(s.state, "Waiting: the index of main is built at the next impl or review."), True
+    }.get(s.state)
+    if state != "pilot":
+        return index or "Waiting: the index of main is built at the next impl or review.", True
+    # The split, the units the report counts in each arm so far and the scoring day.
+    # Quick: whether a step's events remain is all `report` needs to count units, so none is read.
+    with ctx.data.connect() as conn:
+        rows, ended = _rows(conn, key), turnstats.impl_ends(conn, key)
+    steps = [Step(run, unit, 0.0, None if gone else 0, None) for run, unit, gone in ended]
+    arms = report(rows, steps, {}, (None, None))["arms"]
+    split = (
+        f"even-numbered units use it, odd ones do not: {arms['on']['units']} on, "
+        f"{arms['off']['units']} off so far, scored {SCORING_DAY:%b %-d}."
+    )
+    return (f"{index.rstrip('.')}; {split}" if index else split[0].upper() + split[1:]), True
 
 
 def on_set(ctx: Ctx, workspace: str, state: State) -> None:
@@ -732,15 +738,7 @@ def _rounds(
 def measured(ctx: Ctx, key: str, window: tuple[str | None, str | None]) -> Report:
     """The report over the run log: blocking, run in a thread."""
     with ctx.data.connect() as conn:
-        rows = [
-            Row(*r)
-            for r in conn.execute(
-                "SELECT run, workspace, unit, stage, arm, sha, map_chars, wait_ms, error, at "
-                "FROM codegraph_runs WHERE workspace = ?",
-                (key,),
-            ).fetchall()
-            if r[4] in ARMS
-        ]
+        rows = _rows(conn, key)
         pairs = turnstats.pairs(conn, key, None, None)
         runs = [str(p["end"].get("run") or "") for p in pairs]
         chars = turnstats.read_chars(conn, runs, FEATURE)
@@ -785,4 +783,5 @@ PLUGIN = Plugin(
     pilot=True,
     status=status,
     on_set=on_set,
+    summary="Indexes the code of main so impl and review find where things are without reading files.",
 )

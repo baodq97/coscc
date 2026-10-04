@@ -221,9 +221,14 @@ class StudioState(
     autopilot_stops: list[AutopilotStop] = []
     autopilot_cap: str = ""
     autopilot_refused: str = ""
-    # The board's `guide` block, copied: what runs, and what needs a person.
+    # The board's `guide` block, copied: what runs, what needs a person (one per `Needs you`
+    # card), what the autopilot holds back on other cards, the workspace's own notes, and
+    # whether the shortlist has no unit.
     guide_running: list[GuideItem] = []
     guide_needs_you: list[GuideItem] = []
+    guide_held: list[GuideItem] = []
+    guide_notes: list[GuideItem] = []
+    guide_shortlist_empty: bool = False
     run_log: str = ""
     # The unit whose step this page is streaming into `run_log`, so another unit's reply
     # is never shown under the one now open.
@@ -456,6 +461,12 @@ class StudioState(
         return place.href(place.Place("settings", ws))
 
     @rx.var
+    def backlog_href(self) -> str:
+        """Where the guide sends a person when no unit is on the shortlist."""
+        ws = next((w.name for w in self.workspaces if w.id == self.cwd), "")
+        return place.href(place.Place("backlog", ws))
+
+    @rx.var
     def open_questions_here(self) -> list[Question]:
         """The open unit's unanswered questions, the counted artifact's first."""
         shown = [q for q in self.current_unit.questions if not q.answered]
@@ -602,6 +613,7 @@ class StudioState(
                 f.locked,
                 schedule_label(f.schedule) if f.schedule is not None else "",
                 [schedule_label(h) for h in f.hours],
+                f.summary,
             )
             for f in plugin.shown(app.API.state.ctx, app.API.state.plugins, self.cwd)
         ]
@@ -675,13 +687,24 @@ class StudioState(
         )
 
     def _show_guide(self, block: dict) -> None:
-        """Copied from the board; every word of `needs_you` is the service's."""
+        """Copied from the board; every word of `needs_you`, `held` and `notes` is the
+        service's."""
         ws = self._name_of(self.cwd)
 
         def link(screen: str, unit: str = "", tab: str = "overview") -> str:
             if screen == "unit" and not unit:
                 return ""
             return place.href(place.Place(screen, ws, unit, tab or "overview"))
+
+        def todo(r: dict) -> GuideItem:
+            return GuideItem(
+                unit=str(r.get("unit") or ""),
+                what=str(r.get("do") or ""),
+                detail=str(r.get("reason") or ""),
+                href=link(
+                    str(r.get("screen") or ""), str(r.get("unit") or ""), str(r.get("tab") or "")
+                ),
+            )
 
         self.guide_running = [
             GuideItem(
@@ -694,17 +717,10 @@ class StudioState(
             )
             for r in block.get("running") or []
         ]
-        self.guide_needs_you = [
-            GuideItem(
-                unit=str(r.get("unit") or ""),
-                what=str(r.get("do") or ""),
-                detail=str(r.get("reason") or ""),
-                href=link(
-                    str(r.get("screen") or ""), str(r.get("unit") or ""), str(r.get("tab") or "")
-                ),
-            )
-            for r in block.get("needs_you") or []
-        ]
+        self.guide_needs_you = [todo(r) for r in block.get("needs_you") or []]
+        self.guide_held = [todo(r) for r in block.get("held") or []]
+        self.guide_notes = [todo(r) for r in block.get("notes") or []]
+        self.guide_shortlist_empty = bool(block.get("shortlist_empty"))
 
     def _show_autopilot(self, data: dict) -> None:
         self.ap_on = bool(data.get("autopilot"))

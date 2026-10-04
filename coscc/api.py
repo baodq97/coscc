@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, FastAPI, Request
@@ -465,10 +466,14 @@ async def release_publish(request: Request) -> Any:
 @router.get("/api/features")
 async def get_features(request: Request) -> Any:
     """Each feature's state in one workspace: `{name: "off" | "pilot" | "on"}`, `off` while its
-    status forbids the others. A workspace the app does not have is a 400."""
+    status forbids the others. With `detail=1` each value is the row Settings shows instead:
+    `{state, pilot, sentence, locked, summary}`. A workspace the app does not have is a 400."""
     service = _service(request)
     cwd = service.ws.check(_cwd(request))
-    return {f.name: f.state for f in plugin.shown(request.app.state.ctx, features.FEATURES, cwd)}
+    rows = plugin.shown(request.app.state.ctx, features.FEATURES, cwd)
+    if request.query_params.get("detail") == "1":
+        return {f.name: {k: v for k, v in asdict(f).items() if k != "name"} for f in rows}
+    return {f.name: f.state for f in rows}
 
 
 @router.post("/api/features")

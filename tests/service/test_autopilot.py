@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.units import autopilot
+from coscc.units import autopilot, guide
 from coscc.config import Config
 from coscc.github import prmachine
 from tests.github import test_prmachine
@@ -2358,6 +2358,104 @@ class Scripted(_Base):
         self.service.autopilot.stop(self.key)
         got = await self.service.autopilot.pr_read(self.key)
         self.assertEqual((got.calls, len(gh.calls)), (0, calls))
+
+
+class TheGuideBlock(_Base):
+    """`guide_block` over the units of one board read, with the autopilot on and no pass run."""
+
+    VALUES = {
+        "autopilot": True,
+        "autopilot_may_ship": False,
+        "max_parallel": 1,
+        "daily_cap_usd": 1.0,
+    }
+
+    def card(self, name: str, state: str, **kw) -> dict:
+        return {"name": name, "state": {"state": state}, **kw}
+
+    def block(self, units: list[dict] | None = None) -> dict:
+        with mock.patch("coscc.service.autopilot.autopilot_values", return_value=self.VALUES):
+            return self.service.autopilot.guide_block(self.key, units or [])
+
+    def stops(self, *rows: tuple[str, str]) -> None:
+        self.service.autopilot.stops[self.key] = {
+            unit: {"unit": unit, "kind": kind, "reason": f"why {kind}"} for unit, kind in rows
+        }
+
+    def test_off_it_is_only_that(self):
+        units = [self.card("0001_a", "needs-you")]
+        self.assertEqual(self.service.autopilot.guide_block(self.key, units), {"on": False})
+
+    def test_needs_you_counts_the_cards_with_that_state_off_the_shortlist_too(self):
+        # 0132 had a `Needs you` card, was not on the shortlist, and had no stop.
+        self.listed("0001_a")
+        self.stops(("0001_a", "a"))
+        units = [
+            self.card("0001_a", "needs-you", open=1),
+            self.card("0132_z", "needs-you", attention_reason="Changes requested"),
+            self.card("0002_b", "ready"),
+        ]
+        got = self.block(units)["needs_you"]
+        self.assertEqual(len(got), 2)
+        self.assertEqual([r["unit"] for r in got], ["0001_a", "0132_z"])
+        by = {r["unit"]: r for r in got}
+        self.assertEqual((by["0001_a"]["kind"], by["0001_a"]["tab"]), ("a", "questions"))
+        self.assertEqual(
+            (by["0132_z"]["kind"], by["0132_z"]["reason"]), ("needs-you", "Changes requested")
+        )
+
+    def test_a_stop_on_a_card_that_says_something_else_is_held_back(self):
+        self.stops(("0002_b", "e"), ("0003_c", "f"), ("", "cap"), ("", "shortlist"))
+        got = self.block([self.card("0002_b", "error"), self.card("0003_c", "ready")])
+        self.assertEqual(got["needs_you"], [])
+        self.assertEqual(
+            [(r["unit"], r["kind"]) for r in got["held"]], [("0002_b", "e"), ("0003_c", "f")]
+        )
+        self.assertEqual(got["held"][0]["do"], guide.TODO["e"][0])
+        self.assertEqual(got["held"][0]["reason"], "why e")
+
+    def test_the_workspace_stop_is_a_note_and_the_shortlist_one_is_not(self):
+        # The workspace has one stop at a time, under the key `""`.
+        self.stops(("", "cap"), ("0002_b", "e"))
+        got = self.block([self.card("0002_b", "error")])
+        self.assertEqual([r["kind"] for r in got["notes"]], ["cap"])
+        self.assertEqual([r["unit"] for r in got["held"]], ["0002_b"])
+        self.stops(("", "shortlist"))
+        self.assertEqual(self.block()["notes"], [])
+
+    def test_shortlist_empty_before_any_is_saved_and_after_an_empty_one(self):
+        self.assertTrue(self.block()["shortlist_empty"])
+        self.listed()
+        self.assertTrue(self.block()["shortlist_empty"])
+        self.listed("0001_a")
+        self.assertFalse(self.block()["shortlist_empty"])
+        self.listed()
+        self.assertTrue(self.block()["shortlist_empty"])
+
+    def test_shortlist_empty_is_read_on_each_call_with_no_pass_and_no_stop(self):
+        self.assertEqual(self.service.autopilot.stops.get(self.key), None)
+        self.assertTrue(self.block()["shortlist_empty"])
+        self.listed("0001_a")
+        self.assertFalse(self.block()["shortlist_empty"])
+
+    def test_another_workspace_shortlist_is_not_this_one(self):
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {"kind": "shortlist", "workspace": "/elsewhere", "unit": "", "units": ["0001_a"]}
+        )
+        self.assertTrue(self.block()["shortlist_empty"])
+
+    async def test_the_board_read_carries_it(self):
+        self.listed("0001_a")
+        units = [self.card("0001_a", "needs-you")]
+        data = {"units": units}
+        with mock.patch("coscc.service.autopilot.autopilot_values", return_value=self.VALUES):
+            self.service.autopilot.show(self.key, data)
+        self.assertEqual(
+            (len(data["guide"]["needs_you"]), data["guide"]["shortlist_empty"]), (1, False)
+        )
+        self.assertEqual(
+            set(data["guide"]), {"on", "running", "needs_you", "held", "notes", "shortlist_empty"}
+        )
 
 
 class ResumedAtStartUp(unittest.TestCase):

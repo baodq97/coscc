@@ -6,6 +6,7 @@ import reflex as rx
 
 from coscc.screens import studio as s
 from coscc.state import Card, GuideItem
+from coscc.units import autopilot
 from coscc.screens.common import P, _MONO, _RUNIC, _details
 from coscc.screens.overview import _empty_board
 
@@ -556,7 +557,11 @@ def _guide_list(title: str, items, empty: str, testid: str) -> rx.Component:
 
 
 def _guide_panel() -> rx.Component:
-    """What runs and what needs you, under the day's cap line. Off, one sentence and the way to Settings."""
+    """What runs, what needs you and what is held back, under the day's cap line.
+
+    With no unit on the shortlist, a sentence and the way to Backlog. Off, one sentence and the
+    way to Settings.
+    """
     return rx.cond(
         P.autopilot_on,
         rx.vstack(
@@ -570,6 +575,19 @@ def _guide_panel() -> rx.Component:
                 wrap="wrap",
             ),
             rx.cond(P.autopilot_refused != "", s.text(P.autopilot_refused, size="1")),
+            # Outside the closed part: it is read without opening anything.
+            rx.cond(
+                P.guide_shortlist_empty,
+                rx.flex(
+                    s.text(autopilot.NO_SHORTLIST, size="1"),
+                    rx.link("Backlog", href=P.backlog_href, size="1"),
+                    gap="8px",
+                    align="center",
+                    wrap="wrap",
+                    width="100%",
+                    data_testid="guide-no-shortlist",
+                ),
+            ),
             # The lists sit in a closed part so the panel does not push the lanes down.
             rx.el.details(
                 rx.el.summary(
@@ -577,7 +595,12 @@ def _guide_panel() -> rx.Component:
                         P.guide_running.length().to_string()
                         + " running · "
                         + P.guide_needs_you.length().to_string()
-                        + rx.cond(P.guide_needs_you.length() == 1, " needs you", " need you"),
+                        + rx.cond(P.guide_needs_you.length() == 1, " needs you", " need you")
+                        + rx.cond(
+                            P.guide_held.length() > 0,
+                            " · " + P.guide_held.length().to_string() + " held back",
+                            "",
+                        ),
                         size="1",
                         as_="span",
                     ),
@@ -587,6 +610,15 @@ def _guide_panel() -> rx.Component:
                     _guide_list("RUNNING", P.guide_running, "Nothing is running.", "guide-running"),
                     _guide_list(
                         "NEEDS YOU", P.guide_needs_you, "Nothing waits for you.", "guide-needs-you"
+                    ),
+                    # Only when the autopilot holds something back, or the workspace has a stop.
+                    rx.cond(
+                        P.guide_held.length() > 0,
+                        _guide_list("HELD BACK", P.guide_held, "", "guide-held"),
+                    ),
+                    rx.cond(
+                        P.guide_notes.length() > 0,
+                        _guide_list("NOTES", P.guide_notes, "", "guide-notes"),
                     ),
                     columns=rx.breakpoints(initial="1", md="2"),
                     gap="16px",

@@ -273,11 +273,18 @@ def check_shortlist(
     if len(set(names)) != len(names):
         return "a unit appears twice"
     waiting = set(backlog)
+    unestimated = []
     for n in names:
         if n not in waiting:
             return f"{n} is not in the backlog"
         if n not in estimates:
-            return f"{n} has no estimate in effect"
+            unestimated.append(n)
+    if unestimated:
+        # Every unit at once, and the two ways on: the person fixes them in one pass.
+        return (
+            f"{', '.join(unestimated)} {'has' if len(unestimated) == 1 else 'have'} no estimate yet: "
+            "give each one with Edit on its row, or use Propose estimates."
+        )
     return ""
 
 

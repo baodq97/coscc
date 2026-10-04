@@ -53,6 +53,9 @@ runs on `0004_finished` (`seed_runs`), so every anomaly `/cost` knows has a row,
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
 visible text as `<address slug>-<W>x<H>.txt`.
 
+`codegraph` is at `pilot` in `proj` (`seed_pilot`), so `/settings` shows its pilot sentence;
+only with `npm` on `PATH`, else the feature is locked and the row shows `off`.
+
 `proj` holds a `pyproject.toml` at `0.1.0` tagged
 `v0.1.0`, then a `feat` and a `build(deps)` commit of no unit (`seed_release`), so `/board`
 shows its *Release* panel ready with `0.2.0` proposed.
@@ -470,10 +473,12 @@ def seed_transitions(work: Path, data_dir: Path, proj: Path) -> None:
 
 def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     """A run whose cost is unknown on two units and one whose
-    cost is known, written where the app reads its run log, under the key it reads by."""
+    cost is known, written where the app reads its run log, under the key it reads by; and
+    `codegraph` at `pilot` (`seed_pilot`)."""
     from coscc.data import Data
     from coscc.runlog.journal import Journal
 
+    seed_pilot(data_dir, proj)
     journal, key = Journal(work, Data(data_dir)), str(proj.resolve())
     journal.started(key, "0002_open-question", "spec", "manual")
     journal.finished(key, "0002_open-question", "spec", "done", turns=4, cost_usd=0.52)
@@ -604,6 +609,16 @@ def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
     tables.claim(key, 3, "accepted")
     tables.set_unit(key, 3, "0006_frontend-calls-api")
     tables.claim(key, 4, "dismissed", "Already answered by the questions on each unit.")
+
+
+def seed_pilot(data_dir: Path, proj: Path) -> None:
+    """`codegraph` at `pilot` for `proj`, the pref written straight: `POST /api/features` would
+    install its engine (about 290 MB, over the network). The row shows `pilot` only when `npm`
+    is on `PATH`; without it the feature is locked and the row shows `off`."""
+    from coscc.data import Data
+    from coscc.plugin import STATE_PREF
+
+    Data(data_dir).set_pref(STATE_PREF, {"codegraph": {str(proj.resolve()): "pilot"}})
 
 
 def make_autopilot_fixture(api: httpx.Client, work: Path, data_dir: Path, proj: Path) -> None:

@@ -795,4 +795,5 @@ PLUGIN = Plugin(
     status=status,
     on_set=on_set,
     schedule=Schedule(HOURS, DEFAULT_HOURS, tick),
+    summary="Reads the run log on a schedule and proposes units for what keeps needing a person.",
 )

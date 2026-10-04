@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import TypedDict
 
@@ -236,6 +237,34 @@ process.stdout.write(JSON.stringify(reply) + "\n", () => process.exit(code));
 
 class BridgeError(RuntimeError):
     """The bridge did not give a result: it timed out, died, or said why it could not."""
+
+
+SHA = re.compile(r"\b[0-9a-f]{40}\b")
+
+
+def failure_sentence(error: BaseException, *hide: str) -> str:
+    """One line of what went wrong, with no path and no full SHA: it is shown to a person."""
+    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+    for secret in filter(None, hide):
+        text = text.replace(secret, "the workspace")
+    text = SHA.sub("main", text)[:200].rstrip(" .")
+    return f"The code index could not be brought up to date: {text}."
+
+
+def ago(at: str) -> str:
+    """How long since `at`, an ISO time, for a person."""
+    try:
+        then = datetime.fromisoformat(at)
+    except ValueError:
+        return "a while ago"
+    s = max(0.0, (datetime.now(timezone.utc) - then).total_seconds())
+    if s < 60:
+        return "just now"
+    if s < 3600:
+        return f"{int(s // 60)} min ago"
+    if s < 86400:
+        return f"{int(s // 3600)} h ago"
+    return then.strftime("%b %-d")
 
 
 def binary_path(home: Path) -> Path:

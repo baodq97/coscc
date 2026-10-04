@@ -266,6 +266,18 @@ def read_chars(
     return out
 
 
+def impl_ends(conn: sqlite3.Connection, workspace: str) -> list[tuple[str, str, bool]]:
+    """`(run, unit, purged)` of every step `pairs` gives with no window, from one query and no
+    event read: whether `read_chars` has the run is `not purged`. An empty `run` is not in it."""
+    rows = conn.execute(
+        "SELECT json_extract(r.record, '$.run'), r.unit, s.purged_at FROM runs r "
+        "LEFT JOIN step_runs s ON s.run = json_extract(r.record, '$.run') "
+        "WHERE r.workspace = ? AND r.kind = 'end' AND r.stage = 'impl' ORDER BY r.id",
+        (workspace,),
+    ).fetchall()
+    return [(str(run), unit, bool(purged)) for run, unit, purged in rows if run]
+
+
 def changes_requested(text: str) -> int:
     """The rounds of a `review.md` whose first `Verdict:` is `changes-requested`."""
     parts = _ROUND.split(text)[1:]

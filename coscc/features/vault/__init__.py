@@ -606,4 +606,5 @@ PLUGIN = Plugin(
     tables=vault.TABLES,
     agent=agent,
     page=Page("Vault", "key-round", "/vault"),
+    summary="Keeps secrets an agent can use in a command but never read.",
 )

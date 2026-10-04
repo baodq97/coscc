@@ -250,6 +250,8 @@ class Plugin:
     # work and returns.
     on_set: Callable[[Ctx, str, State], None] | None = None
     schedule: Schedule | None = None
+    # One fixed sentence, 100 characters at most: what the feature does, shown under its name.
+    summary: str = ""
 
 
 @dataclass(frozen=True)
@@ -265,6 +267,7 @@ class Shown:
     # The hours of its schedule here and the choices, both empty for a feature with none.
     schedule: int | None = None
     hours: tuple[int, ...] = ()
+    summary: str = ""
 
 
 async def body(request: Request) -> dict[str, Any]:
@@ -531,7 +534,16 @@ def shown(ctx: Ctx, features: Sequence[Plugin], cwd: str) -> list[Shown]:
         hours = f.schedule.hours if f.schedule else ()
         schedule = ctx.schedule(f.name, cwd) if f.schedule else None
         out.append(
-            Shown(f.name, state if may else "off", f.pilot, sentence, not may, schedule, hours)
+            Shown(
+                f.name,
+                state if may else "off",
+                f.pilot,
+                sentence,
+                not may,
+                schedule,
+                hours,
+                f.summary,
+            )
         )
     return out
 

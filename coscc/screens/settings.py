@@ -17,11 +17,13 @@ from coscc.screens.board import _update_panel
 # --- settings ----------------------------------------------------------------
 
 
-def _settings_row(label, description, control: rx.Component) -> rx.Component:
+def _settings_row(label, description, control: rx.Component, then=None) -> rx.Component:
+    """`then`, when given, is one more line under `description`."""
+    lines = [s.text(d, size="1", max_width="440px") for d in (description, then) if d is not None]
     return rx.flex(
         rx.vstack(
             rx.text(label, size="2", weight="medium"),
-            s.text(description, size="1", max_width="440px"),
+            *lines,
             spacing="1",
             min_width="0",
         ),
@@ -415,8 +417,8 @@ def _release_panel() -> rx.Component:
 
 def _feature_choice(f) -> rx.Component:
     """`off` / `on`, with `pilot` between them for a feature that has one; only `off` while
-    locked, the row's sentence saying why."""
-    pilot = rx.segmented_control.item("Pilot: half the units", value="pilot", disabled=f.locked)
+    locked, the row's sentence saying why. One width for every row, its items splitting it evenly."""
+    pilot = rx.segmented_control.item("Pilot", value="pilot", disabled=f.locked)
     return rx.segmented_control.root(
         rx.segmented_control.item("Off", value="off"),
         rx.cond(f.pilot, pilot, rx.fragment()),
@@ -424,6 +426,8 @@ def _feature_choice(f) -> rx.Component:
         value=f.state,
         on_change=lambda state: P.set_feature(f.name, state),
         size="1",
+        width="240px",
+        flex_shrink="0",
         aria_label="Feature " + f.name,
     )
 
@@ -448,7 +452,7 @@ def _features_panel() -> rx.Component:
             P.features,
             lambda f: _settings_row(
                 f.name,
-                f.sentence,
+                f.summary,
                 rx.hstack(
                     rx.cond(f.schedules.length() > 0, _feature_schedule(f), rx.fragment()),
                     _feature_choice(f),
@@ -456,6 +460,7 @@ def _features_panel() -> rx.Component:
                     align="center",
                     flex_wrap="wrap",
                 ),
+                f.sentence,
             ),
         ),
         rx.cond(P.features.length() == 0, s.text("No feature is installed.", size="1")),

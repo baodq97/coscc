@@ -372,7 +372,15 @@ class Card:
 
 # A card's place among its lane's and the List's: what waits on a person first, what has not
 # begun last before the folded groups.
-PLACE = {"needs-you": 0, "error": 1, "running": 2, "awaiting": 3, "paused": 4, "ready": 5}
+PLACE = {
+    "needs-you": 0,
+    "error": 1,
+    "running": 2,
+    "starting": 2,
+    "awaiting": 3,
+    "paused": 4,
+    "ready": 5,
+}
 
 
 def board_place(state: str, begun: bool) -> int:
@@ -1155,6 +1163,8 @@ class FeatureRow:
     # feature with no schedule.
     schedule: str = ""
     schedules: list[str] = dataclasses.field(default_factory=list)
+    # What the feature does, one fixed sentence.
+    summary: str = ""
 
 
 def schedule_label(hours: int) -> str:

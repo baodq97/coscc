@@ -6,6 +6,7 @@ import unittest
 from datetime import date
 
 from coscc.service.common import (
+    COLLAPSED_STATES,
     OUTCOME_LABEL,
     STATE_COLOR,
     STATE_LABEL,
@@ -124,12 +125,49 @@ class TheStateOfAUnit(unittest.TestCase):
             got = unit_state(unit, None, None)
             self.assertEqual(got["state"], want, want)
             self.assertEqual((got["label"], got["color"]), (STATE_LABEL[want], STATE_COLOR[want]))
-        running = shown_state(unit_state(self._unit(), None, None), [{"stage": "plan"}])
+        ready = unit_state(self._unit(), None, None)
+        running = shown_state(ready, [{"stage": "plan", "state": "running"}])
         self.assertEqual((running["state"], running["label"]), ("running", "Running"))
+        starting = shown_state(ready, [{"stage": "plan", "state": "preparing"}])
+        self.assertEqual((starting["state"], starting["label"]), ("starting", "Starting"))
         self.assertEqual(sorted(STATE_LABEL), sorted(STATE_COLOR))
         self.assertEqual(
             len(set(STATE_COLOR.values())), len(STATE_COLOR), "no two states share a colour"
         )
+
+    def test_a_card_says_running_only_for_a_running_or_ending_attempt(self):
+        ready = unit_state(self._unit(), None, None)
+
+        def shown(*states: str) -> str:
+            return shown_state(ready, [{"stage": "plan", "state": s} for s in states])["state"]
+
+        self.assertEqual(shown("queued"), "starting")
+        self.assertEqual(shown("preparing"), "starting")
+        self.assertEqual(shown("queued", "preparing"), "starting")
+        for state in ("running", "ending"):
+            self.assertEqual(shown(state), "running", state)
+            self.assertEqual(shown("preparing", state), "running", state)
+        self.assertEqual(shown_state(ready, [])["state"], "ready")
+        self.assertEqual(shown_state(ready, None)["state"], "ready")
+
+    def test_starting_never_covers_a_collapsed_state(self):
+        rows = [{"stage": "plan", "state": "preparing"}]
+        for hold, why in (
+            ({"state": "paused"}, "paused"),
+            ({"state": "dropped"}, "dropped"),
+            (None, "finished"),
+        ):
+            decided = unit_state(self._unit(why=why, hold=hold), None, None)
+            self.assertIn(decided["state"], COLLAPSED_STATES)
+            self.assertEqual(shown_state(decided, rows), decided)
+
+    def test_starting_is_laid_over_and_has_a_colour_of_its_own(self):
+        self.assertEqual(STATE_LABEL["starting"], "Starting")
+        others = [c for state, c in STATE_COLOR.items() if state != "starting"]
+        self.assertNotIn(STATE_COLOR["starting"], others)
+        # `unit_state` never decides it, whatever the unit.
+        for kw in ({}, {"open": 1}, {"problems": ["x"]}, {"why": "finished"}):
+            self.assertNotIn(self._is(self._unit(**kw)), ("starting", "running"))
 
     def test_no_state_reads_as_approval(self):
         for label in STATE_LABEL.values():
@@ -154,10 +192,14 @@ class TheStateOfAUnit(unittest.TestCase):
         self.assertEqual(self._is(self._unit(why="rejected", hold={"state": "paused"})), "dropped")
         # 3/4: a paused unit with a session listed is still paused.
         paused = unit_state(self._unit(why="paused", hold={"state": "paused"}), None, None)
-        self.assertEqual(shown_state(paused, [{"stage": "plan"}])["state"], "paused")
+        self.assertEqual(
+            shown_state(paused, [{"stage": "plan", "state": "running"}])["state"], "paused"
+        )
         # 4/5: a running unit with an open question is running.
         asking = unit_state(self._unit(open=1), None, None)
-        self.assertEqual(shown_state(asking, [{"stage": "plan"}])["state"], "running")
+        self.assertEqual(
+            shown_state(asking, [{"stage": "plan", "state": "running"}])["state"], "running"
+        )
         self.assertEqual(shown_state(asking, [])["state"], "needs-you")
         # 5/6: an open question beats an error.
         self.assertEqual(self._is(self._unit(open=1, problems=["x"])), "needs-you")
