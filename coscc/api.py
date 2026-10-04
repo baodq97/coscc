@@ -143,7 +143,12 @@ class Decided(TypedDict):
 
 # A comment line this often keeps a quiet stream open through proxies and tells the page it is
 # still connected. Chosen, not measured.
-STREAM_PING_SECONDS = 20.0
+STREAM_PING_SECONDS = 10.0
+# How long one stream lasts before it ends and the page connects again. Bounded because the
+# server, stopping for an update, waits for every open response to end: an endless stream held
+# an Apply for 7 minutes (10-04). It also bounds a session signed out while connected. Chosen,
+# as the websocket's recheck (`auth.WS_RECHECK`).
+STREAM_LIFETIME_SECONDS = 30.0
 
 
 async def _refused(_: Request, e: Exception) -> JSONResponse:
@@ -170,7 +175,9 @@ async def health() -> dict[str, bool]:
 @router.get("/api/stream")
 async def stream(request: Request) -> StreamingResponse:
     """Every bus event as server-sent events, `{subject, workspace, unit}`, `workspace` being
-    the resolved path. It only says that something changed: the page reads what it shows again."""
+    the resolved path. It only says that something changed: the page reads what it shows again.
+    It ends after `STREAM_LIFETIME_SECONDS` with an `end` event, and the page connects again at
+    once; an event in that second is missed, and the page's slow refresh covers it."""
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[Event] = asyncio.Queue()
 
@@ -180,16 +187,18 @@ async def stream(request: Request) -> StreamingResponse:
     stop = _service(request).bus.watch(heard)
 
     async def events() -> AsyncIterator[str]:
+        ends = loop.time() + STREAM_LIFETIME_SECONDS
         try:
-            yield ": open\n\n"
-            while True:
+            yield "retry: 1000\n: open\n\n"
+            while (left := ends - loop.time()) > 0:
                 try:
-                    e = await asyncio.wait_for(queue.get(), STREAM_PING_SECONDS)
+                    e = await asyncio.wait_for(queue.get(), min(STREAM_PING_SECONDS, left))
                 except TimeoutError:
                     yield ": ping\n\n"
                     continue
                 data = {"subject": e.name, "workspace": e.workspace, "unit": e.unit}
                 yield f"data: {json.dumps(data)}\n\n"
+            yield "event: end\ndata: {}\n\n"
         finally:
             stop()
 
