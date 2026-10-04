@@ -15,7 +15,7 @@ import tempfile
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from coscc import units
 from coscc.agent.policy import COMMAND_NAME, GRANTS_PREF, lists_of
@@ -69,6 +69,21 @@ def live_units(workspaces: Iterable[str], data_dir: str | None) -> dict[str, set
     return live
 
 
+class WorkspaceRow(TypedDict):
+    name: str
+    path: str
+    label: str
+    source: Literal["env", "store"]
+    missing: bool
+
+
+class WorkspaceList(TypedDict):
+    working_dir: str | None
+    count: int
+    workspaces: list[WorkspaceRow]
+    paths: list[str]
+
+
 class Workspaces:
     def __init__(self, config: Config, sessions: Sessions) -> None:
         self.config = config
@@ -81,12 +96,12 @@ class Workspaces:
 
     # -- the list -------------------------------------------------------------
 
-    def all(self) -> dict[str, Any]:
+    def all(self) -> WorkspaceList:
         """Both sources, with the count the app could not answer before the store existed.
 
         `source` is carried per entry: an env workspace cannot be renamed or removed from here.
         """
-        rows: list[dict[str, Any]] = []
+        rows: list[WorkspaceRow] = []
         for path in self.config.workspaces:
             rows.append(
                 {

@@ -3,14 +3,15 @@
 import { useEffect, useState } from "react";
 import { api, useResource } from "./api";
 import { useChanges } from "./stream";
-import type { Board, Unit, Workspace } from "./model";
+import type { Cards } from "../api.gen";
+import type { Unit, Workspace } from "./model";
 
-export type WorkspaceBoard = { workspace: Workspace; board?: Board; error?: Error };
+export type WorkspaceBoard = { workspace: Workspace; board?: Cards; error?: Error };
 
 // The stream carries what the app does; a pull request merged or CI finished on GitHub reaches
 // the board only through a slow refresh.
 export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading: boolean } {
-  const ws = useResource<{ workspaces: Workspace[] }>("/api/workspaces");
+  const ws = useResource("/api/workspaces");
   const [boards, setBoards] = useState<WorkspaceBoard[]>([]);
   const [tick, setTick] = useState(0);
   const list = ws.data?.workspaces.filter((w) => !w.missing) ?? [];
@@ -22,7 +23,7 @@ export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading:
     Promise.all(
       list.map((w) =>
         api
-          .get<Board>("/api/board", { cwd: w.path })
+          .get("/api/units", { cwd: w.path })
           .then((board): WorkspaceBoard => ({ workspace: w, board }))
           .catch((error: Error): WorkspaceBoard => ({ workspace: w, error })),
       ),

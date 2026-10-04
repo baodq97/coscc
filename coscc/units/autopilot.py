@@ -158,7 +158,7 @@ def _listed(questions: Iterable[dict[str, Any]]) -> str:
     return ", ".join(f"{q.get('artifact')} question {q.get('n')}" for q in questions)
 
 
-def skips_exhausted(nxt: dict[str, Any], last: dict[str, Any] | None, recorded: bool) -> bool:
+def skips_exhausted(nxt: Mapping[str, Any], last: dict[str, Any] | None, recorded: bool) -> bool:
     """A `ship` that ran out of turns is no stop when `next` names a `ship` that only records
     the merge, unless the step that ran out was itself one (`recorded`)."""
     last = last or {}
@@ -174,7 +174,7 @@ def skips_exhausted(nxt: dict[str, Any], last: dict[str, Any] | None, recorded: 
 
 def stop_for(
     unit_row: dict[str, Any],
-    nxt: dict[str, Any],
+    nxt: Mapping[str, Any],
     last: dict[str, Any] | None,
     may_ship: bool,
     exhausted: int = 0,
@@ -320,7 +320,7 @@ def after_own_integration(
     integration: dict[str, Any] | None,
     last_integration: dict[str, Any] | None,
     after: list[dict[str, Any]] | None,
-    nxt: dict[str, Any],
+    nxt: Mapping[str, Any],
     exhausted: int = 0,
 ) -> tuple[str, dict[str, str] | None] | None:
     """What follows CI red on the autopilot's own pushed integration.
@@ -565,7 +565,7 @@ def pick(
 
 
 def reason_for(
-    nxt: dict[str, Any],
+    nxt: Mapping[str, Any],
     stage: str,
     stop: dict[str, str] | None,
 ) -> tuple[str, str] | None:

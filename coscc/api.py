@@ -41,6 +41,10 @@ from coscc.service.common import NotUpdatable, Updating
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 from coscc.bus import Event
+from coscc.service.agents import AgentPage
+from coscc.service.board import Cards, cards
+from coscc.service.steps import NextStep
+from coscc.service.workspaces import WorkspaceList
 
 log = logging.getLogger(__name__)
 
@@ -104,7 +108,7 @@ async def stream(request: Request) -> StreamingResponse:
 
 
 @router.get("/api/workspaces")
-async def get_workspaces(request: Request) -> Any:
+async def get_workspaces(request: Request) -> WorkspaceList:
     return _service(request).ws.all()
 
 
@@ -128,7 +132,7 @@ async def pull_workspace(name: str, request: Request) -> Any:
 
 
 @router.get("/api/agents")
-async def get_agents(request: Request) -> Any:
+async def get_agents(request: Request) -> AgentPage:
     """The eight agents: who each is, what it runs on and may do, how its runs went, its chip;
     then `estimate` and `chat`, and what was wrong."""
     return _service(request).agents.agent_page()
@@ -371,6 +375,13 @@ async def get_board(request: Request) -> Any:
     return await _service(request).board(_cwd(request), "new" if fresh else "held")
 
 
+@router.get("/api/units")
+async def get_units(request: Request) -> Cards:
+    """Every unit of one workspace as a list shows it, read as `/api/board` reads it but a few
+    kilobytes instead of megabytes; what is running and the autopilot beside it."""
+    return cards(await _service(request).board(_cwd(request), "held"))
+
+
 @router.get("/api/board/running")
 async def get_board_running(request: Request) -> Any:
     """What has an agent working in one workspace now, and what ended unseen.
@@ -381,7 +392,7 @@ async def get_board_running(request: Request) -> Any:
 
 
 @router.get("/api/units/next")
-async def get_next(request: Request) -> Any:
+async def get_next(request: Request) -> NextStep:
     """The one stage the run button may offer for a unit, as `coscc.loop next` answered it:
     `{stage, action, blocked}`. Asks `gh`, so it can wait up to 60s. It starts nothing;
     `/api/board/run` still asks the gate."""
@@ -629,3 +640,65 @@ def build(config: Config | None = None) -> FastAPI:
     # (`coscc/studio.py`) until it replaces that page.
 
     return api
+
+
+def _ts(schema: dict[str, Any]) -> str:
+    """One OpenAPI schema as a TypeScript type."""
+    if "$ref" in schema:
+        return schema["$ref"].rsplit("/", 1)[1]
+    if "anyOf" in schema:
+        return " | ".join(_ts(s) for s in schema["anyOf"])
+    if "enum" in schema:
+        return " | ".join(json.dumps(v) for v in schema["enum"])
+    if "const" in schema:
+        return json.dumps(schema["const"])
+    kind = schema.get("type")
+    if kind == "array":
+        item = _ts(schema.get("items") or {})
+        return f"({item})[]" if "|" in item else f"{item}[]"
+    if kind == "object":
+        if "properties" not in schema:
+            extra = schema.get("additionalProperties")
+            return f"Record<string, {_ts(extra) if isinstance(extra, dict) else 'unknown'}>"
+        need = set(schema.get("required") or ())
+        fields = (
+            f"  {json.dumps(k)}{'' if k in need else '?'}: {_ts(v)};"
+            for k, v in schema["properties"].items()
+        )
+        return "{\n" + "\n".join(fields) + "\n}"
+    return {
+        "string": "string",
+        "integer": "number",
+        "number": "number",
+        "boolean": "boolean",
+        "null": "null",
+    }.get(str(kind), "unknown")
+
+
+def typescript() -> str:
+    """The routes' shapes as TypeScript, which `ui/src/api.gen.ts` holds: each schema a type,
+    and `Get` the answer of each `GET` route that names one. `tests/test_api_types.py` fails
+    when the file is stale; `uv run python -m coscc.api > ui/src/api.gen.ts` writes it."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as data:
+        schema = build(Config(workspaces=(), data_dir=data)).openapi()
+    out = [
+        "// Made by `uv run python -m coscc.api > ui/src/api.gen.ts` from the app's routes. Do not edit.",
+        "",
+    ]
+    for name, s in sorted(schema.get("components", {}).get("schemas", {}).items()):
+        if name not in ("HTTPValidationError", "ValidationError"):
+            out += [f"export type {name} = {_ts(s)};", ""]
+    gets = []
+    for path, ops in sorted(schema["paths"].items()):
+        ok = ops.get("get", {}).get("responses", {}).get("200", {})
+        answer = ok.get("content", {}).get("application/json", {}).get("schema", {})
+        if "$ref" in answer:
+            gets.append(f"  {json.dumps(path)}: {_ts(answer)};")
+    out += ["export type Get = {", *gets, "};", ""]
+    return "\n".join(out)
+
+
+if __name__ == "__main__":
+    print(typescript(), end="")

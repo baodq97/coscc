@@ -548,3 +548,47 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
             "release",
         ):
             self.assertIn(f"{part} ", line)
+
+
+class AListShowsACardOfEachUnit(unittest.TestCase):
+    def test_a_card_keeps_what_a_list_shows_and_drops_the_rest(self):
+        from coscc.service.board import cards
+
+        unit = {
+            "name": "0001_x",
+            "number": 1,
+            "slug": "x",
+            "type": "fix",
+            "phase": "started",
+            "next_stage": "impl",
+            "why": "",
+            "open": 2,
+            "state": {"state": "needs-you", "label": "Needs you", "color": "amber", "ci": None},
+            "hold": {"state": "paused", "by": "owner", "date": "2026-10-04", "reason": "wait"},
+            "pr": {"number": 7, "url": "https://example.test/7"},
+            "cost": {"cost_usd": 1.5, "turns": 9},
+            "backlog": {"rank": 3, "effort": "M"},
+            "stages": [{"name": "intent"}] * 8,
+        }
+        got = cards(
+            {
+                "workspace": "/w/a",
+                "read_at": "now",
+                "units": [unit],
+                "autopilot": None,
+                "guide": {
+                    "running": [
+                        {"unit": "0001_x", "stage": "impl", "agent": "Uruz", "started": "t"}
+                    ]
+                },
+            }
+        )
+        (card,) = got["units"]
+        self.assertEqual(
+            card["hold"], {"state": "paused", "by": "owner", "date": "2026-10-04", "reason": "wait"}
+        )
+        self.assertEqual(card["pr"], {"number": 7, "url": "https://example.test/7"})
+        self.assertEqual((card["cost_usd"], card["rank"], card["effort"]), (1.5, 3, "M"))
+        self.assertNotIn("stages", card)
+        self.assertIsNone(got["autopilot"])
+        self.assertEqual(got["running"][0]["agent"], "Uruz")
