@@ -17,7 +17,7 @@ import asyncio
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, TypedDict, get_args
+from typing import Any, Literal, TypedDict, cast, get_args
 
 from fastapi import APIRouter, Request
 from starlette.routing import BaseRoute
@@ -228,36 +228,15 @@ def _second_before(after: str) -> str:
 
 
 def _proposal(row: Any) -> Proposal:
-    return {
-        "id": row["id"],
-        "run": row["run"],
-        "type": row["type"],
-        "slug": row["slug"],
-        "title": row["title"],
-        "problem": row["problem"],
-        "sources": json.loads(row["sources"]),
-        "state": row["state"],
-        "unit": row["unit"],
-        "by": row["by"],
-        "at": row["at"],
-        "decided": row["decided"],
-        "reason": row["reason"],
-    }
+    got = {k: row[k] for k in Proposal.__annotations__}
+    return cast(Proposal, {**got, "sources": json.loads(row["sources"])})
 
 
 def _run(row: Any) -> Run:
-    return {
-        "id": row["id"],
-        "at": row["at"],
-        "by": row["by"],
-        "outcome": row["outcome"],
-        "cost_usd": row["cost_usd"],
-        "taken": row["taken"],
-        "cut": row["cut"],
-        "rejected": json.loads(row["rejected"]),
-        "stopped": bool(row["stopped"]),
-        "detail": row["detail"],
-    }
+    got = {k: row[k] for k in Run.__annotations__}
+    return cast(
+        Run, {**got, "rejected": json.loads(row["rejected"]), "stopped": bool(row["stopped"])}
+    )
 
 
 class Tables:
