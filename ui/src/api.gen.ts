@@ -336,6 +336,7 @@ export type Run = {
 };
 
 export type RunView = {
+  "workspace": string;
   "unit": string;
   "outcome": string;
   "at": string;

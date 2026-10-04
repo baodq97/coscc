@@ -38,8 +38,10 @@ def skill_of(key: str) -> str:
 
 
 class RunView(TypedDict):
-    """One `end` record of a stage, as the page shows it."""
+    """One `end` record of a stage, as the page shows it; `workspace` is the run-log key, the
+    workspace's resolved path."""
 
+    workspace: str
     unit: str
     outcome: str
     at: str
@@ -114,6 +116,7 @@ def _run_view(record: dict[str, Any]) -> RunView:
     cost = record.get("cost_usd")
     turns = record.get("turns")
     return RunView(
+        workspace=str(record.get("workspace") or ""),
         unit=str(record.get("unit") or ""),
         outcome=str(record.get("outcome") or ""),
         at=str(record.get("at") or ""),

@@ -1598,6 +1598,8 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(up["shortlist"][0]["estimate"]["value"], 3)
         self.assertEqual((up["unestimated"], up["max"]), ([self.b], 7))
         self.assertEqual(up["shortlist_record"]["reason"], "r")
+        # A held read starts the next; it ends before the data root is removed.
+        await self.app.state.service.board(self.cwd, "next")
         self.assertEqual(
             (await self.client.post("/api/backlog/shortlist", content=b"nope")).status_code, 400
         )
