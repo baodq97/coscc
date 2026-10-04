@@ -191,8 +191,8 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         [again] = await self.notices(self.follow(after=mine), 1)
         self.assertEqual(again["id"], between)
 
-    def test_a_stream_lasts_no_longer_than_an_open_socket(self):
-        self.assertLessEqual(notices.LIFETIME_SECONDS, auth.WS_RECHECK)
+    def test_a_stream_lasts_no_longer_than_the_guard_allows(self):
+        self.assertLessEqual(notices.LIFETIME_SECONDS, auth.STREAM_SECONDS)
         self.assertLess(notices.BEAT_SECONDS, notices.LIFETIME_SECONDS)
 
     async def test_one_workspace_sees_only_its_own(self):

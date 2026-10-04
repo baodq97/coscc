@@ -578,13 +578,12 @@ class Preparing(unittest.TestCase):
         self.assertEqual(worktrees.commands(self.tree), [])
         (self.tree / "uv.lock").write_text("", encoding="utf-8")
         (self.tree / "package-lock.json").write_text("{}", encoding="utf-8")
-        (self.tree / "pyproject.toml").write_text(
-            '[project]\nname="x"\n[project.scripts]\ncoscc-build = "coscc.build:main"\n',
-            encoding="utf-8",
-        )
+        for folder in ("ui", "node_modules"):
+            (self.tree / folder).mkdir()
+            (self.tree / folder / "package-lock.json").write_text("{}", encoding="utf-8")
         self.assertEqual(
             worktrees.commands(self.tree),
-            [["uv", "sync", "--frozen"], ["npm", "ci"], ["uv", "run", "coscc-build"]],
+            [["uv", "sync", "--frozen"], ["npm", "ci"], ["npm", "--prefix", "ui", "ci"]],
         )
 
     def test_nothing_to_prepare_is_ok_and_recorded_beside_the_tree(self):
@@ -626,18 +625,13 @@ class Preparing(unittest.TestCase):
                 "CLAUDE_CODE_OAUTH_TOKEN": "sk",
                 "ANTHROPIC_API_KEY": "sk",
                 "COS_TOOLS": "Bash",
-                "__REFLEX_SKIP_COMPILE": "1",
-                "REFLEX_WEB_WORKDIR": "/installed/_web",
                 "PATH": os.pathsep.join([str(ws / ".venv" / "bin"), pkg_bin, "/usr/bin"]),
             },
         ):
             env = worktrees.prepare_env(self.tree, ws)
         self.assertEqual(env["VIRTUAL_ENV"], str(self.tree / ".venv"))
-        self.assertEqual(env["REFLEX_WEB_WORKDIR"], str(self.tree / ".web"))
         self.assertEqual(env["PATH"], "/usr/bin")
-        self.assertFalse(
-            [k for k in env if k.startswith(("CLAUDE", "ANTHROPIC", "COS_", "__REFLEX_"))]
-        )
+        self.assertFalse([k for k in env if k.startswith(("CLAUDE", "ANTHROPIC", "COS_"))])
 
     def test_the_apps_database_is_named_as_protected(self):
         """Appended to what this process was handed, never in its place."""

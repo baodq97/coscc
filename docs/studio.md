@@ -1,16 +1,13 @@
 # CoS Studio
 
-The page this app serves. One route, `/`, six screens, and everything on them read from
-the running service.
-
-It began as `fragmented-product-experience`'s prototype — the same layout, spacing and words — and `0006` replaced
-the invented data underneath it with the real thing and deleted the page that came before.
-`coscc/screens/studio.py`, the presentation primitives, did not change in that swap, which is
-the clearest statement of what `fragmented-product-experience` actually settled: the look.
+The page this app serves: a React app in `ui/`, built into `coscc/_studio/` and served at `/`
+by the same process as the API (`coscc/studio.py`). It reads and acts only through `/api/*`
+(`coscc/api.py`, typed by `ui/src/api.gen.ts`) and hears changes on `/api/stream`.
 
 ```sh
-uv run coscc-build                              # compile the page
+npm --prefix ui ci && npm --prefix ui run build # build the page
 COS_WORKING_DIR=~/projects uv run coscc         # then http://127.0.0.1:8790
+npm --prefix ui run dev                         # or: vite on :5173, proxying /api to :8790
 ```
 
 ## Where the data is
@@ -38,25 +35,28 @@ and `0008` removed it — see `.claude/CLAUDE.md`.
 
 ## The screens
 
-| Screen | Reads | Can change |
+| Screen | Address | Can change |
 |---|---|---|
-| Overview | workspaces, board, run log | nothing |
-| Workspaces | the workspace list | add, adopt, clone, relabel, pull, remove from the list |
-| Board | `coscc.loop status` in each workspace, joined with the run log | a step's mode; running a step |
-| Sessions | the SDK's session store | sends a message, which creates or resumes a session |
-| Activity & usage | the run log | nothing |
-| Settings | the configuration and the grant table | board density and colour mode |
+| Leif's briefing | `/` | nothing |
+| Needs you | `/inbox` | answers a question, holds or reruns a unit |
+| A project | `/work/<project>` | pulls, relabels, removes it from the list |
+| A unit | `/unit/<project>/<number>` | runs its next step, stops it, holds it |
+| Up next | `/up-next` | the shortlist and its order |
+| Talk to Leif | `/leif` | sends a message, which starts or resumes a chat |
+| Agents | `/agents` | an agent's model, effort and ceilings |
+| Insights | `/insights` | nothing |
+| What Leif may do | `/may-do` | features, autopilot and grants |
 
-Removing a workspace takes it off the list. The directory on disk is never deleted.
+Removing a project takes it off the list. The directory on disk is never deleted.
 
 ## What it costs
 
 Two controls spend real account quota, and both say so before they are used:
 
-- **Send**, on Sessions. One message, chat only, no tools.
-- **Run**, in a work unit's drawer. A real step of the loop. In `autonomous` mode on `impl`
+- **Send**, on Talk to Leif. One message, chat only, no tools.
+- **Run**, on a unit's page. A real step of the loop. In `autonomous` mode on `impl`
   it carries a $5 ceiling, and on `pr` it can reach every repository this machine's GitHub
-  login reaches. The drawer shows the tools the step would get and that warning *before*
+  login reaches. The page shows the tools the step would get and that warning *before*
   the button, which is `0006 spec.md` R17.
 
 Six of the eight stages — idea, intent, spec, plan, review, ship — get no tools in either
@@ -69,9 +69,7 @@ reply. The Settings screen says so, because otherwise it looks like the agent wr
 npm run e2e   # the board in a browser, on temporary workspaces
 ```
 
-It needs a browser and a free `COS_PORT` — in a checkout the compiled bundle hardcodes the
-address it opens its WebSocket against, so it cannot move to a spare port. Stop the app
-first. (An installed wheel is the other case: it rewrites that address at startup. See
-[installing coscc](install.md).) It spends no quota.
+It needs a browser; it serves the app on a spare port, on a temporary data root, and spends
+no quota.
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.

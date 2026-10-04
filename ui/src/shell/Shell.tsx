@@ -79,7 +79,7 @@ export function Shell({ title, crumbs, children }: { title: string; crumbs: stri
 
   return (
     <Ctx.Provider value={state}>
-      <div className="app">
+      <div className="app" id="studio-shell">
         <Sidebar />
         <main className="main">
           <Topbar crumbs={crumbs} />

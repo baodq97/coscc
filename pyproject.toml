@@ -7,10 +7,10 @@ description = "Web app that lists, creates and resumes Claude Code sessions acro
 requires-python = ">=3.14"
 dependencies = [
     "claude-agent-sdk>=0.2.161",
-    "reflex>=0.9.12",
     "fastapi>=0.141.1",
     "argon2-cffi>=25.1.0",
-    "reflex-base>=0.9.12",
+    # `coscc vault-measure` calls the app's own routes in-process.
+    "httpx>=0.28.1",
     "uvicorn>=0.53.0",
 ]
 
@@ -19,14 +19,12 @@ requires = ["uv_build>=0.12,<0.13"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-# Flat layout: the package sits at the repo root beside rxconfig.py, the only layout Reflex
-# documents; uv's default is `src/`.
+# Flat layout: the package sits at the repo root; uv's default is `src/`.
 module-root = ""
 module-name = "coscc"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "playwright>=1.63.0",
     "pytest>=9.1.1",
     "pytest-xdist>=3.8.0",
@@ -35,13 +33,8 @@ dev = [
 ]
 
 [project.scripts]
-# `spec.md` R2. The entry point also pins how the app is served: one ASGI app on one
-# port with the compiled frontend mounted, not `reflex run` -- see run.py. That port was
-# loopback-only until 0011; the default is now 0.0.0.0.
+# One ASGI app on one port, behind the login guard: see run.py.
 coscc = "coscc.run:main"
-# Building through here rather than calling `reflex export` directly is what leaves the
-# fingerprint that `run.py` checks. See coscc/build.py.
-coscc-build = "coscc.build:main"
 
 [tool.ruff]
 line-length = 100

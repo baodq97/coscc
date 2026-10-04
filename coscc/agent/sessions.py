@@ -37,7 +37,6 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import HookEvent, HookMatcher, SystemPromptPreset
 
 from coscc import config as cfg
-from coscc import frontend
 from coscc.agent import harness, instructions, transcript
 from coscc.agent.helpers import Helpers
 from coscc.bus import Bus, Event
@@ -51,13 +50,9 @@ log = logging.getLogger(__name__)
 # overridden: `claude_agent_sdk` lays `options.env` over `os.environ`, so a key left out is
 # inherited. Tests must assert the value the child would read, not absence from the dict.
 #
-# `coscc/run.py` sets `REFLEX_WEB_WORKDIR` process-wide, pointing at the served bundle
-# (`coscc/_web`); a step that runs a build would compile into the installed package and the
-# page would 404 while `/api/health` stays 200. `<cwd>/.web` is where a checkout's build belongs.
-#
 # A step's `cwd` is the unit's own worktree, so `VIRTUAL_ENV` points into the worktree, `PATH`
 # loses every entry under the workspace or the installed package (a workspace's `.venv/bin`
-# would run the workspace's code), and every `__REFLEX_*` this process set is overridden empty.
+# would run the workspace's code).
 #
 # `COS_DATA_DIR` is pointed at a directory of the session's own, not blanked: blank read as
 # unset, unset read as `~/.cos`, and a step's `npm test` migrated the running app's `cos.db`.
@@ -81,13 +76,12 @@ def child_env(
     named in `COS_SCRATCH_RAM` and `COS_SCRATCH_DISK`, and the disk one is the child's `TMPDIR`.
     """
     env = {
-        frontend.WEB_WORKDIR_VAR: str(Path(cwd) / ".web"),
         "VIRTUAL_ENV": str(Path(cwd) / ".venv"),
         "PATH": harness.clean_path(workspace),
     }
     # This app's settings describe this app, not the workspace. Empty reads as unset to
     # `coscc/config.py` `from_env` and to `coscc/loop` for `COS_REVIEW_ROUNDS`.
-    env.update({name: "" for name in os.environ if name.startswith(("COS_", "__REFLEX_"))})
+    env.update({name: "" for name in os.environ if name.startswith("COS_")})
     env["COS_DATA_DIR"] = data_dir
     env[cfg.PROTECTED_DB_VAR] = cfg.protect(app_db)
     if scratch is not None:

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from coscc import update
-from coscc import auth, frontend
+from coscc import auth
 from coscc.git import fetches
 from coscc.loop import run
 from coscc.data import Data
@@ -44,7 +44,7 @@ CHECK_TAG_TIMEOUT = 10
 TRIAL_INSTALL_TIMEOUT = 300
 TRIAL_HEALTHY_WITHIN = 60
 TRIAL_STOP_GRACE = 5
-# The longest line of the trial's output read whole; Reflex draws progress bars.
+# The longest line of the trial's output read whole.
 OUTPUT_LINE_LIMIT = 1 << 20
 BUILD_TIMEOUT = 15 * 60
 LOG_TAIL = 40
@@ -158,7 +158,7 @@ class Updater:
 
     def me(self) -> dict[str, Any]:
         if self._me is None:
-            self._me = update.identity(self.config, frontend.is_packaged())
+            self._me = update.identity(self.config, update.is_packaged())
         return self._me
 
     def available(self) -> bool:
@@ -174,7 +174,7 @@ class Updater:
 
     def start(self) -> None:
         # A checkout never gets past the first line: no git call, no thread, no files.
-        if not frontend.is_packaged() and self._me is None:
+        if not update.is_packaged() and self._me is None:
             return
         if not self.available():
             return

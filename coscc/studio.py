@@ -1,9 +1,9 @@
-"""The studio: the app's new page, served under `/next` beside the old one until it replaces it.
+"""The studio: the app's page, at every path no route takes.
 
 `ui/` builds it into `coscc/_studio/` (`npm --prefix ui run build`), inside the package, so a
-wheel carries it like the rest of `coscc/`. Every path below `/next` that is not a built file
-gets `index.html`: the page routes by `location.pathname`. The login guard in front of the app
-covers these routes like every other.
+wheel carries it like the rest of `coscc/`. Every path that is not a built file gets
+`index.html`: the page routes by `location.pathname`. An unknown `/api/` path is a 404, not
+the page. The login guard in front of the app covers these routes like every other.
 """
 
 from __future__ import annotations
@@ -11,10 +11,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 BUILT = Path(__file__).resolve().parent / "_studio"
-BASE = "/next"
 
 router = APIRouter()
 
@@ -34,10 +33,11 @@ def _file(rel: str) -> Path | None:
     return path
 
 
-@router.get(BASE)
-@router.get(BASE + "/{rel:path}")
+@router.get("/{rel:path}", include_in_schema=False)
 async def studio(rel: str = "") -> Response:
-    """A built asset, or the page itself for any other path below `/next`."""
+    """A built asset, or the page itself for any other path."""
+    if rel == "api" or rel.startswith("api/"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
     found = _file(rel)
     if found is not None:
         # Asset names carry their content hash, so a browser may keep them for good.

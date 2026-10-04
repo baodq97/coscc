@@ -6,7 +6,7 @@ all in it.
 ## What it sends
 
 One NDJSON stream for every listener — the page's script, a terminal, an agent's session.
-It ends after `notices.LIFETIME_SECONDS` (30 s, `auth.WS_RECHECK`, the bound a socket has),
+It ends after `notices.LIFETIME_SECONDS` (30 s, `auth.STREAM_SECONDS`),
 and the listener connects again with `after`: `auth.Guard` asks for a live session once per
 request, so that is how a listener whose session ended is refused.
 

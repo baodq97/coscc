@@ -41,16 +41,16 @@ nothing lands in that repository's own tree.
 
 ## The page
 
-**CoS Studio** is the app's one page, at `/`, built from Reflex Python components. Six
-screens — Overview, Workspaces, Board with a work-unit drawer, Sessions, Activity & usage,
-Settings — all reading the running service.
+**CoS Studio** is the app's page, at `/`: a React app in `ui/`, built into the package and
+served by the same FastAPI process as the API it reads. Leif's briefing, what needs you, the
+projects and their units, up next, agents, insights and settings.
 
 To install it on a machine rather than work on it, see
 [installing coscc](docs/install.md) — one line, a systemd user service, and it comes back
 after a reboot. The two commands below are the *checkout* path, for working on the code:
 
 ```sh
-uv run coscc-build                              # compile the page
+npm --prefix ui ci && npm --prefix ui run build # build the page
 COS_WORKING_DIR=~/projects uv run coscc         # then http://0.0.0.0:8790
 ```
 
@@ -69,9 +69,6 @@ over HTTP.
 
 Two controls spend real account quota and both say so before they are used: sending a chat
 message, and running a step of the loop. See [the page guide](docs/studio.md).
-
-Build and serve with the same `COS_HOST`/`COS_PORT` if changing the default address —
-`coscc` refuses to start if the build it finds was made for a different one.
 
 ```sh
 npm run e2e   # the board in a browser, on temporary workspaces

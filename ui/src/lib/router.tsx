@@ -1,17 +1,14 @@
-// Path routing under `/next`, with no library: the app serves `index.html` for every path
-// below it (`coscc/studio.py`), and the page reads `location.pathname`.
+// Path routing with no library: the app serves `index.html` for every path no route takes
+// (`coscc/studio.py`), and the page reads `location.pathname`.
 
 import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 
-export const BASE = "/next";
-
 export function currentPath(): string {
-  const p = location.pathname.startsWith(BASE) ? location.pathname.slice(BASE.length) : location.pathname;
-  return p.replace(/\/+$/, "") || "/";
+  return location.pathname.replace(/\/+$/, "") || "/";
 }
 
 export function navigate(to: string): void {
-  history.pushState(null, "", BASE + (to === "/" ? "/" : to));
+  history.pushState(null, "", to);
   dispatchEvent(new PopStateEvent("popstate"));
 }
 
@@ -45,7 +42,7 @@ export function Link({ to, className, children, title }: { to: string; className
     navigate(to);
   };
   return (
-    <a href={BASE + to} className={className} onClick={onClick} title={title}>
+    <a href={to} className={className} onClick={onClick} title={title}>
       {children}
     </a>
   );

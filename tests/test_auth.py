@@ -1,21 +1,14 @@
 """Tests for the login guard, `coscc/auth.py`.
 
-Driven over raw ASGI, scope by scope, so an HTTP request and a websocket handshake go
-through the same door the same way and a test can see whether the app behind it was ever
-reached. The app behind it is the real FastAPI surface, `coscc.api.build`, on a temporary
-data root; the parts Reflex mounts are stood in for by `REFLEX_PATHS`, because composing
-them needs a built bundle and `npm test` never builds. The guard decides before the inner
-app sees anything, so what the inner app is does not change the count;
-`scripts/verify_0070.py` makes the same count against the composed Reflex app.
+Driven over raw ASGI, scope by scope, so a test can see whether the app behind the door was
+ever reached. The app behind it is the real one, `coscc.api.build`, on a temporary data root.
 
 Nothing here disables the guard. Every test that needs a session gets one the way a person does: it
 reads the setup token off the guard's stderr, posts `/setup`, then `/login`."""
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import inspect
 import io
 import re
 import tempfile
@@ -29,28 +22,23 @@ from argon2.exceptions import VerifyMismatchError
 from starlette.routing import Route
 
 from coscc import auth
-from coscc.state import place
 from coscc.api import build
 from coscc.config import Config
 from coscc.data import Data
 
 PASSWORD = "correct horse battery staple"
 
-# What Reflex serves beside `/api`: the page, a static asset, the socket over polling, upload,
-# the two pings, a path that does not exist, and a CORS preflight — the one the
-# `api_transformer` position never saw.
-REFLEX_PATHS = (
+# What no API route names: the studio's pages and assets, unknown paths, and a CORS preflight.
+OTHER_PATHS = (
     ("GET", "/"),
-    ("GET", "/_event/?EIO=4&transport=polling"),
-    ("POST", "/_upload"),
-    ("GET", "/ping"),
-    ("GET", "/_health"),
     ("GET", "/assets/x.js"),
+    ("GET", "/work/coscc"),
+    ("GET", "/unit/coscc/1"),
+    ("GET", "/feature/vault"),
     ("GET", "/no/such/path"),
+    ("GET", "/api/no-such"),
+    ("POST", "/_upload"),
     ("OPTIONS", "/api/board"),
-    # Every page route `coscc.py` registers, `/cost` included.
-    *(("GET", f"/{screen}") for screen in place.SCREENS[1:]),
-    ("GET", "/unit"),
 )
 
 
@@ -82,16 +70,12 @@ class FakeHasher:
 class Recorder:
     """The inner app, with a note of every scope that reached it."""
 
-    def __init__(self, http_app, ws_app=None):
+    def __init__(self, http_app):
         self.http_app = http_app
-        self.ws_app = ws_app
         self.seen: list[tuple[str, str, str]] = []
 
     async def __call__(self, scope, receive, send):
         self.seen.append((scope["type"], scope.get("method", ""), scope.get("path", "")))
-        if scope["type"] == "websocket" and self.ws_app is not None:
-            await self.ws_app(scope, receive, send)
-            return
         await self.http_app(scope, receive, send)
 
 
@@ -203,9 +187,6 @@ async def ws_handshake(app, target, **kw) -> list:
 
     async def send(message):
         sent.append(message)
-        # A socket that got in hangs up at once, so a leak is counted, not waited on.
-        if message["type"] == "websocket.accept":
-            inbox.put_nowait({"type": "websocket.disconnect", "code": 1000})
 
     await asyncio.wait_for(app(ws_scope(target, **kw), inbox.get, send), 20)
     return sent
@@ -238,11 +219,7 @@ class Door(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.data = Data(self.tmp.name)
         self.api = build(Config(data_dir=self.tmp.name))
-        self.events: list[dict] = []
-        # Set each time `_ws_app` records a message, so a test waits for it, not for a stretch of
-        # time.
-        self.heard = asyncio.Event()
-        self.recorder = Recorder(self.api, self._ws_app)
+        self.recorder = Recorder(self.api)
         self.clock = Clock()
         self.err = io.StringIO()
         self.hasher = self.hasher_factory() if self.hasher_factory else None
@@ -252,16 +229,6 @@ class Door(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         self.tmp.cleanup()
-
-    async def _ws_app(self, scope, receive, send):
-        await receive()
-        await send({"type": "websocket.accept"})
-        while True:
-            message = await receive()
-            self.events.append(message)
-            self.heard.set()
-            if message["type"] == "websocket.disconnect":
-                return
 
     async def call(self, method, target, **kw) -> Reply:
         return await http(self.guard, method, target, recorder=self.recorder, **kw)
@@ -282,7 +249,7 @@ class Door(unittest.IsolatedAsyncioTestCase):
         return await self.call("POST", "/login", form={"password": password}, **kw)
 
     def requests(self):
-        """Every route the API registers, with every method it declares, plus Reflex's."""
+        """Every route the API registers, with every method it declares, plus `OTHER_PATHS`."""
         out = []
         for route in self.api.routes:
             if not isinstance(route, Route):
@@ -290,7 +257,7 @@ class Door(unittest.IsolatedAsyncioTestCase):
             path = re.sub(r"\{[^}]+\}", "x", route.path)
             for method in sorted(route.methods or {"GET"}):
                 out.append((method, path))
-        return out + list(REFLEX_PATHS)
+        return out + list(OTHER_PATHS)
 
     async def count_not_refused(self, has_password: bool) -> list[str]:
         leaks = []
@@ -306,7 +273,7 @@ class Door(unittest.IsolatedAsyncioTestCase):
                 reply = await self.call(method, target, headers=headers)
                 if not exempt and not refused(reply):
                     leaks.append(f"{method} {target} {headers} -> {reply.status}")
-        for target in ("/_event/?EIO=4&transport=websocket", "/api/board", "/no/such"):
+        for target in ("/", "/api/board", "/no/such"):
             before = len(self.recorder.seen)
             sent = await ws_handshake(self.guard, target)
             if len(self.recorder.seen) > before or sent[:1] != [
@@ -519,12 +486,8 @@ class Origins(Door):
         null = await self.call("POST", "/logout", cookie=cookie, headers=(("origin", "null"),))
         self.assertEqual(null.status, 403)
         before = len(self.recorder.seen)
-        sent = await ws_handshake(
-            self.guard,
-            "/_event/?EIO=4&transport=websocket",
-            cookie=cookie,
-            headers=(("origin", "http://evil.example"),),
-        )
+        sent = await ws_handshake(self.guard, "/api/stream", cookie=cookie)
+        # The app has no socket: one with a live session is closed too.
         self.assertEqual(sent, [{"type": "websocket.close", "code": 1008}])
         self.assertEqual(len(self.recorder.seen), before)
 
@@ -648,201 +611,6 @@ class HashConcurrency(Door):
             await asyncio.gather(*tasks)
         self.assertEqual((self.hasher.peak, self.hasher.calls), (2, 2))
         self.assertEqual(self.guard.limiter.wait("10.0.2.9"), 0)
-
-
-class Rechecks:
-    """Stands in for the name `asyncio` inside `coscc.auth`: every attribute is the real one but
-    `sleep`, where the socket watcher parks until a test lets it take one look. A sleep of any other
-    length is recorded and fails the test."""
-
-    def __init__(self):
-        self.parked = asyncio.Event()
-        self.go = asyncio.Event()
-        self.odd: list[float] = []
-
-    def __getattr__(self, name):
-        return getattr(asyncio, name)
-
-    async def sleep(self, delay, result=None):
-        self.parked.set()
-        if delay != auth.WS_RECHECK:
-            self.odd.append(delay)
-            raise AssertionError(f"auth slept {delay}, not WS_RECHECK")
-        await self.go.wait()
-        self.go.clear()
-        return result
-
-
-class Sockets(Door):
-    """The socket watcher is stepped one look at a time through `Rechecks`, and every wait is on an
-    event: under load a stretch of real time was not enough. A ceiling of 20 s only turns a hang
-    into a failure."""
-
-    async def look(self, rechecks: Rechecks, task: asyncio.Future) -> None:
-        """One look of the watcher: once it is parked, let it go, and wait until it is
-        parked again or the socket has closed."""
-        try:
-            await asyncio.wait_for(rechecks.parked.wait(), 20)
-        except asyncio.TimeoutError:
-            self.fail("the watcher never reached asyncio.sleep(WS_RECHECK)")
-        self.assertEqual(rechecks.odd, [])
-        rechecks.parked.clear()
-        rechecks.go.set()
-        parked = asyncio.ensure_future(rechecks.parked.wait())
-        done, _ = await asyncio.wait(
-            {parked, task}, timeout=20, return_when=asyncio.FIRST_COMPLETED
-        )
-        parked.cancel()
-        self.assertTrue(done, "the watcher's look neither ended nor closed the socket")
-        self.assertEqual(rechecks.odd, [])
-
-    async def test_a_socket_closes_after_its_session_ends(self):
-        """At the ASGI layer: handshake refused without a cookie, accepted with one, and closed once
-        the session is gone — the app sees a disconnect."""
-        cookie = (await self.set_password()).cookie()
-        self.assertEqual(
-            await ws_handshake(self.guard, "/_event/?EIO=4&transport=websocket"),
-            [{"type": "websocket.close", "code": 1008}],
-        )
-        inbox: asyncio.Queue = asyncio.Queue()
-        inbox.put_nowait({"type": "websocket.connect"})
-        sent: list = []
-        accepted = asyncio.Event()
-
-        async def send(message):
-            sent.append(message)
-            if message["type"] == "websocket.accept":
-                accepted.set()
-
-        rechecks = Rechecks()
-        with mock.patch.object(auth, "asyncio", rechecks):
-            task = asyncio.ensure_future(
-                self.guard(
-                    ws_scope("/_event/?EIO=4&transport=websocket", cookie=cookie), inbox.get, send
-                )
-            )
-            await asyncio.wait_for(accepted.wait(), 20)
-            self.assertEqual(sent, [{"type": "websocket.accept"}])
-            self.heard.clear()
-            inbox.put_nowait({"type": "websocket.receive", "text": "hello"})
-            await asyncio.wait_for(self.heard.wait(), 20)
-            self.assertEqual(self.events[-1]["type"], "websocket.receive")
-
-            self.data.auth_clear()
-            await self.look(rechecks, task)
-            await asyncio.wait_for(task, 20)
-        self.assertEqual(sent[-1], {"type": "websocket.close", "code": 1008})
-        self.assertEqual(self.events[-1]["type"], "websocket.disconnect")
-
-    async def test_a_session_used_only_through_its_socket_lives_on(self):
-        """The board sends every event over `/_event`, so a handshake and the messages after it are
-        use."""
-        cookie = (await self.set_password()).cookie()
-        sha = auth._sha(cookie)
-        start = self.clock.t
-        inbox: asyncio.Queue = asyncio.Queue()
-        inbox.put_nowait({"type": "websocket.connect"})
-        sent: list = []
-        accepted = asyncio.Event()
-
-        async def send(message):
-            sent.append(message)
-            if message["type"] == "websocket.accept":
-                accepted.set()
-
-        def expires():
-            return self.data.auth_state(sha)[1]["expires_at"]
-
-        rechecks = Rechecks()
-        with mock.patch.object(auth, "asyncio", rechecks):
-            # The handshake two hours on is a use: touched, and the 101 renews the cookie.
-            # The guard touches before it accepts, so the accept is enough to wait for.
-            self.clock.t = start + 7200
-            task = asyncio.ensure_future(
-                self.guard(
-                    ws_scope("/_event/?EIO=4&transport=websocket", cookie=cookie), inbox.get, send
-                )
-            )
-            await asyncio.wait_for(accepted.wait(), 20)
-            self.assertEqual(sent[0]["type"], "websocket.accept")
-            renewed = dict(sent[0]["headers"])[b"set-cookie"].decode()
-            self.assertIn(f"{auth.COOKIE}={cookie}", renewed)
-            self.assertIn(f"Max-Age={auth.SESSION_TTL}", renewed)
-            self.assertEqual(expires(), int(start) + 7200 + auth.SESSION_TTL)
-
-            # Two more hours with no message: not use, no write.
-            self.clock.t = start + 4 * 3600
-            await self.look(rechecks, task)
-            self.assertEqual(expires(), int(start) + 7200 + auth.SESSION_TTL)
-
-            # A message, then the watcher's next look: touched from the socket alone. The
-            # app must have it before the look, or the look races the receive that marks
-            # the socket used.
-            self.heard.clear()
-            inbox.put_nowait({"type": "websocket.receive", "text": "event"})
-            await asyncio.wait_for(self.heard.wait(), 20)
-            await self.look(rechecks, task)
-            self.assertEqual(expires(), int(start) + 4 * 3600 + auth.SESSION_TTL)
-
-            # Past thirty days from the handshake, still open, because it was used since.
-            # `look` returns only once the watcher has decided, so this is not a race.
-            self.clock.t = start + 7200 + auth.SESSION_TTL + 1
-            await self.look(rechecks, task)
-            self.assertFalse(task.done())
-            self.assertNotIn({"type": "websocket.close", "code": 1008}, sent)
-
-            # Thirty days from the last use, it closes like any ended session.
-            self.clock.t = start + 4 * 3600 + auth.SESSION_TTL + 1
-            await self.look(rechecks, task)
-            await asyncio.wait_for(task, 20)
-        self.assertEqual(sent[-1], {"type": "websocket.close", "code": 1008})
-
-    async def test_a_recent_handshake_writes_nothing_and_sets_no_cookie(self):
-        cookie = (await self.set_password()).cookie()
-        start = self.clock.t
-        self.clock.t = start + 1800
-        sent = await ws_handshake(self.guard, "/_event/?EIO=4&transport=websocket", cookie=cookie)
-        self.assertEqual(sent[0], {"type": "websocket.accept"})
-        self.assertEqual(self.data.auth_state(auth._sha(cookie))[1]["last_used_at"], int(start))
-
-
-class SocketsWaitOnEvents(unittest.TestCase):
-    """Held by the suite rather than by a reader: `Sockets` and `Rechecks` sleep for no positive
-    time, and every ceiling is the file's 20 s."""
-
-    def test_the_socket_tests_wait_on_events_not_on_the_clock(self):
-        sleeps, ceilings = [], []
-        for cls in (Sockets, Rechecks):
-            for node in ast.walk(ast.parse(inspect.getsource(cls))):
-                if not isinstance(node, ast.Call):
-                    continue
-                func = node.func
-                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-                if name == "sleep":
-                    sleeps.append(node)
-                if name == "wait_for" and len(node.args) > 1:
-                    ceilings.append(node.args[1])
-                if name in ("wait_for", "wait"):
-                    ceilings += [k.value for k in node.keywords if k.arg == "timeout"]
-
-        def zero(node):
-            return (
-                len(node.args) == 1
-                and not node.keywords
-                and isinstance(node.args[0], ast.Constant)
-                and node.args[0].value == 0
-            )
-
-        def ceiling(node):
-            return (
-                isinstance(node, ast.Constant)
-                and isinstance(node.value, (int, float))
-                and node.value >= 20
-            )
-
-        self.assertEqual([ast.unparse(n) for n in sleeps if not zero(n)], [])
-        self.assertGreater(len(ceilings), 0)
-        self.assertEqual([ast.unparse(n) for n in ceilings if not ceiling(n)], [])
 
 
 if __name__ == "__main__":

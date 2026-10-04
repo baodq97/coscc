@@ -4,9 +4,8 @@ Before a `review` step, when the loop's `screens` says the manifest is stale, th
 branch's own `scripts/capture_screens.py` in the unit's worktree and checks what it wrote.
 This module runs the command, judges its result and says what happened.
 
-The command runs with this process's environment, every `__REFLEX_*` set blank and this
-app's `cos.db` named in `config.PROTECTED_DB_VAR`; left as `coscc/run.py` sets them the
-build fails and overwrites the tracked `reflex.lock/package.json`.
+The command runs with this process's environment and this app's `cos.db` named in
+`config.PROTECTED_DB_VAR`.
 
 A failed retake leaves `.screens/` as it found it: the command clears the last run's images
 and manifest first, so what it would remove is copied aside and put back unless `judge` passes.
@@ -39,12 +38,11 @@ _KEEP_BYTES = 64 * 1024
 
 
 def env(data_dir: str | os.PathLike[str] | None = None) -> dict[str, str]:
-    """This process's environment, every `__REFLEX_*` blank, and this app's `cos.db` protected.
+    """This process's environment, with this app's `cos.db` protected.
 
     `data_dir` is the app's data root, `None` meaning the default `~/.cos`.
     """
     e = dict(os.environ)
-    e.update({name: "" for name in e if name.startswith("__REFLEX_")})
     e[config.PROTECTED_DB_VAR] = config.protect(Data(data_dir).db_path)
     return e
 

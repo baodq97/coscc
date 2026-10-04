@@ -8,7 +8,7 @@ anything.
 
 A feature (`coscc/features/<name>.py`, or a package `<name>/`, ending in one `FEATURE`) is a plug-in, so three more rules:
 it imports only its own `coscc.features.<name>` and `coscc.kernel`, plus the `KERNEL_GAPS` the kernel does not give yet;
-only `coscc/api.py` and `coscc/screens/__init__.py` import `coscc.features`, as
+only `coscc/api.py` imports `coscc.features`, as
 `from coscc import features`; and it is at most 3 files of at most 800 lines. Each check takes
 text or a listing, so a test can feed it a planted case.
 """
@@ -24,9 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1] / "coscc"
 
 LAYERS = (
-    ("coscc", "run", "loop"),
-    ("screens",),
-    ("state",),
+    ("run", "loop"),
     ("api",),
     ("features", "plugin"),
     ("service",),
@@ -37,7 +35,7 @@ LAYERS = (
     ("units",),
     ("git", "runlog"),
     ("agent",),
-    ("auth", "build", "bus", "frontend", "studio", "ui"),
+    ("auth", "bus", "studio"),
     ("data",),
     ("config",),
 )
@@ -167,7 +165,7 @@ KERNEL_GAPS = {
 }
 FEATURE_FILES = 3
 FEATURE_LINES = 800
-FEATURE_READERS = {"api.py", "screens/__init__.py"}
+FEATURE_READERS = {"api.py"}
 
 
 def _coscc_imports(tree: ast.AST):
@@ -211,7 +209,7 @@ def feature_import_problems(sources: dict[str, str]) -> list[str]:
             elif name.startswith("coscc.features") and not path.startswith("features/"):
                 if path not in FEATURE_READERS:
                     out.append(
-                        f"{at}: only coscc/api.py and coscc/screens/__init__.py know the list of "
+                        f"{at}: only coscc/api.py knows the list of "
                         "features. Get what you need through `Ctx` in coscc/kernel.py."
                     )
                 elif name != "coscc.features" or not plain:
@@ -298,7 +296,7 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
     def test_a_feature_that_imports_the_app_is_told_to_use_ctx(self):
         for src in (
             "from coscc.service.steps import Steps\n",
-            "from coscc import state\n",
+            "from coscc import api\n",
             "from coscc.plugin import ctx_of\n",
         ):
             (msg,) = feature_import_problems({"features/a.py": src})
@@ -333,11 +331,11 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
         }
         self.assertEqual(sorted(set(KERNEL_GAPS) - used), [])
 
-    def test_only_the_api_and_the_shell_import_the_list_and_only_one_way(self):
+    def test_only_the_api_imports_the_list_and_only_one_way(self):
         ok = "from coscc import features\n"
-        self.assertEqual(feature_import_problems({"api.py": ok, "screens/__init__.py": ok}), [])
+        self.assertEqual(feature_import_problems({"api.py": ok}), [])
         (msg,) = feature_import_problems({"service/steps.py": ok})
-        self.assertIn("only coscc/api.py and coscc/screens/__init__.py", msg)
+        self.assertIn("only coscc/api.py knows the list", msg)
         (msg,) = feature_import_problems({"api.py": "from coscc.features import FEATURES\n"})
         self.assertIn("import the list as `from coscc import features`", msg)
 

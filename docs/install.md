@@ -47,16 +47,9 @@ machine's `claude` login. A machine whose login lives in that `env` block
 (`ANTHROPIC_API_KEY`) or in `apiKeyHelper` has no login for the app's sessions until the
 key is in the env file too. Your own `claude` at a terminal is unchanged.
 
-**You do not need Node, npm or bun**, to build or to run. The release wheel carries the
-frontend already compiled, so nothing on this machine compiles JavaScript, and the Board
-reads its state through the app's own Python (`coscc.loop`). Until `0153` the Board ran a
-JavaScript script and a machine without `node` got an error on that screen only.
-
-The build is worth stating because it is the one prerequisite this project got wrong:
-the first wheel built for `0011` installed cleanly on a machine with no Node, reported
-`active`, and served nothing at all — Reflex re-runs its compile on every start unless the
-wheel carries the build state that lets it skip.
-`.cos/0011_no-install-path-on-a-clean-machine/impl.md` records the measurement.
+**You do not need Node or npm to run it.** The release wheel carries the page already built,
+so nothing on this machine compiles JavaScript. Only *Build local* (building a wheel from
+`main` on this machine) needs `npm`.
 
 ## Install
 

@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from coscc.units import autopilot, guide
-from coscc.state.place import TABS
+
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 
@@ -40,7 +40,11 @@ class TheLists(unittest.TestCase):
         for kind, (do, screen, tab) in guide.TODO.items():
             self.assertTrue(do.endswith(".") and do.count(".") == 1, kind)
             self.assertIn(screen, ("unit", "settings", "backlog"), kind)
-            self.assertIn(tab, TABS if screen == "unit" else ("",), kind)
+            self.assertIn(
+                tab,
+                ("questions", "overview", "timeline", "artifacts") if screen == "unit" else ("",),
+                kind,
+            )
 
     def test_a_workspace_stop_links_to_no_unit(self):
         [got] = guide.notes([{"unit": "", "kind": "f", "reason": "the pass failed"}])

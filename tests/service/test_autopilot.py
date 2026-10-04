@@ -2523,36 +2523,23 @@ class TheGuideBlock(_Base):
         )
 
 
-class ResumedAtStartUp(unittest.TestCase):
-    """The Reflex lifespan task, since the real stack never runs `api.py`'s.
+class ResumedAtStartUp(unittest.IsolatedAsyncioTestCase):
+    """The served app's start takes up what an update paused, autopilots included."""
 
-    Sending `lifespan.startup` through `served()` compiles the page (about 14 s), so the
-    test checks the registration and the call; `impl.md` records the run through `served()`."""
+    async def test_the_app_resumes_the_autopilot_when_it_starts(self):
+        from coscc.api import build
 
-    def test_the_app_resumes_the_autopilot_when_it_starts(self):
-        # Synchronous: Reflex registers its states in a context an async test's task lacks.
-        import coscc.coscc as composed
-        from coscc.state.app import API
+        with tempfile.TemporaryDirectory() as tmp:
+            app = build(Config(workspaces=(), data_dir=tmp), starting=True)
+            resumed = asyncio.Event()
 
-        # Through the one task that takes paused sessions up first.
-        self.assertIn(composed.resume_after_update, composed.app._lifespan_tasks)
-        calls: list[int] = []
-
-        class Stand:
-            def __init__(self):
-                self.resume = self
-
-            async def resume_after_update(self):
-                calls.append(1)
+            async def resume_after_update():
+                resumed.set()
                 return []
 
-        real = API.state.service
-        API.state.service = Stand()
-        try:
-            asyncio.run(composed.resume_after_update())
-        finally:
-            API.state.service = real
-        self.assertEqual(calls, [1])
+            app.state.service.resume.resume_after_update = resume_after_update
+            async with app.router.lifespan_context(app):
+                await asyncio.wait_for(resumed.wait(), 20)
 
 
 if __name__ == "__main__":

@@ -4,16 +4,13 @@
 # unobserved because nobody runs it locally.
 #
 # `contents: write` is the narrowest thing that can create a release, and it is the only
-# permission granted. Building the wheel needs `uv` — the one third-party action here,
-# pinned the same way `pr.yml` pins its, and the one that runs the loop's two checks — but
-# not Node: Reflex downloads its own Node/Bun to export the frontend, so the runner needs no
-# JavaScript toolchain preinstalled. `gh` is preinstalled, so attaching the built assets to
-# the release needs nothing further.
+# permission granted. Building the wheel needs `uv` and Node (the studio is built with npm),
+# pinned the same way `pr.yml` pins them. `gh` is preinstalled, so attaching the built assets
+# to the release needs nothing further.
 #
-# A wheel with no `coscc/_web/` in it still builds, still installs, and just has no
-# frontend: `uv build` does not know that directory is supposed to exist, and
+# A wheel with no `coscc/_studio/` in it still builds, still installs, and just has no page:
 # `pyproject.toml` declares no package data on purpose. `scripts/build_wheel.sh` is where the
-# copy steps and the guard after them live, and says why each one is there.
+# build and copy steps and the guard after them live.
 name: release
 
 on:
@@ -64,7 +61,7 @@ jobs:
       # step beside it: the board's *Build local* button runs the same file on `origin/main`
       # (`.cos/0068_updating-the-app-is-a-manual-reinstall` R6), and two copies of a recipe
       # drift. It ends with `scripts/check_wheel.py`, which refuses a wheel that would install
-      # and not work — no frontend, no harness, no build stamp — and prints the wheel's path
+      # and not work — no page, no harness, no build stamp — and prints the wheel's path
       # on its last line.
       - name: Build the wheel, and refuse one that would install and not work
         id: wheel

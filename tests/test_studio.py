@@ -21,12 +21,12 @@ def client() -> TestClient:
 
 
 def test_a_built_asset_is_served_and_kept_for_good(built: Path) -> None:
-    res = client().get("/next/assets/app-1.js")
+    res = client().get("/assets/app-1.js")
     assert res.text == "run()"
     assert "immutable" in res.headers["cache-control"]
 
 
-@pytest.mark.parametrize("path", ["/next", "/next/", "/next/work/coscc", "/next/unit/coscc/162"])
+@pytest.mark.parametrize("path", ["/", "/work/coscc", "/unit/coscc/162", "/feature/vault"])
 def test_every_page_path_gets_the_page(built: Path, path: str) -> None:
     res = client().get(path)
     assert res.status_code == 200
@@ -36,7 +36,7 @@ def test_every_page_path_gets_the_page(built: Path, path: str) -> None:
 
 def test_a_path_outside_the_build_gets_the_page_not_the_file(built: Path) -> None:
     (built.parent / "secret.txt").write_text("no")
-    res = client().get("/next/..%2fsecret.txt")
+    res = client().get("/..%2fsecret.txt")
     assert "no" != res.text
 
 
@@ -44,6 +44,13 @@ def test_an_unbuilt_studio_says_how_to_build_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(studio, "BUILT", tmp_path / "missing")
-    res = client().get("/next")
+    res = client().get("/")
     assert res.status_code == 503
     assert "npm --prefix ui" in res.text
+
+
+@pytest.mark.parametrize("path", ["/api", "/api/nothing-here"])
+def test_an_unknown_api_path_is_not_found_not_the_page(built: Path, path: str) -> None:
+    res = client().get(path)
+    assert res.status_code == 404
+    assert res.json() == {"detail": "Not Found"}

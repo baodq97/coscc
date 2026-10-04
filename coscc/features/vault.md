@@ -7,8 +7,7 @@ package `coscc/vault/`'s; the file has the tables' statements through `vault.TAB
 ## What it does
 
 - A person keeps a secret on `/vault`, in one workspace (`ws:<name>`) or for any workspace it is
-  granted to (`global:<name>`). The value goes in through a native HTML form (a `<textarea>`, no
-  Reflex state, no websocket) and one POST, `/api/vault/secrets`, which answers `303` back to the
+  granted to (`global:<name>`). The value goes in through a native HTML form (a `<textarea>`) and one POST, `/api/vault/secrets`, which answers `303` back to the
   page. A password box would not do: a browser strips its line breaks, and a key is many lines.
   The route turns the textarea's CRLF back into LF and drops trailing line breaks; a value of
   several lines keeps one. It is written encrypted with `age` and no route gives it back.

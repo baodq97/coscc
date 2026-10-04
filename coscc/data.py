@@ -788,7 +788,7 @@ class Data:
 
     # -- the person's decisions ---------------------------------------------
     #
-    # Only `Service` calls these, only from the Settings screen's handlers: no route writes here.
+    # No route writes here; the table goes with the decisions rebuild.
 
     _DECISION_FIELDS = (
         "kind",

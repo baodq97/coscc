@@ -26,7 +26,6 @@ from coscc.runlog import events, recovery
 from coscc.data import Data
 from coscc.runlog.journal import Journal, last_runs, timelines_of, totals_of
 from coscc.runner.step import Runner
-from coscc.state import _cell_label, _usd
 from tests.units.test_submit import submits as _submits
 
 UNIT = "0009_a-step-that-dies"
@@ -132,13 +131,11 @@ class EveryWayAStepDies(unittest.TestCase):
 
         rows = timelines_of(self.journal.records(self.d))[UNIT]
         last = last_runs(rows)["spec"]
-        said_cost = f"${end['cost_usd']:.2f}" if cost_known else "cost unknown"
+        self.assertEqual((last["outcome"], last["turns"]), (end["outcome"], TURNS))
+        totals = totals_of(rows)
         self.assertEqual(
-            _cell_label({"status": "not started", "last_run": last}),
-            (f"not started · {end['outcome']} · {TURNS} turns · {said_cost}", "amber"),
-        )
-        self.assertEqual(
-            _usd(totals_of(rows)), f"${end['cost_usd']:.2f}" if cost_known else "unknown"
+            (totals["cost_usd"], totals["unknown"]),
+            (end["cost_usd"], 0) if cost_known else (0.0, 1),
         )
 
         units = [{"name": UNIT, "next": "finished", "why": "finished"}]

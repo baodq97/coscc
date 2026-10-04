@@ -97,11 +97,13 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(body["sessions"]), 1)
         self.assertFalse(body["sessions"][0]["resumable"])
 
-    async def test_the_api_app_does_not_own_the_page(self):
-        """`/` must stay unclaimed here. Reflex mounts this app as the outer one, so a route
-        for `/` defined in FastAPI would win over the compiled-frontend mount and the
-        Python-built page would never render. 404 from the bare API app is correct."""
-        self.assertEqual((await self.client.get("/")).status_code, 404)
+    async def test_the_app_serves_the_studio_at_every_other_path_and_no_unknown_route(self):
+        """The studio answers last: a page path gets it (503 when unbuilt), an `/api/` one never."""
+        for path in ("/", "/unit/w/1"):
+            got = await self.client.get(path)
+            self.assertIn(got.status_code, (200, 503), path)
+            self.assertTrue(got.headers["content-type"].startswith("text/html"), path)
+        self.assertEqual((await self.client.get("/api/no-such")).status_code, 404)
 
 
 class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
@@ -1970,7 +1972,6 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         self,
     ):
         from coscc import units
-        from coscc.state import place
 
         idea = (
             await self.post(
@@ -2027,16 +2028,6 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((b["idea"], b["repo"]), (idea["ref"], "api"))
         self.assertEqual(b["problems"], [])
 
-        # Both ways, as the page writes the addresses.
-        ws, idea_id = idea["ref"].split("/ideas/")
-        self.assertEqual(
-            place.href(place.Place("idea", ws, idea=idea_id[:-3])),
-            "/idea?ws=proj&id=0001_one-feature",
-        )
-        self.assertEqual(
-            place.href(place.Place("unit", "api", back.json()["unit"])),
-            f"/unit?ws=api&id={back.json()['unit']}",
-        )
         page = await self.app.state.service.ideas.idea(self.cwd["proj"], "0001_one-feature")
         self.assertEqual(
             [(r["ref"], r["repo"], r["waits_for"]) for r in page["units"]],
