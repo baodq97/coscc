@@ -28,7 +28,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, NotRequired, TypedDict
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -47,6 +47,57 @@ from coscc.service.steps import NextStep
 from coscc.service.workspaces import WorkspaceList
 
 log = logging.getLogger(__name__)
+
+
+class AutopilotSettings(TypedDict):
+    cwd: str
+    autopilot: bool
+    autopilot_may_ship: bool
+    max_parallel: int
+    daily_cap_usd: float
+    # Why the autopilot cannot run on this bind, or empty.
+    refused_because: str
+
+
+class Build(TypedDict, total=False):
+    """A release or local build the updater knows of: what it is and whether it may be applied."""
+
+    state: str
+    version: str
+    commit: str
+    started: str
+    by: str
+    workspace: str
+    wheel: str
+    sha256: str
+    error: str | None
+    log: str
+
+
+class UpdateStatus(TypedDict):
+    version: str
+    build_id: str
+    commit: str
+    commit_label: str
+    install: str
+    shape: str
+    reason: str
+    # The updater's own state; absent where updates are not available (a checkout).
+    state: NotRequired[str]
+    window: NotRequired[bool]
+    pending: NotRequired[dict[str, Any] | None]
+    release: NotRequired[Build | None]
+    local: NotRequired[Build | None]
+    last: NotRequired[dict[str, Any] | None]
+    checked_at: NotRequired[str | None]
+    error: NotRequired[str | None]
+    warning: NotRequired[str]
+    log: NotRequired[str]
+    # The panel's sentences, and the buttons it may show: `build-local`, `apply-<channel>`, `cancel`.
+    line: str
+    local_line: str
+    actions: list[str]
+
 
 # A comment line this often keeps a quiet stream open through proxies and tells the page it is
 # still connected. Chosen, not measured.
@@ -152,7 +203,7 @@ async def set_agent_field(request: Request) -> Any:
     )
 
 
-@router.get("/api/settings/autopilot")
+@router.get("/api/settings/autopilot", response_model=AutopilotSettings)
 async def get_autopilot(request: Request) -> Any:
     """One workspace's autopilot switches, `max_parallel`, and the app's daily cap."""
     return _service(request).autopilot.settings(_cwd(request))
@@ -520,6 +571,15 @@ async def get_features(request: Request) -> Any:
     return {f.name: f.state for f in rows}
 
 
+@router.get("/api/features/shown")
+async def get_features_shown(request: Request) -> list[plugin.Shown]:
+    """Each feature as Settings shows it for one workspace: its state, whether `pilot` may be
+    chosen, the sentence, whether it is locked, its schedule and the hours offered."""
+    service = _service(request)
+    cwd = service.ws.check(_cwd(request))
+    return plugin.shown(request.app.state.ctx, features.FEATURES, cwd)
+
+
 @router.post("/api/features")
 async def set_feature(request: Request) -> Any:
     """`{cwd, name, state}` sets one feature's state for one workspace; the older `{on: bool}`
@@ -588,7 +648,7 @@ async def _update_body(request: Request) -> dict[str, str]:
     return {k: str(body.get(k, "") or "") for k in ("channel", "by")}
 
 
-@router.get("/api/update")
+@router.get("/api/update", response_model=UpdateStatus)
 async def get_update(request: Request) -> Any:
     """What runs, and what the panel shows; `build_id` is read here."""
     return _service(request).update_status()
@@ -711,7 +771,7 @@ def typescript() -> str:
     for path, ops in sorted(schema["paths"].items()):
         ok = ops.get("get", {}).get("responses", {}).get("200", {})
         answer = ok.get("content", {}).get("application/json", {}).get("schema", {})
-        if "$ref" in answer:
+        if "$ref" in answer or answer.get("type") == "array":
             gets.append(f"  {json.dumps(path)}: {_ts(answer)};")
     out += ["export type Get = {", *gets, "};", ""]
     return "\n".join(out)

@@ -9,6 +9,7 @@ import { UnitPage } from "./screens/UnitPage";
 import { Inbox } from "./screens/Inbox";
 import { Agents } from "./screens/Agents";
 import { System } from "./screens/System";
+import { MayDo } from "./screens/MayDo";
 import { Planned } from "./components/ui";
 
 export type Screen = {
@@ -88,11 +89,7 @@ export const SCREENS: Screen[] = [
     nav: "Team",
     icon: "book",
     keys: "G K",
-    render: () => (
-      <Planned icon="book" title="What Leif may do">
-        Leif's contract with you: what Leif decides alone, what it always asks, the spend cap and the autopilot.
-      </Planned>
-    ),
+    render: () => <MayDo />,
   },
   { path: "/system", title: "Design system", render: () => <System /> },
 ];
