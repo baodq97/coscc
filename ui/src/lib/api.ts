@@ -42,6 +42,21 @@ export function fill(path: string, query: Record<string, string>): { path: strin
   return { path: filled, rest };
 }
 
+/** Reads NDJSON line by line, a line split across chunks included. */
+export async function readLines(body: ReadableStream<Uint8Array>, on: (line: Record<string, unknown>) => void): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let rest = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const lines = (rest + decoder.decode(value, { stream: true })).split("\n");
+    rest = lines.pop() ?? "";
+    lines.filter(Boolean).forEach((l) => on(JSON.parse(l)));
+  }
+  if (rest.trim()) on(JSON.parse(rest));
+}
+
 export const api = {
   /** A `GET` route the app types (`Get`, made from its routes), so the answer is never guessed. */
   get: <P extends keyof Get>(path: P, query: Record<string, string> = {}) => {
@@ -50,6 +65,25 @@ export const api = {
     return call<Get[P]>("GET", qs ? `${url.path}?${qs}` : url.path);
   },
   post: <T>(path: string, body: unknown) => call<T>("POST", path, body),
+  /**
+   * Post and read the answer's NDJSON lines to the end, for a route whose stream does the work
+   * (a chat turn, a release): leaving early would stop it. An `error` line throws.
+   */
+  stream: async (path: string, body: unknown, on: (line: Record<string, unknown>) => void): Promise<void> => {
+    const res = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (res.status === 401) {
+      location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
+      throw new ApiError(401, "signed out");
+    }
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => null);
+      throw new ApiError(res.status, (data && data.error) || res.statusText);
+    }
+    await readLines(res.body, (l) => {
+      if (l.type === "error") throw new Error(String(l.error));
+      on(l);
+    });
+  },
   /**
    * Start something whose route streams until it ends (a step): wait only for the answer that
    * it began or was refused, then let go. Letting go stops nothing; stopping is its own route.

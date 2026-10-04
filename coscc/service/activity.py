@@ -45,7 +45,7 @@ class Shipped(TypedDict):
 
 class Target(TypedDict):
     """One target and where the window stands: `value` is the median over `shipped`, and
-    `over` names the shipped units past the target."""
+    `over` names the shipped units past the target, worst first."""
 
     name: str
     value: float | None
@@ -233,35 +233,38 @@ class Activity:
         }
         found = spend.model(recent, rounds)
         whole = {r["key"]: r["usd"] for r in spend.model(rows)["by_unit"]}
-        last: dict[str, str] = {}
+        # When the app merged it: its `ship` record. A unit merged by hand has none and is left out.
+        shipped_at: dict[str, str] = {}
         for r in rows:
-            if r.get("kind") == "end" and r.get("unit"):
-                last[str(r["unit"])] = max(last.get(str(r["unit"]), ""), str(r.get("at") or ""))
+            if r.get("kind") == "ship" and r.get("result") == "shipped" and r.get("unit"):
+                shipped_at[str(r["unit"])] = str(r.get("at") or "")
         for u in units:
             name = str(u["name"])
-            if u.get("why") in SHIPPED and last.get(name, "") >= since:
+            if u.get("why") in SHIPPED and shipped_at.get(name, "") >= since:
                 out["shipped"].append(
                     {
                         "unit": name,
                         "usd": whole.get(name),
                         "rounds": len(rounds[name]),
-                        "at": last[name],
+                        "at": shipped_at[name],
                     }
                 )
         out["shipped"].sort(key=lambda s: s["at"], reverse=True)
+        by_cost = sorted(out["shipped"], key=lambda s: -(s["usd"] or 0))
+        by_rounds = sorted(out["shipped"], key=lambda s: -s["rounds"])
         costs = [s["usd"] for s in out["shipped"] if s["usd"] is not None]
         out["targets"] = [
             {
                 "name": "cost",
                 "value": round(median(costs), 2) if costs else None,
                 "target": TARGET_USD,
-                "over": [s["unit"] for s in out["shipped"] if (s["usd"] or 0) > TARGET_USD],
+                "over": [s["unit"] for s in by_cost if (s["usd"] or 0) > TARGET_USD],
             },
             {
                 "name": "rounds",
                 "value": median([s["rounds"] for s in out["shipped"]]) if out["shipped"] else None,
                 "target": TARGET_ROUNDS,
-                "over": [s["unit"] for s in out["shipped"] if s["rounds"] > TARGET_ROUNDS],
+                "over": [s["unit"] for s in by_rounds if s["rounds"] > TARGET_ROUNDS],
             },
         ]
         out["by_day"] = [
