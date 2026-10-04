@@ -40,6 +40,8 @@ its import report. Then `AUTOPILOT_FIXTURE`:
                            one head by the autopilot (`make_autopilot_fixture`)
     0009_refused-impl      an accepted plan, whose `impl` the autopilot queued and
                            the gate refused with `gate-closed` (`seed_refusal`)
+    0010_outdated-spec     an accepted spec and plan and one decision recorded after
+                           them, so `/board` lists it to rewrite (`make_outdated_fixture`)
 
 Every file is written by hand, then goes into `cos.db` through the
 import and an ingest (`ingest_fixture`), since the board reads a unit from there.
@@ -415,6 +417,30 @@ def make_unread_fixture(api: httpx.Client, proj: Path) -> None:
         (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
 
 
+def make_outdated_fixture(api: httpx.Client, proj: Path) -> None:
+    """`proj/0010_outdated-spec`: an accepted spec and plan and one decision recorded after them,
+    so the board lists it to be written again. On no shortlist, so the autopilot leaves it."""
+    made = api.post(
+        "/api/units",
+        json={"cwd": str(proj), "slug": "outdated-spec", "brief": "The outdated spec fixture."},
+    )
+    if made.status_code != 200:
+        raise RuntimeError(f"could not make the unit outdated-spec: {made.text}")
+    head = "Intent: intent.md. Author: capture_screens. Status: accepted."
+    for file, text in {
+        "intent.md": INTENT.format(title="outdated spec", problem="Một quyết định đến sau spec."),
+        "spec.md": f"# Spec: outdated spec\n{head}\n\nR1. Một yêu cầu.\n",
+        "plan.md": f"# Plan: outdated spec\n{head}\n\n## Files that change\n- app.py\n",
+    }.items():
+        (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
+    decided = api.post(
+        "/api/decisions",
+        json={"cwd": str(proj), "unit": made.json()["unit"], "text": "Giữ tên cũ của route."},
+    )
+    if decided.status_code != 200:
+        raise RuntimeError(f"could not record the decision on outdated-spec: {decided.text}")
+
+
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     """One ended `plan` run of `0004_finished` in the running app's run log, keyed
     as `Service._journal_key` keys it. `at` is when it is written, so the page reads "just now"."""
@@ -628,7 +654,8 @@ def seed_pilot(data_dir: Path, proj: Path) -> None:
 def make_autopilot_fixture(api: httpx.Client, work: Path, data_dir: Path, proj: Path) -> None:
     """`AUTOPILOT_FIXTURE`, a shortlist of those two units alone, and two tries of
     `0008_draft-impl` on one head: each an `autopilot-pick` that went on with the draft and the
-    step it began, ended. Then the scan's proposals, the rest of what the Backlog shows."""
+    step it began, ended. Then the scan's proposals, the rest of what the Backlog shows, and
+    `0010_outdated-spec`."""
     from coscc.runlog.journal import Journal
 
     make_fixture(api, proj, AUTOPILOT_FIXTURE)
@@ -658,6 +685,7 @@ def make_autopilot_fixture(api: httpx.Client, work: Path, data_dir: Path, proj: 
             "by": "owner",
         }
     )
+    make_outdated_fixture(api, proj)
 
 
 def _tokens(total: int) -> dict[str, int]:
