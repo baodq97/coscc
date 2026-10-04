@@ -11,6 +11,7 @@ import { Agents } from "./screens/Agents";
 import { System } from "./screens/System";
 import { MayDo } from "./screens/MayDo";
 import { NewWork } from "./screens/NewWork";
+import { UpNext } from "./screens/UpNext";
 import { Decided } from "./screens/Decided";
 import { Planned } from "./components/ui";
 
@@ -56,6 +57,7 @@ export const SCREENS: Screen[] = [
     render: () => <Decided />,
   },
   { path: "/work", title: "All work", nav: "Work", icon: "board", keys: "G B", render: () => <Work /> },
+  { path: "/up-next", title: "Up next", nav: "Work", icon: "arrow", keys: "G U", render: () => <UpNext /> },
   { path: "/work/:ws", title: "Work", crumbs: (p) => ["Work", p.ws], render: (p) => <Work workspace={p.ws} /> },
   { path: "/unit/:ws/:n", title: "Unit", crumbs: (p) => ["Work", p.ws, p.n], render: (p) => <UnitPage workspace={p.ws} number={p.n} /> },
   {

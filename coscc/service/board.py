@@ -121,6 +121,59 @@ class Cards(TypedDict):
     running: list[Running]
 
 
+class EstimateBrief(TypedDict):
+    unit: str
+    value: int | None
+    effort: str | None
+    effort_source: str
+    similar: list[str]
+    basis: str
+    effort_basis: str
+    by: str
+    at: str
+
+
+class Shortlisted(TypedDict):
+    """One unit of the saved shortlist, in its order; `computed` is where the estimates and
+    relations would put it, `drift` when that differs."""
+
+    rank: int
+    unit: str
+    estimate: EstimateBrief | None
+    agent_differs: EstimateBrief | None
+    computed: int | None
+    drift: bool
+    warnings: list[str]
+
+
+class Suggested(TypedDict):
+    unit: str
+    computed: int
+    estimate: EstimateBrief
+    agent_differs: EstimateBrief | None
+
+
+class ShortlistSaved(TypedDict):
+    at: str | None
+    n: int
+    by: str
+    reason: str
+
+
+class UpNext(TypedDict):
+    """What the autopilot works on next in one workspace: the saved shortlist, every other
+    estimated unit in the computed order, and what has no estimate yet."""
+
+    shortlist: list[Shortlisted]
+    shortlist_record: ShortlistSaved | None
+    order: list[Suggested]
+    unestimated: list[str]
+    warnings: list[Any]
+    max: int
+    propose_warning: str
+    propose_consequence: str
+
+
 def card(u: Mapping[str, Any]) -> Card:
     """One unit of `Board.read` as a list shows it."""
     state, hold, pr, backlog_ = u["state"], u.get("hold"), u.get("pr"), u.get("backlog") or {}

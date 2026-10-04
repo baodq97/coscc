@@ -199,6 +199,18 @@ export type Detail = {
   "hold_moves": string[];
 };
 
+export type EstimateBrief = {
+  "unit": string;
+  "value": number | null;
+  "effort": string | null;
+  "effort_source": string;
+  "similar": string[];
+  "basis": string;
+  "effort_basis": string;
+  "by": string;
+  "at": string;
+};
+
 export type EventsPage = {
   "run": string;
   "unit": string;
@@ -344,6 +356,23 @@ export type Secrets = {
   "globals": Meta[];
 };
 
+export type ShortlistSaved = {
+  "at": string | null;
+  "n": number;
+  "by": string;
+  "reason": string;
+};
+
+export type Shortlisted = {
+  "rank": number;
+  "unit": string;
+  "estimate": EstimateBrief | null;
+  "agent_differs": EstimateBrief | null;
+  "computed": number | null;
+  "drift": boolean;
+  "warnings": string[];
+};
+
 export type Shown = {
   "name": string;
   "state": "off" | "pilot" | "on";
@@ -402,6 +431,13 @@ export type StepEvent = {
   "truncated_fields"?: string[];
 };
 
+export type Suggested = {
+  "unit": string;
+  "computed": number;
+  "estimate": EstimateBrief;
+  "agent_differs": EstimateBrief | null;
+};
+
 export type UnitRun = {
   "stage": string;
   "agent": string;
@@ -414,6 +450,17 @@ export type UnitRun = {
   "cost_usd": number | null;
   "turns": number | null;
   "run": string;
+};
+
+export type UpNext = {
+  "shortlist": Shortlisted[];
+  "shortlist_record": ShortlistSaved | null;
+  "order": Suggested[];
+  "unestimated": string[];
+  "warnings": unknown[];
+  "max": number;
+  "propose_warning": string;
+  "propose_consequence": string;
 };
 
 export type UpdateStatus = {
@@ -466,6 +513,7 @@ export type Worktree = {
 
 export type Get = {
   "/api/agents": AgentPage;
+  "/api/backlog": UpNext;
   "/api/codegraph/report": Report;
   "/api/decided": Decided[];
   "/api/decisions": DecisionTable;

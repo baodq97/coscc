@@ -5,7 +5,8 @@ import { unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { fill } from "./api";
 import { slugOf } from "../screens/NewWork";
-import { merged, toolSummary } from "../screens/RunLog";
+import { inUnit, merged, toolSummary } from "../screens/RunLog";
+import { moved } from "../screens/UpNext";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -105,8 +106,22 @@ describe("run log", () => {
     expect(toolSummary({ command: "npm test\nmore", description: "x" })).toBe("npm test");
     expect(toolSummary({ file_path: "a.py", old_string: "x" })).toBe("a.py");
   });
+  it("reads a path into the unit's worktree from that worktree", () => {
+    const unit = "0162_stale";
+    expect(inUnit(`Read /home/x/.cos/worktrees/c-1/${unit}/coscc/a.py`, unit)).toBe("Read coscc/a.py");
+    expect(inUnit(`grep -n x '/w/${unit}/b.py' /w/${unit}/c.py`, unit)).toBe("grep -n x 'b.py' c.py");
+    expect(inUnit("/etc/hosts", unit)).toBe("/etc/hosts");
+  });
   it("adds events in order, none twice", () => {
     const e = (seq: number) => ({ run: "r", seq, at: 0, kind: "text" });
     expect(merged([e(1), e(3)], [e(2), e(3)]).map((x) => x.seq)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("up next", () => {
+  it("moves a unit within the shortlist and never out of it", () => {
+    expect(moved(["a", "b", "c"], "c", -1)).toEqual(["a", "c", "b"]);
+    expect(moved(["a", "b", "c"], "a", -1)).toEqual(["a", "b", "c"]);
+    expect(moved(["a", "b", "c"], "a", 1)).toEqual(["b", "a", "c"]);
   });
 });
