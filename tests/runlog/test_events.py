@@ -5,6 +5,7 @@ here as a kind that fell into `system` (`plan.md` Risk 7)."""
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from unittest import mock
@@ -120,6 +121,39 @@ class WhatIsRecorded(unittest.TestCase):
         )
         self.assertEqual(rec.lost, 0)
 
+    def test_config_is_the_first_event_with_the_eight_fields_as_handed_in(self):
+        rec = recorder()
+        rec.config(
+            model="m",
+            model_source="override",
+            effort=None,
+            effort_source="none",
+            max_turns=30,
+            max_turns_source="override",
+            max_budget_usd=None,
+            max_budget_source="none",
+        )
+        rec.message(assistant("m1", TextBlock("hello")))
+        rec.message(result())
+        [config, *rest] = rec.events
+        self.assertEqual((config["kind"], config["seq"]), ("config", 1))
+        self.assertEqual(
+            {k: v for k, v in config.items() if k not in events.COMMON},
+            {
+                "model": "m",
+                "model_source": "override",
+                "effort": None,
+                "effort_source": "none",
+                "max_turns": 30,
+                "max_turns_source": "override",
+                "max_budget_usd": None,
+                "max_budget_source": "none",
+            },
+        )
+        self.assertEqual([e["kind"] for e in rest], ["turn", "text", "result"])
+        self.assertNotIn("config", [e["kind"] for e in rest])
+        self.assertEqual(rec.lost, 0)
+
     def test_a_long_field_is_cut_and_says_so(self):
         rec = recorder()
         rec.message(assistant("m", TextBlock("a" * 70_000)))
@@ -192,6 +226,34 @@ class TheDisk(unittest.IsolatedAsyncioTestCase):
         stored, _ = self.data.step_events_page("r1", None, 100)
         self.assertEqual([e["seq"] for e in stored], list(range(1, 12)))
         self.assertEqual(stored[-1]["kind"], "end")
+
+    async def test_config_is_stored_before_every_sdk_event(self):
+        rec = recorder(self.data)
+        rec.start()
+        rec.config(
+            model="m",
+            model_source="default",
+            effort="high",
+            effort_source="override",
+            max_turns=120,
+            max_turns_source="default",
+            max_budget_usd=8.0,
+            max_budget_source="default",
+        )
+        rec.message(assistant("m1", TextBlock("x"), ToolUseBlock("t1", "Bash", {"command": "ls"})))
+        rec.message(result())
+        await rec.close("done", "")
+        stored, _ = self.data.step_events_page("r1", None, 100)
+        self.assertEqual(stored[0]["kind"], "config")
+        self.assertEqual([e["kind"] for e in stored].count("config"), 1)
+        self.assertEqual(
+            [e["kind"] for e in stored],
+            ["config", "turn", "text", "tool_use", "result", "end"],
+        )
+        self.assertEqual(
+            (stored[0]["max_turns"], stored[0]["max_budget_usd"], stored[0]["effort"]),
+            (120, 8.0, "high"),
+        )
 
     async def test_a_busy_first_write_is_kept_for_the_next(self):
         rec = recorder(self.data)
@@ -279,6 +341,24 @@ class Collapsing(unittest.TestCase):
         self.assertIn("3 turns", paid["label"])
         self.assertIn("$0.5000", paid["label"])
         self.assertIn("7 tokens", paid["label"])
+
+    def test_a_config_event_shows_its_fields_as_its_body(self):
+        view = events.collapse(
+            {
+                "run": "r1",
+                "seq": 1,
+                "at": 0,
+                "kind": "config",
+                "model": "m",
+                "max_turns": 30,
+                "max_turns_source": "override",
+            }
+        )
+        self.assertEqual(view["label"], "config")
+        self.assertEqual(
+            json.loads(view["body"]),
+            {"model": "m", "max_turns": 30, "max_turns_source": "override"},
+        )
 
     def test_a_persisted_output_is_named_and_not_read(self):
         view = events.collapse(

@@ -29,7 +29,13 @@ from coscc.runlog.journal import BadRecord, Journal
 from coscc.data import Busy
 from coscc.agent.policy import grant_for, protected_paths
 from coscc.runner.reply import RunError
-from coscc.runner.step import Runner, check_started_by
+from coscc.runner.step import (
+    Runner,
+    check_started_by,
+    config_sources,
+    tell_config,
+    with_ceilings,
+)
 from coscc.runner.prompt import answers_section
 from coscc.runner.attempt import describe_attempt
 from coscc.agent import steps as steps_mod
@@ -954,14 +960,33 @@ class Steps:
         # The `integrate` row, read once for the prompt, the records and
         # the session's commit attribution.
         agent = self.agents.agent("integrate")
-        # Gebo runs no `Runner`, so its grant takes the protected paths here.
-        grant = replace(
-            grant_for("integrate"),
-            protected=protected_paths(
-                str(Data(self.config.data_dir).root), self.config.config_home, self.config.home
+        # Gebo runs no `Runner`, so its grant takes the protected paths and its two ceilings here,
+        # the ceilings by the function the runner asks: one taken up again keeps its owner's.
+        overrides, _ = self.agents.config_overrides()
+        grant, ceilings = with_ceilings(
+            replace(
+                grant_for("integrate"),
+                protected=protected_paths(
+                    str(Data(self.config.data_dir).root), self.config.config_home, self.config.home
+                ),
             ),
+            "integrate",
+            None,
+            overrides["turns"],
+            overrides["budget"],
+            was,
         )
         name = agent["name"] if agent is not None else ""
+        # This session's own run: what is stored of it is its `config` event and its `end`, since
+        # Gebo's messages are not recorded.
+        recorder = events.Recorder(
+            uuid.uuid4().hex,
+            Data(self.config.data_dir),
+            str(journal.working_dir),
+            key,
+            unit,
+            "integrate",
+        )
         start_at = was.get("start_at")
         if resume is None:
             assert directory is not None
@@ -992,7 +1017,7 @@ class Steps:
                 completion=completion,
                 agent=agent,
             )
-            model, model_source = self.models.model_for("impl")
+            model, model_source, effort, effort_source = self.models.config_for("integrate")
             app = self.app_identity()
             try:
                 start_at = journal.started(
@@ -1007,6 +1032,9 @@ class Steps:
                     head=head_before,
                     model=model,
                     model_source=model_source,
+                    effort=effort,
+                    effort_source=effort_source,
+                    run=recorder.run,
                     pointed=list(own),
                     app_version=app["version"],
                     app_commit=app["commit"],
@@ -1018,6 +1046,10 @@ class Steps:
                 pass
         else:
             prompt, model = str(resume.get("message") or ""), resume.get("model")
+            effort = was.get("effort")
+            # Where they came from is in the owner.
+            model_source = effort_source = ""
+        sources = config_sources(ceilings, model_source, effort_source, was)
         # All `resume_integration` needs to take this session up again, no git read.
         owner = {
             "kind": "integrate",
@@ -1028,6 +1060,10 @@ class Steps:
             "start_at": start_at,
             "max_turns": grant.max_turns,
             "max_budget_usd": grant.max_budget_usd,
+            "effort": effort,
+            # Where each came from, for the `config` of the segment that takes it up.
+            **sources,
+            "run": recorder.run,
             "pr": pr,
             "tree": str(tree),
             "branch": branch,
@@ -1042,6 +1078,7 @@ class Steps:
         failure = ""
         # What Gebo says needs a person is the object it hands back, not its words.
         collector = submit_mod.Collector("integrate")
+        recorder.start()
         try:
             async for kind, payload in integrate.run_gebo(
                 self.sessions,
@@ -1052,22 +1089,31 @@ class Steps:
                 read_also=integrate.read_paths(units_root, unit, rel),
                 lease=(branch, head_before),
                 model=model,
+                effort=effort,
                 settings=agents.settings_json(agent) if agent is not None else None,
                 owner=owner,
                 resume=resume,
                 channel=collector,
+                on_open=functools.partial(tell_config, recorder, model, effort, sources),
             ):
                 if kind == "chunk":
                     yield ("chunk", payload)
                 else:
                     end = payload
-        except Suspended:
-            # Paused by an update, with its `suspend` row. No `end` and no record.
+        except Suspended, asyncio.CancelledError:
+            # Paused by an update, with its `suspend` row, or the app going down. No `end` and no
+            # record; what can be written of the run is, its row stays open and the next start
+            # closes it, the owner naming the run.
+            await recorder.abandon()
             raise
         except Exception as e:
             # Recorded, never swallowed silently.
             log.exception("the integration session of %s failed", unit)
             failure = f"the session failed: {e}"
+        run_fields = {
+            "run": recorder.run,
+            "events_lost": await recorder.close("failed" if failure else "done", failure),
+        }
         details = [failure] if failure else []
         try:
             if await gitops.rebase_in_progress(tree):
@@ -1124,6 +1170,7 @@ class Steps:
                 denied=end.get("denied"),
                 background=end.get("background", 0),
                 models_used=end.get("models_used") or None,
+                **run_fields,
                 **(end.get("cost") or {}),
             )
         except BadRecord, Busy:

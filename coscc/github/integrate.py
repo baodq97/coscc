@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal, get_args
 
@@ -728,13 +729,21 @@ async def run_gebo(
     read_also: tuple[str, ...],
     lease: tuple[str, str],
     model: str | None,
+    effort: str | None = None,
     settings: str | None = None,
     owner: dict[str, Any] | None = None,
     resume: dict[str, Any] | None = None,
     channel: Any = None,
+    on_open: Callable[[int, float | None], None] | None = None,
 ) -> AsyncIterator[tuple[str, Any]]:
     """One Gebo session, streamed. Not `Runner.run`: that requires an artifact written, and Gebo
     writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`.
+
+    `model` and `effort` are passed to the session only when named. The `grant`'s two ceilings are
+    the ones the caller resolved (`models.ceilings`); a `resume` goes on under what is left of them.
+    `on_open` is told those two, the turns and the budget (`None` for none) the session is handed,
+    just before it opens and so before any of its events; a session a used-up ceiling never opens
+    does not call it.
 
     `settings` is the agent's commit attribution, beside the preset every Gebo session has; `None`
     passes nothing.
@@ -752,6 +761,8 @@ async def run_gebo(
         kwargs["workspace"] = workspace
     if model is not None:
         kwargs["model"] = model
+    if effort is not None:
+        kwargs["effort"] = effort
     if settings is not None:
         kwargs["settings"] = settings
     if owner is not None:
@@ -776,6 +787,8 @@ async def run_gebo(
             )
             return
         kwargs["resume_at"] = resume.get("safe_uuid")
+    if on_open is not None:
+        on_open(turns, budget)
     async for kind, payload in sessions.stream(
         tree,
         prompt,

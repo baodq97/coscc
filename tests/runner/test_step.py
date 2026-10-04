@@ -9,7 +9,9 @@ ends is in `tests/runner/test_step_ending.py`."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1368,6 +1370,245 @@ class AnImplRunsUnderTheCeilingsOfItsLabel(unittest.TestCase):
                 probe, start = self.run_impl(d, label=label)
                 self.assertEqual((probe.max_turns, probe.budget), (120, 8.0))
                 self.assertEqual(start["max_turns"], probe.max_turns)
+
+
+class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
+    """A ceiling stored in `cos.db` reaches the session of any stage, and the step's first event
+    says what it was handed and where each value came from."""
+
+    CONFIG_FIELDS = {
+        "model",
+        "model_source",
+        "effort",
+        "effort_source",
+        "max_turns",
+        "max_turns_source",
+        "max_budget_usd",
+        "max_budget_source",
+    }
+
+    def run_spec(self, d, prefs=None, break_store=False, **kw):
+        from coscc.agent import steps
+        from coscc.config import Config
+        from coscc.data import Data
+        from coscc.runlog import events
+
+        config = Config(data_dir=str(Path(d) / "data"), config_home=str(Path(d) / "cfg"))
+        for key, value in (prefs or {}).items():
+            Data(config.data_dir).set_pref(key, value)
+
+        class Probe:
+            def __init__(self):
+                self.max_turns = self.budget = None
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                self.max_turns, self.budget = max_turns, kw.get("max_budget_usd")
+                yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                await _submits(kw)
+                yield ("done", {"session_id": "s-c", "cost": {}})
+
+        Probe.config = config
+        probe = Probe()
+        directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
+        running = steps.Running(d, UNIT, "spec", "")
+        running.handle.recorder = events.Recorder("r-1", Data(config.data_dir), d, d, UNIT, "spec")
+
+        async def go():
+            return [
+                ev
+                async for ev in Runner(sessions=probe, journal=Journal(d, d)).run(
+                    workspace=d,
+                    directory=directory,
+                    journal_key=d,
+                    unit=UNIT,
+                    stage="spec",
+                    artifact="spec.md",
+                    stages=STAGES,
+                    mode="manual",
+                    running=running,
+                    **kw,
+                )
+            ]
+
+        unreadable = (
+            mock.patch.object(Data, "pref_rows", side_effect=sqlite3.OperationalError("locked"))
+            if break_store
+            else contextlib.nullcontext()
+        )
+        with unreadable:
+            final = asyncio.run(go())[-1][1]
+        stored, _ = Data(config.data_dir).step_events_page("r-1", None, 100)
+        return probe, final, stored
+
+    def test_an_overridden_turn_ceiling_is_what_the_session_gets_and_what_config_says(self):
+        with tempfile.TemporaryDirectory() as d:
+            probe, final, stored = self.run_spec(
+                d,
+                {"turns:spec": 30},
+                model="m",
+                model_source="override",
+                effort="high",
+                effort_source="default",
+            )
+        self.assertEqual(final["outcome"], "done", final)
+        self.assertEqual(probe.max_turns, 30)
+        config = next(e for e in stored if e["kind"] == "config")
+        self.assertEqual(config["max_turns"], 30)
+        self.assertEqual(config["max_turns_source"], "override")
+        # The first event of the run, before anything the session said.
+        self.assertEqual((stored[0]["kind"], stored[0]["seq"]), ("config", 1))
+        self.assertEqual(set(config) - {"run", "seq", "at", "kind"}, self.CONFIG_FIELDS)
+        self.assertEqual(
+            {k: config[k] for k in self.CONFIG_FIELDS},
+            {
+                "model": "m",
+                "model_source": "override",
+                "effort": "high",
+                "effort_source": "default",
+                "max_turns": 30,
+                "max_turns_source": "override",
+                "max_budget_usd": grant_for("spec").max_budget_usd,
+                "max_budget_source": "default",
+            },
+        )
+
+    def test_an_overridden_budget_reaches_the_session(self):
+        with tempfile.TemporaryDirectory() as d:
+            probe, _, stored = self.run_spec(d, {"budget:spec": 2.5})
+        self.assertEqual(probe.budget, 2.5)
+        self.assertEqual(
+            (stored[0]["max_budget_usd"], stored[0]["max_budget_source"]), (2.5, "override")
+        )
+        self.assertEqual(stored[0]["max_turns_source"], "default")
+
+    def test_the_floor_of_a_step_that_submits_still_applies_to_an_override(self):
+        with tempfile.TemporaryDirectory() as d:
+            probe, _, stored = self.run_spec(d, {"turns:spec": 1})
+        self.assertEqual(probe.max_turns, policy.SUBMIT_TURNS)
+        self.assertEqual(
+            (stored[0]["max_turns"], stored[0]["max_turns_source"]),
+            (policy.SUBMIT_TURNS, "override"),
+        )
+
+    def test_the_other_rows_overrides_change_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            probe, _, stored = self.run_spec(d, {"turns:impl": 30, "turns:impl:novel": 40})
+        self.assertEqual(probe.max_turns, grant_for("spec").max_turns)
+        self.assertEqual(stored[0]["max_turns_source"], "default")
+
+    def test_a_bad_value_is_skipped_and_the_step_starts_on_the_default(self):
+        for bad in ("many", 100000, 0, 2.5, None):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as d:
+                probe, final, stored = self.run_spec(d, {"turns:spec": bad})
+                self.assertEqual(final["outcome"], "done", final)
+                self.assertEqual(probe.max_turns, grant_for("spec").max_turns)
+                self.assertEqual(stored[0]["max_turns_source"], "default")
+
+    def test_a_store_that_cannot_be_read_is_no_override(self):
+        with tempfile.TemporaryDirectory() as d:
+            probe, final, stored = self.run_spec(d, {"turns:spec": 30}, break_store=True)
+        self.assertEqual(final["outcome"], "done", final)
+        self.assertEqual(probe.max_turns, grant_for("spec").max_turns)
+        self.assertEqual(stored[0]["max_turns_source"], "default")
+
+    def test_with_no_config_the_ceilings_are_the_grants(self):
+        with tempfile.TemporaryDirectory() as d:
+            runner = Runner(sessions=object(), journal=None)
+            grant, ceilings = runner._configured(grant_for("spec"), "spec", None, d, {})
+        self.assertEqual(
+            (grant.max_turns, grant.max_budget_usd),
+            (grant_for("spec").max_turns, grant_for("spec").max_budget_usd),
+        )
+        self.assertEqual(
+            (ceilings["max_turns"], ceilings["max_budget_usd"]),
+            (grant.max_turns, grant.max_budget_usd),
+        )
+
+
+class AStepTakenUpAgainWritesItsConfig(unittest.TestCase):
+    """The new segment's `config` is what its owner kept, less what the first segment used."""
+
+    def run_plan(self, d, owner):
+        from coscc.agent import steps
+        from coscc.data import Data
+        from coscc.runlog import events
+
+        directory = make_unit(
+            Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS"
+        )
+        sessions = AStepAnUpdatePaused.GoesOn(rest=AStepAnUpdatePaused.PLAN)
+        running = steps.Running(d, UNIT, "plan", "")
+        running.handle.recorder = events.Recorder("r-2", Data(d), d, d, UNIT, "plan")
+        resume = {
+            "suspend_id": "p1",
+            "session_id": "s-1",
+            "safe_uuid": "u9",
+            "message": "MSG",
+            "pieces": [],
+            "api_calls": 3,
+            "spent_usd": 0.5,
+            "owner": {"kind": "step", "start_at": "t0", "head": "", **owner},
+        }
+
+        async def go():
+            async for _ in Runner(sessions, Journal(d, d)).run(
+                workspace=d,
+                directory=directory,
+                journal_key=d,
+                unit=UNIT,
+                stage="plan",
+                artifact="plan.md",
+                stages=STAGES,
+                mode="manual",
+                running=running,
+                model="m",
+                effort="high",
+                resume=resume,
+            ):
+                pass
+
+        asyncio.run(go())
+        return sessions.calls[0], Data(d).step_events_page("r-2", None, 100)[0]
+
+    def test_it_says_what_the_owner_kept_and_what_was_left_of_the_ceilings(self):
+        owner = {
+            "max_turns": 50,
+            "max_budget_usd": 3.0,
+            "max_turns_source": "override",
+            "max_budget_source": "default",
+            "model_source": "override",
+            "effort_source": "default",
+        }
+        with tempfile.TemporaryDirectory() as d:
+            call, stored = self.run_plan(d, owner)
+        self.assertEqual((call["max_turns"], call["max_budget_usd"]), (47, 2.5))
+        self.assertEqual(stored[0]["kind"], "config")
+        self.assertEqual(
+            {k: v for k, v in stored[0].items() if k not in ("run", "seq", "at", "kind")},
+            {
+                "model": "m",
+                "model_source": "override",
+                "effort": "high",
+                "effort_source": "default",
+                "max_turns": 47,
+                "max_turns_source": "override",
+                "max_budget_usd": 2.5,
+                "max_budget_source": "default",
+            },
+        )
+        # And it keeps them for the next pause.
+        self.assertEqual(
+            (call["owner"]["max_turns"], call["owner"]["max_turns_source"]), (50, "override")
+        )
+
+    def test_an_owner_with_no_ceilings_leaves_them_as_resolved_now(self):
+        with tempfile.TemporaryDirectory() as d:
+            call, stored = self.run_plan(d, {})
+        self.assertEqual(call["max_turns"], grant_for("plan").max_turns - 3)
+        self.assertEqual(
+            (stored[0]["kind"], stored[0]["max_turns_source"], stored[0]["model_source"]),
+            ("config", "default", ""),
+        )
 
 
 class AWorkspacesListsReachTheImplGrant(unittest.TestCase):

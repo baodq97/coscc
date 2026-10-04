@@ -17,7 +17,9 @@ import inspect
 import json
 import logging
 import os
+import sqlite3
 import uuid
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -25,7 +27,7 @@ from typing import Any, AsyncIterator
 import claude_agent_sdk as sdk
 
 from coscc import hooks as hooks_mod
-from coscc.agent import agents, instructions, modeltrial, steps, transcript
+from coscc.agent import agents, instructions, models, modeltrial, steps, transcript
 from coscc.agent import sessions as sessions_mod
 from coscc.agent.helpers import DEFINITIONS, PROTOCOL, Helpers
 from coscc.runlog.journal import Journal, Outcome
@@ -43,7 +45,7 @@ from coscc.agent.policy import (
     protected_paths,
     with_lists,
 )
-from coscc.data import Data
+from coscc.data import Data, Unusable
 from coscc.units import guards
 from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
@@ -534,6 +536,93 @@ def _channel_for(
     )
 
 
+def _ceiling_overrides(config: Any) -> tuple[dict[str, models.Value], dict[str, models.Value]]:
+    """`(turns, budget)` overrides stored in `cos.db`, by row. A store that cannot be read is no
+    override: a step never fails to start for it. A value out of bounds is skipped."""
+    try:
+        data = Data(config.data_dir)
+        turns = models.overrides_from(data.pref_rows(models.TURNS_PREFIX), models.TURNS_PREFIX)
+        budget = models.overrides_from(data.pref_rows(models.BUDGET_PREFIX), models.BUDGET_PREFIX)
+    except Unusable, sqlite3.Error, OSError:
+        log.exception("the ceiling overrides could not be read, so the defaults apply")
+        return {}, {}
+    return turns[0], budget[0]
+
+
+def with_ceilings(
+    grant: Grant,
+    stage: str,
+    label: str | None,
+    turns: Mapping[str, models.Value],
+    budget: Mapping[str, models.Value],
+    was: Mapping[str, Any],
+) -> tuple[Grant, models.Ceilings]:
+    """`grant` with its two ceilings as `models.ceilings` resolves them from the stored overrides,
+    and those ceilings with where each came from. Gebo's grant is given the same way.
+
+    `was` is the owner of a step taken up again (`{}` for a first segment): it goes on under what
+    its first segment ran under, as its owner kept it. An owner with none (an older build's)
+    leaves them as resolved now."""
+    ceilings = models.ceilings(stage, label, turns, budget)
+    if was.get("max_turns") is not None:
+        ceilings = models.Ceilings(
+            max_turns=int(was["max_turns"]),
+            max_turns_source=str(was.get("max_turns_source") or ""),
+            max_budget_usd=float(was.get("max_budget_usd") or 0.0) or None,
+            max_budget_source=str(was.get("max_budget_source") or ""),
+        )
+    return (
+        replace(
+            grant,
+            max_turns=int(ceilings["max_turns"] or grant.max_turns),
+            max_budget_usd=ceilings["max_budget_usd"] or 0.0,
+        ),
+        ceilings,
+    )
+
+
+def config_sources(
+    ceilings: models.Ceilings,
+    model_source: str,
+    effort_source: str,
+    was: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    """Where the model, the effort and the two ceilings came from, as the owner keeps them for the
+    `config` of a segment that takes the step up again. A source not named is the owner's (`was`)."""
+    kept = was or {}
+    return {
+        "model_source": model_source or str(kept.get("model_source") or ""),
+        "effort_source": effort_source or str(kept.get("effort_source") or ""),
+        "max_turns_source": ceilings["max_turns_source"],
+        "max_budget_source": ceilings["max_budget_source"],
+    }
+
+
+def tell_config(
+    recorder: Any,
+    model: str | None,
+    effort: str | None,
+    sources: Mapping[str, str],
+    turns: int,
+    budget: float | None,
+) -> None:
+    """The recorder's `config` event: the values the session about to open is handed, with where
+    each came from (`config_sources`). Nothing here may change the step."""
+    try:
+        recorder.config(
+            model=model,
+            model_source=sources["model_source"],
+            effort=effort,
+            effort_source=sources["effort_source"],
+            max_turns=turns,
+            max_turns_source=sources["max_turns_source"],
+            max_budget_usd=budget,
+            max_budget_source=sources["max_budget_source"],
+        )
+    except Exception:
+        log.exception("the config of a session was not recorded")
+
+
 def _owner(
     journal_key: str,
     unit: str,
@@ -548,9 +637,11 @@ def _owner(
     recorder: Any,
     resume: dict[str, Any] | None,
     owner_extra: dict[str, Any] | None,
+    sources: dict[str, str],
 ) -> dict[str, Any]:
     """Whose session this is, for a `suspend` row, and all an update's next start needs to take it
-    up again without reading git."""
+    up again without reading git. `sources` is where the model, the effort and the two ceilings
+    came from, for the `config` of the segment that takes it up."""
     segments = list(was.get("segments") or [])
     if resume is not None:
         # This segment, filled in when its first `done` comes.
@@ -571,6 +662,7 @@ def _owner(
         "head": head,
         "label": label,
         "effort": effort,
+        **sources,
         "artifact": artifact,
         "segments": segments,
         **({"run": recorder.run} if recorder is not None else {}),
@@ -1296,20 +1388,26 @@ class Runner:
         # `start` without them.
         self.app = app
 
-    def _configured(self, grant: Grant, stage: str, journal_key: str) -> Grant:
-        """`grant` with this machine's protected paths and, for `impl`, the workspace's `allow`
-        and `block` from `cos.db`, before `Facts.commands` is read from it. A stand-in `Sessions`
-        with no config (a test's) leaves the grant as it is."""
+    def _configured(
+        self, grant: Grant, stage: str, label: str | None, journal_key: str, was: Mapping[str, Any]
+    ) -> tuple[Grant, models.Ceilings]:
+        """`grant` with its two ceilings as `with_ceilings` resolves them (an override of
+        `turns:<row>` and `budget:<row>` from `cos.db`, else the grant's own) for every stage; this
+        machine's protected paths and, for `impl`, the workspace's `allow` and `block`, before
+        `Facts.commands` is read from it; and the ceilings with their sources. A stand-in `Sessions`
+        with no config (a test's) has no overrides and leaves the rest of the grant as it is."""
         config = getattr(self.sessions, "config", None)
+        turns, budget = _ceiling_overrides(config) if config is not None else ({}, {})
+        grant, ceilings = with_ceilings(grant, stage, label, turns, budget, was)
         if config is None:
-            return grant
+            return grant, ceilings
         data = Data(config.data_dir)
         grant = replace(
             grant, protected=protected_paths(str(data.root), config.config_home, config.home)
         )
         if stage != LISTED_STAGE:
-            return grant
-        return with_lists(grant, *lists_of(data.pref(GRANTS_PREF, {}), journal_key))
+            return grant, ceilings
+        return with_lists(grant, *lists_of(data.pref(GRANTS_PREF, {}), journal_key)), ceilings
 
     def _scratch(self, workspace: str, unit: str) -> tuple[Path, Path] | None:
         """The unit's `(ram, disk)` scratch directories, made if missing, or `None` for a stand-in
@@ -1487,12 +1585,17 @@ class Runner:
         reply again from those pieces and takes up that one turn. `owner_extra` is what `Service`
         adds to the owner a `suspend` row carries.
         """
-        grant = self._configured(
-            _admitted(started_by, stage, label, directory, workspace, unit), stage, journal_key
+        was = dict((resume or {}).get("owner") or {})
+        # A step taken up again goes on under the ceilings its owner kept.
+        grant, ceilings = self._configured(
+            _admitted(started_by, stage, label, directory, workspace, unit),
+            stage,
+            label,
+            journal_key,
+            was,
         )
         directory = Path(directory)
         cwd = cwd or workspace
-        was = dict((resume or {}).get("owner") or {})
         turn_kind = str(was.get("kind") or "step") if resume is not None else ""
         recorder, facts, blocks, ledger = await self._features(
             grant,
@@ -1588,6 +1691,7 @@ class Runner:
             recorder,
             resume,
             owner_extra,
+            config_sources(ceilings, model_source, effort_source, was),
         )
         # A routine `impl` in the model trial has its `start` told the model the session's `init`
         # named, once, when it comes, or `never-started` at the end.
@@ -1927,7 +2031,14 @@ class Runner:
     ) -> AsyncIterator[tuple[str, Any]]:
         """The main reply's stream. An `opening` or `closing` turn taken up again has its main reply
         already. The unit's `(ram, disk)` scratch directories are made before the session opens:
-        the gate lets the step write below them and the session's environment names them."""
+        the gate lets the step write below them and the session's environment names them.
+
+        The recorder is handed the segment's `config` first, so it comes before any SDK event: the
+        model and effort as `kw` has them, the two ceilings as the session gets them, and the
+        sources the owner keeps."""
+        recorder = getattr(running.handle, "recorder", None) if running is not None else None
+        if recorder is not None:
+            tell_config(recorder, kw.get("model"), kw.get("effort"), owner, turns_left, budget_left)
         if turn_kind in ("opening", "closing"):
             return _nothing()
         places = self._scratch(workspace, unit)
