@@ -52,7 +52,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
           {running ? (
             <Chip square tone="accent">
               <Dot tone="live" />
-              {names[running.stage] ?? running.agent} · {(STAGE_LABEL[running.stage] ?? running.stage).toLowerCase()}
+              {[names[running.stage] ?? running.agent, STAGE_LABEL[running.stage] ?? running.stage].filter(Boolean).join(" · ")}
             </Chip>
           ) : (
             <Chip square tone={state.group === "Needs you" ? "amber" : shipped ? "accent" : ""}>{state.label}</Chip>
@@ -103,11 +103,13 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         <Prop k="Project">{workspace}</Prop>
         <Prop k="Type">{placed.type || "—"}</Prop>
         <Prop k="Agent">
-          {running ? (
+          {running && (names[running.stage] ?? running.agent) ? (
             <>
               <AgentAvatar stage={running.stage} />
               {names[running.stage] ?? running.agent}
             </>
+          ) : running ? (
+            <span className="faint">the app itself</span>
           ) : (
             <span className="faint">none working</span>
           )}
@@ -141,7 +143,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         ) : (
           <div className="faint" style={{ fontSize: 12.5 }}>Opens after build.</div>
         )}
-        {d?.worktree && (
+        {d?.worktree?.branch && (
           <>
             <h3>Branch</h3>
             <div className="faint" style={{ fontSize: 12.5, wordBreak: "break-all" }}>{d.worktree.branch}</div>
@@ -193,7 +195,8 @@ export function Track({ stages, now, done, waiting }: { stages: StageView[]; now
   return (
     <div className="track">
       {TRACK.map((s, i) => {
-        const finished = done || ["accepted", "done", "skipped"].includes(status[s] ?? "") || (at >= 0 && i < at);
+        // Where the unit is now wins over a stage's status: a stage sent back makes later ones not done.
+        const finished = done || (at >= 0 ? i < at : ["accepted", "done", "skipped"].includes(status[s] ?? ""));
         const current = !done && i === at;
         const group = GROUP[s] !== last ? GROUP[s] : "";
         last = GROUP[s];

@@ -568,7 +568,11 @@ class AListShowsACardOfEachUnit(unittest.TestCase):
             "pr": {"number": 7, "url": "https://example.test/7"},
             "cost": {"cost_usd": 1.5, "turns": 9},
             "backlog": {"rank": 3, "effort": "M"},
-            "stages": [{"name": "intent"}] * 8,
+            "stages": [
+                {"stage": "intent", "last_run": {"ended": "2026-10-03T10:00:00+00:00"}},
+                {"stage": "spec", "last_run": {"ended": "2026-10-04T09:00:00+00:00"}},
+                {"stage": "plan", "last_run": None},
+            ],
         }
         got = cards(
             {
@@ -590,6 +594,7 @@ class AListShowsACardOfEachUnit(unittest.TestCase):
         self.assertEqual(card["pr"], {"number": 7, "url": "https://example.test/7"})
         self.assertEqual((card["cost_usd"], card["rank"], card["effort"]), (1.5, 3, "M"))
         self.assertNotIn("stages", card)
+        self.assertEqual(card["updated"], "2026-10-04T09:00:00+00:00")
         self.assertIsNone(got["autopilot"])
         self.assertEqual(got["running"][0]["agent"], "Uruz")
 

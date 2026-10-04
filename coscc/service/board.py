@@ -77,7 +77,10 @@ class Card(TypedDict):
     hold: HoldView | None
     pr: PullRequest | None
     cost_usd: float
+    # The stage the unit is at.
     at: str
+    # When its last run ended, or empty: what a list sorts by.
+    updated: str
     attention_reason: str
     idea: str
     repo: str
@@ -142,6 +145,10 @@ def card(u: Mapping[str, Any]) -> Card:
         "pr": {"number": int(pr["number"]), "url": str(pr["url"])} if pr else None,
         "cost_usd": float((u.get("cost") or {}).get("cost_usd") or 0),
         "at": str(u.get("at") or ""),
+        "updated": max(
+            (str((st.get("last_run") or {}).get("ended") or "") for st in u.get("stages") or []),
+            default="",
+        ),
         "attention_reason": str(u.get("attention_reason") or ""),
         "idea": str(u.get("idea") or ""),
         "repo": str(u.get("repo") or ""),

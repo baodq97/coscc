@@ -59,6 +59,28 @@ export type AutopilotBrief = {
   "cap": Cap | null;
 };
 
+export type AutopilotSettings = {
+  "cwd": string;
+  "autopilot": boolean;
+  "autopilot_may_ship": boolean;
+  "max_parallel": number;
+  "daily_cap_usd": number;
+  "refused_because": string;
+};
+
+export type Build = {
+  "state"?: string;
+  "version"?: string;
+  "commit"?: string;
+  "started"?: string;
+  "by"?: string;
+  "workspace"?: string;
+  "wheel"?: string;
+  "sha256"?: string;
+  "error"?: string | null;
+  "log"?: string;
+};
+
 export type Cap = {
   "day": string;
   "limit": number;
@@ -83,6 +105,7 @@ export type Card = {
   "pr": PullRequest | null;
   "cost_usd": number;
   "at": string;
+  "updated": string;
   "attention_reason": string;
   "idea": string;
   "repo": string;
@@ -276,6 +299,17 @@ export type Secrets = {
   "globals": Meta[];
 };
 
+export type Shown = {
+  "name": string;
+  "state": "off" | "pilot" | "on";
+  "pilot": boolean;
+  "sentence": string;
+  "locked": boolean;
+  "schedule"?: number | null;
+  "hours"?: number[];
+  "summary"?: string;
+};
+
 export type Source = {
   "id": string;
   "kind": string;
@@ -306,6 +340,29 @@ export type UnitRun = {
   "run": string;
 };
 
+export type UpdateStatus = {
+  "version": string;
+  "build_id": string;
+  "commit": string;
+  "commit_label": string;
+  "install": string;
+  "shape": string;
+  "reason": string;
+  "state"?: string;
+  "window"?: boolean;
+  "pending"?: Record<string, unknown> | null;
+  "release"?: Build | null;
+  "local"?: Build | null;
+  "last"?: Record<string, unknown> | null;
+  "checked_at"?: string | null;
+  "error"?: string | null;
+  "warning"?: string;
+  "log"?: string;
+  "line": string;
+  "local_line": string;
+  "actions": string[];
+};
+
 export type Window = {
   "since": string | null;
   "until": string | null;
@@ -334,9 +391,12 @@ export type Worktree = {
 export type Get = {
   "/api/agents": AgentPage;
   "/api/codegraph/report": Report;
+  "/api/features/shown": Shown[];
+  "/api/settings/autopilot": AutopilotSettings;
   "/api/units": Cards;
   "/api/units/next": NextStep;
   "/api/units/{name}": Detail;
+  "/api/update": UpdateStatus;
   "/api/vault/leaks": Leaks;
   "/api/vault/secrets": Secrets;
   "/api/workspaces": WorkspaceList;
