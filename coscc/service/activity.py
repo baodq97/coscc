@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta, timezone
+from statistics import median
+from typing import Any, TypedDict
 
 from coscc.runlog import spend
 from coscc.data import Data
@@ -24,6 +27,63 @@ def _count(questions: object) -> int:
     if isinstance(questions, int):
         return questions
     return len(questions) if isinstance(questions, list) else 0
+
+
+# What a shipped unit should cost and how many review rounds it should take: the owner's targets.
+TARGET_USD = spend.BUDGET_USD
+TARGET_ROUNDS = 1.5
+# A unit counts as shipped once the loop says it is finished, or finished with main moved on.
+SHIPPED = ("finished", "outdated-main")
+
+
+class Shipped(TypedDict):
+    unit: str
+    usd: float | None
+    rounds: int
+    at: str
+
+
+class Target(TypedDict):
+    """One target and where the window stands: `value` is the median over `shipped`, and
+    `over` names the shipped units past the target."""
+
+    name: str
+    value: float | None
+    target: float
+    over: list[str]
+
+
+class DaySpend(TypedDict):
+    day: str
+    usd: float | None
+    steps: int
+
+
+class StageSpend(TypedDict):
+    stage: str
+    usd: float | None
+    steps: int
+    unknown: int
+
+
+class Waste(TypedDict):
+    """Money spent again, one kind at a time; `not_recorded` counts review rounds no step claimed."""
+
+    kind: str
+    count: int
+    usd: float | None
+    unknown: int
+    not_recorded: int
+
+
+class Insights(TypedDict):
+    days: int
+    recording: bool
+    shipped: list[Shipped]
+    targets: list[Target]
+    by_day: list[DaySpend]
+    by_stage: list[StageSpend]
+    waste: list[Waste]
 
 
 class Activity:
@@ -142,6 +202,86 @@ class Activity:
         if rows is None:
             return {"cwd": cwd, "recording": False}
         return {**spend.model(rows, rounds), "recording": True}
+
+    def insights(
+        self,
+        cwd: str,
+        units: Sequence[Mapping[str, Any]],
+        days: int = 30,
+        now: datetime | None = None,
+    ) -> Insights:
+        """How one workspace did over the last `days`: each unit it shipped with its cost and
+        review rounds, the median of each against its target, the money by day and by stage, and
+        what was spent again. `units` are the board's, for which shipped and their rounds."""
+        rows = self._records_or_none(cwd)
+        out: Insights = {
+            "days": days,
+            "recording": rows is not None,
+            "shipped": [],
+            "targets": [],
+            "by_day": [],
+            "by_stage": [],
+            "waste": [],
+        }
+        if rows is None:
+            return out
+        since = ((now or datetime.now(timezone.utc)) - timedelta(days=days)).isoformat()
+        recent = [r for r in rows if str(r.get("at") or "") >= since]
+        rounds = {
+            str(u["name"]): [str(r.get("verdict") or "") for r in u.get("rounds") or []]
+            for u in units
+        }
+        found = spend.model(recent, rounds)
+        whole = {r["key"]: r["usd"] for r in spend.model(rows)["by_unit"]}
+        last: dict[str, str] = {}
+        for r in rows:
+            if r.get("kind") == "end" and r.get("unit"):
+                last[str(r["unit"])] = max(last.get(str(r["unit"]), ""), str(r.get("at") or ""))
+        for u in units:
+            name = str(u["name"])
+            if u.get("why") in SHIPPED and last.get(name, "") >= since:
+                out["shipped"].append(
+                    {
+                        "unit": name,
+                        "usd": whole.get(name),
+                        "rounds": len(rounds[name]),
+                        "at": last[name],
+                    }
+                )
+        out["shipped"].sort(key=lambda s: s["at"], reverse=True)
+        costs = [s["usd"] for s in out["shipped"] if s["usd"] is not None]
+        out["targets"] = [
+            {
+                "name": "cost",
+                "value": round(median(costs), 2) if costs else None,
+                "target": TARGET_USD,
+                "over": [s["unit"] for s in out["shipped"] if (s["usd"] or 0) > TARGET_USD],
+            },
+            {
+                "name": "rounds",
+                "value": median([s["rounds"] for s in out["shipped"]]) if out["shipped"] else None,
+                "target": TARGET_ROUNDS,
+                "over": [s["unit"] for s in out["shipped"] if s["rounds"] > TARGET_ROUNDS],
+            },
+        ]
+        out["by_day"] = [
+            {"day": d["key"], "usd": d["usd"], "steps": d["steps"]} for d in found["by_day"]
+        ]
+        out["by_stage"] = [
+            {"stage": r["key"], "usd": r["usd"], "steps": r["steps"], "unknown": r["unknown"]}
+            for r in found["by_stage"]
+        ]
+        out["waste"] = [
+            {
+                "kind": w["kind"],
+                "count": w["count"],
+                "usd": w["usd"],
+                "unknown": w["unknown"],
+                "not_recorded": int(w["note"] or 0),
+            }
+            for w in found["waste"]
+        ]
+        return out
 
     def unit_cost(self, cwd: str, unit: str) -> dict[str, Any]:
         """One unit's cost by stage and its anomalies.

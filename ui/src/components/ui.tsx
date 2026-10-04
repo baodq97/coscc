@@ -103,14 +103,3 @@ export function SkeletonRows({ rows = 6 }: { rows?: number }) {
   );
 }
 
-/** A screen that is named and placed in the shell but not built yet. */
-export function Planned({ icon, title, children }: { icon: IconName; title: string; children: ReactNode }) {
-  return (
-    <div className="page mid">
-      <PageHead title={title} />
-      <Empty icon={icon} title="Coming next">
-        {children}
-      </Empty>
-    </div>
-  );
-}

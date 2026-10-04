@@ -170,6 +170,12 @@ export type ConfigRow = {
   "overridden": Record<string, boolean>;
 };
 
+export type DaySpend = {
+  "day": string;
+  "usd": number | null;
+  "steps": number;
+};
+
 export type Decided = {
   "unit": string;
   "artifact": string;
@@ -262,6 +268,16 @@ export type HoldView = {
   "by": string;
   "date": string;
   "reason": string;
+};
+
+export type Insights = {
+  "days": number;
+  "recording": boolean;
+  "shipped": Shipped[];
+  "targets": Target[];
+  "by_day": DaySpend[];
+  "by_stage": StageSpend[];
+  "waste": Waste[];
 };
 
 export type LastRun = {
@@ -382,6 +398,13 @@ export type Secrets = {
   "globals": Meta[];
 };
 
+export type Shipped = {
+  "unit": string;
+  "usd": number | null;
+  "rounds": number;
+  "at": string;
+};
+
 export type ShortlistSaved = {
   "at": string | null;
   "n": number;
@@ -415,6 +438,13 @@ export type Source = {
   "kind": string;
   "unit": string;
   "at": string;
+};
+
+export type StageSpend = {
+  "stage": string;
+  "usd": number | null;
+  "steps": number;
+  "unknown": number;
 };
 
 export type StageView = {
@@ -462,6 +492,13 @@ export type Suggested = {
   "computed": number;
   "estimate": EstimateBrief;
   "agent_differs": EstimateBrief | null;
+};
+
+export type Target = {
+  "name": string;
+  "value": number | null;
+  "target": number;
+  "over": string[];
 };
 
 export type UnitRun = {
@@ -512,6 +549,14 @@ export type UpdateStatus = {
   "actions": string[];
 };
 
+export type Waste = {
+  "kind": string;
+  "count": number;
+  "usd": number | null;
+  "unknown": number;
+  "not_recorded": number;
+};
+
 export type Window = {
   "since": string | null;
   "until": string | null;
@@ -546,6 +591,7 @@ export type Get = {
   "/api/decided": Decided[];
   "/api/decisions": DecisionTable;
   "/api/features/shown": Shown[];
+  "/api/insights": Insights;
   "/api/settings/autopilot": AutopilotSettings;
   "/api/units": Cards;
   "/api/units/next": NextStep;
