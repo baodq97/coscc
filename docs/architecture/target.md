@@ -141,6 +141,43 @@ output                   an artifact, proposals, a decision, a report
 - A skills hub turns skills on, off or pilot, per agent.
 - Dagaz is an agent whose output is a new agent row, proposed to Leif.
 
+## 5a. Leif learns
+
+Leif reasons from what happened. It does not obey a list of rules. The owner's words (10-04)
+were: everything comes from data and is distilled into knowledge used for reasoning, never
+into sentences followed to the letter. Leif supports and recommends, and does more than help
+take decisions. Everything should get better over time.
+
+```
+facts       what happened, append-only: runs, costs, tool errors, answers and who gave them,
+            review findings, outcomes, holds, stops, interventions, what the owner chose
+knowledge   distilled from facts by an agent: a claim, where it holds (project, stage, kind),
+            the facts for and against it, how sure, when it was last checked
+reasoning   Leif, on a question, a next step or a recommendation, reads the knowledge that
+            bears on it and cites what it used
+recommend   options with the one Leif would pick and why; the owner's choice, and later the
+            outcome, are new facts
+```
+
+- **Facts are already kept**, in the run log and in `cos.db`. What is missing is who decided.
+  Today 339 of 356 answers were given by Leif or an agent yet are recorded as `person`, so the
+  provenance becomes a field on every answer and every choice.
+- **Knowledge is distilled, never typed in.** A distiller agent (scheduled, like scan) reads
+  new facts and adds, strengthens, weakens or retires claims. A claim with no evidence left,
+  or contradicted by outcomes, is retired. The owner can correct a claim, and the correction
+  is a fact too.
+- **Nothing is pushed into every prompt.** The knowledge store removed in #161 failed that
+  way: notes injected wholesale, never measured, going stale (−3.9 % on its own measure). Here
+  Leif retrieves what bears on one question and the agent sees only Leif's answer and its
+  reasons.
+- **Value is measured, on Insights**: how often a recommendation is taken, how often its
+  predicted outcome happens, $ and turns per unit, and how often the owner steps in. A claim
+  that is never used or keeps being wrong decays.
+- **The old decisions and delegations go.** The `decisions` table, its Settings form,
+  `DELEGATES` and the `delegated` path are unused and are deleted in the cut. What they tried
+  to do, letting Leif answer in the owner's place, comes back as recommendations Leif may act
+  on when the knowledge behind them is strong and the owner has let it (a fact, not a rule).
+
 ## 6. Contract between the app and the studio
 
 - **Typed routes.** Every route takes and returns a Pydantic model. The ceiling on `dict[str, Any]` in route signatures is 0.
@@ -187,8 +224,10 @@ Each step is one PR, and the app runs after each one.
    - Move the lifespan tasks into `http`.
    - Dissolve `service/` into its owners. The board becomes one cached read.
    - Remove the `reflex` dependency.
+   - Delete the `decisions` table, its form and the `delegated` path (§5a).
 4. **Features to folders.** `backlog`, `release`, `update`, `scratch` and `model-trial` move under `features/`, and the `proposals` feature comes out of scan.
 5. **Agents as data.** Agent rows, the Agents page that edits them, the skills hub, scan as an agent, Dagaz, and Insights.
+6. **Leif learns (§5a).** Provenance on every answer and choice, the distiller agent and its knowledge, Leif's recommendations with their reasons, and their measures on Insights. Talk to Leif is built on it.
 
 Steps 1 and 3 are kernel changes and are planned as units. Steps 2, 4 and 5 are ordinary
 units on the board.
