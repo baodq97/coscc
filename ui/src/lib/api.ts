@@ -2,6 +2,7 @@
 // browser already holds. A 401 means the session ended, so the page goes to the login.
 
 import { useEffect, useRef, useState } from "react";
+import { useChanges } from "./stream";
 
 export class ApiError extends Error {
   constructor(
@@ -43,10 +44,16 @@ export type Resource<T> =
   | { state: "error"; data?: T; error: Error };
 
 /**
- * Read one route and keep it fresh: `every` milliseconds while the page is visible. A failed
- * refresh keeps the last data and reports the error beside it.
+ * Read one route and keep it fresh: again after a change on `/api/stream` whose subject starts
+ * with one of `on` (in the workspace `query.cwd`, if any), and every `every` milliseconds while
+ * the page is visible, for what the stream does not carry. A failed refresh keeps the last data
+ * and reports the error beside it.
  */
-export function useResource<T>(path: string | null, query: Record<string, string> = {}, every = 0): Resource<T> & { reload: () => void } {
+export function useResource<T>(
+  path: string | null,
+  query: Record<string, string> = {},
+  { on = null, every = 0 }: { on?: string[] | null; every?: number } = {},
+): Resource<T> & { reload: () => void } {
   const [res, setRes] = useState<Resource<T>>({ state: "loading" });
   const [tick, setTick] = useState(0);
   const key = path === null ? null : `${path}?${new URLSearchParams(query)}`;
@@ -75,6 +82,8 @@ export function useResource<T>(path: string | null, query: Record<string, string
     const id = setInterval(() => document.visibilityState === "visible" && setTick((t) => t + 1), every);
     return () => clearInterval(id);
   }, [every]);
+
+  useChanges(path === null ? null : on, () => setTick((t) => t + 1), query.cwd ?? "");
 
   return { ...res, reload: () => setTick((t) => t + 1) };
 }

@@ -70,13 +70,19 @@ class Event:
 class Bus:
     def __init__(self) -> None:
         self._handlers: defaultdict[Name, list[Callable[[Event], None]]] = defaultdict(list)
+        self._watchers: list[Callable[[Event], None]] = []
 
     def subscribe(self, name: Name, handler: Callable[[Event], None]) -> None:
         self._handlers[name].append(handler)
 
+    def watch(self, handler: Callable[[Event], None]) -> Callable[[], None]:
+        """`handler` hears every event, after its subscribers, until the returned call."""
+        self._watchers.append(handler)
+        return lambda: self._watchers.remove(handler)
+
     def publish(self, event: Event) -> None:
         log.debug("%s %s %s", event.name, event.workspace, event.unit)
-        for handler in list(self._handlers[event.name]):
+        for handler in [*self._handlers[event.name], *self._watchers]:
             try:
                 handler(event)
             except Exception:

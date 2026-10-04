@@ -38,3 +38,17 @@ class HandlersHearTheEventsOfTheirName(unittest.TestCase):
         with self.assertLogs("coscc.bus", "DEBUG") as logged:
             Bus().publish(Event("answer.written", "k", "u"))
         self.assertIn("answer.written k u", logged.output[0])
+
+
+class AWatcherHearsEverything(unittest.TestCase):
+    def test_a_watcher_hears_every_name_after_the_subscribers_until_it_stops(self):
+        bus, seen = Bus(), []
+        stop = bus.watch(lambda e: seen.append(("watch", e.name)))
+        bus.subscribe("step.ended", lambda e: seen.append(("sub", e.name)))
+        bus.publish(Event("step.ended"))
+        bus.publish(Event("answer.written"))
+        stop()
+        bus.publish(Event("mode.set"))
+        self.assertEqual(
+            seen, [("sub", "step.ended"), ("watch", "step.ended"), ("watch", "answer.written")]
+        )
