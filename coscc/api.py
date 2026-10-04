@@ -960,7 +960,15 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
         *(r for f in features.FEATURES for r in f.routes(ctx)),
         *studio.router.routes,
     ]
-    api = FastAPI(title="coscc", lifespan=lifespan, routes=routes)
+    # No `/docs` or `/openapi.json`: the studio answers those paths; `typescript()` reads the schema.
+    api = FastAPI(
+        title="coscc",
+        lifespan=lifespan,
+        routes=routes,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     api.state.config = config
     api.state.sessions = sessions
     api.state.service = service

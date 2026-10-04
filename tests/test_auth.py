@@ -21,7 +21,7 @@ from urllib.parse import urlencode
 from argon2.exceptions import VerifyMismatchError
 from starlette.routing import Route
 
-from coscc import auth
+from coscc import auth, studio
 from coscc.api import build
 from coscc.config import Config
 from coscc.data import Data
@@ -431,10 +431,12 @@ class Sessions(Door):
         self.assertTrue(refused(await self.call("GET", "/api/workspaces", cookie=cookie)))
 
     async def test_a_page_let_through_must_be_revalidated_and_data_is_left_alone(self):
-        """A cached board after logout never reaches `/login`."""
+        """A cached board after logout never reaches `/login`. The unbuilt studio's page sets no
+        `Cache-Control` of its own, so the guard's is what it carries."""
         cookie = (await self.set_password()).cookie()
-        page = await self.call("GET", "/docs", cookie=cookie)
-        self.assertEqual((page.status, page.header("cache-control")), (200, "no-cache"))
+        with mock.patch.object(studio, "BUILT", Path(self.tmp.name) / "unbuilt"):
+            page = await self.call("GET", "/", cookie=cookie)
+        self.assertEqual((page.status, page.header("cache-control")), (503, "no-cache"))
         data = await self.call("GET", "/api/workspaces", cookie=cookie)
         self.assertEqual((data.status, data.header("cache-control")), (200, None))
 
