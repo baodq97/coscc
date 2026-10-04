@@ -1159,7 +1159,7 @@ class FeatureRow:
 
 def schedule_label(hours: int) -> str:
     """How Settings says a schedule's hours."""
-    return f"Every {hours} h" if hours else "Off"
+    return f"Every {hours} h" if hours else "Schedule off"
 
 
 # A knob's name is the config field's; the screen says what it does.

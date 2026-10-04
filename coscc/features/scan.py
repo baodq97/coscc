@@ -513,7 +513,14 @@ def status(ctx: Ctx, cwd: str) -> tuple[str, bool]:
     if not runs:
         return "On: no scan yet.", True
     last = runs[0]
-    return f"On: the last scan was {last['outcome']}, ${last['cost_usd']:.2f}.", True
+    if last["outcome"] == "skipped":
+        return "On: the last scan found nothing new.", True
+    if last["outcome"] == "failed":
+        return f"On: the last scan failed, ${last['cost_usd']:.2f}.", True
+    return (
+        f"On: the last scan read {last['taken']} interventions for ${last['cost_usd']:.2f}.",
+        True,
+    )
 
 
 def on_set(ctx: Ctx, cwd: str, state: State) -> None:
@@ -612,7 +619,7 @@ _JS = """
   function chip(state) {
     var c = CHIP[state] || "gray";
     return el("span", "display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;" +
-      "background:var(--" + c + "-3);color:var(--" + c + "-11);flex-shrink:0;min-width:64px;" +
+      "background:var(--" + c + "-3);color:var(--" + c + "-11);flex-shrink:0;width:72px;" +
       "text-align:center", state);
   }
   function button(text, soft) {
