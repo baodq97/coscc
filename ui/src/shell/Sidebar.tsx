@@ -2,10 +2,9 @@
 // is always worth a glance: today's spend against the cap and the autopilot.
 
 import { Fragment } from "react";
-import { useResource } from "../lib/api";
 import { Icon, LeifMark } from "../lib/icons";
 import { money } from "../lib/format";
-import type { Board, Workspace } from "../lib/model";
+import { useBoards } from "../lib/boards";
 import { Link, usePath } from "../lib/router";
 import { SCREENS } from "../routes";
 import { Kbd, Meter } from "../components/ui";
@@ -16,10 +15,10 @@ const COLORS = ["#5e6ad2", "#e07a2f", "#2a9461", "#c2417a", "#8a6d3b"];
 export function Sidebar() {
   const path = usePath();
   const shell = useShell();
-  const ws = useResource<{ workspaces: Workspace[] }>("/api/workspaces");
-  const first = ws.data?.workspaces[0];
-  const board = useResource<Board>(first ? "/api/board" : null, first ? { cwd: first.path } : {}, { on: ["step.", "integration.", "mode."], every: 120_000 });
-  const cap = board.data?.autopilot?.cap;
+  const { boards } = useBoards();
+  // The cap is the app's, one a day, so any workspace's board says it; the autopilot is each's.
+  const cap = boards.map((b) => b.board?.autopilot?.cap).find(Boolean);
+  const on = boards.filter((b) => b.board?.autopilot?.on).map((b) => b.workspace.name);
 
   const item = (to: string, label: string, icon: React.ReactNode, extra?: React.ReactNode) => (
     <Link to={to} className={path === to ? "on" : ""}>
@@ -69,7 +68,7 @@ export function Sidebar() {
               ),
             )}
             {group === "Work" &&
-              ws.data?.workspaces.map((w, i) => (
+              boards.map(({ workspace: w }, i) => (
                 <Fragment key={w.path}>{item(`/work/${w.name}`, w.name, <span className="pdot" style={{ background: COLORS[i % COLORS.length] }} />)}</Fragment>
               ))}
           </Fragment>
@@ -91,8 +90,8 @@ export function Sidebar() {
           </div>
           <Meter value={cap?.spent ?? 0} max={cap?.limit ?? 1} />
           <div className="ap">
-            <span className={`dot ${board.data?.autopilot?.on ? "green" : "amber"}`} />
-            {board.data ? `Autopilot ${board.data.autopilot?.on ? "on" : "off"} in ${first?.name}` : "Reading the autopilot…"}
+            <span className={`dot ${on.length ? "green" : "amber"}`} />
+            {!boards.length ? "Reading the autopilot…" : on.length ? `Autopilot on in ${on.join(", ")}` : "Autopilot off everywhere"}
           </div>
         </div>
         <div className="side-util">

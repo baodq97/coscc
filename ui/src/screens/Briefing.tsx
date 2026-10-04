@@ -18,7 +18,7 @@ export function Briefing() {
   const units = allUnits(boards);
   const needs = units.filter((u) => unitState(u).group === "Needs you");
   const moving = units.filter((u) => unitState(u).group === "In progress");
-  const off = boards.filter((b) => b.board?.autopilot && !b.board.autopilot.on).map((b) => b.workspace.name);
+  const off = boards.filter((b) => b.board && !b.board.autopilot?.on).map((b) => b.workspace.name);
 
   return (
     <div className="page mid">
@@ -82,7 +82,7 @@ export function Briefing() {
             <Link key={u.workspace.name + u.name} to={`/unit/${u.workspace.name}/${u.number}`} className="lrow">
               <span className="id">{unitCode(u.workspace.name, u.number)}</span>
               <span className="t">{unitTitle(u.name)}</span>
-              <span className="meta">{u.next_stage ?? ""}</span>
+              <span className="meta">{u.next_stage}</span>
             </Link>
           ))
         ) : (

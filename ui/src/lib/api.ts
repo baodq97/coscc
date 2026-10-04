@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useChanges } from "./stream";
+import type { Get } from "../api.gen";
 
 export class ApiError extends Error {
   constructor(
@@ -31,9 +32,10 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
 }
 
 export const api = {
-  get: <T>(path: string, query: Record<string, string> = {}) => {
+  /** A `GET` route the app types (`Get`, made from its routes), so the answer is never guessed. */
+  get: <P extends keyof Get>(path: P, query: Record<string, string> = {}) => {
     const qs = new URLSearchParams(query).toString();
-    return call<T>("GET", qs ? `${path}?${qs}` : path);
+    return call<Get[P]>("GET", qs ? `${path}?${qs}` : path);
   },
   post: <T>(path: string, body: unknown) => call<T>("POST", path, body),
 };
@@ -49,22 +51,22 @@ export type Resource<T> =
  * the page is visible, for what the stream does not carry. A failed refresh keeps the last data
  * and reports the error beside it.
  */
-export function useResource<T>(
-  path: string | null,
+export function useResource<P extends keyof Get>(
+  path: P | null,
   query: Record<string, string> = {},
   { on = null, every = 0 }: { on?: string[] | null; every?: number } = {},
-): Resource<T> & { reload: () => void } {
-  const [res, setRes] = useState<Resource<T>>({ state: "loading" });
+): Resource<Get[P]> & { reload: () => void } {
+  const [res, setRes] = useState<Resource<Get[P]>>({ state: "loading" });
   const [tick, setTick] = useState(0);
   const key = path === null ? null : `${path}?${new URLSearchParams(query)}`;
-  const last = useRef<T | undefined>(undefined);
+  const last = useRef<Get[P] | undefined>(undefined);
 
   useEffect(() => {
     if (path === null) return;
     let live = true;
     setRes(last.current === undefined ? { state: "loading" } : { state: "ready", data: last.current });
     api
-      .get<T>(path, query)
+      .get(path, query)
       .then((data) => {
         if (!live) return;
         last.current = data;

@@ -11,7 +11,7 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, NotRequired, TypedDict
 
 from coscc.units import autopilot, backlog
 from coscc.units import board as board_reader
@@ -205,6 +205,37 @@ CI_REFRESH = 60.0
 
 class _Stopped(Exception):
     """A Stop an integration read at one of its stop points."""
+
+
+class HoldView(TypedDict):
+    state: str
+    by: str
+    date: str
+    reason: str
+
+
+# The one stage the run button may offer for a unit, as `coscc.loop next` answered it.
+NextStep = TypedDict(
+    "NextStep",
+    {
+        "cwd": str,
+        "unit": str,
+        "stage": str | None,
+        "action": str,
+        "blocked": bool,
+        # Finding ids a person is awaited on.
+        "waiting": list[str],
+        # Finding ids the last review round left out.
+        "dropped": list[str],
+        "hold": NotRequired[HoldView],
+        # The stage a fully answered draft would run again; only the autopilot reads it.
+        "rerun": NotRequired[str],
+        # `impl` when it left its file a draft asking nothing; only the autopilot reads it.
+        "continue": NotRequired[str],
+        # The codes the autopilot branches on.
+        "reasons": list[str],
+    },
+)
 
 
 class Steps:
@@ -1288,7 +1319,7 @@ class Steps:
             log.exception("what follows the %s of %s was not done", stage, unit)
             return
 
-    async def next_step(self, cwd: str, unit: str) -> dict[str, Any]:
+    async def next_step(self, cwd: str, unit: str) -> NextStep:
         """The one stage the run button may offer, and why -- `coscc.loop next`'s answer.
 
         Read with the same store and the same `repo=cwd` that `run_step` hands the gate, so
@@ -1310,7 +1341,9 @@ class Steps:
             return {
                 "cwd": cwd,
                 "unit": unit,
-                **{k: held[k] for k in ("stage", "action", "blocked")},
+                "stage": held["stage"],
+                "action": str(held["action"]),
+                "blocked": bool(held["blocked"]),
                 "waiting": [],
                 "dropped": [],
                 "hold": held["hold"],
@@ -1335,7 +1368,9 @@ class Steps:
         return {
             "cwd": cwd,
             "unit": unit,
-            **{k: found[k] for k in ("stage", "action", "blocked")},
+            "stage": found["stage"],
+            "action": str(found["action"]),
+            "blocked": bool(found["blocked"]),
             # The findings a person is awaited on, copied from `coscc.loop next`.
             "waiting": list(found.get("waiting") or []),
             # The ids the last review round left out, copied from `coscc.loop next`.

@@ -3,13 +3,12 @@
 import { useResource } from "../lib/api";
 import { AgentAvatar } from "../lib/icons";
 import { STAGE_LABEL, modelName, money } from "../lib/format";
-import type { Agent, Workspace } from "../lib/model";
 import { ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 export function Agents() {
-  const ws = useResource<{ workspaces: Workspace[] }>("/api/workspaces");
+  const ws = useResource("/api/workspaces");
   const first = ws.data?.workspaces[0];
-  const agents = useResource<{ rows: Agent[] }>(first ? "/api/agents" : null, first ? { cwd: first.path } : {});
+  const agents = useResource(first ? "/api/agents" : null, first ? { cwd: first.path } : {});
 
   return (
     <div className="page" style={{ maxWidth: 1160 }}>

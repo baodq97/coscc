@@ -9,7 +9,7 @@ import sqlite3
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, TypedDict
 
 from coscc.units import backlog, prose_import
 from coscc.agent import agents
@@ -38,6 +38,7 @@ from coscc.config import Config
 from coscc.service.workspaces import Workspaces
 from coscc.service.common import Holds
 from coscc.service.agents import Agents
+from coscc.service.steps import HoldView
 from coscc.service.release import Release
 from coscc.service.steps import Steps
 
@@ -47,6 +48,137 @@ log = logging.getLogger(__name__)
 # An `ended, unknown` row stops being shown this long after it began, unless a later `start`
 # of the same unit retired it first.
 UNKNOWN_END_FOR = timedelta(hours=24)
+
+
+class CardState(TypedDict):
+    state: str
+    label: str
+    color: str
+
+
+class PullRequest(TypedDict):
+    number: int
+    url: str
+
+
+class Card(TypedDict):
+    """A unit as a list shows it: what it is, where it stands and what it cost. The whole unit
+    is the board's (`Board.read`)."""
+
+    name: str
+    number: int
+    slug: str
+    type: str
+    phase: str
+    next_stage: str
+    why: str
+    open: int
+    state: CardState
+    hold: HoldView | None
+    pr: PullRequest | None
+    cost_usd: float
+    at: str
+    attention_reason: str
+    idea: str
+    repo: str
+    rank: int | None
+    effort: str | None
+
+
+class Cap(TypedDict):
+    day: str
+    limit: float
+    spent: float
+    known: float
+    estimated: float
+    estimated_count: int
+    running: float
+
+
+class AutopilotBrief(TypedDict):
+    on: bool
+    may_ship: bool
+    max_parallel: int
+    refused_because: str
+    cap: Cap | None
+
+
+class Running(TypedDict):
+    unit: str
+    stage: str
+    agent: str
+    started: str
+
+
+class Cards(TypedDict):
+    workspace: str
+    read_at: str
+    units: list[Card]
+    autopilot: AutopilotBrief | None
+    running: list[Running]
+
+
+def cards(board: Mapping[str, Any]) -> Cards:
+    """`board` (`Board.read` with the autopilot's view) cut to what a list of units shows."""
+
+    def card(u: Mapping[str, Any]) -> Card:
+        state, hold, pr, backlog_ = u["state"], u.get("hold"), u.get("pr"), u.get("backlog") or {}
+        return {
+            "name": u["name"],
+            "number": int(u["number"]),
+            "slug": u["slug"],
+            "type": str(u.get("type") or ""),
+            "phase": str(u.get("phase") or ""),
+            "next_stage": str(u.get("next_stage") or ""),
+            "why": str(u.get("why") or ""),
+            "open": int(u.get("open") or 0),
+            "state": {"state": state["state"], "label": state["label"], "color": state["color"]},
+            "hold": {
+                "state": str(hold.get("state") or ""),
+                "by": str(hold.get("by") or ""),
+                "date": str(hold.get("date") or ""),
+                "reason": str(hold.get("reason") or ""),
+            }
+            if hold
+            else None,
+            "pr": {"number": int(pr["number"]), "url": str(pr["url"])} if pr else None,
+            "cost_usd": float((u.get("cost") or {}).get("cost_usd") or 0),
+            "at": str(u.get("at") or ""),
+            "attention_reason": str(u.get("attention_reason") or ""),
+            "idea": str(u.get("idea") or ""),
+            "repo": str(u.get("repo") or ""),
+            "rank": backlog_.get("rank"),
+            "effort": backlog_.get("effort"),
+        }
+
+    pilot = board.get("autopilot")
+    autopilot: AutopilotBrief | None = (
+        {
+            "on": bool(pilot["on"]),
+            "may_ship": bool(pilot.get("may_ship")),
+            "max_parallel": int(pilot.get("max_parallel") or 0),
+            "refused_because": str(pilot.get("refused_because") or ""),
+            "cap": pilot.get("cap"),
+        }
+        if pilot
+        else None
+    )
+    running = (board.get("guide") or {}).get("running") or []
+    return {
+        "workspace": str(board.get("workspace") or ""),
+        "read_at": str(board.get("read_at") or ""),
+        "units": [card(u) for u in board.get("units") or []],
+        "autopilot": autopilot,
+        "running": [
+            {
+                "unit": str(r.get("unit") or ""),
+                "stage": str(r.get("stage") or ""),
+                "agent": str(r.get("agent") or ""),
+                "started": str(r.get("started") or ""),
+            }
+            for r in running
+        ],
+    }
 
 
 def waits_for(unit: dict[str, Any]) -> list[str]:

@@ -42,7 +42,15 @@ describe("router", () => {
 });
 
 describe("unit state", () => {
-  const base: Unit = { name: "0001_x", number: 1, slug: "x", type: "fix", phase: "started", next_stage: "spec", why: null, open: 0, pr: null, hold: null };
+  const base: Unit = {
+    name: "0001_x", number: 1, slug: "x", type: "fix", phase: "started", next_stage: "spec", why: "", open: 0,
+    state: { state: "ready", label: "Ready", color: "gray" }, hold: null, pr: null, cost_usd: 0, at: "",
+    attention_reason: "", idea: "", repo: "", rank: null, effort: null,
+  };
+
+  it("reads a paused hold as paused", () => {
+    expect(unitState({ ...base, hold: { state: "paused", by: "owner", date: "2026-10-04", reason: "" } }).group).toBe("Paused");
+  });
 
   it("puts a unit with open questions under Needs you", () => {
     expect(unitState({ ...base, open: 2 })).toEqual({ group: "Needs you", label: "2 questions" });

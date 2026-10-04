@@ -7,14 +7,12 @@ import { PHASE, STAGE_LABEL, unitCode, unitTitle } from "../lib/format";
 import { unitState } from "../lib/model";
 import { Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
-type Next = { stage: string; action: string; reasons: string[]; blocked: boolean };
-
 const PHASES = ["Shape", "Build", "Check", "Ship"] as const;
 
 export function UnitPage({ workspace, number }: { workspace: string; number: string }) {
   const { boards, loading } = useBoards();
   const unit = allUnits(boards).find((u) => u.workspace.name === workspace && u.number === Number(number));
-  const next = useResource<Next>(unit ? "/api/units/next" : null, unit ? { cwd: unit.workspace.path, unit: unit.name } : {}, { on: [""] });
+  const next = useResource(unit ? "/api/units/next" : null, unit ? { cwd: unit.workspace.path, unit: unit.name } : {}, { on: [""] });
 
   if (loading) return <div className="page"><SkeletonRows rows={5} /></div>;
   if (!unit)
