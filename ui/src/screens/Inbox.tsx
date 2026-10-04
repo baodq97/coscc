@@ -15,7 +15,7 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
   const { boards, loading } = useBoards();
   const waiting = allUnits(boards)
     .filter((u) => u.open > 0)
-    .sort((a, b) => b.at.localeCompare(a.at));
+    .sort((a, b) => b.updated.localeCompare(a.updated));
   const chosen = waiting.find((u) => u.workspace.name === workspace && u.number === Number(number)) ?? waiting[0];
 
   if (loading) return <div className="page"><SkeletonRows rows={4} /></div>;
@@ -50,7 +50,7 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
                 <span className="ny-t ellipsis" style={{ fontSize: 13 }}>
                   {u.open} question{u.open > 1 ? "s" : ""} on {unitCode(u.workspace.name, u.number)}
                 </span>
-                <span className="faint nowrap" style={{ fontSize: 12, marginLeft: "auto" }}>{ago(u.at)}</span>
+                <span className="faint nowrap" style={{ fontSize: 12, marginLeft: "auto" }}>{u.updated ? ago(u.updated) : ""}</span>
               </div>
               <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{unitTitle(u.name)}</div>
             </div>

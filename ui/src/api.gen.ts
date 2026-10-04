@@ -105,6 +105,7 @@ export type Card = {
   "pr": PullRequest | null;
   "cost_usd": number;
   "at": string;
+  "updated": string;
   "attention_reason": string;
   "idea": string;
   "repo": string;
