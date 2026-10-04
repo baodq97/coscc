@@ -398,13 +398,17 @@ class Tables:
             )
 
 
+def _check_on(ctx: Ctx, cwd: str) -> None:
+    if not ctx.enabled(FEATURE, cwd):
+        raise Invalid("scan is off in this workspace; turn it on in Settings")
+
+
 async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
     """One scan of the workspace `cwd`, in five steps: read, skip, prompt, session, keep. `by` is `owner` for
     *Scan now*, `schedule` for a tick. `Invalid` while the feature is off here or a scan of the
     workspace already runs."""
     key = ctx.workspace_key(cwd)
-    if not ctx.enabled(FEATURE, cwd):
-        raise Invalid("scan is off in this workspace; turn it on in Settings")
+    _check_on(ctx, cwd)
     if key in _scanning:
         raise Invalid("a scan of this workspace is already running; wait for it to end")
     _scanning.add(key)
@@ -479,6 +483,7 @@ async def accept(ctx: Ctx, cwd: str, pid: int, slug: str) -> Proposal:
     """A unit through the app's own way of making one, its brief the proposal's. The slug
     may differ from the proposal's. The shortlist is not touched."""
     key = ctx.workspace_key(cwd)
+    _check_on(ctx, cwd)
     slug = slug.strip()
     if not SLUG.match(slug) or len(slug) > SLUG_MAX:
         raise Invalid(f"a slug is lowercase words joined by hyphens, at most {SLUG_MAX} characters")
@@ -496,6 +501,7 @@ async def accept(ctx: Ctx, cwd: str, pid: int, slug: str) -> Proposal:
 async def dismiss(ctx: Ctx, cwd: str, pid: int, reason: str) -> Proposal:
     """Dismissed with a reason of 1 to `REASON_MAX` characters, which the next scan reads."""
     key = ctx.workspace_key(cwd)
+    _check_on(ctx, cwd)
     reason = " ".join(reason.split())
     if not 0 < len(reason) <= REASON_MAX:
         raise Invalid(f"a dismissal needs a reason of 1 to {REASON_MAX} characters")
@@ -591,7 +597,8 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
     @router.post("/api/scan/proposals/{pid}")
     async def decide(pid: int, request: Request) -> Proposal:
         """`{cwd, action: accept, slug}` makes a unit from it; `{cwd, action: dismiss, reason}`
-        puts it aside. Either acts for whoever holds the password, as `owner`."""
+        puts it aside. Either acts for whoever holds the password, as `owner`, and is refused
+        while the feature is off."""
         sent = await body(request)
         cwd = str(sent.get("cwd") or "")
         action = sent.get("action")

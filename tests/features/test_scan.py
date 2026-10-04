@@ -257,6 +257,15 @@ class APersonDecides(_Feature):
             await scan.accept(ctx, WS, self.p["id"], "fine")
         self.assertEqual(self.store.proposal(WS, self.p["id"])["state"], "pending")
 
+    async def test_an_off_workspace_decides_nothing(self):
+        self.on = False
+        with self.assertRaises(Invalid):
+            await scan.accept(self.ctx, WS, self.p["id"], "fine")
+        with self.assertRaises(Invalid):
+            await scan.dismiss(self.ctx, WS, self.p["id"], "a reason")
+        self.assertEqual(self.store.proposal(WS, self.p["id"])["state"], "pending")
+        self.assertEqual(self.units, [])
+
     async def test_dismiss_needs_a_reason_and_the_next_scan_reads_it(self):
         for reason in ("", "   ", "r" * 501):
             with self.assertRaises(Invalid):
