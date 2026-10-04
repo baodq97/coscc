@@ -391,7 +391,7 @@ class TheIdeaScreensAreUiFiles(unittest.TestCase):
             Path(__file__).resolve().parents[2] / ".claude" / "rules" / "ui-standard.md"
         ).read_text(encoding="utf-8")
         globs = scoped_patterns(text) or []
-        for path in ("coscc/screens/idea.py", "coscc/state/ideas.py", "coscc/service/ideas.py"):
+        for path in ("coscc/screens/idea.py", "coscc/state/ideas.py"):
             self.assertTrue(any(fnmatch.fnmatch(path, g) for g in globs), path)
 
     def test_the_idea_page_is_drawn(self):

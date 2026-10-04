@@ -14,6 +14,8 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from coscc.loop import REVIEW_ROUNDS
 from coscc.loop.model import (
     non_blocking,
@@ -550,6 +552,28 @@ def test_a_ui_unit_whose_pass_has_no_screens_cannot_ship_and_next_offers_review(
     n = next_step(u, ui_probe(["coscc/screens.py"]))
     assert n["stage"] == "review"
     assert "no ### Screens" in n["action"]
+
+
+def real_ui():
+    return {"path": UI_STANDARD, "globs": parse_standard((REPO / UI_STANDARD).read_text())}
+
+
+@pytest.mark.parametrize("path", ["coscc/screens/board.py", "coscc/features/vault/page.py"])
+def test_a_changed_screen_of_the_real_standard_blocks_ship_for_want_of_screens(path):
+    g = check_gate(passed_with(), "ship", ui_probe([path], {}, real_ui()))
+    assert g["ok"] is False
+    assert "has no ### Screens" in g["need"][0]
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["coscc/features/vault/__init__.py", "coscc/features/notices.py", "coscc/service/board.py"],
+)
+def test_a_file_that_draws_no_page_reads_exactly_as_with_no_standard(path):
+    u = passed_with()
+    assert check_gate(u, "ship", ui_probe([path], {}, real_ui())) == check_gate(
+        u, "ship", green_probe()
+    )
 
 
 def test_each_condition_broken_once_closes_ship_and_says_which():
