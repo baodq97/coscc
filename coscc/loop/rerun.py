@@ -81,9 +81,9 @@ def rerun_offers(unit, limit=REVIEW_ROUNDS):
 
 def rerun_block(unit, name, date, hash_of, by="owner"):
     """the `### Rerun` block the app appends to `intent.md ## Answers`, whole. `hash_of(file)`
-    is `above_answers` of that artifact as it is on disk now. One the app asks for (`by` is
-    `app`) also names what made `name` outdated: each decision with its authority, and each
-    path main changed with the command that shows how."""
+    is `above_answers` of that artifact as it is on disk now. On an outdated `name`, whoever
+    asks (`by`, `owner` or `app`), it also names what made it so: each decision with its
+    authority, and each path main changed with the command that shows how."""
     files = [
         f
         for f in (stage_of(n)["file"] for n in [name, *rerun_later(unit, name)])
@@ -94,7 +94,7 @@ def rerun_block(unit, name, date, hash_of, by="owner"):
             "### Rerun",
             f"Requested by: {by}. Date: {date}. Via: product.",
             f"Stage: {name}.",
-            *(cause_lines(outdated_of(unit, name)) if by == "app" else []),
+            *cause_lines(outdated_of(unit, name)),
             *[f"Stale: {f} sha256:{hash_of(f)}" for f in files],
             "",
         ]

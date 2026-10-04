@@ -327,8 +327,23 @@ class TheAppRunsAnOutdatedSpecAgain(unittest.TestCase):
             }
         )
         self.run_step("spec", write=SPEC_AGAIN, file="spec.md", rerun=True, note="đọc lại")
-        self.assertEqual(self.seen[-1]["trial_record"], {"decisions": ["C2"]})
-        self.assertIn("Requested by: owner.", self.intent())
+        # The same cause the app's own run would carry, so this run clears the stage too.
+        self.assertEqual(
+            self.seen[-1]["trial_record"],
+            {
+                "decisions": ["C2"],
+                "cause": {
+                    "kinds": ["decision"],
+                    "decisions": ["C2"],
+                    "from_sha": None,
+                    "main_sha": None,
+                    "paths": [],
+                },
+            },
+        )
+        text = self.intent()
+        self.assertIn("Requested by: owner.", text)
+        self.assertIn("Decisions: C2 (agent).", text)
 
 
 IMPL_DRAFT = "# Impl: x\nStatus: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"

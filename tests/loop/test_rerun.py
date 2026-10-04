@@ -306,8 +306,15 @@ def test_the_app_is_refused_a_stage_nothing_made_outdated_and_a_person_is_not(st
     assert python(store.argv("rerun", UNIT, "spec", "someone")).code == 2
 
 
-def test_a_persons_block_names_no_cause_even_when_the_stage_is_outdated(store):
+def test_a_persons_block_on_an_outdated_stage_names_the_same_cause(store):
     make_outdated(store, OUTDATED)
     block = json.loads(python(store.argv("rerun", UNIT, "spec")).out)["block"]
     assert "Requested by: owner." in block
+    assert "Decisions: C1 (person), C3 (agent)." in block
+    assert f"Changed: coscc/x.py `git diff {A}..{B} -- coscc/x.py`" in block
+
+
+def test_a_persons_block_on_a_stage_nothing_made_outdated_names_no_cause(store):
+    make_outdated(store, {"plan": {"decisions": [], "main": {"paths": []}}})
+    block = json.loads(python(store.argv("rerun", UNIT, "spec")).out)["block"]
     assert "Decisions:" not in block and "Main:" not in block

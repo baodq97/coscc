@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from coscc.service import outdated
+from tests.git import test_drift
 
 A, B = "a" * 40, "b" * 40
 SPEC = "# Spec: x\nStatus: accepted.\n\nWe change `src/a.py`.\n"
@@ -98,6 +99,38 @@ class OneUnit(unittest.TestCase):
     def test_no_decision_rows_is_no_decision(self):
         # The feature that writes them is gone, or never wrote one: no error, nothing outdated.
         self.assertEqual(self.of([]), {})
+
+
+class APersonsRerunOnABranchNotRebased(unittest.TestCase):
+    """A person runs an outdated spec again on a branch cut before main moved: its `start`
+    carries the main it was handed, so the stage is no longer outdated, rebased or not."""
+
+    setUp = test_drift.ComputingOnARealRepository.setUp
+    _git = test_drift.ComputingOnARealRepository._git
+    _merge = test_drift.ComputingOnARealRepository._merge
+
+    def of(self, rows) -> dict:
+        (self.repo / "spec.md").write_text(SPEC, encoding="utf-8")
+        arts = {"spec.md": {"status": "accepted"}}
+        return asyncio.run(outdated.of_unit(rows, arts, self.repo, str(self.repo)))
+
+    def test_the_rerun_clears_what_main_changed(self):
+        self._git("checkout", "-q", "-b", "unit")
+        (self.repo / "own.txt").write_text("mine\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-qm", "own")
+        own = self._git("rev-parse", "HEAD").strip()
+        self._git("checkout", "-q", "main")
+        b = self._merge("src/a.py")
+        self._git("checkout", "-q", "unit")
+        first = [{"kind": "start", "stage": "spec", "head": own}, *run("spec")[1:]]
+        entry = self.of(first)["spec"]
+        self.assertEqual(entry["main"]["paths"], ["src/a.py"])
+        cause = outdated.cause_of(entry)
+        fields = outdated.start_fields(first, "spec", cause)
+        self.assertEqual((fields["cause"]["from_sha"], fields["cause"]["main_sha"]), (self.a, b))
+        again = {"kind": "start", "stage": "spec", "head": own, "started_by": "person", **fields}
+        self.assertEqual(self.of([*first, again, *run("spec")[1:]]), {})
 
 
 if __name__ == "__main__":

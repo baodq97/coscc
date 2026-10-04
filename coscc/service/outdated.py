@@ -93,7 +93,8 @@ def start_fields(
     records: Sequence[Mapping[str, Any]], stage: str, cause: Cause | None
 ) -> StartFields | None:
     """What a `start` of `spec` or `plan` adds: every live decision, which the run takes, and
-    for a rerun the app asked for, its `cause`. `None` for any other stage."""
+    for a rerun of an outdated stage, by a person or the app, its `cause`. `None` for any other
+    stage."""
     if stage not in dict(STAGES):
         return None
     out: StartFields = {"decisions": [d["id"] for d in live_decisions(records)]}

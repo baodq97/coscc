@@ -1599,10 +1599,11 @@ class Steps:
             # Refuse, or find what the step runs on: nothing is spent until the gate is open.
             data, found, row = await self._find_stage(cwd, unit, stage)
             rerun_block = await self._ask_rerun(cwd, unit, stage, started_by, note) if rerun else ""
-            # What made the app run it again, for its `start`; none for a person's run.
+            # What made the stage outdated, for its `start`, whoever ran it again: the main it
+            # was handed is the main it read up to.
             cause = (
                 outdated.cause_of((self.ws.meta_of(cwd, unit).get("outdated") or {}).get(stage))
-                if rerun and started_by != "person"
+                if rerun
                 else None
             )
             tree, work = await self._open_tree(cwd, unit, stage)
@@ -1764,10 +1765,11 @@ class Steps:
         """The `### Rerun` block for running `stage` again, asked before a worktree is opened or
         the gate asked. Whether `stage` may run again, and the block that says so, are
         the loop's; its refusal is passed on. The app's own (`started_by` not `person`) only for
-        a stage `coscc.loop next` names outdated, and with no note."""
+        a stage `coscc.loop next` names outdated, and with no note. Either names what made the
+        stage outdated, from `outdated` worked out again here."""
         by = "owner"
+        await outdated.refresh(self.ws, cwd, [unit])
         if started_by != "person":
-            await outdated.refresh(self.ws, cwd, [unit])
             if note.strip() or not await self._outdated_rerun(cwd, unit, stage):
                 raise Refused(
                     "a stage is run again only by a person, from the board, never by the autopilot"
