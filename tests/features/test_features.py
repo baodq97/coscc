@@ -164,12 +164,15 @@ class TurningAFeatureOffForAWorkspace(Setup):
             got = await client.get("/api/features", params={"cwd": str(self.ws), "detail": "1"})
         rows = got.json()
         self.assertEqual(set(rows), {f.name for f in features.FEATURES})
-        self.assertEqual(len(rows), 5)
+        self.assertEqual(len(rows), 6)
         for name, row in rows.items():
             with self.subTest(feature=name):
                 self.assertTrue(row["summary"])
                 self.assertLessEqual(len(row["summary"]), 100)
-                self.assertEqual(set(row), {"state", "pilot", "sentence", "locked", "summary"})
+                self.assertEqual(
+                    set(row),
+                    {"state", "pilot", "sentence", "locked", "schedule", "hours", "summary"},
+                )
         self.assertEqual(rows["notices"]["state"], "on")
 
     def test_an_entry_of_the_older_pref_reads_as_off_until_the_next_write_moves_it(self):
