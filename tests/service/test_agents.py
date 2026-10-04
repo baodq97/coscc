@@ -98,6 +98,14 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
         # Reset removes the key.
         self.assertEqual(self.data.pref_rows("turns:"), {})
 
+    def test_the_default_effort_saved_is_a_reset(self):
+        agents = self.service.agents
+        agents.set_agent_field("spec", "effort", "max")
+        page = agents.set_agent_field("spec", "effort", "")
+        self.assertEqual(self._row(page, "spec")["config"]["effort_source"], "default")
+        self.assertEqual(self.data.pref_rows("effort:"), {})
+        self.assertEqual(self._settings()[-1], ("spec", "effort", "max", None, "owner"))
+
     def test_a_value_out_of_bounds_is_refused_and_nothing_is_written(self):
         wrong = [
             ("spec", "turns", 0),

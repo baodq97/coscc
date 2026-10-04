@@ -48,7 +48,8 @@ def _field_form(
         min_width="120px",
     )
     pick = s.native_select(
-        rx.el.option("SDK default", value=""),
+        # Saved, it resets the override (`Agents.set_agent_field`).
+        rx.el.option("Default", value=""),
         *[rx.el.option(e, value=e) for e in models.EFFORTS],
         name="value",
         default_value=draft,

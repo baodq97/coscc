@@ -271,7 +271,7 @@ class Agents:
 
         `field` is one of `agents.FIELDS` (an agent's identity; `""` resets too) or of
         `models.FIELD_PREFIX` (model, effort, turns, budget; which rows take which is
-        `models.settable`).
+        `models.settable`; an effort of `""` resets too).
 
         **Behind the password like every route here**: whoever holds it or a live session can
         raise any agent's budget to `BUDGET_MAX` a step, and the autopilot runs with it. The
@@ -314,6 +314,9 @@ class Agents:
             raise Invalid(f"no such row: {key} (use one of {', '.join(rows)})")
         if field not in rows[key]:
             raise Invalid(f"{key} has no {field} to set")
+        # The effort box's "Default" choice sends nothing: it means the default, so a reset.
+        if field == "effort" and value == "":
+            value = None
         if value is not None:
             value, reason = models.check(field, value)
             if reason:
