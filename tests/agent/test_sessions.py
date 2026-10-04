@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from contextlib import suppress
 from pathlib import Path
 from unittest import mock
 
@@ -1655,8 +1656,8 @@ class _PausingClient:
     """A live client for `suspend_all`: records the order of `interrupt` and `disconnect`,
     and writes the lines the CLI writes on an interrupt into its transcript."""
 
-    def __init__(self, path, order, hang=0.0, process=None):
-        self.path, self.order, self.hang = path, order, hang
+    def __init__(self, path, order, hang=0.0, process=None, gate=None):
+        self.path, self.order, self.hang, self.gate = path, order, hang, gate
         self._transport = mock.Mock(_process=process) if process is not None else None
         self._query = object()
 
@@ -1669,6 +1670,8 @@ class _PausingClient:
 
     async def disconnect(self):
         self.order.append("disconnect")
+        if self.gate:
+            await self.gate()
         if self.hang:
             await asyncio.sleep(self.hang)
 
@@ -1734,18 +1737,42 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(handle.suspended and handle.closed)
 
     async def test_suspend_closes_every_session_in_parallel(self):
+        # A close is open from the client's `disconnect` to the SIGKILL that ends `_shut`. The first
+        # close stays open until the second has started (or the bound passes), so a sequential
+        # `suspend_all` records start, end, start whatever the speed of the machine.
+        events, started, both = [], [], asyncio.Event()
+
+        class Process(_Process):
+            def __init__(self, sid):
+                super().__init__(obeys=False)
+                self.sid = sid
+
+            def kill(self):
+                events.append(("end", self.sid))
+                super().kill()
+
+        def gate(sid):
+            async def wait():
+                events.append(("start", sid))
+                started.append(sid)
+                if len(started) == 2:
+                    both.set()
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(both.wait(), 1)
+
+            return wait
+
         with (
-            mock.patch.object(sessions, "DISCONNECT_TIMEOUT", 0.3),
-            mock.patch.object(sessions, "KILL_AFTER", 0.2),
+            mock.patch.object(sessions, "DISCONNECT_TIMEOUT", 2.0),
+            mock.patch.object(sessions, "KILL_AFTER", 0.05),
         ):
             for sid in ("sid-3", "sid-4"):
-                self._flow(sid, hang=10, process=_Process(obeys=False))
-            began = asyncio.get_running_loop().time()
+                self._flow(sid, process=Process(sid), gate=gate(sid))
             records = await self.s.suspend_all()
-            took = asyncio.get_running_loop().time() - began
         self.assertEqual(len(records), 2)
-        # Each hangs the whole `DISCONNECT_TIMEOUT + KILL_AFTER`; one after the other would be twice that.
-        self.assertLess(took, 1.5 * (0.3 + 0.2))
+        self.assertEqual({k for k, _ in events[:2]}, {"start"})
+        self.assertEqual({k for k, _ in events[2:]}, {"end"})
+        self.assertEqual(len(events), 4)
 
     @unittest.skipUnless(Path("/proc/self/stat").exists(), "no /proc")
     async def test_suspend_kills_descendants_left_alive_after_a_sigkill(self):

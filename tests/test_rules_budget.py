@@ -97,17 +97,20 @@ class TheScopes(unittest.TestCase):
 
 
 class TheUiStandardFollowsTheSplit(unittest.TestCase):
-    """A module of `screens`, `state` or `service` the UI standard's globs do not match is code it
-    is not loaded for, and a unit that changes only that module is not a UI unit to
+    """A module of `screens` or `state`, or a feature's page, that the UI standard's globs do not
+    match is code it is not loaded for, and a unit that changes only that file is not a UI unit to
     `coscc/units/board.py`."""
 
     def test_every_module_they_were_split_into_is_named(self):
         globs = scoped_patterns(UI.read_text(encoding="utf-8")) or []
         split = [
             p.relative_to(REPO).as_posix()
-            for name in ("screens", "state", "service")
+            for name in ("screens", "state")
             for p in sorted((REPO / "coscc" / name).glob("*.py"))
             if p.name not in ("__init__.py", "store.py")
+        ] + [
+            p.relative_to(REPO).as_posix()
+            for p in sorted((REPO / "coscc" / "features").glob("*/page.py"))
         ]
         self.assertIn("coscc/state/views.py", split)
         self.assertEqual(

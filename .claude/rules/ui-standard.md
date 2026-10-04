@@ -2,20 +2,18 @@
 paths:
   - "coscc/screens/*.py"
   - "coscc/state/*.py"
-  - "coscc/service/*.py"
-  - "coscc/features/*.py"
-  - "coscc/update/*.py"
-  - "coscc/units/backlog.py"
-  - "coscc/runlog/events.py"
-  - "coscc/ui.py"
   - "coscc/coscc.py"
+  - "coscc/ui.py"
   - "coscc/auth.py"
+  - "coscc/features/*/page.py"
 ---
 
 # The UI standard
 
 What a screen may show. The `paths:` globs above are the files that count as screens: the loop
 reads them to tell a UI unit from any other, and a feature's page text obeys the same rules.
+A feature's page lives in `coscc/features/<name>/page.py` (a single-file feature that needs a page
+splits it out there).
 
 ## What a good screen looks like
 

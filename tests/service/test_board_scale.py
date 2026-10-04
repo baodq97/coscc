@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -88,31 +87,35 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
             for _ in range(5):
                 await asyncio.sleep(0)
 
-    async def warm(self, name: str, units: int) -> tuple[dict, float, float]:
-        """The board after one read, the seconds that read took, and a held answer's seconds."""
+    async def warm(self, name: str, units: int) -> tuple[dict, int]:
+        """The board after one read, and the reads a held answer made."""
         service, cwd = await self.store(name, units)
-        began = time.monotonic()
         board = await service.board(cwd)
-        cold = time.monotonic() - began
         await self.ended(service)
-        began = time.monotonic()
-        held = await service.board(cwd, "held")
-        answered = time.monotonic() - began
+        reads = service.boards.read
+        calls = []
+
+        async def counted(*args, **kw):
+            calls.append(args)
+            return await reads(*args, **kw)
+
+        with mock.patch.object(service.boards, "read", counted):
+            held = await service.board(cwd, "held")
         await self.ended(service)
         self.assertEqual(held["read_at"], board["read_at"])
-        return held, cold, answered
+        return held, len(calls)
 
     async def test_a_held_answer_on_300_finished_units_is_as_quick_as_on_8(self):
-        small, _, small_took = await self.warm("small", SMALL)
-        large, _, large_took = await self.warm("large", LARGE)
+        small, small_reads = await self.warm("small", SMALL)
+        large, large_reads = await self.warm("large", LARGE)
         self.assertEqual({u["why"] for u in small["units"]}, {"finished"})
         self.assertEqual({u["why"] for u in large["units"]}, {"finished"})
         self.assertEqual((len(small["units"]), len(large["units"])), (SMALL, LARGE))
-        self.assertLessEqual(large_took, 0.5)
-        self.assertLessEqual(large_took - small_took, 0.1)
+        # It reads nothing, so no size of workspace can make it slower.
+        self.assertEqual((small_reads, large_reads), (0, 0))
 
     async def test_the_rounds_of_300_units_carry_no_text_and_stay_small(self):
-        large, _, _ = await self.warm("large", LARGE)
+        large, _ = await self.warm("large", LARGE)
         rounds = [u["rounds"] for u in large["units"]]
         self.assertEqual({len(r) for r in rounds}, {ROUNDS})
         for unit in rounds:
