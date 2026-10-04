@@ -12,10 +12,10 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
-from coscc.agent import labels
+from coscc.agent import labels, models
 from coscc.runlog import spend
 from coscc.units.guards import REASONS as GATE_REASONS
-from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, grant_for, grant_for_step, is_prose_stage
+from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, is_prose_stage
 
 # Defaults.
 DEFAULT_MAX_PARALLEL = 4
@@ -377,39 +377,44 @@ def today(now: datetime) -> str:
     return spend.local_day(now.isoformat())
 
 
-def spent_today(records: Iterable[dict[str, Any]], now: datetime) -> dict[str, Any]:
+def spent_today(
+    records: Iterable[dict[str, Any]], now: datetime, budget: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """`spent_on` the machine's day of `now`. An `end` with no `cost_usd` is counted at its estimate, not as the cap reached."""
-    return spent_on(records, today(now))
+    return spent_on(records, today(now), budget)
 
 
-def reservation(stage: str) -> float:
-    """What a step of `stage` is counted at before it ends: the largest `max_budget_usd` any
-    label can give it (`coscc/agent/policy.py` `grant_for_step`)."""
-    if stage == "integrate":
-        return float(grant_for("integrate").max_budget_usd or 0.0)
+def reservation(stage: str, budget: Mapping[str, Any] | None = None) -> float:
+    """What a step of `stage` is counted at before it ends: the largest dollar ceiling any
+    label can give it, as `models.ceilings` resolves it from the `budget:` overrides by row
+    (`budget`), so a raised ceiling is held in full."""
     return float(
         max(
-            grant_for_step(stage, None).max_budget_usd or 0.0,
-            grant_for_step(stage, labels.NOVEL).max_budget_usd or 0.0,
+            models.ceilings(stage, label, {}, budget or {})["max_budget_usd"] or 0.0
+            for label in (None, labels.NOVEL)
         )
     )
 
 
-def estimate(stage: str) -> float:
+def estimate(stage: str, budget: Mapping[str, Any] | None = None) -> float:
     """What an `end` of `stage` with no `cost_usd` is counted at: its reservation, or, for a
-    stage no grant gives a budget, the largest budget in the grant table (read, never copied)."""
-    own = reservation(stage)
+    stage no grant gives a budget, the largest budget in the grant table or the overrides
+    (read, never copied)."""
+    own = reservation(stage, budget)
     if own > 0:
         return own
     return float(
         max(
             [float(g.max_budget_usd or 0.0) for g in GRANTS.values()]
-            + [float(budget) for _, budget in NOVEL_CEILINGS.values()]
+            + [float(b) for _, b in NOVEL_CEILINGS.values()]
+            + [float(b) for b in (budget or {}).values()]
         )
     )
 
 
-def spent_on(records: Iterable[dict[str, Any]], day: str) -> dict[str, Any]:
+def spent_on(
+    records: Iterable[dict[str, Any]], day: str, budget: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """`{known, estimated, estimated_count}`: every `end` of the machine's `day`, whoever
     started it, every workspace. An `end` with no `cost_usd` counts at `estimate` of its
     stage. An `integration` record is never added: a Gebo session's cost is on its own `end`."""
@@ -418,7 +423,7 @@ def spent_on(records: Iterable[dict[str, Any]], day: str) -> dict[str, Any]:
         if r.get("kind") != "end" or spend.local_day(r.get("at")) != day:
             continue
         if r.get("cost_usd") is None:
-            estimated += estimate(str(r.get("stage") or ""))
+            estimated += estimate(str(r.get("stage") or ""), budget)
             count += 1
         else:
             known += float(r["cost_usd"])
@@ -446,14 +451,15 @@ def reserved(
     records: Iterable[dict[str, Any]],
     now: datetime,
     active: Iterable[tuple[str, str, str]] = (),
+    budget: Mapping[str, Any] | None = None,
 ) -> float:
     """What the steps running now are counted at: every open `start`, and every step this
     process holds (`(workspace, unit, stage)`) that has not written its `start` yet."""
     opened = open_starts(records, now)
-    total = sum(reservation(str(r.get("stage") or "")) for r in opened.values())
+    total = sum(reservation(str(r.get("stage") or ""), budget) for r in opened.values())
     for workspace, unit, stage in active:
         if (workspace, unit) not in opened:
-            total += reservation(stage)
+            total += reservation(stage, budget)
     return total
 
 

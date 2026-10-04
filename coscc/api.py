@@ -85,49 +85,24 @@ async def pull_workspace(name: str, request: Request) -> Any:
     return await _service(request).ws.pull(name)
 
 
-@router.get("/api/settings/models")
-async def get_stage_models(request: Request) -> Any:
-    """Each stage, then chat, with its agent count, its model and where that model came from."""
-    return await _service(request).models.stage_models()
-
-
-@router.post("/api/settings/models")
-async def set_stage_model(request: Request) -> Any:
-    """`{name, model}` sets one row's model; `{name}` alone removes its override.
-
-    It decides what every step spends: whoever holds the password or a session can move
-    any stage's model. The trace is a `setting` record in the run log.
-    """
-    body = await plugin.body(request)
-    return await _service(request).models.set_stage_model(body.get("name"), body.get("model"))
-
-
-@router.post("/api/settings/efforts")
-async def set_stage_effort(request: Request) -> Any:
-    """`{name, effort}` sets one row's effort; `{name}` alone removes its override.
-
-    Same exposure and trace as the model route; `max` is accepted only here.
-    """
-    body = await plugin.body(request)
-    return await _service(request).models.set_stage_effort(body.get("name"), body.get("effort"))
-
-
-@router.get("/api/settings/agents")
+@router.get("/api/agents")
 async def get_agents(request: Request) -> Any:
-    """Every agent row, each field with where it came from, and what was wrong."""
-    return _service(request).agents.agent_table()
+    """The eight agents: who each is, what it runs on and may do, how its runs went, its chip;
+    then `estimate` and `chat`, and what was wrong."""
+    return _service(request).agents.agent_page()
 
 
-@router.post("/api/settings/agents")
-async def set_agent(request: Request) -> Any:
-    """`{key, name?, glyph?, meaning?, role?}` sets those fields' override, `""` removes one
-    field's, and `{key}` alone removes the row's. A wrong field is a 400 and nothing is written.
+@router.post("/api/agents/field")
+async def set_agent_field(request: Request) -> Any:
+    """`{key, field, value}` saves one field of one row; no `value` (or `null`) resets it to
+    its default. Out of bounds is a 400 and nothing is written. No route writes a grant.
 
-    Whoever holds the password or a session can rename any agent. The trace is a `setting` record.
+    It decides what every step spends: whoever holds the password or a session can move any
+    agent's model or raise its ceilings. The trace is an `agent-setting` record in the run log.
     """
     body = await plugin.body(request)
-    return _service(request).agents.set_agent(
-        body.get("key"), {k: v for k, v in body.items() if k != "key"}
+    return _service(request).agents.set_agent_field(
+        body.get("key"), body.get("field"), body.get("value")
     )
 
 

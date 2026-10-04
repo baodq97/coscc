@@ -19,6 +19,7 @@ from unittest import mock
 
 from tests.units.test_meta import ingest
 from coscc.bus import Bus
+from coscc.agent.policy import grant_for
 from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
@@ -295,7 +296,7 @@ class GeboThroughTheService(unittest.TestCase):
         async def act(tree, gate):
             return "[needs-person] f.txt: both"
 
-        self.service.agents.set_agent("integrate", {"name": "Weaver"})
+        self.service.agents.set_agent_field("integrate", "name", "Weaver")
         rec = self.integrate_with(act)
         [start] = [r for r in self.records("start") if r.get("stage") == "integrate"]
         self.assertEqual(start["agent"], "Weaver")
@@ -308,6 +309,82 @@ class GeboThroughTheService(unittest.TestCase):
             "Co-authored-by: Weaver (agent, integrate) <weaver@agents.coscc.invalid>",
         )
         self.assertEqual(kw["system_prompt"], {"type": "preset", "preset": "claude_code"})
+
+    def stored_config(self) -> tuple[dict, list[dict]]:
+        """Gebo's `start`, and the events stored under its `run`."""
+        from coscc.data import Data
+
+        [start] = [r for r in self.records("start") if r.get("stage") == "integrate"]
+        stored, _ = Data(self.service.config.data_dir).step_events_page(start["run"], None, 100)
+        return start, stored
+
+    def test_gebo_runs_under_the_ceilings_overridden_for_it_and_writes_its_config(self):
+        from coscc.data import Data
+
+        async def act(tree, gate):
+            return "[needs-person] f.txt: both"
+
+        for field, value in (
+            ("turns", 33),
+            ("budget", 2.5),
+            ("model", "gebo-model"),
+            ("effort", "high"),
+        ):
+            self.service.agents.set_agent_field("integrate", field, value)
+        self.integrate_with(act)
+        [kw] = self.service.sessions.kws
+        self.assertEqual((kw["max_turns"], kw["max_budget_usd"]), (33, 2.5))
+        self.assertEqual((kw["model"], kw["effort"]), ("gebo-model", "high"))
+        start, stored = self.stored_config()
+        self.assertEqual((start["max_turns"], start["effort"]), (33, "high"))
+        self.assertEqual(start["model_source"], "override")
+        # Nothing else of Gebo's session is stored: the `config`, first, and the `end`.
+        self.assertEqual([e["kind"] for e in stored], ["config", "end"])
+        self.assertEqual(
+            {k: v for k, v in stored[0].items() if k not in ("run", "seq", "at", "kind")},
+            {
+                "model": "gebo-model",
+                "model_source": "override",
+                "effort": "high",
+                "effort_source": "override",
+                "max_turns": 33,
+                "max_turns_source": "override",
+                "max_budget_usd": 2.5,
+                "max_budget_source": "override",
+            },
+        )
+        self.assertIsNotNone(Data(self.service.config.data_dir).step_run(start["run"])["ended_at"])
+        [end] = [r for r in self.records("end") if r.get("stage") == "integrate"]
+        self.assertEqual(end["run"], start["run"])
+
+    def test_gebo_with_nothing_overridden_runs_under_its_grants_ceilings(self):
+        async def act(tree, gate):
+            return "[needs-person] f.txt: both"
+
+        self.integrate_with(act)
+        grant = grant_for("integrate")
+        [kw] = self.service.sessions.kws
+        self.assertEqual(
+            (kw["max_turns"], kw["max_budget_usd"]), (grant.max_turns, grant.max_budget_usd)
+        )
+        _, stored = self.stored_config()
+        self.assertEqual(
+            (stored[0]["max_turns_source"], stored[0]["max_budget_source"]),
+            ("default", "default"),
+        )
+
+    def test_gebo_without_a_model_of_its_own_runs_imples_model(self):
+        async def act(tree, gate):
+            return "[needs-person] f.txt: both"
+
+        self.service.agents.set_agent_field("impl", "model", "impl-model")
+        self.integrate_with(act)
+        [kw] = self.service.sessions.kws
+        self.assertEqual(kw["model"], "impl-model")
+        _, stored = self.stored_config()
+        self.assertEqual(
+            (stored[0]["model"], stored[0]["model_source"]), ("impl-model", "override")
+        )
 
     def test_a_rebase_left_stopped_is_aborted_by_the_app(self):
         async def act(tree, gate):

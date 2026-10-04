@@ -14,10 +14,22 @@ from coscc.github import prmachine
 
 REPO = Path(__file__).resolve().parents[2]
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "review"]
+# `agents.json`'s keys: the stages that run a session, then Gebo.
+AGENTS = STAGES + ["integrate"]
 
 
 def row(model=None, effort=None):
     return {"model": model, "effort": effort}
+
+
+def table(keys=AGENTS, model=None, effort=None, defaults=None, env=None, turns=None, budget=None):
+    over = {
+        "model": model or {},
+        "effort": effort or {},
+        "turns": turns or {},
+        "budget": budget or {},
+    }
+    return models.agent_config(keys, over, defaults or {}, env)
 
 
 class TheOrderIsOverrideThenDefaultThenCosModel(unittest.TestCase):
@@ -34,8 +46,8 @@ class TheOrderIsOverrideThenDefaultThenCosModel(unittest.TestCase):
 
     def test_cos_model_only_where_neither_answers(self):
         defaults, _ = models.load_defaults()
-        t = models.table(STAGES, {}, {}, defaults, "x", 1)
-        by = {r["name"]: (r["model"], r["source"]) for r in t["rows"]}
+        t = table(defaults=defaults, env="x")
+        by = {r["key"]: (r["model"], r["model_source"]) for r in t["rows"]}
         self.assertEqual(by["chat"], ("x", "COS_MODEL"))
         for stage in STAGES:
             self.assertEqual(by[stage][1], "default", stage)
@@ -121,13 +133,13 @@ class TheTrialTier(unittest.TestCase):
 
     def test_the_settings_table_never_shows_the_trial(self):
         defaults, _ = models.load_defaults()
-        t = models.table(STAGES, {}, {}, defaults, None, 1)
+        t = table(defaults=defaults)
         self.assertFalse([r for r in t["rows"] if r["effort_source"] == models.TRIAL])
 
 
 class TheTable(unittest.TestCase):
     def test_chat_comes_after_the_stages_in_their_order(self):
-        t = models.table(STAGES, {}, {}, {}, None, 1)
+        t = table()
         expected = [
             "idea",
             "intent",
@@ -140,13 +152,13 @@ class TheTable(unittest.TestCase):
             "review:novel",
             "estimate",
             "chat",
+            "integrate",
         ]
-        self.assertEqual([r["name"] for r in t["rows"]], expected)
-        self.assertTrue(all(r["agents"] == 1 for r in t["rows"]))
+        self.assertEqual([r["key"] for r in t["rows"]], expected)
 
     def test_an_unknown_key_is_reported_not_shown(self):
-        t = models.table(STAGES, {"bogus": "x"}, {}, {"old-stage": row("y")}, None, 1)
-        self.assertNotIn("bogus", [r["name"] for r in t["rows"]])
+        t = table(model={"bogus": "x"}, defaults={"old-stage": row("y")})
+        self.assertNotIn("bogus", [r["key"] for r in t["rows"]])
         self.assertEqual(len(t["problems"]), 2)
         self.assertIn("bogus", t["problems"][0])
         self.assertIn("old-stage", t["problems"][1])
@@ -154,16 +166,16 @@ class TheTable(unittest.TestCase):
     def test_a_novel_key_before_plan_is_reported(self):
         # A stage order that puts `impl` before `plan` has no `impl:novel` row.
         order = ["idea", "impl", "plan", "review"]
-        t = models.table(order, {}, {"impl:novel": "high"}, {"impl:novel": row("x")}, None, 1)
-        self.assertNotIn("impl:novel", [r["name"] for r in t["rows"]])
-        self.assertIn("review:novel", [r["name"] for r in t["rows"]])
+        t = table(order, effort={"impl:novel": "high"}, defaults={"impl:novel": row("x")})
+        self.assertNotIn("impl:novel", [r["key"] for r in t["rows"]])
+        self.assertIn("review:novel", [r["key"] for r in t["rows"]])
         self.assertEqual(len(t["problems"]), 2)
         self.assertTrue(all("impl:novel" in p for p in t["problems"]))
 
     def test_chat_has_no_effort(self):
-        t = models.table(STAGES, {}, {"chat": "high"}, {}, None, 1)
-        chat = [r for r in t["rows"] if r["name"] == "chat"][0]
-        self.assertEqual((chat["effort"], chat["effort_source"]), ("", "none"))
+        t = table(effort={"chat": "high"})
+        chat = [r for r in t["rows"] if r["key"] == "chat"][0]
+        self.assertEqual((chat["effort"], chat["effort_source"]), (None, "none"))
         self.assertEqual(len(t["problems"]), 1)
 
 
@@ -248,7 +260,7 @@ class TheShippedDefaultsMatchTheLoop(unittest.TestCase):
         self.assertEqual(base, (set(names) - set(prmachine.STAGES)) | {models.ESTIMATE})
         # The only variants shipped are these two.
         self.assertEqual(set(defaults) - base, {"impl:novel", "review:novel"})
-        self.assertEqual(models.table(names, {}, {}, defaults, None, 1)["problems"], [])
+        self.assertEqual(table(names, defaults=defaults)["problems"], [])
 
     def test_the_answered_split(self):
         defaults, _ = models.load_defaults()
@@ -279,8 +291,136 @@ class TheShippedDefaultsMatchTheLoop(unittest.TestCase):
             self.assertTrue(entry["model"].endswith("[1m]"), (stage, entry))
 
 
+class TheCeilingsResolveInOnePlace(unittest.TestCase):
+    """Override, else the grant's own, the `SUBMIT_TURNS` floor after either."""
+
+    def test_default_and_override_each_say_so(self):
+        self.assertEqual(
+            models.ceilings("spec", None, {}, {}),
+            {
+                "max_turns": 40,
+                "max_turns_source": "default",
+                "max_budget_usd": 4.0,
+                "max_budget_source": "default",
+            },
+        )
+        found = models.ceilings("spec", None, {"spec": 30}, {"spec": 1.5})
+        self.assertEqual((found["max_turns"], found["max_turns_source"]), (30, "override"))
+        self.assertEqual((found["max_budget_usd"], found["max_budget_source"]), (1.5, "override"))
+
+    def test_a_grant_with_no_budget_is_none(self):
+        found = models.ceilings("idea", None, {}, {})
+        self.assertEqual((found["max_budget_usd"], found["max_budget_source"]), (None, "none"))
+        # `Grant()`'s one turn, raised to the floor of a stage that submits.
+        self.assertEqual((found["max_turns"], found["max_turns_source"]), (4, "default"))
+
+    def test_the_floor_holds_under_an_override(self):
+        found = models.ceilings("plan", None, {"plan": 1}, {})
+        self.assertEqual((found["max_turns"], found["max_turns_source"]), (4, "override"))
+
+    def test_impl_novel_replaces_novel_ceilings_only_when_overridden(self):
+        self.assertEqual(models.ceilings("impl", "novel", {}, {})["max_turns"], 250)
+        self.assertEqual(models.ceilings("impl", "novel", {}, {})["max_budget_usd"], 16.0)
+        found = models.ceilings("impl", "novel", {"impl:novel": 300}, {"impl:novel": 20.0})
+        self.assertEqual((found["max_turns"], found["max_budget_usd"]), (300, 20.0))
+        # The base row's override is not the `novel` run's.
+        self.assertEqual(models.ceilings("impl", "novel", {"impl": 10}, {})["max_turns"], 250)
+        self.assertEqual(models.ceilings("impl", None, {"impl": 10}, {})["max_turns"], 10)
+
+    def test_the_page_shows_what_the_runner_gets(self):
+        t = table(turns={"spec": 30, "impl:novel": 300})
+        by = {r["key"]: r for r in t["rows"]}
+        self.assertEqual(by["spec"]["ceilings"], models.ceilings("spec", None, {"spec": 30}, {}))
+        self.assertEqual(by["impl:novel"]["ceilings"]["max_turns"], 300)
+        self.assertEqual(by["spec"]["overridden"]["turns"], True)
+        # `review:novel` and the two other sessions take no ceilings.
+        self.assertEqual(by["review:novel"]["ceilings"]["max_turns_source"], "none")
+        self.assertEqual(by["chat"]["fields"], ["model"])
+
+
+class TheSourcesOfAModel(unittest.TestCase):
+    def test_override_default_cos_model_and_none(self):
+        defaults = {"spec": row("d", "medium")}
+        by = lambda t: {r["key"]: r for r in t["rows"]}
+        self.assertEqual(
+            by(table(model={"spec": "o"}, defaults=defaults))["spec"]["model_source"], "override"
+        )
+        self.assertEqual(by(table(defaults=defaults))["spec"]["model_source"], "default")
+        self.assertEqual(by(table(env="e"))["spec"]["model_source"], "COS_MODEL")
+        self.assertEqual(by(table())["spec"]["model_source"], "none")
+
+    def test_gebo_runs_impls_row_unless_its_own_is_set(self):
+        defaults, _ = models.load_defaults()
+        self.assertEqual(
+            models.resolve("integrate", None, {}, {}, defaults, None),
+            ("claude-sonnet-5-5[1m]", "default", "medium", "default"),
+        )
+        self.assertEqual(
+            models.resolve("integrate", None, {"integrate": "g"}, {}, defaults, None)[:2],
+            ("g", "override"),
+        )
+
+
+class TheBoundsOfAnOverride(unittest.TestCase):
+    """Out of bounds is refused, and a stored one is skipped and named."""
+
+    def test_each_bound(self):
+        good = [
+            ("model", "  m  ", "m"),
+            ("model", "x" * 100, "x" * 100),
+            ("effort", "max", "max"),
+            ("turns", 1, 1),
+            ("turns", 500, 500),
+            ("turns", "30", 30),
+            ("budget", 0.1, 0.1),
+            ("budget", 50, 50.0),
+            ("budget", "1.234", 1.23),
+        ]
+        for field, value, stored in good:
+            self.assertEqual(models.check(field, value), (stored, ""), (field, value))
+        bad = [
+            ("model", ""),
+            ("model", "   "),
+            ("model", "x" * 101),
+            ("model", 3),
+            ("effort", "turbo"),
+            ("turns", 0),
+            ("turns", 501),
+            ("turns", 2.5),
+            ("turns", True),
+            ("budget", 0.09),
+            ("budget", 50.01),
+            ("budget", float("nan")),
+            ("budget", "lots"),
+            ("colour", "red"),
+        ]
+        for field, value in bad:
+            found, reason = models.check(field, value)
+            self.assertIsNone(found, (field, value))
+            self.assertTrue(reason, (field, value))
+
+    def test_a_stored_value_out_of_bounds_is_a_problem(self):
+        rows = {
+            "turns:spec": json.dumps(30),
+            "turns:plan": json.dumps(900),
+            "turns:impl": "{",
+            "turns:review": json.dumps("30"),
+        }
+        found, problems = models.overrides_from(rows, models.TURNS_PREFIX)
+        self.assertEqual(found, {"spec": 30})
+        self.assertEqual(len(problems), 3)
+        found, problems = models.overrides_from(
+            {"budget:spec": json.dumps(2.5), "budget:plan": json.dumps(99)}, models.BUDGET_PREFIX
+        )
+        self.assertEqual((found, len(problems)), ({"spec": 2.5}, 1))
+
+    def test_a_key_no_row_takes_is_a_problem(self):
+        t = table(turns={"review:novel": 10, "chat": 10, "deploy": 10}, budget={"estimate": 1.0})
+        self.assertEqual(len(t["problems"]), 4, t["problems"])
+
+
 class TheEstimateRow(unittest.TestCase):
-    """A Settings row just before `chat`, resolved like any other."""
+    """An Agents page row just before `chat`, resolved like any other."""
 
     def test_it_sits_before_chat_and_resolves(self):
         self.assertEqual(models.rows_for(["idea", "plan"])[-2:], [models.ESTIMATE, models.CHAT])

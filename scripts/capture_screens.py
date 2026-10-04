@@ -49,7 +49,9 @@ that ended `failed` after 109 turns with no known cost on `0002_open-question`, 
 `impl` run on `0004_finished` that ended `failed` with neither; also two
 `impl` runs and one `integrate` opened by a conflict on `0002_open-question` ($16.32 in all,
 over the $15 budget, one `impl` at four times the median tokens per turn) and three `impl`
-runs on `0004_finished` (`seed_runs`), so every anomaly `/cost` knows has a row, and one chat conversation in a temporary `CLAUDE_CONFIG_DIR`, titled `Backlog screen
+runs on `0004_finished`, then a last `impl` run that failed (`seed_runs`), so every anomaly
+`/cost` knows has a row and `/agents` shows `impl` as `failed` and `spec` as `ok` (an `idle`
+agent has no run: `idea`), and one chat conversation in a temporary `CLAUDE_CONFIG_DIR`, titled `Backlog screen
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
 visible text as `<address slug>-<W>x<H>.txt`.
 
@@ -493,8 +495,6 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
         cost_unknown=True,
         detail="ProcessError: Command failed with exit code -9",
     )
-    journal.started(key, "0004_finished", "impl", "autonomous")
-    journal.finished(key, "0004_finished", "impl", "failed", cost_unknown=True)
     # Enough that each of the four anomalies has a row on
     # `/cost` — `0002` over $15, `impl` run too often on both units, one `impl` step at four
     # times the median tokens per turn — and an `integrate` opened by a conflict.
@@ -510,6 +510,10 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
         journal.finished(
             key, "0004_finished", "impl", "done", turns=10, cost_usd=0.40, **_tokens(100_000)
         )
+    # The last `impl` run of all is this failed one, so `/agents` shows `impl` as `failed`
+    # (a stage's chip is its last run's); `spec` ended `done` above and is `ok`.
+    journal.started(key, "0004_finished", "impl", "autonomous")
+    journal.finished(key, "0004_finished", "impl", "failed", cost_unknown=True)
 
 
 def seed_refusal(data_dir: Path, proj: Path) -> None:

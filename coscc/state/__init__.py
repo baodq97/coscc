@@ -22,6 +22,7 @@ from reflex_base.event.context import EventContext
 
 from coscc import plugin
 from coscc.state import app, place, present
+from coscc.service.agents import AgentPage
 from coscc.service.common import COLLAPSED_STATES
 from coscc.service.common import FOLDED_STATES
 from coscc.service.common import Invalid
@@ -82,10 +83,11 @@ from coscc.state.views import (
     knob,
     FeatureRow,
     schedule_label,
-    ModelRow,
-    AgentRow,
     ImportRow,
-    GrantRow,
+    AgentListRow,
+    AgentDetail,
+    OtherRow,
+    agent_views,
     _run_target,
     _run_waiting,
     _run_dropped,
@@ -283,7 +285,6 @@ class StudioState(
     unit_anomalies: list[AnomalyRow] = []
     knobs: list[Knob] = []
     features: list[FeatureRow] = []
-    grants: list[GrantRow] = []
     # The fields an import could not read, and why the report itself could not be.
     import_rows: list[ImportRow] = []
     import_problem: str = ""
@@ -294,13 +295,15 @@ class StudioState(
     loopback_only: bool = True
     # `COS_MODEL`, the fallback for a row nothing else answers.
     model: str = ""
-    # The model of each stage, then chat, and why a row fell back. The box being typed in
-    # is `model_target`, the same one-box-at-a-time shape the answers use.
-    model_rows: list[ModelRow] = []
-    model_problems: list[str] = []
-    # The agent table, and why a field fell back. Each row is its own form.
-    agent_rows: list[AgentRow] = []
+    # The Agents page, as `Agents.agent_page` had it on arriving and after the last save: the
+    # table, one drawer's worth per agent, the "Other sessions" rows and what was skipped.
+    agent_list: list[AgentListRow] = []
+    agent_details: list[AgentDetail] = []
+    agent_others: list[OtherRow] = []
     agent_problems: list[str] = []
+    # The chip the table is narrowed to, `""` for all; the agent whose drawer is open.
+    agent_chip: str = ""
+    agent_key: str = ""
     # One workspace's autopilot settings, as `Autopilot.settings` has them.
     ap_on: bool = False
     ap_may_ship: bool = False
@@ -312,9 +315,6 @@ class StudioState(
     impl_block: list[str] = []
     impl_allow_text: str = ""
     impl_block_text: str = ""
-    model_target: str = ""
-    model_text: str = ""
-    saving_model: bool = False
 
     # -- chrome
     mobile_open: bool = False
@@ -510,6 +510,16 @@ class StudioState(
         return [c.id for c in self.cards if q in c.title.lower() or q in c.id.lower()][:6]
 
     @rx.var
+    def agent_shown(self) -> list[AgentListRow]:
+        """The table's rows, narrowed to the chip chosen."""
+        return [r for r in self.agent_list if not self.agent_chip or r.chip == self.agent_chip]
+
+    @rx.var
+    def agent_detail(self) -> AgentDetail:
+        """The open drawer's agent; nothing while no drawer is open."""
+        return next((d for d in self.agent_details if d.key == self.agent_key), AgentDetail())
+
+    @rx.var
     def cost_over_count(self) -> int:
         return len([r for r in self.cost_units if r.over])
 
@@ -529,20 +539,6 @@ class StudioState(
         self.loopback_only = data.get("host") in ("127.0.0.1", "localhost", "::1")
         self.model = data.get("cos_model") or "unset"
         self.knobs = [knob(k) for k in data.get("knobs") or []]
-        self.grants = [
-            GrantRow(
-                stage=g["stage"],
-                tools=g["tools"],
-                commands=g["commands"],
-                turns=str(g["max_turns"]),
-                budget=str(g.get("budget") or f"${g['max_budget_usd']:.2f}"),
-                warning=g["warning"],
-                consequence=str(g.get("consequence") or ""),
-                tool_list=list(g.get("tool_list") or []),
-                command_list=list(g.get("command_list") or []),
-            )
-            for g in data.get("grants") or []
-        ]
         report = data.get("import_report") or {}
         self.import_rows = [
             ImportRow(
@@ -556,45 +552,15 @@ class StudioState(
         ]
         self.import_problem = str(report.get("problem") or "")
 
-    def _show_models(self, data: dict) -> None:
-        self.model_rows = [
-            ModelRow(
-                name=str(r["name"]),
-                agents=int(r["agents"]),
-                model=str(r["model"] or "SDK default"),
-                source=str(r["source"]),
-                # A `:novel` row can show `override` inherited from its base row; only
-                # the service knows whether this row itself has one to reset.
-                overridden=bool(r.get("overridden", r["source"] == "override")),
-                effort=str(r.get("effort") or "SDK default"),
-                effort_source=str(r.get("effort_source") or "none"),
-                effort_overridden=bool(
-                    r.get("effort_overridden", r.get("effort_source") == "override")
-                ),
-                has_effort=str(r["name"]) != "chat",
-            )
-            for r in data.get("rows") or []
-        ]
-        self.model_problems = [str(p) for p in data.get("problems") or []]
+    def _show_agents(self, page: AgentPage) -> None:
+        """What `Agents.agent_page` returned: the table, each drawer and the other sessions."""
+        self.agent_list, self.agent_details, self.agent_others = agent_views(page)
+        self.agent_problems = [str(p) for p in page["problems"]]
 
-    def _show_agents(self, data: dict) -> None:
-        self.agent_rows = [
-            AgentRow(
-                key=str(r["key"]),
-                **{f: str(r.get(f) or "") for f in ("glyph", "name", "meaning", "role")},
-                **{
-                    f"{f}_source": str((r.get("source") or {}).get(f) or "")
-                    for f in ("glyph", "name", "meaning", "role")
-                },
-                overridden=bool(r.get("overridden")),
-            )
-            for r in data.get("rows") or []
-        ]
-        self.agent_problems = [str(p) for p in data.get("problems") or []]
+    def _load_agents(self) -> None:
+        self._show_agents(app.SERVICE.agents.agent_page())
 
-    async def _load_models(self) -> None:
-        self._show_models(await app.SERVICE.models.stage_models())
-        self._show_agents(app.SERVICE.agents.agent_table())
+    async def _load_workspace_settings(self) -> None:
         self._load_autopilot()
         self._load_command_lists()
         self._load_features()
@@ -1264,7 +1230,10 @@ class StudioState(
         # An idea is read after the board, every arrival, like a unit's dialog.
         idea = want.idea if screen == "idea" else ""
         feature = want.feature if screen == "feature" else ""
-        fixed = place.Place(screen, self._name_of(cwd), unit, tab, idea=idea, feature=feature)
+        agent = want.agent if screen == "agents" else ""
+        fixed = place.Place(
+            screen, self._name_of(cwd), unit, tab, idea=idea, feature=feature, agent=agent
+        )
 
         moved_ws = cwd != self._read_cwd
         moved_unit = unit != self._read_unit
@@ -1298,7 +1267,7 @@ class StudioState(
             yield
             await self._load_board()
             yield
-            await self._load_models()
+            await self._load_workspace_settings()
             # No Sessions here: this arrival reads them when Sessions is where it lands.
             self._load_activity()
             self._load_update()
@@ -1327,6 +1296,14 @@ class StudioState(
             self._load_cost()
         if self.screen == "settings":
             self._load_decisions()
+        if self.screen == "agents":
+            # Once on entering the page; opening a drawer moves nothing and reads nothing.
+            if first or moved_screen:
+                self._load_agents()
+            if agent not in {d.key for d in self.agent_details}:
+                agent = ""
+                fixed = dataclasses.replace(fixed, agent="")
+        self.agent_key = agent
         self._show_feature(feature, cwd)
         self._read_cwd = cwd
         self.unit_id, self.detail_tab = unit, tab
@@ -1549,70 +1526,62 @@ class StudioState(
         self._remember("density", value)
 
     @rx.event
-    def edit_model(self, name: str, value: str):
-        """Typing into one row's box makes it the row being edited."""
-        self.model_target = name
-        self.model_text = value
+    def set_agent_chip(self, value: str | list[str]):
+        """Narrow the table to one chip, or to every agent with `all`."""
+        chip = value if isinstance(value, str) else (value or [""])[0]
+        self.agent_chip = "" if chip == "all" else chip
 
     @rx.event
-    async def save_model(self, name: str):
-        """Set one row's model. Whether it may be set is `Models.set_stage_model`'s call."""
-        if name != self.model_target or not self.model_text.strip():
-            self.notice = "Type a model name in that row's box first."
-            return
-        await self._change_model(name, self.model_text)
+    def open_agent(self, key: str):
+        # `arrive` reads it: the drawer sits over the table, at an address of its own.
+        return rx.redirect(place.href(place.Place("agents", self._name_of(self.cwd), agent=key)))
 
     @rx.event
-    async def reset_model(self, name: str):
-        """Remove the override, so the row falls back to the default or `COS_MODEL`."""
-        await self._change_model(name, None)
-
-    async def _change_model(self, name: str, model: str | None) -> None:
-        self.saving_model = True
-        try:
-            self._show_models(await app.SERVICE.models.set_stage_model(name, model))
-        except Invalid as e:
-            self.notice = str(e)
-            return
-        finally:
-            self.saving_model = False
-        self.model_target, self.model_text = "", ""
-        self.notice = (
-            f"{name} now runs on {model.strip()} from its next session."
-            if model is not None
-            else f"{name} is back on its default."
-        )
+    def toggle_agent(self, value: bool):
+        if not value:
+            return rx.redirect(place.href(place.Place("agents", self._name_of(self.cwd))))
 
     @rx.event
-    def save_agent(self, form: dict):
-        """One row's form, as typed. Whether it may be saved is `Agents.set_agent`'s call;
-        a field left as it was is not sent."""
+    def save_agent_field(self, form: dict):
+        """One box as typed. Whether it may be saved is `Agents.set_agent_field`'s call."""
+        key, field = str(form.get("key") or ""), str(form.get("field") or "")
+        self._change_agent(key, field, str(form.get("value") or "").strip())
+
+    @rx.event
+    def save_agent_identity(self, form: dict):
+        """The four identity boxes of one agent; a field left as it was is not sent."""
         key = str(form.get("key") or "")
-        row = next((r for r in self.agent_rows if r.key == key), None)
+        row = next((d for d in self.agent_details if d.key == key), None)
         if row is None:
             return
-        fields = {
+        changed = {
             f: str(form.get(f) or "").strip()
             for f in ("glyph", "name", "meaning", "role")
             if f in form and str(form.get(f) or "").strip() != getattr(row, f)
         }
-        if not fields:
+        if not changed:
             self.notice = "Nothing changed."
             return
-        self._change_agent(key, fields)
+        for field, value in changed.items():
+            if not self._change_agent(key, field, value):
+                return
 
     @rx.event
-    def reset_agent(self, key: str):
-        """Remove the row's override, so every field is back on its default."""
-        self._change_agent(key, {})
+    def reset_agent_field(self, key: str, field: str):
+        """Remove the override, so the field falls back to its default."""
+        self._change_agent(key, field, None)
 
-    def _change_agent(self, key: str, fields: dict) -> None:
+    def _change_agent(self, key: str, field: str, value: str | None) -> bool:
+        """Save or reset one field and read the page again (`_show_agents`). `False` when the
+        service refused it, with its reason as the page's error."""
+        self.error = ""
         try:
-            self._show_agents(app.SERVICE.agents.set_agent(key, fields))
+            self._show_agents(app.SERVICE.agents.set_agent_field(key, field, value))
         except Invalid as e:
-            self.notice = str(e)
-            return
-        self.notice = f"The {key} agent is saved; the next step that starts uses it."
+            self._fail(e)
+            return False
+        self.notice = "Saved; the next step that starts uses it."
+        return True
 
     @rx.event
     def set_autopilot_on(self, value: bool):
@@ -1669,31 +1638,6 @@ class StudioState(
             self._load_autopilot()
             return
         self.notice = "Saved."
-
-    @rx.event
-    async def save_effort(self, name: str, effort: str):
-        """Set one row's effort. Whether it may be set is `Models.set_stage_effort`'s call."""
-        await self._change_effort(name, effort)
-
-    @rx.event
-    async def reset_effort(self, name: str):
-        """Remove the effort override, so the row falls back to its default or the SDK's."""
-        await self._change_effort(name, None)
-
-    async def _change_effort(self, name: str, effort: str | None) -> None:
-        self.saving_model = True
-        try:
-            self._show_models(await app.SERVICE.models.set_stage_effort(name, effort))
-        except Invalid as e:
-            self.notice = str(e)
-            return
-        finally:
-            self.saving_model = False
-        self.notice = (
-            f"{name} now runs at effort {effort} from its next session."
-            if effort is not None
-            else f"{name} effort is back on its default."
-        )
 
     def _remember(self, key: str, value: str) -> None:
         try:

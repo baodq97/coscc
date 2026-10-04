@@ -689,6 +689,59 @@ async def _studio(manager, token: str):
         return await root.get_state(page.StudioState)
 
 
+def agent_page() -> dict:
+    """What `Agents.agent_page` answers, cut down to one agent, `impl`, whose last run failed."""
+    ceilings = {
+        "max_turns": 120,
+        "max_turns_source": "default",
+        "max_budget_usd": 8.0,
+        "max_budget_source": "override",
+    }
+    config = {
+        "key": "impl",
+        "fields": ["model", "effort", "turns", "budget"],
+        "model": "claude-sonnet-5-5",
+        "model_source": "default",
+        "effort": "high",
+        "effort_source": "override",
+        "ceilings": ceilings,
+        "overridden": {"model": False, "effort": True, "turns": False, "budget": True},
+    }
+    run = {"unit": "0002_x", "outcome": "failed", "at": "2026-01-01T00:00:00+00:00"}
+    return {
+        "rows": [
+            {
+                "key": "impl",
+                "glyph": "ᚢ",
+                "name": "Uruz",
+                "meaning": "m",
+                "role": "r",
+                "identity_source": {"glyph": "default", "name": "override"},
+                "config": config,
+                "variants": [{**config, "key": "impl:novel", "fields": ["model", "effort"]}],
+                "skill": "write-impl",
+                "grant": {
+                    "tools": ["Read"],
+                    "commands": ["git"],
+                    "mcp": [],
+                    "submits": True,
+                    "warning": "w",
+                },
+                "last": {**run, "turns": 109, "cost_usd": None},
+                "runs": [{**run, "turns": 109, "cost_usd": None}],
+                "runs_30d": 1,
+                "cost_30d": 0.0,
+                "chip": "failed",
+            }
+        ],
+        "others": [
+            {**config, "key": "chat", "fields": ["model"], "effort": None, "effort_source": "none"}
+        ],
+        "problems": ["p"],
+        "cos_model": None,
+    }
+
+
 class _Page:
     """Every `SERVICE` call a first arrival makes, answered from memory and counted, and every
     `rx.redirect` the handlers ask for, recorded."""
@@ -754,9 +807,9 @@ class _Page:
         }
         stack = contextlib.ExitStack()
         for name, value in {
-            "activity.settings": counted("settings", {"knobs": [], "grants": []}),
+            "activity.settings": counted("settings", {"knobs": []}),
             "activity.preferences": counted("preferences", {}),
-            "models.stage_models": acounted("stage_models", {"rows": [], "problems": []}),
+            "agents.agent_page": counted("agent_page", agent_page()),
             "backlog.branch_here": acounted("branch_here", {"branch": "main"}),
             "board": acounted("board", self.BOARD),
             "chat.sessions_for": counted("sessions_for", {"sessions": []}),
@@ -816,6 +869,8 @@ class AnArrivalReadsOnce(unittest.TestCase):
                             "timeline": fake.calls["timeline"] - before.get("timeline", 0),
                             "decisions": fake.calls["decisions_table"]
                             - before.get("decisions_table", 0),
+                            "agent_page": fake.calls["agent_page"] - before.get("agent_page", 0),
+                            "agent": studio.agent_key,
                             "screen": studio.screen,
                             "cwd": studio.cwd,
                             "unit": studio.unit_id,
@@ -874,6 +929,24 @@ class AnArrivalReadsOnce(unittest.TestCase):
             [s["screen"] for s in seen], ["board", "settings", "board", "settings", "settings"]
         )
         self.assertEqual([s["decisions"] for s in seen], [0, 1, 0, 1, 1])
+
+    def test_the_agents_page_is_read_once_on_entering_and_a_drawer_reads_nothing(self):
+        """`Agents.agent_page` once per arrival at /agents; opening and closing a drawer is an
+        arrival that moves nothing; an agent that is no row is replaced by the table."""
+        seen = self._walk(
+            [
+                ("/board?ws=a", "s1"),
+                ("/agents?ws=a", "s1"),
+                ("/agents?ws=a&agent=impl", "s1"),
+                ("/agents?ws=a", "s1"),
+                ("/agents?ws=a&agent=nobody", "s1"),
+                ("/agents/?ws=a&agent=impl", "s2"),  # reload
+            ]
+        )
+        self.assertEqual([s["screen"] for s in seen], ["board"] + ["agents"] * 5)
+        self.assertEqual([s["agent_page"] for s in seen], [0, 1, 0, 0, 0, 1])
+        self.assertEqual([s["agent"] for s in seen], ["", "", "impl", "", "", "impl"])
+        self.assertEqual(seen[4]["redirects"], [("/agents?ws=a", True)])
 
     def test_an_address_without_ws_is_replaced_by_one_with_it(self):
         seen = self._walk([("/board", "s1"), ("/board?ws=a", "s1")])
@@ -1454,11 +1527,8 @@ class TheBoardIsDrawnFromTheStages(unittest.TestCase):
     def test_the_board_and_settings_show_what_the_service_resolved(self):
         """The glyph, label and notes of each column, and each Settings row, copied from the service
         with nothing worked out here."""
-        from types import SimpleNamespace
 
-        from coscc.agent import agents
         from coscc.service.common import unit_state
-        from coscc.state import StudioState
 
         class Named(_Page):
             BOARD = {
@@ -1496,17 +1566,6 @@ class TheBoardIsDrawnFromTheStages(unittest.TestCase):
             (glyphs, labels, notes),
             ({"alpha": "ᚨ"}, {"alpha": "Aa (agent, alpha)"}, {"alpha": "m\nr"}),
         )
-
-        page = SimpleNamespace()
-        table = agents.table({"review": {"name": "Judge"}})
-        table["rows"][0]["overridden"] = False
-        StudioState._show_agents(page, {**table, "problems": ["p"]})
-        review = next(r for r in page.agent_rows if r.key == "review")
-        self.assertEqual(
-            (review.name, review.name_source, review.glyph_source), ("Judge", "override", "default")
-        )
-        self.assertEqual(len(page.agent_rows), 8)
-        self.assertEqual(page.agent_problems, ["p"])
 
 
 class NoCardLosesWhatItShowed(unittest.TestCase):

@@ -8,13 +8,9 @@ from typing import Any
 
 from coscc.units import autopilot
 from coscc.units import board as board_reader
-from coscc.units.board import Unavailable
 from coscc.data import Data
 from coscc.runlog.journal import Journal
 from coscc.agent import labels, models, modeltrial
-from coscc.github import prmachine
-from coscc.runner.step import SESSIONS_PER_STEP
-from coscc.service.common import Invalid, log_setting
 
 from coscc.config import Config
 
@@ -33,22 +29,33 @@ class Models:
     # The resolving is `coscc/agent/models.py`; this gathers its inputs: the stage list from
     # the loop, the overrides from `prefs`, `COS_MODEL` from `Config`.
 
-    def model_overrides(self) -> tuple[dict[str, str], list[str]]:
+    def model_overrides(self) -> tuple[dict[str, models.Value], list[str]]:
         return models.overrides_from(Data(self.config.data_dir).pref_rows(models.PREFIX))
 
-    def effort_overrides(self) -> tuple[dict[str, str], list[str]]:
+    def effort_overrides(self) -> tuple[dict[str, models.Value], list[str]]:
         return models.overrides_from(
             Data(self.config.data_dir).pref_rows(models.EFFORT_PREFIX), models.EFFORT_PREFIX
         )
 
     def model_for(self, name: str) -> tuple[str | None, str]:
-        """`(model, source)` for chat, and for Gebo on `impl`'s base row. Never raises on bad data.
+        """`(model, source)` for chat. Never raises on bad data.
 
-        A board step goes through `_stage_config` instead, which also reads the label.
+        A board step goes through `stage_config` instead, which also reads the label.
         """
-        overrides, _ = self.model_overrides()
+        return self.config_for(name)[:2]
+
+    def config_for(self, name: str) -> tuple[str | None, str, str | None, str]:
+        """`(model, model_source, effort, effort_source)` of a row run with no label: Gebo's
+        `integrate`, which falls back to `impl`'s base row (`models.FALLS_BACK`)."""
         defaults, _ = models.load_defaults()
-        return models.resolve(name, None, overrides, {}, defaults, self.config.model)[:2]
+        return models.resolve(
+            name,
+            None,
+            self.model_overrides()[0],
+            self.effort_overrides()[0],
+            defaults,
+            self.config.model,
+        )
 
     def stage_config(
         self, stage: str, stages: list[str], directory: Path, journal: Journal, key: str, unit: str
@@ -124,84 +131,3 @@ class Models:
             "findings_open": sum(int(r.get("findings_open") or 0) for r in added),
             "verdicts": [str(r.get("verdict") or "") for r in added],
         }
-
-    async def stage_models(self) -> dict[str, Any]:
-        """Every row Settings shows: stage, agents, model, effort, where each came from.
-
-        When the loop cannot run there is no stage list (a second copy of the loop would be
-        wrong), so the table is empty and `problems` says why. `pr` and `ship` run no session.
-        """
-        try:
-            stages = [s for s in await board_reader.stages() if s not in prmachine.STAGES]
-        except Unavailable as e:
-            return {"rows": [], "problems": [str(e)], "cos_model": self.config.model}
-        overrides, bad_rows = self.model_overrides()
-        efforts, bad_efforts = self.effort_overrides()
-        defaults, bad_defaults = models.load_defaults()
-        table = models.table(
-            stages, overrides, efforts, defaults, self.config.model, SESSIONS_PER_STEP
-        )
-        for r in table["rows"]:
-            r["overridden"] = r["name"] in overrides
-            r["effort_overridden"] = r["name"] in efforts
-        table["problems"] = bad_defaults + bad_rows + bad_efforts + table["problems"]
-        table["cos_model"] = self.config.model
-        return table
-
-    async def _setting_row(self, name: Any, allow_chat: bool) -> str:
-        """Check a Settings row name against the loop: a stage, `<stage>:novel` for a
-        stage after `plan`, or `chat` when the setting has one."""
-        if not isinstance(name, str) or not name:
-            raise Invalid("name is required")
-        try:
-            stages = await board_reader.stages()
-        except Unavailable as e:
-            raise Invalid(str(e)) from e
-        allowed = [r for r in models.rows_for(stages) if allow_chat or r != models.CHAT]
-        if name not in allowed:
-            raise Invalid(f"no such stage: {name} (use one of {', '.join(allowed)})")
-        return name
-
-    async def set_stage_model(self, name: Any, model: Any = None) -> dict[str, Any]:
-        """Set one row's model, or remove the override when `model` is None.
-
-        Behind the password like every route: whoever holds it can move `review` to a weaker
-        model. The one trace is the `setting` record, with the old and new value. No gate reads it.
-        An unknown model fails at the next step of that stage, with the CLI's own error.
-        """
-        name = await self._setting_row(name, allow_chat=True)
-        if model is not None:
-            if not isinstance(model, str) or not model.strip():
-                raise Invalid("model is required")
-            model = model.strip()
-
-        data = Data(self.config.data_dir)
-        key = models.PREFIX + name
-        old = self.model_overrides()[0].get(name)
-        if model is None:
-            data.delete_pref(key)
-        else:
-            data.set_pref(key, model)
-        log_setting(self.ws.journal(), key, old, model)
-        return await self.stage_models()
-
-    async def set_stage_effort(self, name: Any, effort: Any = None) -> dict[str, Any]:
-        """Set one row's effort, or remove the override when `effort` is None.
-
-        Same exposure and trace as `set_stage_model`. `max` is accepted here and only here
-        (`models.json` may not ship it), so every `max` run traces back to a `setting` record.
-        `chat` has no effort.
-        """
-        name = await self._setting_row(name, allow_chat=False)
-        if effort is not None and effort not in models.EFFORTS:
-            raise Invalid(f"effort must be one of {', '.join(models.EFFORTS)}")
-
-        data = Data(self.config.data_dir)
-        key = models.EFFORT_PREFIX + name
-        old = self.effort_overrides()[0].get(name)
-        if effort is None:
-            data.delete_pref(key)
-        else:
-            data.set_pref(key, effort)
-        log_setting(self.ws.journal(), key, old, effort)
-        return await self.stage_models()

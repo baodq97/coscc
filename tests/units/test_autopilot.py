@@ -658,6 +658,20 @@ class TheDaysMoney(unittest.TestCase):
         self.assertEqual(ap.reservation("integrate"), 8.0)
         self.assertEqual(ap.reservation("no-such-stage"), 0.0)
 
+    def test_a_raised_budget_is_reserved_and_estimated_in_full(self):
+        self.assertEqual(ap.reservation("impl", {"impl:novel": 50.0}), 50.0)
+        self.assertEqual(ap.reservation("impl", {"impl": 30.0}), 30.0)
+        self.assertEqual(ap.reservation("spec", {"spec": 12.5}), 12.5)
+        self.assertEqual(ap.reservation("integrate", {"integrate": 20.0}), 20.0)
+        # A lowered one is held at what it now is.
+        self.assertEqual(ap.reservation("review", {"review": 1.0}), 1.0)
+        rows = [{"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"}]
+        got = ap.spent_on(rows, ap.today(NOW), {"impl": 40.0})
+        self.assertEqual(got["estimated"], 40.0)
+        self.assertEqual(ap.estimate("idea", {"spec": 45.0}), 45.0)
+        start = {"kind": "start", "workspace": "w", "unit": "0010_a", "stage": "spec", "at": at()}
+        self.assertEqual(ap.reserved([start], NOW, (), {"spec": 9.0}), 9.0)
+
     def test_an_end_without_cost_counts_its_stages_ceiling(self):
         rows = [
             {"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"},

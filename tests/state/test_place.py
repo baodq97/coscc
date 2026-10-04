@@ -21,6 +21,8 @@ class AnAddressReadsBackAsThePlaceItWasWrittenFrom(unittest.TestCase):
     def _every_place(self):
         for screen, ws in itertools.product(place.SCREENS, ("", "coscc")):
             yield Place(screen, ws)
+        for ws in ("", "coscc"):
+            yield Place("agents", ws, agent="impl")
         for ws, unit, tab in itertools.product(("", "coscc"), ("", "0016_x"), place.TABS):
             yield Place("unit", ws, unit, tab)
 
@@ -30,7 +32,7 @@ class AnAddressReadsBackAsThePlaceItWasWrittenFrom(unittest.TestCase):
             with self.subTest(place=p):
                 self.assertEqual(_read(place.href(p)), p)
                 count += 1
-        self.assertEqual(count, 16 + 20)
+        self.assertEqual(count, 18 + 2 + 20)
 
     def test_no_address_ends_in_a_slash_but_the_root(self):
         for p in self._every_place():
@@ -51,6 +53,18 @@ class AnAddressReadsBackAsThePlaceItWasWrittenFrom(unittest.TestCase):
             "/unit?ws=a&id=0016_x&tab=questions",
         )
         self.assertEqual(place.href(Place("unit", "a", "0016_x")), "/unit?ws=a&id=0016_x")
+
+
+class AnAgentsDrawerIsNamedInItsAddress(unittest.TestCase):
+    def test_the_agent_reads_back(self):
+        p = Place("agents", "proj", agent="impl")
+        self.assertEqual(place.href(p), "/agents?ws=proj&agent=impl")
+        self.assertEqual(_read(place.href(p)), p)
+        self.assertEqual(place.href(Place("agents", "proj")), "/agents?ws=proj")
+
+    def test_only_the_agents_screen_carries_one(self):
+        self.assertEqual(place.href(Place("board", "proj", agent="impl")), "/board?ws=proj")
+        self.assertEqual(_read("/board?ws=proj&agent=impl").agent, "")
 
 
 class AFeaturePageIsNamedInItsAddress(unittest.TestCase):

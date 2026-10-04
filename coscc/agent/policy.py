@@ -222,14 +222,14 @@ SPIKE_WARNING = (
 # Said on the Backlog panel above the button, before it is pressed.
 ESTIMATE_WARNING = (
     "Proposing estimates opens one paid session (1 turn, $2.00 ceiling) on the model of the "
-    "Settings row `estimate`. Whoever holds the password or a live session can press it, and "
+    "Agents page row `estimate`. Whoever holds the password or a live session can press it, and "
     "can rewrite any estimate, relation or the shortlist under any name they type."
 )
 
 # Said beside *Scan now* on the Backlog, before it is pressed.
 SCAN_WARNING = (
     "Scanning opens one paid session (2 turns, $0.68 ceiling, about $1 at most) on the model of "
-    "the Settings row `estimate`."
+    "the Agents page row `estimate`."
 )
 
 # Only stages that appear here get anything. The rest (`idea`, `intent`, any stage invented
@@ -381,8 +381,15 @@ def grant_for(stage: str) -> Grant:
     grant = GRANTS.get(stage, Grant())
     if stage not in SUBMITTING + SUBMITTING_SESSIONS:
         return grant
-    turns = grant.max_turns if stage in OWN_TURNS else max(grant.max_turns, SUBMIT_TURNS)
-    return replace(grant, submits=True, max_turns=turns)
+    return replace(grant, submits=True, max_turns=turns_floor(stage, grant.max_turns))
+
+
+def turns_floor(stage: str, turns: int) -> int:
+    """`turns`, raised to `SUBMIT_TURNS` for a stage or session that submits, unless it is one
+    of `OWN_TURNS`. A person's override of the ceiling gets the same floor."""
+    if stage in OWN_TURNS or stage not in SUBMITTING + SUBMITTING_SESSIONS:
+        return turns
+    return max(turns, SUBMIT_TURNS)
 
 
 def grant_for_step(stage: str, label: str | None) -> Grant:

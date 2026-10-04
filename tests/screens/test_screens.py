@@ -296,7 +296,7 @@ class ThePage(unittest.TestCase):
 
     def test_every_column_may_carry_its_agent_and_settings_lists_them(self):
         """The glyph is a button with its label for hover and screen readers, drawn in the system's
-        runic fonts; Settings has one form per agent, Reset hidden (S8)."""
+        runic fonts."""
         board = _render(screens._board())
         for said in (
             "stage-glyph",
@@ -306,16 +306,8 @@ class ThePage(unittest.TestCase):
             "Noto Sans Runic",
         ):
             self.assertIn(said, board)
-        settings = _render(screens._settings())
-        for said in (
-            "agents-panel",
-            "agent-row",
-            "A change applies to the next step that starts.",
-            "agent_problems",
-            "Reset",
-        ):
-            self.assertIn(said, settings)
-        self.assertNotIn("COS_", _render(screens.settings._agent_row(screens.P.agent_rows[0])))
+        # Settings no longer sets who an agent is: the Agents page does.
+        self.assertNotIn("agents-panel", _render(screens._settings()))
 
     def test_settings_has_the_decisions_panel(self):
         """S7: the form asks no name; S8: *Withdraw* only on a decision in force."""
@@ -357,12 +349,140 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("COS_", panel)
         self.assertNotRegex(panel, r"/home/|/tmp/")
 
-    def test_a_grants_tools_are_a_list_behind_details(self):
+    def test_settings_lost_the_agents_models_and_grants_panels_and_their_links(self):
+        """No panel for who an agent is, what it runs on or what it may do, and no link in
+        `settings-index` to one."""
+        from coscc.screens import settings as page
+
         settings = _render(screens._settings())
-        self.assertNotIn("tools: ", settings)
-        self.assertNotIn("commands: ", settings)
-        self.assertIn("What it may use", settings)
-        self.assertIn("tool_list", settings)
+        for gone in ("agents-panel", "models-panel", "grants-panel", "agent-row", "model-row"):
+            self.assertNotIn(gone, settings)
+        self.assertEqual(
+            {t for _, t in page.SECTIONS} & {"agents-panel", "models-panel", "grants-panel"}, set()
+        )
+        for _, target in page.SECTIONS:
+            self.assertIn(f'"{target}"', settings.replace('\\"', '"'), target)
+
+
+class TheAgentsScreen(unittest.TestCase):
+    """`/agents` on rows shaped like the capture fixture: a `spec` run that ended `done` for
+    $0.52 and an `impl` run that ended `failed`."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        from pathlib import Path
+
+        from coscc.agent.sessions import Sessions
+        from coscc.config import Config
+        from coscc.service import Service
+        from coscc.state.views import agent_views
+
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = Path(cls._tmp.name)
+        (root / "work").mkdir()
+        config = Config(workspaces=(), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        cls.service = Service(config, Sessions(config))
+        journal = cls.service.ws.journal()
+        journal.finished("proj", "0002_u", "spec", "done", turns=4, cost_usd=0.52)
+        journal.finished("proj", "0002_u", "impl", "failed", turns=109)
+        cls.page = cls.service.agents.agent_page()
+        cls.table, cls.details, cls.others = agent_views(cls.page)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_the_table_has_the_eight_agents_failed_first(self):
+        by = {r.key: r for r in self.table}
+        self.assertEqual(len(self.table), 8)
+        self.assertEqual((by["impl"].chip, by["impl"].color), ("failed", "red"))
+        self.assertEqual((by["spec"].chip, by["spec"].color), ("ok", "grass"))
+        self.assertEqual(by["idea"].chip, "idle")
+        self.assertEqual(self.table[0].key, "impl")
+        self.assertEqual(by["spec"].outcome, "done")
+        self.assertEqual(by["spec"].when, "just now")
+        self.assertEqual(by["spec"].cost, "$0.520")
+        self.assertEqual(by["idea"].outcome, "—")
+        impl = next(r for r in self.page["rows"] if r["key"] == "impl")
+        # Copied from the service, never worked out here.
+        self.assertEqual(by["impl"].model, impl["config"]["model"])
+        self.assertEqual(by["impl"].turns, "120")
+
+    def test_other_sessions_keep_their_fields(self):
+        by = {r.key: r for r in self.others}
+        self.assertEqual(list(by), ["estimate", "chat"])
+        self.assertTrue(by["estimate"].has_effort)
+        self.assertFalse(by["chat"].has_effort)
+
+    def test_a_drawer_holds_the_grant_the_boxes_and_the_runs(self):
+        by = {d.key: d for d in self.details}
+        impl, idea = by["impl"], by["idea"]
+        self.assertEqual(impl.skill, "write-impl")
+        self.assertEqual([f.field for f in impl.fields], ["model", "effort", "turns", "budget"])
+        # The two ceilings of `impl:novel` are its own boxes, inside impl's drawer.
+        self.assertEqual(
+            [(f.row, f.field) for f in impl.variants],
+            [
+                ("impl:novel", "model"),
+                ("impl:novel", "effort"),
+                ("impl:novel", "turns"),
+                ("impl:novel", "budget"),
+            ],
+        )
+        self.assertEqual([r.outcome for r in impl.runs], ["failed"])
+        self.assertEqual((impl.submits, impl.chip), ("yes", "failed"))
+        budget = next(f for f in idea.fields if f.field == "budget")
+        self.assertEqual((budget.value, budget.source, budget.overridden), ("none", "none", False))
+        self.assertEqual((idea.chip, idea.runs, idea.variants), ("idle", [], []))
+
+    def test_the_screen_draws_the_table_the_drawer_and_the_other_sessions(self):
+        shown = _render(screens.agents.agents_screen()).replace('\\"', '"')
+        for said in (
+            "agents-table",
+            "agent-row",
+            "agent-drawer",
+            "other-sessions",
+            "agent-filter",
+            "agent-problem",
+            "Other sessions",
+            "Cost, 30 days",
+            "No agent has that status.",
+            "No run yet.",
+            "reset_agent_field",
+            "agent-ceiling-note",
+        ):
+            self.assertIn(said, shown)
+        # One sentence beside the boxes that raise what a step spends, and only one (S2).
+        self.assertEqual(shown.count("lets each step spend more"), 1)
+
+    def test_the_grant_is_drawn_and_never_written(self):
+        """No box, button or handler of the page takes a grant."""
+        from coscc.screens.agents import _grant
+        from coscc.state import StudioState
+
+        grant = _render(_grant())
+        for writes in ("Input", "input", "onSubmit", "Save", "reset_agent"):
+            self.assertNotIn(writes, grant)
+        # S3: a long list of commands is behind an open button.
+        self.assertIn("agent-commands", grant)
+        handlers = [n for n in StudioState.event_handlers if "grant" in n.lower()]
+        self.assertEqual(handlers, [])
+
+    def test_the_nav_lists_agents_on_every_page(self):
+        from coscc.state.views import NAVIGATION
+
+        self.assertIn("agents", [k for k, _, _ in NAVIGATION])
+        page = _render(screens.index()).replace('\\"', '"')
+        self.assertIn("nav-agents", page)
+        self.assertIn("mobile-nav-agents", page)
+
+    def test_the_drawer_has_an_address_of_its_own(self):
+        from coscc.state import place
+
+        p = place.Place("agents", "proj", agent="impl")
+        self.assertEqual(place.href(p), "/agents?ws=proj&agent=impl")
+        self.assertEqual(place.read("/agents", "ws=proj&agent=impl"), p)
 
 
 class TheIntegrationPanel(unittest.TestCase):

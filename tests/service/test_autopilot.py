@@ -1104,6 +1104,10 @@ class Scripted(_Base):
             ["integrate"],
         )
         self.assertEqual(self.service.autopilot.cap([], 100.0)["running"], need)
+        # A raised dollar ceiling is what the queued step is held at from then on.
+        self.service.agents.set_agent_field("integrate", "budget", 30)
+        self.assertEqual(self.service.autopilot.cap([], 100.0)["running"], 30.0)
+        self.service.agents.set_agent_field("integrate", "budget", None)
         self.add("0002_b", "spec")
         self.listed()
         await self.pass_()

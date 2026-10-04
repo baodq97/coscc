@@ -13,7 +13,7 @@ schedule's tick and the Backlog script are all in it.
    (pending, accepted, dismissed with why; newest first, 2,000 characters at most, the count cut
    recorded) and at most 25 interventions, oldest first.
 4. Opens one `scan` session (`Ctx.session`): the grant `scan` in `coscc/agent/policy.py`, the
-   model of the Settings row `estimate`, `submit` only, 2 turns, $0.68. It is a run in the run
+   model of the Agents page row `estimate`, `submit` only, 2 turns, $0.68. It is a run in the run
    log like the estimate's, so `/cost` counts it.
 5. Keeps each proposal that keeps the rules (`problems_of`), at most 8, as `pending`; records why
    the rest were dropped; moves the cursor to the last intervention the prompt held. A session

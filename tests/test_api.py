@@ -178,7 +178,7 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
 
-class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
+class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -191,90 +191,73 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
-    async def rows(self):
-        r = await self.client.get("/api/settings/models")
+    async def page(self):
+        r = await self.client.get("/api/agents")
         self.assertEqual(r.status_code, 200)
-        return {row["name"]: row for row in r.json()["rows"]}
+        return r.json()
 
-    async def test_eleven_rows_with_nothing_configured(self):
-        rows = await self.rows()
-        self.assertEqual(len(rows), 11)
-        self.assertNotIn("pr", rows)
-        self.assertNotIn("ship", rows)
-        self.assertEqual(list(rows)[-2:], ["estimate", "chat"])
-        self.assertEqual(rows["impl"]["source"], "default")
-        self.assertEqual(
-            (rows["impl:novel"]["effort"], rows["impl:novel"]["effort_source"]), ("high", "default")
-        )
+    async def test_eight_agents_and_two_other_sessions(self):
+        page = await self.page()
+        self.assertEqual(len(page["rows"]), 8)
+        self.assertEqual([r["key"] for r in page["others"]], ["estimate", "chat"])
+        impl = next(r for r in page["rows"] if r["key"] == "impl")
+        self.assertEqual(impl["config"]["model_source"], "default")
+        self.assertEqual([v["key"] for v in impl["variants"]], ["impl:novel"])
+        self.assertEqual(impl["variants"][0]["effort"], "high")
 
-    async def test_effort_set_then_remove(self):
-        r = await self.client.post(
-            "/api/settings/efforts", json={"name": "impl:novel", "effort": "max"}
-        )
+    async def test_set_then_reset(self):
+        body = {"key": "spec", "field": "turns", "value": 30}
+        r = await self.client.post("/api/agents/field", json=body)
         self.assertEqual(r.status_code, 200)
-        row = (await self.rows())["impl:novel"]
-        self.assertEqual((row["effort"], row["effort_source"]), ("max", "override"))
-        r = await self.client.post("/api/settings/efforts", json={"name": "impl:novel"})
+        spec = next(x for x in r.json()["rows"] if x["key"] == "spec")
+        self.assertEqual(spec["config"]["ceilings"]["max_turns"], 30)
+        r = await self.client.post("/api/agents/field", json={"key": "spec", "field": "turns"})
         self.assertEqual(r.status_code, 200)
-        self.assertEqual((await self.rows())["impl:novel"]["effort_source"], "default")
+        spec = next(x for x in r.json()["rows"] if x["key"] == "spec")
+        self.assertEqual(spec["config"]["ceilings"]["max_turns_source"], "default")
 
-    async def test_bad_effort_requests_are_400(self):
+    async def test_bad_requests_are_400_with_a_reason(self):
         for body in (
-            {"name": "bogus", "effort": "low"},
-            {"name": "plan", "effort": "turbo"},
-            {"effort": "low"},
-            {"name": "chat", "effort": "low"},
-            {"name": "plan:novel", "effort": "low"},
-        ):
-            r = await self.client.post("/api/settings/efforts", json=body)
-            self.assertEqual(r.status_code, 400, body)
-        r = await self.client.post("/api/settings/efforts", content=b"not json")
-        self.assertEqual(r.status_code, 400)
-
-    async def test_set_then_remove(self):
-        r = await self.client.post("/api/settings/models", json={"name": "impl", "model": "m"})
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual((await self.rows())["impl"]["source"], "override")
-        r = await self.client.post("/api/settings/models", json={"name": "impl"})
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual((await self.rows())["impl"]["source"], "default")
-
-    async def test_bad_requests_are_400(self):
-        for body in (
-            {"name": "bogus", "model": "m"},
-            {"name": "plan", "model": "  "},
-            {"model": "m"},
-            {"name": "plan", "model": 3},
-        ):
-            r = await self.client.post("/api/settings/models", json=body)
-            self.assertEqual(r.status_code, 400, body)
-        r = await self.client.post("/api/settings/models", content=b"not json")
-        self.assertEqual(r.status_code, 400)
-
-    async def test_settings_agents_routes_answer_400_with_a_reason(self):
-        r = await self.client.get("/api/settings/agents")
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(len(r.json()["rows"]), 8)
-        r = await self.client.post("/api/settings/agents", json={"key": "review", "name": "Judge"})
-        self.assertEqual(r.status_code, 200)
-        row = next(x for x in r.json()["rows"] if x["key"] == "review")
-        self.assertEqual((row["name"], row["source"]["name"]), ("Judge", "override"))
-        for body in (
-            {"key": "review", "name": "two words"},
-            {"key": "spec", "name": "judge"},
-            {"key": "bogus", "name": "X"},
-            {"name": "X"},
-            {"key": "plan", "glyph": "abc"},
+            {"key": "bogus", "field": "model", "value": "m"},
+            {"key": "plan", "field": "model", "value": "  "},
+            {"key": "plan", "field": "effort", "value": "turbo"},
+            {"key": "chat", "field": "effort", "value": "low"},
+            {"key": "plan", "field": "turns", "value": 501},
+            {"key": "plan", "field": "budget", "value": 0.05},
+            {"key": "review", "field": "name", "value": "two words"},
+            {"field": "model", "value": "m"},
             [1, 2],
         ):
-            r = await self.client.post("/api/settings/agents", json=body)
+            r = await self.client.post("/api/agents/field", json=body)
             self.assertEqual(r.status_code, 400, body)
             self.assertTrue(r.json()["error"], body)
-        r = await self.client.post("/api/settings/agents", content=b"not json")
+        r = await self.client.post("/api/agents/field", content=b"not json")
         self.assertEqual(r.status_code, 400)
-        r = await self.client.post("/api/settings/agents", json={"key": "review"})
-        row = next(x for x in r.json()["rows"] if x["key"] == "review")
-        self.assertEqual((row["name"], row["overridden"]), ("Tiwaz", False))
+
+    async def test_no_route_writes_a_grant(self):
+        # A grant is shown, never written.
+        before = (await self.page())["rows"]
+        for field in ("tools", "commands", "mcp", "submits", "warning", "grant"):
+            r = await self.client.post(
+                "/api/agents/field", json={"key": "impl", "field": field, "value": ["Bash"]}
+            )
+            self.assertEqual(r.status_code, 400, field)
+        self.assertEqual(
+            [r["grant"] for r in (await self.page())["rows"]], [r["grant"] for r in before]
+        )
+        writes = [
+            route.path
+            for route in self.app.routes
+            if "POST" in getattr(route, "methods", ()) and "agents" in route.path
+        ]
+        self.assertEqual(writes, ["/api/agents/field"])
+
+    async def test_the_settings_routes_are_gone(self):
+        for path in ("/api/settings/models", "/api/settings/efforts", "/api/settings/agents"):
+            r = await self.client.post(path, json={"name": "impl", "model": "m"})
+            self.assertIn(r.status_code, (404, 405), path)
+            r = await self.client.get(path)
+            self.assertIn(r.status_code, (404, 405), path)
 
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):

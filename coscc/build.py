@@ -37,6 +37,7 @@ _SOURCES = (
     "coscc/screens/backlog.py",
     "coscc/screens/dialogs.py",
     "coscc/screens/idea.py",
+    "coscc/screens/agents.py",
     "coscc/state/views.py",
     "coscc/state/workspaces.py",
     "coscc/state/watch.py",

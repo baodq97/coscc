@@ -1,4 +1,4 @@
-"""The six screens, built from Python components, reading only `StudioState`.
+"""The screens, built from Python components, reading only `StudioState`.
 
 Each action whose effect costs money or leaves this machine keeps one sentence beside its button (`Service.CONSEQUENCE`). Paths, full shas, UUIDs and variable names sit only inside a closed `_details`.
 """
@@ -17,6 +17,7 @@ from coscc.screens.chrome import _sidebar, _topbar, _banners
 from coscc.screens.overview import _overview, _workspaces_screen
 from coscc.screens.board import _RECONNECT_JS, _board
 from coscc.screens.sessions import _sessions, _activity, _cost
+from coscc.screens.agents import agents_screen
 from coscc.screens.settings import _settings
 from coscc.screens.unit import _detail_dialog
 from coscc.screens.backlog import _backlog_screen
@@ -46,6 +47,7 @@ def _screen() -> rx.Component:
         ("sessions", _sessions()),
         ("activity", _activity()),
         ("cost", _cost()),
+        ("agents", agents_screen()),
         ("settings", _settings()),
         ("idea", _idea_screen()),
         ("feature", _feature_screen()),

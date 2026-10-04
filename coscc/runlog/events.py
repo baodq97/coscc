@@ -1,7 +1,7 @@
 """The recorder each board step carries: what the step does, event by event, for anyone watching.
 
-Every SDK message `Sessions._stream` gets, every refusal `permission_gate` makes and the
-runner's outcome become numbered events, kept in memory for the life of the step, pushed to
+Every SDK message `Sessions._stream` gets, every refusal `permission_gate` makes, the `config`
+a session opened with and the runner's outcome become numbered events, kept in memory for the life of the step, pushed to
 followers, and written to two tables of `cos.db` (never into the run log).
 
 Nothing here may change the step. `message` and `denied` run on the SDK's read loop, so they
@@ -184,6 +184,33 @@ class Recorder:
                     q.put_nowait(("event", event))
         except Exception:  # noqa: BLE001 - `_lose` logs the first; nothing here may reach the step
             self._lose()
+
+    def config(
+        self,
+        *,
+        model: str | None,
+        model_source: str,
+        effort: str | None,
+        effort_source: str,
+        max_turns: int,
+        max_turns_source: str,
+        max_budget_usd: float | None,
+        max_budget_source: str,
+    ) -> None:
+        """`config`: what the session was handed, once, as it opens and before any SDK event, and
+        again for the segment of a step taken up after an update. The runner hands the values in;
+        nothing is resolved here."""
+        self._emit(
+            "config",
+            model=model,
+            model_source=model_source,
+            effort=effort,
+            effort_source=effort_source,
+            max_turns=max_turns,
+            max_turns_source=max_turns_source,
+            max_budget_usd=max_budget_usd,
+            max_budget_source=max_budget_source,
+        )
 
     def message(self, msg: Any) -> None:
         """One SDK message, as one or more events. Synchronous: no `await` on this path."""
@@ -399,6 +426,8 @@ def _body(event: dict[str, Any]) -> str:
         value = event.get("data")
     elif kind == "end":
         value = event.get("detail")
+    elif kind == "config":
+        value = {name: v for name, v in event.items() if name not in COMMON}
     else:
         value = ""
     if value is None:
