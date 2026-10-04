@@ -33,7 +33,6 @@ def _field_form(
     source,
     overridden,
     select=False,
-    compact: bool = False,
 ) -> rx.Component:
     """One box of one row: its value, a badge saying where the value came from, *Save*, and
     *Reset* only while an override is there to clear (S8). The plain element, not `rx.form`,
@@ -59,10 +58,10 @@ def _field_form(
     control = (
         pick if select is True else text_box if select is False else rx.cond(select, pick, text_box)
     )
-    head = (
-        []
-        if compact
-        else [
+    return rx.el.form(
+        rx.el.input(type="hidden", name="key", value=row),
+        rx.el.input(type="hidden", name="field", value=field),
+        rx.flex(
             rx.hstack(
                 s.text(label, size="1", weight="medium"),
                 _source_badge(source, overridden),
@@ -70,16 +69,8 @@ def _field_form(
                 align="center",
                 width="190px",
                 flex_shrink="0",
-            )
-        ]
-    )
-    return rx.el.form(
-        rx.el.input(type="hidden", name="key", value=row),
-        rx.el.input(type="hidden", name="field", value=field),
-        rx.flex(
-            *head,
+            ),
             control,
-            *([_source_badge(source, overridden)] if compact else []),
             rx.button("Save", type="submit", size="1"),
             rx.cond(
                 overridden,
@@ -115,6 +106,7 @@ def _field_row(f) -> rx.Component:
 
 
 def _agent_row(row: rx.Var[AgentListRow]) -> rx.Component:
+    # The chip and the last run come first, so a phone shows what needs attention unscrolled.
     return rx.table.row(
         rx.table.cell(
             rx.hstack(
@@ -129,28 +121,32 @@ def _agent_row(row: rx.Var[AgentListRow]) -> rx.Component:
                         padding="0",
                         height="auto",
                     ),
-                    s.text(row.key, size="1"),
-                    spacing="0",
+                    rx.hstack(
+                        s.text(row.key, size="1"),
+                        s.badge(row.chip, row.color),
+                        spacing="2",
+                        align="center",
+                    ),
+                    spacing="1",
                     align="start",
                 ),
                 align="center",
                 spacing="3",
             )
         ),
+        rx.table.cell(
+            rx.vstack(
+                rx.text(row.outcome, size="2", white_space="nowrap"),
+                s.text(row.when, size="1", white_space="nowrap"),
+                spacing="0",
+                align="start",
+            )
+        ),
+        rx.table.cell(_mono(row.cost)),
         rx.table.cell(_mono(row.model)),
         rx.table.cell(_mono(row.effort)),
         rx.table.cell(_mono(row.turns)),
         rx.table.cell(_mono(row.budget)),
-        rx.table.cell(
-            rx.hstack(
-                rx.text(row.outcome, size="2", white_space="nowrap"),
-                s.text(row.when, size="1", white_space="nowrap"),
-                spacing="2",
-                align="center",
-            )
-        ),
-        rx.table.cell(_mono(row.cost)),
-        rx.table.cell(s.badge(row.chip, row.color)),
         on_click=P.open_agent(row.key),
         cursor="pointer",
         _hover={"background": rx.color("gray", 3)},
@@ -186,35 +182,33 @@ def _filter() -> rx.Component:
 
 
 def _other_row(row: rx.Var[OtherRow]) -> rx.Component:
-    return rx.table.row(
-        rx.table.cell(rx.text(row.key, size="2", weight="medium")),
-        rx.table.cell(
+    """One session's boxes stacked under its name, which wrap on a phone where table cells
+    would run off the screen."""
+    return rx.vstack(
+        rx.text(row.key, size="2", weight="medium"),
+        _field_form(
+            row.key,
+            "model",
+            "Model of " + row.key,
+            row.model.draft,
+            row.model.source,
+            row.model.overridden,
+        ),
+        rx.cond(
+            row.has_effort,
             _field_form(
                 row.key,
-                "model",
-                "Model of " + row.key,
-                row.model.draft,
-                row.model.source,
-                row.model.overridden,
-                compact=True,
-            )
+                "effort",
+                "Effort of " + row.key,
+                row.effort.draft,
+                row.effort.source,
+                row.effort.overridden,
+                select=True,
+            ),
         ),
-        rx.table.cell(
-            rx.cond(
-                row.has_effort,
-                _field_form(
-                    row.key,
-                    "effort",
-                    "Effort of " + row.key,
-                    row.effort.draft,
-                    row.effort.source,
-                    row.effort.overridden,
-                    select=True,
-                    compact=True,
-                ),
-                s.text("—", size="1"),
-            )
-        ),
+        spacing="3",
+        width="100%",
+        align="start",
         data_testid="other-row",
     )
 
@@ -222,7 +216,7 @@ def _other_row(row: rx.Var[OtherRow]) -> rx.Component:
 def _others() -> rx.Component:
     return s.panel(
         s.section_head("Other sessions"),
-        _table(["Session", "Model", "Effort"], P.agent_others, _other_row, ""),
+        rx.vstack(rx.foreach(P.agent_others, _other_row), spacing="5", width="100%"),
         id="other-sessions",
     )
 
@@ -463,13 +457,12 @@ def agents_screen() -> rx.Component:
             _table(
                 [
                     "Agent",
+                    "Last run",
+                    "Cost, 30 days",
                     "Model",
                     "Effort",
                     "Turns",
                     "Cost ceiling",
-                    "Last run",
-                    "Cost, 30 days",
-                    "Status",
                 ],
                 P.agent_shown,
                 _agent_row,
