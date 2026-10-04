@@ -2,19 +2,39 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
+import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 from coscc.config import Config
 from coscc.data import Busy, Data
 from coscc.service import Service
+from coscc.service.agents import chip_of
 from coscc.service.common import Invalid
 from coscc.agent.sessions import Sessions
 
+NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 
-class AnOverrideIsCheckedSavedAndLogged(unittest.TestCase):
+
+def _at(days_ago: float) -> str:
+    return (NOW - timedelta(days=days_ago)).isoformat(timespec="seconds")
+
+
+def _end(stage: str, outcome: str, days_ago: float, cost=None, turns=None, unit="0001_u"):
+    record = {"v": 1, "kind": "end", "workspace": "w", "unit": unit, "stage": stage}
+    record.update(outcome=outcome, at=_at(days_ago))
+    if cost is not None:
+        record["cost_usd"] = cost
+    if turns is not None:
+        record["turns"] = turns
+    return record
+
+
+class _WithAService(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -23,108 +43,206 @@ class AnOverrideIsCheckedSavedAndLogged(unittest.TestCase):
         (root / "work").mkdir()
         self.service = Service(config, Sessions(config))
         self.data = Data(config.data_dir)
+        self.journal = self.service.ws.journal()
+
+    def _seed(self, records):
+        """Write `records` as they are, `at` included, the way `Journal.append` stores them."""
+        self.journal.records()
+        with self.data.write() as conn:
+            conn.executemany(
+                "INSERT INTO runs (root, workspace, unit, stage, kind, at, record) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        self.journal._root,
+                        r["workspace"],
+                        r["unit"],
+                        r["stage"],
+                        r["kind"],
+                        r["at"],
+                        json.dumps(r),
+                    )
+                    for r in records
+                ],
+            )
 
     def _settings(self):
         return [
-            (r["name"], r["old"], r["new"])
-            for r in self.service.ws.journal().records("", kind="setting")
+            (r["agent"], r["field"], r["old"], r["new"], r["by"])
+            for r in self.journal.records(kind="agent-setting")
         ]
 
-    def _rows(self, table):
-        return {r["key"]: r for r in table["rows"]}
+    def _row(self, page, key):
+        return next(r for r in page["rows"] if r["key"] == key)
 
-    def test_a_valid_override_is_saved_and_logged_with_old_and_new(self):
-        table = self.service.agents.set_agent("review", {"name": "Judge"})
-        row = self._rows(table)["review"]
-        self.assertEqual(
-            (row["name"], row["source"]["name"], row["overridden"]), ("Judge", "override", True)
-        )
-        self.assertEqual((row["glyph"], row["source"]["glyph"]), ("ᛏ", "default"))
-        self.service.agents.set_agent("review", {"role": "Reads it all."})
-        self.assertEqual(self.service.agents.agent("review")["name"], "Judge")
-        self.assertEqual(self.service.agents.agent("review")["role"], "Reads it all.")
+
+class AFieldIsCheckedSavedAndLogged(_WithAService):
+    def test_each_save_and_reset_is_one_agent_setting_row(self):
+        agents = self.service.agents
+        agents.set_agent_field("spec", "turns", 30)
+        agents.set_agent_field("spec", "budget", "2.5")
+        agents.set_agent_field("impl:novel", "effort", "max")
+        page = agents.set_agent_field("spec", "turns", None)
+        spec = self._row(page, "spec")
+        self.assertEqual(spec["config"]["ceilings"]["max_turns_source"], "default")
+        self.assertEqual(spec["config"]["ceilings"]["max_budget_usd"], 2.5)
         self.assertEqual(
             self._settings(),
             [
-                ("agent:review", None, {"name": "Judge"}),
-                ("agent:review", {"name": "Judge"}, {"name": "Judge", "role": "Reads it all."}),
+                ("spec", "turns", None, 30, "owner"),
+                ("spec", "budget", None, 2.5, "owner"),
+                ("impl:novel", "effort", None, "max", "owner"),
+                ("spec", "turns", 30, None, "owner"),
+            ],
+        )
+        # Reset removes the key.
+        self.assertEqual(self.data.pref_rows("turns:"), {})
+
+    def test_a_value_out_of_bounds_is_refused_and_nothing_is_written(self):
+        wrong = [
+            ("spec", "turns", 0),
+            ("spec", "turns", 501),
+            ("spec", "turns", 2.5),
+            ("spec", "budget", 0.09),
+            ("spec", "budget", 50.01),
+            ("spec", "model", ""),
+            ("spec", "model", "x" * 101),
+            ("spec", "effort", "turbo"),
+            ("chat", "effort", "low"),
+            ("chat", "turns", 10),
+            ("review:novel", "turns", 10),
+            ("estimate", "budget", 1.0),
+            ("deploy", "model", "m"),
+            ("spec", "tools", ["Bash"]),
+            ("", "model", "m"),
+            (None, "model", "m"),
+        ]
+        for key, field, value in wrong:
+            with self.assertRaises(Invalid, msg=(key, field, value)):
+                self.service.agents.set_agent_field(key, field, value)
+        for prefix in ("model:", "effort:", "turns:", "budget:"):
+            self.assertEqual(self.data.pref_rows(prefix), {}, prefix)
+        self.assertEqual(self._settings(), [])
+
+    def test_identity_fields_keep_their_rules(self):
+        agents = self.service.agents
+        agents.set_agent_field("review", "name", "Judge")
+        self.assertEqual(agents.agent("review")["name"], "Judge")
+        for key, field, value in (
+            ("review", "name", "Two words"),
+            ("review", "glyph", "abc"),
+            ("review", "meaning", "m" * 61),
+            # Another row's name, whatever its case.
+            ("spec", "name", "judge"),
+            ("review", "name", "GEBO"),
+            ("deploy", "name", "Nobody"),
+        ):
+            with self.assertRaises(Invalid, msg=(key, field, value)):
+                agents.set_agent_field(key, field, value)
+        agents.set_agent_field("impl", "name", "Tiwaz")
+        # Resetting `review`'s name would bring `Tiwaz` back to it.
+        with self.assertRaises(Invalid):
+            agents.set_agent_field("review", "name", None)
+        agents.set_agent_field("impl", "name", None)
+        agents.set_agent_field("review", "name", None)
+        self.assertEqual(agents.agent("review")["name"], "Tiwaz")
+        self.assertEqual(self.data.pref_rows("agent:"), {})
+        self.assertEqual(
+            self._settings(),
+            [
+                ("review", "name", None, "Judge", "owner"),
+                ("impl", "name", None, "Tiwaz", "owner"),
+                ("impl", "name", "Tiwaz", None, "owner"),
+                ("review", "name", "Judge", None, "owner"),
             ],
         )
 
-    def test_a_wrong_field_is_refused_and_nothing_is_written(self):
-        wrong = [
-            ("review", {"name": "Two words"}),
-            ("review", {"name": "x" * 25}),
-            ("review", {"name": "Ümlaut"}),
-            ("review", {"glyph": "abc"}),
-            ("review", {"glyph": "a b"}),
-            ("review", {"meaning": "m" * 61}),
-            ("review", {"meaning": "a\nb"}),
-            ("review", {"role": "r" * 201}),
-            ("review", {"role": "a\nb"}),
-            ("review", {"colour": "red"}),
-            ("review", {"colour": ""}),
-            ("review", {"name": 3}),
-            # Another row's name, whatever its case.
-            ("review", {"name": "uruz"}),
-            ("review", {"name": "GEBO"}),
-            ("deploy", {"name": "Nobody"}),
-            ("", {"name": "Nobody"}),
-            (None, {}),
-        ]
-        for key, fields in wrong:
-            with self.assertRaises(Invalid, msg=(key, fields)):
-                self.service.agents.set_agent(key, fields)
-        self.assertEqual(self.data.pref_rows("agent:"), {})
-        self.assertEqual(self._settings(), [])
-
-    def test_a_name_taken_by_an_override_is_refused_too(self):
-        self.service.agents.set_agent("plan", {"name": "Road"})
-        with self.assertRaises(Invalid):
-            self.service.agents.set_agent("spec", {"name": "road"})
-        # A row may keep its own name.
-        self.service.agents.set_agent("plan", {"name": "ROAD"})
-        self.assertEqual(self.service.agents.agent("plan")["name"], "ROAD")
-
-    def test_a_default_name_coming_back_is_checked_too(self):
-        self.service.agents.set_agent("review", {"name": "Judge", "role": "Reads it all."})
-        self.service.agents.set_agent("impl", {"name": "Tiwaz"})
-        # Reset, and clearing the name alone, would both bring `Tiwaz` back to `review`.
-        for fields in ({}, {"name": ""}):
-            with self.assertRaises(Invalid, msg=fields):
-                self.service.agents.set_agent("review", fields)
-        self.assertEqual(self.service.agents.agent("review")["name"], "Judge")
-        self.assertEqual(len(self._settings()), 2)
-        self.service.agents.set_agent("impl")
-        self.service.agents.set_agent("review")
-        self.assertEqual(self.service.agents.agent("review")["name"], "Tiwaz")
-
     def test_an_unreadable_store_writes_nothing(self):
-        self.service.agents.set_agent("review", {"name": "Judge"})
+        self.service.agents.set_agent_field("review", "name", "Judge")
         with mock.patch.object(Data, "pref_rows", side_effect=Busy("locked")):
-            with self.assertRaises(Invalid):
-                self.service.agents.set_agent("review", {"role": "Reads it all."})
+            for field, value in (("role", "Reads it all."), ("turns", 10)):
+                with self.assertRaises(Invalid):
+                    self.service.agents.set_agent_field("review", field, value)
         self.assertEqual(self.data.pref_rows("agent:"), {"agent:review": '{"name": "Judge"}'})
         self.assertEqual(len(self._settings()), 1)
 
-    def test_the_key_alone_removes_the_rows_override(self):
-        self.service.agents.set_agent("impl", {"name": "Builder", "glyph": "ᛒ"})
-        self.service.agents.set_agent("impl", {"glyph": ""})
-        self.assertEqual(self.service.agents.agent("impl")["glyph"], "ᚢ")
-        self.assertEqual(self.service.agents.agent("impl")["name"], "Builder")
-        table = self.service.agents.set_agent("impl")
-        self.assertFalse(self._rows(table)["impl"]["overridden"])
-        self.assertEqual(self.service.agents.agent("impl")["name"], "Uruz")
-        self.assertEqual(self.data.pref_rows("agent:"), {})
-        self.assertEqual(self._settings()[-1], ("agent:impl", {"name": "Builder"}, None))
 
-    def test_a_broken_stored_override_falls_back_and_is_named(self):
-        self.data.set_pref("agent:spec", {"name": "has space", "glyph": "ᚲᚲ"})
-        self.data.set_pref("agent:deploy", {"name": "Nobody"})
-        table = self.service.agents.agent_table()
-        row = self._rows(table)["spec"]
-        self.assertEqual((row["name"], row["glyph"]), ("Kenaz", "ᚲᚲ"))
-        self.assertEqual(len(table["problems"]), 2, table["problems"])
+class ThePage(_WithAService):
+    def test_eight_rows_with_what_each_runs_on_and_may_do(self):
+        page = self.service.agents.agent_page(now=NOW)
+        self.assertEqual(
+            [r["key"] for r in page["rows"]],
+            ["idea", "intent", "spec", "spike", "plan", "impl", "review", "integrate"],
+        )
+        by = {r["key"]: r for r in page["rows"]}
+        self.assertEqual(by["impl"]["skill"], "write-impl")
+        self.assertEqual(by["integrate"]["skill"], "integrate")
+        self.assertIn("Bash", by["impl"]["grant"]["tools"])
+        self.assertTrue(by["impl"]["grant"]["submits"])
+        self.assertEqual(by["spec"]["grant"]["commands"], [])
+        self.assertEqual(by["idea"]["config"]["ceilings"]["max_budget_source"], "none")
+        self.assertEqual([v["key"] for v in by["review"]["variants"]], ["review:novel"])
+        self.assertEqual(by["spec"]["chip"], "idle")
+        self.assertEqual([r["key"] for r in page["others"]], ["estimate", "chat"])
+        self.assertEqual(page["problems"], [])
+
+    def test_runs_last_five_and_thirty_days(self):
+        self._seed(
+            [_end("spec", "done", d, cost=0.5, turns=7) for d in (40, 20, 10, 5, 3, 2, 1)]
+            + [_end("impl", "done", 2, cost=1.0), _end("impl", "failed", 1, cost=0.25)]
+        )
+        page = self.service.agents.agent_page(now=NOW)
+        by = {r["key"]: r for r in page["rows"]}
+        spec = by["spec"]
+        self.assertEqual(len(spec["runs"]), 5)
+        self.assertEqual(spec["runs"][0]["at"], _at(1))
+        self.assertEqual((spec["last"]["outcome"], spec["last"]["turns"]), ("done", 7))
+        self.assertEqual((spec["runs_30d"], spec["cost_30d"]), (6, 3.0))
+        self.assertEqual(spec["chip"], "ok")
+        self.assertEqual((by["impl"]["chip"], by["impl"]["cost_30d"]), ("failed", 1.25))
+        # A failed or costly row is listed first.
+        self.assertEqual(page["rows"][0]["key"], "impl")
+
+    def test_the_chips_in_their_order(self):
+        done = {"outcome": "done", "cost_usd": 1.0, "at": "", "unit": "", "turns": 1}
+        self.assertEqual(chip_of({**done, "outcome": "exhausted"}, 4.0, 1), "failed")
+        # Failed wins over costly.
+        self.assertEqual(chip_of({**done, "outcome": "failed", "cost_usd": 4.0}, 4.0, 1), "failed")
+        self.assertEqual(chip_of({**done, "cost_usd": 3.2}, 4.0, 1), "costly")
+        self.assertEqual(chip_of({**done, "cost_usd": 3.19}, 4.0, 1), "ok")
+        # Costly wins over idle; with no budget nothing is costly.
+        self.assertEqual(chip_of({**done, "cost_usd": 3.2}, 4.0, 0), "costly")
+        self.assertEqual(chip_of({**done, "cost_usd": 9.0}, None, 1), "ok")
+        self.assertEqual(chip_of(done, 4.0, 0), "idle")
+        self.assertEqual(chip_of(None, 4.0, 0), "idle")
+
+    def test_bad_prefs_are_skipped_and_named(self):
+        # R13: not JSON, out of bounds, and a key no row has.
+        self.data.set_pref("turns:spec", 900)
+        self.data.set_pref("budget:nobody", 1.0)
+        self.data.set_pref("model:plan", "x" * 101)
+        with self.data.write() as conn:
+            conn.execute("INSERT INTO prefs (key, value) VALUES ('effort:spec', '{')")
+        page = self.service.agents.agent_page(now=NOW)
+        spec = self._row(page, "spec")
+        self.assertEqual(spec["config"]["ceilings"]["max_turns"], 40)
+        self.assertEqual(spec["config"]["effort_source"], "default")
+        self.assertEqual(len(page["problems"]), 4, page["problems"])
+
+    def test_ten_thousand_runs_under_half_a_second(self):
+        # R12.
+        stages = ["idea", "intent", "spec", "spike", "plan", "impl", "review", "integrate"]
+        self._seed(
+            [
+                _end(stages[i % 8], "done", (i % 60) + 0.5, cost=0.1, turns=3, unit=f"{i:04d}_u")
+                for i in range(10_000)
+            ]
+        )
+        began = time.perf_counter()
+        page = self.service.agents.agent_page(now=NOW)
+        took = time.perf_counter() - began
+        self.assertEqual(len(page["rows"]), 8)
+        self.assertLess(took, 0.5)
 
 
 if __name__ == "__main__":

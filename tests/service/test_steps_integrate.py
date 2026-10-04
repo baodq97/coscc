@@ -295,7 +295,7 @@ class GeboThroughTheService(unittest.TestCase):
         async def act(tree, gate):
             return "[needs-person] f.txt: both"
 
-        self.service.agents.set_agent("integrate", {"name": "Weaver"})
+        self.service.agents.set_agent_field("integrate", "name", "Weaver")
         rec = self.integrate_with(act)
         [start] = [r for r in self.records("start") if r.get("stage") == "integrate"]
         self.assertEqual(start["agent"], "Weaver")

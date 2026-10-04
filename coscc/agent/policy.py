@@ -381,8 +381,15 @@ def grant_for(stage: str) -> Grant:
     grant = GRANTS.get(stage, Grant())
     if stage not in SUBMITTING + SUBMITTING_SESSIONS:
         return grant
-    turns = grant.max_turns if stage in OWN_TURNS else max(grant.max_turns, SUBMIT_TURNS)
-    return replace(grant, submits=True, max_turns=turns)
+    return replace(grant, submits=True, max_turns=turns_floor(stage, grant.max_turns))
+
+
+def turns_floor(stage: str, turns: int) -> int:
+    """`turns`, raised to `SUBMIT_TURNS` for a stage or session that submits, unless it is one
+    of `OWN_TURNS`. A person's override of the ceiling gets the same floor."""
+    if stage in OWN_TURNS or stage not in SUBMITTING + SUBMITTING_SESSIONS:
+        return turns
+    return max(turns, SUBMIT_TURNS)
 
 
 def grant_for_step(stage: str, label: str | None) -> Grant:

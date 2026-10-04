@@ -1568,7 +1568,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
     def test_an_override_keeps_the_arm_and_records_the_real_model(self):
         self._unit()
-        asyncio.run(self.service.models.set_stage_model("impl", "claude-other"))
+        self.service.agents.set_agent_field("impl", "model", "claude-other")
         before = self._prefs()
         self._run(arm="opus-5-5")
         start = self._starts()[0]
