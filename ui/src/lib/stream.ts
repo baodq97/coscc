@@ -1,6 +1,7 @@
 // The app's one live channel. `/api/stream` only says that something changed; a screen then
 // reads what it shows again. One EventSource serves the whole page, and the browser reconnects
-// it by itself. A reconnect counts as a change to everything, since events may have been missed.
+// it by itself. The server ends each stream after a while with an `end` event; a reconnect
+// after anything else counts as a change to everything, since events may have been missed.
 
 import { useEffect, useRef } from "react";
 
@@ -13,17 +14,21 @@ let source: EventSource | null = null;
 function open() {
   if (source || typeof EventSource === "undefined") return;
   let dropped = false;
+  let ending = false;
   source = new EventSource("/api/stream");
+  source.addEventListener("end", () => {
+    ending = true;
+  });
   source.onmessage = (m) => {
     const change = JSON.parse(m.data) as Change;
     listeners.forEach((l) => l(change));
   };
   source.onerror = () => {
-    dropped = true;
+    dropped = dropped || !ending;
   };
   source.onopen = () => {
     if (dropped) listeners.forEach((l) => l(EVERYTHING));
-    dropped = false;
+    dropped = ending = false;
   };
 }
 

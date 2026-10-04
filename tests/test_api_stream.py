@@ -19,7 +19,7 @@ class TheStreamForwardsTheBus(unittest.IsolatedAsyncioTestCase):
         response = await api.stream(request)
         self.assertEqual(response.media_type, "text/event-stream")
         body = response.body_iterator
-        self.assertEqual(await anext(body), ": open\n\n")
+        self.assertEqual(await anext(body), "retry: 1000\n: open\n\n")
         bus.publish(Event("step.ended", "/w/coscc", "0001_x"))
         line = await anext(body)
         self.assertTrue(line.startswith("data: ") and line.endswith("\n\n"))
@@ -42,3 +42,18 @@ class TheStreamForwardsTheBus(unittest.IsolatedAsyncioTestCase):
             await body.aclose()
         finally:
             api.STREAM_PING_SECONDS = old
+
+
+class AStreamEnds(unittest.IsolatedAsyncioTestCase):
+    async def test_it_ends_with_an_end_event_and_stops_its_watch(self):
+        bus = Bus()
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(service=SimpleNamespace(bus=bus)))
+        )
+        old, api.STREAM_LIFETIME_SECONDS = api.STREAM_LIFETIME_SECONDS, 0.05
+        try:
+            lines = [line async for line in (await api.stream(request)).body_iterator]
+        finally:
+            api.STREAM_LIFETIME_SECONDS = old
+        self.assertEqual(lines[-1], "event: end\ndata: {}\n\n")
+        self.assertEqual(bus._watchers, [])

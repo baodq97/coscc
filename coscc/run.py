@@ -30,6 +30,11 @@ REPO = Path(__file__).resolve().parent.parent
 log = logging.getLogger(__name__)
 
 
+# Longer than the studio's stream lasts (`api.STREAM_LIFETIME_SECONDS`), so a stop lets it end
+# on its own first.
+STOP_WAIT_SECONDS = 40
+
+
 def main(argv: list[str] | None = None) -> None:
     args = sys.argv[1:] if argv is None else argv
     if args:
@@ -83,6 +88,9 @@ def main(argv: list[str] | None = None) -> None:
             port=config.port,
             log_level="warning",
             proxy_headers=False,
+            # A stop waits this long for open responses, then closes them: a reader that never
+            # ends (a stream, a follower) must not hold an update for good.
+            timeout_graceful_shutdown=STOP_WAIT_SECONDS,
         )
     )
     update.SERVER.register(server)
