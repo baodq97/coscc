@@ -168,16 +168,25 @@ class Agents:
         return found, problems
 
     def _ends(self, workspace: str | None) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
-        """Every `end` record by stage, newest first, from one read of the run log."""
+        """Every `end` record by stage, newest first, from one read of the run log, each with
+        the `label` of the `start` it closes, so a run is measured against its own ceiling."""
         journal = self.ws.journal()
         if journal is None:
             return {}, []
         try:
-            records = journal.records(workspace, kind="end")
+            records = journal.records(workspace, kinds=("start", "end"))
         except (Unusable, Busy, sqlite3.Error, OSError) as e:
             return {}, [f"the run log could not be read, so no run is shown: {e}"]
+        labels: dict[tuple[str, str, str], Any] = {}
+        ends: list[dict[str, Any]] = []
+        for record in records:
+            step = (str(record.get("workspace")), str(record.get("unit")), str(record.get("stage")))
+            if record.get("kind") == "start":
+                labels[step] = record.get("label")
+            else:
+                ends.append({**record, "label": labels.pop(step, None)})
         by_stage: dict[str, list[dict[str, Any]]] = {}
-        for record in reversed(records):
+        for record in reversed(ends):
             by_stage.setdefault(str(record.get("stage") or ""), []).append(record)
         return by_stage, []
 
@@ -209,6 +218,17 @@ class Agents:
             recent = [r for r in mine if str(r.get("at") or "") >= since]
             last = _run_view(mine[0]) if mine else None
             config_row = by_key[key]
+            variants = [r for k, r in by_key.items() if k == key + models.NOVEL_SUFFIX]
+            # A `novel` run is held to the `:novel` row's dollar ceiling where it has one.
+            ran_under = next(
+                (
+                    v["ceilings"]["max_budget_usd"]
+                    for v in variants
+                    if mine and mine[0].get("label") == models.NOVEL
+                    if v["ceilings"]["max_budget_usd"]
+                ),
+                config_row["ceilings"]["max_budget_usd"],
+            )
             cost = sum(
                 float(r["cost_usd"]) for r in recent if isinstance(r.get("cost_usd"), (int, float))
             )
@@ -221,14 +241,14 @@ class Agents:
                     role=str(who["role"]),
                     identity_source=dict(who["source"]),
                     config=config_row,
-                    variants=[r for k, r in by_key.items() if k == key + models.NOVEL_SUFFIX],
+                    variants=variants,
                     skill=skill_of(key),
                     grant=_grant_view(key),
                     last=last,
                     runs=[_run_view(r) for r in mine[:RECENT]],
                     runs_30d=len(recent),
                     cost_30d=round(cost, 6),
-                    chip=chip_of(last, config_row["ceilings"]["max_budget_usd"], len(recent)),
+                    chip=chip_of(last, ran_under, len(recent)),
                 )
             )
         rows.sort(key=lambda r: r["chip"] not in ATTENTION)

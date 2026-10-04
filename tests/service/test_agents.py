@@ -203,6 +203,27 @@ class ThePage(_WithAService):
         # A failed or costly row is listed first.
         self.assertEqual(page["rows"][0]["key"], "impl")
 
+    def test_a_novel_run_is_costly_against_its_own_ceiling(self):
+        def start(label, days_ago):
+            return {
+                "v": 1,
+                "kind": "start",
+                "workspace": "w",
+                "unit": "0001_u",
+                "stage": "impl",
+            } | {
+                "at": _at(days_ago),
+                "label": label,
+            }
+
+        # $7 is 88 % of the plain $8 but 44 % of the novel $16.
+        self._seed([start("novel", 2), _end("impl", "done", 2, cost=7.0)])
+        self.assertEqual(self._row(self.service.agents.agent_page(now=NOW), "impl")["chip"], "ok")
+        self._seed([start("routine", 1), _end("impl", "done", 1, cost=7.0)])
+        self.assertEqual(
+            self._row(self.service.agents.agent_page(now=NOW), "impl")["chip"], "costly"
+        )
+
     def test_the_chips_in_their_order(self):
         done = {"outcome": "done", "cost_usd": 1.0, "at": "", "unit": "", "turns": 1}
         self.assertEqual(chip_of({**done, "outcome": "exhausted"}, 4.0, 1), "failed")
