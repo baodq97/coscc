@@ -282,6 +282,31 @@ class AtPilotTheSentenceTellsTheSplit(Setup):
         self.assertEqual((arms["on"]["units"], arms["off"]["units"]), (1, 1))
         self.assertIn("1 on, 1 off so far", codegraph.status(self.ctx, "/w/proj")[0])
 
+    def test_a_step_whose_events_were_purged_is_not_counted_as_the_report_does_not(self):
+        self.seed({"0002_a": "on", "0003_b": "off", "0004_c": "on"})
+        with self.ctx.data.write() as conn:
+            conn.execute(
+                "INSERT INTO step_runs (run, root, workspace, unit, stage, started_at, purged_at) "
+                "VALUES ('r2', '/r', ?, '0004_c', 'impl', 0, '2026-10-03T00:00:00')",
+                (KEY,),
+            )
+        self.idx.shown = Status("", "", "", "")
+        arms = codegraph.measured(self.ctx, KEY, (None, None))["arms"]
+        self.assertEqual((arms["on"]["units"], arms["off"]["units"]), (1, 1))
+        self.assertIn("1 on, 1 off so far", codegraph.status(self.ctx, "/w/proj")[0])
+
+    def test_it_reads_no_event_and_no_review(self):
+        # Asked on every read of the panel: it must not run the report's parsing.
+        self.seed({"0002_a": "on", "0003_b": "off"})
+        self.idx.shown = Status("", "", "", "")
+        with (
+            mock.patch.object(codegraph.turnstats, "pairs", side_effect=AssertionError),
+            mock.patch.object(codegraph.turnstats, "read_chars", side_effect=AssertionError),
+            mock.patch.object(codegraph, "_rounds", side_effect=AssertionError),
+        ):
+            sentence = codegraph.status(self.ctx, "/w/proj")[0]
+        self.assertIn("1 on, 1 off so far", sentence)
+
     def test_an_install_state_comes_first(self):
         for state, head in (
             ("installing", "Installing the code index engine"),

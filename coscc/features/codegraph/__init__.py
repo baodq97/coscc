@@ -24,6 +24,7 @@ from coscc.data import now
 from coscc.features.codegraph.graph import (
     BridgeError,
     GitError,
+    ago,
     call,
     callers,
     changed_files,
@@ -42,7 +43,7 @@ from coscc.service.common import Invalid
 from coscc.units import turnstats
 from coscc.units.autopilot import files_of
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timezone
+from datetime import date
 from fastapi import APIRouter, Request
 from pathlib import Path
 from starlette.routing import BaseRoute
@@ -505,6 +506,15 @@ def _where(ctx: Ctx, key: str) -> tuple[str, str] | None:
     return (found[0], found[1]) if found and found[0] and found[1] else None
 
 
+def _rows(conn: sqlite3.Connection, key: str) -> list[Row]:
+    found = conn.execute(
+        "SELECT run, workspace, unit, stage, arm, sha, map_chars, wait_ms, error, at "
+        "FROM codegraph_runs WHERE workspace = ?",
+        (key,),
+    ).fetchall()
+    return [Row(*r) for r in found if r[4] in ARMS]
+
+
 def _record(ctx: Ctx, row: Row) -> None:
     with ctx.data.write() as conn:
         conn.execute(
@@ -666,21 +676,6 @@ def agent(ctx: Ctx) -> Parts:
     )
 
 
-def _ago(at: str) -> str:
-    try:
-        then = datetime.fromisoformat(at)
-    except ValueError:
-        return "a while ago"
-    s = max(0.0, (datetime.now(timezone.utc) - then).total_seconds())
-    if s < 60:
-        return "just now"
-    if s < 3600:
-        return f"{int(s // 60)} min ago"
-    if s < 86400:
-        return f"{int(s // 3600)} h ago"
-    return then.strftime("%b %-d")
-
-
 def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
     """One sentence for the Settings row, and whether `pilot` and `on` may be chosen."""
     idx = _indexes(ctx)
@@ -695,13 +690,17 @@ def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
     index = {
         "installing": "Installing the code index engine, about 290 MB, once.",
         "building": "Building the index of main.",
-        "ready": f"Ready: the index of main is from {_ago(s.at)}.",
+        "ready": f"Ready: the index of main is from {ago(s.at)}.",
         "failed": f"Failed: {s.reason}",
     }.get(s.state)
     if state != "pilot":
         return index or "Waiting: the index of main is built at the next impl or review.", True
     # The split, the units the report counts in each arm so far and the scoring day.
-    arms = measured(ctx, key, (None, None))["arms"]
+    # Quick: whether a step's events remain is all `report` needs to count units, so none is read.
+    with ctx.data.connect() as conn:
+        rows, ended = _rows(conn, key), turnstats.impl_ends(conn, key)
+    steps = [Step(run, unit, 0.0, None if gone else 0, None) for run, unit, gone in ended]
+    arms = report(rows, steps, {}, (None, None))["arms"]
     split = (
         f"even-numbered units use it, odd ones do not: {arms['on']['units']} on, "
         f"{arms['off']['units']} off so far, scored {SCORING_DAY:%b %-d}."
@@ -739,15 +738,7 @@ def _rounds(
 def measured(ctx: Ctx, key: str, window: tuple[str | None, str | None]) -> Report:
     """The report over the run log: blocking, run in a thread."""
     with ctx.data.connect() as conn:
-        rows = [
-            Row(*r)
-            for r in conn.execute(
-                "SELECT run, workspace, unit, stage, arm, sha, map_chars, wait_ms, error, at "
-                "FROM codegraph_runs WHERE workspace = ?",
-                (key,),
-            ).fetchall()
-            if r[4] in ARMS
-        ]
+        rows = _rows(conn, key)
         pairs = turnstats.pairs(conn, key, None, None)
         runs = [str(p["end"].get("run") or "") for p in pairs]
         chars = turnstats.read_chars(conn, runs, FEATURE)

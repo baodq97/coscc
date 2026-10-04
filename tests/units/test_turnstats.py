@@ -325,6 +325,21 @@ class TheCharactersRead(Fixture):
             )
         self.assertEqual(self.chars(), {"r3": (3, 0)})
 
+    def test_the_ends_say_without_an_event_which_runs_read_chars_has(self):
+        self.step("2026-09-24T10:00:00", "0001_a", turns=1, run="r1")
+        self.step("2026-09-24T11:00:00", "0002_b", turns=1)
+        self.step("2026-09-24T12:00:00", "0003_c", turns=1, run="r3")
+        self.run_row("2026-09-24T13:00:00", "0004_d", "review", "end", run="r4")
+        with Data(self.data).connect() as conn:
+            conn.execute(
+                "INSERT INTO step_runs (run, root, workspace, unit, stage, started_at, purged_at) "
+                "VALUES ('r1', '/r', ?, 'u', 'impl', 0, '2026-10-25T00:00:00')",
+                (self.key,),
+            )
+            ends = turnstats.impl_ends(conn, self.key)
+        self.assertEqual(ends, [("r1", "0001_a", True), ("r3", "0003_c", False)])
+        self.assertEqual({r for r, _, gone in ends if not gone}, set(self.chars()))
+
 
 class TheCommand(Fixture):
     def main(self, *args: str) -> tuple[int, str, str]:
