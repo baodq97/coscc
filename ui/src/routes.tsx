@@ -10,6 +10,7 @@ import { Inbox } from "./screens/Inbox";
 import { Agents } from "./screens/Agents";
 import { System } from "./screens/System";
 import { MayDo } from "./screens/MayDo";
+import { NewWork } from "./screens/NewWork";
 import { Decided } from "./screens/Decided";
 import { Planned } from "./components/ui";
 
@@ -61,11 +62,7 @@ export const SCREENS: Screen[] = [
     path: "/new",
     title: "New work",
     keys: "C",
-    render: () => (
-      <Planned icon="edit" title="New work">
-        Say what you want in your own words. Leif drafts the unit, you confirm the project and the type.
-      </Planned>
-    ),
+    render: () => <NewWork />,
   },
   { path: "/agents", title: "Agents", nav: "Team", icon: "team", keys: "G T", render: () => <Agents /> },
   {

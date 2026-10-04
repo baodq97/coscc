@@ -5,7 +5,7 @@ import { allUnits, useBoards } from "../lib/boards";
 import { LeifAvatar } from "../lib/icons";
 import { unitState } from "../lib/model";
 import { Link } from "../lib/router";
-import { unitCode, unitTitle } from "../lib/format";
+import { ago, unitCode, unitTitle } from "../lib/format";
 import { Button, Empty, SkeletonRows } from "../components/ui";
 
 function greeting(now = new Date()): string {
@@ -17,7 +17,7 @@ export function Briefing() {
   const { boards, loading } = useBoards();
   const units = allUnits(boards);
   const needs = units.filter((u) => unitState(u).group === "Needs you");
-  const moving = units.filter((u) => unitState(u).group === "In progress");
+  const moving = boards.flatMap((b) => (b.board?.running ?? []).map((run) => ({ ...run, workspace: b.workspace.name, number: Number(run.unit.slice(0, 4)) })));
   const off = boards.filter((b) => b.board && !b.board.autopilot?.on).map((b) => b.workspace.name);
 
   return (
@@ -36,7 +36,7 @@ export function Briefing() {
             <span className="sk" style={{ width: 360, height: 12, display: "inline-block" }} />
           ) : (
             <div>
-              <b>{needs.length} {needs.length === 1 ? "thing needs" : "things need"} you</b>, {moving.length} {moving.length === 1 ? "unit is" : "units are"} moving
+              <b>{needs.length} {needs.length === 1 ? "thing needs" : "things need"} you</b>, {moving.length} {moving.length === 1 ? "step is" : "steps are"} running
               across {boards.length} projects.{off.length ? ` The autopilot is off in ${off.join(" and ")}.` : ""}
             </div>
           )}
@@ -78,11 +78,13 @@ export function Briefing() {
         {loading ? (
           <SkeletonRows rows={4} />
         ) : moving.length ? (
-          moving.slice(0, 8).map((u) => (
-            <Link key={u.workspace.name + u.name} to={`/unit/${u.workspace.name}/${u.number}`} className="lrow">
-              <span className="id">{unitCode(u.workspace.name, u.number)}</span>
-              <span className="t">{unitTitle(u.name)}</span>
-              <span className="meta">{u.next_stage}</span>
+          moving.slice(0, 8).map((r) => (
+            <Link key={r.workspace + r.unit + r.stage} to={`/unit/${r.workspace}/${r.number}`} className="lrow">
+              <span className="id">{unitCode(r.workspace, r.number)}</span>
+              <span className="t">{unitTitle(r.unit)}</span>
+              <span className="meta">
+                {r.stage} · {ago(r.started)}
+              </span>
             </Link>
           ))
         ) : (

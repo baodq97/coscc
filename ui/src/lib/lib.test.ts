@@ -4,6 +4,7 @@ import { match } from "./router";
 import { unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { fill } from "./api";
+import { slugOf } from "../screens/NewWork";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -83,5 +84,17 @@ describe("api", () => {
   it("fills a route's path from the query and keeps the rest as a query", () => {
     expect(fill("/api/units/{name}", { name: "0001_x y", cwd: "/w/a" })).toEqual({ path: "/api/units/0001_x%20y", rest: { cwd: "/w/a" } });
     expect(fill("/api/units", { cwd: "/w/a" })).toEqual({ path: "/api/units", rest: { cwd: "/w/a" } });
+  });
+});
+
+describe("new work", () => {
+  it("names a unit from the owner's words in plain ASCII", () => {
+    expect(slugOf("Sửa lỗi: board chậm!")).toBe("sua-loi-board-cham");
+    expect(slugOf("  Đổi tên  ")).toBe("doi-ten");
+  });
+  it("cuts a long name at a word", () => {
+    const name = slugOf("word ".repeat(30));
+    expect(name.length).toBeLessThanOrEqual(60);
+    expect(name.endsWith("word")).toBe(true);
   });
 });
