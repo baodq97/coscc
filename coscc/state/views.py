@@ -1155,6 +1155,8 @@ class FeatureRow:
     # feature with no schedule.
     schedule: str = ""
     schedules: list[str] = dataclasses.field(default_factory=list)
+    # What the feature does, one fixed sentence.
+    summary: str = ""
 
 
 def schedule_label(hours: int) -> str:

@@ -785,4 +785,5 @@ PLUGIN = Plugin(
     pilot=True,
     status=status,
     on_set=on_set,
+    summary="Indexes the code of main so impl and review find where things are without reading files.",
 )

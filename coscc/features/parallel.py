@@ -98,4 +98,5 @@ PLUGIN = Plugin(
     "parallel",
     lambda _ctx: [],
     agent=lambda _ctx: Parts(blocks=(Block("parallel", render),)),
+    summary="Lets impl start one helper per step of a plan's Parallelization section.",
 )

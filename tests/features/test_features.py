@@ -159,6 +159,19 @@ class TurningAFeatureOffForAWorkspace(Setup):
         self.assertEqual({got[f.name] for f in features.FEATURES if f.default == "on"}, {"on"})
         self.assertEqual(got["codegraph"], "off")
 
+    async def test_with_detail_each_feature_says_what_it_does_in_one_short_sentence(self):
+        async with self.client() as client:
+            got = await client.get("/api/features", params={"cwd": str(self.ws), "detail": "1"})
+        rows = got.json()
+        self.assertEqual(set(rows), {f.name for f in features.FEATURES})
+        self.assertEqual(len(rows), 5)
+        for name, row in rows.items():
+            with self.subTest(feature=name):
+                self.assertTrue(row["summary"])
+                self.assertLessEqual(len(row["summary"]), 100)
+                self.assertEqual(set(row), {"state", "pilot", "sentence", "locked", "summary"})
+        self.assertEqual(rows["notices"]["state"], "on")
+
     def test_an_entry_of_the_older_pref_reads_as_off_until_the_next_write_moves_it(self):
         data = Data(self.config.data_dir)
         key = str(self.ws.resolve())

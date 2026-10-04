@@ -349,4 +349,9 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
     return router.routes
 
 
-PLUGIN = Plugin("notices", routes=routes, scripts=(_NOTICE_JS,))
+PLUGIN = Plugin(
+    "notices",
+    routes=routes,
+    scripts=(_NOTICE_JS,),
+    summary="Pops up a notice when a step fails, a unit has questions, the autopilot stops or a PR ships.",
+)

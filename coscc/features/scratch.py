@@ -39,4 +39,5 @@ PLUGIN = Plugin(
     "scratch",
     lambda _ctx: [],
     agent=lambda _ctx: Parts(blocks=(Block("scratch", render),)),
+    summary="Tells every step where it may write besides the worktree: one folder in RAM, one on disk.",
 )
