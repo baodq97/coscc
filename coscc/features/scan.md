@@ -20,6 +20,8 @@ schedule's tick and the Backlog script are all in it.
    that handed back no object is `failed` and the cursor stays.
 
 A scan that cost more than $1 sets the workspace's schedule to off, and the Backlog says why.
+A scan an update paused is `failed` at $0 here: what it spent is read off its transcript after,
+and only the run log's `end` holds it, so this rule does not see it.
 
 ## Tables
 

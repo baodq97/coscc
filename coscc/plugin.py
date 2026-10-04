@@ -114,7 +114,8 @@ class Ctx:
     interventions: Callable[[str, str, int], list[Intervention]] = _no_interventions
     # `(workspace path, kind, prompt)`: one paid session under the grant `kind` that hands its
     # object back through `submit`, recorded in the run log as the estimate is. `Invalid` while
-    # another such session of the workspace runs or an update is under way.
+    # another such session of the workspace runs or an update is under way. One an update
+    # paused hands back no cost: the run log's `end` holds it.
     session: Callable[[str, str, str], Awaitable[Submitted]] = _no_session
     # `(workspace path, slug, brief)`: a new unit, made as `POST /api/units` makes one, and its
     # name. It touches no shortlist.
@@ -429,7 +430,11 @@ def ctx_of(service: Service, features: Sequence[Plugin] = ()) -> Ctx:
                 await stream.aclose()
             outcome = "done"
         except Suspended:
-            got = Submitted(None, {}, "", "an update paused the session")
+            # What it spent is read off its transcript only after this, and lands in the run
+            # log's `end` once the app is back (`Resume._end_unresumed`).
+            got = Submitted(
+                None, {}, "", "an update paused the session; what it spent is in the run log"
+            )
         except asyncio.CancelledError:
             outcome = "interrupted"
             raise
