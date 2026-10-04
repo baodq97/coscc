@@ -43,9 +43,10 @@ from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 from coscc.bus import Event
 from coscc.service.agents import AgentPage
-from coscc.service.board import Cards, Detail, cards, detail
+from coscc.service.board import Cards, Detail, UpNext, cards, detail
 from coscc.service.steps import NextStep
 from coscc.service.watch import EventsPage
+from coscc.units.backlog import SHORTLIST_MAX
 from coscc.service.workspaces import WorkspaceList
 
 log = logging.getLogger(__name__)
@@ -415,6 +416,14 @@ async def more_rounds(request: Request) -> Any:
     return await _service(request).answers.more_rounds(
         *(str(body.get(k) or "") for k in ("cwd", "unit", "by"))
     )
+
+
+@router.get("/api/backlog", response_model=UpNext)
+async def get_backlog(request: Request) -> Any:
+    """The shortlist the autopilot works through, the other estimated units in the order their
+    estimates and relations give, and the units with no estimate. Read from the board held."""
+    board = await _service(request).board(_cwd(request), "held")
+    return {**(board.get("backlog") or {}), "max": SHORTLIST_MAX}
 
 
 @router.post("/api/backlog/estimate")

@@ -1593,6 +1593,11 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         self.assertEqual([e["unit"] for e in board["backlog"]["shortlist"]], [self.a])
         self.assertTrue(board["backlog"]["propose_warning"])
+        up = (await self.client.get("/api/backlog", params={"cwd": self.cwd})).json()
+        self.assertEqual([e["unit"] for e in up["shortlist"]], [self.a])
+        self.assertEqual(up["shortlist"][0]["estimate"]["value"], 3)
+        self.assertEqual((up["unestimated"], up["max"]), ([self.b], 7))
+        self.assertEqual(up["shortlist_record"]["reason"], "r")
         self.assertEqual(
             (await self.client.post("/api/backlog/shortlist", content=b"nope")).status_code, 400
         )

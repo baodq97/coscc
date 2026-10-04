@@ -6,6 +6,7 @@ import { matches } from "./stream";
 import { fill } from "./api";
 import { slugOf } from "../screens/NewWork";
 import { merged, toolSummary } from "../screens/RunLog";
+import { moved } from "../screens/UpNext";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -108,5 +109,13 @@ describe("run log", () => {
   it("adds events in order, none twice", () => {
     const e = (seq: number) => ({ run: "r", seq, at: 0, kind: "text" });
     expect(merged([e(1), e(3)], [e(2), e(3)]).map((x) => x.seq)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("up next", () => {
+  it("moves a unit within the shortlist and never out of it", () => {
+    expect(moved(["a", "b", "c"], "c", -1)).toEqual(["a", "c", "b"]);
+    expect(moved(["a", "b", "c"], "a", -1)).toEqual(["a", "b", "c"]);
+    expect(moved(["a", "b", "c"], "a", 1)).toEqual(["b", "a", "c"]);
   });
 });
