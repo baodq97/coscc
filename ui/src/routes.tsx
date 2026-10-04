@@ -12,6 +12,7 @@ import { System } from "./screens/System";
 import { MayDo } from "./screens/MayDo";
 import { NewWork } from "./screens/NewWork";
 import { UpNext } from "./screens/UpNext";
+import { Talk } from "./screens/Talk";
 import { Decided } from "./screens/Decided";
 import { Planned } from "./components/ui";
 
@@ -42,11 +43,7 @@ export const SCREENS: Screen[] = [
     nav: "Leif",
     icon: "chat",
     keys: "G L",
-    render: () => (
-      <Planned icon="chat" title="Talk to Leif">
-        One conversation with Leif. Leif shows units, costs and plans as cards, and acts only after you say so.
-      </Planned>
-    ),
+    render: () => <Talk />,
   },
   {
     path: "/decisions",

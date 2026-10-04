@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, TypedDict
 
 from coscc.agent import sessions as reader
 from coscc.agent import transcript
@@ -19,6 +19,34 @@ from coscc.service.workspaces import Workspaces
 from coscc.agent.sessions import Sessions
 from coscc.update.updater import Updater
 from coscc.service.models import Models
+
+
+class ChatSession(TypedDict):
+    """One Claude session started in the workspace's folder: by the app's chat, or in a
+    terminal (`resumable` false: read only, unless the app may resume foreign sessions)."""
+
+    session_id: str
+    summary: str
+    last_modified: int
+    created_at: int | None
+    git_branch: str | None
+    resumable: bool
+
+
+class ChatSessions(TypedDict):
+    cwd: str
+    sessions: list[ChatSession]
+
+
+class ChatMessage(TypedDict):
+    role: str
+    text: str
+    uuid: str
+
+
+class ChatHistory(TypedDict):
+    session_id: str
+    messages: list[ChatMessage]
 
 
 class Chat:

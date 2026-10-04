@@ -45,6 +45,7 @@ from coscc.bus import Event
 from coscc.service.agents import AgentPage
 from coscc.service.board import Cards, Detail, UpNext, cards, detail
 from coscc.service.steps import NextStep
+from coscc.service.sessions import ChatHistory, ChatSessions
 from coscc.service.watch import EventsPage
 from coscc.units.backlog import SHORTLIST_MAX
 from coscc.service.workspaces import WorkspaceList
@@ -254,6 +255,38 @@ async def set_agent_field(request: Request) -> Any:
     return _service(request).agents.set_agent_field(
         body.get("key"), body.get("field"), body.get("value")
     )
+
+
+@router.get("/api/chat/sessions", response_model=ChatSessions)
+async def get_chat_sessions(request: Request) -> Any:
+    """The Claude sessions started in one workspace's folder, newest first: the app's chats and
+    any begun in a terminal there, each saying whether the app may write to it."""
+    return _service(request).chat.sessions_for(_cwd(request), limit=40)
+
+
+@router.get("/api/chat/history", response_model=ChatHistory)
+async def get_chat_history(request: Request) -> Any:
+    """Every message of one session, as its transcript holds it."""
+    return _service(request).chat.history(_cwd(request), request.query_params.get("session_id", ""))
+
+
+@router.post("/api/chat")
+async def chat(request: Request) -> Any:
+    """**Opens a paid Claude session** in a workspace's folder, or continues one the app may
+    resume: `{cwd, text, session_id?}`. One turn on the `chat` row's model; the tools it gets
+    are the chat setting's. Streams NDJSON: `chunk` lines, `tool` lines (`name`), then `done`
+    with the `session_id`. A dropped reader ends the turn. The trace is a `chat` record in the
+    run log. Refused while the app updates."""
+    body = await kernel.body(request)
+    cwd, text = str(body.get("cwd") or ""), str(body.get("text") or "")
+    service = _service(request)
+    service.chat.check_send(cwd, text)
+
+    async def turn() -> AsyncIterator[tuple[str, Any]]:
+        async for kind, payload in service.chat.stream(cwd, text, body.get("session_id") or None):
+            yield (kind, {"name": payload}) if kind == "tool" else (kind, payload)
+
+    return await kernel.ndjson(turn(), "the chat turn")
 
 
 @router.get("/api/settings/autopilot", response_model=AutopilotSettings)

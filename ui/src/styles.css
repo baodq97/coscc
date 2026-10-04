@@ -515,3 +515,7 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
 .link-btn:hover { color: var(--text); }
 .agent-card { padding: 14px; display: flex; flex-direction: column; gap: 10px; color: inherit; }
 .agent-card:hover { border-color: var(--text-4); }
+.talk-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 7px 8px; border: 0; border-radius: var(--r2); background: none; text-align: left; font: inherit; color: var(--text); cursor: pointer; }
+.talk-row:hover { background: var(--hover); }
+.talk-row.on { background: var(--accent-soft); }
+.talk-row .ellipsis { max-width: 100%; }

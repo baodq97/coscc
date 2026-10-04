@@ -496,6 +496,56 @@ class WatchingARunOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertIn("event: done", blocks[-2])
 
 
+class TalkingOverHttp(unittest.IsolatedAsyncioTestCase):
+    """The chat routes translate `Chat`; a turn is stood in for, so none is paid."""
+
+    async def asyncSetUp(self):
+        self.app = build(_tmp_config(self))
+        self.service = self.app.state.service
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_a_workspace_with_no_session_lists_none(self):
+        with mock.patch("coscc.agent.sessions.sdk.list_sessions", return_value=[]):
+            r = await self.client.get("/api/chat/sessions", params={"cwd": "/tmp"})
+        self.assertEqual(r.json(), {"cwd": "/tmp", "sessions": []})
+
+    async def test_a_turn_with_no_text_or_session_is_refused_before_anything_opens(self):
+        self.assertEqual(
+            (await self.client.post("/api/chat", json={"cwd": "/tmp", "text": " "})).status_code,
+            400,
+        )
+        r = await self.client.get("/api/chat/history", params={"cwd": "/tmp"})
+        self.assertEqual(r.status_code, 400)
+
+    async def test_a_turn_streams_its_text_tools_and_session(self):
+        async def turn(cwd, text, session_id=None):
+            self.assertEqual((text, session_id), ("hi", "s0"))
+            yield ("chunk", "he")
+            yield ("tool", "Read")
+            yield ("chunk", "llo")
+            yield ("done", {"session_id": "s1"})
+
+        with mock.patch.object(self.service.chat, "stream", turn):
+            r = await self.client.post(
+                "/api/chat", json={"cwd": "/tmp", "text": "hi", "session_id": "s0"}
+            )
+        lines = [json.loads(line) for line in r.text.splitlines()]
+        self.assertEqual(
+            lines,
+            [
+                {"type": "chunk", "text": "he"},
+                {"type": "tool", "name": "Read"},
+                {"type": "chunk", "text": "llo"},
+                {"type": "done", "session_id": "s1"},
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 

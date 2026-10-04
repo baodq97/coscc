@@ -7,6 +7,7 @@ import { fill } from "./api";
 import { slugOf } from "../screens/NewWork";
 import { inUnit, merged, toolSummary } from "../screens/RunLog";
 import { moved } from "../screens/UpNext";
+import { readReply } from "../screens/Talk";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -123,5 +124,20 @@ describe("up next", () => {
     expect(moved(["a", "b", "c"], "c", -1)).toEqual(["a", "c", "b"]);
     expect(moved(["a", "b", "c"], "a", -1)).toEqual(["a", "b", "c"]);
     expect(moved(["a", "b", "c"], "a", 1)).toEqual(["b", "a", "c"]);
+  });
+});
+
+describe("talk", () => {
+  it("reads a reply line by line, a line split across chunks included", async () => {
+    const parts = ['{"type":"chunk","text":"he', 'llo"}\n{"type":"tool","name":"Read"}\n', '{"type":"done","session_id":"s1"}'];
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        parts.forEach((p) => c.enqueue(new TextEncoder().encode(p)));
+        c.close();
+      },
+    });
+    const seen: unknown[] = [];
+    await readReply(body, (l) => seen.push(l));
+    expect(seen).toEqual([{ type: "chunk", text: "hello" }, { type: "tool", name: "Read" }, { type: "done", session_id: "s1" }]);
   });
 });
