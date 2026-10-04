@@ -209,11 +209,10 @@ function TheApp() {
 }
 
 /** The owner's standing decisions, which agents read as precedent, and delegations, which let
- * Leif answer a kind of question in the owner's place. A row is withdrawn, never deleted. */
+ * Leif answer a kind of question in the owner's place. Read only here: they are written on the
+ * person's own Settings screen, which no route reaches, so no agent can widen its own mandate. */
 function Decisions() {
   const table = useResource("/api/decisions");
-  const { error, busy, save } = useSaving(table.reload);
-  const [adding, setAdding] = useState(false);
   if (table.state === "error") return <ErrorState error={table.error} onRetry={table.reload} />;
   if (!table.data) return <SkeletonRows rows={3} />;
   const live = table.data.rows.filter((d) => d.state === "in force" || d.state === "not yet").reverse();
@@ -221,36 +220,17 @@ function Decisions() {
   return (
     <div className="card">
       {live.map((d) => (
-        <DecisionRow key={d.id} decision={d} disabled={busy} onWithdraw={() => save("/api/decisions/withdraw", { id: d.id })} />
+        <DecisionRow key={d.id} decision={d} />
       ))}
       {!live.length && <div className="card-b faint">None in force.</div>}
-      <div className="card-b row">
-        {gone > 0 && <span className="faint" style={{ fontSize: 12 }}>{gone} withdrawn or expired</span>}
-        <span className="grow" />
-        {!adding && (
-          <Button size="sm" icon="plus" onClick={() => setAdding(true)}>
-            Add one
-          </Button>
-        )}
+      <div className="card-b faint" style={{ fontSize: 12 }}>
+        {gone > 0 ? `${gone} withdrawn or expired. ` : ""}Add or withdraw one on the Settings screen of the board.
       </div>
-      {adding && (
-        <AddDecision
-          workspaces={table.data.workspaces}
-          busy={busy}
-          onCancel={() => setAdding(false)}
-          onSave={async (fields) => {
-            await save("/api/decisions", fields);
-            setAdding(false);
-          }}
-        />
-      )}
-      {error && <div className="card-b" style={{ color: "var(--red)", fontSize: 12.5 }}>{error.message}</div>}
     </div>
   );
 }
 
-function DecisionRow({ decision: d, disabled, onWithdraw }: { decision: Decision; disabled: boolean; onWithdraw: () => void }) {
-  const [asking, setAsking] = useState(false);
+function DecisionRow({ decision: d }: { decision: Decision }) {
   return (
     <div className="ny" style={{ alignItems: "flex-start" }}>
       <span className="faint" style={{ width: 34, fontSize: 12, paddingTop: 1 }}>{d.id}</span>
@@ -260,61 +240,6 @@ function DecisionRow({ decision: d, disabled, onWithdraw }: { decision: Decision
           {d.kind === "delegation" ? `${d.agent} may answer: ${d.covers}` : "Decision"} · {d.workspace_name} · since {d.from_day}
           {d.until_day ? ` until ${d.until_day}` : ""} · {d.source}
         </div>
-      </div>
-      <Button size="sm" kind="ghost" disabled={disabled} onClick={() => (asking ? onWithdraw() : setAsking(true))}>
-        {asking ? "Withdraw it?" : "Withdraw"}
-      </Button>
-    </div>
-  );
-}
-
-function AddDecision({ workspaces, busy, onCancel, onSave }: { workspaces: string[]; busy: boolean; onCancel: () => void; onSave: (f: Record<string, string>) => void }) {
-  const [f, setF] = useState({ kind: "decision", text: "", source: "", workspace: "all", until: "", agent: "Leif", covers: "" });
-  const set = (k: keyof typeof f, v: string) => setF({ ...f, [k]: v });
-  const ready = f.text.trim() && f.source.trim() && (f.kind === "decision" || f.covers.trim());
-  return (
-    <div className="card-b" style={{ borderTop: "1px solid var(--line)" }}>
-      <Field label="Kind" hint={f.kind === "delegation" ? "Leif answers these questions in your place." : "Agents read it as your precedent."}>
-        <div className="seg">
-          {["decision", "delegation"].map((k) => (
-            <button key={k} className={f.kind === k ? "on" : ""} onClick={() => set("kind", k)}>
-              {k}
-            </button>
-          ))}
-        </div>
-      </Field>
-      <Field label="What you decided">
-        <textarea className="ta" rows={2} style={{ fontSize: 13 }} value={f.text} onChange={(e) => set("text", e.target.value)} />
-      </Field>
-      {f.kind === "delegation" && (
-        <Field label="Which questions" hint="One line.">
-          <input className="input" value={f.covers} onChange={(e) => set("covers", e.target.value)} />
-        </Field>
-      )}
-      <Field label="Where you decided it" hint="A message, a meeting, a date.">
-        <input className="input" value={f.source} onChange={(e) => set("source", e.target.value)} />
-      </Field>
-      <Field label="Project">
-        <select className="input" value={f.workspace} onChange={(e) => set("workspace", e.target.value)}>
-          <option value="all">All projects</option>
-          {workspaces.map((w) => (
-            <option key={w} value={w}>
-              {w}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label="Until" hint="Optional.">
-        <input className="input" type="date" style={{ width: 160 }} value={f.until} onChange={(e) => set("until", e.target.value)} />
-      </Field>
-      <div className="row" style={{ marginTop: 10 }}>
-        <span className="grow" />
-        <Button size="sm" kind="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button size="sm" kind="primary" disabled={busy || !ready} onClick={() => onSave(f)}>
-          Save
-        </Button>
       </div>
     </div>
   );

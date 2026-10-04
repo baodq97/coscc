@@ -324,23 +324,6 @@ async def get_decisions(request: Request) -> Any:
     return _service(request).answers.decisions_table()
 
 
-@router.post("/api/decisions", response_model=DecisionTable)
-async def add_decision(request: Request) -> Any:
-    """One new decision or delegation: `{kind, text, source, until?, workspace?, agent?,
-    covers?}`, in force from today. A delegation lets an agent answer in the owner's place, so
-    whoever holds the password can widen what agents decide; the trace is the row itself."""
-    service = _service(request)
-    service.answers.add_decision(await kernel.body(request))
-    return service.answers.decisions_table()
-
-
-@router.post("/api/decisions/withdraw", response_model=DecisionTable)
-async def withdraw_decision(request: Request) -> Any:
-    """`{id: "D<n>"}` withdraws one in force from today; its row stays."""
-    body = await kernel.body(request)
-    return _service(request).answers.withdraw_decision(body.get("id"))
-
-
 @router.get("/api/decided")
 async def get_decided(request: Request) -> list[Decided]:
     """Every answer in one workspace that a person did not give, newest first: what Leif and

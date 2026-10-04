@@ -1,4 +1,5 @@
-"""The owner's decisions over HTTP, and the log of what was decided in their place."""
+"""The owner's decisions, read over HTTP and never written there, and the log of what was
+decided in their place."""
 
 from __future__ import annotations
 
@@ -25,33 +26,13 @@ class Routes(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
-    async def test_a_delegation_is_added_then_withdrawn_and_its_row_stays(self):
-        added = await self.client.post(
-            "/api/decisions",
-            json={
-                "kind": "delegation",
-                "text": "Leif answers spec questions on fixes",
-                "source": "chat 10-04",
-                "agent": "Leif",
-                "covers": "spec questions on fix units",
-            },
+    async def test_decisions_are_read_and_never_written_here(self):
+        r = await self.client.get("/api/decisions")
+        self.assertEqual(
+            r.json(),
+            {"rows": [], "workspaces": [self.app.state.service.ws.all()["workspaces"][0]["name"]]},
         )
-        self.assertEqual(added.status_code, 200, added.text)
-        (row,) = added.json()["rows"]
-        self.assertEqual((row["id"], row["kind"], row["state"]), ("D1", "delegation", "in force"))
-        gone = await self.client.post("/api/decisions/withdraw", json={"id": "D1"})
-        self.assertEqual(gone.json()["rows"][0]["state"], "withdrawn")
-        again = await self.client.post("/api/decisions/withdraw", json={"id": "D1"})
-        self.assertEqual(again.status_code, 400)
-        self.assertIn("withdrawn already", again.json()["error"])
-
-    async def test_a_delegation_must_say_what_it_covers(self):
-        r = await self.client.post(
-            "/api/decisions",
-            json={"kind": "delegation", "text": "x", "source": "y", "agent": "Leif"},
-        )
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("covers", r.json()["error"])
+        self.assertEqual((await self.client.post("/api/decisions", json={})).status_code, 405)
 
     async def test_decided_lists_answers_given_for_the_owner_newest_first(self):
         board = {
