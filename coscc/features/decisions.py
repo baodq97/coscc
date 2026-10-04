@@ -473,7 +473,8 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
 
 # On an open unit, its decisions with their authority, and a Reverse button on each live agent
 # one. The address's `ws` is a folder name; `/api/workspaces` says where it is. It draws into its
-# own child of the slot, and again every few seconds, since another script clears the slot.
+# own child of the slot, put back whenever another script clears the slot, and again every few
+# seconds.
 _JS = """
 (function () {
   if (window.__coscc_decisions) return;
@@ -494,15 +495,23 @@ _JS = """
     if (d.authority === "delegated") return "delegated" + (d.delegation ? " (" + d.delegation + ")" : "");
     return "person";
   }
+  var mine = null;
   function box(el) {
-    var mine = el.querySelector("[data-decisions]");
     if (!mine) {
       mine = document.createElement("div");
       mine.setAttribute("data-decisions", "");
       mine.style.cssText = "margin:8px 0 0";
-      el.appendChild(mine);
     }
+    if (mine.parentNode !== el) el.appendChild(mine);
     return mine;
+  }
+  // Another feature's script empties the slot as it draws; the list goes straight back in.
+  function hold(el) {
+    new MutationObserver(function () {
+      if (mine && mine.parentNode !== el && document.body.contains(el)) el.appendChild(mine);
+    }).observe(el, {childList: true});
+    if (mine) mine.textContent = "";
+    draw();
   }
   function reverse(w, unit, d) {
     var sent = {cwd: w.path, unit: unit, id: d.id};
@@ -540,7 +549,8 @@ _JS = """
       b.type = "button";
       b.textContent = "Reverse";
       b.setAttribute("aria-label", "Reverse " + d.id);
-      b.style.cssText = "cursor:pointer";
+      b.style.cssText = "cursor:pointer;border:0;border-radius:4px;padding:2px 8px;font-size:12px;" +
+        "color:var(--accent-11);background:var(--accent-3)";
       b.onclick = function () { b.disabled = true; reverse(w, unit, d); };
       p.appendChild(b);
     }
@@ -556,7 +566,7 @@ _JS = """
       return window.coscc.api(url).then(function (r) { return r.ok ? r.json() : null; })
         .then(function (j) { return j && {w: w, list: j.decisions || []}; });
     }).then(function (got) {
-      var mine = box(document.getElementById("slot-unit") || el);
+      box(document.getElementById("slot-unit") || el);
       if (!got || !got.list.length) { mine.textContent = ""; return; }
       var by = {};
       got.list.forEach(function (d) { if (d.reverses) by[d.reverses] = d.id; });
@@ -568,7 +578,7 @@ _JS = """
       got.list.forEach(function (d) { mine.appendChild(row(got.w, unit, d, by)); });
     }).catch(function () {});
   }
-  window.coscc.slot("slot-unit", draw);
+  window.coscc.slot("slot-unit", hold);
   window.coscc.every(15000, draw);
 })();
 """
