@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-import re
 import shutil
 import sqlite3
 import threading
@@ -28,6 +27,7 @@ from coscc.features.codegraph.graph import (
     call,
     callers,
     changed_files,
+    failure_sentence,
     find,
     impact,
     impl_map,
@@ -67,7 +67,6 @@ DB_FILE = Path(".codegraph") / "codegraph.db"
 # call. Chosen, not measured: a sync is seconds, a first build of a large tree minutes.
 WAIT_S = 60.0
 CALL_S = 1800.0
-SHA = re.compile(r"\b[0-9a-f]{40}\b")
 
 
 class Ready(NamedTuple):
@@ -94,15 +93,6 @@ class IndexRow(NamedTuple):
     sha: str
     at: str
     reason: str
-
-
-def _sentence(error: BaseException, *hide: str) -> str:
-    """One line of what went wrong, with no path and no full SHA: it is shown to a person."""
-    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
-    for secret in filter(None, hide):
-        text = text.replace(secret, "the workspace")
-    text = SHA.sub("main", text)[:200].rstrip(" .")
-    return f"The code index could not be brought up to date: {text}."
 
 
 class Indexes:
@@ -264,7 +254,7 @@ class Indexes:
             self._put(key, path, "ready", root=root, sha=sha)
         except Exception as error:
             log.exception("codegraph index of %s failed", key)
-            self._put(key, path, "failed", reason=_sentence(error, root, path))
+            self._put(key, path, "failed", reason=failure_sentence(error, root, path))
 
     def _task(self, key: str, path: str) -> asyncio.Task[None]:
         """The refresh of this workspace, started if none is running: two askers share one."""
@@ -331,8 +321,7 @@ ARMS: tuple[str, ...] = get_args(Arm)
 # characters read per impl step of at least this share against the off arm.
 MIN_UNITS = 5
 READ_DROP = 0.30
-# The day the owner scores the pilot, given by the owner and in no committed file.
-SCORING_DAY = date(2026, 11, 15)
+SCORING_DAY = date(2026, 11, 15)  # the owner scores the pilot then; no committed file says it
 
 
 @dataclass(frozen=True)
@@ -441,14 +430,12 @@ def _missed(on: ArmStats, off: ArmStats) -> list[str]:
     return out
 
 
-def units_by_arm(pairs: Iterable[tuple[str, str]]) -> tuple[dict[str, set[str]], set[str]]:
-    """The units of `(unit, arm)` records per arm, and the ones that ran in both arms. Such a
-    unit says nothing about either, so it is in neither arm's set."""
+def units_by_arm(pairs: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
+    """The units of `(unit, arm)` records per arm; one in both says nothing, so is in neither."""
     seen: dict[str, set[str]] = {}
     for unit, arm in pairs:
         seen.setdefault(unit, set()).add(arm)
-    mixed = {u for u, arms in seen.items() if len(arms) > 1}
-    return {a: {u for u, arms in seen.items() if a in arms} - mixed for a in ARMS}, mixed
+    return {a: {u for u, arms in seen.items() if arms == {a}} for a in ARMS}
 
 
 def report(
@@ -461,7 +448,8 @@ def report(
     inside = [
         r for r in rows if (since is None or r.at >= since) and (until is None or r.at < until)
     ]
-    _, mixed = units_by_arm((r.unit, r.arm) for r in inside)
+    alone = units_by_arm((r.unit, r.arm) for r in inside)
+    mixed = {r.unit for r in inside} - alone["on"] - alone["off"]
     impl = {r.run: r for r in inside if r.stage == "impl"}
 
     kept: dict[str, list[Step]] = {a: [] for a in ARMS}
@@ -699,7 +687,8 @@ def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
     why = idx.lock()
     if why:
         return why, False
-    if ctx.state(FEATURE, workspace) == "off":
+    state = ctx.state(FEATURE, workspace)
+    if state == "off":
         return "Off in this workspace.", True
     key = ctx.workspace_key(workspace)
     s = idx.status(key)
@@ -709,24 +698,17 @@ def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
         "ready": f"Ready: the index of main is from {_ago(s.at)}.",
         "failed": f"Failed: {s.reason}",
     }.get(s.state)
-    if ctx.state(FEATURE, workspace) != "pilot":
+    if state != "pilot":
         return index or "Waiting: the index of main is built at the next impl or review.", True
-    split = _pilot_split(ctx, key)
-    # The index state first, then the split as the rest of the same sentence.
-    return (f"{index.rstrip('.')}; {split[:1].lower()}{split[1:]}" if index else split), True
-
-
-def _pilot_split(ctx: Ctx, key: str) -> str:
-    """How the pilot divides the units, the units seen in each arm so far, and the scoring day."""
+    # The split, the units in each arm so far and the scoring day, after the index state.
     with ctx.data.connect() as conn:
-        pairs = conn.execute(
-            "SELECT unit, arm FROM codegraph_runs WHERE workspace = ?", (key,)
-        ).fetchall()
-    arms, _ = units_by_arm((r[0], r[1]) for r in pairs if r[1] in ARMS)
-    return (
-        f"Even-numbered units use it, odd ones do not: {len(arms['on'])} on, "
-        f"{len(arms['off'])} off so far, scored {SCORING_DAY.strftime('%b %-d')}."
+        rows = conn.execute("SELECT unit, arm FROM codegraph_runs WHERE workspace = ?", (key,))
+        arms = units_by_arm((u, a) for u, a in rows.fetchall() if a in ARMS)
+    split = (
+        f"even-numbered units use it, odd ones do not: {len(arms['on'])} on, "
+        f"{len(arms['off'])} off so far, scored {SCORING_DAY:%b %-d}."
     )
+    return (f"{index.rstrip('.')}; {split}" if index else split[0].upper() + split[1:]), True
 
 
 def on_set(ctx: Ctx, workspace: str, state: State) -> None:

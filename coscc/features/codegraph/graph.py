@@ -238,6 +238,18 @@ class BridgeError(RuntimeError):
     """The bridge did not give a result: it timed out, died, or said why it could not."""
 
 
+SHA = re.compile(r"\b[0-9a-f]{40}\b")
+
+
+def failure_sentence(error: BaseException, *hide: str) -> str:
+    """One line of what went wrong, with no path and no full SHA: it is shown to a person."""
+    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+    for secret in filter(None, hide):
+        text = text.replace(secret, "the workspace")
+    text = SHA.sub("main", text)[:200].rstrip(" .")
+    return f"The code index could not be brought up to date: {text}."
+
+
 def binary_path(home: Path) -> Path:
     """Where the library's own Node binary lands on this machine."""
     machine = platform.machine().lower()
