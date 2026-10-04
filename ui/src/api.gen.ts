@@ -145,6 +145,38 @@ export type ConfigRow = {
   "overridden": Record<string, boolean>;
 };
 
+export type Decided = {
+  "unit": string;
+  "artifact": string;
+  "n": number;
+  "question": string;
+  "text": string;
+  "by": string;
+  "authority": string;
+  "date": string;
+};
+
+export type Decision = {
+  "id": string;
+  "kind": string;
+  "text": string;
+  "source": string;
+  "workspace": string;
+  "workspace_name": string;
+  "agent": string;
+  "covers": string;
+  "from_day": string;
+  "until_day": string;
+  "withdrawn": string;
+  "created_at": string;
+  "state": string;
+};
+
+export type DecisionTable = {
+  "rows": Decision[];
+  "workspaces": string[];
+};
+
 export type Deleted = {
   "deleted": string;
 };
@@ -391,6 +423,8 @@ export type Worktree = {
 export type Get = {
   "/api/agents": AgentPage;
   "/api/codegraph/report": Report;
+  "/api/decided": Decided[];
+  "/api/decisions": DecisionTable;
   "/api/features/shown": Shown[];
   "/api/settings/autopilot": AutopilotSettings;
   "/api/units": Cards;

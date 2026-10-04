@@ -10,6 +10,7 @@ import { Inbox } from "./screens/Inbox";
 import { Agents } from "./screens/Agents";
 import { System } from "./screens/System";
 import { MayDo } from "./screens/MayDo";
+import { Decided } from "./screens/Decided";
 import { Planned } from "./components/ui";
 
 export type Screen = {
@@ -51,11 +52,7 @@ export const SCREENS: Screen[] = [
     nav: "Leif",
     icon: "decided",
     keys: "G D",
-    render: () => (
-      <Planned icon="decided" title="Leif decided">
-        Every call Leif made for you today, with its reason and precedent, and Overrule.
-      </Planned>
-    ),
+    render: () => <Decided />,
   },
   { path: "/work", title: "All work", nav: "Work", icon: "board", keys: "G B", render: () => <Work /> },
   { path: "/work/:ws", title: "Work", crumbs: (p) => ["Work", p.ws], render: (p) => <Work workspace={p.ws} /> },

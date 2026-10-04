@@ -37,6 +37,7 @@ from coscc import kernel
 from coscc import features, plugin, studio
 from coscc.config import Config, from_env
 from coscc.service import Service
+from coscc.service.answers import opens_with
 from coscc.service.common import NotUpdatable, Updating
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
@@ -97,6 +98,47 @@ class UpdateStatus(TypedDict):
     line: str
     local_line: str
     actions: list[str]
+
+
+class Decision(TypedDict):
+    """A standing decision or delegation of the owner's, as `decisions` holds it, with its state."""
+
+    id: str
+    kind: str
+    text: str
+    source: str
+    workspace: str
+    workspace_name: str
+    agent: str
+    covers: str
+    from_day: str
+    until_day: str
+    withdrawn: str
+    created_at: str
+    # `in force`, `not yet`, `expired` or `withdrawn`.
+    state: str
+
+
+class DecisionTable(TypedDict):
+    rows: list[Decision]
+    workspaces: list[str]
+
+
+# Who answers for the owner, as the start of an answer's `by`.
+AGENT_NAMES = ("Leif", "Claude", "agent")
+
+
+class Decided(TypedDict):
+    """An answer given for the owner: by Leif under a delegation, or inferred by an agent."""
+
+    unit: str
+    artifact: str
+    n: int
+    question: str
+    text: str
+    by: str
+    authority: str
+    date: str
 
 
 # A comment line this often keeps a quiet stream open through proxies and tells the page it is
@@ -274,6 +316,54 @@ async def answer_question(request: Request) -> Any:
         str(body.get("answered_by") or ""),
         str(body.get("delegation") or ""),
     )
+
+
+@router.get("/api/decisions", response_model=DecisionTable)
+async def get_decisions(request: Request) -> Any:
+    """The owner's standing decisions and delegations, withdrawn and expired included."""
+    return _service(request).answers.decisions_table()
+
+
+@router.post("/api/decisions", response_model=DecisionTable)
+async def add_decision(request: Request) -> Any:
+    """One new decision or delegation: `{kind, text, source, until?, workspace?, agent?,
+    covers?}`, in force from today. A delegation lets an agent answer in the owner's place, so
+    whoever holds the password can widen what agents decide; the trace is the row itself."""
+    service = _service(request)
+    service.answers.add_decision(await kernel.body(request))
+    return service.answers.decisions_table()
+
+
+@router.post("/api/decisions/withdraw", response_model=DecisionTable)
+async def withdraw_decision(request: Request) -> Any:
+    """`{id: "D<n>"}` withdraws one in force from today; its row stays."""
+    body = await kernel.body(request)
+    return _service(request).answers.withdraw_decision(body.get("id"))
+
+
+@router.get("/api/decided")
+async def get_decided(request: Request) -> list[Decided]:
+    """Every answer in one workspace that a person did not give, newest first: what Leif and
+    the agents decided for the owner. An answer counts when its authority is not `person`, or
+    when its `by` opens with an agent's name: Leif's answers through `/api/units/answer` are
+    recorded as `person` with `by` naming Leif. Read from the board held."""
+    board = await _service(request).board(_cwd(request), "held")
+    out: list[Decided] = [
+        {
+            "unit": str(u.get("name") or ""),
+            "artifact": str(a.get("artifact") or ""),
+            "n": int(a.get("n") or 0),
+            "question": str(a.get("question") or ""),
+            "text": str(a.get("text") or ""),
+            "by": str(a.get("by") or ""),
+            "authority": str(a.get("authority") or ""),
+            "date": str(a.get("date") or ""),
+        }
+        for u in board.get("units") or []
+        for a in u.get("answers") or []
+        if (a.get("authority") or "person") != "person" or opens_with(a.get("by"), AGENT_NAMES)
+    ]
+    return sorted(out, key=lambda d: d["date"], reverse=True)
 
 
 @router.post("/api/units/outcome")
