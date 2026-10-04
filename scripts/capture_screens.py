@@ -40,8 +40,9 @@ its import report. Then `AUTOPILOT_FIXTURE`:
                            one head by the autopilot (`make_autopilot_fixture`)
     0009_refused-impl      an accepted plan, whose `impl` the autopilot queued and
                            the gate refused with `gate-closed` (`seed_refusal`)
-    0010_outdated-spec     an accepted spec and plan and one decision recorded after
-                           them, so `/board` lists it to rewrite (`make_outdated_fixture`)
+    0010_outdated-spec     an accepted spec and plan and decisions recorded after them,
+                           so `/board` lists it to rewrite; one an agent's in force and
+                           one an agent's a person reversed (`make_outdated_fixture`)
 
 Every file is written by hand, then goes into `cos.db` through the
 import and an ingest (`ingest_fixture`), since the board reads a unit from there.
@@ -417,9 +418,17 @@ def make_unread_fixture(api: httpx.Client, proj: Path) -> None:
         (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
 
 
-def make_outdated_fixture(api: httpx.Client, proj: Path) -> None:
-    """`proj/0010_outdated-spec`: an accepted spec and plan and one decision recorded after them,
-    so the board lists it to be written again. On no shortlist, so the autopilot leaves it."""
+def make_outdated_fixture(api: httpx.Client, work: Path, data_dir: Path, proj: Path) -> None:
+    """`proj/0010_outdated-spec`: an accepted spec and plan and decisions recorded after them,
+    so the board lists it to be written again: C1 a person's, C2 an agent's in force, C3 an
+    agent's that C4, a person's, reversed. The agents' go through the feature's own `Book`, as its
+    tool writes them. On no shortlist, so the autopilot leaves it."""
+    from coscc.bus import Bus
+    from coscc.data import Data
+    from coscc.features import decisions
+    from coscc.plugin import Ctx
+    from coscc.runlog.journal import Journal
+
     made = api.post(
         "/api/units",
         json={"cwd": str(proj), "slug": "outdated-spec", "brief": "The outdated spec fixture."},
@@ -439,6 +448,15 @@ def make_outdated_fixture(api: httpx.Client, proj: Path) -> None:
     )
     if decided.status_code != 200:
         raise RuntimeError(f"could not record the decision on outdated-spec: {decided.text}")
+    data, key, unit = Data(data_dir), str(proj.resolve()), made.json()["unit"]
+    book = decisions.Book(Ctx(lambda: Journal(work, data), str, lambda _f, _w: True, Bus(), data))
+    book.record(key, unit, "Lưu quyết định trong bảng riêng.", "agent", "impl")
+    book.record(key, unit, "Bỏ tool ghi quyết định ở impl.", "agent", "impl")
+    reversed_ = api.post(
+        "/api/decisions/reverse", json={"cwd": str(proj), "unit": unit, "id": "C3"}
+    )
+    if reversed_.status_code != 200:
+        raise RuntimeError(f"could not reverse C3 on outdated-spec: {reversed_.text}")
 
 
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
@@ -685,7 +703,7 @@ def make_autopilot_fixture(api: httpx.Client, work: Path, data_dir: Path, proj: 
             "by": "owner",
         }
     )
-    make_outdated_fixture(api, proj)
+    make_outdated_fixture(api, work, data_dir, proj)
 
 
 def _tokens(total: int) -> dict[str, int]:
