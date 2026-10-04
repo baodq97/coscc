@@ -72,7 +72,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
               </b>
               <div className="muted">{open[0].text.replace(/\*\*/g, "").slice(0, 140)}</div>
             </div>
-            <Link to="/inbox" className="btn primary sm">
+            <Link to={`/inbox/${workspace}/${number}`} className="btn primary sm">
               Answer
             </Link>
           </div>
