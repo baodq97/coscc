@@ -79,7 +79,8 @@ TABLES = (
 )""",
     """CREATE TABLE IF NOT EXISTS scan_cursor (
     workspace TEXT PRIMARY KEY,
-    after     TEXT NOT NULL
+    after     TEXT NOT NULL,
+    seen      TEXT NOT NULL DEFAULT '[]'
 )""",
 )
 
@@ -205,8 +206,7 @@ def prompt_of(
     found: Sequence[Intervention], proposals: Sequence[Proposal]
 ) -> tuple[str, list[Intervention], int]:
     """The prompt, the interventions it holds (oldest first, at most `LIMIT`, within
-    `PROMPT_MAX`) and how many proposals were cut from its lists. A cut never splits one
-    second: what is left out would otherwise be behind the cursor."""
+    `PROMPT_MAX`) and how many proposals were cut from its lists."""
     lists, cut = _lists(proposals)
     fixed = f"{INSTRUCTIONS}\n\nProposals already made:\n\n{lists}\n\nInterventions:\n"
     taken: list[Intervention] = []
@@ -216,11 +216,15 @@ def prompt_of(
             break
         taken.append(i)
         size += len(_line(i)) + 1
-    left = found[len(taken) :]
-    if taken and left and left[0].at == taken[-1].at:
-        kept = [t for t in taken if t.at != left[0].at]
-        taken = kept or taken
     return fixed + "\n".join(_line(i) for i in taken), taken, cut
+
+
+def _second_before(after: str) -> str:
+    """`after` one second earlier, so a read past it holds the rest of `after`'s second."""
+    try:
+        return (datetime.fromisoformat(after) - timedelta(seconds=1)).isoformat(timespec="seconds")
+    except ValueError:
+        return after
 
 
 def _proposal(row: Any) -> Proposal:
@@ -262,12 +266,14 @@ class Tables:
     def __init__(self, ctx: Ctx) -> None:
         self.ctx = ctx
 
-    def cursor(self, key: str) -> str:
+    def cursor(self, key: str) -> tuple[str, list[str]]:
+        """The time of the last intervention taken, and the ids taken at that second: a cut
+        may split a second, and its rest is read by the next scan."""
         with self.ctx.data.connect() as conn:
             row = conn.execute(
-                "SELECT after FROM scan_cursor WHERE workspace = ?", (key,)
+                "SELECT after, seen FROM scan_cursor WHERE workspace = ?", (key,)
             ).fetchone()
-        return row["after"] if row else ""
+        return (row["after"], json.loads(row["seen"])) if row else ("", [])
 
     def proposals(self, key: str) -> list[Proposal]:
         """Newest first."""
@@ -348,10 +354,17 @@ class Tables:
                     ),
                 )
             if outcome == "done" and taken:
+                last = taken[-1].at
+                was = conn.execute(
+                    "SELECT after, seen FROM scan_cursor WHERE workspace = ?", (key,)
+                ).fetchone()
+                seen = json.loads(was["seen"]) if was and was["after"] == last else []
+                seen += [i.id for i in taken if i.at == last]
                 conn.execute(
-                    "INSERT INTO scan_cursor (workspace, after) VALUES (?, ?) "
-                    "ON CONFLICT (workspace) DO UPDATE SET after = excluded.after",
-                    (key, taken[-1].at),
+                    "INSERT INTO scan_cursor (workspace, after, seen) VALUES (?, ?, ?) "
+                    "ON CONFLICT (workspace) DO UPDATE SET after = excluded.after, "
+                    "seen = excluded.seen",
+                    (key, last, json.dumps(seen)),
                 )
             row = conn.execute("SELECT * FROM scan_runs WHERE id = ?", (run,)).fetchone()
         return _run(row)
@@ -397,8 +410,11 @@ async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
     _scanning.add(key)
     store = Tables(ctx)
     try:
-        after = await asyncio.to_thread(store.cursor, key)
-        found = await asyncio.to_thread(ctx.interventions, cwd, after, LIMIT + 1)
+        after, seen = await asyncio.to_thread(store.cursor, key)
+        found = await asyncio.to_thread(
+            ctx.interventions, cwd, _second_before(after), LIMIT + 1 + len(seen)
+        )
+        found = [i for i in found if i.at >= after and i.id not in seen]
         if not found:
             return await asyncio.to_thread(
                 store.record, key, by, "skipped", detail="no intervention since the last scan"

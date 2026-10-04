@@ -113,9 +113,11 @@ class ThePromptIsBounded(_Feature):
         self.assertLessEqual(len(self.prompts[0]), scan.PROMPT_MAX)
         self.assertIn("rerun:runs:25 |", self.prompts[0])
         self.assertNotIn("rerun:runs:26 |", self.prompts[0])
-        self.assertEqual(self.store.cursor(WS), self.found[24].at)
+        self.assertEqual(self.store.cursor(WS), (self.found[24].at, ["rerun:runs:25"]))
         await scan.scan(self.ctx, WS, "owner")
-        self.assertEqual(self.asked[-1], (self.found[24].at, scan.LIMIT + 1))
+        self.assertEqual(self.asked[-1], ("2026-10-02T00:24:59+00:00", scan.LIMIT + 2))
+        self.assertIn("rerun:runs:26 |", self.prompts[-1])
+        self.assertNotIn("rerun:runs:25 |", self.prompts[-1])
 
     async def test_the_character_ceiling_leaves_the_rest_for_the_next_scan(self):
         long = "x" * 300
@@ -129,10 +131,15 @@ class ThePromptIsBounded(_Feature):
         self.assertGreater(cut, 0)
         self.assertLessEqual(len(scan.INSTRUCTIONS), 3_000)
 
-    def test_a_cut_never_splits_one_second(self):
-        same = [i._replace(at="2026-10-02T01:00:00+00:00") for i in found(30)[20:]]
-        prompt, taken, _ = scan.prompt_of(found(20) + same, [])
-        self.assertEqual(len(taken), 20)
+    async def test_a_second_the_cut_split_is_read_on_by_the_next_scan(self):
+        self.found = [i._replace(at="2026-10-02T01:00:00+00:00") for i in found(60)]
+        for _ in range(3):
+            await scan.scan(self.ctx, WS, "owner")
+        read = [line.split(" |")[0] for p in self.prompts for line in p.splitlines()]
+        held = [i.removeprefix("- ") for i in read if i.startswith("- rerun:runs:")]
+        self.assertEqual(sorted(held), sorted(i.id for i in self.found))
+        self.assertEqual(len(self.store.cursor(WS)[1]), 60)
+        self.assertEqual((await scan.scan(self.ctx, WS, "owner"))["outcome"], "skipped")
 
 
 class TheObjectIsChecked(_Feature):
@@ -170,7 +177,7 @@ class TheObjectIsChecked(_Feature):
         self.assertEqual(
             (run["outcome"], run["cost_usd"], run["detail"]), ("failed", 0.4, "no-submission")
         )
-        self.assertEqual(self.store.cursor(WS), "")
+        self.assertEqual(self.store.cursor(WS), ("", []))
 
     async def test_a_scan_over_a_dollar_turns_the_schedule_off_and_says_why(self):
         self.found = found(1)

@@ -27,7 +27,8 @@ A scan that cost more than $1 sets the workspace's schedule to off, and the Back
   interventions it took and proposals it cut or dropped.
 - `scan_proposals`: `pending`, `accepted` (with the unit made) or `dismissed` (with the reason),
   each with the interventions it gathers.
-- `scan_cursor`: per workspace, the time of the last intervention a scan took.
+- `scan_cursor`: per workspace, the time of the last intervention a scan took and the ids taken
+  at that second, so a second the prompt split is read on by the next scan.
 
 ## Routes
 
