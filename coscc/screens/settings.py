@@ -1,16 +1,15 @@
-"""The Settings screen: knobs, grants, models and the autopilot's settings."""
+"""The Settings screen: knobs, the autopilot's settings and the rest of what the app keeps. The agents are `agents.py`."""
 
 from __future__ import annotations
 
 import reflex as rx
 from reflex.style import set_color_mode
 
-from coscc.agent import models
 from coscc.screens import studio as s
 from coscc.service.common import CONSEQUENCE
-from coscc.state import AgentRow, GrantRow, ImportRow, Knob, ModelRow
+from coscc.state import ImportRow, Knob
 from coscc.state.views import DecisionRow
-from coscc.screens.common import P, _MONO, _RUNIC, _details, _table
+from coscc.screens.common import P, _MONO, _details, _table
 from coscc.screens.board import _update_panel
 
 
@@ -47,7 +46,7 @@ def _knob_row(knob: rx.Var[Knob]) -> rx.Component:
 
 
 def _name_list(label: str, names: rx.Var[list[str]]) -> rx.Component:
-    """One badge per tool or command, or "none"."""
+    """One badge per name, or "none"."""
     return rx.flex(
         s.text(label, size="1", weight="medium", width="80px", flex_shrink="0"),
         rx.cond(
@@ -60,178 +59,6 @@ def _name_list(label: str, names: rx.Var[list[str]]) -> rx.Component:
         align="center",
         width="100%",
         margin_bottom="6px",
-    )
-
-
-def _grant_row(grant: rx.Var[GrantRow]) -> rx.Component:
-    return rx.box(
-        rx.hstack(
-            s.badge(grant.stage, "iris"),
-            rx.spacer(),
-            s.text(grant.turns + " turns", size="1"),
-            s.text("max " + grant.budget, size="1"),
-            width="100%",
-            align="center",
-            wrap="wrap",
-        ),
-        s.text(grant.consequence, size="1", margin_top="6px"),
-        # A grant's tools and commands are lists, shown only when opened.
-        _details(
-            "grant-" + grant.stage,
-            "What it may use",
-            _name_list("Tools", grant.tool_list),
-            _name_list("Commands", grant.command_list),
-            margin_top="4px",
-        ),
-        padding="16px 0",
-        border_bottom=f"1px solid {s.LINE}",
-        width="100%",
-        data_testid="grant-row",
-    )
-
-
-def _model_row(row: rx.Var[ModelRow]) -> rx.Component:
-    """One stage, or chat: on what model, and where that model came from."""
-    return rx.box(
-        rx.hstack(
-            s.badge(row.name, "iris"),
-            rx.spacer(),
-            s.text(row.model, size="1", font_family="ui-monospace, monospace"),
-            s.badge(row.source, rx.cond(row.overridden, "amber", "gray")),
-            width="100%",
-            align="center",
-            wrap="wrap",
-        ),
-        rx.hstack(
-            rx.input(
-                value=rx.cond(P.model_target == row.name, P.model_text, ""),
-                on_change=lambda v: P.edit_model(row.name, v),
-                placeholder="model id, e.g. claude-sonnet-5-5",
-                aria_label="Model for " + row.name,
-                size="1",
-                width="100%",
-            ),
-            rx.button("Save", on_click=P.save_model(row.name), size="1", loading=P.saving_model),
-            rx.cond(
-                row.overridden,
-                rx.button(
-                    "Reset",
-                    on_click=P.reset_model(row.name),
-                    size="1",
-                    variant="soft",
-                    loading=P.saving_model,
-                ),
-            ),
-            width="100%",
-            align="center",
-            margin_top="8px",
-        ),
-        # The effort, with its own source and its own override. Chat has none.
-        rx.cond(
-            row.has_effort,
-            rx.hstack(
-                s.text("effort", size="1"),
-                rx.spacer(),
-                s.text(row.effort, size="1", font_family="ui-monospace, monospace"),
-                s.badge(row.effort_source, rx.cond(row.effort_overridden, "amber", "gray")),
-                rx.select(
-                    list(models.EFFORTS),
-                    placeholder="set effort",
-                    value="",
-                    on_change=lambda v: P.save_effort(row.name, v),
-                    size="1",
-                    aria_label="Effort for " + row.name,
-                ),
-                rx.cond(
-                    row.effort_overridden,
-                    rx.button(
-                        "Reset",
-                        on_click=P.reset_effort(row.name),
-                        size="1",
-                        variant="soft",
-                        loading=P.saving_model,
-                    ),
-                ),
-                width="100%",
-                align="center",
-                margin_top="8px",
-                wrap="wrap",
-            ),
-        ),
-        padding="12px 0",
-        border_bottom=f"1px solid {s.LINE}",
-        width="100%",
-        data_testid="model-row",
-    )
-
-
-def _agent_field(row: rx.Var[AgentRow], field: str, value, source, width: str) -> rx.Component:
-    """One field of an agent row: its box, and a badge saying where its value came from."""
-    return rx.vstack(
-        rx.hstack(
-            s.text(field.capitalize(), size="1", weight="medium"),
-            s.badge(source, rx.cond(source == "override", "amber", "gray")),
-            align="center",
-            spacing="2",
-        ),
-        rx.input(
-            name=field,
-            default_value=value,
-            placeholder="Not set",
-            aria_label=field.capitalize() + " of " + row.key,
-            size="1",
-            width="100%",
-            font_family=_RUNIC if field == "glyph" else None,
-        ),
-        spacing="1",
-        width=width,
-        min_width=width if width != "100%" else "0",
-        flex_grow="1",
-    )
-
-
-def _agent_row(row: rx.Var[AgentRow]) -> rx.Component:
-    """One agent: its four fields, each with its source, saved as one form.
-    The plain element, not `rx.form`, which would add a Radix package to the bundle."""
-    return rx.el.form(
-        rx.el.input(type="hidden", name="key", value=row.key),
-        rx.hstack(
-            rx.text(row.glyph, font_family=_RUNIC, size="4", aria_hidden="true"),
-            s.badge(row.key, "iris"),
-            rx.spacer(),
-            rx.button("Save", type="submit", size="1"),
-            # Hidden, not greyed, while the row has nothing to reset.
-            rx.cond(
-                row.overridden,
-                rx.button(
-                    "Reset",
-                    type="button",
-                    on_click=P.reset_agent(row.key),
-                    size="1",
-                    variant="soft",
-                ),
-            ),
-            width="100%",
-            align="center",
-        ),
-        rx.flex(
-            _agent_field(row, "glyph", row.glyph, row.glyph_source, "90px"),
-            _agent_field(row, "name", row.name, row.name_source, "160px"),
-            _agent_field(row, "meaning", row.meaning, row.meaning_source, "220px"),
-            _agent_field(row, "role", row.role, row.role_source, "100%"),
-            gap="10px",
-            wrap="wrap",
-            width="100%",
-            margin_top="8px",
-        ),
-        on_submit=P.save_agent,
-        reset_on_submit=False,
-        # A new key after a save or a reset, so each box shows the value now in force.
-        key=row.key + row.glyph + row.name + row.meaning + row.role,
-        padding="12px 0",
-        border_bottom=f"1px solid {s.LINE}",
-        width="100%",
-        data_testid="agent-row",
     )
 
 
@@ -699,10 +526,7 @@ SECTIONS = (
     ("Features", "features-panel"),
     ("Decisions", "decisions-panel"),
     ("Import report", "import-panel"),
-    ("Board steps", "grants-panel"),
     ("Commands", "impl-lists-panel"),
-    ("Agents", "agents-panel"),
-    ("Models", "models-panel"),
     ("Updates", "update-panel"),
 )
 NEEDS_WORKSPACE = ("autopilot-panel", "features-panel", "impl-lists-panel")
@@ -855,50 +679,7 @@ def _settings() -> rx.Component:
         rx.cond(P.has_workspace, _features_panel(), rx.fragment()),
         _decisions_panel(),
         _import_panel(),
-        s.panel(
-            s.section_head(
-                "What a board step may do", rx.icon("key-round", size=18, color=s.MUTED)
-            ),
-            s.text("A stage not listed gets no tools.", size="1"),
-            rx.foreach(P.grants, _grant_row),
-            id="grants-panel",
-        ),
         rx.cond(P.has_workspace, _command_lists(), rx.fragment()),
-        # Who each stage's session is told it is.
-        s.panel(
-            s.section_head("Agents", rx.icon("users", size=18, color=s.MUTED)),
-            s.text("A change applies to the next step that starts.", size="1"),
-            rx.foreach(
-                P.agent_problems,
-                lambda p: rx.callout(
-                    p,
-                    icon="circle_alert",
-                    color_scheme="red",
-                    variant="surface",
-                    size="1",
-                    margin_top="8px",
-                ),
-            ),
-            rx.foreach(P.agent_rows, _agent_row),
-            id="agents-panel",
-        ),
-        s.panel(
-            s.section_head("Which model runs each stage", rx.icon("cpu", size=18, color=s.MUTED)),
-            s.text("A change applies to the next session a step or a chat starts.", size="1"),
-            rx.foreach(
-                P.model_problems,
-                lambda p: rx.callout(
-                    p,
-                    icon="circle_alert",
-                    color_scheme="red",
-                    variant="surface",
-                    size="1",
-                    margin_top="8px",
-                ),
-            ),
-            rx.foreach(P.model_rows, _model_row),
-            id="models-panel",
-        ),
         # The update panel, and what `main` holds since the last release.
         _update_panel(),
         _release_panel(),

@@ -222,14 +222,14 @@ SPIKE_WARNING = (
 # Said on the Backlog panel above the button, before it is pressed.
 ESTIMATE_WARNING = (
     "Proposing estimates opens one paid session (1 turn, $2.00 ceiling) on the model of the "
-    "Settings row `estimate`. Whoever holds the password or a live session can press it, and "
+    "Agents page row `estimate`. Whoever holds the password or a live session can press it, and "
     "can rewrite any estimate, relation or the shortlist under any name they type."
 )
 
 # Said beside *Scan now* on the Backlog, before it is pressed.
 SCAN_WARNING = (
     "Scanning opens one paid session (2 turns, $0.68 ceiling, about $1 at most) on the model of "
-    "the Settings row `estimate`."
+    "the Agents page row `estimate`."
 )
 
 # Only stages that appear here get anything. The rest (`idea`, `intent`, any stage invented

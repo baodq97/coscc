@@ -1,7 +1,7 @@
 """Where the page is, as an address, and back.
 
-A *place* is the screen, the workspace's name, the unit and the unit's tab, or the idea or
-feature it names. `read` and `href`
+A *place* is the screen, the workspace's name, the unit and the unit's tab, or the idea,
+feature or agent it names. `read` and `href`
 only translate: neither knows which workspaces or units exist, and `StudioState.arrive`
 decides what a place that names nothing becomes.
 
@@ -17,7 +17,17 @@ from urllib.parse import parse_qs, urlencode
 
 # The screens with a route of their own, in `NAVIGATION`'s order. `unit` is the Board with a
 # unit's dialog open.
-SCREENS = ("overview", "workspaces", "board", "backlog", "sessions", "activity", "cost", "settings")
+SCREENS = (
+    "overview",
+    "workspaces",
+    "board",
+    "backlog",
+    "sessions",
+    "activity",
+    "cost",
+    "agents",
+    "settings",
+)
 
 TABS = ("overview", "artifacts", "questions", "comments", "timeline")
 
@@ -32,6 +42,8 @@ class Place:
     idea: str = ""
     # `/feature?ws=<ws>&name=<feature>`: a feature's page, framed.
     feature: str = ""
+    # `/agents?agent=<stage>`: one agent's drawer open over the table.
+    agent: str = ""
 
 
 def read(path: str, query: str) -> Place:
@@ -47,6 +59,8 @@ def read(path: str, query: str) -> Place:
         return Place("idea", one("ws"), idea=one("id"))
     if screen == "feature":
         return Place("feature", one("ws"), feature=one("name"))
+    if screen == "agents":
+        return Place("agents", one("ws"), agent=one("agent"))
     if screen != "unit":
         return Place(screen, one("ws"))
     return Place("unit", one("ws"), one("id"), one("tab") or "overview")
@@ -60,6 +74,8 @@ def href(place: Place) -> str:
         pairs.append(("id", place.idea))
     if place.screen == "feature" and place.feature:
         pairs.append(("name", place.feature))
+    if place.screen == "agents" and place.agent:
+        pairs.append(("agent", place.agent))
     if place.screen == "unit":
         if place.unit:
             pairs.append(("id", place.unit))

@@ -444,7 +444,7 @@ class Backlog:
         resume: Mapping[str, Any] | None = None,
     ) -> AsyncGenerator[tuple[str, Any], None]:
         """One session of `kind`, a grant of `policy.SUBMITTING_SESSIONS`, that hands its object
-        back through `submit` on the model of the Settings row `estimate`; its reply is never
+        back through `submit` on the model of the Agents page row `estimate`; its reply is never
         read. Yields each `chunk`, then `("done", Submitted)`.
 
         Writes `start`/`end` (stage `kind`, unit `""`) so Activity counts the money. A session

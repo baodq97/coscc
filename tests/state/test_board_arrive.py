@@ -100,7 +100,7 @@ class TheBoardArrives(unittest.TestCase):
             asyncio.run(go())
         return frames
 
-    def test_the_cards_are_sent_before_models_backlog_and_update(self):
+    def test_the_cards_are_sent_before_the_workspace_settings_backlog_and_update(self):
         async def scenario(arrive, manager, token, fake, frames, reads):
             await arrive("/board?ws=a", "s1")
 
@@ -109,7 +109,7 @@ class TheBoardArrives(unittest.TestCase):
         first = {n: next((i for i, f in enumerate(names) if n in f), None) for n in ("cards",)}
         later = [
             next((i for i, f in enumerate(names) if n in f), None)
-            for n in ("model_problems", "upd_version")
+            for n in ("features", "upd_version")
         ]
         self.assertIsNotNone(first["cards"])
         self.assertTrue(all(i is not None and first["cards"] < i for i in later), (first, later))

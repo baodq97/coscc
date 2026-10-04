@@ -223,33 +223,12 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertIn("cos_model", self.service.activity.settings())
         self.assertNotIn("model", self.service.activity.settings())
 
-    def test_settings_shows_the_novel_impl_ceilings_after_impl(self):
-        rows = self.service.activity.settings()["grants"]
-        stages = [r["stage"] for r in rows]
-        impl, novel = rows[stages.index("impl")], rows[stages.index("impl:novel")]
-        self.assertEqual(stages.index("impl:novel"), stages.index("impl") + 1)
-        self.assertEqual((novel["max_turns"], novel["max_budget_usd"]), (250, 16.0))
-        self.assertEqual((impl["max_turns"], impl["max_budget_usd"]), (120, 8.0))
-        for field in ("tools", "commands", "warning"):
-            self.assertEqual(novel[field], impl[field], field)
-        for stage in ("pr:novel", "review:novel", "ship:novel"):
-            self.assertNotIn(stage, stages)
-
-    def test_settings_shows_each_grants_ceiling(self):
-        rows = {r["stage"]: r for r in self.service.activity.settings()["grants"]}
-        self.assertNotIn("precedent", rows)
-        self.assertEqual(rows["impl"]["budget"], "$8.00")
+    def test_settings_no_longer_lists_the_grants(self):
+        """They are on the Agents page, read only; one place shows them."""
+        self.assertNotIn("grants", self.service.activity.settings())
 
     def test_settings_never_show_the_trial(self):
         """The Agents page shows `models.json` and the overrides, never an arm's model."""
         page = self.service.agents.agent_page()
         rows = [r["config"] for r in page["rows"]] + page["others"]
         self.assertFalse([r for r in rows if r["model_source"] == "trial"])
-
-    def test_a_grants_tools_and_commands_are_also_lists(self):
-        """The page lists them; the joined strings stay in the API as they were."""
-        for row in self.service.activity.settings()["grants"]:
-            self.assertEqual(", ".join(row["tool_list"]) or "none", row["tools"], row["stage"])
-            self.assertEqual(
-                ", ".join(row["command_list"]) or "none", row["commands"], row["stage"]
-            )

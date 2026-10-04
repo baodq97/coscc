@@ -420,7 +420,7 @@ class TheBoundsOfAnOverride(unittest.TestCase):
 
 
 class TheEstimateRow(unittest.TestCase):
-    """A Settings row just before `chat`, resolved like any other."""
+    """An Agents page row just before `chat`, resolved like any other."""
 
     def test_it_sits_before_chat_and_resolves(self):
         self.assertEqual(models.rows_for(["idea", "plan"])[-2:], [models.ESTIMATE, models.CHAT])

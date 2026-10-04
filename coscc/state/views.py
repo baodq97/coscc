@@ -7,11 +7,14 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import sys
+from datetime import datetime
 
+from coscc.agent.models import ConfigRow
 from coscc.runlog import events as events_mod
 from coscc.state import place, present
 from coscc.runlog import spend
 from coscc.runlog.journal import COST_USD, TOKEN_FIELDS
+from coscc.service.agents import AgentPage, RunView
 from coscc.service.common import reason_beside
 from coscc.service.common import shown_state
 
@@ -24,6 +27,7 @@ NAVIGATION = (
     ("sessions", "Sessions", "messages-square"),
     ("activity", "Activity", "chart-no-axes-combined"),
     ("cost", "Cost", "circle-dollar-sign"),
+    ("agents", "Agents", "users"),
     ("settings", "Settings", "settings-2"),
 )
 
@@ -1194,39 +1198,6 @@ def knob(k: dict) -> Knob:
 
 
 @dataclasses.dataclass
-class ModelRow:
-    """One stage, or chat, as Settings shows it. Every field is copied from `Models.stage_models`; nothing is resolved here."""
-
-    name: str = ""
-    agents: int = 1
-    model: str = ""
-    source: str = ""
-    overridden: bool = False
-    # The effort beside the model, looked up on its own. `chat` has none.
-    effort: str = ""
-    effort_source: str = ""
-    effort_overridden: bool = False
-    has_effort: bool = True
-
-
-@dataclasses.dataclass
-class AgentRow:
-    """One row of the agent table as Settings shows it: each field and where it
-    came from. Copied from `Agents.agent_table`; nothing is resolved here."""
-
-    key: str = ""
-    glyph: str = ""
-    name: str = ""
-    meaning: str = ""
-    role: str = ""
-    glyph_source: str = ""
-    name_source: str = ""
-    meaning_source: str = ""
-    role_source: str = ""
-    overridden: bool = False
-
-
-@dataclasses.dataclass
 class DecisionRow:
     """One of the person's decisions as Settings shows it. Copied from
     `Answers.decisions_table`, the days through `present.day`; nothing is decided here."""
@@ -1256,17 +1227,218 @@ class ImportRow:
     reason: str = ""
 
 
+# --- the Agents page --------------------------------------------------------
+
+# A chip's colour: the two that need a look are loud, the two that do not are quiet.
+CHIP_COLOR = {"failed": "red", "costly": "amber", "idle": "gray", "ok": "grass"}
+# What each field is called beside its box.
+FIELD_LABEL = {
+    "model": "Model",
+    "effort": "Effort",
+    "turns": "Turn ceiling",
+    "budget": "Cost ceiling",
+    "glyph": "Glyph",
+    "name": "Name",
+    "meaning": "Meaning",
+    "role": "Role",
+}
+# What a value reads as when no layer names one.
+NO_MODEL = "SDK default"
+NO_CEILING = "none"
+
+
 @dataclasses.dataclass
-class GrantRow:
-    stage: str = ""
-    tools: str = ""
-    commands: str = ""
+class AgentField:
+    """One value the Agents page can set: what is in force, where it came from and what the box holds."""
+
+    row: str = ""
+    field: str = ""
+    label: str = ""
+    value: str = ""
+    draft: str = ""
+    source: str = ""
+    overridden: bool = False
+
+
+@dataclasses.dataclass
+class AgentListRow:
+    """One agent as the table shows it."""
+
+    key: str = ""
+    glyph: str = ""
+    name: str = ""
+    model: str = ""
+    effort: str = ""
     turns: str = ""
     budget: str = ""
+    outcome: str = ""
+    when: str = ""
+    cost: str = ""
+    chip: str = ""
+    color: str = "gray"
+
+
+@dataclasses.dataclass
+class AgentRunRow:
+    outcome: str = ""
+    when: str = ""
+    turns: str = ""
+    cost: str = ""
+
+
+@dataclasses.dataclass
+class AgentDetail:
+    """What one agent's drawer shows; the grant is read, never written (R4)."""
+
+    key: str = ""
+    glyph: str = ""
+    name: str = ""
+    meaning: str = ""
+    role: str = ""
+    glyph_source: str = ""
+    name_source: str = ""
+    meaning_source: str = ""
+    role_source: str = ""
+    skill: str = ""
+    tools: list[str] = dataclasses.field(default_factory=list)
+    commands: list[str] = dataclasses.field(default_factory=list)
+    mcp: list[str] = dataclasses.field(default_factory=list)
+    submits: str = ""
     warning: str = ""
-    consequence: str = ""
-    tool_list: list[str] = dataclasses.field(default_factory=list)
-    command_list: list[str] = dataclasses.field(default_factory=list)
+    chip: str = ""
+    color: str = "gray"
+    # model, effort, then the two ceilings; and the same of `<key>:novel`, when it has them.
+    fields: list[AgentField] = dataclasses.field(default_factory=list)
+    variants: list[AgentField] = dataclasses.field(default_factory=list)
+    runs: list[AgentRunRow] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class OtherRow:
+    """`estimate` or `chat`: a model, and an effort where the row has one."""
+
+    key: str = ""
+    model: AgentField = dataclasses.field(default_factory=AgentField)
+    effort: AgentField = dataclasses.field(default_factory=AgentField)
+    has_effort: bool = False
+
+
+def _plain(value: object, none: str) -> str:
+    return none if value is None else str(value)
+
+
+def _agent_fields(row: ConfigRow, suffix: str = "") -> list[AgentField]:
+    """The fields of one `ConfigRow` its row may set, in the page's order. `suffix` says which
+    variant they are, so two `model` boxes in one drawer are told apart."""
+    ceil = row["ceilings"]
+    shown: dict[str, tuple[str, str, str]] = {
+        "model": (_plain(row["model"], NO_MODEL), row["model"] or "", row["model_source"]),
+        "effort": (_plain(row["effort"], NO_MODEL), row["effort"] or "", row["effort_source"]),
+        "turns": (
+            _plain(ceil["max_turns"], NO_CEILING),
+            _plain(ceil["max_turns"], ""),
+            ceil["max_turns_source"],
+        ),
+        "budget": (
+            "none" if ceil["max_budget_usd"] is None else f"${ceil['max_budget_usd']:.2f}",
+            "" if ceil["max_budget_usd"] is None else f"{ceil['max_budget_usd']:.2f}",
+            ceil["max_budget_source"],
+        ),
+    }
+    return [
+        AgentField(
+            row=row["key"],
+            field=name,
+            label=FIELD_LABEL[name] + suffix,
+            value=shown[name][0],
+            draft=shown[name][1],
+            source=shown[name][2],
+            overridden=bool(row["overridden"].get(name)),
+        )
+        for name in shown
+        if name in row["fields"]
+    ]
+
+
+def _run_row(run: RunView, now: datetime | None) -> AgentRunRow:
+    return AgentRunRow(
+        outcome=run["outcome"] or "—",
+        when=present.when(run["at"], now) or "—",
+        turns="—" if run["turns"] is None else str(run["turns"]),
+        cost=present.money(run["cost_usd"]),
+    )
+
+
+def agent_views(
+    page: AgentPage, now: datetime | None = None
+) -> tuple[list[AgentListRow], list[AgentDetail], list[OtherRow]]:
+    """The table, the drawers and the "Other sessions" rows of one `Agents.agent_page`.
+    Nothing is resolved here: the values and their sources are the service's."""
+    table: list[AgentListRow] = []
+    details: list[AgentDetail] = []
+    for r in page["rows"]:
+        fields = _agent_fields(r["config"])
+        by_name = {f.field: f for f in fields}
+        last = r["last"]
+        color = CHIP_COLOR.get(r["chip"], "gray")
+        table.append(
+            AgentListRow(
+                key=r["key"],
+                glyph=r["glyph"],
+                name=r["name"],
+                model=by_name["model"].value,
+                effort=by_name["effort"].value,
+                turns=by_name["turns"].value,
+                budget=by_name["budget"].value,
+                outcome=(last["outcome"] or "—") if last else "—",
+                when=(present.when(last["at"], now) or "—") if last else "",
+                cost=present.money(r["cost_30d"]) if r["runs_30d"] else "—",
+                chip=r["chip"],
+                color=color,
+            )
+        )
+        grant = r["grant"]
+        source = r["identity_source"]
+        details.append(
+            AgentDetail(
+                key=r["key"],
+                glyph=r["glyph"],
+                name=r["name"],
+                meaning=r["meaning"],
+                role=r["role"],
+                glyph_source=source.get("glyph", "default"),
+                name_source=source.get("name", "default"),
+                meaning_source=source.get("meaning", "default"),
+                role_source=source.get("role", "default"),
+                skill=r["skill"],
+                tools=grant["tools"],
+                commands=grant["commands"],
+                mcp=grant["mcp"],
+                submits="yes" if grant["submits"] else "no",
+                warning=grant["warning"],
+                chip=r["chip"],
+                color=color,
+                fields=fields,
+                variants=[
+                    f
+                    for v in r["variants"]
+                    for f in _agent_fields(v, " (" + v["key"].rpartition(":")[2] + ")")
+                ],
+                runs=[_run_row(run, now) for run in r["runs"]],
+            )
+        )
+    others: list[OtherRow] = []
+    for row in page["others"]:
+        by_name = {f.field: f for f in _agent_fields(row)}
+        others.append(
+            OtherRow(
+                key=row["key"],
+                model=by_name["model"],
+                effort=by_name.get("effort", AgentField()),
+                has_effort="effort" in by_name,
+            )
+        )
+    return table, details, others
 
 
 # --- formatting --------------------------------------------------------------

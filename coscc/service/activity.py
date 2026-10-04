@@ -9,9 +9,8 @@ from coscc.runlog import spend
 from coscc.data import Data
 from coscc.runlog.journal import COST_FIELDS, COST_USD, add_cost, zero_cost
 from coscc.data import Busy
-from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, grant_for_step
-from coscc.agent import labels
-from coscc.service.common import Invalid, STAGE_FILES, consequence
+from coscc.agent.policy import PROSE_STAGES
+from coscc.service.common import Invalid, STAGE_FILES
 
 from coscc.config import Config
 
@@ -161,9 +160,9 @@ class Activity:
     def settings(self) -> dict[str, Any]:
         """The safety posture, as something a screen can render. Read only.
 
-        The screen shows the four knobs and the grant table and can change neither; there is no setter here, as in `config.from_env`.
+        The screen shows the four knobs and can change none of them; there is no setter here, as in `config.from_env`.
 
-        The model per stage is the one thing Settings can change (`stage_models`, `set_stage_model`), so it is not here. The route decides what every step spends for whoever holds the password or a live session. `cos_model` below is only the fallback for a row nothing else answers.
+        The grants and the model of each stage are on the Agents page (`Agents.agent_page`), so they are not here. `cos_model` below is only the fallback for a row nothing else answers.
         """
         c = self.config
         return {
@@ -197,34 +196,6 @@ class Activity:
                     "on": c.resume_foreign_sessions,
                     "detail": "The app resumes only the sessions it created.",
                 },
-            ],
-            # The board's own grants, from `policy.py` rather than from the config; they are
-            # separate on purpose, and the screen shows that. A stage with its own `novel`
-            # ceilings shows them as `<stage>:novel`, right after its own row.
-            "grants": [
-                {
-                    "stage": name,
-                    "tools": ", ".join(grant.tools) or "none",
-                    "commands": ", ".join(grant.commands) or "none",
-                    # The same, one item each, for the page to list.
-                    "tool_list": list(grant.tools),
-                    "command_list": list(grant.commands),
-                    "max_turns": grant.max_turns,
-                    "max_budget_usd": grant.max_budget_usd,
-                    "budget": f"${grant.max_budget_usd:.2f}",
-                    "app_writes_artifact": grant.app_writes_artifact,
-                    "warning": grant.warning,
-                    "consequence": consequence(name),
-                }
-                for stage, own in sorted(GRANTS.items())
-                for name, grant in (
-                    [(stage, own)]
-                    + (
-                        [(f"{stage}:{labels.NOVEL}", grant_for_step(stage, labels.NOVEL))]
-                        if stage in NOVEL_CEILINGS
-                        else []
-                    )
-                )
             ],
             "prose_stages": list(PROSE_STAGES),
             "import_report": self._import_report(),
