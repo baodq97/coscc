@@ -744,6 +744,9 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         [row] = self._after_end_with("ship-refused")
         self.assertEqual(row["result"], "refused")
 
+    def test_a_ship_still_merging_records_no_ship(self):
+        self.assertEqual(self._after_end_with("ship-merging"), [])
+
     def test_any_other_why_or_stage_records_no_ship(self):
         self.assertEqual(self._after_end_with("ci"), [])
         self.assertEqual(self._after_end_with("finished", stage="review"), [])

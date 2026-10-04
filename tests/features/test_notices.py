@@ -13,6 +13,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from coscc import auth, plugin
 from coscc.features import notices
@@ -216,6 +217,26 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         [line] = await self.notices(self.follow(after=mine), 1)
         self.assertEqual(line["id"], last)
         self.assertGreater(later, mine)
+
+    async def test_a_ship_still_merging_makes_no_ship_refused_notice(self):
+        """`after_end` of a `ship` the loop reads `ship-merging` writes no `ship` record, so no
+        notice says the unit did not merge; one read `ship-refused` still does."""
+        from coscc.units import board as board_reader
+
+        for why, unit in (("ship-merging", "0001_a"), ("ship-refused", "0002_b")):
+
+            async def read(root, timeout=None, state=None, why=why, unit=unit):
+                return {"units": [{"name": unit, "why": why, "questions": []}]}
+
+            with mock.patch.object(board_reader, "read", read):
+                await self.service.steps.after_end(str(self.ws), unit, "ship", self.key)
+        last = self.append(stop(self.key, "0003_c"))
+        got = await self.notices(self.follow(after=0), 2)
+        self.assertEqual(
+            [(n["kind"], n["unit"]) for n in got],
+            [("ship-refused", "0002_b"), ("autopilot-stop", "0003_c")],
+        )
+        self.assertEqual(got[-1]["id"], last)
 
     async def test_following_writes_nothing_to_the_run_log(self):
         self.append(stop(self.key))

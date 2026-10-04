@@ -503,6 +503,7 @@ class Autopilot:
                 unopened = autopilot.unopened_of(records, key, name, last_stage)
                 # No `start` found reads as no recording `ship`.
                 recorded = (began.get(name) or {}).get("ship_mode") == "record"
+                shipping = here.get(name) == "ship"
                 stop = autopilot.stop_for(
                     u,
                     nxt,
@@ -511,6 +512,7 @@ class Autopilot:
                     ran_out,
                     unopened,
                     recorded,
+                    shipping,
                 )
                 stage = nxt.get("stage") or ""
                 info = u.get("integration") or {}
@@ -577,6 +579,7 @@ class Autopilot:
                             ran_out,
                             unopened,
                             recorded,
+                            shipping,
                         )
                     else:
                         stage, rerun = nxt["rerun"], True

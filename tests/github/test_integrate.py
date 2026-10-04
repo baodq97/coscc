@@ -65,35 +65,44 @@ class RefusalNamesTheFirstConditionMissing(unittest.TestCase):
     )
 
     def test_each_condition(self):
+        # Only a state with nothing to integrate carries `NOTHING`; every other refusal is one a
+        # person looks at, and carries no code.
         cases = [
-            ({"in_window": False}, "not between pr and ship"),
+            ({"in_window": False}, "not between pr and ship", ""),
             (
                 {"busy": "0001_a is busy: a spec step is running since 2026-09-24T01:02:03+00:00"},
                 "a spec step is running",
+                "",
             ),
-            ({"clean": False}, "uncommitted"),
-            ({"branch_ok": False}, "not on the unit's branch"),
-            ({"local_head": NEW}, "not the pull request's head"),
-            ({"state": "current"}, "nothing to integrate"),
-            ({"state": "unknown"}, "nothing to integrate"),
+            ({"clean": None}, "no worktree", ""),
+            ({"clean": False}, "uncommitted", ""),
+            ({"branch_ok": False}, "not on the unit's branch", ""),
+            ({"pr_head": ""}, "could not be read", ""),
+            ({"local_head": NEW}, "not the pull request's head", ""),
+            ({"state": "current"}, "nothing to integrate", ig.NOTHING),
+            ({"state": "unknown"}, "nothing to integrate", ig.NOTHING),
         ]
-        for change, want in cases:
+        for change, want, code in cases:
             with self.subTest(change=change):
-                self.assertIn(want, ig.refusal(**{**self.OK, **change}))
+                said, got = ig.refusal(**{**self.OK, **change})
+                self.assertIn(want, said)
+                self.assertEqual(got, code)
+        self.assertEqual(ig.NOTHING, "nothing-to-integrate")
 
     def test_all_hold(self):
         for state in ig.BUTTON_STATES:
-            self.assertEqual(ig.refusal(**{**self.OK, "state": state}), "")
+            self.assertEqual(ig.refusal(**{**self.OK, "state": state}), ("", ""))
 
     def test_the_order_is_the_specs(self):
         self.assertIn(
-            "not between", ig.refusal(**{**self.OK, "in_window": False, "busy": "0001_a is busy"})
+            "not between",
+            ig.refusal(**{**self.OK, "in_window": False, "busy": "0001_a is busy"})[0],
         )
 
     def test_current_says_what_it_was_compared_with(self):
         """The sentence names the ref and how it got there, and keeps its start."""
         origin = ig.origin_note(MAIN, {"outcome": "fetched", "attempts": 1, "age": 0.4})
-        said = ig.refusal(**{**self.OK, "state": "current", "origin": origin})
+        said, _ = ig.refusal(**{**self.OK, "state": "current", "origin": origin})
         self.assertEqual(
             said,
             "the unit is current against origin/main ccccccc (fetched), which has nothing to integrate",
@@ -102,12 +111,12 @@ class RefusalNamesTheFirstConditionMissing(unittest.TestCase):
 
     def test_without_an_origin_the_old_sentence_stands(self):
         self.assertEqual(
-            ig.refusal(**{**self.OK, "state": "current"}),
+            ig.refusal(**{**self.OK, "state": "current"})[0],
             "the unit is current, which has nothing to integrate",
         )
         # Only `current` carries the ref: `unknown` keeps its sentence.
         self.assertEqual(
-            ig.refusal(**{**self.OK, "state": "unknown", "origin": "origin/main x"}),
+            ig.refusal(**{**self.OK, "state": "unknown", "origin": "origin/main x"})[0],
             "the unit is unknown, which has nothing to integrate",
         )
 
@@ -119,19 +128,22 @@ class RefusalNamesTheFirstConditionMissing(unittest.TestCase):
                         ig.refusal(
                             **{**self.OK, "local_head": NEW, "relation": how, "state": state}
                         ),
-                        "",
+                        ("", ""),
                     )
 
     def test_an_unread_relation_is_refused_with_gits_words(self):
-        said = ig.refusal(**{**self.OK, "local_head": NEW, "relation_said": "bad object bbbbbbb"})
+        said, code = ig.refusal(
+            **{**self.OK, "local_head": NEW, "relation_said": "bad object bbbbbbb"}
+        )
         self.assertEqual(
             said,
             "the local head (bbbbbbb) is not the pull request's head (aaaaaaa): bad object bbbbbbb",
         )
+        self.assertEqual(code, "")
         # `behind` that could not follow is refused too.
         self.assertIn(
             "not the pull request's head",
-            ig.refusal(**{**self.OK, "local_head": NEW, "relation": "behind"}),
+            ig.refusal(**{**self.OK, "local_head": NEW, "relation": "behind"})[0],
         )
 
 
@@ -179,7 +191,10 @@ class Relation(unittest.TestCase):
                 said = ig.refusal(**{**ok, "local_head": NEW, "relation": "stale", "state": state})
                 self.assertEqual(
                     said,
-                    f"the local head (bbbbbbb) is not the pull request's head (aaaaaaa): {ig.STALE}",
+                    (
+                        f"the local head (bbbbbbb) is not the pull request's head (aaaaaaa): {ig.STALE}",
+                        "",
+                    ),
                 )
 
 
@@ -404,6 +419,20 @@ class Record(unittest.TestCase):
             outcome="needs-person",
         )
         self.assertEqual(rec["head_after"], "")
+
+    def test_the_code_is_always_written_and_empty_without_one(self):
+        kw = dict(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after="",
+            origin_sha=MAIN,
+            outcome="refused",
+        )
+        self.assertEqual(ig.record(**kw)["code"], "")
+        self.assertEqual(ig.record(**kw, code=ig.NOTHING)["code"], "nothing-to-integrate")
 
     def test_an_unknown_outcome_is_refused(self):
         with self.assertRaises(ValueError):

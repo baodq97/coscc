@@ -98,6 +98,11 @@ class TheReasonTableIsClosed(unittest.TestCase):
     def test_the_feature_refusal_is_the_app_s_alone(self):
         self.assertNotIn("feature-refused", "\n".join(loop_lines()))
 
+    def test_an_integration_with_nothing_to_integrate_is_the_app_s_alone(self):
+        self.assertIn("nothing-to-integrate", guards.REASONS)
+        self.assertNotIn("nothing-to-integrate", "\n".join(loop_lines()))
+        self.assertEqual(Refused("x", ("nothing-to-integrate",)).reasons, ("nothing-to-integrate",))
+
     def test_a_refusal_with_a_code_outside_the_table_is_refused(self):
         with self.assertRaises(ValueError):
             Refused("x", ("no-such",))

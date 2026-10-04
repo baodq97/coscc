@@ -671,6 +671,67 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [])
         self.assertEqual(self.stops(), {"0001_a": "b", "0002_b": "d"})
 
+    async def _integrated_with_nothing_to_do(self, unit: str) -> None:
+        """One pass that integrates `unit`, read `behind`, and the integration refused because the
+        unit had nothing to integrate: its attempt's row and its record carry the code."""
+        self.add(unit, "review", integration={"state": "behind"}, between_pr_and_ship=True)
+        self.refuse[unit] = "nothing-to-integrate"
+        await self.pass_()
+        self.assertEqual(self.launched, [(unit, "integrate", "autopilot")])
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {
+                "kind": "integration",
+                "workspace": self.key,
+                "unit": unit,
+                "stage": "integrate",
+                "outcome": "refused",
+                "started_by": "autopilot",
+                "code": "nothing-to-integrate",
+                "detail": "the unit is current, which has nothing to integrate",
+            }
+        )
+        del self.refuse[unit]
+        self.launched.clear()
+
+    async def test_an_integration_with_nothing_to_integrate_runs_what_next_names(self):
+        """0157: CI green, `review` next; the board had read `behind`, the integration found the
+        unit current. The next pass queues `review`, with no stop and no person."""
+        await self._integrated_with_nothing_to_do("0001_a")
+        self.units["0001_a"]["integration"] = {"state": "current"}
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([("0001_a", "review", "autopilot")], {}))
+
+    async def test_an_integration_with_nothing_to_integrate_is_no_stop_f_when_asked_again(self):
+        """The board still reads `behind`: the pass integrates again, and the refusal's code is no
+        stop `f`."""
+        await self._integrated_with_nothing_to_do("0001_a")
+        await self.pass_()
+        self.assertEqual(
+            (self.launched, self.stops()), ([("0001_a", "integrate", "autopilot")], {})
+        )
+
+    async def test_a_ship_still_merging_runs_with_its_ship_and_stops_e_without(self):
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
+        self.add(
+            "0001_a",
+            "",
+            action="ship is merging #7 — wait",
+            reasons=["ship-merging"],
+            integration={"state": "current"},
+            rounds=[{"verdict": "pass"}],
+            between_pr_and_ship=True,
+        )
+        row = self.service.attempts.open("step", self.key, "0001_a", "ship", state="running")
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {}))
+        self.service.attempts.move(row["id"], "ended", "done")
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
+        self.assertEqual(
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"],
+            "ship requested a merge and recorded no outcome",
+        )
+
     async def test_e_reads_past_what_an_earlier_version_wrote_on_the_unit(self):
         """A `precedent` line, from an earlier version, is no step. A done one does not lift a
         failed step's stop, and a failed one stops nothing."""

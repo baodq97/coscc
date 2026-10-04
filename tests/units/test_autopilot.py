@@ -263,6 +263,91 @@ class Stops(unittest.TestCase):
         theirs = {"kind": "integration", "outcome": "refused", "started_by": "person"}
         self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), theirs, True))
 
+    NOTHING = {
+        "kind": "integration",
+        "outcome": "refused",
+        "started_by": "autopilot",
+        "code": "nothing-to-integrate",
+        "detail": "the unit is current against origin/main ccccccc (fetched), which has nothing "
+        "to integrate",
+    }
+
+    def test_an_integration_with_nothing_to_integrate_is_no_stop_and_next_runs(self):
+        """0157: CI green on the head, `review` next, and the autopilot's integration found the
+        unit current. No stop: the pass queues `review`."""
+        green = nxt("review", "CI is green: write-review")
+        self.assertIsNone(ap.stop_for(unit(), green, self.NOTHING, True))
+        self.assertIsNone(ap.stop_for(unit(), green, self.NOTHING, False))
+        # It is no last word: what follows is decided as with none.
+        for next_, may_ship in (
+            (nxt("ship", "ship"), False),
+            (nxt("", "finish and accept impl.md"), True),
+            (nxt("", "answer F1", waiting=["F1"]), True),
+        ):
+            self.assertEqual(
+                ap.stop_for(unit(), next_, self.NOTHING, may_ship),
+                ap.stop_for(unit(), next_, None, may_ship),
+                next_,
+            )
+        self.assertEqual(ap.stop_for(unit(), nxt("ship", "ship"), self.NOTHING, False)["kind"], "c")
+
+    def test_e_every_other_refusal_of_the_autopilots_integration_still_stops(self):
+        """No code is a refusal a person looks at, and so is a record from before the code."""
+        for detail in (
+            "the unit's worktree has uncommitted changes",
+            "the unit's worktree is not on the unit's branch",
+            "the unit has no worktree to integrate in",
+            "0010_a is busy: a spec step is running since 2026-09-24T01:02:03+00:00",
+            "the pull request's head could not be read, so the unit is unknown: nothing to integrate",
+            "the local head (bbbbbbb) is not the pull request's head (aaaaaaa)",
+        ):
+            with self.subTest(detail=detail):
+                refused = {**self.NOTHING, "code": "", "detail": detail}
+                got = ap.stop_for(unit(), nxt("review", "x"), refused, True)
+                self.assertEqual(
+                    got, {"kind": "e", "reason": f"the last integration was refused: {detail}"}
+                )
+        old = {k: v for k, v in self.NOTHING.items() if k != "code"}
+        self.assertEqual(ap.stop_for(unit(), nxt("review", "x"), old, True)["kind"], "e")
+        # `failed` and `needs-person` stop whatever their code.
+        failed = {**self.NOTHING, "outcome": "failed"}
+        self.assertEqual(ap.stop_for(unit(), nxt("review", "x"), failed, True)["kind"], "e")
+        gebo = {**self.NOTHING, "outcome": "needs-person", "needs_person": ["x.py"]}
+        self.assertEqual(ap.stop_for(unit(), nxt("review", "x"), gebo, True)["kind"], "d")
+
+    MERGING_NOW = nxt("", "ship is merging #7 — wait", reasons=["ship-merging"])
+
+    def test_a_ship_still_merging_is_no_stop_while_its_ship_runs(self):
+        self.assertIsNone(ap.stop_for(unit(), self.MERGING_NOW, None, True, shipping=True))
+        self.assertTrue(ap.is_ship_merging(self.MERGING_NOW))
+
+    def test_e_a_ship_still_merging_with_no_ship_running(self):
+        self.assertEqual(
+            ap.stop_for(unit(), self.MERGING_NOW, None, True),
+            {"kind": "e", "reason": "ship requested a merge and recorded no outcome"},
+        )
+        # Not the stop `f` on the action's words.
+        done = {"kind": ap.PR_MACHINE, "stage": "ship", "outcome": "done", "result": "merged"}
+        self.assertEqual(ap.stop_for(unit(), self.MERGING_NOW, done, True)["kind"], "e")
+
+    def test_a_ship_that_failed_still_stops_while_next_reads_merging(self):
+        """A `ship` the guard refused, or one that failed, is still its stop `e`; a merge GitHub
+        refused is still `f`."""
+        refused = {
+            "kind": ap.PR_MACHINE,
+            "stage": "ship",
+            "outcome": "failed",
+            "result": "refused",
+            "reasons": ["head-moved"],
+            "detail": "",
+        }
+        self.assertEqual(
+            ap.stop_for(unit(), self.MERGING_NOW, refused, True),
+            {"kind": "e", "reason": "the last ship was refused: head-moved"},
+        )
+        github = {**refused, "result": "failed", "detail": "not mergeable", "merge_refused": True}
+        self.assertEqual(ap.stop_for(unit(), self.MERGING_NOW, github, True)["kind"], "f")
+
     def test_e_a_pr_or_ship_the_machine_failed_or_refused_and_none_once_one_did_its_work(self):
         """With no `end`, the machine's record is the last word."""
         refused = {
@@ -1293,6 +1378,13 @@ class AfterARefusal(unittest.TestCase):
             ap.after_refusal(self.refused("ci-pending"), "impl", NOW, fresh=True), (None, None)
         )
         self.assertEqual(ap.after_refusal(self.refused("unit-busy"), "impl", NOW), (None, None))
+
+    def test_an_integration_with_nothing_to_integrate_is_no_stop_and_no_wait(self):
+        refused = self.refused("nothing-to-integrate", "integrate")
+        self.assertEqual(ap.after_refusal(refused, "integrate", NOW), (None, None))
+        # Another refusal of the integration is still the stop `f`.
+        stop, _ = ap.after_refusal(self.refused("invalid", "integrate"), "integrate", NOW)
+        self.assertEqual(stop, {"kind": "f", "reason": "integrate was refused: invalid"})
 
 
 class ExhaustedOf(unittest.TestCase):

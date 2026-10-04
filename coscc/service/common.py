@@ -14,6 +14,7 @@ from coscc.git import gitops
 from coscc.github import integrate
 from coscc.runlog.journal import BadRecord, Journal
 from coscc.units import states
+from coscc.units.autopilot import SHIP_UNRECORDED
 from coscc.units.guards import REASONS
 from coscc.data import Busy
 from coscc.data import now as _now
@@ -343,6 +344,10 @@ def attention_reason(unit: dict[str, Any]) -> str:
         # reads the unit as finished with its pull request open.
         if unit.get("why") == "ship-refused":
             return ""
+        # A merge asked for and not recorded: while its `ship` runs the card says `Running`, and
+        # `reason_beside` drops this.
+        if unit.get("why") == "ship-merging":
+            return SHIP_UNRECORDED
         # A fact, not an order: no button accepts a draft; its stage's next run does.
         return f"{draft.get('stage')}.md is a draft"
     return "Changes requested"
@@ -431,9 +436,11 @@ def unit_state(
         and last_end.get("outcome") in ("failed", "exhausted")
         and last_end.get("stage") == unit.get("at")
     )
+    # `ship-merging` with no `ship` running is a merge nothing will record; `shown_state` lays
+    # `Running` over it while one runs.
     if (
         unit.get("problems")
-        or why == "unreadable"
+        or why in ("unreadable", "ship-merging")
         or failed
         or red
         or (unit.get("integration") or {}).get("state") == "red-after-integration"
@@ -466,8 +473,12 @@ def shown_state(
 
 def reason_beside(reason: str, state: str) -> str:
     """`attention_reason` as the dialog shows it beside the state shown, `""` where the two
-    would disagree: any reason beside a collapsed state, and "Needs a person" beside any state
-    but *Needs you*."""
-    if state in COLLAPSED_STATES or (reason == "Needs a person" and state != "needs-you"):
+    would disagree: any reason beside a collapsed state, "Needs a person" beside any state
+    but *Needs you*, and `SHIP_UNRECORDED` beside any but *Error*."""
+    if (
+        state in COLLAPSED_STATES
+        or (reason == "Needs a person" and state != "needs-you")
+        or (reason == SHIP_UNRECORDED and state != "error")
+    ):
         return ""
     return reason
