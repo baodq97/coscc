@@ -292,7 +292,7 @@ class TheShippedDefaultsMatchTheLoop(unittest.TestCase):
 
 
 class TheCeilingsResolveInOnePlace(unittest.TestCase):
-    """R6: override, else the grant's own, the `SUBMIT_TURNS` floor after either."""
+    """Override, else the grant's own, the `SUBMIT_TURNS` floor after either."""
 
     def test_default_and_override_each_say_so(self):
         self.assertEqual(
@@ -362,7 +362,7 @@ class TheSourcesOfAModel(unittest.TestCase):
 
 
 class TheBoundsOfAnOverride(unittest.TestCase):
-    """R5 and R13: out of bounds is refused, and a stored one is skipped and named."""
+    """Out of bounds is refused, and a stored one is skipped and named."""
 
     def test_each_bound(self):
         good = [

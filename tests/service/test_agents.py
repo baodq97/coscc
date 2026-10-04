@@ -217,7 +217,7 @@ class ThePage(_WithAService):
         self.assertEqual(chip_of(None, 4.0, 0), "idle")
 
     def test_bad_prefs_are_skipped_and_named(self):
-        # R13: not JSON, out of bounds, and a key no row has.
+        # Not JSON, out of bounds, and a key no row has.
         self.data.set_pref("turns:spec", 900)
         self.data.set_pref("budget:nobody", 1.0)
         self.data.set_pref("model:plan", "x" * 101)
@@ -230,7 +230,6 @@ class ThePage(_WithAService):
         self.assertEqual(len(page["problems"]), 4, page["problems"])
 
     def test_ten_thousand_runs_under_half_a_second(self):
-        # R12.
         stages = ["idea", "intent", "spec", "spike", "plan", "impl", "review", "integrate"]
         self._seed(
             [

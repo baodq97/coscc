@@ -18,7 +18,7 @@ from coscc.service.common import OWNER, Invalid
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces
 
-# The `runs` kind of one saved or reset field (R9).
+# The `runs` kind of one saved or reset field: the trace of who moved what.
 SETTING_KIND = "agent-setting"
 # How far back the page adds up cost and looks for a run; how many runs a drawer lists.
 WINDOW_DAYS = 30
@@ -47,7 +47,7 @@ class RunView(TypedDict):
 
 
 class GrantView(TypedDict):
-    """What `grant_for` gives a step, to be read and never written (R4)."""
+    """What `grant_for` gives a step, to be read and never written: changing one widens what a step may do."""
 
     tools: list[str]
     commands: list[str]
@@ -182,7 +182,7 @@ class Agents:
         return by_stage, []
 
     def agent_page(self, workspace: str | None = None, now: datetime | None = None) -> AgentPage:
-        """Everything the Agents page shows, in one call (R12).
+        """Everything the Agents page shows, in one call: the run log is read once, not per stage.
 
         `rows`, one per agent, failed and costly first and otherwise in `agents.json`'s order:
         identity, model, effort and the two ceilings each with its source, its `:novel` rows
@@ -247,7 +247,7 @@ class Agents:
         self, key: object, field: object, value: object = None, workspace: str | None = None
     ) -> AgentPage:
         """Save one field of one row, or reset it to its default when `value` is `None`, then
-        log it (R9) and return `agent_page`. Out of bounds is refused and nothing is written.
+        log it and return `agent_page`. Out of bounds is refused and nothing is written.
 
         `field` is one of `agents.FIELDS` (an agent's identity; `""` resets too) or of
         `models.FIELD_PREFIX` (model, effort, turns, budget; which rows take which is

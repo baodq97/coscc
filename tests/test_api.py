@@ -235,7 +235,7 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
     async def test_no_route_writes_a_grant(self):
-        # R4: a grant is shown, never written.
+        # A grant is shown, never written.
         before = (await self.page())["rows"]
         for field in ("tools", "commands", "mcp", "submits", "warning", "grant"):
             r = await self.client.post(

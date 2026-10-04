@@ -49,7 +49,7 @@ FALLS_BACK = {"integrate": "impl"}
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 OVERRIDE_ONLY = "max"
 
-# The bounds an override keeps. Chosen, not measured (spec C1): 500 turns is twice the `novel`
+# The bounds an override keeps. Chosen, not measured: 500 turns is twice the `novel`
 # ceiling, $50 about three times its $16.
 MODEL_MAX = 100
 TURNS_MIN, TURNS_MAX = 1, 500

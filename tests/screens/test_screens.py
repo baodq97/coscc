@@ -350,7 +350,7 @@ class ThePage(unittest.TestCase):
         self.assertNotRegex(panel, r"/home/|/tmp/")
 
     def test_settings_lost_the_agents_models_and_grants_panels_and_their_links(self):
-        """R10: no panel for who an agent is, what it runs on or what it may do, and no link in
+        """No panel for who an agent is, what it runs on or what it may do, and no link in
         `settings-index` to one."""
         from coscc.screens import settings as page
 
@@ -457,7 +457,7 @@ class TheAgentsScreen(unittest.TestCase):
         self.assertEqual(shown.count("lets each step spend more"), 1)
 
     def test_the_grant_is_drawn_and_never_written(self):
-        """R4: no box, button or handler of the page takes a grant."""
+        """No box, button or handler of the page takes a grant."""
         from coscc.screens.agents import _grant
         from coscc.state import StudioState
 

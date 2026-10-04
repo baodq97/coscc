@@ -1288,7 +1288,7 @@ class AgentRunRow:
 
 @dataclasses.dataclass
 class AgentDetail:
-    """What one agent's drawer shows; the grant is read, never written (R4)."""
+    """What one agent's drawer shows; the grant is read, never written."""
 
     key: str = ""
     glyph: str = ""

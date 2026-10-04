@@ -66,7 +66,8 @@ class AStepCanBeWatched(unittest.TestCase):
             reader = asyncio.create_task(self._drain())
             while (
                 not self.service.steps.recorders
-                or next(iter(self.service.steps.recorders.values())).seq < self.N
+                # The `config` event, then the refusals.
+                or next(iter(self.service.steps.recorders.values())).seq < self.N + 1
             ):
                 await asyncio.sleep(0.01)
             [run] = list(self.service.steps.recorders)
@@ -111,13 +112,13 @@ class AStepCanBeWatched(unittest.TestCase):
         )
         self.assertEqual((listed, steps_run), (run, run))
         self.assertEqual(live["status"], "running")
-        self.assertEqual([e["seq"] for e in live["events"]], list(range(self.N - 199, self.N + 1)))
+        self.assertEqual([e["seq"] for e in live["events"]], list(range(self.N - 198, self.N + 2)))
         self.assertTrue(live["has_older"])
         self.assertEqual(len(older["events"]), events_mod.PAGE_MAX)
         self.assertEqual(older["events"][-1]["seq"], live["first_seq"] - 1)
         self.assertEqual([e["seq"] for e in one["events"]], [7])
         # Following from 100: every later event once, in order, ending with `end`.
-        self.assertEqual(followed, list(range(101, self.N + 2)))
+        self.assertEqual(followed, list(range(101, self.N + 3)))
         self.assertEqual(after["status"], "ended")
         self.assertEqual(after["events"][-1]["kind"], "end")
         # The same pages from the table as from memory.
