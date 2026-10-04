@@ -19,6 +19,11 @@ export function toolSummary(input: unknown): string {
   return JSON.stringify(input).slice(0, 160);
 }
 
+/** `text` with every path into the unit's own worktree read from that worktree: `…/0001_x/a.py` is `a.py`. */
+export function inUnit(text: string, unit: string): string {
+  return unit ? text.split(new RegExp(`[^\\s'"]*/${unit}/`)).join("") : text;
+}
+
 /** `events` with `more` added in order, none twice. */
 export function merged(events: StepEvent[], more: StepEvent[]): StepEvent[] {
   const seen = new Set(events.map((e) => e.seq));
@@ -73,6 +78,23 @@ export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; ru
     return () => source.close();
   }, [following, ready, round, cwd, unit, run]);
 
+  // Opens at the end, where a reader looks first; while following, stays there unless scrolled up.
+  const box = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+  useEffect(() => {
+    const el = box.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  }, [events.length]);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const onScroll = () => {
+      pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    };
+    el.addEventListener("scroll", onScroll);
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [ready, events.length > 0]);
+
   const older = async () => {
     try {
       const p = await api.get("/api/units/{name}/runs/{run}", { cwd, name: unit, run, limit: PAGE, before: String(events[0]?.seq ?? "") });
@@ -88,14 +110,14 @@ export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; ru
   if (page.status === "purged") return <div className="faint rl-note">The events of this run were cleared on {page.purged_at?.slice(0, 10)}.</div>;
   if (!events.length) return <div className="faint rl-note">{page.status === "none" ? "This run recorded nothing: the app went down before its first event." : "No events yet."}</div>;
   return (
-    <div className="rl">
+    <div className="rl" ref={box}>
       {page.has_older && (
         <Button size="sm" kind="ghost" onClick={older}>
           Earlier events
         </Button>
       )}
       {events.map((e) => (
-        <Line key={e.seq} event={e} />
+        <Line key={e.seq} event={e} unit={unit} />
       ))}
       {following && <div className="faint rl-note">Following…</div>}
       {page.events_lost > 0 && <div className="faint rl-note">{page.events_lost} events were not recorded.</div>}
@@ -103,20 +125,20 @@ export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; ru
   );
 }
 
-function Line({ event: e }: { event: StepEvent }) {
+function Line({ event: e, unit }: { event: StepEvent; unit: string }) {
   switch (e.kind) {
     case "config":
       return <div className="rl-l faint">opened with {[e.model, e.effort].filter(Boolean).join(" · ") || "the defaults"}</div>;
     case "text":
-      return e.role === "user" ? null : <div className="rl-l rl-say">{e.text}</div>;
+      return e.role === "user" ? null : <div className="rl-l rl-say">{inUnit(e.text ?? "", unit)}</div>;
     case "tool_use":
       return (
         <div className="rl-l mono">
-          <span className="rl-tool">{e.name?.replace(/^mcp__\w+?__/, "")}</span> {toolSummary(e.input)}
+          <span className="rl-tool">{e.name?.replace(/^mcp__\w+?__/, "")}</span> {inUnit(toolSummary(e.input), unit)}
         </div>
       );
     case "tool_result":
-      return e.is_error ? <div className="rl-l mono rl-bad">failed: {firstLine(e.content)}</div> : null;
+      return e.is_error ? <div className="rl-l mono rl-bad">failed: {inUnit(firstLine(e.content), unit)}</div> : null;
     case "denied":
       return (
         <div className="rl-l mono rl-bad">
