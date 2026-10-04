@@ -18,7 +18,7 @@ export function Sidebar() {
   const shell = useShell();
   const ws = useResource<{ workspaces: Workspace[] }>("/api/workspaces");
   const first = ws.data?.workspaces[0];
-  const board = useResource<Board>(first ? "/api/board" : null, first ? { cwd: first.path } : {}, 60_000);
+  const board = useResource<Board>(first ? "/api/board" : null, first ? { cwd: first.path } : {}, { on: ["step.", "integration.", "mode."], every: 120_000 });
   const cap = board.data?.autopilot?.cap;
 
   const item = (to: string, label: string, icon: React.ReactNode, extra?: React.ReactNode) => (

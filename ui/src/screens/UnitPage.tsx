@@ -14,7 +14,7 @@ const PHASES = ["Shape", "Build", "Check", "Ship"] as const;
 export function UnitPage({ workspace, number }: { workspace: string; number: string }) {
   const { boards, loading } = useBoards();
   const unit = allUnits(boards).find((u) => u.workspace.name === workspace && u.number === Number(number));
-  const next = useResource<Next>(unit ? "/api/units/next" : null, unit ? { cwd: unit.workspace.path, unit: unit.name } : {}, 15_000);
+  const next = useResource<Next>(unit ? "/api/units/next" : null, unit ? { cwd: unit.workspace.path, unit: unit.name } : {}, { on: [""] });
 
   if (loading) return <div className="page"><SkeletonRows rows={5} /></div>;
   if (!unit)

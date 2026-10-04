@@ -5,10 +5,10 @@ in-process with `httpx.ASGITransport` and no frontend or Node. Nothing here read
 environment, returns configuration or runs anything the caller names, and nothing decides:
 every route translates a request into a `Service` call and the result back into JSON.
 
-The page does not come through here: its buttons reach `Service` over Reflex's socket. It only
-fetches `/api/update` and the routes of the features in `coscc/features/` (notices). The rest
-is for the owner's own tools, the updater's trial of a new build and `scripts/install.sh`; a
-route nobody calls is not kept.
+The studio (`/next`, `ui/`) reads and acts only through here, and hears changes on
+`/api/stream`. The Reflex page's buttons still reach `Service` over its socket until it is
+removed (`docs/architecture/target.md`). The owner's own tools, the updater's trial of a new
+build and `scripts/install.sh` use these routes too; a route nobody calls is not kept.
 
 Reflex reserves `/ping/`, `/_event` and `/_upload`; the guard in `coscc/auth.py` serves
 `/login`, `/setup` and `/logout`. Nothing here may use them. Every route sits behind that
@@ -23,13 +23,15 @@ update is under way (`Updating`), or 409 when this install cannot be updated (`N
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from coscc import kernel
 from coscc import features, plugin, studio
@@ -38,8 +40,13 @@ from coscc.service import Service
 from coscc.service.common import NotUpdatable, Updating
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
+from coscc.bus import Event
 
 log = logging.getLogger(__name__)
+
+# A comment line this often keeps a quiet stream open through proxies and tells the page it is
+# still connected. Chosen, not measured.
+STREAM_PING_SECONDS = 20.0
 
 
 async def _refused(_: Request, e: Exception) -> JSONResponse:
@@ -61,6 +68,39 @@ router = APIRouter()
 @router.get("/api/health")
 async def health() -> dict[str, bool]:
     return {"ok": True}
+
+
+@router.get("/api/stream")
+async def stream(request: Request) -> StreamingResponse:
+    """Every bus event as server-sent events, `{subject, workspace, unit}`, `workspace` being
+    the resolved path. It only says that something changed: the page reads what it shows again."""
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[Event] = asyncio.Queue()
+
+    def heard(e: Event) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, e)
+
+    stop = _service(request).bus.watch(heard)
+
+    async def events() -> AsyncIterator[str]:
+        try:
+            yield ": open\n\n"
+            while True:
+                try:
+                    e = await asyncio.wait_for(queue.get(), STREAM_PING_SECONDS)
+                except TimeoutError:
+                    yield ": ping\n\n"
+                    continue
+                data = {"subject": e.name, "workspace": e.workspace, "unit": e.unit}
+                yield f"data: {json.dumps(data)}\n\n"
+        finally:
+            stop()
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/api/workspaces")

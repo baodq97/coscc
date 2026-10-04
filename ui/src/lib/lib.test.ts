@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ago, modelName, money, unitCode, unitTitle } from "./format";
 import { match } from "./router";
 import { unitState, type Unit } from "./model";
+import { matches } from "./stream";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -50,5 +51,21 @@ describe("unit state", () => {
   it("reads a finished unit as shipped and a pre-intent one as an idea", () => {
     expect(unitState({ ...base, why: "finished" }).group).toBe("Shipped");
     expect(unitState({ ...base, phase: "pre-intent" }).group).toBe("Ideas");
+  });
+});
+
+describe("stream", () => {
+  const change = { subject: "step.ended", workspace: "/w/a", unit: "0001_x" };
+
+  it("matches a subject by prefix, and an empty prefix matches all", () => {
+    expect(matches(change, ["step."])).toBe(true);
+    expect(matches(change, ["answer."])).toBe(false);
+    expect(matches(change, [""])).toBe(true);
+  });
+
+  it("keeps a screen to its workspace, and a change of no workspace reaches every screen", () => {
+    expect(matches(change, ["step."], "/w/a")).toBe(true);
+    expect(matches(change, ["step."], "/w/b")).toBe(false);
+    expect(matches({ ...change, workspace: "" }, ["step."], "/w/b")).toBe(true);
   });
 });

@@ -2,11 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { api, useResource } from "./api";
+import { useChanges } from "./stream";
 import type { Board, Unit, Workspace } from "./model";
 
 export type WorkspaceBoard = { workspace: Workspace; board?: Board; error?: Error };
 
-export function useBoards(every = 30_000): { boards: WorkspaceBoard[]; loading: boolean } {
+// The stream carries what the app does; a pull request merged or CI finished on GitHub reaches
+// the board only through a slow refresh.
+export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading: boolean } {
   const ws = useResource<{ workspaces: Workspace[] }>("/api/workspaces");
   const [boards, setBoards] = useState<WorkspaceBoard[]>([]);
   const [tick, setTick] = useState(0);
@@ -29,6 +32,8 @@ export function useBoards(every = 30_000): { boards: WorkspaceBoard[]; loading: 
     };
     // `key` stands for the list of workspaces.
   }, [key, tick]);
+
+  useChanges([""], () => setTick((t) => t + 1));
 
   useEffect(() => {
     const id = setInterval(() => document.visibilityState === "visible" && setTick((t) => t + 1), every);
