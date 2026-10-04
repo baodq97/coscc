@@ -488,7 +488,8 @@ def test_status_json_and_next_action_never_carry_rerun(tmp_path):
         {"intent.md": DRAFT_INTENT + answer_block(1, "A", "x") + answer_block(2, "A", "y")},
     )
     assert "rerun" not in next_action(a.u)
-    assert "rerun" not in run_in(a.root, "status", "--json").out
+    # Not the root's own path, which may hold the word.
+    assert "rerun" not in run_in(a.root, "status", "--json").out.replace(str(a.root), "")
 
 
 # --- a draft impl.md asks a person, and runs again on the answer --------------------------------
