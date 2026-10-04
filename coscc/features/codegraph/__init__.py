@@ -17,7 +17,7 @@ import sqlite3
 import threading
 import time
 from claude_agent_sdk import McpServerConfig, SdkMcpTool, create_sdk_mcp_server, tool
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from coscc import units
 from coscc.agent import policy
 from coscc.bus import Event
@@ -42,7 +42,7 @@ from coscc.service.common import Invalid
 from coscc.units import turnstats
 from coscc.units.autopilot import files_of
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from fastapi import APIRouter, Request
 from pathlib import Path
 from starlette.routing import BaseRoute
@@ -331,6 +331,8 @@ ARMS: tuple[str, ...] = get_args(Arm)
 # characters read per impl step of at least this share against the off arm.
 MIN_UNITS = 5
 READ_DROP = 0.30
+# The day the owner scores the pilot, given by the owner and in no committed file.
+SCORING_DAY = date(2026, 11, 15)
 
 
 @dataclass(frozen=True)
@@ -439,6 +441,16 @@ def _missed(on: ArmStats, off: ArmStats) -> list[str]:
     return out
 
 
+def units_by_arm(pairs: Iterable[tuple[str, str]]) -> tuple[dict[str, set[str]], set[str]]:
+    """The units of `(unit, arm)` records per arm, and the ones that ran in both arms. Such a
+    unit says nothing about either, so it is in neither arm's set."""
+    seen: dict[str, set[str]] = {}
+    for unit, arm in pairs:
+        seen.setdefault(unit, set()).add(arm)
+    mixed = {u for u, arms in seen.items() if len(arms) > 1}
+    return {a: {u for u, arms in seen.items() if a in arms} - mixed for a in ARMS}, mixed
+
+
 def report(
     rows: list[Row],
     steps: list[Step],
@@ -449,11 +461,7 @@ def report(
     inside = [
         r for r in rows if (since is None or r.at >= since) and (until is None or r.at < until)
     ]
-    # A unit that ran in both arms says nothing about either: its runs leave both.
-    seen: dict[str, set[str]] = {}
-    for r in inside:
-        seen.setdefault(r.unit, set()).add(r.arm)
-    mixed = {u for u, arms in seen.items() if len(arms) > 1}
+    _, mixed = units_by_arm((r.unit, r.arm) for r in inside)
     impl = {r.run: r for r in inside if r.stage == "impl"}
 
     kept: dict[str, list[Step]] = {a: [] for a in ARMS}
@@ -693,13 +701,32 @@ def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
         return why, False
     if ctx.state(FEATURE, workspace) == "off":
         return "Off in this workspace.", True
-    s = idx.status(ctx.workspace_key(workspace))
-    return {
+    key = ctx.workspace_key(workspace)
+    s = idx.status(key)
+    index = {
         "installing": "Installing the code index engine, about 290 MB, once.",
         "building": "Building the index of main.",
         "ready": f"Ready: the index of main is from {_ago(s.at)}.",
         "failed": f"Failed: {s.reason}",
-    }.get(s.state, "Waiting: the index of main is built at the next impl or review."), True
+    }.get(s.state)
+    if ctx.state(FEATURE, workspace) != "pilot":
+        return index or "Waiting: the index of main is built at the next impl or review.", True
+    split = _pilot_split(ctx, key)
+    # The index state first, then the split as the rest of the same sentence.
+    return (f"{index.rstrip('.')}; {split[:1].lower()}{split[1:]}" if index else split), True
+
+
+def _pilot_split(ctx: Ctx, key: str) -> str:
+    """How the pilot divides the units, the units seen in each arm so far, and the scoring day."""
+    with ctx.data.connect() as conn:
+        pairs = conn.execute(
+            "SELECT unit, arm FROM codegraph_runs WHERE workspace = ?", (key,)
+        ).fetchall()
+    arms, _ = units_by_arm((r[0], r[1]) for r in pairs if r[1] in ARMS)
+    return (
+        f"Even-numbered units use it, odd ones do not: {len(arms['on'])} on, "
+        f"{len(arms['off'])} off so far, scored {SCORING_DAY.strftime('%b %-d')}."
+    )
 
 
 def on_set(ctx: Ctx, workspace: str, state: State) -> None:

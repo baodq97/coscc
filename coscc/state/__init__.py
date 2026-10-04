@@ -461,6 +461,12 @@ class StudioState(
         return place.href(place.Place("settings", ws))
 
     @rx.var
+    def backlog_href(self) -> str:
+        """Where the guide sends a person when no unit is on the shortlist."""
+        ws = next((w.name for w in self.workspaces if w.id == self.cwd), "")
+        return place.href(place.Place("backlog", ws))
+
+    @rx.var
     def open_questions_here(self) -> list[Question]:
         """The open unit's unanswered questions, the counted artifact's first."""
         shown = [q for q in self.current_unit.questions if not q.answered]

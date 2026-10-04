@@ -198,8 +198,11 @@ class SettingsSaysOneSentence(Setup):
             self.state = "pilot"
             self.assertTrue(codegraph.status(self.ctx, "/w/proj")[0].startswith("Ready: "))
             self.idx.shown = Status("failed", SHA, now(), "git refused.")
-            self.assertEqual(codegraph.status(self.ctx, "/w/proj")[0], "Failed: git refused.")
+            self.assertTrue(
+                codegraph.status(self.ctx, "/w/proj")[0].startswith("Failed: git refused; ")
+            )
             self.idx.shown = Status("", "", "", "")
+            self.state = "on"
             self.assertIn("next impl", codegraph.status(self.ctx, "/w/proj")[0])
 
     def test_a_lock_is_the_sentence_and_forbids_choosing(self):
@@ -209,6 +212,73 @@ class SettingsSaysOneSentence(Setup):
     def test_the_feature_is_off_by_default_and_offers_a_pilot(self):
         self.assertIn(codegraph.PLUGIN, features.FEATURES)
         self.assertEqual((codegraph.PLUGIN.default, codegraph.PLUGIN.pilot), ("off", True))
+
+
+class AtPilotTheSentenceTellsTheSplit(Setup):
+    def seed(self, runs: dict[str, str]) -> None:
+        """One impl run per `(unit, arm)` in the run log and in `codegraph_runs`, in the report's form."""
+        with self.ctx.data.write() as conn:
+            for i, (unit, arm) in enumerate(runs.items()):
+                run = f"r{i}"
+                for kind, record in (("start", {}), ("end", {"run": run, "cost_usd": 1.0})):
+                    conn.execute(
+                        "INSERT INTO runs (at, root, workspace, unit, stage, kind, record) "
+                        "VALUES ('2026-10-02T10:00:00', '/r', ?, ?, 'impl', ?, ?)",
+                        (KEY, unit, kind, json.dumps({"kind": kind, **record})),
+                    )
+                conn.execute(
+                    "INSERT INTO codegraph_runs VALUES (?, ?, ?, 'impl', ?, ?, 0, 0, '', ?)",
+                    (run, KEY, unit, arm, SHA, "2026-10-02T10:00:00"),
+                )
+
+    def test_it_names_the_split_the_units_of_each_arm_and_the_scoring_day(self):
+        # 0002 and 0004 on, 0003 off, and 0006 in both arms: counted in neither.
+        self.seed({"0002_a": "on", "0003_b": "off", "0004_c": "on", "0005_e": "off"})
+        with self.ctx.data.write() as conn:
+            conn.execute(
+                "INSERT INTO codegraph_runs VALUES ('r9', ?, '0004_c', 'review', 'off', ?, 0, 0, '', "
+                "'2026-10-02T11:00:00')",
+                (KEY, SHA),
+            )
+        self.idx.shown = Status("", "", "", "")
+        sentence, may = codegraph.status(self.ctx, "/w/proj")
+        self.assertTrue(may)
+        self.assertIn("Even-numbered units use it, odd ones do not", sentence)
+        self.assertIn(": 1 on, 2 off so far", sentence)
+        self.assertIn("Nov 15", sentence)
+        self.assertNotIn("Waiting", sentence)
+        arms = codegraph.measured(self.ctx, KEY, (None, None))["arms"]
+        self.assertEqual((arms["on"]["units"], arms["off"]["units"]), (1, 2))
+
+    def test_the_counts_are_the_reports_for_units_in_one_arm(self):
+        self.seed(
+            {"0002_a": "on", "0003_b": "off", "0004_c": "on", "0005_e": "off", "0006_f": "on"}
+        )
+        self.idx.shown = Status("", "", "", "")
+        arms = codegraph.measured(self.ctx, KEY, (None, None))["arms"]
+        sentence = codegraph.status(self.ctx, "/w/proj")[0]
+        self.assertIn(f"{arms['on']['units']} on, {arms['off']['units']} off so far", sentence)
+        self.assertIn("3 on, 2 off so far", sentence)
+
+    def test_an_install_state_comes_first(self):
+        for state, head in (
+            ("installing", "Installing the code index engine"),
+            ("building", "Building the index of main"),
+            ("failed", "Failed: git refused"),
+        ):
+            self.idx.shown = Status(state, SHA, now(), "git refused.")
+            sentence = codegraph.status(self.ctx, "/w/proj")[0]
+            self.assertTrue(sentence.startswith(head), sentence)
+            self.assertIn("even-numbered units use it", sentence)
+            self.assertIn("Nov 15", sentence)
+
+    def test_only_a_pilot_has_it(self):
+        self.idx.shown = Status("", "", "", "")
+        self.state = "on"
+        self.assertNotIn("Even-numbered", codegraph.status(self.ctx, "/w/proj")[0])
+
+    def test_the_scoring_day_is_the_one_the_owner_gave(self):
+        self.assertEqual(codegraph.SCORING_DAY.isoformat(), "2026-11-15")
 
 
 class AnIntegrationSyncsAnIndexInUse(Setup):

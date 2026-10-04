@@ -175,7 +175,8 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("COS_", _render(_guide_panel()))
 
     def test_board_carries_the_guide_panel_in_place_of_the_strip(self):
-        """Two lists, the cap line kept, one sentence and Settings when off."""
+        """Four lists, the cap line kept, the empty shortlist and Backlog outside the closed
+        part, one sentence and Settings when off."""
         board = _render(screens._board())
         self.assertIn("guide-panel", board)
         self.assertNotIn("autopilot-strip", board)
@@ -183,15 +184,23 @@ class ThePage(unittest.TestCase):
         for said in (
             "RUNNING",
             "NEEDS YOU",
+            "HELD BACK",
+            "NOTES",
             "guide-running",
             "guide-needs-you",
+            "guide-held",
+            "guide-notes",
+            "held back",
             "autopilot_cap",
             "Autopilot is on",
             "settings_href",
+            "backlog_href",
+            "Nothing is on the shortlist, so the autopilot starts nothing.",
             "The autopilot is off, so nothing starts on its own.",
         ):
             self.assertIn(said, panel)
-        self.assertEqual(panel.count('"name": "\\"ul\\""'), 2, "each list is a list (S5)")
+        self.assertEqual(panel.count('"name": "\\"ul\\""'), 4, "each list is a list (S5)")
+        self.assertLess(panel.index("guide-no-shortlist"), panel.index("guide-lists"))
         self.assertNotIn("Leif", panel)
 
     def test_the_dialog_overview_carries_every_field_the_card_let_go(self):

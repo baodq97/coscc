@@ -294,11 +294,11 @@ class TheGuide(unittest.TestCase):
         self.key = self.service.ws.key(self.cwd)
         self.journal = self.service.ws.journal()
 
-    def block(self) -> dict:
+    def block(self, units=()) -> dict:
         with mock.patch(
             "coscc.service.autopilot.autopilot_values", return_value={"autopilot": True}
         ):
-            return self.service.autopilot.guide_block(self.key)
+            return self.service.autopilot.guide_block(self.key, units)
 
     def test_guide_lists_running_steps(self):
         self.service.attempts.open("step", self.key, "0009_x", "impl", state="running")
@@ -322,14 +322,31 @@ class TheGuide(unittest.TestCase):
             "kind": "shortlist",
             "reason": "none",
         }
-        got = self.block()["needs_you"]
-        self.assertEqual([r["kind"] for r in got], [*kinds[:-1], "shortlist"])
-        by = {r["kind"]: r for r in got}
+        self.service.autopilot.stops[self.key]["0099_w"] = {
+            "unit": "",
+            "kind": "cap",
+            "reason": "spent",
+        }
+        asking = {"name": "0001_u", "state": {"state": "needs-you"}}
+        block = self.block([asking, {"name": "0002_u", "state": {"state": "ready"}}])
+        self.assertEqual([r["kind"] for r in block["needs_you"]], ["a"])
+        # The rest are held back: their cards do not say `Needs you`.
+        self.assertEqual([r["kind"] for r in block["held"]], list(kinds[1:-1]))
+        # The workspace's own stops; the empty shortlist is said outside the lists.
+        self.assertEqual([r["kind"] for r in block["notes"]], ["cap"])
+        a = block["needs_you"][0]
         self.assertEqual(
-            (by["a"]["unit"], by["a"]["screen"], by["a"]["tab"], by["a"]["reason"]),
+            (a["unit"], a["screen"], a["tab"], a["reason"]),
             ("0001_u", "unit", "questions", "why a"),
         )
-        self.assertEqual((by["cap"]["screen"], by["shortlist"]["screen"]), ("settings", "backlog"))
+        self.assertEqual(block["notes"][0]["screen"], "settings")
+        self.assertTrue(block["shortlist_empty"])
+
+    def test_a_needs_you_unit_with_a_step_running_is_counted_as_running(self):
+        """The card lays `Running` over `Needs you`; the guide counts what the card says."""
+        self.service.attempts.open("step", self.key, "0001_u", "impl", state="running")
+        got = self.block([{"name": "0001_u", "state": {"state": "needs-you"}}])
+        self.assertEqual((got["needs_you"], len(got["running"])), ([], 1))
 
     def test_guide_says_only_that_the_autopilot_is_off_when_it_is(self):
         self.service.attempts.open("step", self.key, "0009_x", "impl", state="running")

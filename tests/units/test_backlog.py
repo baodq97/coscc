@@ -299,6 +299,19 @@ class TheShortlist(unittest.TestCase):
         self.assertIn("no estimate", b.check_shortlist(["0009_u"], self.BACKLOG, self.ESTS))
         self.assertEqual(b.check_shortlist(self.BACKLOG[:7], self.BACKLOG, self.ESTS), "")
 
+    def test_the_refusal_names_every_unit_without_an_estimate_and_both_ways_on(self):
+        ests = {n: {} for n in self.BACKLOG[:6]}
+        said = b.check_shortlist(["0001_u", "0008_u", "0009_u"], self.BACKLOG, ests)
+        self.assertEqual(
+            said,
+            "0008_u, 0009_u have no estimate yet: "
+            "give each one with Edit on its row, or use Propose estimates.",
+        )
+        one = b.check_shortlist(["0001_u", "0009_u"], self.BACKLOG, ests)
+        self.assertTrue(one.startswith("0009_u has no estimate yet: "))
+        for way in ("Edit", "Propose estimates"):
+            self.assertIn(way, said)
+
     def test_answer_2_a_shortlist_that_drifts_everywhere_is_taken_and_marked(self):
         units = [_unit(n) for n in ("0001_a", "0002_b", "0003_c")]
         records = [_est("0001_a", 5, "S"), _est("0002_b", 3, "S"), _est("0003_c", 1, "S")]

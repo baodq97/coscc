@@ -348,13 +348,15 @@ def attention_reason(unit: dict[str, Any]) -> str:
     return "Changes requested"
 
 
-# The eight states and their labels, in the order their rules are tried. No label reads as
-# approval: `Done` comes from `next.why = finished` alone.
+# The nine states and their labels, in the order their rules are tried. No label reads as
+# approval: `Done` comes from `next.why = finished` alone. `running` and `starting` are only
+# laid over (`shown_state`), never decided by `unit_state`.
 STATE_LABEL = {
     "done": "Done",
     "dropped": "Dropped",
     "paused": "Paused",
     "running": "Running",
+    "starting": "Starting",
     "needs-you": "Needs you",
     "error": "Error",
     "awaiting": "Awaiting CI/merge",
@@ -366,6 +368,7 @@ STATE_COLOR = {
     "dropped": "bronze",
     "paused": "plum",
     "running": "iris",
+    "starting": "blue",
     "needs-you": "amber",
     "error": "red",
     "awaiting": "cyan",
@@ -450,11 +453,15 @@ def unit_state(
 def shown_state(
     decided: dict[str, Any], running_rows: list[dict[str, Any]] | None
 ) -> dict[str, Any]:
-    """`Running` while `Board.running` lists a session of the unit, below rules 1-3 and above
-    the rest. `running_rows` is that answer's `running` entry for the unit."""
-    if running_rows and decided.get("state") not in COLLAPSED_STATES:
-        return _state("running")
-    return decided
+    """`Running` while `Board.running` lists a `running` or `ending` attempt of the unit, and
+    `Starting` while it lists only `queued` or `preparing` ones, below rules 1-3 and above the
+    rest. `running_rows` is that answer's `running` entry for the unit; a row's `state` is its
+    attempt's."""
+    if not running_rows or decided.get("state") in COLLAPSED_STATES:
+        return decided
+    if all(r.get("state") in ("queued", "preparing") for r in running_rows):
+        return _state("starting")
+    return _state("running")
 
 
 def reason_beside(reason: str, state: str) -> str:

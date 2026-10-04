@@ -9,7 +9,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterable
 
 from coscc.units import autopilot, backlog, guide, states
 from coscc.git import fetches
@@ -19,7 +19,14 @@ from coscc.runlog.journal import BadRecord
 from coscc.data import Busy
 from coscc.config import LOOPBACK, Config
 from coscc.data import Data
-from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, Refused, log_setting
+from coscc.service.common import (
+    BRANCH_REMOTE,
+    BRANCH_TRUNK,
+    Invalid,
+    Refused,
+    log_setting,
+    shown_state,
+)
 from coscc.service.workspaces import Workspaces
 from coscc.service.common import Holds
 from coscc.service.agents import Agents
@@ -790,25 +797,48 @@ class Autopilot:
             held = (self.held.get(key) or {}).get(unit["name"])
             unit["held"] = " ".join(p for p in held if p) if held else ""
         data["autopilot"] = self._block(key)
-        data["guide"] = self.guide_block(key)
+        data["guide"] = self.guide_block(key, data["units"])
 
-    def guide_block(self, key: str) -> dict[str, Any]:
-        """The board's guide: `{on, running, needs_you}`, or `{on: False}` alone while the
-        autopilot is off. What runs is read from memory. Display only; decides nothing.
+    def guide_block(self, key: str, units: Iterable[dict[str, Any]] = ()) -> dict[str, Any]:
+        """The board's guide: `{on, running, needs_you, held, notes, shortlist_empty}`, or
+        `{on: False}` alone while the autopilot is off. `units` are those of the board read:
+        `needs_you` has one item per unit its card labels `Needs you`: its `state` with what
+        runs laid over, as the card has it (`shown_state`). What runs is read from memory, and
+        `shortlist_empty` from the run log on every call, as a pass reads it. Display only;
+        decides nothing.
         """
         if not autopilot_values(self.config, key)["autopilot"]:
             return {"on": False}
+        entries = self.boards.running_here(key, self.agents.agent_overrides()[0])
+        units = [
+            {**u, "state": shown_state(u.get("state") or {}, entries.get(u.get("name")))}
+            for u in units
+        ]
         stops = sorted(
             (self.stops.get(key) or {}).values(),
             key=lambda s: (autopilot.unit_number(s["unit"]), s["unit"]),
         )
         return {
             "on": True,
-            "running": guide.running(
-                self.boards.running_here(key, self.agents.agent_overrides()[0])
-            ),
-            "needs_you": guide.needs_you(stops),
+            "running": guide.running(entries),
+            "needs_you": guide.needs_you(units, stops),
+            "held": guide.held(units, stops),
+            "notes": guide.notes(stops),
+            "shortlist_empty": self._shortlist_empty(key),
         }
+
+    def _shortlist_empty(self, key: str) -> bool:
+        """No shortlist was ever saved, or the one in effect has no unit; `False` where the run
+        log cannot be read now. The read of `run_pass`, so there is one rule."""
+        journal = self.ws.journal()
+        if journal is None:
+            return False
+        try:
+            records = journal.records(kinds=("shortlist",))
+        except Busy:
+            return False
+        listed, _ = backlog.shortlist_of(r for r in records if r.get("workspace") == key)
+        return listed is None or not listed["units"]
 
     def settings(self, cwd: str) -> dict[str, Any]:
         """The four settings of one workspace, and whether the bind lets the autopilot run."""

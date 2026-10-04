@@ -21,6 +21,13 @@ check runs once per app process, at the first run or pick that needs the engine;
 restarts, an install found broken keeps the feature off for every unit and is not installed
 again. A failed install is tried again only when a person picks `pilot` or `on`.
 
+The row says what the feature does (`summary`), then one status sentence. At `pilot` that
+sentence tells the split (even-numbered units use it, odd ones do not), the units with records
+in each arm so far, and the scoring day, `SCORING_DAY` in `__init__.py` (2026-11-15, shown as
+`Nov 15`); it comes after the index state while the engine installs, the index builds, is ready
+or has failed, and alone before the first index. The counts are the report's rule, a unit in both
+arms counted in neither (`units_by_arm`), over all records, not a window.
+
 ## What the agent sees
 
 - `impl`, `on` arm, index ready: the MCP server `codegraph` with `find` (entry points for

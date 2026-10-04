@@ -70,11 +70,16 @@ def _backlog_row(row: rx.Var[BacklogRow], shortlisted: bool) -> rx.Component:
                     rx.button(
                         "Remove", on_click=P.shortlist_remove(row.unit), size="1", variant="ghost"
                     ),
-                    rx.button(
-                        "Add to shortlist",
-                        on_click=P.shortlist_add(row.unit),
-                        size="1",
-                        variant="ghost",
+                    # No estimate, no place on the shortlist: the sentence stands where the button was.
+                    rx.cond(
+                        P.backlog_unestimated.contains(row.unit),
+                        s.text("Needs an estimate first.", size="1"),
+                        rx.button(
+                            "Add to shortlist",
+                            on_click=P.shortlist_add(row.unit),
+                            size="1",
+                            variant="ghost",
+                        ),
                     ),
                 ),
                 rx.button(
