@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -45,6 +46,18 @@ class Refused(Invalid):
             if code not in REASONS:
                 raise ValueError(f"no reason code {code!r}")
         self.reasons = tuple(reasons)
+
+
+@dataclass(frozen=True)
+class Submitted:
+    """What one session that hands back an object left: the object, or `None` and `failure`
+    saying why there is none; what it cost (`journal.COST_FIELDS` and `cost_usd`); and its
+    session id, `run`."""
+
+    object: dict[str, Any] | None
+    cost: dict[str, Any]
+    run: str
+    failure: str = ""
 
 
 class Holds:
@@ -297,6 +310,7 @@ CONSEQUENCE = {
     "ship": "Merges the pull request with this machine's gh login, and spends quota.",
     "integrate": "Rebases this pull request with this machine's gh login; a conflict opens a paid session.",
     "estimate": "Opens one paid session that proposes estimates.",
+    "scan": "Opens one paid session, about $1 at most, that proposes work from the run log.",
     "drop": "Closes this unit's open pull request with this machine's gh login.",
     # The whole warning is `release.WARNING`, in `/api/board`.
     "release": "Commits, pushes, merges and tags on main with this machine's gh login.",

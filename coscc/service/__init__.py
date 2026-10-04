@@ -106,6 +106,8 @@ class Service:
             "retake.ended",
             "estimate.ended",
             "estimate.refused",
+            "scan.ended",
+            "scan.refused",
             "chat-turn.ended",
         ):
             self.bus.subscribe(name, lambda _: self.updater.job_ended())

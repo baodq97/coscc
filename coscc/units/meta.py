@@ -22,7 +22,7 @@ from typing import Any
 
 from coscc.data import Data, now
 from coscc.loop import run
-from coscc.runlog.journal import Journal
+from coscc.runlog.journal import Intervention, Journal
 from coscc.units import backlog
 from coscc.units.history import History
 from coscc.units.states import Machine
@@ -471,6 +471,77 @@ class UnitMeta:
                 for f in obj.get("findings") or ()
             ],
         )
+
+    def interventions(self, workspace: str, after: str, limit: int) -> list[Intervention]:
+        """What the CI and the reviews of `workspace` sent back to a person, past `after`: each
+        transition the CI read `red` (`ci-red`; its `to_state` is no clue, it stays `accepted`),
+        each `impl` moved to `draft` (`impl-draft`) and each round that asked for changes
+        (`review-round`, its findings' words as the detail). Oldest first, at most `limit` of
+        each."""
+        out: list[Intervention] = []
+        with self.data.connect() as conn:
+            for row in conn.execute(
+                "SELECT id, at, unit, stage, artifact, inputs FROM transitions "
+                "WHERE root = ? AND workspace = ? AND at > ? AND actor = 'code:ci' "
+                "AND CASE WHEN json_valid(inputs) THEN json_extract(inputs, '$.ci') END = 'red' "
+                "ORDER BY at, id LIMIT ?",
+                (self.root, workspace, after, int(limit)),
+            ).fetchall():
+                read = json.loads(row["inputs"])
+                head = str(read.get("head") or "")[:7] if isinstance(read, dict) else ""
+                said = f"CI went red on {row['artifact']}" + (f" at {head}" if head else "")
+                out.append(
+                    Intervention(
+                        f"ci-red:transitions:{row['id']}",
+                        "ci-red",
+                        row["at"],
+                        row["unit"],
+                        row["stage"],
+                        said,
+                    )
+                )
+            for row in conn.execute(
+                "SELECT id, at, unit, stage, from_state, guard FROM transitions "
+                "WHERE root = ? AND workspace = ? AND at > ? AND stage = 'impl' "
+                "AND to_state = 'draft' ORDER BY at, id LIMIT ?",
+                (self.root, workspace, after, int(limit)),
+            ).fetchall():
+                said = f"impl went from {row['from_state'] or 'nothing'} to draft ({row['guard']})"
+                out.append(
+                    Intervention(
+                        f"impl-draft:transitions:{row['id']}",
+                        "impl-draft",
+                        row["at"],
+                        row["unit"],
+                        "impl",
+                        said,
+                    )
+                )
+            for row in conn.execute(
+                "SELECT id, at, unit, n FROM review_rounds WHERE root = ? AND workspace = ? "
+                "AND at > ? AND verdict = 'changes-requested' ORDER BY at, id LIMIT ?",
+                (self.root, workspace, after, int(limit)),
+            ).fetchall():
+                findings = conn.execute(
+                    "SELECT finding, severity, text FROM review_findings WHERE round = ? "
+                    "ORDER BY finding",
+                    (row["id"],),
+                ).fetchall()
+                said = "; ".join(
+                    f"{f['finding']} ({f['severity']}): {' '.join(f['text'].split())[:120]}"
+                    for f in findings
+                )
+                out.append(
+                    Intervention(
+                        f"review-round:review_rounds:{row['id']}",
+                        "review-round",
+                        row["at"],
+                        row["unit"],
+                        "review",
+                        f"round {row['n']}: {said}" if said else f"round {row['n']}",
+                    )
+                )
+        return out
 
     def _write_ideas(
         self, conn: sqlite3.Connection, workspace: str, ideas: Iterable[Mapping[str, Any]] | None

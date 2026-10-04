@@ -8,7 +8,8 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, AsyncIterator, TypedDict
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
+from typing import Any, TypedDict
 
 from coscc.units import backlog, guards
 from coscc.units import board as board_reader
@@ -31,7 +32,7 @@ from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service.update import refuse_while_updating
-from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, OWNER
+from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, OWNER, Submitted
 
 from coscc.bus import Bus, Event
 from coscc.config import Config
@@ -284,7 +285,7 @@ class Backlog:
         self.bus.publish(Event("shortlist.saved", key))
         return {"recorded": recorded}
 
-    async def propose_estimates(  # noqa: C901, PLR0915 - still to split
+    async def propose_estimates(  # noqa: PLR0915 - still to split
         self,
         cwd: str,
         resume: dict[str, Any] | None = None,
@@ -308,7 +309,6 @@ class Backlog:
         key = self.ws.key(cwd)
         attempt = self.holds.attempts.open("estimate", key, "", "estimate")["id"]
         self.holds.attempts.move(attempt, "running")
-        started = ended = False
         outcome = "failed"
         try:
             try:
@@ -347,23 +347,132 @@ class Backlog:
                 for n, f in found.items()
             ]
             prompt = backlog.build_prompt(texts, finished, left_out)
-            grant = grant_for("estimate")
-            defaults, _ = models.load_defaults()
-            model, model_source, effort, effort_source = models.resolve(
-                models.ESTIMATE,
-                None,
-                self.models.model_overrides()[0],
-                self.models.effort_overrides()[0],
-                defaults,
-                self.config.model,
-            )
-            start_at = ((resume or {}).get("owner") or {}).get("start_at")
+            names = [u["name"] for u in data["units"]]
+            # What `record` wrote and refused, and what failed.
+            kept: dict[str, Any] = {"written": 0, "rejected": [], "failed": None}
+
+            def record(got: Submitted) -> str | None:
+                """Each valid part of the object, before the `end`; what failed, if anything."""
+                parsed: dict[str, Any] = {
+                    "records": [],
+                    "rejected": [],
+                    "failed": got.failure or None,
+                }
+                if not got.failure:
+                    parsed = backlog.parse_proposal(
+                        got.object,
+                        waiting,
+                        names,
+                        found,
+                        got.run,
+                        backlog.relations_of(rows),
+                        workspace=key,
+                        undetermined=left_out,
+                    )
+                kept["failed"], kept["rejected"] = parsed["failed"], list(parsed["rejected"])
+                for rec in parsed["records"]:
+                    if rec["kind"] == "relation":
+                        check = (
+                            lambda rec: (
+                                lambda live: backlog.check_relation(
+                                    rec["unit"],
+                                    rec["other"],
+                                    rec["type"],
+                                    "add",
+                                    rec["reason"],
+                                    rec["by"],
+                                    names,
+                                    backlog.relations_of(live),
+                                    agent=True,
+                                )
+                            )
+                        )(rec)
+                    else:
+                        check = lambda _live: ""
+                    try:
+                        self._append_checked(journal, rec, check)
+                        kept["written"] += 1
+                    except Invalid as e:
+                        kept["rejected"].append({"unit": rec["unit"], "reason": str(e)})
+                return parsed["failed"]
+
+            got = Submitted(None, {}, "")
+            stream = self.submitting(cwd, key, journal, "estimate", prompt, record, resume)
+            try:
+                async for kind, payload in stream:
+                    if kind == "chunk":
+                        yield ("chunk", payload)
+                    else:
+                        got = payload
+            finally:
+                await stream.aclose()
+            cost = got.cost
+            outcome = "failed" if kept.get("failed") else "done"
+            summary = {
+                "kind": "estimate",
+                "workspace": key,
+                "unit": "",
+                "stage": "estimate",
+                "session_id": got.run,
+                "cost_usd": cost.get("cost_usd"),
+                "turns": cost.get("turns"),
+                "written": kept["written"],
+                "rejected": kept["rejected"],
+                "outcome": outcome,
+                "detail": kept["failed"],
+            }
+            try:
+                summary = journal.append(summary)
+            except BadRecord, Busy:
+                pass
+            outcome = "done"
+            yield ("done", {"estimate": summary})
+        except asyncio.CancelledError:
+            outcome = "interrupted"
+            raise
+        finally:
+            self.holds.attempts.move(attempt, "ended", outcome)
+
+    async def submitting(
+        self,
+        cwd: str,
+        key: str,
+        journal: Journal,
+        kind: str,
+        prompt: str,
+        after: Callable[[Submitted], str | None] = lambda got: got.failure or None,
+        resume: Mapping[str, Any] | None = None,
+    ) -> AsyncGenerator[tuple[str, Any], None]:
+        """One session of `kind`, a grant of `policy.SUBMITTING_SESSIONS`, that hands its object
+        back through `submit` on the model of the Settings row `estimate`; its reply is never
+        read. Yields each `chunk`, then `("done", Submitted)`.
+
+        Writes `start`/`end` (stage `kind`, unit `""`) so Activity counts the money. A session
+        over a ceiling, or one that handed back no object, is a `Submitted` with `failure`.
+        `after(submitted)` runs before the `end` and says what failed, `None` for `done`; it is
+        where the estimate writes its records. A `start` left with no `end` gets a `cancelled`
+        one on the way out; an update that paused the session raises `Suspended` and writes
+        none, its `suspend` row being the end.
+        """
+        grant = grant_for(kind)
+        defaults, _ = models.load_defaults()
+        model, model_source, effort, effort_source = models.resolve(
+            models.ESTIMATE,
+            None,
+            self.models.model_overrides()[0],
+            self.models.effort_overrides()[0],
+            defaults,
+            self.config.model,
+        )
+        started = ended = False
+        start_at = ((resume or {}).get("owner") or {}).get("start_at")
+        try:
             if resume is None:
                 try:
                     start_at = journal.started(
                         key,
                         "",
-                        "estimate",
+                        kind,
                         "manual",
                         started_by="person",
                         prompt_chars=len(prompt),
@@ -380,13 +489,13 @@ class Backlog:
             else:
                 # The `start` was written before the update; this ends it.
                 started = True
-            ask = resume_kwargs(resume, grant, prompt)
+            ask = resume_kwargs(dict(resume) if resume is not None else None, grant, prompt)
             used_up = ask.pop("used_up", "")
-            reply, end, failure = "", {}, ""
-            # The estimate is the object handed back, never the reply's words.
-            collector = submit_mod.Collector("estimate")
+            end, failure = {}, ""
+            # The object handed back, never the reply's words.
+            collector = submit_mod.Collector(kind)
             try:
-                async for kind, payload in (
+                async for item, payload in (
                     nothing()
                     if used_up
                     else self.sessions.stream(
@@ -400,11 +509,11 @@ class Backlog:
                         step=StepHandle(),
                         mcp_servers={submit_mod.SERVER: collector.server()},
                         owner={
-                            "kind": "estimate",
+                            "kind": kind,
                             "workspace": key,
                             "workspace_dir": cwd,
                             "unit": "",
-                            "stage": "estimate",
+                            "stage": kind,
                             "start_at": start_at,
                         },
                         **ask,
@@ -412,12 +521,11 @@ class Backlog:
                         **({"effort": effort} if effort is not None else {}),
                     )
                 ):
-                    if kind == "chunk":
-                        reply += payload
+                    if item == "chunk":
                         yield ("chunk", payload)
-                    elif kind == "session":
+                    elif item == "session":
                         end["session_id"] = str(payload)
-                    elif kind == "done":
+                    elif item == "done":
                         end.update(
                             session_id=payload.get("session_id", end.get("session_id", "")),
                             cost=payload.get("cost") or {},
@@ -429,7 +537,7 @@ class Backlog:
                 raise
             except Exception as e:
                 # Recorded as the reason.
-                log.exception("the estimate session failed")
+                log.exception("the %s session failed", kind)
                 failure = f"the session failed: {e}"
             if used_up and not failure:
                 failure = f"the session stopped at a ceiling ({used_up}) before the update"
@@ -437,98 +545,45 @@ class Backlog:
             terminal = end.get("terminal_reason", "")
             if not failure and any(m in terminal for m in CEILING_MARKERS):
                 failure = f"the session stopped at a ceiling ({terminal}); nothing was recorded"
-            # No object, no estimate, whatever the reply says.
+            # No object, nothing recorded, whatever the reply says.
             if not failure and not submitted(collector):
-                failure = backlog.NO_OBJECT
-            session = end.get("session_id", "")
-            names = [u["name"] for u in data["units"]]
-            parsed: dict[str, Any] = {"records": [], "rejected": [], "failed": failure or None}
-            if not failure:
-                parsed = backlog.parse_proposal(
-                    collector.object(),
-                    waiting,
-                    names,
-                    found,
-                    session,
-                    backlog.relations_of(rows),
-                    workspace=key,
-                    undetermined=left_out,
+                failure = (
+                    backlog.NO_OBJECT
+                    if kind == "estimate"
+                    else f"no-submission: the session handed back no {kind} through submit"
                 )
-            written, rejected = 0, list(parsed["rejected"])
-            for rec in parsed["records"]:
-                if rec["kind"] == "relation":
-                    check = (
-                        lambda rec: (
-                            lambda live: backlog.check_relation(
-                                rec["unit"],
-                                rec["other"],
-                                rec["type"],
-                                "add",
-                                rec["reason"],
-                                rec["by"],
-                                names,
-                                backlog.relations_of(live),
-                                agent=True,
-                            )
-                        )
-                    )(rec)
-                else:
-                    check = lambda _live: ""
-                try:
-                    self._append_checked(journal, rec, check)
-                    written += 1
-                except Invalid as e:
-                    rejected.append({"unit": rec["unit"], "reason": str(e)})
-            outcome = "failed" if parsed["failed"] else "done"
+            got = Submitted(
+                None if failure else collector.object(), cost, end.get("session_id", ""), failure
+            )
+            detail = after(got)
             try:
                 journal.finished(
                     key,
                     "",
-                    "estimate",
-                    outcome,
-                    session_id=session,
-                    detail=parsed["failed"],
+                    kind,
+                    "failed" if detail else "done",
+                    session_id=got.run,
+                    detail=detail,
                     guard=RUN_SUBMITTED,
                     **cost,
                 )
                 ended = True
             except BadRecord, Busy:
                 pass
-            summary = {
-                "kind": "estimate",
-                "workspace": key,
-                "unit": "",
-                "stage": "estimate",
-                "session_id": session,
-                "cost_usd": cost.get("cost_usd"),
-                "turns": cost.get("turns"),
-                "written": written,
-                "rejected": rejected,
-                "outcome": outcome,
-                "detail": parsed["failed"],
-            }
-            try:
-                summary = journal.append(summary)
-            except BadRecord, Busy:
-                pass
-            outcome = "done"
-            yield ("done", {"estimate": summary})
-        except asyncio.CancelledError:
-            outcome = "interrupted"
-            raise
+            yield ("done", got)
         finally:
             if started and not ended:
                 try:
                     journal.finished(
                         key,
                         "",
-                        "estimate",
+                        kind,
                         "cancelled",
-                        detail="the proposal ended before its reply was read",
+                        detail=f"the {'proposal' if kind == 'estimate' else kind} ended "
+                        "before its reply was read",
                     )
                 except BadRecord, Busy:
                     pass
-            self.holds.attempts.move(attempt, "ended", outcome)
 
     async def start_branch(self, cwd: str, unit: str) -> Cut:
         """Cut this unit's branch in the workspace and switch to it.

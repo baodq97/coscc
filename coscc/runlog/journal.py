@@ -28,7 +28,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, get_args
+from typing import Any, Callable, Iterable, Literal, NamedTuple, get_args
 
 from coscc.data import BUSY_TIMEOUT, Data, now as _now
 
@@ -86,6 +86,23 @@ def zero_cost() -> dict[str, Any]:
 
 class BadRecord(ValueError):
     """A record this module will not store, carrying a reason a caller can show."""
+
+
+class Intervention(NamedTuple):
+    """One time a person had to step in, as the owner of the table that saw it reads it.
+    `id` is `<kind>:<table>:<row id>`, the same on every read; `detail` is the row's own words,
+    uncut (`coscc/service/interventions.py` cuts it)."""
+
+    id: str
+    kind: str
+    at: str
+    unit: str
+    stage: str
+    detail: str
+
+
+# A row whose JSON will not parse is read as having no field at all, never as an error.
+_RERUN = "CASE WHEN json_valid(record) THEN json_extract(record, '$.rerun') END = 1"
 
 
 class Bell:
@@ -488,6 +505,49 @@ class Journal:
                 continue
             if isinstance(item, dict):
                 out.append((int(row["id"]), item))
+        return out
+
+    def interventions(
+        self, workspace: str, after: str, limit: int, timeout: float | None = None
+    ) -> list[Intervention]:
+        """The runs a person started again (`start` with `rerun`, its note as the detail) and
+        every integration (`integration`, its outcome and detail) of `workspace` whose `at` is
+        past `after`, oldest first, at most `limit` of each."""
+        if self._needs_import():
+            with self.transaction(timeout):
+                pass
+        out: list[Intervention] = []
+        with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
+            for kind, where in (
+                ("rerun", f"kind = 'start' AND {_RERUN}"),
+                ("integrate", "kind = 'integration'"),
+            ):
+                rows = conn.execute(
+                    "SELECT id, at, unit, stage, record FROM runs WHERE root = ? AND workspace = ? "
+                    f"AND at > ? AND {where} ORDER BY at, id LIMIT ?",
+                    (self._root, workspace, after, int(limit)),
+                ).fetchall()
+                for row in rows:
+                    try:
+                        item = json.loads(row["record"])
+                    except json.JSONDecodeError, ValueError, TypeError:
+                        item = {}
+                    item = item if isinstance(item, dict) else {}
+                    if kind == "rerun":
+                        detail = str(item.get("rerun_note") or "")
+                    else:
+                        said = str(item.get("detail") or "")
+                        detail = str(item.get("outcome") or "") + (f": {said}" if said else "")
+                    out.append(
+                        Intervention(
+                            f"{kind}:runs:{row['id']}",
+                            kind,
+                            row["at"],
+                            row["unit"],
+                            row["stage"],
+                            detail,
+                        )
+                    )
         return out
 
     def modes(self, workspace: str, timeout: float | None = None) -> dict[tuple[str, str], str]:
