@@ -1,7 +1,7 @@
 # Scan: the run log read for work that would stop people stepping in
 
 Read this before changing `coscc/features/scan.py`: the tables, the routes, the scan, the
-schedule's tick and the Backlog script are all in it. Unit 0156 (`spec.md`) holds why.
+schedule's tick and the Backlog script are all in it.
 
 ## What one scan does
 
@@ -53,7 +53,7 @@ hours passed since the last scan of the workspace, a skipped one included.
 ## Hazards
 
 - The budget is checked only after a turn is paid for, so a scan can pass $0.68 by one turn;
-  $1 at worst was measured once (spike 0156 U2, U3), not proven.
+  $1 at worst was measured once, by a spike, not proven.
 - The autopilot never reads these tables, and accepting a proposal never touches the shortlist.
 - A scan in progress is held per process (`_scanning`), and by the attempt `Ctx.session` opens
   for the workspace's unit `""`, which an estimate also takes: one waits for the other.

@@ -1,4 +1,4 @@
-"""The scan feature (0156): what one scan reads, what it hands the session, what it keeps."""
+"""The scan feature: what one scan reads, what it hands the session, what it keeps."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ class _Feature(unittest.IsolatedAsyncioTestCase):
             set_schedule=set_schedule,
         )
         create_tables(self.ctx, scan.TABLES)
-        self.store = scan.Store(self.ctx)
+        self.store = scan.Tables(self.ctx)
 
 
 class NothingNewOpensNoSession(_Feature):

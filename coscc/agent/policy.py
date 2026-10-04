@@ -323,8 +323,8 @@ GRANTS: dict[str, Grant] = {
     ),
     # Not a stage either: one run of the `scan` feature, which reads the run log and proposes
     # work. No tools and no commands, like `estimate`; it hands its proposals back through
-    # `submit`. Two turns is what a scan took (spike 0156 U2: `submit`, then the end). The
-    # budget is checked only once a turn is paid for (U3), so $0.68 is $1 less the dearest whole
+    # `submit`. Two turns is what a measured scan took (`submit`, then the end). The budget
+    # is checked only once a turn is paid for, so $0.68 is $1 less the dearest whole
     # scan measured ($0.32, one sample): a scan stays near $1 at worst, not under it for sure.
     "scan": Grant(
         max_turns=2,

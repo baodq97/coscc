@@ -1,4 +1,4 @@
-"""Every time a person stepped in, read from the six sources of 0156's R1 and counted once."""
+"""Every time a person stepped in, read from its six sources and counted once."""
 
 from __future__ import annotations
 

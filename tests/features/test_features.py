@@ -264,7 +264,7 @@ class AFeatureHandsTheAgentItsParts(Setup):
 
 
 class AScheduledFeatureRunsOnItsOwn(Setup):
-    """K4 of 0156: the pref `features.schedule`, its door, and the core's tick."""
+    """The pref `features.schedule`, its door, and the core's tick."""
 
     def scheduled(self, ticked: list) -> Plugin:
         async def tick(_ctx, cwd: str, hours: int) -> None:

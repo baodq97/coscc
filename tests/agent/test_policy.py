@@ -583,7 +583,7 @@ class TheEstimateGrantOpensNothing(unittest.TestCase):
 
 
 class TheScanGrantOpensNothingAndKeepsItsTwoTurns(unittest.TestCase):
-    """0156 R4: `submit` only, 2 turns and $0.68, and a warning beside *Scan now*."""
+    """`submit` only, 2 turns and $0.68, and a warning beside *Scan now*."""
 
     def test_the_grant(self):
         g = grant_for("scan")

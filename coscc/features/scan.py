@@ -1,4 +1,4 @@
-"""Scan: one paid session reads what people had to step in for and proposes work (0156).
+"""Scan: one paid session reads what people had to step in for and proposes work.
 
 A scan reads a workspace's interventions past its cursor (`Ctx.interventions`), puts at most
 `LIMIT` of them and the proposals already made into one prompt, and opens one `scan` session
@@ -30,7 +30,7 @@ from coscc.service.common import CONSEQUENCE, OWNER, Invalid
 from coscc.units.submit import SCAN_TYPES, SLUG, SLUG_MAX
 
 FEATURE = "scan"
-# The bounds of 0156's spec: R5 (input), R6 (output), R10 (a dismissal), R13 (the cost).
+# The bounds of a scan's input, its output, a dismissal and its cost.
 LIMIT = 25
 PROMPT_MAX = 12_000
 LISTS_MAX = 2_000
@@ -145,12 +145,12 @@ class Run(TypedDict):
     detail: str
 
 
-# The workspaces a scan of this process runs in now (R3): a second press is refused at once.
+# The workspaces a scan of this process runs in now: a second press is refused at once.
 _scanning: set[str] = set()
 
 
 def problems_of(proposal: Mapping[str, Any], ids: set[str]) -> list[str]:
-    """Why one proposal breaks R6, `[]` when it keeps every rule."""
+    """Why one proposal breaks a rule of its type, slug, lengths and sources, `[]` when none."""
     out = []
     if proposal.get("type") not in SCAN_TYPES:
         out.append(f"type {proposal.get('type')!r} is not a branch type")
@@ -256,7 +256,7 @@ def _run(row: Any) -> Run:
     }
 
 
-class Store:
+class Tables:
     """The feature's three tables, for one `Ctx`. Blocking: call it from a thread."""
 
     def __init__(self, ctx: Ctx) -> None:
@@ -386,7 +386,7 @@ class Store:
 
 
 async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
-    """One scan of the workspace `cwd`, the five steps of 0156's Design. `by` is `owner` for
+    """One scan of the workspace `cwd`, in five steps: read, skip, prompt, session, keep. `by` is `owner` for
     *Scan now*, `schedule` for a tick. `Invalid` while the feature is off here or a scan of the
     workspace already runs."""
     key = ctx.workspace_key(cwd)
@@ -395,7 +395,7 @@ async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
     if key in _scanning:
         raise Invalid("a scan of this workspace is already running; wait for it to end")
     _scanning.add(key)
-    store = Store(ctx)
+    store = Tables(ctx)
     try:
         after = await asyncio.to_thread(store.cursor, key)
         found = await asyncio.to_thread(ctx.interventions, cwd, after, LIMIT + 1)
@@ -460,13 +460,13 @@ def brief_of(p: Proposal) -> str:
 
 
 async def accept(ctx: Ctx, cwd: str, pid: int, slug: str) -> Proposal:
-    """R9: a unit through the app's own way of making one, its brief the proposal's. The slug
+    """A unit through the app's own way of making one, its brief the proposal's. The slug
     may differ from the proposal's. The shortlist is not touched."""
     key = ctx.workspace_key(cwd)
     slug = slug.strip()
     if not SLUG.match(slug) or len(slug) > SLUG_MAX:
         raise Invalid(f"a slug is lowercase words joined by hyphens, at most {SLUG_MAX} characters")
-    store = Store(ctx)
+    store = Tables(ctx)
     p = await asyncio.to_thread(store.claim, key, pid, "accepted")
     try:
         unit = await ctx.create_unit(cwd, slug, brief_of(p))
@@ -478,12 +478,12 @@ async def accept(ctx: Ctx, cwd: str, pid: int, slug: str) -> Proposal:
 
 
 async def dismiss(ctx: Ctx, cwd: str, pid: int, reason: str) -> Proposal:
-    """R10: dismissed with a reason of 1 to `REASON_MAX` characters, which the next scan reads."""
+    """Dismissed with a reason of 1 to `REASON_MAX` characters, which the next scan reads."""
     key = ctx.workspace_key(cwd)
     reason = " ".join(reason.split())
     if not 0 < len(reason) <= REASON_MAX:
         raise Invalid(f"a dismissal needs a reason of 1 to {REASON_MAX} characters")
-    return await asyncio.to_thread(Store(ctx).claim, key, pid, "dismissed", reason)
+    return await asyncio.to_thread(Tables(ctx).claim, key, pid, "dismissed", reason)
 
 
 def _hours_since(at: str) -> float:
@@ -496,7 +496,7 @@ def _hours_since(at: str) -> float:
 
 async def tick(ctx: Ctx, cwd: str, hours: int) -> None:
     """A scheduled scan, once `hours` passed since the last scan of the workspace or never."""
-    runs = await asyncio.to_thread(Store(ctx).runs, ctx.workspace_key(cwd), 1)
+    runs = await asyncio.to_thread(Tables(ctx).runs, ctx.workspace_key(cwd), 1)
     if runs and _hours_since(runs[0]["at"]) < hours:
         return
     try:
@@ -509,7 +509,7 @@ def status(ctx: Ctx, cwd: str) -> tuple[str, bool]:
     """The last scan, for the Settings row."""
     if ctx.state(FEATURE, cwd) == "off":
         return "Off in this workspace.", True
-    runs = Store(ctx).runs(ctx.workspace_key(cwd), 1)
+    runs = Tables(ctx).runs(ctx.workspace_key(cwd), 1)
     if not runs:
         return "On: no scan yet.", True
     last = runs[0]
@@ -517,13 +517,13 @@ def status(ctx: Ctx, cwd: str) -> tuple[str, bool]:
 
 
 def on_set(ctx: Ctx, cwd: str, state: State) -> None:
-    """Turned on, it scans every 24 h (0156 R3) until Settings says otherwise."""
+    """Turned on, it scans every 24 h until Settings says otherwise."""
     if state == "on":
         ctx.set_schedule(FEATURE, cwd, DEFAULT_HOURS)
 
 
 def note_of(ctx: Ctx, cwd: str, runs: Sequence[Run]) -> str:
-    """R13's one sentence while a scan's cost keeps the schedule off."""
+    """The one sentence while a scan's cost keeps the schedule off."""
     if ctx.schedule(FEATURE, cwd) != 0:
         return ""
     for r in runs:
@@ -536,7 +536,7 @@ def note_of(ctx: Ctx, cwd: str, runs: Sequence[Run]) -> str:
 
 def routes(ctx: Ctx) -> Sequence[BaseRoute]:
     router = APIRouter()
-    store = Store(ctx)
+    store = Tables(ctx)
 
     @router.post("/api/scan")
     async def run_scan(request: Request) -> Run:
@@ -547,7 +547,7 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
     @router.get("/api/scan/proposals")
     async def proposals(request: Request) -> dict[str, object]:
         """`?cwd=`: `{on}` alone while the feature is off; else every proposal, newest first,
-        the last scans, R13's note, and the sentence beside *Scan now*."""
+        the last scans, why the schedule is off, and the sentence beside *Scan now*."""
         cwd = request.query_params.get("cwd", "")
         key = ctx.workspace_key(cwd)
         if not ctx.enabled(FEATURE, cwd):
