@@ -95,14 +95,16 @@ tests/features/<name>/
 
 ```python
 Feature(
-    name, summary, default="on" | "off" | "pilot",
-    routes=lambda ctx: [...],      # typed routes under /api/<name>/
-    tables=(...),                  # created at start; only this feature reads and writes them
+    name,
+    summary,
+    default="on" | "off" | "pilot",
+    routes=lambda ctx: [...],  # typed routes under /api/<name>/
+    tables=(...),  # created at start; only this feature reads and writes them
     agent=lambda ctx: Parts(...),  # tools, guards, prompt blocks (hooks.py today)
     grants=Grants(paths=..., protected=..., commands=...),  # what core policy now hard-codes
-    events=("<name>.<verb>", ...), # subjects it may publish; listeners via ctx.bus
-    schedule=Schedule(...),        # optional
-    settings=Model,                # a Pydantic model; the studio draws its form
+    events=("<name>.<verb>", ...),  # subjects it may publish; listeners via ctx.bus
+    schedule=Schedule(...),  # optional
+    settings=Model,  # a Pydantic model; the studio draws its form
 )
 ```
 
