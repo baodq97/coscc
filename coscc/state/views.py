@@ -1151,6 +1151,15 @@ class FeatureRow:
     sentence: str = ""
     # `pilot` and `on` may not be chosen now; `sentence` says why.
     locked: bool = False
+    # The schedule chosen here and the choices, as `schedule_label` words; both empty for a
+    # feature with no schedule.
+    schedule: str = ""
+    schedules: list[str] = dataclasses.field(default_factory=list)
+
+
+def schedule_label(hours: int) -> str:
+    """How Settings says a schedule's hours."""
+    return f"Every {hours} h" if hours else "Schedule off"
 
 
 # A knob's name is the config field's; the screen says what it does.

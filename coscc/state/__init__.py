@@ -81,6 +81,7 @@ from coscc.state.views import (
     Knob,
     knob,
     FeatureRow,
+    schedule_label,
     ModelRow,
     AgentRow,
     ImportRow,
@@ -593,7 +594,15 @@ class StudioState(
             self.features = []
             return
         self.features = [
-            FeatureRow(f.name, f.state, f.pilot, f.sentence, f.locked)
+            FeatureRow(
+                f.name,
+                f.state,
+                f.pilot,
+                f.sentence,
+                f.locked,
+                schedule_label(f.schedule) if f.schedule is not None else "",
+                [schedule_label(h) for h in f.hours],
+            )
             for f in plugin.shown(app.API.state.ctx, app.API.state.plugins, self.cwd)
         ]
 
@@ -603,6 +612,24 @@ class StudioState(
         try:
             plugin.set_state(
                 app.SERVICE, app.API.state.ctx, app.API.state.plugins, name, self.cwd, state
+            )
+        except Invalid as e:
+            self.notice = str(e)
+        self._load_features()
+
+    @rx.event
+    def set_feature_schedule(self, name: str, label: str):
+        """The same call as `POST /api/features` with `schedule`."""
+        hours = [
+            h
+            for f in app.API.state.plugins
+            if f.name == name and f.schedule
+            for h in f.schedule.hours
+            if schedule_label(h) == label
+        ]
+        try:
+            plugin.set_schedule_of(
+                app.SERVICE, app.API.state.plugins, name, self.cwd, hours[0] if hours else label
             )
         except Invalid as e:
             self.notice = str(e)

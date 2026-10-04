@@ -477,8 +477,21 @@ async def set_feature(request: Request) -> Any:
     is read as `on` or `off`. A feature, workspace or state not known, `pilot` for a feature
     without it, or `pilot`/`on` while the feature's status forbids them is a 400. It changes the
     pref `features.state`, then tells the feature, which may start its own setup (codegraph's
-    install). Whoever holds the password or a session can silence a workspace's notices."""
+    install). Whoever holds the password or a session can silence a workspace's notices.
+
+    `{cwd, name, schedule}` instead sets how many hours apart a feature with a `schedule` runs
+    on its own there, `0` for never: the pref `features.schedule`. A scheduled run may open a
+    paid session (the `scan` feature's), so this is a spending choice."""
     body = await plugin.body(request)
+    if "schedule" in body and "state" not in body and "on" not in body:
+        hours = plugin.set_schedule_of(
+            _service(request),
+            features.FEATURES,
+            str(body.get("name") or ""),
+            str(body.get("cwd") or ""),
+            body.get("schedule"),
+        )
+        return {"name": str(body.get("name")), "schedule": hours}
     state, on = body.get("state"), body.get("on")
     if state is None and isinstance(on, bool):
         state = "on" if on else "off"

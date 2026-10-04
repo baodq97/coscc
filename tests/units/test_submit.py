@@ -17,7 +17,9 @@ from coscc.units.submit import AGAIN, Channel
 def _filled(channel: Channel | submit.Collector, fields: dict[str, Any]) -> dict[str, Any]:
     if isinstance(channel, submit.Collector):
         # Each session's empty object: no estimate, nothing needing a person.
-        empty = {"estimate": "units", "integrate": "needs_person"}[channel.kind]
+        empty = {"estimate": "units", "integrate": "needs_person", "scan": "proposals"}[
+            channel.kind
+        ]
         return {empty: [], **fields}
     if channel.stage == submit.ROUND:
         return {"verdict": "pass", "findings": [], "screens": [], **fields}
@@ -318,6 +320,11 @@ class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
                     }
                 ]
             },
+            "scan": {
+                "proposals": [
+                    {"type": "fix", "slug": "a-b", "title": "t", "problem": "p", "sources": ["x"]}
+                ]
+            },
         }
         for kind, obj in good.items():
             collector = submit.Collector(kind)
@@ -330,6 +337,7 @@ class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
         for kind, bad in (
             ("integrate", {"needs_person": ["a line"]}),
             ("estimate", {"units": "none"}),
+            ("scan", {"proposals": [{"type": "fix"}]}),
         ):
             collector = submit.Collector(kind)
             said = asyncio.run(submits({"mcp_servers": {"cos": collector.server()}}, **bad))
@@ -343,7 +351,15 @@ class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
         for kind in submit.SESSIONS:
             grant = policy.grant_for(kind)
             self.assertTrue(grant.submits, kind)
-            self.assertGreaterEqual(grant.max_turns, policy.SUBMIT_TURNS, kind)
+            if kind not in policy.OWN_TURNS:
+                self.assertGreaterEqual(grant.max_turns, policy.SUBMIT_TURNS, kind)
+
+    def test_the_scan_rules_are_the_loops_own(self):
+        from coscc import loop
+
+        self.assertEqual(submit.SCAN_TYPES, tuple(loop.BRANCH_TYPES))
+        self.assertEqual(submit.SLUG.pattern, loop.SLUG_RE.pattern)
+        self.assertEqual(submit.SLUG_MAX, loop.SLUG_MAX)
 
 
 if __name__ == "__main__":

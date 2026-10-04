@@ -85,7 +85,8 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
         for kind in policy.SUBMITTING_SESSIONS:
             g, old = grant_for(kind), policy.GRANTS[kind]
             self.assertEqual(replace(g, submits=False, max_turns=old.max_turns), old, kind)
-            self.assertEqual(g.max_turns, max(old.max_turns, policy.SUBMIT_TURNS), kind)
+            turns = old.max_turns if kind in policy.OWN_TURNS else policy.SUBMIT_TURNS
+            self.assertEqual(g.max_turns, max(old.max_turns, turns), kind)
             self.assertEqual(decide(g, submit.NAME, {}, "/tmp/ws"), "", kind)
             self.assertIn("not granted", decide(g, "mcp__cos__other", {}, "/tmp/ws"), kind)
 
@@ -168,7 +169,7 @@ class OneGrantPerStage(unittest.TestCase):
         }
         self.assertEqual(
             set(policy.GRANTS),
-            set(expected) | {"spec", "integrate", "spike", "estimate"},
+            set(expected) | {"spec", "integrate", "spike", "estimate", "scan"},
         )
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
@@ -579,6 +580,20 @@ class TheEstimateGrantOpensNothing(unittest.TestCase):
         self.assertEqual((g.max_turns, g.max_budget_usd), (policy.SUBMIT_TURNS, 2.0))
         self.assertIn("paid session", g.warning)
         self.assertIn("password", g.warning)
+
+
+class TheScanGrantOpensNothingAndKeepsItsTwoTurns(unittest.TestCase):
+    """`submit` only, 2 turns and $0.68, and a warning beside *Scan now*."""
+
+    def test_the_grant(self):
+        g = grant_for("scan")
+        self.assertFalse(g.opens_anything)
+        self.assertTrue(g.submits)
+        self.assertEqual((g.max_turns, g.max_budget_usd), (2, 0.68))
+        self.assertIn("paid session", g.warning)
+        self.assertEqual(decide(g, "mcp__cos__submit", {}, "/tmp/ws"), "")
+        for tool in ("Read", "Bash", "Write"):
+            self.assertIn("not granted", decide(g, tool, {}, "/tmp/ws"), tool)
 
 
 if __name__ == "__main__":

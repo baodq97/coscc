@@ -9,6 +9,7 @@ next write for that pair moves it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -21,17 +22,23 @@ from fastapi.responses import StreamingResponse
 from starlette.routing import BaseRoute
 
 from coscc.agent.policy import is_prose_stage
+from coscc.agent.sessions import Suspended
 from coscc.bus import Bus
 from coscc.data import Data
 from coscc.hooks import Hooks, Parts
-from coscc.runlog.journal import Journal
+from coscc.runlog.journal import Intervention, Journal
 from coscc.service import Service
-from coscc.service.common import Invalid
+from coscc.service.common import Invalid, Submitted
+from coscc.service.interventions import interventions
+from coscc.service.update import refuse_while_updating
 from coscc.service.workspaces import Workspaces
 from coscc.units import worktrees
 
 OFF_PREF = "features.off"
 STATE_PREF = "features.state"
+SCHEDULE_PREF = "features.schedule"
+# How often the core asks each scheduled feature whether it is due. Chosen, not measured.
+TICK_SECONDS = 300.0
 CREATE_TABLE = re.compile(r"\s*CREATE TABLE IF NOT EXISTS\s+\w+", re.IGNORECASE)
 
 State = Literal["off", "pilot", "on"]
@@ -64,6 +71,26 @@ async def _no_main_tree(workspace: str) -> tuple[str, str]:
     raise Invalid(f"no main tree for {workspace} here")
 
 
+def _no_interventions(_workspace: str, _after: str, _limit: int) -> list[Intervention]:
+    return []
+
+
+async def _no_session(_workspace: str, kind: str, _prompt: str) -> Submitted:
+    raise Invalid(f"no {kind} session here")
+
+
+async def _no_unit(_workspace: str, slug: str, _brief: str) -> str:
+    raise Invalid(f"no unit {slug} can be made here")
+
+
+def _no_schedule(_feature: str, _workspace: str) -> int:
+    return 0
+
+
+def _set_no_schedule(feature: str, _workspace: str, _hours: int) -> None:
+    raise Invalid(f"{feature} has no schedule here")
+
+
 @dataclass(frozen=True)
 class Ctx:
     journal: Callable[[], Journal | None]
@@ -82,6 +109,35 @@ class Ctx:
     # `origin/main`, as `(path, sha)`. Raises `GitError` when git refuses, `Invalid` when the
     # workspace is not known.
     main_tree: Callable[[str], Awaitable[tuple[str, str]]] = _no_main_tree
+    # `(workspace path, after, limit)`: every time a person stepped in there past the time
+    # `after` (`""`: from the first), oldest first (`coscc/service/interventions.py`). Blocking.
+    interventions: Callable[[str, str, int], list[Intervention]] = _no_interventions
+    # `(workspace path, kind, prompt)`: one paid session under the grant `kind` that hands its
+    # object back through `submit`, recorded in the run log as the estimate is. `Invalid` while
+    # another such session of the workspace runs or an update is under way. One an update
+    # paused hands back no cost: the run log's `end` holds it.
+    session: Callable[[str, str, str], Awaitable[Submitted]] = _no_session
+    # `(workspace path, slug, brief)`: a new unit, made as `POST /api/units` makes one, and its
+    # name. It touches no shortlist.
+    create_unit: Callable[[str, str, str], Awaitable[str]] = _no_unit
+    # `(feature, workspace path)`: the hours of its `schedule` there, `0` for off.
+    schedule: Callable[[str, str], int] = _no_schedule
+    # `(feature, workspace path, hours)`: set them, one of its `schedule.hours`.
+    set_schedule: Callable[[str, str, int], None] = _set_no_schedule
+
+
+@dataclass(frozen=True)
+class Schedule:
+    """How often the core asks a feature to run on its own in a workspace where it is not `off`."""
+
+    # What Settings offers, in hours, `0` being off. Each workspace's choice is the pref
+    # `features.schedule`, `{feature: {workspace key: hours}}`.
+    hours: tuple[int, ...]
+    # The choice of a workspace nobody chose one for.
+    default: int
+    # `(ctx, workspace path, hours)`: asked every `TICK_SECONDS` while the choice is not `0`;
+    # the feature decides whether that many hours passed since its last run.
+    tick: Callable[[Ctx, str, int], Awaitable[None]]
 
 
 # The page kit: one script the shell injects once, before every feature script. `window.coscc`:
@@ -193,6 +249,7 @@ class Plugin:
     # `(ctx, workspace path, state)`: told once a person set a state. Quick: it schedules long
     # work and returns.
     on_set: Callable[[Ctx, str, State], None] | None = None
+    schedule: Schedule | None = None
 
 
 @dataclass(frozen=True)
@@ -205,6 +262,9 @@ class Shown:
     pilot: bool
     sentence: str
     locked: bool
+    # The hours of its schedule here and the choices, both empty for a feature with none.
+    schedule: int | None = None
+    hours: tuple[int, ...] = ()
 
 
 async def body(request: Request) -> dict[str, Any]:
@@ -339,7 +399,125 @@ def ctx_of(service: Service, features: Sequence[Plugin] = ()) -> Ctx:
         tree, sha = await worktrees.main_tree(service.ws.check(workspace), data.root)
         return str(tree), sha
 
-    return Ctx(service.ws.journal, workspace_key, enabled, service.bus, data, state, arm, main_tree)
+    def found(workspace: str, after: str, limit: int) -> list[Intervention]:
+        return interventions(
+            service.ws.journal(),
+            service.ws.unit_meta(),
+            service.holds.attempts,
+            workspace_key(workspace),
+            after,
+            limit,
+        )
+
+    async def session(workspace: str, kind: str, prompt: str) -> Submitted:
+        """The estimate's session (`Backlog.submitting`), held by an attempt of `kind`."""
+        key = workspace_key(workspace)
+        refuse_while_updating(service.updater)
+        journal = service.ws.journal()
+        if journal is None:
+            raise Invalid("no working folder is set, so a session cannot be recorded")
+        attempt = service.holds.attempts.open(kind, key, "", kind)["id"]
+        service.holds.attempts.move(attempt, "running")
+        outcome = "failed"
+        got = Submitted(None, {}, "", "the session ended before it handed anything back")
+        try:
+            stream = service.backlog.submitting(workspace, key, journal, kind, prompt)
+            try:
+                async for item, payload in stream:
+                    if item == "done":
+                        got = payload
+            finally:
+                await stream.aclose()
+            outcome = "done"
+        except Suspended:
+            # What it spent is read off its transcript only after this, and lands in the run
+            # log's `end` once the app is back (`Resume._end_unresumed`).
+            got = Submitted(
+                None, {}, "", "an update paused the session; what it spent is in the run log"
+            )
+        except asyncio.CancelledError:
+            outcome = "interrupted"
+            raise
+        finally:
+            service.holds.attempts.move(attempt, "ended", outcome)
+        return got
+
+    async def create_unit(workspace: str, slug: str, brief: str) -> str:
+        return str((await service.answers.create_unit(workspace, slug, brief))["unit"])
+
+    def schedule(feature: str, workspace: str) -> int:
+        plugin = next((f for f in features if f.name == feature), None)
+        if plugin is None or plugin.schedule is None:
+            return 0
+        return schedule_of(data, plugin, Workspaces.key(workspace))
+
+    def set_schedule(feature: str, workspace: str, hours: int) -> None:
+        set_schedule_of(service, features, feature, workspace, hours)
+
+    return Ctx(
+        service.ws.journal,
+        workspace_key,
+        enabled,
+        service.bus,
+        data,
+        state,
+        arm,
+        main_tree,
+        found,
+        session,
+        create_unit,
+        schedule,
+        set_schedule,
+    )
+
+
+def schedule_of(data: Data, plugin: Plugin, key: str) -> int:
+    """The hours chosen for `(plugin, workspace key)`, else its schedule's `default`."""
+    if plugin.schedule is None:
+        return 0
+    got = _pref(data, SCHEDULE_PREF).get(plugin.name)
+    hours = got.get(key) if isinstance(got, dict) else None
+    if isinstance(hours, int) and hours in plugin.schedule.hours:
+        return hours
+    return plugin.schedule.default
+
+
+def set_schedule_of(
+    service: Service, features: Sequence[Plugin], feature: str, cwd: str, hours: object
+) -> int:
+    """Set `feature`'s schedule for the workspace `cwd`. `Invalid`: a feature or workspace not
+    known, one without a schedule, or hours it does not offer."""
+    plugin = next((f for f in features if f.name == feature), None)
+    if plugin is None:
+        raise Invalid(f"not a feature: {feature}")
+    if plugin.schedule is None:
+        raise Invalid(f"{feature} has no schedule")
+    service.ws.check(cwd)
+    if not isinstance(hours, int) or isinstance(hours, bool) or hours not in plugin.schedule.hours:
+        offered = ", ".join(str(h) for h in plugin.schedule.hours)
+        raise Invalid(f"schedule must be one of {offered} hours")
+    data = Data(service.config.data_dir)
+    chosen = _pref(data, SCHEDULE_PREF)
+    mine = chosen.get(feature)
+    chosen[feature] = {**(mine if isinstance(mine, dict) else {}), Workspaces.key(cwd): hours}
+    data.set_pref(SCHEDULE_PREF, chosen)
+    return hours
+
+
+async def tick(service: Service, ctx: Ctx, features: Sequence[Plugin]) -> None:
+    """One round of every scheduled feature, in each listed workspace where it is not `off` and
+    its schedule is not `0`. A tick that fails is logged and the next still runs."""
+    for f in features:
+        if f.schedule is None:
+            continue
+        for cwd in service.ws.all()["paths"]:
+            hours = ctx.schedule(f.name, cwd)
+            if not hours or not ctx.enabled(f.name, cwd):
+                continue
+            try:
+                await f.schedule.tick(ctx, cwd, hours)
+            except Exception:
+                log.exception("the scheduled run of %s in %s failed", f.name, cwd)
 
 
 def shown(ctx: Ctx, features: Sequence[Plugin], cwd: str) -> list[Shown]:
@@ -350,7 +528,11 @@ def shown(ctx: Ctx, features: Sequence[Plugin], cwd: str) -> list[Shown]:
         sentence, may = f.status(ctx, cwd) if f.status else ("", True)
         if not sentence:
             sentence = "Off in this workspace." if state == "off" else "On in this workspace."
-        out.append(Shown(f.name, state if may else "off", f.pilot, sentence, not may))
+        hours = f.schedule.hours if f.schedule else ()
+        schedule = ctx.schedule(f.name, cwd) if f.schedule else None
+        out.append(
+            Shown(f.name, state if may else "off", f.pilot, sentence, not may, schedule, hours)
+        )
     return out
 
 

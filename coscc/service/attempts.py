@@ -22,6 +22,7 @@ from typing import Any, TypedDict, cast
 
 from coscc.bus import NAMES, Bus, Event, Name
 from coscc.data import Data, now
+from coscc.runlog.journal import Intervention
 from coscc.service.common import Refused
 
 log = logging.getLogger(__name__)
@@ -46,6 +47,8 @@ MACHINES: dict[str, dict[str, set[str]]] = {
     "hold": _SHORT,
     "rounds": _SHORT,
     "estimate": _SHORT,
+    # A feature's paid session (`plugin.Ctx.session`), named by its grant.
+    "scan": _SHORT,
 }
 ENDS = ("ended", "refused")
 # The kind of slot each machine waits for, and where the scheduler sends one that gets it.
@@ -119,6 +122,8 @@ def describe(unit: str, row: Attempt) -> str:
         return f"{unit} is busy: a review round is being allowed since {t}; try again in a moment"
     if machine == "estimate":
         return f"a proposal for this workspace is already running since {t}; wait for it to end"
+    if machine == "scan":
+        return f"a scan of this workspace is already running since {t}; wait for it to end"
     if state == "queued":
         return (
             f"{unit} is busy: a {stage} step is queued since {t}, waiting for a free slot{stopping}; "
@@ -189,6 +194,46 @@ class Attempts:
                     "SELECT * FROM attempt_moves WHERE attempt = ? ORDER BY seq", (int(attempt),)
                 )
             ]
+
+    def interventions(self, workspace: str, after: str, limit: int) -> list[Intervention]:
+        """Each attempt of `workspace` the gate refused (`refused`, its reason code as the
+        detail) and each a person opened as a rerun (`rerun`, its note), whose move is past
+        `after`. Oldest first, at most `limit` of each."""
+        out: list[Intervention] = []
+        with self.data.connect() as conn:
+            for row in conn.execute(
+                "SELECT m.rowid AS id, m.at, m.outcome, a.unit, a.stage FROM attempt_moves m "
+                "JOIN attempts a ON a.id = m.attempt WHERE a.workspace = ? "
+                "AND m.moved_to = 'refused' AND m.at > ? ORDER BY m.at, m.rowid LIMIT ?",
+                (workspace, after, int(limit)),
+            ).fetchall():
+                out.append(
+                    Intervention(
+                        f"refused:attempt_moves:{row['id']}",
+                        "refused",
+                        row["at"],
+                        row["unit"],
+                        row["stage"],
+                        f"the gate refused it: {row['outcome']}",
+                    )
+                )
+            for row in conn.execute(
+                "SELECT a.id, f.at, a.unit, a.stage, a.note FROM attempts a "
+                "JOIN attempt_moves f ON f.attempt = a.id AND f.seq = 1 "
+                "WHERE a.workspace = ? AND a.rerun = 1 AND f.at > ? ORDER BY f.at, a.id LIMIT ?",
+                (workspace, after, int(limit)),
+            ).fetchall():
+                out.append(
+                    Intervention(
+                        f"rerun:attempts:{row['id']}",
+                        "rerun",
+                        row["at"],
+                        row["unit"],
+                        row["stage"],
+                        row["note"],
+                    )
+                )
+        return out
 
     def unfinished(self, workspace: str | None = None, unit: str | None = None) -> list[Attempt]:
         """Every attempt not yet `ended` or `refused`, oldest first; of one workspace, one unit."""

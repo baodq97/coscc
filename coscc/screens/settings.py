@@ -428,6 +428,17 @@ def _feature_choice(f) -> rx.Component:
     )
 
 
+def _feature_schedule(f) -> rx.Component:
+    """How often a feature with a schedule runs on its own here."""
+    return rx.select(
+        f.schedules,
+        value=f.schedule,
+        on_change=lambda label: P.set_feature_schedule(f.name, label),
+        size="1",
+        aria_label="Schedule of " + f.name,
+    )
+
+
 def _features_panel() -> rx.Component:
     """Each feature's state in this workspace. Off silences it here and starts nothing."""
     return s.panel(
@@ -435,7 +446,17 @@ def _features_panel() -> rx.Component:
         s.text("Turned off here, a feature does nothing in this workspace.", size="1"),
         rx.foreach(
             P.features,
-            lambda f: _settings_row(f.name, f.sentence, _feature_choice(f)),
+            lambda f: _settings_row(
+                f.name,
+                f.sentence,
+                rx.hstack(
+                    rx.cond(f.schedules.length() > 0, _feature_schedule(f), rx.fragment()),
+                    _feature_choice(f),
+                    spacing="3",
+                    align="center",
+                    flex_wrap="wrap",
+                ),
+            ),
         ),
         rx.cond(P.features.length() == 0, s.text("No feature is installed.", size="1")),
         id="features-panel",
