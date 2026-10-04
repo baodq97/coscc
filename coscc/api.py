@@ -76,7 +76,11 @@ async def stream(request: Request) -> StreamingResponse:
     the resolved path. It only says that something changed: the page reads what it shows again."""
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[Event] = asyncio.Queue()
-    stop = _service(request).bus.watch(lambda e: loop.call_soon_threadsafe(queue.put_nowait, e))
+
+    def heard(e: Event) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, e)
+
+    stop = _service(request).bus.watch(heard)
 
     async def events() -> AsyncIterator[str]:
         try:
