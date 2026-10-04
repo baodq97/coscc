@@ -19,7 +19,7 @@ Read this before adding a route, a button or a grant.
   it on, starts the next stage through the same gate, never releases, and is refused beyond
   loopback.
 - **Answers reach gates.** An answer is a row rendered into the next prompt. A finding answer
-  and a delegation also feed a gate, so one agent's round plus an answer anyone with the
+  also feeds a gate, so one agent's round plus an answer anyone with the
   password can write is part of what opens a merge.
 - **A screenshot is an agent's look,** not a person's.
 - **Say what a new route can do,** to whom, at what cost, and where the trace is. Prefer a row

@@ -2163,7 +2163,7 @@ def test_a_skip_no_person_decided_stops_the_unit_for_a_person(tmp_path):
         assert n["blocked"] is True
         assert n["reasons"] == ["agent-cannot-skip"]
         assert re.search(
-            r"spec\.md is skipped by .*, not by a person or their delegate — a person records "
+            r"spec\.md is skipped by .*, not by a person — a person records "
             r"the skip \(coscc skip\), or runs write-spec",
             n["action"],
         )
@@ -2174,7 +2174,7 @@ def test_a_skip_no_person_decided_stops_the_unit_for_a_person(tmp_path):
 
 
 def test_a_skip_a_person_decided_opens_plan_with_or_without_a_file(tmp_path):
-    for authority in ["person", "delegated"]:
+    for authority in ["person"]:
         written = skip_tree(tmp_path, authority)
         assert "agentSkip" not in written["artifacts"]["spec.md"]
         assert next_action(written)["stage"] == "plan"

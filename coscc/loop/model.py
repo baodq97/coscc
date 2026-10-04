@@ -1055,7 +1055,7 @@ def agent_skip(u, f):
 
 def skipped_by(u, f):
     by = nullish(dig(u, "artifacts", f, "agentSkip", "by"), "no one the app knows")
-    return f"{f} is skipped by {by}, not by a person or their delegate"
+    return f"{f} is skipped by {by}, not by a person"
 
 
 def missing(u, f):

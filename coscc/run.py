@@ -162,7 +162,7 @@ def _answer_and_stop(args: list[str]) -> None:
         raise SystemExit(_vault_measure(args[1:]))
     print(
         f"coscc: unrecognised argument {args[0]!r}\n"
-        "usage: coscc [--version | reset-password | state <workspace> | skip <workspace> <unit> spec [--delegated] <reason> | vault-measure <workspace> [--since ISO] [--until ISO]]\n"
+        "usage: coscc [--version | reset-password | state <workspace> | skip <workspace> <unit> spec <reason> | vault-measure <workspace> [--since ISO] [--until ISO]]\n"
         "everything else is configuration, and it is read from the environment "
         "(COS_HOST, COS_PORT, COS_WORKING_DIR, ...) -- see docs/install.md",
         file=sys.stderr,
@@ -234,17 +234,16 @@ def _workspace(config, data, target: str) -> tuple[dict[str, str], str | None]:
     return names, wanted
 
 
-SKIP_USAGE = "usage: coscc skip <workspace> <unit> spec [--delegated] <reason>"
+SKIP_USAGE = "usage: coscc skip <workspace> <unit> spec <reason>"
 
 
 def _skip(args: list[str]) -> int:
-    """Record a person's decision to skip a unit's spec (`delegated` with `--delegated`).
+    """Record a person's decision to skip a unit's spec.
 
     Shell-only, so no session can make it. It writes the transition through guard
     `skip-decision` and no file. Only `spec`: the unit machine has no `skipped` for `plan.md`.
     """
-    delegated = "--delegated" in args
-    rest = [a for a in args if a != "--delegated"]
+    rest = list(args)
     reason = " ".join(rest[3:]).strip()
     if len(rest) < 4 or rest[2] != "spec" or not reason:
         print(f"coscc: {SKIP_USAGE}", file=sys.stderr)
@@ -286,7 +285,7 @@ def _skip(args: list[str]) -> int:
     if known is None:
         print(f"coscc: the app knows no unit {unit!r} in {target!r}", file=sys.stderr)
         return 2
-    authority = "delegated" if delegated else "person"
+    authority = "person"
     try:
         applied = transitions.apply(
             meta.history,

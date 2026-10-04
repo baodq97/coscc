@@ -30,10 +30,10 @@ CODE: Kind = "code"
 
 LOCK_TIMEOUT = BUSY_TIMEOUT
 
-# Whose decision a transition is. `person` and `delegated` are the originator and the one they
-# delegated to; `agent` is what a model inferred and never counts as either; `code` is a guard
-# reading git, `gh` or the database. An older row says `UNKNOWN`.
-Authority = Literal["person", "delegated", "agent", "code"]
+# Whose decision a transition is. `person` is the originator; `agent` is what a model inferred
+# and never counts as one; `code` is a guard reading git, `gh` or the database. An older row
+# says `UNKNOWN`.
+Authority = Literal["person", "agent", "code"]
 AUTHORITIES: tuple[Authority, ...] = get_args(Authority)
 
 _TRANSITION_COLUMNS = (

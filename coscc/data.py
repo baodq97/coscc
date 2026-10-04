@@ -34,8 +34,8 @@ from typing import Any, Iterator
 # `500` on a database a newer one has touched**, so rolling the app back means rolling the
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
-# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`).
-SCHEMA_VERSION = 10
+# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped).
+SCHEMA_VERSION = 11
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -214,23 +214,8 @@ CREATE TABLE IF NOT EXISTS step_events (
     bytes INTEGER NOT NULL,
     PRIMARY KEY (run, seq)
 )""",
-    """-- A decision the person made, or a delegation to one agent, typed on the
--- Settings screen and never over HTTP. `AUTOINCREMENT` so `D<n>` is never reused, even once
--- the last row is gone. Days are ISO dates; `''` is "none": every workspace, no end, not
--- withdrawn. A row is never deleted: withdrawing it writes `withdrawn` once.
-CREATE TABLE IF NOT EXISTS decisions (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind       TEXT NOT NULL,
-    text       TEXT NOT NULL,
-    source     TEXT NOT NULL,
-    workspace  TEXT NOT NULL,
-    agent      TEXT NOT NULL,
-    covers     TEXT NOT NULL,
-    from_day   TEXT NOT NULL,
-    until_day  TEXT NOT NULL,
-    withdrawn  TEXT NOT NULL,
-    created_at TEXT NOT NULL
-)""",
+    # The owner's typed decisions and delegations, never used; Leif's knowledge replaces them.
+    "DROP TABLE IF EXISTS decisions",
     """-- One row per directory under a store's `.cos/`, whatever its name --
 -- `number` and `slug` are NULL for one that does not match NNNN_<slug>. `type` is the
 -- word `intent.md` declares, or `unknown` until one is read. `lane` is `full` for every
@@ -469,7 +454,7 @@ _COLUMNS = (
     # The head and the artifacts' revisions a run was handed when it opened.
     ("step_runs", "head", "TEXT NOT NULL DEFAULT ''"),
     ("step_runs", "revisions", "TEXT NOT NULL DEFAULT '{}'"),
-    # Whose answer a row is: `person`, `delegated` or `agent` (an earlier version's precedent answers).
+    # Whose answer a row is: `person` or `agent` (an earlier version's precedent answers).
     ("unit_answers", "authority", "TEXT NOT NULL DEFAULT 'unknown'"),
     # The CI answer read at `ci_head`, written only with a `ci-at-head` transition; the checks
     # it was read from (JSON, for the names of the red ones) and when.
@@ -785,50 +770,6 @@ class Data:
         with self.connect() as conn:
             rows = conn.execute("SELECT key, value FROM prefs").fetchall()
         return {str(row["key"]): row["value"] for row in rows if str(row["key"]).startswith(prefix)}
-
-    # -- the person's decisions ---------------------------------------------
-    #
-    # No route writes here; the table goes with the decisions rebuild.
-
-    _DECISION_FIELDS = (
-        "kind",
-        "text",
-        "source",
-        "workspace",
-        "agent",
-        "covers",
-        "from_day",
-        "until_day",
-    )
-
-    def decisions(self) -> list[dict[str, Any]]:
-        """Every decision, withdrawn and expired included, oldest first."""
-        with self.connect() as conn:
-            rows = conn.execute("SELECT * FROM decisions ORDER BY id").fetchall()
-        return [{k: row[k] for k in row.keys()} for row in rows]
-
-    def decision_add(self, **fields: str) -> int:
-        """One new decision; its `id`. Every field of `_DECISION_FIELDS` is text, `''` for none."""
-        values = [str(fields.get(k) or "") for k in self._DECISION_FIELDS]
-        with self.write() as conn:
-            cur = conn.execute(
-                f"INSERT INTO decisions ({', '.join(self._DECISION_FIELDS)}, withdrawn, created_at) "
-                f"VALUES ({', '.join('?' for _ in self._DECISION_FIELDS)}, '', ?)",
-                (*values, now()),
-            )
-            if cur.lastrowid is None:
-                raise sqlite3.DatabaseError("the decision was not inserted")
-            return cur.lastrowid
-
-    def decision_withdraw(self, decision_id: int, day: str) -> bool:
-        """Write the day `decision_id` was withdrawn, once. False when there is no such row or it
-        was withdrawn already; the row is never deleted."""
-        with self.write() as conn:
-            cur = conn.execute(
-                "UPDATE decisions SET withdrawn = ? WHERE id = ? AND withdrawn = ''",
-                (day, int(decision_id)),
-            )
-            return cur.rowcount > 0
 
     # -- the login ---------------------------------------------------------
     #

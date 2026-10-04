@@ -279,7 +279,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 - One modular app on SQLite. No new services or brokers.
 - An idea is finished by its acceptance criteria and cross-repository evidence, not only by
   every child unit having merged.
-- Every recorded decision says who made it: the person, delegated by the person, or inferred
+- Every recorded decision says who made it: the person, or inferred
   by an agent. An inference is never promoted to the person's intent.
 - The reviewer gets evidence the app collected (diff, base/head, test results, screenshots
   from a real build), not only the implementer's report.

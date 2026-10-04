@@ -135,9 +135,9 @@ class TheGuards(unittest.TestCase):
             ("not-open-finding",),
         )
 
-    def test_only_a_person_or_their_delegate_skips(self):
+    def test_only_a_person_skips(self):
         self.assertEqual(guards.skip_decision({"authority": "person"}), OPEN)
-        self.assertEqual(guards.skip_decision({"authority": "delegated"}), OPEN)
+        self.assertNotEqual(guards.skip_decision({"authority": "delegated"}), OPEN)
         for who in ("agent", "code", None):
             self.assertEqual(
                 guards.skip_decision({"authority": who}).reasons, ("agent-cannot-skip",)

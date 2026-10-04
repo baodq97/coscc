@@ -105,36 +105,12 @@ class UpdateStatus(TypedDict):
     actions: list[str]
 
 
-class Decision(TypedDict):
-    """A standing decision or delegation of the owner's, as `decisions` holds it, with its state."""
-
-    id: str
-    kind: str
-    text: str
-    source: str
-    workspace: str
-    workspace_name: str
-    agent: str
-    covers: str
-    from_day: str
-    until_day: str
-    withdrawn: str
-    created_at: str
-    # `in force`, `not yet`, `expired` or `withdrawn`.
-    state: str
-
-
-class DecisionTable(TypedDict):
-    rows: list[Decision]
-    workspaces: list[str]
-
-
 # Who answers for the owner, as the start of an answer's `by`.
 AGENT_NAMES = ("Leif", "Claude", "agent")
 
 
 class Decided(TypedDict):
-    """An answer given for the owner: by Leif under a delegation, or inferred by an agent."""
+    """An answer given for the owner: by Leif, or inferred by an agent."""
 
     unit: str
     artifact: str
@@ -371,9 +347,6 @@ async def answer_question(request: Request) -> Any:
     `question` may also be `"F<n>"` with `artifact` `review.md`: a finding the last
     review round confirmed needs a person. That appends `### F<n>`; `coscc.loop next` reads
     it to offer `review` again, and the `ship` gate counts an `[answered]` finding as closed.
-
-    An optional `delegation: "D<n>"` writes the answer as one an agent gave under a
-    delegation entered on Settings (`delegated`). What it `covers` is not checked.
     """
     body = await kernel.body(request)
     return await _service(request).answers.answer(
@@ -383,14 +356,7 @@ async def answer_question(request: Request) -> Any:
         body.get("question"),
         str(body.get("answer") or ""),
         str(body.get("answered_by") or ""),
-        str(body.get("delegation") or ""),
     )
-
-
-@router.get("/api/decisions", response_model=DecisionTable)
-async def get_decisions(request: Request) -> Any:
-    """The owner's standing decisions and delegations, withdrawn and expired included."""
-    return _service(request).answers.decisions_table()
 
 
 @router.get("/api/decided")

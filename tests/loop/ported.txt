@@ -146,7 +146,7 @@ fails ahead of missing: spec is rewritten before the spike is redone (R8) → te
 a question still failing at round 2 needs a person → tests/loop/test_model.py::test_a_question_still_failing_at_the_last_spike_round_needs_a_person
 a spec rewritten without its questions no longer needs the spike beside it (0136 R14) → tests/loop/test_model.py::test_a_spec_rewritten_without_its_questions_needs_no_spike
 0136 R14: a skip an agent wrote, or one whose author the app does not know, stops the unit for a person → tests/loop/test_model.py::test_a_skip_no_person_decided_stops_the_unit_for_a_person
-0136 R14: a skip a person or their delegate decided opens plan, with or without a spec.md → tests/loop/test_model.py::test_a_skip_a_person_decided_opens_plan_with_or_without_a_file
+0136 R14: a skip a person decided opens plan, with or without a spec.md → tests/loop/test_model.py::test_a_skip_a_person_decided_opens_plan_with_or_without_a_file
 with a spike required, impl opens only on a plan that cites spike.md (R9) → tests/loop/test_model.py::test_with_a_spike_required_impl_opens_only_on_a_plan_citing_it
 0045 R9: a hold block ends the answer before it, and is never an answer → tests/loop/test_model.py::test_a_hold_block_ends_the_answer_before_it
 0045 R1: no hold block is hold null and the active moves → tests/loop/test_model.py::test_no_hold_block_is_no_hold_and_the_active_moves

@@ -297,46 +297,6 @@ OUTCOME_INTENT = (
 )
 
 
-class ADelegatedAnswer(unittest.TestCase):
-    """What the route writes, and the authority the board reads back."""
-
-    def test_a_block_written_with_delegation_reads_back_as_delegated(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            cwd = str(root / "work" / "proj")
-            Path(cwd).mkdir(parents=True)
-            config = Config(
-                workspaces=(cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
-            )
-            service = Service(config, Sessions(config))
-            made = create_sync(service, cwd, "a-problem", "x")
-            (Path(made["path"]) / "intent.md").write_text(
-                "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n## Open questions\n\n1. One?\n2. Two?\n",
-                encoding="utf-8",
-            )
-            added = service.answers.add_decision(
-                {
-                    "kind": "delegation",
-                    "text": "Leif đặt tên.",
-                    "source": "chat",
-                    "agent": "Leif",
-                    "covers": "naming",
-                }
-            )["added"]
-            asyncio.run(
-                service.answers.answer(
-                    cwd, made["unit"], "intent.md", 1, "Có.", "Leif (CoS)", added
-                )
-            )
-            asyncio.run(
-                service.answers.answer(cwd, made["unit"], "intent.md", 2, "Không.", "Leif (CoS)")
-            )
-            [u] = asyncio.run(service.board(cwd))["units"]
-            self.assertEqual(
-                {a["n"]: a["authority"] for a in u["answers"]}, {1: "delegated", 2: "person"}
-            )
-
-
 class HowAnAnswerNamesItsQuestion(unittest.TestCase):
     """`artifact` and `question` in any accepted form write the same row; any other form is
     refused with what to send."""

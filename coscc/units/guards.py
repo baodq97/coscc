@@ -77,7 +77,7 @@ REASONS = (
 )
 
 # Who may skip a stage. `agent` and `code` never may.
-DECIDERS = ("person", "delegated")
+DECIDERS = ("person",)
 
 
 class BadVerdict(ValueError):
@@ -263,7 +263,7 @@ GUARDS: dict[str, Guard] = {
         ),
         Guard(
             "skip-decision",
-            "Spec or plan is skipped only on the decision of a person or their delegate.",
+            "Spec or plan is skipped only on a person's decision.",
             skip_decision,
         ),
         Guard(

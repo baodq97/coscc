@@ -68,21 +68,13 @@ def _no_status(artifact: str, raw: str | None, machine: Machine) -> str:
     return machine.refuse(artifact, raw) or f'status "{raw}" is not one the app records'
 
 
-# The last line of an answer written under a delegation, `Theo ủy quyền: D<n>`.
-DELEGATION = "Theo ủy quyền:"
-
-
-def authority_of(via: str | None, text: str | None) -> str:
+def authority_of(via: str | None) -> str:
     """The authority of an answer read from a file, which does not say whose it was.
 
-    An answer an earlier version wrote from precedent (`Via: precedent.`) is `agent`; one with
-    a line opening with `DELEGATION` is `delegated`; any other is `person`. Read only on an
-    import, and by the once-per-store classification of rows an older import left unknown."""
-    if via == "precedent":
-        return "agent"
-    if any(line.startswith(DELEGATION) for line in (text or "").splitlines()):
-        return "delegated"
-    return "person"
+    An answer an earlier version wrote from precedent (`Via: precedent.`) is `agent`; any other
+    is `person`. Read only on an import, and by the once-per-store classification of rows an
+    older import left unknown."""
+    return "agent" if via == "precedent" else "person"
 
 
 class UnitMeta:
@@ -118,12 +110,12 @@ class UnitMeta:
             if self.data.has_run(key, conn):
                 return
             rows = conn.execute(
-                "SELECT id, via, text FROM unit_answers WHERE root = ? AND workspace = ? AND authority = 'unknown'",
+                "SELECT id, via FROM unit_answers WHERE root = ? AND workspace = ? AND authority = 'unknown'",
                 (self.root, workspace),
             ).fetchall()
             conn.executemany(
                 "UPDATE unit_answers SET authority = ? WHERE id = ?",
-                [(authority_of(r["via"], r["text"]), r["id"]) for r in rows],
+                [(authority_of(r["via"]), r["id"]) for r in rows],
             )
             Data.mark_run(conn, key)
 
@@ -331,7 +323,7 @@ class UnitMeta:
                     a["date"],
                     a["via"],
                     f"{SOURCE}:{workspace}/{unit}/{a['artifact']}/answer/{i}",
-                    authority=authority_of(a["via"], a["text"]),
+                    authority=authority_of(a["via"]),
                 )
             for i, h in enumerate(meta.get("holds") or []):
                 if h.get("by") is None:
@@ -619,7 +611,7 @@ class UnitMeta:
         authority: str = "unknown",
     ) -> None:
         """`ref` is a question's number or a finding's `F<k>`; the last row for it wins.
-        `authority` is `person`, `delegated` or `agent`: whose answer it is, which no name in `by` settles."""
+        `authority` is `person` or `agent`: whose answer it is, which no name in `by` settles."""
         if conn is not None:
             return self._answer(
                 conn, workspace, unit, artifact, ref, text, by, date, via, authority=authority
@@ -755,7 +747,7 @@ class UnitMeta:
                 a = artifact(r)
                 if a is not None and r["to_state"] != self.machine.absent:
                     a["status"] = r["to_state"]
-                    # Whose skip it was: the loop stops the unit unless a person's or their delegate's.
+                    # Whose skip it was: the loop stops the unit unless a person's.
                     if r["to_state"] == "skipped":
                         a["authority"] = r["authority"]
             # Whether the unit is merged: the machine's own fold where it moved the unit, else a ship recorded outside it.
