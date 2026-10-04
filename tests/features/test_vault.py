@@ -194,8 +194,7 @@ class TheToolsTakeNoValue(Bed):
         hooks = self.service.steps.hooks
         for stage in ("impl", "spike"):
             self.assertEqual(
-                [t.server for t in hooks.for_step(stage, str(self.ws)).tools],
-                ["decisions", "vault"],
+                [t.server for t in hooks.for_step(stage, str(self.ws)).tools], ["vault"]
             )
         for stage in ("plan", "spec", "review", "pr"):
             self.assertEqual(hooks.for_step(stage, str(self.ws)).tools, ())

@@ -88,29 +88,6 @@ def _hint_word(s):
     return s["hint"].split(" ")[0]
 
 
-def outdated_of(unit, name):
-    """`{why, said, decisions, main}` when the app found decisions not taken, or main paths
-    cited, since the last `done` run of `name`; `None` otherwise. `decision` wins `why`."""
-    entry = dig(unit, "outdated", name)
-    if name not in ("spec", "plan") or not isinstance(entry, dict):
-        return None
-    decisions = [d for d in entry.get("decisions") or [] if isinstance(d, dict) and d.get("id")]
-    main = entry.get("main") if isinstance(entry.get("main"), dict) else {}
-    paths = [p for p in main.get("paths") or [] if isinstance(p, str)]
-    if not decisions and not paths:
-        return None
-    said = [
-        *([f"{len(decisions)} new decision(s)"] if decisions else []),
-        *([f"main changed {len(paths)} path(s) it cites"] if paths else []),
-    ]
-    return {
-        "why": "outdated-decision" if decisions else "outdated-main",
-        "said": " / ".join(said),
-        "decisions": decisions,
-        "main": {**main, "paths": paths} if paths else None,
-    }
-
-
 def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whole
     limit = review_limit(unit, limit)
     if status_of(unit, "plan.md") == "done":
@@ -214,16 +191,6 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                 ),
                 "stage": s["name"],
                 "why": code("stale"),
-            }
-        outdated = outdated_of(unit, s["name"])
-        if status == "accepted" and outdated:
-            # Run again through `rerun`, never as a plain step: `stage` stays empty.
-            return {
-                "blocked": True,
-                "action": f"{s['file']} is outdated — {outdated['said']}: {_hint_word(s)} again",
-                "stage": "",
-                "rerun": s["name"],
-                "why": code(outdated["why"]),
             }
         if s["file"] == "review.md" and incomplete_draft(unit):
             used = rounds_used(unit)

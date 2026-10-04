@@ -122,33 +122,6 @@ def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _count(n: int, word: str) -> str:
-    return f"{n} {word}" if n == 1 else f"{n} {word}s"
-
-
-def _rewrite_of(u: dict[str, Any]) -> dict[str, Any] | None:
-    """`{stage, label}` of the spec or plan to write again when the loop calls the unit outdated
-    (`next.why` is an `outdated-*` code), `None` otherwise. The earliest stage with something
-    counted wins, as the loop's own pick; a check of `main` that did not finish counts nothing."""
-    if not str((u.get("next") or {}).get("why") or "").startswith("outdated-"):
-        return None
-    found = u.get("outdated")
-    for stage in ("spec", "plan"):
-        entry = found.get(stage) if isinstance(found, dict) else None
-        if not isinstance(entry, dict):
-            continue
-        decisions = [d for d in entry.get("decisions") or [] if isinstance(d, dict) and d.get("id")]
-        main = entry.get("main") if isinstance(entry.get("main"), dict) else {}
-        paths = (main.get("paths") or []) if main.get("checked") else []
-        said = [
-            *([_count(len(decisions), "new decision")] if decisions else []),
-            *([f"main changed {_count(len(paths), 'path')}"] if paths else []),
-        ]
-        if said:
-            return {"stage": stage, "label": f"Rewrite {stage}: " + " / ".join(said)}
-    return None
-
-
 def _ideas_of(data: dict[str, Any]) -> list[dict[str, Any]]:
     """The store's ideas, `{id, title, status, units: [{ref, depends_on}], problems}`."""
     return [
@@ -250,8 +223,6 @@ async def read(
             "idea": str(u.get("idea") or ""),
             "repo": str(u.get("repo") or ""),
             "depends_on": _depends_on_of(u),
-            # The spec or plan the loop calls outdated, and the line that says why, or None.
-            "rewrite": _rewrite_of(u),
         }
         for u in data.get("units") or []
     ]
@@ -459,11 +430,9 @@ async def rerun(
     stage: str | None = None,
     timeout: float = TIMEOUT,
     state: dict[str, Any] | None = None,
-    by: str = "owner",
 ) -> dict[str, Any]:
     """Ask the loop's `rerun` which accepted stages of `unit` may run again, or, with `stage`,
-    for the `### Rerun` block to append before running it. `by="app"` asks for the block of an
-    outdated stage, which the loop refuses for any other.
+    for the `### Rerun` block to append before running it.
 
     Returns `{unit, offers, why}` without `stage`, `{unit, stage, later, block}` with one, and
     `{"error": <what the loop said>, "code": n}` when it exits non-zero (exit 1 is "not
@@ -473,7 +442,6 @@ async def rerun(
     try:
         source, stdin = _source(state)
         argv = ["--root", str(path), *source, "rerun", unit] + ([stage] if stage else [])
-        argv += [by] if stage and by != "owner" else []
         code, out_text, err_text = await _ask(argv, timeout, stdin)
     except TimeoutError:
         raise Unavailable(f"asking what may run again timed out after {timeout:.0f}s") from None

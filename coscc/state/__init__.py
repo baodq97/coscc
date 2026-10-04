@@ -759,7 +759,6 @@ class StudioState(
         """The board held for this workspace: at once when one was read, else when the first
         read ends. The next read, if anything changed, arrives through `watch_board`."""
         self._full, self.cards, self.stages, self.board_note = {}, [], [], ""
-        self.rewrites = []
         self._set_current()
         self.empty_store, self.empty_host, self.empty_host_units = "", "", 0
         self.branch = ""
@@ -799,7 +798,6 @@ class StudioState(
         self.recording = bool(data["recording"])
         self._show_autopilot_block(data.get("autopilot") or {})
         self._show_guide(data.get("guide") or {})
-        self._show_rewrites(data)
         self._show_release(data.get("release"))
         read_only = READ_ONLY_NOTE if data.get("read_only_because") else ""
         self.board_note = read_only or data.get("empty_because") or ""
