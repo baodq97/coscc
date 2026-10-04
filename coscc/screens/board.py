@@ -6,6 +6,7 @@ import reflex as rx
 
 from coscc.screens import studio as s
 from coscc.state import Card, GuideItem
+from coscc.state.rerun import Rewrite
 from coscc.units import autopilot
 from coscc.screens.common import P, _MONO, _RUNIC, _details
 from coscc.screens.overview import _empty_board
@@ -648,6 +649,47 @@ def _guide_panel() -> rx.Component:
     )
 
 
+def _rewrite_row(item: rx.Var[Rewrite]) -> rx.Component:
+    """One outdated unit: why its spec or plan is outdated, and the one button that writes it again. No note field; the stage and the line are the board's."""
+    return rx.flex(
+        s.badge(item.unit, "iris"),
+        s.text(
+            item.label, size="2", color=s.INK, flex="1", min_width="0", overflow_wrap="anywhere"
+        ),
+        rx.button(
+            rx.icon("rotate-ccw", size=14),
+            "Rewrite " + item.stage + " — spends quota",
+            on_click=P.rewrite_outdated(item.unit),
+            id="rewrite-" + item.unit,
+            data_testid="rewrite-button",
+            size="1",
+            variant="soft",
+        ),
+        gap="8px",
+        align="center",
+        wrap="wrap",
+        width="100%",
+        data_testid="rewrite-row",
+    )
+
+
+def _rewrites_panel() -> rx.Component:
+    """The units whose accepted spec or plan decisions or main have passed, each with its button. Not drawn when none is outdated."""
+    return rx.cond(
+        P.rewrites.length() > 0,
+        rx.vstack(
+            s.eyebrow("OUTDATED"),
+            rx.foreach(P.rewrites, _rewrite_row),
+            padding="12px 16px",
+            background=rx.color("amber", 3),
+            border_radius="10px",
+            spacing="2",
+            width="100%",
+            id="rewrites-panel",
+        ),
+    )
+
+
 def _focus(target: str):
     """Moves focus to a form's first field, below the board."""
     return rx.call_script(f"document.getElementById('{target}').focus()")
@@ -738,6 +780,7 @@ def _board() -> rx.Component:
             wrap="wrap",
         ),
         rx.cond(P.has_workspace, _guide_panel(), rx.fragment()),
+        _rewrites_panel(),
         rx.box(
             rx.cond(
                 P.cards.length() == 0,

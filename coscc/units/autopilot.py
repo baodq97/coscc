@@ -725,6 +725,63 @@ def rerun_stop(artifact: str) -> dict[str, str]:
     )
 
 
+# --- an accepted spec or plan a decision or `main` came after ---------
+
+OUTDATED = ("outdated-decision", "outdated-main")
+
+
+def is_outdated(answer: Any) -> bool:
+    """`next` names an accepted spec or plan to run again for what came after it."""
+    return any(said(answer, c) for c in OUTDATED)
+
+
+def _cause_key(cause: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        tuple(sorted(str(c) for c in cause.get("decisions") or [])),
+        cause.get("from_sha"),
+        cause.get("main_sha"),
+    )
+
+
+def outdated_refusal(
+    records: Iterable[Mapping[str, Any]],
+    workspace: str,
+    unit: str,
+    stage: str,
+    cause: Mapping[str, Any] | None,
+) -> str:
+    """Why the app may not run `stage` of `unit` again for `cause`, `""` when it may. One set of
+    inputs (its decisions and its two SHAs) never starts a second run; and at most `MAX_RERUNS`
+    `start`s carrying a `cause` follow the last one a person began."""
+    if not cause:
+        return f"nothing says what made {stage} outdated"
+    key, count = _cause_key(cause), 0
+    for r in records:
+        if r.get("kind") != "start" or (r.get("workspace"), r.get("unit"), r.get("stage")) != (
+            workspace,
+            unit,
+            stage,
+        ):
+            continue
+        if r.get("started_by", "person") == "person":
+            count = 0
+            continue
+        seen = r.get("cause")
+        if not isinstance(seen, Mapping):
+            continue
+        if _cause_key(seen) == key:
+            return f"{stage} already ran again for these same decisions and commits"
+        count += 1
+    if count >= MAX_RERUNS:
+        return f"{stage} ran again {count} times for what came after it since a person last ran it"
+    return ""
+
+
+def outdated_stop(artifact: str, why: str) -> dict[str, str]:
+    """An outdated spec or plan the app may not run again: a person decides."""
+    return _stop("reruns", f"{artifact} is outdated, but {why}; a person decides the next run.")
+
+
 # --- a try that must change the head ---------------------------------
 
 # How often `impl` is queued on one head with an app note (a draft continued, a red CI) before a

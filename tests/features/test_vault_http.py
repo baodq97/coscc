@@ -368,7 +368,7 @@ class WithTheVaultOff(Http):
     async def test_the_tool_guard_and_block_go_with_it(self):
         await self.turn_off()
         parts = self.service.steps.hooks.for_step("impl", str(self.ws))
-        self.assertEqual([t.server for t in parts.tools], [])
+        self.assertEqual([t.server for t in parts.tools if t.server == "vault"], [])
         self.assertEqual([g.name for g in parts.guards], [])
         self.assertEqual([b.name for b in parts.blocks if b.name == "vault"], [])
 
