@@ -52,6 +52,16 @@ REASONS = (
 )
 # The stop `e` of a unit whose screenshots could not be taken again before `review`.
 SCREENS_FAILED = "the screenshots could not be taken again before review"
+# The stop `e`, and the board's reason, of a unit `next` reads as merging with no `ship` running.
+SHIP_UNRECORDED = "ship requested a merge and recorded no outcome"
+
+
+def has_nothing_to_integrate(code: Any) -> bool:
+    """An integration refused because the unit's state had nothing to integrate
+    (`integrate.NOTHING`): no refusal a person must look at. A record with no code is a real one."""
+    return code == "nothing-to-integrate"
+
+
 # The workspace's stop line when there is no shortlist to follow.
 NO_SHORTLIST = "Nothing is on the shortlist, so the autopilot starts nothing."
 
@@ -100,6 +110,11 @@ def continues(answer: Any) -> bool:
 def is_recording_ship(answer: Any) -> bool:
     """`next` or the gate names a `ship` that only records a merge already made."""
     return said(answer, "recording-ship")
+
+
+def is_ship_merging(answer: Any) -> bool:
+    """`next` reads `ship.md` as a merge asked for and not yet recorded."""
+    return said(answer, "ship-merging")
 
 
 def needs_a_person(answer: Any) -> bool:
@@ -165,6 +180,7 @@ def stop_for(
     exhausted: int = 0,
     unopened: int = 0,
     recorded: bool = False,
+    shipping: bool = False,
 ) -> dict[str, str] | None:
     """The first stop that holds for one unit, as `{kind, reason}`, or `None`.
 
@@ -173,7 +189,8 @@ def stop_for(
     `None`. `None` back means no stop, which is not the same as something to run.
     `exhausted` and `unopened` are how many steps of `last`'s stage ended `exhausted` or
     `failed` for their reply's opening; at 0 such a step stops at once. `recorded` is whether
-    the step that wrote `last` was a `ship` that only records.
+    the step that wrote `last` was a `ship` that only records. `shipping` is whether a `ship`
+    attempt of the unit has not ended.
     """
     stage = str(nxt.get("stage") or "")
     action = str(nxt.get("action") or "")
@@ -206,8 +223,10 @@ def stop_for(
     # `exhausted` is no stop: it runs again once, and the second time stops; `ship` stops the
     # first time. The same holds, on its own count, for a prose stage that ended `failed`
     # because its reply lacked its opening. Otherwise no retry: `failed`, `cancelled`,
-    # `stopped`, an integration that failed or that the autopilot started and was refused,
-    # and a `ship` that ran out before `next` names one that only records the merge.
+    # `stopped`, an integration that failed or that the autopilot started and was refused for
+    # anything but a state with nothing to integrate, and a `ship` that ran out before `next`
+    # names one that only records the merge. An integration refused with nothing to integrate is
+    # no last word: what follows is decided as if it had not run.
     ran_out_once = outcome == "exhausted" and seen.get("stage") != "ship" and exhausted == 1
     unopened_once = _unopened(last) and unopened == 1
     skipped = skips_exhausted(nxt, last, recorded)
@@ -222,7 +241,12 @@ def stop_for(
             "e", f"the last {seen.get('stage')} step ended {outcome or 'without an outcome'}"
         )
     if kind == "integration" and (
-        outcome == "failed" or (outcome == "refused" and seen.get("started_by") == "autopilot")
+        outcome == "failed"
+        or (
+            outcome == "refused"
+            and seen.get("started_by") == "autopilot"
+            and not has_nothing_to_integrate(seen.get("code"))
+        )
     ):
         detail = str(seen.get("detail") or "")
         return _stop("e", f"the last integration was {outcome}" + (f": {detail}" if detail else ""))
@@ -244,6 +268,10 @@ def stop_for(
     # a person runs it again, and a retake that is taken lifts the stop.
     if kind == "screens" and outcome == "failed":
         return _stop("e", SCREENS_FAILED)
+    # A merge asked for and not yet recorded: no stop while the `ship` that asked runs; with none
+    # running, nothing will record it.
+    if not stage and is_ship_merging(nxt):
+        return None if shipping else _stop("e", SHIP_UNRECORDED)
 
     # c. `ship`, while the workspace has not allowed it.
     if stage == "ship" and not may_ship:
@@ -760,10 +788,12 @@ def after_refusal(
     The same stage refused is the stop `f`, with the refusal's code, but for a race (`WAIT`). A race is
     asked again at once if `fresh` (a read of the pull requests moved something), else after
     `REFUSAL_HOLD`; before that the unit waits with a reason of its own. Another stage than the
-    refused one is no part of it."""
+    refused one is no part of it, and neither is an integration with nothing to integrate."""
     if refusal is None or refusal.get("stage") != stage:
         return None, None
     code = str(refusal.get("code") or "")
+    if has_nothing_to_integrate(code):
+        return None, None
     if code in WAIT:
         # `unit-busy` is no hold: the other attempt shows as running while it lasts.
         moment = _moment(refusal.get("at"))

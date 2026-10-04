@@ -31,6 +31,7 @@ REASONS = (
     "stale",
     "review-incomplete",
     "ship-refused",
+    "ship-merging",
     "draft",
     "awaits-person",
     "person-answered",
@@ -69,6 +70,8 @@ REASONS = (
     "no-branch",
     "no-git",
     "no-run-log",
+    # An integration refused because the unit's state has nothing to integrate.
+    "nothing-to-integrate",
     # A feature refused the step; the words name the feature, and its reason follows.
     "feature-refused",
 )

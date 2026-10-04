@@ -24,8 +24,9 @@ from coscc.loop.model import (
 )
 from coscc.loop.probe import UI_STANDARD
 from coscc.loop.repo_rules import screens_answer, screens_needs
-from coscc.loop.rules import check_gate, next_action, next_step, stage_at
+from coscc.loop.rules import check_gate, decide, next_action, next_answer, next_step, stage_at
 from tests.loop.conftest import TZ, git
+from tests.loop.test_model_links import MERGE, merged_probe
 from tests.loop.test_model import (
     CHAIN,
     FULL_LANE,
@@ -893,9 +894,32 @@ def test_a_draft_ship_md_from_the_last_round_asks_the_gate_and_an_open_one_stops
         "finish and accept ship.md",
         "stage": "",
     }
-    assert (
-        "ship was refused: ship.md names no refusal" in next_step(u(None), green_probe())["action"]
-    )
+    # No `Refused:` line: a merge asked for and not yet recorded, which is no refusal.
+    assert "ship was refused" not in next_step(u(None), green_probe())["action"]
+
+
+def test_a_draft_ship_md_with_a_round_and_no_refused_line_is_merging_not_refused():
+    u = accepted_pass({"ship.md": ship_art(ship_draft(1, None))})
+    assert decide(u)["why"] == "ship-merging"
+    assert decide(u)["action"] == "ship is merging #7 — wait"
+    # The gate cannot yet see the merge commit: a wait, and its words are not raised as a refusal.
+    unfetched = merged_probe(git={f"cat-file -e {MERGE}^{{commit}}": NOT_ANCESTOR})
+    wait = next_answer(u, unfetched)
+    assert wait["stage"] == ""
+    assert wait["reasons"] == ["ship-merging"]
+    assert wait["action"] == "ship is merging #7 — wait"
+    assert "not in this repository" not in wait["action"]
+    # Nor does an open pull request's CI reach the reasons.
+    assert next_answer(u, green_probe([{"name": "tests", "bucket": "pending"}]))["reasons"] == [
+        "ship-merging"
+    ]
+    # Once the merge commit is here, the ship that records it, as after a refusal.
+    done = next_answer(u, merged_probe())
+    assert done["stage"] == "ship"
+    assert done["reasons"] == ["ship-merging", "recording-ship"]
+    assert "do not merge" in done["action"]
+    # A `Refused:` line is still a refusal.
+    assert decide(accepted_pass({"ship.md": ship_art(ship_draft(1))}))["why"] == "ship-refused"
 
 
 def test_a_draft_ship_md_with_no_round_stops_as_it_always_did():

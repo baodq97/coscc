@@ -223,6 +223,20 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                 if s["file"] == "ship.md"
                 else None
             )
+            # A round and no `Refused:` line: ship asked GitHub to merge and has not written the
+            # outcome yet, which is no refusal.
+            if (
+                refused is not None
+                and last_round(unit)
+                and nullish(dig(unit, "artifacts", "ship.md", "ship", "refused")) is None
+            ):
+                number = nullish(dig(unit, "artifacts", "pr.md", "pr", "number"))
+                return {
+                    "blocked": True,
+                    "action": f"ship is merging #{js(number) if number is not None else '?'} — wait",
+                    "stage": "",
+                    "why": code("ship-merging"),
+                }
             if refused is not None and last_round(unit):
                 return {
                     "blocked": True,
@@ -596,6 +610,15 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
                 "stage": "ship",
             }
         return _none("; ".join(g["need"]))
+
+    if why == "ship-merging":
+        # The merge GitHub made, once the commit is here, is recorded as after any `ship`. Until
+        # then a wait: what the gate still needs (the merge commit not fetched) is no refusal.
+        g = evaluate_("ship")
+        if g["ok"] and g["said"].get("merged"):
+            return recorded(g)
+        seen["said"] = {}
+        return next_
 
     if why == "ship-refused":
         ship = unit["artifacts"]["ship.md"]["ship"]

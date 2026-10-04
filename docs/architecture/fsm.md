@@ -95,7 +95,8 @@ Derived states (CODE, recomputed each read):
 | rejected | any artifact rejected | — |
 | stale | rerun made it stale | that stage |
 | review-incomplete | incomplete or unfinished round | review |
-| ship-refused | ship draft with `Round:` | — (see 1.3) |
+| ship-merging | ship draft with `Round:` and no `Refused:` line: a merge asked for, not yet recorded | — (a wait; ship "record, do not merge" once the merge commit is here) |
+| ship-refused | ship draft with `Round:` and a `Refused:` line | — (see 1.3) |
 | draft | "finish and accept X" (+ `rerun` when all its questions are answered and the stage is in intent/spec/spike/plan/impl) | — |
 | awaits-person / person-answered | needs-person round with unanswered / answered `F<n>` | — / review |
 | changes-requested | review asked for changes | → refined by `nextStep` |

@@ -728,7 +728,7 @@ class Steps:
                         how, how_said = "", str(e)
                 if how and how != "same":
                     seen["completion"] = {"relation": how, "local_head": was, "cut": cut}
-            reason = integrate.refusal(
+            reason, why = integrate.refusal(
                 in_window=info is not None,
                 busy=busy,
                 clean=clean,
@@ -752,10 +752,12 @@ class Steps:
                         origin_sha=origin_sha,
                         outcome="refused",
                         detail=reason,
+                        code=why,
                         **seen,
                     )
                 )
-                raise Invalid(reason)
+                # The attempt's row carries the code, which the autopilot reads.
+                raise Refused(reason, (why,)) if why else Invalid(reason)
             refusal = self.feature_refusal(
                 facts_of(
                     workspace=cwd,
@@ -1199,7 +1201,8 @@ class Steps:
 
         `why` is `decide`'s, read off the files by `coscc.loop status` as `board.read` copies it,
         without asking `gh` as `next` would, so `ship-refused` can also be a merge whose branch
-        deletion failed."""
+        deletion failed. `ship-merging` (a merge asked for and not recorded yet) writes no
+        `ship` record: it is no refusal, and the `shipped` follows once the merge is recorded."""
         try:
             journal = self.ws.journal()
             if journal is None:

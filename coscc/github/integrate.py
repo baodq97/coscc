@@ -183,6 +183,8 @@ def newer_base(local_base: str, pr_base: str, pr_base_in_local_base: bool | None
 # The relations that go the completion road, whatever the unit's state.
 COMPLETION = ("ahead", "diverged")
 STALE = "the pull request's head is on a base no older than the local head's, so the local head is not a rebase of it"
+# The one refusal's code that says the unit's state had nothing to integrate: no person needs to act.
+NOTHING = "nothing-to-integrate"
 
 
 def refusal(
@@ -197,8 +199,9 @@ def refusal(
     origin: str = "",
     relation: str = "",
     relation_said: str = "",
-) -> str:
-    """The first condition that does not hold, or `""`.
+) -> tuple[str, str]:
+    """The first condition that does not hold, or `""`, and its code: `NOTHING` for a state
+    outside `BUTTON_STATES`, `""` for every other.
 
     `origin` is `origin_note`'s sentence; a `current` unit is then said to be current against it.
     The sentence still begins `the unit is current`.
@@ -208,34 +211,38 @@ def refusal(
     (`relation_said`) when it could not tell, and `stale` with `STALE`.
     """
     if not in_window:
-        return "this unit is not between pr and ship with an open pull request"
+        return "this unit is not between pr and ship with an open pull request", ""
     if busy:
         # `steps.describe`'s sentence: what holds the unit, and since when.
-        return busy
+        return busy, ""
     if clean is None:
-        return "the unit has no worktree to integrate in"
+        return "the unit has no worktree to integrate in", ""
     if clean is not True:
-        return "the unit's worktree has uncommitted changes"
+        return "the unit's worktree has uncommitted changes", ""
     if branch_ok is not True:
-        return "the unit's worktree is not on the unit's branch"
+        return "the unit's worktree is not on the unit's branch", ""
     if not pr_head:
         # Nothing to compare the local head with: `gh` could not be read, so the state is `unknown`
-        # too. Said as that, not as a head mismatch against "none".
-        return f"the pull request's head could not be read, so the unit is {state or 'unknown'}: nothing to integrate"
+        # too. Said as that, not as a head mismatch against "none". Not `NOTHING`: the state is
+        # not known.
+        return (
+            f"the pull request's head could not be read, so the unit is {state or 'unknown'}: nothing to integrate",
+            "",
+        )
     if not local_head or local_head != pr_head:
         if local_head and relation in COMPLETION:
-            return ""
+            return "", ""
         if relation == "stale" and not relation_said:
             relation_said = STALE
         return (
             f"the local head ({local_head[:7] or 'none'}) is not the pull request's head "
             f"({pr_head[:7] or 'none'})" + (f": {relation_said}" if relation_said else "")
-        )
+        ), ""
     if state not in BUTTON_STATES:
         if state == "current" and origin:
-            return f"the unit is current against {origin}, which has nothing to integrate"
-        return f"the unit is {state}, which has nothing to integrate"
-    return ""
+            return f"the unit is current against {origin}, which has nothing to integrate", NOTHING
+        return f"the unit is {state}, which has nothing to integrate", NOTHING
+    return "", ""
 
 
 def warnings(
@@ -388,10 +395,14 @@ def record(
     started_by: str = "person",
     completion: dict | None = None,
     agent: str = "",
+    code: str = "",
 ) -> dict[str, Any]:
     """The one record every integration leaves, whatever happened.
 
     `agent` is the session's agent name, written only when one was opened.
+
+    `code` is `refusal`'s code of a `refused` one, `""` otherwise; always written. A record
+    without it reads as a refusal a person must look at.
 
     `fetch` is how the press got its `origin/main` and `merge_state` what GitHub said of the pull
     request then, observed and never decided on. `update_branch` is the exit code and words of a
@@ -420,6 +431,7 @@ def record(
         "report": report,
         "needs_person": list(needs_person or []),
         "detail": detail,
+        "code": code,
         "fetch": _fetch_of(fetch),
         "merge_state": merge_state,
         "update_branch": (

@@ -23,7 +23,7 @@ from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
 from coscc.service import Service
-from coscc.service.common import Invalid
+from coscc.service.common import Invalid, Refused
 from tests.units.test_submit import submits as _submits
 from coscc.service.steps import CI_REFRESH
 from tests.service.test_service import use_sessions, use_config
@@ -804,6 +804,24 @@ class AStaleOriginMain(unittest.TestCase):
         [only] = self.records("integration")
         self.assertEqual(only["outcome"], "refused")
         self.assertEqual(self.updates, 0)
+        # The code, not the words, says there was nothing to do: on the record, the refusal and
+        # the attempt's row the autopilot reads.
+        self.assertEqual(only["code"], "nothing-to-integrate")
+        self.assertIsInstance(caught.exception, Refused)
+        self.assertEqual(caught.exception.reasons, ("nothing-to-integrate",))
+        ended = self.service.attempts.get(1)
+        self.assertEqual((ended["state"], ended["outcome"]), ("refused", "nothing-to-integrate"))
+
+    def test_a_refusal_a_person_must_look_at_carries_no_code(self):
+        (self.tree / "g.txt").write_text("dirty\n", encoding="utf-8")
+        with self.assertRaises(Invalid) as caught:
+            self.press()
+        self.assertIn("uncommitted", str(caught.exception))
+        self.assertNotIsInstance(caught.exception, Refused)
+        [only] = self.records("integration")
+        self.assertEqual((only["outcome"], only["code"]), ("refused", ""))
+        ended = self.service.attempts.get(1)
+        self.assertEqual((ended["state"], ended["outcome"]), ("refused", "invalid"))
 
     def autopilot_pass_at_ship(self) -> tuple[dict, dict, list[tuple[str, str]], dict]:
         """One autopilot pass over this unit, passed and waiting at `ship`. `next` is a stand-in —

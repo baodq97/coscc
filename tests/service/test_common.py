@@ -343,6 +343,30 @@ class TheStateOfAUnit(unittest.TestCase):
         )
         self.assertEqual(attention_reason(old), "ship.md is a draft")
 
+    def test_a_ship_still_merging_is_running_with_its_ship_and_an_error_without(self):
+        """A merge asked for and not recorded is no refusal: `Running` while its `ship` runs, and
+        an error saying so once no `ship` is left to record it."""
+        rows = [{"stage": "review", "status": "accepted"}, {"stage": "ship", "status": "draft"}]
+        merging = self._unit(
+            why="ship-merging",
+            at="ship",
+            between_pr_and_ship=True,
+            stages=rows,
+            next="ship is merging #7 — wait",
+        )
+        decided = unit_state(merging, None, None)
+        reason = attention_reason(merging)
+        # The ship's attempt runs.
+        shown = shown_state(decided, [{"stage": "ship", "state": "running"}])
+        self.assertEqual(shown["state"], "running")
+        self.assertEqual(reason_beside(reason, shown["state"]), "")
+        # None is left.
+        alone = shown_state(decided, [])
+        self.assertEqual(alone["state"], "error")
+        self.assertEqual(
+            reason_beside(reason, alone["state"]), "ship requested a merge and recorded no outcome"
+        )
+
 
 class WhatTheBoardSaysBesideAUnit(unittest.TestCase):
     """The words and buttons the board derives from what it read."""

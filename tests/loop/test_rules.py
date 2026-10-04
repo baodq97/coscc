@@ -671,3 +671,47 @@ class AnImplLeftInDraftIsToBeContinued(unittest.TestCase):
         put(self.store, "0001_a", accepted("plan.md", **{"impl.md": "draft"}))
         units = json.loads(python(self.store.argv("status", "--json")).out)["units"]
         self.assertNotIn("continue", units[0]["next"])
+
+
+# --- a ship that asked for a merge ----------------------------------------------------------
+
+
+class AShipThatAskedForAMergeIsMergingNotRefused(unittest.TestCase):
+    """`ship.md` draft with `Round:` and no `Refused:` line: ship asked GitHub to merge and has
+    not written the outcome yet."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.store = UnitStore(Path(self._dir.name) / "store")
+
+    def _put(self, name: str, went_out: str) -> None:
+        put(self.store, name, accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
+            texts={"review.md": review("accepted", round_(1, "pass")),
+                   "ship.md": text("ship.md", "draft", head="Round: 1.", body=f"## What went out\n{went_out}")})  # fmt: skip
+
+    def test_status_and_next_say_merging_and_never_ship_refused(self):
+        self._put("0001_a", "Merge requested.\n")
+        [row] = json.loads(python(self.store.argv("status", "--json")).out)["units"]
+        self.assertEqual(
+            row["next"],
+            {
+                "blocked": True,
+                "action": "ship is merging #7 — wait",
+                "stage": "",
+                "why": "ship-merging",
+            },
+        )
+        self.assertEqual(row["at"], "ship")
+        self.assertTrue(row["betweenPrAndShip"])
+        body = json.loads(python(self.store.argv("next", "0001_a")).out)
+        self.assertEqual(
+            (body["stage"], body["action"], body["reasons"]),
+            ("", "ship is merging #7 — wait", ["ship-merging"]),
+        )
+
+    def test_a_refused_line_is_still_ship_refused(self):
+        self._put("0001_a", "Refused: not up to date\n")
+        state = json.loads(self.store.state().read_text())
+        unit = read_unit(str(self.store.cos / "0001_a"), "0001_a", state)
+        self.assertEqual(next_answer(unit)["reasons"], ["ship-refused"])
