@@ -204,6 +204,8 @@ class ThePage(_WithAService):
         spec = by["spec"]
         self.assertEqual(len(spec["runs"]), 5)
         self.assertEqual(spec["runs"][0]["at"], _at(1))
+        # A run names its workspace, so a page over every workspace can tell whose unit it is.
+        self.assertEqual(spec["runs"][0]["workspace"], "w")
         self.assertEqual((spec["last"]["outcome"], spec["last"]["turns"]), ("done", 7))
         self.assertEqual((spec["runs_30d"], spec["cost_30d"]), (6, 3.0))
         self.assertEqual(spec["chip"], "ok")

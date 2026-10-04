@@ -513,3 +513,5 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
 .rl-note { font-size: 12px; margin-top: 6px; }
 .link-btn { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { color: var(--text); }
+.agent-card { padding: 14px; display: flex; flex-direction: column; gap: 10px; color: inherit; }
+.agent-card:hover { border-color: var(--text-4); }
