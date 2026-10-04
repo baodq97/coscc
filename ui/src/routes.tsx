@@ -1,0 +1,100 @@
+// Every screen of the studio: its path, its place in the sidebar, and what draws it.
+// The command bar and the sidebar are both built from this one list.
+
+import type { ReactNode } from "react";
+import type { IconName } from "./lib/icons";
+import { Briefing } from "./screens/Briefing";
+import { Work } from "./screens/Work";
+import { UnitPage } from "./screens/UnitPage";
+import { Agents } from "./screens/Agents";
+import { System } from "./screens/System";
+import { Planned } from "./components/ui";
+
+export type Screen = {
+  path: string;
+  title: string;
+  nav?: "Leif" | "Work" | "Team";
+  icon?: IconName;
+  keys?: string;
+  crumbs?: (p: Record<string, string>) => string[];
+  render: (p: Record<string, string>) => ReactNode;
+};
+
+export const SCREENS: Screen[] = [
+  { path: "/", title: "Briefing", nav: "Leif", keys: "G H", render: () => <Briefing /> },
+  {
+    path: "/inbox",
+    title: "Needs you",
+    nav: "Leif",
+    icon: "inbox",
+    keys: "G I",
+    render: () => (
+      <Planned icon="inbox" title="Needs you">
+        Every question, merge and decision waiting on you across all projects, each with Leif's recommendation and one main button.
+      </Planned>
+    ),
+  },
+  {
+    path: "/leif",
+    title: "Talk to Leif",
+    nav: "Leif",
+    icon: "chat",
+    keys: "G L",
+    render: () => (
+      <Planned icon="chat" title="Talk to Leif">
+        One conversation with Leif. Leif shows units, costs and plans as cards, and acts only after you say so.
+      </Planned>
+    ),
+  },
+  {
+    path: "/decisions",
+    title: "Leif decided",
+    nav: "Leif",
+    icon: "decided",
+    keys: "G D",
+    render: () => (
+      <Planned icon="decided" title="Leif decided">
+        Every call Leif made for you today, with its reason and precedent, and Overrule.
+      </Planned>
+    ),
+  },
+  { path: "/work", title: "All work", nav: "Work", icon: "board", keys: "G B", render: () => <Work /> },
+  { path: "/work/:ws", title: "Work", crumbs: (p) => ["Work", p.ws], render: (p) => <Work workspace={p.ws} /> },
+  { path: "/unit/:ws/:n", title: "Unit", crumbs: (p) => ["Work", p.ws, p.n], render: (p) => <UnitPage workspace={p.ws} number={p.n} /> },
+  {
+    path: "/new",
+    title: "New work",
+    keys: "C",
+    render: () => (
+      <Planned icon="edit" title="New work">
+        Say what you want in your own words. Leif drafts the unit, you confirm the project and the type.
+      </Planned>
+    ),
+  },
+  { path: "/agents", title: "Agents", nav: "Team", icon: "team", keys: "G T", render: () => <Agents /> },
+  {
+    path: "/insights",
+    title: "Insights",
+    nav: "Team",
+    icon: "chart",
+    keys: "G S",
+    render: () => (
+      <Planned icon="chart" title="Insights">
+        Cost, speed and quality per project and per agent, against the targets: $15 a shipped unit, no hand interventions, 1.5 review rounds.
+      </Planned>
+    ),
+  },
+  {
+    path: "/may-do",
+    title: "What Leif may do",
+    nav: "Team",
+    icon: "book",
+    keys: "G K",
+    render: () => (
+      <Planned icon="book" title="What Leif may do">
+        Leif's contract with you: what Leif decides alone, what it always asks, the spend cap and the autopilot.
+      </Planned>
+    ),
+  },
+  { path: "/system", title: "Design system", render: () => <System /> },
+];

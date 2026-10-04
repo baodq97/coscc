@@ -284,27 +284,27 @@ class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
 class NoHandWrittenMarkup(unittest.TestCase):
     """No hand-written markup, as a standing check, not just a one-off in the proof.
 
-    `coscc/_web/` is excluded, and the exclusion is narrow on purpose. That directory holds the
-    *compiled* bundle — thousands of generated `.html` and `.css` files that the release copies
-    into the package and `.gitignore` keeps out of git. The claim this test defends is about
+    `coscc/_web/` and `coscc/_studio/` are excluded, and the exclusion is narrow on purpose. They
+    hold the *compiled* bundles (Reflex's, and the studio's built from `ui/`): generated `.html`
+    and `.css` files that the release copies into the package and `.gitignore` keeps out of git. The claim this test defends is about
     markup somebody typed, so generated output is not in its scope. Excluding any wider path
     would start hiding the thing it is here to catch."""
 
-    GENERATED = "_web"
+    GENERATED = ("_web", "_studio")
 
     def test_the_app_ships_no_hand_written_html_or_css(self):
         repo = Path(__file__).resolve().parents[1]
         found = [
             p.relative_to(repo)
             for p in list(repo.glob("coscc/**/*.html")) + list(repo.glob("coscc/**/*.css"))
-            if self.GENERATED not in p.relative_to(repo).parts
+            if not set(self.GENERATED) & set(p.relative_to(repo).parts)
         ]
         self.assertEqual(found, [], f"hand-written markup is back: {found}")
 
     def test_the_exclusion_is_only_the_compiled_bundle(self):
         # If someone widens GENERATED to something like "coscc", the check above passes
         # while defending nothing. This is the tripwire for that.
-        self.assertEqual(self.GENERATED, "_web")
+        self.assertEqual(self.GENERATED, ("_web", "_studio"))
 
 
 class Loopback(unittest.TestCase):

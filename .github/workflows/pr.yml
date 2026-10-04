@@ -57,3 +57,8 @@ jobs:
       # in `scripts/` was measured on, so it does not replace running the same command
       # locally.
       - run: npm test
+      # The studio (`ui/`): its types, its tests and its build.
+      - run: npm --prefix ui ci --no-audit --no-fund
+      - run: npm --prefix ui run check
+      - run: npm --prefix ui test
+      - run: npm --prefix ui run build

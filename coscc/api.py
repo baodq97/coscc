@@ -31,7 +31,7 @@ from typing import Any, AsyncIterator
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from coscc import features, plugin
+from coscc import features, plugin, studio
 from coscc.config import Config, from_env
 from coscc.service import Service
 from coscc.service.common import Invalid, NotUpdatable, Updating
@@ -563,7 +563,11 @@ def build(config: Config | None = None) -> FastAPI:
     # Checked now, created when the app starts (`coscc.py`): building the page imports this
     # module in processes that may not open the database.
     tables = plugin.tables_of(features.FEATURES)
-    routes = [*router.routes, *(r for f in features.FEATURES for r in f.routes(ctx))]
+    routes = [
+        *router.routes,
+        *studio.router.routes,
+        *(r for f in features.FEATURES for r in f.routes(ctx)),
+    ]
     api = FastAPI(title="coscc", lifespan=lifespan, routes=routes)
     api.state.config = config
     api.state.sessions = sessions
@@ -579,6 +583,7 @@ def build(config: Config | None = None) -> FastAPI:
     api.add_exception_handler(Invalid, _refused)
 
     # No route for `/` and no static mount: `/` has to fall through to Reflex's compiled-frontend
-    # mount, and a route defined here would win over it.
+    # mount, and a route defined here would win over it. The new studio is under `/next`
+    # (`coscc/studio.py`) until it replaces that page.
 
     return api

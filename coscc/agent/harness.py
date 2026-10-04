@@ -154,6 +154,9 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     found = sum(1 for n in names if n.startswith(skills_prefix) and n.endswith("/" + SKILL_FILE))
     if not found:
         out.append(f"no {skills_prefix}*/{SKILL_FILE} — every step would refuse to run")
+    studio = _posix("_studio", "index.html")
+    if studio not in names:
+        out.append(f"no {studio} — /next would serve no page")
     if state_set not in names:
         out.append(f"no {state_set} — no transition could be read or written")
     # Without it no guard is chosen for any transition.

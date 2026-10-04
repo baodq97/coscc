@@ -24,3 +24,4 @@ __pycache__/
 dist/
 # What `scripts/capture_screens.py` writes: screenshots and their manifest (`0083`).
 .screens/
+coscc/_studio/
