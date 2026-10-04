@@ -320,7 +320,13 @@ def render(book: Book, facts: Facts) -> str:
     """The block of spec and plan: the unit's live decisions and how to weigh them."""
     if facts.stage not in BLOCK_STAGES:
         return ""
-    live = [d for d in book.rows(facts.workspace_key, facts.unit) if not d["withdrawn"]]
+    try:
+        rows = book.rows(facts.workspace_key, facts.unit)
+    except sqlite3.OperationalError:
+        # The table is made when the app starts; an app built without starting has none, and
+        # a block that raises would fail the step it was to inform.
+        return ""
+    live = [d for d in rows if not d["withdrawn"]]
     if not live:
         return ""
     parts = [
