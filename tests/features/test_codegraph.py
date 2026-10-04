@@ -301,8 +301,8 @@ class AtPilotTheSentenceTellsTheSplit(Setup):
         self.seed({"0002_a": "on", "0003_b": "off"})
         self.idx.shown = Status("", "", "", "")
         with (
-            mock.patch.object(codegraph.turnstats, "pairs", side_effect=AssertionError),
-            mock.patch.object(codegraph.turnstats, "read_chars", side_effect=AssertionError),
+            mock.patch.object(codegraph, "turn_pairs", side_effect=AssertionError),
+            mock.patch.object(codegraph, "read_chars", side_effect=AssertionError),
             mock.patch.object(codegraph, "_rounds", side_effect=AssertionError),
         ):
             sentence = codegraph.status(self.ctx, "/w/proj")[0]

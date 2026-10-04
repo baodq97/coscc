@@ -39,7 +39,9 @@ Copy `notices`. A need no extension point serves is a kernel change, planned fir
 - Extension points: `routes`, `scripts`, `tables`, `agent` giving `Parts` of `Tool`, `Guard`
   (`check(Facts)` returns words to deny, or `None`; asked before every step and integration) and `Block` (`render(Facts)` adds prompt
   text); slots `slot-topbar` and `slot-unit`; `page=Page(label, icon, path)`, a sidebar entry
-  whose screen frames the feature's own `GET path?cwd=<workspace>`.
+  whose screen frames the feature's own `GET path?cwd=<workspace>`; `sessions=(Session(kind,
+  grant, schema, purpose),)`, a paid session it runs through `ctx.session(cwd, kind, prompt)`.
+  The core never writes a feature's name (`CoreNamesNoFeature` in `tests/test_boundaries.py`).
 - Building blocks: `kernel.body/line/ndjson`, `Ctx`, `window.coscc.api/stream/every/ago/slot`.
 
 ```python

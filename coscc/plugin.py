@@ -15,9 +15,11 @@ import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
+from coscc.agent import policy
 from coscc.agent.policy import is_prose_stage
+from coscc.bus import Name
 from coscc.agent.sessions import Suspended
 from coscc.data import Data
 from coscc.runlog.journal import Intervention
@@ -33,11 +35,11 @@ from coscc.kernel import (
     Submitted,
     arm_of,
 )
-from coscc.service import Service
+from coscc.service import Service, attempts
 from coscc.service.interventions import interventions
 from coscc.service.update import refuse_while_updating
 from coscc.service.workspaces import Workspaces
-from coscc.units import worktrees
+from coscc.units import submit, worktrees
 
 OFF_PREF = "features.off"
 STATE_PREF = "features.state"
@@ -160,6 +162,20 @@ def create_tables(ctx: Ctx, tables: Sequence[str]) -> None:
     with ctx.data.write() as conn:
         for statement in tables:
             conn.execute(statement)
+
+
+def add_sessions(service: Service, features: Sequence[Feature]) -> None:
+    """Every feature's `sessions` into the core's tables: its grant (`policy`), its `submit`
+    schema, its attempt machine; and the updater hears each one end, as it hears the core's."""
+    for f in features:
+        for s in f.sessions:
+            policy.add_session(s.kind, s.grant, s.own_turns)
+            submit.add_session(s.kind, s.schema, s.purpose)
+            attempts.add_session(s.kind)
+            for end in ("ended", "refused"):
+                service.bus.subscribe(
+                    cast(Name, f"{s.kind}.{end}"), lambda _: service.updater.job_ended()
+                )
 
 
 def hooks_of(features: Sequence[Feature], ctx: Ctx) -> Hooks:

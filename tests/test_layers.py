@@ -161,18 +161,9 @@ FEATURE_MAY_IMPORT = {"coscc.kernel"}
 # Core modules a feature still imports because the kernel does not give it yet. The list only
 # shrinks: an entry no feature imports any more fails `test_every_kernel_gap_is_still_used`.
 KERNEL_GAPS = {
-    "coscc.agent": "`policy`: vault and codegraph read and check grants",
-    "coscc.agent.policy": "scan's `grant_for`",
-    "coscc.auth": "notices' websocket recheck, gone with the Reflex page",
-    "coscc.bus": "codegraph's `Event`",
-    "coscc.data": "`now` and `Busy`",
-    "coscc.runlog.journal": "notices' `BELL`",
-    "coscc.service.common": "scan's `CONSEQUENCE` and `OWNER`",
-    "coscc.units": "codegraph's `cos_dir` and `turnstats`",
-    "coscc.units.autopilot": "codegraph's `files_of`, notices' stop kinds",
-    "coscc.units.scratch": "scratch's `RAM_CAP`",
-    "coscc.units.submit": "scan's proposal types and slug rules",
-    "coscc.vault": "the vault feature's store, rules and runner",
+    "coscc.auth": "notices' lifetime is the socket's recheck bound; both go with the Reflex page",
+    "coscc.units.turnstats": "codegraph's turn statistics; codegraph already has its 3 files",
+    "coscc.vault": "the vault's store, rules and runner; a feature has at most 3 files",
 }
 FEATURE_FILES = 3
 FEATURE_LINES = 800
@@ -328,7 +319,7 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
         self.assertIn("never by import", msg)
 
     def test_a_feature_may_import_the_kernel_and_its_gaps(self):
-        src = "from coscc.kernel import Ctx\nfrom coscc.data import now\n"
+        src = "from coscc.kernel import Ctx\nfrom coscc.vault import Store\n"
         self.assertEqual(feature_import_problems({"features/a.py": src}), [])
         (msg,) = feature_import_problems({"features/a.py": "from coscc.git import gitops\n"})
         self.assertIn("imports only coscc.kernel", msg)

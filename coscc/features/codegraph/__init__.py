@@ -17,10 +17,6 @@ import threading
 import time
 from claude_agent_sdk import McpServerConfig, SdkMcpTool, create_sdk_mcp_server, tool
 from collections.abc import Callable, Iterable, Mapping
-from coscc import units
-from coscc.agent import policy
-from coscc.bus import Event
-from coscc.data import now
 from coscc.features.codegraph.graph import (
     BridgeError,
     GitError,
@@ -37,9 +33,24 @@ from coscc.features.codegraph.graph import (
     old_hunks,
     review_map,
 )
-from coscc.kernel import Block, Ctx, Facts, Feature as Feature, Invalid, Parts, State, Tool
-from coscc.units import turnstats
-from coscc.units.autopilot import files_of
+from coscc.kernel import (
+    Block,
+    Ctx,
+    Event,
+    Facts,
+    Feature,
+    Invalid,
+    Parts,
+    State,
+    Tool,
+    check_command,
+    cos_dir,
+    files_of,
+    grant_for,
+    now,
+)
+from coscc.units.turnstats import changes_requested, impl_ends, read_chars, shipped_units
+from coscc.units.turnstats import pairs as turn_pairs
 from dataclasses import dataclass, replace
 from datetime import date
 from fastapi import APIRouter, Request
@@ -596,9 +607,9 @@ def build_tools(ctx: Ctx, facts: Facts) -> list[SdkMcpTool[Any]]:
         if where is None or not isinstance(binary, Path):
             return _text("The code index is not ready; use Read and Grep.", True)
         root, sha = where
-        grant = replace(policy.grant_for(facts.stage), commands=facts.commands)
+        grant = replace(grant_for(facts.stage), commands=facts.commands)
         for line in (f"{binary} {home / 'bridge.mjs'}", f"git diff --name-only {sha}"):
-            words = policy.check_command(grant, line)
+            words = check_command(grant, line)
             if words:
                 return _text(f"Refused: {words}", True)
 
@@ -696,7 +707,7 @@ def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
     # The split, the units the report counts in each arm so far and the scoring day.
     # Quick: whether a step's events remain is all `report` needs to count units, so none is read.
     with ctx.data.connect() as conn:
-        rows, ended = _rows(conn, key), turnstats.impl_ends(conn, key)
+        rows, ended = _rows(conn, key), impl_ends(conn, key)
     steps = [Step(run, unit, 0.0, None if gone else 0, None) for run, unit, gone in ended]
     arms = report(rows, steps, {}, (None, None))["arms"]
     split = (
@@ -726,10 +737,10 @@ def _rounds(
 ) -> dict[str, int]:
     """The changes-requested rounds of each unit shipped in the window whose review is there."""
     out: dict[str, int] = {}
-    for unit in turnstats.shipped_units(conn, key, *window):
-        review = units.cos_dir(key, ctx.data.root) / unit / "review.md"
+    for unit in shipped_units(conn, key, *window):
+        review = cos_dir(key, ctx.data.root) / unit / "review.md"
         if review.is_file():
-            out[unit] = turnstats.changes_requested(review.read_text(encoding="utf-8"))
+            out[unit] = changes_requested(review.read_text(encoding="utf-8"))
     return out
 
 
@@ -737,9 +748,9 @@ def measured(ctx: Ctx, key: str, window: tuple[str | None, str | None]) -> Repor
     """The report over the run log: blocking, run in a thread."""
     with ctx.data.connect() as conn:
         rows = _rows(conn, key)
-        pairs = turnstats.pairs(conn, key, None, None)
+        pairs = turn_pairs(conn, key, None, None)
         runs = [str(p["end"].get("run") or "") for p in pairs]
-        chars = turnstats.read_chars(conn, runs, NAME)
+        chars = read_chars(conn, runs, NAME)
         rounds = _rounds(conn, ctx, key, window)
     steps = [
         Step(

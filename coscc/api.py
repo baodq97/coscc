@@ -14,7 +14,7 @@ Reflex reserves `/ping/`, `/_event` and `/_upload`; the guard in `coscc/auth.py`
 `/login`, `/setup` and `/logout`. Nothing here may use them. Every route sits behind that
 guard: without a live session only `GET /api/health` gets through. One password, one user:
 whoever holds it or a session cookie can call every route below. A name a body carries
-(`answered_by`, `by`, `stopped_by`, `recorded_by`) is written as sent, or as `service.OWNER`
+(`answered_by`, `by`, `stopped_by`, `recorded_by`) is written as sent, or as `kernel.OWNER`
 when absent; neither is an identity. Tests that build this app alone drive it without the guard.
 
 A refusal is `Invalid` raised by `Service` and answered in one place: 400, or 503 while an
@@ -612,6 +612,7 @@ def build(config: Config | None = None) -> FastAPI:
     # The routes themselves, not `include_router`, which keeps them behind one entry of `routes`.
     # Read now, so a test can patch `features.FEATURES`.
     ctx = plugin.ctx_of(service, features.FEATURES)
+    plugin.add_sessions(service, features.FEATURES)
     service.steps.hooks = plugin.hooks_of(features.FEATURES, ctx)
     # Checked now, created when the app starts (`coscc.py`): building the page imports this
     # module in processes that may not open the database.

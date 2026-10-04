@@ -226,12 +226,6 @@ ESTIMATE_WARNING = (
     "can rewrite any estimate, relation or the shortlist under any name they type."
 )
 
-# Said beside *Scan now* on the Backlog, before it is pressed.
-SCAN_WARNING = (
-    "Scanning opens one paid session (2 turns, $0.68 ceiling, about $1 at most) on the model of "
-    "the Agents page row `estimate`."
-)
-
 # Only stages that appear here get anything. The rest (`idea`, `intent`, any stage invented
 # later) falls through to `Grant()`. Keyed by stage alone.
 GRANTS: dict[str, Grant] = {
@@ -321,16 +315,6 @@ GRANTS: dict[str, Grant] = {
         max_budget_usd=2.0,
         warning=ESTIMATE_WARNING,
     ),
-    # Not a stage either: one run of the `scan` feature, which reads the run log and proposes
-    # work. No tools and no commands, like `estimate`; it hands its proposals back through
-    # `submit`. Two turns is what a measured scan took (`submit`, then the end). The budget
-    # is checked only once a turn is paid for, so $0.68 is $1 less the dearest whole
-    # scan measured ($0.32, one sample): a scan stays near $1 at worst, not under it for sure.
-    "scan": Grant(
-        max_turns=2,
-        max_budget_usd=0.68,
-        warning=SCAN_WARNING,
-    ),
 }
 
 # The ceilings a step gets when its plan's label is `novel` (`coscc/agent/labels.py`), as
@@ -365,11 +349,22 @@ SUBMITTING = ("idea", "impl", "intent", "plan", "review", "spec", "spike")
 # reply. Chosen, not measured.
 SUBMIT_TURNS = 4
 # The sessions that are no stage and hand back an object through `submit`: Gebo, the
-# estimate and a scan, `coscc/units/submit.py`'s `SESSIONS`.
-SUBMITTING_SESSIONS = ("estimate", "integrate", "scan")
-# The sessions whose own `max_turns` holds below `SUBMIT_TURNS`: a turn more on a scan could
-# pass its $1 (see `GRANTS["scan"]`), so a refused object is not submitted again.
-OWN_TURNS = ("scan",)
+# estimate, and each feature's (`add_session`); `coscc/units/submit.py`'s `SESSIONS`.
+SUBMITTING_SESSIONS = {"estimate", "integrate"}
+# The sessions whose own `max_turns` holds below `SUBMIT_TURNS`, because one more turn could
+# pass their budget: a refused object is not submitted again.
+OWN_TURNS: set[str] = set()
+
+
+def add_session(kind: str, grant: Grant, own_turns: bool) -> None:
+    """A feature's session (`kernel.Session`), added when the app is built; adding the same
+    one again changes nothing, and taking a name another grant holds is a `ValueError`."""
+    if GRANTS.get(kind, grant) != grant:
+        raise ValueError(f"the grant {kind!r} is taken")
+    GRANTS[kind] = grant
+    SUBMITTING_SESSIONS.add(kind)
+    if own_turns:
+        OWN_TURNS.add(kind)
 
 
 def grant_for(stage: str) -> Grant:
@@ -379,7 +374,7 @@ def grant_for(stage: str) -> Grant:
     `SUBMIT_TURNS` turns, unless it is one of `OWN_TURNS`.
     """
     grant = GRANTS.get(stage, Grant())
-    if stage not in SUBMITTING + SUBMITTING_SESSIONS:
+    if stage not in SUBMITTING and stage not in SUBMITTING_SESSIONS:
         return grant
     return replace(grant, submits=True, max_turns=turns_floor(stage, grant.max_turns))
 
@@ -387,7 +382,7 @@ def grant_for(stage: str) -> Grant:
 def turns_floor(stage: str, turns: int) -> int:
     """`turns`, raised to `SUBMIT_TURNS` for a stage or session that submits, unless it is one
     of `OWN_TURNS`. A person's override of the ceiling gets the same floor."""
-    if stage in OWN_TURNS or stage not in SUBMITTING + SUBMITTING_SESSIONS:
+    if stage in OWN_TURNS or (stage not in SUBMITTING and stage not in SUBMITTING_SESSIONS):
         return turns
     return max(turns, SUBMIT_TURNS)
 
