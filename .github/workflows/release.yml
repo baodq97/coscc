@@ -32,6 +32,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      # `scripts/build_wheel.sh` builds the studio (`ui/`) with npm.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           python-version: '3.14'

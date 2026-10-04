@@ -54,6 +54,12 @@ uv sync --frozen
 # nothing upstream of this step needs to provision one.
 uv run coscc-build >&2
 
+# The studio (`ui/`, served under `/next` by `coscc/studio.py`) builds straight into
+# `coscc/_studio/`, inside the package, so `uv build` carries it. `npm ci` installs exactly the
+# lock file; `check_wheel.py` refuses a wheel without the page.
+npm --prefix ui ci --no-audit --no-fund >&2
+npm --prefix ui run build >&2
+
 # `.web/` is gitignored and never committed (see .gitignore), so this copy is the only thing
 # that puts the bundle somewhere `uv build` will include it — `pyproject.toml` declares
 # `module-name = "coscc"`, so only what lands under `coscc/` travels in the wheel (0011

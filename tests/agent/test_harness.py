@@ -34,6 +34,7 @@ RUNNABLE = (
     f"coscc/_web/{frontend._LAYOUT.as_posix()}/index.html",
     f"coscc/_web/{frontend.MARKER.as_posix()}",
     "coscc/_harness/skills/write-spec/SKILL.md",
+    "coscc/_studio/index.html",
     # Committed rather than generated, unlike the four above, and checked anyway: an installed copy
     # cannot tell how a missing file came to be missing.
     "coscc/units/states.json",
@@ -154,6 +155,15 @@ class AWheelIsChecked(unittest.TestCase):
             wheel = _wheel(Path(tmp) / "ok.whl", RUNNABLE)
             self.assertFalse(any(".mjs" in n for n in zipfile.ZipFile(wheel).namelist()))
             self.assertEqual(harness.wheel_complaints(wheel), [])
+
+    def test_a_wheel_without_the_studio_is_caught(self):
+        # `/next` would answer 503 on an install that is otherwise whole.
+        with tempfile.TemporaryDirectory() as tmp:
+            names = [n for n in RUNNABLE if "_studio" not in n]
+            wheel = _wheel(Path(tmp) / "nostudio.whl", names)
+            complaints = harness.wheel_complaints(wheel)
+            self.assertEqual(len(complaints), 1, complaints)
+            self.assertIn("_studio/index.html", complaints[0])
 
     def test_a_wheel_without_the_state_set_is_caught(self):
         # `coscc/units/states.py` has nothing to validate a transition against, so the log can
