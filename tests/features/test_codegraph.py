@@ -260,6 +260,28 @@ class AtPilotTheSentenceTellsTheSplit(Setup):
         self.assertIn(f"{arms['on']['units']} on, {arms['off']['units']} off so far", sentence)
         self.assertIn("3 on, 2 off so far", sentence)
 
+    def test_a_run_that_failed_is_not_counted_as_the_report_does_not(self):
+        self.seed({"0002_a": "on", "0003_b": "off", "0004_c": "on"})
+        with self.ctx.data.write() as conn:
+            conn.execute("UPDATE codegraph_runs SET error = 'no index' WHERE unit = '0004_c'")
+        self.idx.shown = Status("", "", "", "")
+        arms = codegraph.measured(self.ctx, KEY, (None, None))["arms"]
+        self.assertEqual((arms["on"]["units"], arms["off"]["units"]), (1, 1))
+        self.assertIn("1 on, 1 off so far", codegraph.status(self.ctx, "/w/proj")[0])
+
+    def test_a_unit_with_only_a_review_run_is_not_counted(self):
+        self.seed({"0002_a": "on", "0003_b": "off"})
+        with self.ctx.data.write() as conn:
+            conn.execute(
+                "INSERT INTO codegraph_runs VALUES ('r9', ?, '0006_f', 'review', 'on', ?, 0, 0, '', "
+                "'2026-10-02T11:00:00')",
+                (KEY, SHA),
+            )
+        self.idx.shown = Status("", "", "", "")
+        arms = codegraph.measured(self.ctx, KEY, (None, None))["arms"]
+        self.assertEqual((arms["on"]["units"], arms["off"]["units"]), (1, 1))
+        self.assertIn("1 on, 1 off so far", codegraph.status(self.ctx, "/w/proj")[0])
+
     def test_an_install_state_comes_first(self):
         for state, head in (
             ("installing", "Installing the code index engine"),

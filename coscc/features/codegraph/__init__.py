@@ -700,13 +700,11 @@ def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
     }.get(s.state)
     if state != "pilot":
         return index or "Waiting: the index of main is built at the next impl or review.", True
-    # The split, the units in each arm so far and the scoring day, after the index state.
-    with ctx.data.connect() as conn:
-        rows = conn.execute("SELECT unit, arm FROM codegraph_runs WHERE workspace = ?", (key,))
-        arms = units_by_arm((u, a) for u, a in rows.fetchall() if a in ARMS)
+    # The split, the units the report counts in each arm so far and the scoring day.
+    arms = measured(ctx, key, (None, None))["arms"]
     split = (
-        f"even-numbered units use it, odd ones do not: {len(arms['on'])} on, "
-        f"{len(arms['off'])} off so far, scored {SCORING_DAY:%b %-d}."
+        f"even-numbered units use it, odd ones do not: {arms['on']['units']} on, "
+        f"{arms['off']['units']} off so far, scored {SCORING_DAY:%b %-d}."
     )
     return (f"{index.rstrip('.')}; {split}" if index else split[0].upper() + split[1:]), True
 
