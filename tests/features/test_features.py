@@ -19,14 +19,19 @@ from coscc import features
 from coscc.hooks import Block, Guard, Parts, Tool
 from coscc.plugin import (
     OFF_PREF,
+    SCHEDULE_PREF,
     STATE_PREF,
     Ctx,
     Plugin,
+    Schedule,
     arm_of,
     create_tables,
     ctx_of,
     hooks_of,
+    set_schedule_of,
     set_state,
+    shown,
+    tick,
 )
 from coscc.api import build
 from coscc.config import PROTECTED_DB_VAR, Config
@@ -256,6 +261,60 @@ class AFeatureHandsTheAgentItsParts(Setup):
             hooks_of([fake_feature("a"), fake_feature("b", server="other", guard="g2")], ctx)
         with self.assertRaisesRegex(ValueError, "fake: .*prose stages \\(plan\\)"):
             hooks_of([fake_feature(stages=("impl", "plan"))], ctx)
+
+
+class AScheduledFeatureRunsOnItsOwn(Setup):
+    """K4 of 0156: the pref `features.schedule`, its door, and the core's tick."""
+
+    def scheduled(self, ticked: list) -> Plugin:
+        async def tick(_ctx, cwd: str, hours: int) -> None:
+            ticked.append((cwd, hours))
+
+        return Plugin("timed", lambda _ctx: [], schedule=Schedule((0, 12, 24), 24, tick))
+
+    async def test_the_door_writes_the_pref_and_settings_reads_it_back(self):
+        timed = self.scheduled([])
+        with mock.patch("coscc.features.FEATURES", (*features.FEATURES, timed)):
+            async with self.client() as client:
+                api = client._transport.app
+                listed = {f.name: f for f in shown(api.state.ctx, api.state.plugins, str(self.ws))}
+                self.assertEqual(
+                    (listed["timed"].schedule, listed["timed"].hours), (24, (0, 12, 24))
+                )
+                self.assertIsNone(listed["notices"].schedule)
+                good = {"cwd": str(self.ws), "name": "timed", "schedule": 12}
+                r = await client.post("/api/features", json=good)
+                self.assertEqual(
+                    (r.status_code, r.json()), (200, {"name": "timed", "schedule": 12})
+                )
+                self.assertEqual(api.state.ctx.schedule("timed", str(self.ws)), 12)
+                stored = Data(self.config.data_dir).pref(SCHEDULE_PREF, {})
+                self.assertEqual(stored, {"timed": {str(self.ws.resolve()): 12}})
+                for bad in (
+                    {**good, "schedule": 6},
+                    {**good, "schedule": True},
+                    {**good, "name": "notices"},
+                    {**good, "cwd": "/etc"},
+                ):
+                    r = await client.post("/api/features", json=bad)
+                    self.assertEqual(r.status_code, 400, bad)
+                self.assertEqual(api.state.ctx.schedule("timed", str(self.ws)), 12)
+
+    async def test_a_tick_asks_only_where_it_is_on_and_scheduled(self):
+        ticked: list = []
+        timed = self.scheduled(ticked)
+        with mock.patch("coscc.features.FEATURES", (timed,)):
+            api = build(self.config)
+        ctx, service = api.state.ctx, api.state.service
+        await tick(service, ctx, (timed,))
+        self.assertEqual(ticked, [(str(self.ws), 24)])
+        set_schedule_of(service, (timed,), "timed", str(self.ws), 0)
+        await tick(service, ctx, (timed,))
+        self.assertEqual(len(ticked), 1)
+        set_schedule_of(service, (timed,), "timed", str(self.ws), 12)
+        set_state(service, ctx, (timed,), "timed", str(self.ws), "off")
+        await tick(service, ctx, (timed,))
+        self.assertEqual(len(ticked), 1)
 
 
 class AFeatureWithAgentPartsSaysWhatTheAgentSees(unittest.TestCase):

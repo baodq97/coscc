@@ -304,6 +304,8 @@ def _backlog_screen() -> rx.Component:
                 flex_wrap="wrap",
             ),
         ),
+        # A feature's part of the Backlog, drawn by its own script (`plugin.KIT_JS`'s `slot`).
+        rx.box(id="slot-backlog", width="100%"),
         spacing="5",
         width="100%",
         id="backlog-panel",

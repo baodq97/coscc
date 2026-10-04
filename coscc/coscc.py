@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import reflex as rx
 
 from coscc import plugin, screens, ui
@@ -44,6 +46,17 @@ async def create_feature_tables() -> None:
 
 
 app.register_lifespan_task(create_feature_tables)
+
+
+async def run_schedules() -> None:
+    """Every scheduled feature, asked every `plugin.TICK_SECONDS` while the app runs; the first
+    round waits one period, so a start spends nothing at once."""
+    while True:
+        await asyncio.sleep(plugin.TICK_SECONDS)
+        await plugin.tick(API.state.service, API.state.ctx, API.state.plugins)
+
+
+app.register_lifespan_task(run_schedules)
 
 
 def served():
