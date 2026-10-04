@@ -24,11 +24,7 @@ from coscc.loop.model import (
 )
 from coscc.loop.probe import UI_STANDARD
 from coscc.loop.repo_rules import screens_answer, screens_needs
-<<<<<<< HEAD
 from coscc.loop.rules import check_gate, decide, next_action, next_answer, next_step, stage_at
-=======
-from coscc.loop.rules import check_gate, next_action, next_answer, next_step, stage_at
->>>>>>> 2d70b72 (feat(0159): an outdated spec or plan runs again through the loop)
 from tests.loop.conftest import TZ, git
 from tests.loop.test_model_links import MERGE, merged_probe
 from tests.loop.test_model import (
