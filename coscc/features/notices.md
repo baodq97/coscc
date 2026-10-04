@@ -96,8 +96,9 @@ session is seeded.
   the bell and arrives at once. Measured in `features/test_notices.py`, not in production.
 - **An autopilot stop reaches the run log only when a pass runs**, every 5 minutes or after a
   step ends: the stream is prompt about the log, not about the stop.
-- **`ship-refused` can be a merge that happened.** `why` is read off the files after the step;
-  a `ship` whose branch deletion failed after the merge leaves `ship.md` `draft` and reads as
-  `ship-refused`. A `shipped` for the same unit follows once `ship` runs again.
+- **A merge not yet recorded makes no notice.** `why` is read off the files after the step; a
+  `ship.md` `draft` with a round and no `Refused:` line reads `ship-merging`, which writes no
+  `ship` record. `shipped` follows once the merge is recorded; `ship-refused` needs the
+  `Refused:` line.
 - **Hearing a notice is not an approval.** It changes no artifact, gate, stop or hold, and
   the stream writes nothing to the run log.
