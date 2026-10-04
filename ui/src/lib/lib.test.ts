@@ -3,6 +3,7 @@ import { ago, modelName, money, unitCode, unitTitle } from "./format";
 import { match } from "./router";
 import { unitState, type Unit } from "./model";
 import { matches } from "./stream";
+import { fill } from "./api";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -75,5 +76,12 @@ describe("stream", () => {
     expect(matches(change, ["step."], "/w/a")).toBe(true);
     expect(matches(change, ["step."], "/w/b")).toBe(false);
     expect(matches({ ...change, workspace: "" }, ["step."], "/w/b")).toBe(true);
+  });
+});
+
+describe("api", () => {
+  it("fills a route's path from the query and keeps the rest as a query", () => {
+    expect(fill("/api/units/{name}", { name: "0001_x y", cwd: "/w/a" })).toEqual({ path: "/api/units/0001_x%20y", rest: { cwd: "/w/a" } });
+    expect(fill("/api/units", { cwd: "/w/a" })).toEqual({ path: "/api/units", rest: { cwd: "/w/a" } });
   });
 });

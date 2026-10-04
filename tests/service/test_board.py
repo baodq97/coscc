@@ -592,3 +592,43 @@ class AListShowsACardOfEachUnit(unittest.TestCase):
         self.assertNotIn("stages", card)
         self.assertIsNone(got["autopilot"])
         self.assertEqual(got["running"][0]["agent"], "Uruz")
+
+
+class AUnitPageShowsItsRuns(unittest.TestCase):
+    def test_a_run_whose_cost_was_never_reported_says_unknown_not_zero(self):
+        from coscc.service.board import detail
+
+        unit = {
+            "name": "0001_x",
+            "number": 1,
+            "slug": "x",
+            "state": {"state": "ready", "label": "Ready", "color": "gray"},
+            "questions": [{"artifact": "spec.md", "n": 1, "text": "Which?", "answered": True}],
+            "answers": [
+                {
+                    "artifact": "spec.md",
+                    "n": 1,
+                    "text": "This one",
+                    "by": "Leif",
+                    "authority": "delegated",
+                }
+            ],
+            "worktree": {"branch": "fix/x", "path": "/w/x", "prepare": None},
+        }
+        timeline = [
+            {
+                "stage": "spec",
+                "started": "t0",
+                "ended": "t1",
+                "outcome": "done",
+                "cost": {"cost_usd": 0.0, "turns": 3},
+                "reported": False,
+                "turns_reported": True,
+            },
+            {"stage": "plan", "started": "t2", "ended": None, "outcome": None, "cost": {}},
+        ]
+        got = detail(unit, timeline)
+        self.assertEqual((got["runs"][0]["cost_usd"], got["runs"][0]["turns"]), (None, 3))
+        self.assertEqual(got["runs"][1]["ended"], "")
+        self.assertEqual(got["answers"][0]["authority"], "delegated")
+        self.assertEqual(got["worktree"], {"branch": "fix/x", "path": "/w/x"})

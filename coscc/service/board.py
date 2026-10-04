@@ -9,7 +9,7 @@ import sqlite3
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, TypedDict
+from typing import Any, Callable, Mapping, Sequence, TypedDict
 
 from coscc.units import backlog, prose_import
 from coscc.agent import agents
@@ -118,38 +118,40 @@ class Cards(TypedDict):
     running: list[Running]
 
 
+def card(u: Mapping[str, Any]) -> Card:
+    """One unit of `Board.read` as a list shows it."""
+    state, hold, pr, backlog_ = u["state"], u.get("hold"), u.get("pr"), u.get("backlog") or {}
+    return {
+        "name": u["name"],
+        "number": int(u["number"]),
+        "slug": u["slug"],
+        "type": str(u.get("type") or ""),
+        "phase": str(u.get("phase") or ""),
+        "next_stage": str(u.get("next_stage") or ""),
+        "why": str(u.get("why") or ""),
+        "open": int(u.get("open") or 0),
+        "state": {"state": state["state"], "label": state["label"], "color": state["color"]},
+        "hold": {
+            "state": str(hold.get("state") or ""),
+            "by": str(hold.get("by") or ""),
+            "date": str(hold.get("date") or ""),
+            "reason": str(hold.get("reason") or ""),
+        }
+        if hold
+        else None,
+        "pr": {"number": int(pr["number"]), "url": str(pr["url"])} if pr else None,
+        "cost_usd": float((u.get("cost") or {}).get("cost_usd") or 0),
+        "at": str(u.get("at") or ""),
+        "attention_reason": str(u.get("attention_reason") or ""),
+        "idea": str(u.get("idea") or ""),
+        "repo": str(u.get("repo") or ""),
+        "rank": backlog_.get("rank"),
+        "effort": backlog_.get("effort"),
+    }
+
+
 def cards(board: Mapping[str, Any]) -> Cards:
     """`board` (`Board.read` with the autopilot's view) cut to what a list of units shows."""
-
-    def card(u: Mapping[str, Any]) -> Card:
-        state, hold, pr, backlog_ = u["state"], u.get("hold"), u.get("pr"), u.get("backlog") or {}
-        return {
-            "name": u["name"],
-            "number": int(u["number"]),
-            "slug": u["slug"],
-            "type": str(u.get("type") or ""),
-            "phase": str(u.get("phase") or ""),
-            "next_stage": str(u.get("next_stage") or ""),
-            "why": str(u.get("why") or ""),
-            "open": int(u.get("open") or 0),
-            "state": {"state": state["state"], "label": state["label"], "color": state["color"]},
-            "hold": {
-                "state": str(hold.get("state") or ""),
-                "by": str(hold.get("by") or ""),
-                "date": str(hold.get("date") or ""),
-                "reason": str(hold.get("reason") or ""),
-            }
-            if hold
-            else None,
-            "pr": {"number": int(pr["number"]), "url": str(pr["url"])} if pr else None,
-            "cost_usd": float((u.get("cost") or {}).get("cost_usd") or 0),
-            "at": str(u.get("at") or ""),
-            "attention_reason": str(u.get("attention_reason") or ""),
-            "idea": str(u.get("idea") or ""),
-            "repo": str(u.get("repo") or ""),
-            "rank": backlog_.get("rank"),
-            "effort": backlog_.get("effort"),
-        }
 
     pilot = board.get("autopilot")
     autopilot: AutopilotBrief | None = (
@@ -178,6 +180,199 @@ def cards(board: Mapping[str, Any]) -> Cards:
             }
             for r in running
         ],
+    }
+
+
+class LastRun(TypedDict):
+    outcome: str
+    ended: str
+    turns: int | None
+    cost_usd: float | None
+
+
+class StageView(TypedDict):
+    stage: str
+    file: str
+    status: str
+    optional: bool
+    mode: str
+    last_run: LastRun | None
+
+
+class Question(TypedDict):
+    artifact: str
+    n: int
+    text: str
+    answered: bool
+    by: str
+
+
+class Answer(TypedDict):
+    artifact: str
+    n: int
+    question: str
+    text: str
+    by: str
+    # Who decided: `person`, `delegated` or `agent-inferred`.
+    authority: str
+    via: str
+    date: str
+
+
+class Round(TypedDict):
+    n: int
+    verdict: str
+    findings: int
+    findings_open: int
+    reviewed: str
+    unfinished: bool
+
+
+class Dependency(TypedDict):
+    ref: str
+    why: str
+    merged: bool
+
+
+class UnitRun(TypedDict):
+    """One run of a stage, from the run log; `ended` is empty while it runs."""
+
+    stage: str
+    agent: str
+    model: str
+    started: str
+    ended: str
+    outcome: str
+    detail: str
+    artifact: str
+    cost_usd: float | None
+    turns: int | None
+    run: str
+
+
+class Worktree(TypedDict):
+    branch: str
+    path: str
+
+
+class Detail(TypedDict):
+    """One unit as its page shows it: the card, its stages, what was asked and answered, its
+    review rounds and every run, oldest first."""
+
+    card: Card
+    stages: list[StageView]
+    questions: list[Question]
+    answers: list[Answer]
+    rounds: list[Round]
+    depends_on: list[Dependency]
+    runs: list[UnitRun]
+    worktree: Worktree | None
+
+
+def _text(v: Any) -> str:
+    return "" if v is None else str(v)
+
+
+def _number(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def _count(v: Any) -> int | None:
+    return int(v) if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> Detail:
+    """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`) as a page shows it."""
+
+    def last(r: Mapping[str, Any] | None) -> LastRun | None:
+        if not r:
+            return None
+        return {
+            "outcome": _text(r.get("outcome")),
+            "ended": _text(r.get("ended")),
+            "turns": _count(r.get("turns")),
+            "cost_usd": _number(r.get("cost_usd")),
+        }
+
+    tree = unit.get("worktree")
+    return {
+        "card": card(unit),
+        "stages": [
+            {
+                "stage": _text(st.get("stage")),
+                "file": _text(st.get("file")),
+                "status": _text(st.get("status")),
+                "optional": bool(st.get("optional")),
+                "mode": _text(st.get("mode")),
+                "last_run": last(st.get("last_run")),
+            }
+            for st in unit.get("stages") or []
+        ],
+        "questions": [
+            {
+                "artifact": _text(q.get("artifact")),
+                "n": int(q.get("n") or 0),
+                "text": _text(q.get("text")),
+                "answered": bool(q.get("answered")),
+                "by": _text(q.get("by")),
+            }
+            for q in unit.get("questions") or []
+        ],
+        "answers": [
+            {
+                "artifact": _text(a.get("artifact")),
+                "n": int(a.get("n") or 0),
+                "question": _text(a.get("question")),
+                "text": _text(a.get("text")),
+                "by": _text(a.get("by")),
+                "authority": _text(a.get("authority")),
+                "via": _text(a.get("via")),
+                "date": _text(a.get("date")),
+            }
+            for a in unit.get("answers") or []
+        ],
+        "rounds": [
+            {
+                "n": int(r.get("n") or 0),
+                "verdict": _text(r.get("verdict")),
+                "findings": int(r.get("findings") or 0),
+                "findings_open": int(r.get("findings_open") or 0),
+                "reviewed": _text(r.get("reviewed")),
+                "unfinished": bool(r.get("unfinished")),
+            }
+            for r in unit.get("rounds") or []
+        ],
+        "depends_on": [
+            {
+                "ref": _text(d.get("ref")),
+                "why": _text(d.get("why")),
+                "merged": bool(d.get("merged")),
+            }
+            for d in unit.get("depends_on") or []
+        ],
+        "runs": [
+            {
+                "stage": _text(r.get("stage")),
+                "agent": _text(r.get("agent")),
+                "model": _text(r.get("model")),
+                "started": _text(r.get("started")),
+                "ended": _text(r.get("ended")),
+                "outcome": _text(r.get("outcome")),
+                "detail": _text(r.get("detail")),
+                "artifact": _text(r.get("artifact")),
+                "cost_usd": _number((r.get("cost") or {}).get("cost_usd"))
+                if r.get("reported", True)
+                else None,
+                "turns": _count((r.get("cost") or {}).get("turns"))
+                if r.get("turns_reported", True)
+                else None,
+                "run": _text(r.get("run")),
+            }
+            for r in timeline
+        ],
+        "worktree": {"branch": _text(tree.get("branch")), "path": _text(tree.get("path"))}
+        if tree
+        else None,
     }
 
 

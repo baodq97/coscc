@@ -25,6 +25,17 @@ export type AgentRow = {
   "chip": string;
 };
 
+export type Answer = {
+  "artifact": string;
+  "n": number;
+  "question": string;
+  "text": string;
+  "by": string;
+  "authority": string;
+  "via": string;
+  "date": string;
+};
+
 export type ArmStats = {
   "steps": number;
   "excluded": number;
@@ -115,6 +126,23 @@ export type Deleted = {
   "deleted": string;
 };
 
+export type Dependency = {
+  "ref": string;
+  "why": string;
+  "merged": boolean;
+};
+
+export type Detail = {
+  "card": Card;
+  "stages": StageView[];
+  "questions": Question[];
+  "answers": Answer[];
+  "rounds": Round[];
+  "depends_on": Dependency[];
+  "runs": UnitRun[];
+  "worktree": Worktree | null;
+};
+
 export type GrantView = {
   "tools": string[];
   "commands": string[];
@@ -128,6 +156,13 @@ export type HoldView = {
   "by": string;
   "date": string;
   "reason": string;
+};
+
+export type LastRun = {
+  "outcome": string;
+  "ended": string;
+  "turns": number | null;
+  "cost_usd": number | null;
 };
 
 export type Leaks = {
@@ -181,12 +216,29 @@ export type PullRequest = {
   "url": string;
 };
 
+export type Question = {
+  "artifact": string;
+  "n": number;
+  "text": string;
+  "answered": boolean;
+  "by": string;
+};
+
 export type Report = {
   "window": Window;
   "arms": Arms;
   "excluded_units": number;
   "verdict": "pass" | "fail";
   "missed": string[];
+};
+
+export type Round = {
+  "n": number;
+  "verdict": string;
+  "findings": number;
+  "findings_open": number;
+  "reviewed": string;
+  "unfinished": boolean;
 };
 
 export type Run = {
@@ -230,6 +282,29 @@ export type Source = {
   "at": string;
 };
 
+export type StageView = {
+  "stage": string;
+  "file": string;
+  "status": string;
+  "optional": boolean;
+  "mode": string;
+  "last_run": LastRun | null;
+};
+
+export type UnitRun = {
+  "stage": string;
+  "agent": string;
+  "model": string;
+  "started": string;
+  "ended": string;
+  "outcome": string;
+  "detail": string;
+  "artifact": string;
+  "cost_usd": number | null;
+  "turns": number | null;
+  "run": string;
+};
+
 export type Window = {
   "since": string | null;
   "until": string | null;
@@ -250,11 +325,17 @@ export type WorkspaceRow = {
   "missing": boolean;
 };
 
+export type Worktree = {
+  "branch": string;
+  "path": string;
+};
+
 export type Get = {
   "/api/agents": AgentPage;
   "/api/codegraph/report": Report;
   "/api/units": Cards;
   "/api/units/next": NextStep;
+  "/api/units/{name}": Detail;
   "/api/vault/leaks": Leaks;
   "/api/vault/secrets": Secrets;
   "/api/workspaces": WorkspaceList;

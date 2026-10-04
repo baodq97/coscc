@@ -31,11 +31,23 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
   return data as T;
 }
 
+/** `/api/units/{name}` with `{name: "0001_x"}` is `/api/units/0001_x`; the rest of `query` stays a query. */
+export function fill(path: string, query: Record<string, string>): { path: string; rest: Record<string, string> } {
+  const rest = { ...query };
+  const filled = path.replace(/\{(\w+)\}/g, (_, key: string) => {
+    const value = rest[key] ?? "";
+    delete rest[key];
+    return encodeURIComponent(value);
+  });
+  return { path: filled, rest };
+}
+
 export const api = {
   /** A `GET` route the app types (`Get`, made from its routes), so the answer is never guessed. */
   get: <P extends keyof Get>(path: P, query: Record<string, string> = {}) => {
-    const qs = new URLSearchParams(query).toString();
-    return call<Get[P]>("GET", qs ? `${path}?${qs}` : path);
+    const url = fill(path, query);
+    const qs = new URLSearchParams(url.rest).toString();
+    return call<Get[P]>("GET", qs ? `${url.path}?${qs}` : url.path);
   },
   post: <T>(path: string, body: unknown) => call<T>("POST", path, body),
 };
