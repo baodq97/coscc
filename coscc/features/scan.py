@@ -619,8 +619,8 @@ _JS = """
   function chip(state) {
     var c = CHIP[state] || "gray";
     return el("span", "display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;" +
-      "background:var(--" + c + "-3);color:var(--" + c + "-11);flex-shrink:0;width:72px;" +
-      "text-align:center", state);
+      "background:var(--" + c + "-3);color:var(--" + c + "-11);flex-shrink:0;min-width:88px;" +
+      "white-space:nowrap;text-align:center", state);
   }
   function button(text, soft) {
     var b = el("button", "border-radius:6px;padding:4px 10px;font-size:13px;cursor:pointer;" +
