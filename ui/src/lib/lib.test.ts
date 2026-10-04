@@ -8,6 +8,7 @@ import { slugOf } from "../screens/NewWork";
 import { inUnit, merged, toolSummary } from "../screens/RunLog";
 import { moved } from "../screens/UpNext";
 import { readReply } from "../screens/Talk";
+import { lastDays } from "../screens/Insights";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -139,5 +140,17 @@ describe("talk", () => {
     const seen: unknown[] = [];
     await readReply(body, (l) => seen.push(l));
     expect(seen).toEqual([{ type: "chunk", text: "hello" }, { type: "tool", name: "Read" }, { type: "done", session_id: "s1" }]);
+  });
+});
+
+describe("insights", () => {
+  it("fills every day of the window, oldest first, a day with no spend at zero", () => {
+    const days = lastDays([{ day: "2026-10-03", usd: 4 }, { day: "2026-10-01", usd: null }], 4, new Date(2026, 9, 4));
+    expect(days).toEqual([
+      { day: "2026-10-01", usd: 0 },
+      { day: "2026-10-02", usd: 0 },
+      { day: "2026-10-03", usd: 4 },
+      { day: "2026-10-04", usd: 0 },
+    ]);
   });
 });

@@ -13,8 +13,8 @@ import { MayDo } from "./screens/MayDo";
 import { NewWork } from "./screens/NewWork";
 import { UpNext } from "./screens/UpNext";
 import { Talk } from "./screens/Talk";
+import { Insights } from "./screens/Insights";
 import { Decided } from "./screens/Decided";
-import { Planned } from "./components/ui";
 
 export type Screen = {
   path: string;
@@ -71,11 +71,7 @@ export const SCREENS: Screen[] = [
     nav: "Team",
     icon: "chart",
     keys: "G S",
-    render: () => (
-      <Planned icon="chart" title="Insights">
-        Cost, speed and quality per project and per agent, against the targets: $15 a shipped unit, no hand interventions, 1.5 review rounds.
-      </Planned>
-    ),
+    render: () => <Insights />,
   },
   {
     path: "/may-do",

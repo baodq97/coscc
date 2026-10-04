@@ -519,3 +519,7 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
 .talk-row:hover { background: var(--hover); }
 .talk-row.on { background: var(--accent-soft); }
 .talk-row .ellipsis { max-width: 100%; }
+.days { display: flex; align-items: flex-end; gap: 3px; height: 90px; }
+.days .day { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+.days .day i { display: block; width: 100%; min-height: 1px; background: var(--accent); border-radius: 2px 2px 0 0; opacity: .85; }
+.days .day:hover i { opacity: 1; }

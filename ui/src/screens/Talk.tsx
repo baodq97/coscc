@@ -8,7 +8,7 @@ import { ApiError, api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { ago } from "../lib/format";
 import { Icon, LeifAvatar } from "../lib/icons";
-import { Button, Empty, SkeletonRows } from "../components/ui";
+import { Button, SkeletonRows } from "../components/ui";
 
 type Shown = { role: string; text: string; tools?: string[] };
 
@@ -39,6 +39,10 @@ export function Talk() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const end = useRef<HTMLDivElement>(null);
+  const [elsewhere, setElsewhere] = useState(false);
+  // The app's own chats first; sessions begun in a terminal or by an agent's run are read only.
+  const mine = sessions.data?.sessions.filter((s) => s.resumable) ?? [];
+  const others = sessions.data?.sessions.filter((s) => !s.resumable) ?? [];
 
   useEffect(() => end.current?.scrollIntoView({ block: "end" }), [messages]);
 
@@ -187,23 +191,34 @@ export function Talk() {
         </div>
         {sessions.state === "loading" ? (
           <SkeletonRows rows={4} />
-        ) : !sessions.data?.sessions.length ? (
-          <Empty icon="chat" title="No conversations yet">
-            They appear here once you send one.
-          </Empty>
         ) : (
-          <div className="col" style={{ gap: 2 }}>
-            {sessions.data.sessions.map((s) => (
-              <button key={s.session_id} className={`talk-row ${session?.session_id === s.session_id ? "on" : ""}`} disabled={busy} onClick={() => open(s)}>
-                <span className="ellipsis">{s.summary}</span>
-                <span className="faint" style={{ fontSize: 11.5 }}>
-                  {!s.resumable && <Icon name="lock" size={10} />} {ago(new Date(s.last_modified).toISOString())}
-                </span>
+          <>
+            <SessionList sessions={mine} current={session} busy={busy} onOpen={open} />
+            {!mine.length && <div className="faint" style={{ fontSize: 12.5 }}>Your conversations appear here once you send one.</div>}
+            {others.length > 0 && (
+              <button className="link-btn faint" style={{ fontSize: 12, marginTop: 12 }} onClick={() => setElsewhere(!elsewhere)}>
+                {elsewhere ? "Hide" : "Show"} {others.length} begun elsewhere (read only)
               </button>
-            ))}
-          </div>
+            )}
+            {elsewhere && <SessionList sessions={others} current={session} busy={busy} onOpen={open} />}
+          </>
         )}
       </aside>
+    </div>
+  );
+}
+
+function SessionList({ sessions, current, busy, onOpen }: { sessions: ChatSession[]; current: ChatSession | null; busy: boolean; onOpen: (s: ChatSession) => void }) {
+  return (
+    <div className="col" style={{ gap: 2, marginTop: 4 }}>
+      {sessions.map((s) => (
+        <button key={s.session_id} className={`talk-row ${current?.session_id === s.session_id ? "on" : ""}`} disabled={busy} onClick={() => onOpen(s)}>
+          <span className="ellipsis">{s.summary}</span>
+          <span className="faint" style={{ fontSize: 11.5 }}>
+            {!s.resumable && <Icon name="lock" size={10} />} {ago(new Date(s.last_modified).toISOString())}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }

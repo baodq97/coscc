@@ -45,6 +45,7 @@ from coscc.bus import Event
 from coscc.service.agents import AgentPage
 from coscc.service.board import Cards, Detail, UpNext, cards, detail
 from coscc.service.steps import NextStep
+from coscc.service.activity import Insights
 from coscc.service.sessions import ChatHistory, ChatSessions
 from coscc.service.watch import EventsPage
 from coscc.units.backlog import SHORTLIST_MAX
@@ -255,6 +256,16 @@ async def set_agent_field(request: Request) -> Any:
     return _service(request).agents.set_agent_field(
         body.get("key"), body.get("field"), body.get("value")
     )
+
+
+@router.get("/api/insights")
+async def get_insights(request: Request) -> Insights:
+    """How one workspace did over the last 30 days against the owner's targets: what it shipped
+    at what cost and how many review rounds, its money by day and by stage, and what was spent
+    again. Read only; the run log and the board held."""
+    service, cwd = _service(request), _cwd(request)
+    board = await service.board(cwd, "held")
+    return service.activity.insights(cwd, board.get("units") or [])
 
 
 @router.get("/api/chat/sessions", response_model=ChatSessions)
