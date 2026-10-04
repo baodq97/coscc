@@ -102,6 +102,17 @@ class InsightsMeasureTheShippedUnitsAgainstTheTargets(unittest.TestCase):
             end("0002_a", "2026-10-01T00:00:00+00:00", 8.0, "review"),
             end("0003_b", "2026-10-02T00:00:00+00:00", 4.0),
             end("0004_open", "2026-10-03T00:00:00+00:00", 2.0),
+            # Shipped by the app: the oldest before the window, the others in it.
+            *(
+                {"kind": "ship", "unit": u, "stage": "ship", "result": "shipped", "at": at}
+                for u, at in (
+                    ("0001_old", "2026-08-01T01:00:00+00:00"),
+                    ("0002_a", "2026-10-01T01:00:00+00:00"),
+                    ("0003_b", "2026-10-02T01:00:00+00:00"),
+                )
+            ),
+            # A late run on a unit shipped long ago does not bring it into the window.
+            end("0001_old", "2026-10-03T00:00:00+00:00", 0.5, "pr"),
         ]
         rounds = lambda *v: [{"verdict": x} for x in v]
         units = [
@@ -131,7 +142,7 @@ class InsightsMeasureTheShippedUnitsAgainstTheTargets(unittest.TestCase):
             {d["day"] for d in got["by_day"]}, {"2026-10-01", "2026-10-02", "2026-10-03"}
         )
         self.assertEqual(
-            {r["stage"]: r["usd"] for r in got["by_stage"]}, {"review": 8.0, "impl": 6.0}
+            {r["stage"]: r["usd"] for r in got["by_stage"]}, {"review": 8.0, "impl": 6.0, "pr": 0.5}
         )
 
     def test_a_workspace_with_no_run_log_says_so(self):

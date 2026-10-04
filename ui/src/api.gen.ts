@@ -159,6 +159,16 @@ export type ChatSessions = {
   "sessions": ChatSession[];
 };
 
+export type Check = {
+  "name": string;
+  "bucket": string;
+};
+
+export type Commit = {
+  "sha": string;
+  "subject": string;
+};
+
 export type ConfigRow = {
   "key": string;
   "fields": string[];
@@ -344,6 +354,37 @@ export type Question = {
   "text": string;
   "answered": boolean;
   "by": string;
+};
+
+export type ReleaseUnit = {
+  "name": string;
+  "type": string;
+  "pr": number | null;
+  "sha": string;
+  "subject": string;
+};
+
+export type ReleaseView = {
+  "state": string;
+  "reason": string;
+  "last_tag": string;
+  "units": ReleaseUnit[];
+  "unmatched": Commit[];
+  "count": number;
+  "proposed": string;
+  "version": string;
+  "pr": number | null;
+  "checks": Check[];
+  "head": string;
+  "button": string;
+  "enabled": boolean;
+  "disabled_reason": string;
+  "warning": string;
+  "consequence": string;
+  "release_url": string;
+  "workflow": string;
+  "workflow_url": string;
+  "main_version"?: string;
 };
 
 export type Report = {
@@ -592,6 +633,7 @@ export type Get = {
   "/api/decisions": DecisionTable;
   "/api/features/shown": Shown[];
   "/api/insights": Insights;
+  "/api/release": ReleaseView | null;
   "/api/settings/autopilot": AutopilotSettings;
   "/api/units": Cards;
   "/api/units/next": NextStep;

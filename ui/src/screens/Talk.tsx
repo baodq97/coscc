@@ -4,28 +4,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage, ChatSession } from "../api.gen";
-import { ApiError, api, useResource } from "../lib/api";
+import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { ago } from "../lib/format";
 import { Icon, LeifAvatar } from "../lib/icons";
 import { Button, SkeletonRows } from "../components/ui";
 
 type Shown = { role: string; text: string; tools?: string[] };
-
-/** Reads an NDJSON reply line by line: `chunk` text, `tool` names, then `done` or `error`. */
-export async function readReply(body: ReadableStream<Uint8Array>, on: (line: Record<string, unknown>) => void): Promise<void> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let rest = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    const lines = (rest + decoder.decode(value, { stream: true })).split("\n");
-    rest = lines.pop() ?? "";
-    lines.filter(Boolean).forEach((l) => on(JSON.parse(l)));
-  }
-  if (rest.trim()) on(JSON.parse(rest));
-}
 
 export function Talk() {
   const { boards, loading } = useBoards();
@@ -68,21 +53,10 @@ export function Talk() {
     setMessages((m) => [...m, { role: "user", text: said }, { role: "assistant", text: "" }]);
     const add = (f: (last: Shown) => Shown) => setMessages((m) => [...m.slice(0, -1), f(m[m.length - 1])]);
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd, text: said, session_id: session?.resumable ? session.session_id : undefined }),
-      });
-      if (!res.ok || !res.body) {
-        const data = await res.json().catch(() => null);
-        throw new ApiError(res.status, (data && data.error) || res.statusText);
-      }
       let id = "";
-      await readReply(res.body, (l) => {
+      await api.stream("/api/chat", { cwd, text: said, session_id: session?.resumable ? session.session_id : undefined }, (l) => {
         if (l.type === "chunk") add((last) => ({ ...last, text: last.text + String(l.text) }));
         else if (l.type === "tool") add((last) => ({ ...last, tools: [...(last.tools ?? []), String(l.name)] }));
-        else if (l.type === "error") throw new Error(String(l.error));
         else if (l.type === "done") id = String(l.session_id ?? "");
       });
       if (id && id !== session?.session_id) setSession({ session_id: id, summary: said, last_modified: Date.now(), created_at: null, git_branch: null, resumable: true });

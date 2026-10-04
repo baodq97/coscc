@@ -21,6 +21,8 @@ const WASTE: Record<string, string> = {
 };
 
 const number = (unit: string) => Number(unit.slice(0, 4));
+// Units a target card names; the shipped list below has every one.
+const WORST = 5;
 
 /** The last `n` days, oldest first, each with its spend or zero. */
 export function lastDays(by: { day: string; usd: number | null }[], n: number, today = new Date()): { day: string; usd: number }[] {
@@ -126,13 +128,14 @@ function TargetCard({ target: t, shipped, workspace }: { target: Target; shipped
       <div className="faint" style={{ fontSize: 12, marginTop: 8 }}>
         {t.over.length ? (
           <>
-            Over:{" "}
-            {t.over.map((u, i) => (
+            {t.over.length} of {shipped} over; worst:{" "}
+            {t.over.slice(0, WORST).map((u, i) => (
               <span key={u}>
                 {i > 0 && ", "}
                 <Link to={`/unit/${workspace}/${number(u)}`}>{unitCode(workspace, number(u))}</Link>
               </span>
             ))}
+            {t.over.length > WORST && "…"}
           </>
         ) : shipped ? (
           "Every shipped unit is within it."

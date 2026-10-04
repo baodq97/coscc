@@ -3,12 +3,12 @@ import { ago, modelName, money, unitCode, unitTitle } from "./format";
 import { match } from "./router";
 import { unitState, type Unit } from "./model";
 import { matches } from "./stream";
-import { fill } from "./api";
+import { fill, readLines } from "./api";
 import { slugOf } from "../screens/NewWork";
 import { inUnit, merged, toolSummary } from "../screens/RunLog";
 import { moved } from "../screens/UpNext";
-import { readReply } from "../screens/Talk";
 import { lastDays } from "../screens/Insights";
+import { kinds } from "../screens/Work";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -138,7 +138,7 @@ describe("talk", () => {
       },
     });
     const seen: unknown[] = [];
-    await readReply(body, (l) => seen.push(l));
+    await readLines(body, (l) => seen.push(l));
     expect(seen).toEqual([{ type: "chunk", text: "hello" }, { type: "tool", name: "Read" }, { type: "done", session_id: "s1" }]);
   });
 });
@@ -152,5 +152,11 @@ describe("insights", () => {
       { day: "2026-10-03", usd: 4 },
       { day: "2026-10-04", usd: 0 },
     ]);
+  });
+});
+
+describe("release", () => {
+  it("sums what a release gathers by kind, most first", () => {
+    expect(kinds([{ type: "fix" }, { type: "feat" }, { type: "feat" }, { type: "" }])).toBe("2 feat, 1 fix, 1 other");
   });
 });

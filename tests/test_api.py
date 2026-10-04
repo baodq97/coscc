@@ -154,14 +154,16 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
     async def test_label_can_be_changed_and_read_back(self):
         (self.root / "repo").mkdir()
         await self.client.post("/api/workspaces", json={"name": "repo"})
-        self.app.state.service.ws.set_label("repo", "Renamed")
+        r = await self.client.post("/api/workspaces/repo/label", json={"label": "Renamed"})
+        self.assertEqual(r.status_code, 200)
         body = (await self.client.get("/api/workspaces")).json()
         self.assertEqual(body["workspaces"][0]["label"], "Renamed")
 
     async def test_remove_delists_but_leaves_the_directory(self):
         (self.root / "repo").mkdir()
         await self.client.post("/api/workspaces", json={"name": "repo"})
-        self.app.state.service.ws.remove("repo")
+        r = await self.client.post("/api/workspaces/repo/remove")
+        self.assertEqual(r.json(), {"removed": "repo", "count": 0})
         self.assertEqual((await self.client.get("/api/workspaces")).json()["count"], 0)
         self.assertTrue((self.root / "repo").is_dir())
 
@@ -177,6 +179,18 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
     async def test_pull_on_something_not_listed_is_refused(self):
         r = await self.client.post("/api/workspaces/ghost/pull")
         self.assertEqual(r.status_code, 400)
+
+    async def test_label_and_remove_on_something_not_listed_are_refused(self):
+        for path in ("/api/workspaces/ghost/label", "/api/workspaces/ghost/remove"):
+            self.assertEqual((await self.client.post(path, json={})).status_code, 400, path)
+
+    async def test_a_folder_that_is_no_git_checkout_has_no_release(self):
+        (self.root / "repo").mkdir()
+        await self.client.post("/api/workspaces", json={"name": "repo"})
+        cwd = str(self.root / "repo")
+        r = await self.client.get("/api/release", params={"cwd": cwd})
+        self.assertEqual((r.status_code, r.json()), (200, None))
+        await self.app.state.service.board(cwd, "new")
 
 
 class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
@@ -1648,8 +1662,9 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(up["shortlist"][0]["estimate"]["value"], 3)
         self.assertEqual((up["unestimated"], up["max"]), ([self.b], 7))
         self.assertEqual(up["shortlist_record"]["reason"], "r")
-        # A held read starts the next; it ends before the data root is removed.
-        await self.app.state.service.board(self.cwd, "next")
+        # A held read starts the next; a new read begins after it, so both end before the
+        # data root is removed.
+        await self.app.state.service.board(self.cwd, "new")
         self.assertEqual(
             (await self.client.post("/api/backlog/shortlist", content=b"nope")).status_code, 400
         )

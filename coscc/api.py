@@ -46,6 +46,7 @@ from coscc.service.agents import AgentPage
 from coscc.service.board import Cards, Detail, UpNext, cards, detail
 from coscc.service.steps import NextStep
 from coscc.service.activity import Insights
+from coscc.service.release import ReleaseView
 from coscc.service.sessions import ChatHistory, ChatSessions
 from coscc.service.watch import EventsPage
 from coscc.units.backlog import SHORTLIST_MAX
@@ -235,6 +236,20 @@ async def add_workspace(request: Request) -> Any:
 @router.post("/api/workspaces/{name}/pull")
 async def pull_workspace(name: str, request: Request) -> Any:
     return await _service(request).ws.pull(name)
+
+
+@router.post("/api/workspaces/{name}/label")
+async def label_workspace(name: str, request: Request) -> Any:
+    """`{label}`: the line a workspace is described by."""
+    body = await kernel.body(request)
+    return _service(request).ws.set_label(name, str(body.get("label") or ""))
+
+
+@router.post("/api/workspaces/{name}/remove")
+async def remove_workspace(name: str, request: Request) -> Any:
+    """Stop listing a workspace. Its directory, units and run log stay; adding it again brings
+    them back. The scratch of units no listed workspace holds is swept."""
+    return _service(request).ws.remove(name)
 
 
 @router.get("/api/agents")
@@ -730,6 +745,13 @@ async def integrate_unit(request: Request) -> Any:
     return await kernel.ndjson(stream, "the integration")
 
 
+@router.get("/api/release", response_model=ReleaseView | None)
+async def get_release(request: Request) -> Any:
+    """What a release of one workspace would gather and the one button it offers now; `null`
+    for a workspace that is not a git checkout. Read from the board held."""
+    return (await _service(request).board(_cwd(request), "held")).get("release")
+
+
 @router.post("/api/release/prepare")
 async def release_prepare(request: Request) -> Any:
     """`{cwd, version}`: a `chore/release-X-Y-Z` pull request, streamed like `/api/units/integrate`.
@@ -972,7 +994,7 @@ def typescript() -> str:
     for path, ops in sorted(schema["paths"].items()):
         ok = ops.get("get", {}).get("responses", {}).get("200", {})
         answer = ok.get("content", {}).get("application/json", {}).get("schema", {})
-        if "$ref" in answer or answer.get("type") == "array":
+        if "$ref" in answer or answer.get("type") == "array" or "anyOf" in answer:
             gets.append(f"  {json.dumps(path)}: {_ts(answer)};")
     out += ["export type Get = {", *gets, "};", ""]
     return "\n".join(out)

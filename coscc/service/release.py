@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable, NotRequired, TypedDict
 
 from coscc.github import integrate, release
 from coscc.git import gitops
@@ -26,6 +26,50 @@ PrsOnce = Callable[[], Awaitable["list[dict[str, Any]] | str"]]
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces
 from coscc.update.updater import Updater
+
+
+class ReleaseUnit(TypedDict):
+    name: str
+    type: str
+    pr: int | None
+    sha: str
+    subject: str
+
+
+class Commit(TypedDict):
+    sha: str
+    subject: str
+
+
+class Check(TypedDict):
+    name: str
+    bucket: str
+
+
+class ReleaseView(TypedDict):
+    """The board's `release` block: what a release would gather since `last_tag`, the one
+    button the state offers (`prepare` or `publish`) and why it may not be pressed."""
+
+    state: str
+    reason: str
+    last_tag: str
+    units: list[ReleaseUnit]
+    unmatched: list[Commit]
+    count: int
+    proposed: str
+    version: str
+    pr: int | None
+    checks: list[Check]
+    head: str
+    button: str
+    enabled: bool
+    disabled_reason: str
+    warning: str
+    consequence: str
+    release_url: str
+    workflow: str
+    workflow_url: str
+    main_version: NotRequired[str]
 
 
 def _empty_block(state: str, reason: str) -> dict[str, Any]:
