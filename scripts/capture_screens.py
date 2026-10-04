@@ -518,13 +518,102 @@ def seed_refusal(data_dir: Path, proj: Path) -> None:
     attempts.move(row["id"], "refused", "gate-closed")
 
 
+SCAN_PROPOSALS = (
+    (
+        "fix",
+        "impl-drafts-need-a-blind-rerun",
+        "Impl that ends as a draft says nothing about why",
+        "Twice this week an impl step ended with its record still a draft and the board offered "
+        "only a rerun. Nothing on the unit said what was left open, so the owner reran it blind "
+        "and read the transcript to find the cause. Each blind rerun costs a full impl session "
+        "and about an hour of waiting.",
+    ),
+    (
+        "feat",
+        "ci-red-names-no-failing-job",
+        "A red CI names no failing job",
+        "CI went red on three pull requests and each time the unit only said that CI was red. "
+        "The owner opened GitHub to find which job failed and pasted its log into a rerun note "
+        "by hand. The same head was reported red again after the fix landed, so one failure was "
+        "counted twice and the second rerun was spent for nothing.",
+    ),
+    (
+        "fix",
+        "branches-fall-behind-main",
+        "Pull request branches fall behind main",
+        "Five integrations in two days were started by hand because a branch fell behind main "
+        "while its review ran. One collided with the running review and was refused, so the "
+        "owner waited and pressed it again. Each one interrupts the loop and needs a person to "
+        "notice that the branch is behind before review can pass.",
+    ),
+    (
+        "chore",
+        "rerun-notes-carry-decisions",
+        "Rerun notes carry decisions nobody records",
+        "Spec steps converged only after the owner reran them with free-text notes that carried "
+        "decisions. Those notes live only in the run log, so the next stage never reads them and "
+        "the same question comes back. Four reruns in two days held a decision that should have "
+        "been an answer on the unit, recorded where every later stage reads it.",
+    ),
+)
+
+
+def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
+    """The `scan` feature on for `proj` with its schedule off, so nothing pays, and the four
+    proposals of one scan: two pending, one accepted as `0006_frontend-calls-api`, one dismissed.
+    Written through the feature's own tables, which the app made when it started."""
+    from datetime import datetime, timedelta, timezone
+
+    from coscc.bus import Bus
+    from coscc.data import Data
+    from coscc.features import scan
+    from coscc.plugin import Ctx
+    from coscc.runlog.journal import Intervention
+
+    for body in ({"state": "on"}, {"schedule": 0}):
+        r = api.post("/api/features", json={"cwd": str(proj), "name": "scan", **body})
+        if r.status_code != 200:
+            raise RuntimeError(f"could not set up the scan feature: {r.text}")
+    key = str(proj.resolve())
+    now = datetime.now(timezone.utc)
+    kinds = ("impl-draft", "ci-red", "integrate", "rerun", "review-round", "refused")
+    units = ("0008_draft-impl", "0002_open-question", "0004_finished", "0009_refused-impl")
+    taken = [
+        Intervention(
+            f"{kinds[n % 6]}:runs:{n}",
+            kinds[n % 6],
+            (now - timedelta(hours=30 - n)).isoformat(timespec="seconds"),
+            units[n % 4],
+            "impl",
+            "",
+        )
+        for n in range(12)
+    ]
+    tables = scan.Tables(Ctx(lambda: None, str, lambda _f, _w: True, Bus(), Data(data_dir)))
+    proposals = [
+        {
+            "type": t,
+            "slug": s,
+            "title": title,
+            "problem": problem,
+            "sources": [i.id for i in taken[n * 3 : n * 3 + 3]],
+        }
+        for n, (t, s, title, problem) in enumerate(SCAN_PROPOSALS)
+    ]
+    tables.record(key, "owner", "done", cost=0.32, session="s", taken=taken, proposals=proposals)
+    tables.claim(key, 3, "accepted")
+    tables.set_unit(key, 3, "0006_frontend-calls-api")
+    tables.claim(key, 4, "dismissed", "Already answered by the questions on each unit.")
+
+
 def make_autopilot_fixture(api: httpx.Client, work: Path, data_dir: Path, proj: Path) -> None:
     """`AUTOPILOT_FIXTURE`, a shortlist of those two units alone, and two tries of
     `0008_draft-impl` on one head: each an `autopilot-pick` that went on with the draft and the
-    step it began, ended."""
+    step it began, ended. Then the scan's proposals, the rest of what the Backlog shows."""
     from coscc.runlog.journal import Journal
 
     make_fixture(api, proj, AUTOPILOT_FIXTURE)
+    make_scan_fixture(api, data_dir, proj)
     journal, key = Journal(work, data_dir), str(proj.resolve())
     for _ in range(2):
         journal.append(
