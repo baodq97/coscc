@@ -313,14 +313,15 @@ class Autopilot:
     def cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:
         """The figures for a pass and for the board: every workspace, every starter."""
         now = datetime.now().astimezone()
-        spent = autopilot.spent_today(records, now)
+        budget = self.agents.config_overrides()[0]["budget"]
+        spent = autopilot.spent_today(records, now, budget)
         active = {
             (row["workspace"], row["unit"]): row["stage"] or row["machine"]
             for row in self.holds.attempts.unfinished()
             if row["unit"]
         }
         running = autopilot.reserved(
-            records, now, [(k, unit, stage) for (k, unit), stage in active.items()]
+            records, now, [(k, unit, stage) for (k, unit), stage in active.items()], budget
         )
         return {
             "limit": limit,
@@ -471,6 +472,7 @@ class Autopilot:
             board = {u["name"]: u for u in data["units"]}
             found: dict[str, dict[str, str]] = {}
             candidates: list[dict[str, Any]] = []
+            budget = self.agents.config_overrides()[0]["budget"]
             # Why each unit that is no candidate waits, for the units ranked below it.
             reasons: dict[str, tuple[str, str]] = {}
             # Every unit on the shortlist is asked, and no other.
@@ -642,7 +644,7 @@ class Autopilot:
                         "stage": stage,
                         "files": files,
                         "rank": rank,
-                        "need": autopilot.reservation(stage),
+                        "need": autopilot.reservation(stage, budget),
                         "rerun": rerun,
                         "note": app_note,
                         "extra": extra,
