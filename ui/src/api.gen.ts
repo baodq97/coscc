@@ -265,6 +265,13 @@ export type EventsPage = {
   "purged_at": string | null;
 };
 
+export type FeaturePage = {
+  "name": string;
+  "label": string;
+  "icon": string;
+  "path": string;
+};
+
 export type GrantView = {
   "tools": string[];
   "commands": string[];
@@ -631,6 +638,7 @@ export type Get = {
   "/api/codegraph/report": Report;
   "/api/decided": Decided[];
   "/api/decisions": DecisionTable;
+  "/api/features/pages": FeaturePage[];
   "/api/features/shown": Shown[];
   "/api/insights": Insights;
   "/api/release": ReleaseView | null;

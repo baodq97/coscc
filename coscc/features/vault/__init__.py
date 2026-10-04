@@ -579,25 +579,11 @@ _JS = """
 (function () {
   if (window.__coscc_vault) return;
   window.__coscc_vault = true;
-  var listed = null;
-  function here() {
-    listed = listed || window.coscc.api("/api/workspaces")
-      .then(function (r) { return r.ok ? r.json() : {}; })
-      .then(function (j) { return j.workspaces || []; })
-      .catch(function () { return []; });
-    var ws = new URLSearchParams(window.location.search).get("ws");
-    return listed.then(function (list) {
-      return list.filter(function (w) { return w.name === ws; })[0] || list[0] || null;
-    });
-  }
   window.coscc.slot("slot-unit", function (el) {
-    var id = new URLSearchParams(window.location.search).get("id");
-    if (!id) return;
-    here().then(function (w) {
-      if (!w) return null;
-      var url = "/api/vault/leaks?cwd=" + encodeURIComponent(w.path) + "&unit=" + encodeURIComponent(id);
-      return window.coscc.api(url).then(function (r) { return r.ok ? r.json() : null; });
-    }).then(function (j) {
+    var cwd = el.dataset.cwd, unit = el.dataset.unit;
+    if (!cwd || !unit) return;
+    var url = "/api/vault/leaks?cwd=" + encodeURIComponent(cwd) + "&unit=" + encodeURIComponent(unit);
+    window.coscc.api(url).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
       el.textContent = "";
       if (!j || !j.names || !j.names.length) return;
       var p = document.createElement("p");

@@ -2,19 +2,14 @@
 (function () {
   if (window.__coscc_scan) return;
   window.__coscc_scan = true;
-  var C = window.coscc, filter = "pending", listed = null;
+  var C = window.coscc, filter = "pending";
   var CHIP = {pending: "amber", accepted: "grass", dismissed: "gray"};
   var KIND = {"refused": "Refused", "ci-red": "CI red", "rerun": "Rerun",
     "review-round": "Review round", "impl-draft": "Impl draft", "integrate": "Integrate"};
+  // The workspace the slot is drawn for, from the slot element the page gives.
   function here() {
-    listed = listed || C.api("/api/workspaces")
-      .then(function (r) { return r.ok ? r.json() : {}; })
-      .then(function (j) { return j.workspaces || []; })
-      .catch(function () { return []; });
-    var ws = new URLSearchParams(window.location.search).get("ws");
-    return listed.then(function (list) {
-      return list.filter(function (w) { return w.name === ws; })[0] || list[0] || null;
-    });
+    var cwd = slotEl && slotEl.dataset.cwd;
+    return Promise.resolve(cwd ? {path: cwd, name: slotEl.dataset.workspace || ""} : null);
   }
   function el(tag, css, text) {
     var e = document.createElement(tag);

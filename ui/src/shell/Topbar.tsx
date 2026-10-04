@@ -22,6 +22,7 @@ export function Topbar({ crumbs }: { crumbs: string[] }) {
         )}
       </div>
       <div className="top-r">
+        <div id="slot-topbar" />
         <button className={`btn ghost sm ${shell.leifOpen ? "on" : ""}`} onClick={shell.toggleLeif} title="Leif panel (L)">
           <LeifAvatar />
           <span>Leif</span>
