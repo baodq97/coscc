@@ -15,20 +15,75 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Literal, TypedDict, cast, get_args
 
 from fastapi import APIRouter, Request
 from starlette.routing import BaseRoute
 
-from coscc.agent.policy import grant_for
-from coscc.data import now
-from coscc.kernel import Ctx, Feature, Intervention, Invalid, Schedule, State, body
-from coscc.service.common import CONSEQUENCE, OWNER
-from coscc.units.submit import SCAN_TYPES, SLUG, SLUG_MAX
+from coscc.kernel import (
+    OWNER,
+    Ctx,
+    Feature,
+    Grant,
+    Intervention,
+    Invalid,
+    Schedule,
+    Session,
+    State,
+    body,
+    now,
+)
 
 NAME = "scan"
+
+# The loop's branch types and slug grammar (`coscc/loop/__init__.py`'s `BRANCH_TYPES`, `SLUG_RE`
+# and `SLUG_MAX`), which a feature may not import; `test_scan` pins the copies.
+SCAN_TYPES = ("feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci", "revert")
+SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", re.ASCII)
+SLUG_MAX = 60
+
+# Said beside *Scan now* on the Backlog, before it is pressed.
+CONSEQUENCE = "Opens one paid session, about $1 at most, that proposes work from the run log."
+_PROPOSAL = {
+    **{k: {"type": "string"} for k in ("type", "slug", "title", "problem")},
+    "sources": {"type": "array", "items": {"type": "string"}},
+}
+# No tools and no commands, like the estimate; it hands its proposals back through `submit`,
+# whose schema leaves their rules (`problems_of`) to this file, so one bad proposal drops alone.
+# Two turns is what a measured scan took (`submit`, then the end). The budget is checked only
+# once a turn is paid for, so $0.68 is $1 less the dearest whole scan measured ($0.32, one
+# sample): a scan stays near $1 at worst, not under it for sure. One more turn could pass it.
+SESSION = Session(
+    NAME,
+    Grant(
+        max_turns=2,
+        max_budget_usd=0.68,
+        warning="Scanning opens one paid session (2 turns, $0.68 ceiling, about $1 at most) on "
+        "the model of the Agents page row `estimate`.",
+    ),
+    {
+        "type": "object",
+        "properties": {
+            "proposals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": _PROPOSAL,
+                    "required": list(_PROPOSAL),
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["proposals"],
+        "additionalProperties": False,
+    },
+    "Hand the app the work you propose, each item with the interventions it gathers.",
+    own_turns=True,
+)
 # The bounds of a scan's input, its output, a dismissal and its cost.
 LIMIT = 25
 PROMPT_MAX = 12_000
@@ -403,7 +458,7 @@ async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
             )
         made = await asyncio.to_thread(store.proposals, key)
         prompt, taken, cut = prompt_of(found, made)
-        got = await ctx.session(cwd, "scan", prompt)
+        got = await ctx.session(cwd, NAME, prompt)
         cost = float(got.cost.get("cost_usd") or 0.0)
         stopped = cost > CAP_USD and ctx.schedule(NAME, cwd) != 0
         if stopped:
@@ -568,8 +623,8 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
             "scanning": key in _scanning,
             "schedule": ctx.schedule(NAME, cwd),
             "note": note_of(ctx, cwd, runs),
-            "consequence": CONSEQUENCE[NAME],
-            "warning": grant_for(NAME).warning,
+            "consequence": CONSEQUENCE,
+            "warning": SESSION.grant.warning,
         }
 
     @router.post("/api/scan/proposals/{pid}")
@@ -593,197 +648,7 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
 # *Scan now* with its cost beside it, and each row's sources, *Accept* and *Dismiss* once opened.
 # Hidden while the feature is off. `#proposal-<id>` opens that row. The colours are the Radix
 # variables `screens/studio.py` uses; a feature may not import `screens`.
-_JS = """
-(function () {
-  if (window.__coscc_scan) return;
-  window.__coscc_scan = true;
-  var C = window.coscc, filter = "pending", listed = null;
-  var CHIP = {pending: "amber", accepted: "grass", dismissed: "gray"};
-  var KIND = {"refused": "Refused", "ci-red": "CI red", "rerun": "Rerun",
-    "review-round": "Review round", "impl-draft": "Impl draft", "integrate": "Integrate"};
-  function here() {
-    listed = listed || C.api("/api/workspaces")
-      .then(function (r) { return r.ok ? r.json() : {}; })
-      .then(function (j) { return j.workspaces || []; })
-      .catch(function () { return []; });
-    var ws = new URLSearchParams(window.location.search).get("ws");
-    return listed.then(function (list) {
-      return list.filter(function (w) { return w.name === ws; })[0] || list[0] || null;
-    });
-  }
-  function el(tag, css, text) {
-    var e = document.createElement(tag);
-    if (css) e.style.cssText = css;
-    if (text !== undefined) e.textContent = text;
-    return e;
-  }
-  function chip(state) {
-    var c = CHIP[state] || "gray";
-    return el("span", "display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;" +
-      "background:var(--" + c + "-3);color:var(--" + c + "-11);flex-shrink:0;min-width:88px;" +
-      "white-space:nowrap;text-align:center", state);
-  }
-  function button(text, soft) {
-    var b = el("button", "border-radius:6px;padding:4px 10px;font-size:13px;cursor:pointer;" +
-      "border:1px solid var(--" + (soft ? "gray-6" : "accent-9") + ");background:var(--" +
-      (soft ? "gray-2" : "accent-9") + ");color:var(--" + (soft ? "gray-12" : "accent-contrast") + ")", text);
-    b.type = "button";
-    return b;
-  }
-  function input(value, label) {
-    var i = el("input", "flex:1;min-width:160px;border:1px solid var(--gray-6);border-radius:6px;" +
-      "padding:4px 8px;font-size:13px;background:var(--gray-1);color:var(--gray-12)");
-    i.value = value;
-    i.setAttribute("aria-label", label);
-    return i;
-  }
-  function muted(text) { return el("div", "color:var(--gray-11);font-size:13px", text); }
-  function act(w, p, sent, err) {
-    sent.cwd = w.path;
-    return C.api("/api/scan/proposals/" + p.id, {method: "POST",
-      headers: {"Content-Type": "application/json"}, body: JSON.stringify(sent)})
-      .then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
-      .then(function (got) {
-        if (got[0]) { window.location.hash = "proposal-" + p.id; return draw(); }
-        err.textContent = got[1].detail || got[1].error || "That did not work.";
-      });
-  }
-  function sources(p) {
-    var t = el("table", "width:100%;border-collapse:collapse;font-size:13px;margin:8px 0");
-    var head = el("tr");
-    ["Kind", "Unit", "When"].forEach(function (h) {
-      head.appendChild(el("th", "text-align:left;color:var(--gray-11);font-weight:500;" +
-        "padding:4px 8px 4px 0;border-bottom:1px solid var(--gray-5)", h));
-    });
-    t.appendChild(head);
-    p.sources.forEach(function (s) {
-      var r = el("tr");
-      [KIND[s.kind] || s.kind, s.unit || "-", C.ago(s.at)].forEach(function (v) {
-        r.appendChild(el("td", "padding:4px 8px 4px 0;border-bottom:1px solid var(--gray-4)", v));
-      });
-      t.appendChild(r);
-    });
-    return t;
-  }
-  function actions(w, p) {
-    var box = el("div", "display:flex;flex-direction:column;gap:8px;margin-top:8px");
-    var err = el("div", "color:var(--red-11);font-size:13px");
-    var one = el("div", "display:flex;gap:8px;align-items:center;flex-wrap:wrap");
-    var slug = input(p.slug, "Slug of the new unit");
-    var ok = button("Accept");
-    ok.onclick = function () { act(w, p, {action: "accept", slug: slug.value}, err); };
-    one.appendChild(slug); one.appendChild(ok);
-    var two = el("div", "display:flex;gap:8px;align-items:center;flex-wrap:wrap");
-    var why = input("", "Why it is dismissed");
-    why.placeholder = "Why it is dismissed";
-    var no = button("Dismiss", true);
-    var hint = muted("Dismiss needs a reason.");
-    function check() {
-      var empty = !why.value.trim();
-      no.disabled = empty; no.style.opacity = empty ? "0.5" : "1";
-      hint.style.display = empty ? "block" : "none";
-    }
-    why.oninput = check; check();
-    no.onclick = function () { act(w, p, {action: "dismiss", reason: why.value}, err); };
-    two.appendChild(why); two.appendChild(no);
-    box.appendChild(one); box.appendChild(two); box.appendChild(hint); box.appendChild(err);
-    return box;
-  }
-  function row(w, p) {
-    var d = el("details", "border-bottom:1px solid var(--gray-5)");
-    d.id = "proposal-" + p.id;
-    var s = el("summary", "display:flex;gap:12px;align-items:center;padding:10px 0;cursor:pointer;" +
-      "flex-wrap:wrap");
-    s.appendChild(chip(p.state));
-    s.appendChild(el("span", "flex:1;min-width:160px;color:var(--gray-12)", p.title));
-    s.appendChild(el("span", "color:var(--gray-11);font-size:13px;width:64px", p.type));
-    s.appendChild(el("span", "color:var(--gray-11);font-size:13px;width:84px",
-      p.sources.length + (p.sources.length === 1 ? " source" : " sources")));
-    s.appendChild(el("span", "color:var(--gray-11);font-size:13px;width:110px", C.ago(p.at)));
-    d.appendChild(s);
-    var body = el("div", "padding:0 0 14px");
-    body.appendChild(el("p", "margin:4px 0;white-space:pre-wrap;color:var(--gray-12);font-size:14px",
-      p.problem));
-    body.appendChild(sources(p));
-    if (p.state === "pending") body.appendChild(actions(w, p));
-    if (p.state === "accepted") body.appendChild(muted("Accepted as " + p.unit + ", " + C.ago(p.decided) + "."));
-    if (p.state === "dismissed") body.appendChild(muted("Dismissed " + C.ago(p.decided) + ": " + p.reason));
-    d.appendChild(body);
-    return d;
-  }
-  function last(runs) {
-    if (!runs.length) return "No scan yet.";
-    var r = runs[0], cost = "$" + r.cost_usd.toFixed(2);
-    if (r.outcome === "skipped") return "Last scan " + C.ago(r.at) + ": nothing new, $0.00.";
-    if (r.outcome === "failed") return "Last scan " + C.ago(r.at) + " failed, " + cost + ".";
-    return "Last scan " + C.ago(r.at) + ": " + r.taken + " interventions read, " + cost + ".";
-  }
-  var slotEl = null;
-  function draw() {
-    var target = slotEl;
-    return here().then(function (w) {
-      if (!w || !target) return;
-      return C.api("/api/scan/proposals?cwd=" + encodeURIComponent(w.path))
-        .then(function (r) { return r.ok ? r.json() : {on: false}; })
-        .then(function (j) { paint(target, w, j); });
-    }).catch(function () {});
-  }
-  function paint(target, w, j) {
-    target.textContent = "";
-    if (!j.on) return;
-    var panel = el("section", "background:var(--gray-2);border:1px solid var(--gray-5);" +
-      "border-radius:14px;padding:22px;width:100%;box-sizing:border-box");
-    panel.id = "scan-proposals";
-    var head = el("div", "display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px");
-    head.appendChild(el("h3", "margin:0;font-size:18px;font-weight:500;flex:1", "Proposals"));
-    var go = button(j.scanning ? "Scanning" : "Scan now", true);
-    go.id = "scan-now";
-    go.disabled = !!j.scanning;
-    var said = muted(j.consequence);
-    var err = el("div", "color:var(--red-11);font-size:13px");
-    go.onclick = function () {
-      go.disabled = true; go.textContent = "Scanning";
-      C.api("/api/scan?cwd=" + encodeURIComponent(w.path), {method: "POST"})
-        .then(function (r) { return r.json().then(function (b) { return [r.ok, b]; }); })
-        .then(function (got) { if (!got[0]) err.textContent = got[1].detail || "The scan did not run."; })
-        .catch(function () {}).then(draw);
-    };
-    head.appendChild(go);
-    panel.appendChild(head);
-    var line = el("div", "display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px");
-    line.appendChild(said);
-    line.appendChild(muted(last(j.runs)));
-    panel.appendChild(line);
-    if (j.note) panel.appendChild(el("div", "color:var(--amber-11);font-size:13px;margin-bottom:6px", j.note));
-    panel.appendChild(err);
-    var tabs = el("div", "display:flex;gap:6px;margin:10px 0;flex-wrap:wrap");
-    tabs.setAttribute("role", "group");
-    tabs.setAttribute("aria-label", "Filter proposals by state");
-    ["pending", "accepted", "dismissed", "all"].forEach(function (f) {
-      var n = j.proposals.filter(function (p) { return f === "all" || p.state === f; }).length;
-      var t = button(f.charAt(0).toUpperCase() + f.slice(1) + " " + n, f !== filter);
-      t.setAttribute("aria-pressed", f === filter ? "true" : "false");
-      t.onclick = function () { filter = f; paint(target, w, j); };
-      tabs.appendChild(t);
-    });
-    panel.appendChild(tabs);
-    var shown = j.proposals.filter(function (p) { return filter === "all" || p.state === filter; });
-    shown.forEach(function (p) { panel.appendChild(row(w, p)); });
-    if (!shown.length) panel.appendChild(muted(j.proposals.length ? "No proposal in this state." :
-      "No proposal yet: a scan makes them from the run log."));
-    target.appendChild(panel);
-    var want = window.location.hash.slice(1);
-    var open = want && document.getElementById(want);
-    if (open && open.tagName === "DETAILS") { open.open = true; open.scrollIntoView({block: "start"}); }
-  }
-  C.slot("slot-backlog", function (target) {
-    slotEl = target;
-    var want = window.location.hash.match(/^#proposal-(\\d+)$/);
-    if (want) filter = "all";
-    draw();
-  });
-})();
-"""
+_JS = (Path(__file__).parent / "scan.js").read_text(encoding="utf-8")
 
 FEATURE = Feature(
     NAME,
@@ -794,5 +659,6 @@ FEATURE = Feature(
     status=status,
     on_set=on_set,
     schedule=Schedule(HOURS, DEFAULT_HOURS, tick),
+    sessions=(SESSION,),
     summary="Reads the run log on a schedule and proposes units for what keeps needing a person.",
 )

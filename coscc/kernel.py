@@ -23,11 +23,30 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 from starlette.routing import BaseRoute
 
+from coscc.agent.policy import Grant as Grant
+from coscc.agent.policy import check_command as check_command
+from coscc.agent.policy import grant_for as grant_for
 from coscc.bus import Bus
+from coscc.bus import Event as Event
+from coscc.data import Busy as Busy
 from coscc.data import Data
+from coscc.data import now as now
+from coscc.runlog.journal import BELL as BELL
 from coscc.runlog.journal import Intervention, Journal
+from coscc.units import cos_dir as cos_dir
+from coscc.units.autopilot import files_of as files_of
+from coscc.units.autopilot import is_step as is_step
+from coscc.units.scratch import RAM_CAP
 
 log = logging.getLogger(__name__)
+
+# What one unit's ram scratch directory may hold before a write there is refused.
+SCRATCH_RAM_CAP = RAM_CAP
+
+
+# The word every record gets when the request names nobody. It is not an identity: the one
+# password names nobody, so it says only that someone holding it or a live session acted.
+OWNER = "owner"
 
 
 class Invalid(Exception):
@@ -276,6 +295,23 @@ class Schedule:
 
 
 @dataclass(frozen=True)
+class Session:
+    """A paid session a feature runs through `Ctx.session`: no stage, and it hands one object
+    back through `submit`. `kind` names its grant, its attempts and their bus events
+    (`<kind>.queued`, `.running`, `.ended`, `.refused`)."""
+
+    kind: str
+    grant: Grant
+    # The JSON Schema of the object it hands back.
+    schema: dict[str, Any]
+    # What the `submit` tool tells the session it is for.
+    purpose: str
+    # Whether `grant.max_turns` holds below the floor a submitting session gets, because one
+    # more turn could pass its budget; a refused object is then not submitted again.
+    own_turns: bool = False
+
+
+@dataclass(frozen=True)
 class Page:
     """A sidebar entry whose screen frames the feature's own `GET path?cwd=<workspace>`."""
 
@@ -306,6 +342,7 @@ class Feature:
     # work and returns.
     on_set: Callable[[Ctx, str, State], None] | None = None
     schedule: Schedule | None = None
+    sessions: tuple[Session, ...] = ()
     # One fixed sentence, 100 characters at most: what the feature does, shown under its name.
     summary: str = ""
 

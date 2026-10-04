@@ -23,19 +23,21 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import BaseRoute
 
 from coscc import vault
-from coscc.agent import policy
-from coscc.data import Busy
 from coscc.kernel import (
     Block,
+    Busy,
     Ctx,
     Facts,
-    Feature as Feature,
+    Feature,
+    Grant,
     Guard,
     Invalid,
     Page,
     Parts,
     Tool,
     body,
+    check_command,
+    grant_for,
 )
 from coscc.features.vault import page as page
 
@@ -125,8 +127,8 @@ class Handlers:
             rows.append({**_meta(s, key), "usable_now": now})
         return _text({"secrets": rows})
 
-    def _grant(self) -> policy.Grant:
-        grant = policy.grant_for(self.facts.stage)
+    def _grant(self) -> Grant:
+        grant = grant_for(self.facts.stage)
         return replace(grant, commands=self.facts.commands, protected=self.get().protected())
 
     def _run(self, command: str, uses: list[vault.Use], timeout: int, capture: str) -> Any:
@@ -155,7 +157,7 @@ class Handlers:
         if isinstance(uses, str) or not isinstance(capture, str):
             return _no(uses if isinstance(uses, str) else "capture is a ws: name")
         # The kernel lets the tool through by name; the line is this handler's to check.
-        words = policy.check_command(self._grant(), command)
+        words = check_command(self._grant(), command)
         if words:
             return _text({"result": "command-refused", "reason": words}, True)
         timeout = _seconds(args.get("timeout"))

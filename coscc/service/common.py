@@ -272,10 +272,6 @@ def outcome_label(
     }
 
 
-# The word every record gets when the request names nobody. It is not an identity: the one
-# password names nobody, so it says only that someone holding it or a live session acted.
-OWNER = "owner"
-
 # `MISSED_HINT` in the page's language; the stored word is unchanged.
 MISSED_HINT_LABEL = "Consider dropping or redoing it."
 # Each outcome kind as the page says it.
@@ -295,7 +291,6 @@ CONSEQUENCE = {
     "ship": "Merges the pull request with this machine's gh login, and spends quota.",
     "integrate": "Rebases this pull request with this machine's gh login; a conflict opens a paid session.",
     "estimate": "Opens one paid session that proposes estimates.",
-    "scan": "Opens one paid session, about $1 at most, that proposes work from the run log.",
     "drop": "Closes this unit's open pull request with this machine's gh login.",
     # The whole warning is `release.WARNING`, in `/api/board`.
     "release": "Commits, pushes, merges and tags on main with this machine's gh login.",

@@ -44,10 +44,8 @@ Name = Literal[
     "estimate.running",
     "estimate.ended",
     "estimate.refused",
-    "scan.queued",
-    "scan.running",
-    "scan.ended",
-    "scan.refused",
+    # A feature's session (`kernel.Session`) moves as `<kind>.queued`, `.running`, `.ended` and
+    # `.refused` too; its kind is not known here.
     "integration.escalated",
     "retake.ended",
     "chat-turn.ended",

@@ -47,9 +47,17 @@ MACHINES: dict[str, dict[str, set[str]]] = {
     "hold": _SHORT,
     "rounds": _SHORT,
     "estimate": _SHORT,
-    # A feature's paid session (`kernel.Ctx.session`), named by its grant.
-    "scan": _SHORT,
 }
+
+
+def add_session(kind: str) -> None:
+    """A feature's paid session (`kernel.Session`, run through `kernel.Ctx.session`): a short
+    hold named by its grant, added when the app is built."""
+    if MACHINES.get(kind, _SHORT) is not _SHORT:
+        raise ValueError(f"the machine {kind!r} is taken")
+    MACHINES[kind] = _SHORT
+
+
 ENDS = ("ended", "refused")
 # The kind of slot each machine waits for, and where the scheduler sends one that gets it.
 SLOTS = {"step": "agent", "integration": "heavy"}
@@ -122,8 +130,8 @@ def describe(unit: str, row: Attempt) -> str:
         return f"{unit} is busy: a review round is being allowed since {t}; try again in a moment"
     if machine == "estimate":
         return f"a proposal for this workspace is already running since {t}; wait for it to end"
-    if machine == "scan":
-        return f"a scan of this workspace is already running since {t}; wait for it to end"
+    if machine != "step":
+        return f"a {machine} of this workspace is already running since {t}; wait for it to end"
     if state == "queued":
         return (
             f"{unit} is busy: a {stage} step is queued since {t}, waiting for a free slot{stopping}; "

@@ -7,13 +7,12 @@ the same for every step, since reading scratch is open to all of them.
 
 from __future__ import annotations
 
-from coscc.kernel import Block, Facts, Feature, Parts
-from coscc.units.scratch import RAM_CAP
+from coscc.kernel import SCRATCH_RAM_CAP, Block, Facts, Feature, Parts
 
 
 def render(_facts: Facts) -> str:
     """The three places an agent writes, whatever the step."""
-    cap = RAM_CAP // 2**20
+    cap = SCRATCH_RAM_CAP // 2**20
     return "\n".join(
         [
             "# Where you write",

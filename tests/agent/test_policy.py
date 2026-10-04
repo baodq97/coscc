@@ -167,9 +167,10 @@ class OneGrantPerStage(unittest.TestCase):
             "plan": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
             "review": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
         }
+        added = policy.SUBMITTING_SESSIONS - {"estimate", "integrate"}
         self.assertEqual(
-            set(policy.GRANTS),
-            set(expected) | {"spec", "integrate", "spike", "estimate", "scan"},
+            set(policy.GRANTS) - added,
+            set(expected) | {"spec", "integrate", "spike", "estimate"},
         )
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
@@ -582,18 +583,26 @@ class TheEstimateGrantOpensNothing(unittest.TestCase):
         self.assertIn("password", g.warning)
 
 
-class TheScanGrantOpensNothingAndKeepsItsTwoTurns(unittest.TestCase):
-    """`submit` only, 2 turns and $0.68, and a warning beside *Scan now*."""
+class AFeatureAddsItsSession(unittest.TestCase):
+    """`add_session`: a feature's grant, submitting, with its own turns when it asks."""
 
-    def test_the_grant(self):
-        g = grant_for("scan")
-        self.assertFalse(g.opens_anything)
+    def tearDown(self):
+        policy.GRANTS.pop("planted", None)
+        policy.SUBMITTING_SESSIONS.discard("planted")
+        policy.OWN_TURNS.discard("planted")
+
+    def test_an_added_session_submits_and_keeps_its_own_turns(self):
+        grant = Grant(max_turns=2, max_budget_usd=0.5)
+        policy.add_session("planted", grant, own_turns=True)
+        policy.add_session("planted", grant, own_turns=True)
+        g = grant_for("planted")
         self.assertTrue(g.submits)
-        self.assertEqual((g.max_turns, g.max_budget_usd), (2, 0.68))
-        self.assertIn("paid session", g.warning)
+        self.assertEqual((g.max_turns, g.max_budget_usd), (2, 0.5))
         self.assertEqual(decide(g, "mcp__cos__submit", {}, "/tmp/ws"), "")
-        for tool in ("Read", "Bash", "Write"):
-            self.assertIn("not granted", decide(g, tool, {}, "/tmp/ws"), tool)
+
+    def test_a_name_another_grant_holds_is_refused(self):
+        with self.assertRaises(ValueError):
+            policy.add_session("impl", Grant(), own_turns=False)
 
 
 if __name__ == "__main__":

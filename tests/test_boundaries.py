@@ -15,6 +15,7 @@ import re
 import unittest
 from collections import Counter
 
+from coscc import features
 from tests.test_layers import ROOT, _files
 
 DATA = "coscc.data"
@@ -758,3 +759,84 @@ class CallsAreTyped(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# A feature's name the core may still write, with why. Anything else is the core knowing a
+# feature: what it needs comes from the feature's own `Feature` (its sessions, tables, parts).
+CORE_MAY_NAME: dict[tuple[str, str], str] = {
+    ("*", "scratch"): "the kernel makes each unit's scratch directories and a spike's; the "
+    "feature only tells the agent about them",
+    ("coscc/agent/policy.py", "vault"): "the vault's store is a protected path even with the "
+    "vault off",
+}
+
+
+def _docstrings(tree: ast.AST) -> set[int]:
+    out = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                out.add(id(first.value))
+    return out
+
+
+def feature_names_in_core(trees: dict[str, ast.AST], names: tuple[str, ...]) -> list[str]:
+    """Each string in core code, docstrings aside, that is a feature's name or one of its event
+    subjects (`<name>.<state>`). `coscc/features/` and the vault's own package are not core."""
+    out = []
+    for path, tree in sorted(trees.items()):
+        if path.startswith(("coscc/features/", "coscc/vault/")):
+            continue
+        docs = _docstrings(tree)
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            if id(node) in docs:
+                continue
+            for name in names:
+                if node.value != name and not node.value.startswith(name + "."):
+                    continue
+                if ("*", name) in CORE_MAY_NAME or (path, name) in CORE_MAY_NAME:
+                    continue
+                out.append(
+                    f"{path}:{node.lineno} names the feature {name}: let the feature declare it "
+                    "on its `Feature`, or list it in CORE_MAY_NAME with why."
+                )
+    return out
+
+
+class CoreNamesNoFeature(unittest.TestCase):
+    def test_no_core_module_names_a_feature(self):
+        names = tuple(f.name for f in features.FEATURES)
+        self.assertEqual(feature_names_in_core(_trees(), names), [])
+
+    def test_a_planted_name_or_event_counts_but_prose_does_not(self):
+        src = (
+            '"""The scan feature."""\n'
+            'X = "scan"\n'
+            'Y = "scan.ended"\n'
+            'Z = "a scan of this workspace"\n'
+            'W = "scratch"\n'
+        )
+        found = feature_names_in_core({"coscc/service/m.py": ast.parse(src)}, ("scan", "scratch"))
+        self.assertEqual(
+            [f.split(" names")[0] for f in found], ["coscc/service/m.py:2", "coscc/service/m.py:3"]
+        )
+        self.assertEqual(
+            feature_names_in_core({"coscc/features/scan.py": ast.parse(src)}, ("scan",)), []
+        )
+
+    def test_every_allowed_name_is_still_written(self):
+        written = {
+            (path, node.value)
+            for path, tree in _trees().items()
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        stale = [
+            key
+            for key in CORE_MAY_NAME
+            if not any(v == key[1] and key[0] in ("*", p) for p, v in written)
+        ]
+        self.assertEqual(stale, [])

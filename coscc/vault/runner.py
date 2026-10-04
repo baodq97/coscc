@@ -66,13 +66,17 @@ class Result:
     captured: int
 
 
+# The run log's kind for every line of the vault.
+KIND = "vault"
+
+
 def record(
     journal: Journal | None, action: str, name: str, workspace: str, actor: str, **fields: object
 ) -> None:
-    """One run-log line of kind `vault`. A log that will not take it does not stop the caller."""
+    """One run-log line of kind `KIND`. A log that will not take it does not stop the caller."""
     if journal is None:
         return
-    line = {"kind": "vault", "action": action, "name": name, "workspace": workspace, "actor": actor}
+    line = {"kind": KIND, "action": action, "name": name, "workspace": workspace, "actor": actor}
     try:
         journal.append({**line, **fields})
     except BadRecord, Busy:

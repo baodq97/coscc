@@ -7,7 +7,7 @@ command with secrets in it, and `sources` gathers what a unit has written. Only
 
 from coscc.vault.filters import Hit, forms, mask, scan
 from coscc.vault.rules import REFUSALS, Refusal, policy, sentence
-from coscc.vault.runner import Result, Use, record, run
+from coscc.vault.runner import KIND, Result, Use, record, run
 from coscc.vault.sources import unit_sources
 from coscc.vault.store import (
     MODES,
@@ -21,6 +21,7 @@ from coscc.vault.store import (
 )
 
 __all__ = [
+    "KIND",
     "MODES",
     "NAME",
     "REFUSALS",

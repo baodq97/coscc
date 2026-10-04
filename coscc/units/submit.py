@@ -12,7 +12,6 @@ nothing and runs nothing.
 """
 
 import hashlib
-import re
 import weakref
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -225,40 +224,11 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["units"],
         "additionalProperties": False,
     },
-    # A scan's proposals. Their rules (`SCAN_TYPES`, `SLUG`, the lengths, sources from its own
-    # input) are `coscc/features/scan.py`'s, so one bad proposal drops alone.
-    "scan": {
-        "type": "object",
-        "properties": {
-            "proposals": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "type": {"type": "string"},
-                        "slug": {"type": "string"},
-                        "title": {"type": "string"},
-                        "problem": {"type": "string"},
-                        "sources": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "required": ["type", "slug", "title", "problem", "sources"],
-                    "additionalProperties": False,
-                },
-            }
-        },
-        "required": ["proposals"],
-        "additionalProperties": False,
-    },
 }
 
-# The loop's branch types and slug grammar (`coscc/loop/__init__.py`'s `BRANCH_TYPES`, `SLUG_RE`
-# and `SLUG_MAX`), which a package below the loop may not import; `test_submit` pins the copies.
-SCAN_TYPES = ("feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci", "revert")
-SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", re.ASCII)
-SLUG_MAX = 60
-
 # The sessions that are no stage and hand back an object, each by its grant's name, with the
-# schema it submits against and what its tool says it is for.
+# schema it submits against and what its tool says it is for; a feature adds its own
+# (`add_session`).
 SESSIONS: dict[str, tuple[str, str]] = {
     "estimate": (
         "estimate",
@@ -268,11 +238,16 @@ SESSIONS: dict[str, tuple[str, str]] = {
         "integrate-result",
         "Hand the app the commits only a person can settle, each with why; `[]` when there is none.",
     ),
-    "scan": (
-        "scan",
-        "Hand the app the work you propose, each item with the interventions it gathers.",
-    ),
 }
+
+
+def add_session(kind: str, schema: Mapping[str, object], purpose: str) -> None:
+    """A feature's session (`kernel.Session`), added when the app is built; adding the same
+    one again changes nothing, and taking a schema's name another holds is a `ValueError`."""
+    if SCHEMAS.get(kind, schema) != schema:
+        raise ValueError(f"the schema {kind!r} is taken")
+    SCHEMAS[kind] = dict(schema)
+    SESSIONS[kind] = (kind, purpose)
 
 
 def schema_for(stage: str) -> dict[str, Any] | None:

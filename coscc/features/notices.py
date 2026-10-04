@@ -21,10 +21,7 @@ from fastapi.responses import StreamingResponse
 from starlette.routing import BaseRoute
 
 from coscc.auth import WS_RECHECK
-from coscc.data import Busy
-from coscc.kernel import Ctx, Feature, Invalid, line
-from coscc.runlog.journal import BELL
-from coscc.units import autopilot
+from coscc.kernel import BELL, Busy, Ctx, Feature, Invalid, is_step, line
 
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
 SOURCE_KINDS = ("autopilot-stop", "questions", "end", "ship")
@@ -40,7 +37,7 @@ LIFETIME_SECONDS = WS_RECHECK
 # How many rows one read of the stream takes at most. Chosen, not measured.
 PAGE = 500
 
-# What each stop of `autopilot.STOP_KINDS` means, said of a unit. `full` is no autopilot stop
+# What each stop the autopilot makes means, said of a unit. `full` is no autopilot stop
 # and never reaches here.
 STOPS = {
     "a": "it has open questions",
@@ -103,7 +100,7 @@ def _kind_and_text(record: dict[str, Any]) -> tuple[str, str] | None:
         return "questions", f"{unit or 'A unit'} in {where} has {asked}{after}."
     if kind == "end":
         outcome = str(record.get("outcome") or "")
-        if not unit or not autopilot.is_step(record) or outcome == "done":
+        if not unit or not is_step(record) or outcome == "done":
             return None
         said = ENDED.get(outcome, "ended without finishing")
         return "step-ended", f"The {stage or 'last'} step of {unit} in {where} {said}."

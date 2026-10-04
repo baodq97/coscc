@@ -50,12 +50,12 @@ from coscc.service.common import (
     BRANCH_REMOTE,
     BRANCH_TRUNK,
     CONSEQUENCE,
-    OWNER,
     Refused,
     _younger_than,
     describe_base,
     step_cwd,
 )
+from coscc.kernel import OWNER
 from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces

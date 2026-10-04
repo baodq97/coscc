@@ -32,7 +32,7 @@ from coscc.service.sessions import Chat
 from coscc.service.steps import Steps
 from coscc.runlog.journal import BadRecord
 from coscc.data import Busy
-from coscc.service.common import OWNER
+from coscc.kernel import OWNER
 from coscc.service.update import SETTLE_POLL, as_invalid, update_words
 from coscc.service.watch import Watch
 from coscc.service.workspaces import Workspaces
@@ -106,8 +106,6 @@ class Service:
             "retake.ended",
             "estimate.ended",
             "estimate.refused",
-            "scan.ended",
-            "scan.refused",
             "chat-turn.ended",
         ):
             self.bus.subscribe(name, lambda _: self.updater.job_ended())

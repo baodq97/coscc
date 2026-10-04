@@ -14,7 +14,7 @@ from typing import Any, TypedDict
 from coscc.agent import agents, models, policy
 from coscc.data import Busy, Data, Unusable
 from coscc.runlog.journal import BadRecord
-from coscc.service.common import OWNER
+from coscc.kernel import OWNER
 from coscc.kernel import Invalid
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces

@@ -444,7 +444,7 @@ def _vault_measure(args: list[str]) -> int:
     uses = [
         r
         for r in records
-        if r.get("kind") == "vault"
+        if r.get("kind") == vault.KIND
         and r.get("action") == "use"
         and not r.get("codes")
         and not r.get("refused")
