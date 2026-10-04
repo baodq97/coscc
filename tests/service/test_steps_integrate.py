@@ -24,7 +24,8 @@ from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
 from coscc.service import Service
-from coscc.service.common import Invalid, Refused
+from coscc.service.common import Refused
+from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
 from coscc.service.steps import CI_REFRESH
 from tests.service.test_service import use_sessions, use_config
@@ -671,7 +672,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(self.records("integration"), [])
 
     def guarded(self, check):
-        from coscc.hooks import Guard, Hooks, Parts
+        from coscc.kernel import Guard, Hooks, Parts
 
         self.service.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
 

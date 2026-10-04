@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.agent import modeltrial, policy
-from coscc.hooks import Facts, Hooks, Parts, Tool
+from coscc.kernel import Facts, Hooks, Parts, Tool
 from coscc.runlog.journal import Journal
 from coscc.agent.policy import decide, grant_for
 from coscc.runner.prompt import compose_prompt
@@ -1618,7 +1618,7 @@ class AWorkspacesListsReachTheImplGrant(unittest.TestCase):
     def run_stage(self, d, stage, stored):
         from coscc.config import Config
         from coscc.data import Data
-        from coscc.hooks import Block
+        from coscc.kernel import Block
 
         seen = {}
 

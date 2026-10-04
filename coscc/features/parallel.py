@@ -15,8 +15,7 @@ from __future__ import annotations
 import re
 from typing import TypedDict
 
-from coscc.hooks import Block, Facts, Parts
-from coscc.plugin import Plugin
+from coscc.kernel import Block, Facts, Feature, Parts
 
 HEADING = "## Parallelization"
 NONE = "none: one session"
@@ -94,7 +93,7 @@ def render(facts: Facts) -> str:
     return "\n".join(parts).rstrip()
 
 
-PLUGIN = Plugin(
+FEATURE = Feature(
     "parallel",
     lambda _ctx: [],
     agent=lambda _ctx: Parts(blocks=(Block("parallel", render),)),

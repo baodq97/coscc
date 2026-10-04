@@ -16,6 +16,7 @@ from unittest import mock
 import claude_agent_sdk as sdk
 import httpx
 
+from coscc.kernel import Feature
 from coscc import update
 from coscc.api import build
 from coscc.config import Config
@@ -1617,7 +1618,7 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(got.status_code, 400, (name, value))
         # JSON has no infinity; the service refuses one too.
-        from coscc.service.common import Invalid
+        from coscc.kernel import Invalid
 
         with self.assertRaises(Invalid):
             self.service.autopilot.set_setting("/tmp", "daily_cap_usd", float("inf"))
@@ -1950,15 +1951,14 @@ class FeatureStatesOverHttp(unittest.IsolatedAsyncioTestCase):
     """`/api/features` with a two-state feature, a pilot one and one its status locks."""
 
     async def asyncSetUp(self):
-        from coscc.plugin import Plugin
 
         self.config = _tmp_config(self)
         self.cwd = self.config.workspaces[0]
         self.told: list[tuple[str, str]] = []
         self.may = True
         plugins = (
-            Plugin("plain", lambda _c: []),
-            Plugin(
+            Feature("plain", lambda _c: []),
+            Feature(
                 "graph",
                 lambda _c: [],
                 default="off",

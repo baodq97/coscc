@@ -28,7 +28,7 @@ package `coscc/vault/`'s; the file has the tables' statements through `vault.TAB
 All behind the login; none is in `auth.EXEMPT`. Every one refuses a workspace with the vault off
 (the pref `features.off`), except delete and revoke.
 
-- `GET /vault?cwd=`: the page, framed by the studio's *Vault* sidebar entry (`Plugin.page`).
+- `GET /vault?cwd=`: the page, framed by the studio's *Vault* sidebar entry (`Feature.page`).
   With the vault off it still opens, with delete and revoke only. Without `age` it says so and
   saves no value. Its colours are the studio's tokens copied from the built Radix CSS, and it
   reads the studio's colour mode from `localStorage.theme`: a theme change in `coscc/ui.py` is

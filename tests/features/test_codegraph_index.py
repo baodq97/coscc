@@ -21,7 +21,7 @@ from coscc.features.codegraph import (
     Indexes,
     Ready,
 )
-from coscc.plugin import Ctx
+from coscc.kernel import Ctx
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40

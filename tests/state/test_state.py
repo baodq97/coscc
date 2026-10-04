@@ -14,6 +14,7 @@ import ast
 import re
 import unittest
 
+from coscc import kernel
 from coscc.state import present
 from pathlib import Path
 from coscc.screens.board import _unit_card
@@ -2309,8 +2310,8 @@ class AFeatureIsTurnedOffFromSettings(unittest.TestCase):
             service = mock.Mock(config=mock.Mock(data_dir=root))
             service.ws.check.side_effect = lambda cwd: cwd
             plugins = (
-                plugin.Plugin("notices", lambda _c: []),
-                plugin.Plugin("graph", lambda _c: [], default="off", pilot=True),
+                kernel.Feature("notices", lambda _c: []),
+                kernel.Feature("graph", lambda _c: [], default="off", pilot=True),
             )
             api = SimpleNamespace(
                 state=SimpleNamespace(ctx=plugin.ctx_of(service, plugins), plugins=plugins)
@@ -2348,7 +2349,7 @@ class AFeaturePageIsFramedFromItsOwnRoute(unittest.TestCase):
         from unittest import mock
 
         from coscc import state
-        from coscc.plugin import Page
+        from coscc.kernel import Page
 
         page = SimpleNamespace(feature="", feature_label="", feature_src="", feature_off=False)
         pages = {"vault": Page("Vault", "key-round", "/vault")}

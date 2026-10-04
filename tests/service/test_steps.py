@@ -19,7 +19,8 @@ from coscc.git import fetches
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.units import autopilot
-from coscc.service.common import Invalid, Refused, describe_base, step_cwd
+from coscc.service.common import Refused, describe_base, step_cwd
+from coscc.kernel import Invalid
 from coscc.service import Service
 from coscc.service.answers import Answers
 from coscc.agent.sessions import Sessions
@@ -2708,7 +2709,7 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
         self.key = self.service.ws.key(str(self.repo))
 
     def guarded(self, check):
-        from coscc.hooks import Guard, Hooks, Parts
+        from coscc.kernel import Guard, Hooks, Parts
 
         self.service.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
 

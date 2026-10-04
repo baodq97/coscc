@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from coscc.update import updater as updater_mod
-from coscc.service.common import Invalid, NotUpdatable, Updating
+from coscc.service.common import NotUpdatable, Updating
+from coscc.kernel import Invalid
 
 
 # How often `settle_after_suspend` looks again.

@@ -16,14 +16,13 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from coscc.agent import transcript
 from coscc.agent import steps as steps_mod
 from coscc.data import Data, now as _now
-from coscc.hooks import facts as facts_of
+from coscc.kernel import Invalid, facts as facts_of
 from coscc.runlog import events
 from coscc.runlog.journal import BadRecord
 from coscc.runner.step import Runner
 from coscc.data import Busy
 from coscc.service.update import refuse_while_updating
 from coscc.service.attempts import Attempt, describe
-from coscc.service.common import Invalid
 from coscc.units import worktrees
 from coscc.service.sessions import CHAT_TURNS
 from coscc.bus import Bus

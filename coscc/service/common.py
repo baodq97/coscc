@@ -5,11 +5,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from coscc.kernel import Invalid
 from coscc.git import gitops
 from coscc.github import integrate
 from coscc.runlog.journal import BadRecord, Journal
@@ -33,10 +33,6 @@ BRANCH_REMOTE = "origin"
 BRANCH_TRUNK = gitops.TRUNK
 
 
-class Invalid(Exception):
-    """A request this layer refuses, carrying a reason a caller can show verbatim."""
-
-
 class Refused(Invalid):
     """The gate refused a step. `reasons` are its codes (`guards.REASONS`), which the
     autopilot reads instead of the words."""
@@ -47,18 +43,6 @@ class Refused(Invalid):
             if code not in REASONS:
                 raise ValueError(f"no reason code {code!r}")
         self.reasons = tuple(reasons)
-
-
-@dataclass(frozen=True)
-class Submitted:
-    """What one session that hands back an object left: the object, or `None` and `failure`
-    saying why there is none; what it cost (`journal.COST_FIELDS` and `cost_usd`); and its
-    session id, `run`."""
-
-    object: dict[str, Any] | None
-    cost: dict[str, Any]
-    run: str
-    failure: str = ""
 
 
 class Holds:

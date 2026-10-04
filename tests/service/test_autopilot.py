@@ -19,7 +19,7 @@ from tests.github import test_prmachine
 from coscc.runlog.journal import Journal
 from coscc.data import Busy
 from coscc.service import Service
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.service.common import Refused
 from coscc.agent.sessions import Sessions
 from tests.units.test_submit import submits as _submits

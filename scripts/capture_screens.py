@@ -576,7 +576,7 @@ def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
     from coscc.bus import Bus
     from coscc.data import Data
     from coscc.features import scan
-    from coscc.plugin import Ctx
+    from coscc.kernel import Ctx
     from coscc.runlog.journal import Intervention
 
     for body in ({"state": "on"}, {"schedule": 0}):

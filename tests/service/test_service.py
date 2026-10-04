@@ -14,7 +14,7 @@ from coscc import units
 from coscc.agent import harness
 from coscc.config import Config
 from coscc.service import Service, common
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 
 REPO = str(Path(__file__).resolve().parents[2])

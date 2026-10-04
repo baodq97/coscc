@@ -10,7 +10,8 @@ from coscc.data import Data
 from coscc.runlog.journal import COST_FIELDS, COST_USD, add_cost, zero_cost
 from coscc.data import Busy
 from coscc.agent.policy import PROSE_STAGES
-from coscc.service.common import Invalid, STAGE_FILES
+from coscc.service.common import STAGE_FILES
+from coscc.kernel import Invalid
 
 from coscc.config import Config
 

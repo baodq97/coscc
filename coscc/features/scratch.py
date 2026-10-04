@@ -7,8 +7,7 @@ the same for every step, since reading scratch is open to all of them.
 
 from __future__ import annotations
 
-from coscc.hooks import Block, Facts, Parts
-from coscc.plugin import Plugin
+from coscc.kernel import Block, Facts, Feature, Parts
 from coscc.units.scratch import RAM_CAP
 
 
@@ -35,7 +34,7 @@ def render(_facts: Facts) -> str:
     )
 
 
-PLUGIN = Plugin(
+FEATURE = Feature(
     "scratch",
     lambda _ctx: [],
     agent=lambda _ctx: Parts(blocks=(Block("scratch", render),)),

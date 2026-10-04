@@ -1,6 +1,6 @@
 # Scratch: where a step writes besides the worktree
 
-Read this before changing `coscc/features/scratch.py`: the block and `PLUGIN` are all in it.
+Read this before changing `coscc/features/scratch.py`: the block and `FEATURE` are all in it.
 The directories, the variables naming them, the cap and the cleanup are the kernel's
 (`coscc/units/scratch.py`, `policy.decide`, `sessions.child_env`).
 

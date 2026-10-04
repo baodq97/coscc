@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.config import Config
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Live, Sessions
 from coscc.units import scratch

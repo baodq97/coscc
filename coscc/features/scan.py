@@ -24,12 +24,11 @@ from starlette.routing import BaseRoute
 
 from coscc.agent.policy import grant_for
 from coscc.data import now
-from coscc.plugin import Ctx, Plugin, Schedule, State, body
-from coscc.runlog.journal import Intervention
-from coscc.service.common import CONSEQUENCE, OWNER, Invalid
+from coscc.kernel import Ctx, Feature, Intervention, Invalid, Schedule, State, body
+from coscc.service.common import CONSEQUENCE, OWNER
 from coscc.units.submit import SCAN_TYPES, SLUG, SLUG_MAX
 
-FEATURE = "scan"
+NAME = "scan"
 # The bounds of a scan's input, its output, a dismissal and its cost.
 LIMIT = 25
 PROMPT_MAX = 12_000
@@ -378,7 +377,7 @@ class Tables:
 
 
 def _check_on(ctx: Ctx, cwd: str) -> None:
-    if not ctx.enabled(FEATURE, cwd):
+    if not ctx.enabled(NAME, cwd):
         raise Invalid("scan is off in this workspace; turn it on in Settings")
 
 
@@ -406,9 +405,9 @@ async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
         prompt, taken, cut = prompt_of(found, made)
         got = await ctx.session(cwd, "scan", prompt)
         cost = float(got.cost.get("cost_usd") or 0.0)
-        stopped = cost > CAP_USD and ctx.schedule(FEATURE, cwd) != 0
+        stopped = cost > CAP_USD and ctx.schedule(NAME, cwd) != 0
         if stopped:
-            ctx.set_schedule(FEATURE, cwd, 0)
+            ctx.set_schedule(NAME, cwd, 0)
         if got.object is None:
             return await asyncio.to_thread(
                 store.record,
@@ -508,7 +507,7 @@ async def tick(ctx: Ctx, cwd: str, hours: int) -> None:
 
 def status(ctx: Ctx, cwd: str) -> tuple[str, bool]:
     """The last scan, for the Settings row."""
-    if ctx.state(FEATURE, cwd) == "off":
+    if ctx.state(NAME, cwd) == "off":
         return "Off in this workspace.", True
     runs = Tables(ctx).runs(ctx.workspace_key(cwd), 1)
     if not runs:
@@ -527,12 +526,12 @@ def status(ctx: Ctx, cwd: str) -> tuple[str, bool]:
 def on_set(ctx: Ctx, cwd: str, state: State) -> None:
     """Turned on, it scans every 24 h until Settings says otherwise."""
     if state == "on":
-        ctx.set_schedule(FEATURE, cwd, DEFAULT_HOURS)
+        ctx.set_schedule(NAME, cwd, DEFAULT_HOURS)
 
 
 def note_of(ctx: Ctx, cwd: str, runs: Sequence[Run]) -> str:
     """The one sentence while a scan's cost keeps the schedule off."""
-    if ctx.schedule(FEATURE, cwd) != 0:
+    if ctx.schedule(NAME, cwd) != 0:
         return ""
     for r in runs:
         if r["by"] == "schedule" and not r["stopped"]:
@@ -558,7 +557,7 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
         the last scans, why the schedule is off, and the sentence beside *Scan now*."""
         cwd = request.query_params.get("cwd", "")
         key = ctx.workspace_key(cwd)
-        if not ctx.enabled(FEATURE, cwd):
+        if not ctx.enabled(NAME, cwd):
             return {"on": False}
         made = await asyncio.to_thread(store.proposals, key)
         runs = await asyncio.to_thread(store.runs, key)
@@ -567,10 +566,10 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
             "proposals": made,
             "runs": runs,
             "scanning": key in _scanning,
-            "schedule": ctx.schedule(FEATURE, cwd),
+            "schedule": ctx.schedule(NAME, cwd),
             "note": note_of(ctx, cwd, runs),
-            "consequence": CONSEQUENCE[FEATURE],
-            "warning": grant_for(FEATURE).warning,
+            "consequence": CONSEQUENCE[NAME],
+            "warning": grant_for(NAME).warning,
         }
 
     @router.post("/api/scan/proposals/{pid}")
@@ -786,8 +785,8 @@ _JS = """
 })();
 """
 
-PLUGIN = Plugin(
-    FEATURE,
+FEATURE = Feature(
+    NAME,
     routes,
     scripts=(_JS,),
     tables=TABLES,

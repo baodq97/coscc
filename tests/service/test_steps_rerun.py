@@ -22,7 +22,8 @@ from coscc.units import worktrees
 from coscc.config import Config
 from coscc.runner.reply import RunError
 from coscc.service import Service
-from coscc.service.common import Invalid, Refused
+from coscc.service.common import Refused
+from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 from coscc.service.common import unit_state
 

@@ -47,7 +47,7 @@ MACHINES: dict[str, dict[str, set[str]]] = {
     "hold": _SHORT,
     "rounds": _SHORT,
     "estimate": _SHORT,
-    # A feature's paid session (`plugin.Ctx.session`), named by its grant.
+    # A feature's paid session (`kernel.Ctx.session`), named by its grant.
     "scan": _SHORT,
 }
 ENDS = ("ended", "refused")

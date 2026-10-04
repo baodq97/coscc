@@ -22,7 +22,7 @@ from coscc.config import Config
 from coscc.git import fetches
 from coscc.github import integrate
 from coscc.service import Service
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 
 REPO = Path(__file__).resolve().parents[2]
 ID = ("-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false")

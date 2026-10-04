@@ -15,13 +15,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc import kernel
 from coscc import plugin, vault
 from coscc.agent import policy
 from coscc.api import build
 from coscc.config import Config
 from coscc.data import Data
 from coscc.features import vault as feature
-from coscc.hooks import Facts
+from coscc.kernel import Facts
 
 AGE = """#!{python}
 import base64, sys
@@ -445,7 +446,7 @@ class TheGuardHoldsWhatCarriesAValueOut(Bed):
         self.assertIsNone(feature._leaks(self.ctx, lambda: self.store, self.facts("ship")))
 
     def test_a_run_log_that_cannot_be_read_holds_the_step(self):
-        ctx = plugin.Ctx(
+        ctx = kernel.Ctx(
             lambda: None, self.ctx.workspace_key, self.ctx.enabled, self.ctx.bus, self.ctx.data
         )
         self.assertIn("cannot", feature._leaks(ctx, lambda: self.store, self.facts("pr")) or "")

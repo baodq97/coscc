@@ -566,7 +566,7 @@ class TakingUpAfterAnUpdate(_Base):
 
 class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
     def guarded(self, check):
-        from coscc.hooks import Guard, Hooks, Parts
+        from coscc.kernel import Guard, Hooks, Parts
 
         self.service.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
 

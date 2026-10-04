@@ -25,12 +25,21 @@ from starlette.routing import BaseRoute
 from coscc import vault
 from coscc.agent import policy
 from coscc.data import Busy
-from coscc.hooks import Block, Facts, Guard, Parts, Tool
+from coscc.kernel import (
+    Block,
+    Ctx,
+    Facts,
+    Feature as Feature,
+    Guard,
+    Invalid,
+    Page,
+    Parts,
+    Tool,
+    body,
+)
 from coscc.features.vault import page as page
-from coscc.plugin import Ctx, Page, Plugin, body
-from coscc.service.common import Invalid
 
-FEATURE = "vault"
+NAME = "vault"
 HUMAN = "human:owner"
 # The stages the tool is offered to, and the ones the guard holds.
 TOOL_STAGES = ("impl", "spike")
@@ -378,7 +387,7 @@ class Door:
 
     def key_of(self, cwd: str, *, must_be_on: bool = True) -> str:
         key = self.ctx.workspace_key(cwd)
-        if must_be_on and not self.ctx.enabled(FEATURE, cwd):
+        if must_be_on and not self.ctx.enabled(NAME, cwd):
             raise Invalid("the vault is off for this workspace")
         return key
 
@@ -496,7 +505,7 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
         key = door.key_of(cwd, must_be_on=False)
         mine, others = await asyncio.to_thread(door.rows, key)
         age = door.get().can_encrypt()
-        shown = page.page(cwd, key, ctx.enabled(FEATURE, cwd), mine, others, query, age)
+        shown = page.page(cwd, key, ctx.enabled(NAME, cwd), mine, others, query, age)
         return HTMLResponse(shown, headers={"Cache-Control": "no-store"})
 
     @router.get("/api/vault/secrets")
@@ -599,7 +608,7 @@ _JS = """
 })();
 """
 
-PLUGIN = Plugin(
+FEATURE = Feature(
     "vault",
     routes=routes,
     scripts=(_JS,),

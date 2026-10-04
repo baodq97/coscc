@@ -10,7 +10,7 @@ import logging
 import reflex as rx
 
 from coscc.state import app, present
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.state.views import DecisionRow, _key_label
 
 log = logging.getLogger(__name__)

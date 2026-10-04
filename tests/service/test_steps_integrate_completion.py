@@ -24,7 +24,7 @@ from coscc.git import fetches
 from coscc.config import Config
 from tests.service.test_steps_integrate import BRANCH, PR, SLUG, StandIn, git
 from coscc.service import Service
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from tests.service.test_service import use_sessions, use_config
 
 REFUSED = ("is not the pull request's head", "the last integration was refused")

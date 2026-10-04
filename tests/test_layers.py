@@ -1,13 +1,13 @@
 """Each package imports only the packages below it, so a change is read downwards.
 
 `LAYERS` runs from the top down. A module imports its own package and anything on a lower
-line, never a line above or its own line's neighbour (a feature reaches `plugin`, its neighbour, by design). An import inside a function counts: it
+line, never a line above or its own line's neighbour. An import inside a function counts: it
 hides a cycle, it does not remove one. Inside a package no module reaches another that reaches
 it back; an `if TYPE_CHECKING:` import is not read. `tests/` is not checked; a test may reach
 anything.
 
-A feature (`coscc/features/<name>.py`, or a package `<name>/`, ending in one `PLUGIN`) is a plug-in, so three more rules:
-it imports only its own `coscc.features.<name>`, `coscc.plugin`, `coscc.bus`, `coscc.service.common` and packages below `service`;
+A feature (`coscc/features/<name>.py`, or a package `<name>/`, ending in one `FEATURE`) is a plug-in, so three more rules:
+it imports only its own `coscc.features.<name>` and `coscc.kernel`, plus the `KERNEL_GAPS` the kernel does not give yet;
 only `coscc/api.py` and `coscc/screens/__init__.py` import `coscc.features`, as
 `from coscc import features`; and it is at most 3 files of at most 800 lines. Each check takes
 text or a listing, so a test can feed it a planted case.
@@ -33,7 +33,7 @@ LAYERS = (
     ("vault",),
     ("github", "update"),
     ("runner",),
-    ("hooks",),
+    ("kernel",),
     ("units",),
     ("git", "runlog"),
     ("agent",),
@@ -85,8 +85,6 @@ def violations() -> list[str]:
     for path in _files():
         own = _top(path)
         for line, top, name in _imported(ast.parse(path.read_text())):
-            if (own, top) == ("features", "plugin"):
-                continue
             if name == LOOP_CHILD:
                 continue
             if top != own and LAYER.get(top, -1) <= LAYER[own]:
@@ -159,7 +157,23 @@ def import_cycles() -> list[list[str]]:
     return found
 
 
-FEATURE_MAY_IMPORT = {"coscc.plugin", "coscc.bus", "coscc.service.common"}
+FEATURE_MAY_IMPORT = {"coscc.kernel"}
+# Core modules a feature still imports because the kernel does not give it yet. The list only
+# shrinks: an entry no feature imports any more fails `test_every_kernel_gap_is_still_used`.
+KERNEL_GAPS = {
+    "coscc.agent": "`policy`: vault and codegraph read and check grants",
+    "coscc.agent.policy": "scan's `grant_for`",
+    "coscc.auth": "notices' websocket recheck, gone with the Reflex page",
+    "coscc.bus": "codegraph's `Event`",
+    "coscc.data": "`now` and `Busy`",
+    "coscc.runlog.journal": "notices' `BELL`",
+    "coscc.service.common": "scan's `CONSEQUENCE` and `OWNER`",
+    "coscc.units": "codegraph's `cos_dir` and `turnstats`",
+    "coscc.units.autopilot": "codegraph's `files_of`, notices' stop kinds",
+    "coscc.units.scratch": "scratch's `RAM_CAP`",
+    "coscc.units.submit": "scan's proposal types and slug rules",
+    "coscc.vault": "the vault feature's store, rules and runner",
+}
 FEATURE_FILES = 3
 FEATURE_LINES = 800
 FEATURE_READERS = {"api.py", "screens/__init__.py"}
@@ -194,26 +208,20 @@ def feature_import_problems(sources: dict[str, str]) -> list[str]:
         for line, name, plain in _coscc_imports(tree):
             at = f"coscc/{path}:{line} imports {name}"
             if is_feature:
-                if (
-                    name in FEATURE_MAY_IMPORT
-                    or LAYER.get(name.split(".")[1], -1) > LAYER["service"]
-                ):
+                if name in FEATURE_MAY_IMPORT or name in KERNEL_GAPS:
                     continue
                 if name == f"coscc.features.{own}" or name.startswith(f"coscc.features.{own}."):
                     continue
                 if name.startswith("coscc.features"):
                     fix = "features talk through `coscc/bus.py`, never by import"
                 else:
-                    fix = (
-                        "a feature gets the running app only through `Ctx` in coscc/plugin.py: "
-                        "add what it needs there"
-                    )
+                    fix = "a feature imports only coscc.kernel: add what it needs there"
                 out.append(f"{at}: {fix}.")
             elif name.startswith("coscc.features") and not path.startswith("features/"):
                 if path not in FEATURE_READERS:
                     out.append(
                         f"{at}: only coscc/api.py and coscc/screens/__init__.py know the list of "
-                        "features. Get what you need through `Ctx` in coscc/plugin.py."
+                        "features. Get what you need through `Ctx` in coscc/kernel.py."
                     )
                 elif name != "coscc.features" or not plain:
                     out.append(f"{at}: import the list as `from coscc import features`.")
@@ -297,9 +305,13 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
         self.assertEqual(feature_size_problems(_feature_lines()), [])
 
     def test_a_feature_that_imports_the_app_is_told_to_use_ctx(self):
-        for src in ("from coscc.service.steps import Steps\n", "from coscc import state\n"):
+        for src in (
+            "from coscc.service.steps import Steps\n",
+            "from coscc import state\n",
+            "from coscc.plugin import ctx_of\n",
+        ):
             (msg,) = feature_import_problems({"features/a.py": src})
-            self.assertIn("only through `Ctx` in coscc/plugin.py: add what it needs there", msg)
+            self.assertIn("imports only coscc.kernel: add what it needs there", msg)
 
     def test_a_feature_that_imports_a_feature_is_told_to_use_the_bus(self):
         for src in ("from coscc.features import b\n", "from coscc.features.b import x\n"):
@@ -315,9 +327,20 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
         (msg,) = feature_import_problems({"features/a/x.py": "from coscc.features.ab import x\n"})
         self.assertIn("never by import", msg)
 
-    def test_a_feature_may_import_the_door_the_bus_and_lower_packages(self):
-        src = "from coscc.plugin import Ctx\nfrom coscc.bus import Bus\nfrom coscc.data import Data\nfrom coscc.service.common import Invalid\n"
+    def test_a_feature_may_import_the_kernel_and_its_gaps(self):
+        src = "from coscc.kernel import Ctx\nfrom coscc.data import now\n"
         self.assertEqual(feature_import_problems({"features/a.py": src}), [])
+        (msg,) = feature_import_problems({"features/a.py": "from coscc.git import gitops\n"})
+        self.assertIn("imports only coscc.kernel", msg)
+
+    def test_every_kernel_gap_is_still_used(self):
+        used = {
+            name
+            for path, text in _sources().items()
+            if path.startswith("features/")
+            for _, name, _ in _coscc_imports(ast.parse(text))
+        }
+        self.assertEqual(sorted(set(KERNEL_GAPS) - used), [])
 
     def test_only_the_api_and_the_shell_import_the_list_and_only_one_way(self):
         ok = "from coscc import features\n"

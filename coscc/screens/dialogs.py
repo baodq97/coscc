@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import reflex as rx
 
-from coscc.plugin import Page
+from coscc.kernel import Page
 from coscc.screens import studio as s
 from coscc.state.views import NAVIGATION
 from coscc.state.views import WatchEvent

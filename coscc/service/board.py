@@ -27,13 +27,13 @@ from coscc.service.common import (
     Asked,
     open_prs_held,
     CONSEQUENCE,
-    Invalid,
     _younger_than,
     attention_reason,
     consequence,
     outcome_label,
     unit_state,
 )
+from coscc.kernel import Invalid
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces
 from coscc.service.common import Holds

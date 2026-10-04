@@ -22,7 +22,7 @@ from coscc.units import board as board_reader
 from coscc.units import worktrees
 from coscc.api import build
 from coscc.config import Config
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
 from tests.service.test_service import use_sessions
 

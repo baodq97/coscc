@@ -10,7 +10,7 @@ from pathlib import Path
 from coscc.bus import Bus
 from coscc.runlog import events as events_mod
 from coscc.config import Config
-from coscc.service.common import Invalid
+from coscc.kernel import Invalid
 from coscc.service import Service
 from tests.service.test_service import create_sync
 from tests.units.test_submit import submits as _submits

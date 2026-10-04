@@ -13,7 +13,8 @@ from unittest import mock
 
 from coscc.bus import Bus
 from coscc.config import Config
-from coscc.service.common import STAGE_FILES, Invalid
+from coscc.service.common import STAGE_FILES
+from coscc.kernel import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
