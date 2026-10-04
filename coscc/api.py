@@ -42,7 +42,7 @@ from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 from coscc.bus import Event
 from coscc.service.agents import AgentPage
-from coscc.service.board import Cards, cards
+from coscc.service.board import Cards, Detail, cards, detail
 from coscc.service.steps import NextStep
 from coscc.service.workspaces import WorkspaceList
 
@@ -399,6 +399,22 @@ async def get_next(request: Request) -> NextStep:
     return await _service(request).steps.next_step(
         _cwd(request), request.query_params.get("unit", "")
     )
+
+
+@router.get("/api/units/{name}")
+async def get_unit(name: str, request: Request) -> Detail:
+    """One unit as its page shows it: its card, stages, questions and answers with who gave them,
+    review rounds, and every run from the run log. Read from the board held, like `/api/units`."""
+    service, cwd = _service(request), _cwd(request)
+    board = await service.board(cwd, "held")
+    unit = next((u for u in board.get("units") or [] if u.get("name") == name), None)
+    if unit is None:
+        raise Invalid(f"no unit {name} in {cwd}")
+    journal = service.ws.journal()
+    timeline = (
+        await asyncio.to_thread(journal.timeline, service.ws.key(cwd), name) if journal else []
+    )
+    return detail(unit, timeline)
 
 
 @router.post("/api/board/mode")

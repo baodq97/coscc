@@ -6,6 +6,7 @@ import type { IconName } from "./lib/icons";
 import { Briefing } from "./screens/Briefing";
 import { Work } from "./screens/Work";
 import { UnitPage } from "./screens/UnitPage";
+import { Inbox } from "./screens/Inbox";
 import { Agents } from "./screens/Agents";
 import { System } from "./screens/System";
 import { Planned } from "./components/ui";
@@ -28,12 +29,9 @@ export const SCREENS: Screen[] = [
     nav: "Leif",
     icon: "inbox",
     keys: "G I",
-    render: () => (
-      <Planned icon="inbox" title="Needs you">
-        Every question, merge and decision waiting on you across all projects, each with Leif's recommendation and one main button.
-      </Planned>
-    ),
+    render: () => <Inbox />,
   },
+  { path: "/inbox/:ws/:n", title: "Needs you", crumbs: (p) => ["Needs you", p.ws, p.n], render: (p) => <Inbox workspace={p.ws} number={p.n} /> },
   {
     path: "/leif",
     title: "Talk to Leif",

@@ -31,13 +31,41 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
   return data as T;
 }
 
+/** `/api/units/{name}` with `{name: "0001_x"}` is `/api/units/0001_x`; the rest of `query` stays a query. */
+export function fill(path: string, query: Record<string, string>): { path: string; rest: Record<string, string> } {
+  const rest = { ...query };
+  const filled = path.replace(/\{(\w+)\}/g, (_, key: string) => {
+    const value = rest[key] ?? "";
+    delete rest[key];
+    return encodeURIComponent(value);
+  });
+  return { path: filled, rest };
+}
+
 export const api = {
   /** A `GET` route the app types (`Get`, made from its routes), so the answer is never guessed. */
   get: <P extends keyof Get>(path: P, query: Record<string, string> = {}) => {
-    const qs = new URLSearchParams(query).toString();
-    return call<Get[P]>("GET", qs ? `${path}?${qs}` : path);
+    const url = fill(path, query);
+    const qs = new URLSearchParams(url.rest).toString();
+    return call<Get[P]>("GET", qs ? `${url.path}?${qs}` : url.path);
   },
   post: <T>(path: string, body: unknown) => call<T>("POST", path, body),
+  /**
+   * Start something whose route streams until it ends (a step): wait only for the answer that
+   * it began or was refused, then let go. Letting go stops nothing; stopping is its own route.
+   */
+  start: async (path: string, body: unknown): Promise<void> => {
+    const res = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (res.status === 401) {
+      location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
+      throw new ApiError(401, "signed out");
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new ApiError(res.status, (data && data.error) || res.statusText);
+    }
+    await res.body?.cancel();
+  },
 };
 
 export type Resource<T> =
