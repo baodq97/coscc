@@ -137,10 +137,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         j = Journal(self.service.config.working_dir, self.service.config.data_dir)
         return j.records(str(self.repo.resolve()), kind="pr-comment")
 
-    def _rounds(self):
-        [u] = asyncio.run(self.service.board(str(self.repo)))["units"]
-        return {r["n"]: r["comment"] for r in u["rounds"]}
-
     def test_a_round_the_step_writes_is_posted_once_with_its_own_text(self):
         gh = FakeGh()
         _, done = self._run_review(gh)[-1]
@@ -218,20 +214,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         with mock.patch("coscc.git.gh.run", gh):
             asyncio.run(go())
         self.assertEqual(gh.calls, [])
-
-    def test_the_board_says_which_round_is_not_on_the_pr(self):
-        (self.dir / "review.md").write_text(REVIEW_ONE + ROUND_TWO, encoding="utf-8")
-        self._post(FakeGh(), 1)
-        rounds = self._rounds()
-        self.assertTrue(rounds[1]["posted"])
-        self.assertTrue(rounds[1]["url"].startswith(PR_URL))
-        self.assertEqual(rounds[2], {"posted": False, "url": "", "reason": None})
-
-    def test_a_failed_attempt_shows_its_reason_until_one_succeeds(self):
-        self._post(FakeGh(fail=True), 1)
-        self.assertEqual(self._rounds()[1]["reason"], "HTTP 401: Bad credentials")
-        self._post(FakeGh(), 1)
-        self.assertTrue(self._rounds()[1]["posted"])
 
     def test_posting_again_never_makes_a_second_comment(self):
         gh = FakeGh()
@@ -459,12 +441,9 @@ class RecordingAnOutcome(unittest.TestCase):
         self.record()
         u = self.board_unit()
         self.assertEqual(u["outcome"]["result"], "met")
-        self.assertEqual(u["outcome_label"]["text"], "đạt")
-        self.assertTrue(u["outcome_label"]["form"])
         self.record(result="trượt", measured_by="Linh", source="board, 2026-10-08")
         u = self.board_unit()
         self.assertEqual((u["outcome"]["result"], u["outcome"]["measured_by"]), ("missed", "Linh"))
-        self.assertEqual(u["outcome_label"]["hint"], "cân nhắc bỏ hoặc làm lại")
         self.assertEqual(u["next"], "finished")
         self.assertEqual((u["questions"][0]["answered"], u["open"]), (True, 0))
 
@@ -502,7 +481,6 @@ class RecordingAnOutcome(unittest.TestCase):
         (self.dir / "plan.md").write_text("# plan\nStatus: accepted.\n", encoding="utf-8")
         (self.dir / "ship.md").unlink()
         self.assertIn("only on a finished unit", self.refused())
-        self.assertFalse(self.board_unit()["outcome_label"]["form"])
 
     def test_a_section_after_answers_is_refused(self):
         self.intent.write_text(OUTCOME_INTENT + "\n## Notes\n\nx\n", encoding="utf-8")
@@ -532,7 +510,7 @@ class RecordingAnOutcome(unittest.TestCase):
         journal = self.service.ws.journal()
         key = self.service.ws.key(self.cwd)
         before = len(journal.records(key))
-        self.assertEqual(self.board_unit()["outcome_label"]["kind"], "due")
+        self.assertIsNone(self.board_unit()["outcome"]["result"])
         self.board_unit()
         self.assertEqual(len(journal.records(key)), before)
         self.assertEqual(self.service.chat.sessions_for(self.cwd)["sessions"], [])

@@ -28,12 +28,28 @@ from coscc.units import BadUnit
 
 WORKTREES_DIR = "worktrees"
 
+# Where a unit's branch is cut from: the trunk as this remote has it. Constants, not request
+# fields, so a caller cannot point the fetch at another remote or branch.
+BRANCH_REMOTE = "origin"
+BRANCH_TRUNK = gitops.TRUNK
+
 # # Seconds, per preparing command. Chosen, not measured; it turns a hung install into a
 # # reported failure.
 PREPARE_TIMEOUT = 600.0
 
 # # How much of a failed command's output is kept for the page.
 TAIL_CHARS = 2000
+
+
+def describe_base(base: dict[str, Any] | None) -> str:
+    """The one sentence saying a step's base may be stale, or `""` when it is fresh. The step's
+    state and the runner prompt both call this so the sentence is written once."""
+    if not base or base.get("fresh", True):
+        return ""
+    sha = base.get("sha") or "?"
+    ref = base.get("ref") or f"{BRANCH_REMOTE}/{BRANCH_TRUNK}"
+    reason = base.get("reason") or ""
+    return f"This step ran on {ref} at {sha}, which may be stale: {reason}"
 
 
 def _package_dir() -> Path:

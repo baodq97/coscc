@@ -479,7 +479,6 @@ export type StageView = {
   "file": string;
   "status": string;
   "optional": boolean;
-  "mode": string;
   "last_run": LastRun | null;
 };
 
@@ -550,7 +549,6 @@ export type UpNext = {
   "warnings": unknown[];
   "max": number;
   "propose_warning": string;
-  "propose_consequence": string;
 };
 
 export type UpdateStatus = {

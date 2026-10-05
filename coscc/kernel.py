@@ -33,6 +33,7 @@ from coscc.store.db import Data
 from coscc.store.db import now as now
 from coscc.store.journal import BELL as BELL
 from coscc.store.journal import Intervention, Journal
+from coscc.units import Invalid as Invalid
 from coscc.units import cos_dir as cos_dir
 from coscc.units.autopilot import files_of as files_of
 from coscc.units.autopilot import is_step as is_step
@@ -47,10 +48,6 @@ SCRATCH_RAM_CAP = RAM_CAP
 # The word every record gets when the request names nobody. It is not an identity: the one
 # password names nobody, so it says only that someone holding it or a live session acted.
 OWNER = "owner"
-
-
-class Invalid(Exception):
-    """A request this layer refuses, carrying a reason a caller can show verbatim."""
 
 
 @dataclass(frozen=True)

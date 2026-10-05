@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any, Literal
 
 from coscc.bus import Event
@@ -22,9 +23,7 @@ from coscc.service.answers import Answers
 from coscc.service.attempts import Attempt, Attempts
 from coscc.service.autopilot import Autopilot, autopilot_values
 from coscc.service.backlog import Backlog
-from coscc.service.board import Board
-from coscc.service.common import Holds
-from coscc.service.ideas import Ideas
+from coscc.service.common import Holds, open_prs_once
 from coscc.service.models import Models
 from coscc.service.release import Release
 from coscc.service.resume import Resume
@@ -33,9 +32,11 @@ from coscc.service.steps import Steps
 from coscc.store.journal import BadRecord
 from coscc.store.db import Busy
 from coscc.kernel import OWNER
+from coscc.units.ideas import Ideas
+from coscc.units.read import Board
+from coscc.units.workspaces import Workspaces
 from coscc.service.update import SETTLE_POLL, as_invalid, update_words
 from coscc.service.watch import Watch
-from coscc.service.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +91,16 @@ class Service:
             self.bus,
         )
         self.watch = Watch(self.config, self.ws, self.steps.recorders)
-        self.boards = Board(self.config, self.ws, self.holds, self.agents, self.release, self.steps)
+        self.boards = Board(
+            self.config,
+            self.ws,
+            self.bus,
+            self.attempts.unfinished,
+            lambda: self.agents.agent_overrides()[0],
+            lambda cwd: open_prs_once(cwd)(),
+            self._attach,
+        )
+        self.release.details.changed = self.boards.changed
         self.autopilot = Autopilot(
             self.config, self.ws, self.holds, self.agents, self.steps, self.boards
         )
@@ -119,16 +129,6 @@ class Service:
             "hold.moved",
         ):
             self.bus.subscribe(name, self._wake_autopilot)
-        for name in (
-            "step.ended",
-            "step.refused",
-            "integration.ended",
-            "integration.refused",
-            "answer.written",
-            "hold.moved",
-            "mode.set",
-        ):
-            self.bus.subscribe(name, self._read_board_again)
         self.resume = Resume(
             self.config,
             self.ws,
@@ -163,43 +163,22 @@ class Service:
         if not event.going_down:
             self.autopilot.nudge(event.workspace)
 
-    def _read_board_again(self, event: Event) -> None:
-        """A change the app made reads that workspace's board again, once one was read."""
-        if event.going_down or event.workspace not in self.boards.held:
-            return
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        self.boards.refresh(self.boards.held[event.workspace]["cwd"], again=True)
+    async def _attach(self, cwd, data, journal, key, prs, fresh) -> Callable[[], None]:
+        """What the board read adds from above `units`: each unit's integration and the release
+        block. Returns what starts the CI asks that found no answer, which the read calls last."""
+        asks = await self.steps.attach_integration(cwd, data["units"], journal, key, prs, fresh)
+        data["release"] = await self.release.attach_release(
+            cwd, data["units"], journal, key, prs, fresh
+        )
+        return lambda: self.steps.ask_ci(asks, ended=lambda tree: self.boards.changed((tree,)))
 
     async def board(
         self, cwd: str, which: Literal["new", "held", "next"] = "new"
     ) -> dict[str, Any]:
-        """The board of `cwd` as `boards.read` returns it, with what the autopilot shows on it.
-
-        `new` waits for a read begun after this call, which asks `gh` anew. `held` answers with the last read and
-        starts the next, so it waits only while nothing was read yet: what the page and
-        `/api/board` ask. `next` waits for the next read to end and starts none: what a tab
-        that shows the board waits on. Every workspace has one read running at most.
-        """
-        self.ws.check(cwd)
-        key = self.ws.key(cwd)
-        if which == "next":
-            await self.boards.next_read(cwd)
-            data = self.boards.held[key]["data"]
-        else:
-            kept = self.boards.held.get(key) if which == "held" else None
-            task = self.boards.refresh(cwd, again=which == "new", fresh=which == "new")
-            data = kept["data"] if kept is not None else await asyncio.shield(task)
-        self.autopilot.show(key, data)
+        """The board of `cwd` (`Board.get`) with what the autopilot shows on it."""
+        data = await self.boards.get(cwd, which)
+        self.autopilot.show(self.ws.key(cwd), data)
         return data
-
-    async def warm_boards(self) -> None:
-        """Every listed workspace's board read once, so the first page opened finds it held. A
-        first read waits on its workspace's open pull requests, so the board it holds has them."""
-        cwds = [w["path"] for w in self.ws.all()["workspaces"] if not w.get("missing")]
-        await asyncio.gather(*(self.boards.refresh(c) for c in cwds), return_exceptions=True)
 
     # -- updating the app -----------------------------------------------------
     #

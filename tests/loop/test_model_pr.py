@@ -567,7 +567,7 @@ def test_a_changed_screen_of_the_real_standard_blocks_ship_for_want_of_screens(p
 
 @pytest.mark.parametrize(
     "path",
-    ["coscc/features/vault/__init__.py", "coscc/features/notices.py", "coscc/service/board.py"],
+    ["coscc/features/vault/__init__.py", "coscc/features/notices.py", "coscc/units/read.py"],
 )
 def test_a_file_that_draws_no_page_reads_exactly_as_with_no_standard(path):
     u = passed_with()

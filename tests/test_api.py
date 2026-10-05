@@ -884,7 +884,6 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertIn("### Outcome", after[len(before) :].decode("utf-8"))
         board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
         self.assertEqual(board["units"][0]["outcome"]["result"], "missed")
-        self.assertEqual(board["units"][0]["outcome_label"]["text"], "trượt")
 
     async def test_a_refusal_is_a_400_and_writes_nothing(self):
         before = self.intent.read_bytes()
@@ -1191,12 +1190,6 @@ class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((first.status_code, second.status_code), (200, 200))
         self.assertEqual((first.json()["state"], second.json()["state"]), ("posted", "already"))
         self.assertEqual(len([c for c in self.calls if c[:2] == ["pr", "comment"]]), 1)
-
-    async def test_the_board_then_shows_the_round_on_the_pr(self):
-        await self.post()
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
-        [rnd] = board["units"][0]["rounds"]
-        self.assertEqual(rnd["comment"]["url"], f"{self.PR_URL}#c1")
 
     async def test_bad_requests_are_400_and_reach_no_gh(self):
         for over in ({"round": 9}, {"round": "x"}, {"unit": "0099_nothing"}, {"cwd": "/etc"}):
@@ -1954,9 +1947,7 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
             ],
         )
         [f] = proj["units"]
-        self.assertEqual(
-            (f["why"], f["waits_for"], f["state"]["state"]), ("dependency", [back_ref], "awaiting")
-        )
+        self.assertEqual((f["why"], f["state"]["state"]), ("dependency", "awaiting"))
         [b] = (await self.board("api"))["units"]
         self.assertEqual((b["idea"], b["repo"]), (idea["ref"], "api"))
         self.assertEqual(b["problems"], [])

@@ -19,12 +19,14 @@ from coscc.units import BadUnit
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable
 from coscc.service.update import refuse_while_updating
-from coscc.service.common import CONSEQUENCE, Asked, open_prs_once
+from coscc.service.common import open_prs_once
+from coscc.units.board import CONSEQUENCE
+from coscc.units.read import Asked
 from coscc.kernel import Invalid
 
 PrsOnce = Callable[[], Awaitable["list[dict[str, Any]] | str"]]
 from coscc.config import Config
-from coscc.service.workspaces import Workspaces
+from coscc.units.workspaces import Workspaces
 from coscc.update.updater import Updater
 
 

@@ -19,15 +19,17 @@ from coscc.store.journal import BadRecord
 from coscc.store.db import Busy
 from coscc.config import LOOPBACK, Config
 from coscc.store.db import Data
-from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Refused, log_setting, shown_state
+from coscc.service.common import Refused, log_setting
+from coscc.units.board import shown_state
+from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK
 from coscc.kernel import Invalid
-from coscc.service.workspaces import Workspaces
+from coscc.units.workspaces import Workspaces
 from coscc.service.common import Holds
 from coscc.service.agents import Agents
 
 if TYPE_CHECKING:
     # `steps` imports `answers`, which reads the settings below.
-    from coscc.service.board import Board
+    from coscc.units.read import Board
     from coscc.service.steps import Steps
 
 log = logging.getLogger(__name__)

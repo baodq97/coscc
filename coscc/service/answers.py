@@ -35,11 +35,11 @@ from coscc.service.common import OUTCOME_RESULTS, Refused
 from coscc.kernel import OWNER
 from coscc.kernel import Invalid
 from coscc.config import Config
-from coscc.service.workspaces import Workspaces
+from coscc.units.workspaces import Workspaces
 from coscc.service.common import Holds
 from coscc.service.agents import Agents
 from coscc.service.backlog import Backlog
-from coscc.service.ideas import Ideas
+from coscc.units.ideas import Ideas
 from coscc.bus import Bus, Event
 
 log = logging.getLogger(__name__)

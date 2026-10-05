@@ -32,14 +32,14 @@ from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service.update import refuse_while_updating
-from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK
+from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK
 from coscc.kernel import OWNER
 from coscc.kernel import Invalid, Submitted
 
 from coscc.bus import Bus, Event
 from coscc.config import Config
 
-from coscc.service.workspaces import Workspaces
+from coscc.units.workspaces import Workspaces
 
 from coscc.service.common import Holds
 

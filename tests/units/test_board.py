@@ -22,7 +22,15 @@ from coscc.units import board as _board
 board = WithSnapshot(_board)
 from coscc.agent import harness
 from coscc.loop import run as loop_run
-from coscc.units.board import Unavailable
+from coscc.units.board import (
+    COLLAPSED_STATES,
+    STATE_COLOR,
+    STATE_LABEL,
+    Unavailable,
+    attention_reason,
+    shown_state,
+    unit_state,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -1078,3 +1086,278 @@ class TheGateHandsOnACleanRebase(unittest.TestCase):
             self.assertIsNone(_board._rebased(bad), bad)
         self.assertEqual(_board.Gate(True, "open", (), both).rebased, both)
         self.assertIsNone(_board.Gate(True, "open").rebased)
+
+
+class TheStateOfAUnit(unittest.TestCase):
+    """One state per unit, the first rule that matches deciding it."""
+
+    @staticmethod
+    def _unit(**kw) -> dict:
+        base = {
+            "name": "0001_x",
+            "why": "missing",
+            "at": "plan",
+            "open": 0,
+            "problems": [],
+            "hold": None,
+            "between_pr_and_ship": False,
+            "integration": None,
+            "stages": [{"stage": "intent", "status": "accepted"}],
+        }
+        return {**base, **kw}
+
+    def _is(self, unit: dict, last_end=None, ci=None) -> str:
+        return unit_state(unit, last_end, ci)["state"]
+
+    def test_every_state_has_a_case_and_its_own_label_and_colour(self):
+        cases = {
+            "done": self._unit(why="finished"),
+            "dropped": self._unit(why="dropped", hold={"state": "dropped"}),
+            "paused": self._unit(why="paused", hold={"state": "paused"}),
+            "needs-you": self._unit(open=2),
+            "error": self._unit(problems=["plan.md: no Status line"]),
+            "awaiting": self._unit(at="review", between_pr_and_ship=True),
+            "ready": self._unit(),
+        }
+        for want, unit in cases.items():
+            got = unit_state(unit, None, None)
+            self.assertEqual(got["state"], want, want)
+            self.assertEqual((got["label"], got["color"]), (STATE_LABEL[want], STATE_COLOR[want]))
+        ready = unit_state(self._unit(), None, None)
+        running = shown_state(ready, [{"stage": "plan", "state": "running"}])
+        self.assertEqual((running["state"], running["label"]), ("running", "Running"))
+        starting = shown_state(ready, [{"stage": "plan", "state": "preparing"}])
+        self.assertEqual((starting["state"], starting["label"]), ("starting", "Starting"))
+        self.assertEqual(sorted(STATE_LABEL), sorted(STATE_COLOR))
+        self.assertEqual(
+            len(set(STATE_COLOR.values())), len(STATE_COLOR), "no two states share a colour"
+        )
+
+    def test_a_card_says_running_only_for_a_running_or_ending_attempt(self):
+        ready = unit_state(self._unit(), None, None)
+
+        def shown(*states: str) -> str:
+            return shown_state(ready, [{"stage": "plan", "state": s} for s in states])["state"]
+
+        self.assertEqual(shown("queued"), "starting")
+        self.assertEqual(shown("preparing"), "starting")
+        self.assertEqual(shown("queued", "preparing"), "starting")
+        for state in ("running", "ending"):
+            self.assertEqual(shown(state), "running", state)
+            self.assertEqual(shown("preparing", state), "running", state)
+        self.assertEqual(shown_state(ready, [])["state"], "ready")
+        self.assertEqual(shown_state(ready, None)["state"], "ready")
+
+    def test_starting_never_covers_a_collapsed_state(self):
+        rows = [{"stage": "plan", "state": "preparing"}]
+        for hold, why in (
+            ({"state": "paused"}, "paused"),
+            ({"state": "dropped"}, "dropped"),
+            (None, "finished"),
+        ):
+            decided = unit_state(self._unit(why=why, hold=hold), None, None)
+            self.assertIn(decided["state"], COLLAPSED_STATES)
+            self.assertEqual(shown_state(decided, rows), decided)
+
+    def test_starting_is_laid_over_and_has_a_colour_of_its_own(self):
+        self.assertEqual(STATE_LABEL["starting"], "Starting")
+        others = [c for state, c in STATE_COLOR.items() if state != "starting"]
+        self.assertNotIn(STATE_COLOR["starting"], others)
+        # `unit_state` never decides it, whatever the unit.
+        for kw in ({}, {"open": 1}, {"problems": ["x"]}, {"why": "finished"}):
+            self.assertNotIn(self._is(self._unit(**kw)), ("starting", "running"))
+
+    def test_no_state_reads_as_approval(self):
+        for label in STATE_LABEL.values():
+            self.assertNotIn("Approved", label)
+            self.assertNotIn("Accepted", label)
+
+    def test_a_rejected_unit_is_dropped_and_names_the_stage(self):
+        unit = self._unit(
+            why="rejected",
+            stages=[
+                {"stage": "intent", "status": "accepted"},
+                {"stage": "spec", "status": "rejected"},
+            ],
+        )
+        got = unit_state(unit, None, None)
+        self.assertEqual((got["state"], got["label"]), ("dropped", "Dropped — spec rejected"))
+
+    def test_each_pair_of_neighbouring_rules_goes_to_the_earlier_one(self):
+        # 1/2: finished and dropped at once.
+        self.assertEqual(self._is(self._unit(why="finished", hold={"state": "dropped"})), "done")
+        # 2/3: rejected with a pause still on file.
+        self.assertEqual(self._is(self._unit(why="rejected", hold={"state": "paused"})), "dropped")
+        # 3/4: a paused unit with a session listed is still paused.
+        paused = unit_state(self._unit(why="paused", hold={"state": "paused"}), None, None)
+        self.assertEqual(
+            shown_state(paused, [{"stage": "plan", "state": "running"}])["state"], "paused"
+        )
+        # 4/5: a running unit with an open question is running.
+        asking = unit_state(self._unit(open=1), None, None)
+        self.assertEqual(
+            shown_state(asking, [{"stage": "plan", "state": "running"}])["state"], "running"
+        )
+        self.assertEqual(shown_state(asking, [])["state"], "needs-you")
+        # 5/6: an open question beats an error.
+        self.assertEqual(self._is(self._unit(open=1, problems=["x"])), "needs-you")
+        self.assertEqual(self._is(self._unit(why="awaits-person", problems=["x"])), "needs-you")
+        # 6/7: an error in the pr→ship window.
+        self.assertEqual(
+            self._is(self._unit(at="review", between_pr_and_ship=True, problems=["x"])), "error"
+        )
+        # 7/8: in the window and missing is awaiting, not ready.
+        self.assertEqual(self._is(self._unit(at="review", between_pr_and_ship=True)), "awaiting")
+
+    def test_each_cause_of_error(self):
+        # (a)
+        self.assertEqual(self._is(self._unit(problems=["x"])), "error")
+        self.assertEqual(self._is(self._unit(why="unreadable")), "error")
+        # (b)
+        self.assertEqual(self._is(self._unit(), {"stage": "plan", "outcome": "failed"}), "error")
+        self.assertEqual(self._is(self._unit(), {"stage": "plan", "outcome": "exhausted"}), "error")
+        # (c)
+        window = self._unit(at="review", between_pr_and_ship=True)
+        self.assertEqual(
+            self._is({**window, "integration": {"state": "red-after-integration"}}), "error"
+        )
+        # (d)
+        ci = {
+            "head": "a",
+            "checks": [{"name": "tests", "bucket": "fail"}],
+            "at": "2026-09-26T00:00:00+00:00",
+        }
+        self.assertEqual(self._is(window, None, ci), "error")
+        cancelled = {**ci, "checks": [{"name": "lint", "bucket": "cancel"}]}
+        self.assertEqual(self._is(window, None, cancelled), "error")
+
+    def test_a_failure_at_another_stage_or_a_stop_is_not_an_error(self):
+        self.assertEqual(
+            self._is(self._unit(at="plan"), {"stage": "spec", "outcome": "failed"}), "ready"
+        )
+        self.assertEqual(
+            self._is(self._unit(at="plan"), {"stage": "plan", "outcome": "stopped"}), "ready"
+        )
+
+    def test_a_stale_review_or_ship_in_the_window_is_awaiting(self):
+        """A rerun of `pr` leaves `review.md` stale; `next` sends it down the missing review's wait
+        on CI, so the card and the dialog say so too."""
+        for at in ("review", "ship"):
+            got = unit_state(self._unit(at=at, why="stale", between_pr_and_ship=True), None, None)
+            self.assertEqual(got["state"], "awaiting", at)
+        # A stale `pr.md` is `pr` to run again, not a wait.
+        self.assertEqual(
+            self._is(self._unit(at="pr", why="stale", between_pr_and_ship=True)), "ready"
+        )
+
+    def test_changes_requested_in_the_window_is_ready(self):
+        """It waits on an `impl`, not on CI."""
+        self.assertEqual(
+            self._is(self._unit(at="review", why="changes-requested", between_pr_and_ship=True)),
+            "ready",
+        )
+
+    def test_a_broken_or_dropped_unit_keeps_the_reason_its_artifacts_give(self):
+        """A unit with `problems` is `Error`, yet `attention_reason` still reads "Needs a person"; a
+        dropped unit with a draft still reads "<stage>.md is a draft"."""
+        broken = self._unit(problems=["plan.md: no Status line"])
+        self.assertEqual(attention_reason(broken), "Needs a person")
+        self.assertEqual(unit_state(broken, None, None)["state"], "error")
+        dropped = self._unit(
+            why="dropped",
+            hold={"state": "dropped"},
+            stages=[
+                {"stage": "intent", "status": "accepted"},
+                {"stage": "spec", "status": "draft"},
+            ],
+        )
+        self.assertEqual(attention_reason(dropped), "spec.md is a draft")
+
+    def test_attention_reads_the_code_and_not_the_words(self):
+        # A `next` whose words say finished, closed or waiting decides nothing.
+        rows = [{"stage": "spec", "status": "draft"}]
+        for nxt in ("finished", "closed — spec rejected", "waiting on api/0001_b to merge"):
+            with self.subTest(nxt=nxt):
+                self.assertEqual(
+                    attention_reason({"next": nxt, "why": "", "stages": rows}), "spec.md is a draft"
+                )
+        self.assertEqual(attention_reason({"next": "x", "why": "finished", "stages": rows}), "")
+        self.assertEqual(attention_reason({"next": "x", "why": "rejected", "stages": rows}), "")
+        self.assertEqual(
+            attention_reason({"next": "x", "why": "dependency", "stages": rows}), "Needs a person"
+        )
+
+    def test_a_ship_md_a_refused_merge_left_is_not_offered_for_acceptance(self):
+        """`next` works that draft; one with no `Round` reads as before."""
+        rows = [{"stage": "review", "status": "accepted"}, {"stage": "ship", "status": "draft"}]
+        refused = self._unit(
+            why="ship-refused",
+            at="ship",
+            between_pr_and_ship=True,
+            stages=rows,
+            next="ship after review round 1 did not merge — the next step says what runs now",
+        )
+        self.assertEqual(attention_reason(refused), "")
+        self.assertEqual(unit_state(refused, None, None)["state"], "ready")
+        old = self._unit(
+            why="draft",
+            at="ship",
+            between_pr_and_ship=True,
+            stages=rows,
+            next="finish and accept ship.md",
+        )
+        self.assertEqual(attention_reason(old), "ship.md is a draft")
+
+    def test_a_ship_still_merging_is_running_with_its_ship_and_an_error_without(self):
+        """A merge asked for and not recorded is no refusal: `Running` while its `ship` runs, and
+        an error saying so once no `ship` is left to record it."""
+        rows = [{"stage": "review", "status": "accepted"}, {"stage": "ship", "status": "draft"}]
+        merging = self._unit(
+            why="ship-merging",
+            at="ship",
+            between_pr_and_ship=True,
+            stages=rows,
+            next="ship is merging #7 — wait",
+        )
+        decided = unit_state(merging, None, None)
+        self.assertEqual(
+            attention_reason(merging), "ship requested a merge and recorded no outcome"
+        )
+        # The ship's attempt runs.
+        shown = shown_state(decided, [{"stage": "ship", "state": "running"}])
+        self.assertEqual(shown["state"], "running")
+        # None is left.
+        alone = shown_state(decided, [])
+        self.assertEqual(alone["state"], "error")
+
+
+class WhatABoardSaysOfAUnitsWait(unittest.TestCase):
+    def test_each_kind_of_wait_has_its_reason_and_a_calm_unit_none(self):
+        fixtures = {
+            "intent.md is a draft": {
+                "next": "accept intent.md",
+                "stages": [{"stage": "intent", "status": "draft"}],
+            },
+            "Changes requested": {
+                "next": "impl",
+                "stages": [
+                    {"stage": "intent", "status": "accepted"},
+                    {"stage": "review", "status": "changes-requested"},
+                ],
+            },
+            "Needs a person": {
+                "next": "waiting",
+                "stages": [{"stage": "review", "status": "changes-requested"}],
+                "person_findings": [{"id": "F1", "answered": False}],
+            },
+        }
+        self.assertEqual(
+            {want: attention_reason(u) for want, u in fixtures.items()},
+            {want: want for want in fixtures},
+        )
+        self.assertEqual(
+            attention_reason(
+                {"next": "spec", "stages": [{"stage": "intent", "status": "accepted"}]}
+            ),
+            "",
+        )

@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from coscc.service.models import Models
     from coscc.service.sessions import Chat
     from coscc.service.steps import Steps
-    from coscc.service.workspaces import Workspaces
+    from coscc.units.workspaces import Workspaces
 
 # The kinds `Sessions.stream`'s `owner` names, and which of them hold a unit.
 STEP_KINDS = ("step", "opening", "closing")

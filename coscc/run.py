@@ -113,7 +113,7 @@ def purge_events(config) -> None:
 def sweep_scratch(config) -> None:
     """Remove the scratch of units no workspace has. A failure is logged; the app starts anyway."""
     from coscc.store.workspaces import Store
-    from coscc.service.workspaces import live_units
+    from coscc.units.workspaces import live_units
     from coscc.units import scratch
 
     try:

@@ -38,7 +38,7 @@ from coscc.kernel import (
 from coscc.service import Service, attempts
 from coscc.service.interventions import interventions
 from coscc.service.update import refuse_while_updating
-from coscc.service.workspaces import Workspaces
+from coscc.units.workspaces import Workspaces
 from coscc.units import submit, worktrees
 
 OFF_PREF = "features.off"
