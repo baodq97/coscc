@@ -40,7 +40,6 @@ class OnlyImplAndOnlyAutonomous(unittest.TestCase):
         Md` `## Answers`, answer 1: grants follow the stage, not the mode, so there is no `manual`
         left to carry nothing. What stays locked is a stage the table does not name."""
         self.assertEqual(grant_for("idea"), Grant(submits=True, max_turns=policy.SUBMIT_TURNS))
-        self.assertEqual(grant_for("intent"), Grant(submits=True, max_turns=policy.SUBMIT_TURNS))
         self.assertEqual(grant_for("no-such-stage"), Grant())
 
     def test_impl_writes_its_own_artifact_and_prose_stages_do_not(self):
@@ -983,6 +982,54 @@ class GeboReadsAnExplicitList(unittest.TestCase):
 
     def test_the_worktree_is_written(self):
         self.assertEqual(self.d("Write", self.tree / "a.py"), "")
+
+
+class IntentReadsWhatSpecReads(unittest.TestCase):
+    """`intent` checks the idea's problem against the worktree's code, so it reads as `spec`
+    reads and does nothing else."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.tree = base / "tree"
+        self.other = base / "units" / "0030_y"
+        for d in (self.tree, self.other):
+            d.mkdir(parents=True)
+        (self.tree / "a.py").write_text("x")
+        (self.other / "intent.md").write_text("x")
+        (self.other / "impl.md").write_text("x")
+        self.also = (str(self.other / "intent.md"),)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def d(self, stage, tool, path):
+        return decide(
+            grant_for(stage), tool, {"file_path": str(path)}, str(self.tree), read_also=self.also
+        )
+
+    def test_it_holds_the_read_tools_and_nothing_beyond_reading(self):
+        grant = grant_for("intent")
+        self.assertEqual(grant.tools, READ_TOOLS)
+        self.assertEqual(grant.commands, ())
+        self.assertEqual(policy.beyond_reading(grant), ())
+
+    def test_its_ceilings_are_specs(self):
+        grant = grant_for("intent")
+        self.assertEqual(grant.max_turns, 40)
+        self.assertEqual(grant.max_budget_usd, 4.0)
+
+    def test_it_reads_where_spec_reads_and_nowhere_else(self):
+        for tool, path in (
+            ("Read", self.tree / "a.py"),
+            ("Read", self.other / "intent.md"),
+            ("Read", self.other / "impl.md"),
+            ("Write", self.tree / "a.py"),
+        ):
+            with self.subTest(tool=tool, path=path):
+                self.assertEqual(self.d("intent", tool, path), self.d("spec", tool, path))
+        self.assertEqual(self.d("intent", "Read", self.tree / "a.py"), "")
+        self.assertIn("reading outside", self.d("intent", "Read", self.other / "impl.md"))
 
 
 class SpikeWritesOnlyItsScratch(unittest.TestCase):
