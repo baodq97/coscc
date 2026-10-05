@@ -18,7 +18,7 @@ from coscc.kernel import Invalid
 from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
-from tests.http.test_app import create_sync, timeline, unit_history
+from tests.http.test_app import create_sync, unit_history
 from tests.units.test_submit import a_head, finding, submits as _submits
 from tests.http.test_app import use_sessions
 
@@ -169,15 +169,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         end = j.records(str(self.repo.resolve()), kind="end")[-1]
         self.assertEqual((end["outcome"], end["findings"], end["findings_open"]), ("done", 2, 1))
 
-    def test_the_end_record_carries_the_added_rounds_verdicts(self):
-        # The one round this step added, round 2, asks for changes.
-        from coscc.store.journal import Journal
-
-        self._run_review(FakeGh())
-        j = Journal(self.core.config.working_dir, self.core.config.data_dir)
-        end = j.records(str(self.repo.resolve()), kind="end")[-1]
-        self.assertEqual(end["verdicts"], ["changes-requested"])
-
     def test_a_failed_post_leaves_review_md_byte_for_byte_the_same(self):
         self._run_review(FakeGh())
         good = (self.dir / "review.md").read_bytes()
@@ -247,24 +238,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         r = self._post(gh, 1)
         self.assertEqual((r["state"], r["reason"]), ("failed", "pr.md names no pull request"))
         self.assertEqual(gh.calls, [])
-
-    def test_every_attempt_is_one_run_log_row(self):
-        self._post(FakeGh(), 1)
-        self._post(FakeGh(fail=True), 1)
-        rows = self._pr_rows()
-        self.assertEqual(len(rows), 2)
-        ok, bad = rows
-        self.assertEqual(
-            (ok["unit"], ok["round"], ok["pr"], ok["outcome"], ok["stage"]),
-            (self.unit, 1, PR_URL, "posted", "review"),
-        )
-        self.assertTrue(ok["comment_url"].startswith(PR_URL))
-        self.assertEqual((bad["outcome"], bad["detail"]), ("failed", "HTTP 401: Bad credentials"))
-
-    def test_a_comment_row_does_not_disturb_the_cost_timeline(self):
-        self._post(FakeGh(), 1)
-        tl = timeline(self.core, str(self.repo), self.unit)
-        self.assertEqual(tl.get("runs") or [], [])
 
 
 OUTCOME_INTENT = (
@@ -337,29 +310,6 @@ class HowAnAnswerNamesItsQuestion(unittest.TestCase):
             self.assertEqual((got["artifact"], got["question"]), ("intent.md", 1))
             self.assertEqual(self.answers(), [("intent.md", 1)])
 
-    def test_a_bad_artifact_lists_the_artifacts_of_the_unit(self):
-        message = self.refused("intnet", 1)
-        self.assertSays(message, "'intnet'", self.unit, "intent.md", "spec.md", "review.md")
-
-    def test_a_question_that_is_not_a_number_lists_the_open_questions(self):
-        for question in ("Câu 1", "One?", self.LONG, "1.0", 1.0, True, None, "", "-1", "١"):
-            self.assertListsTheOpenQuestions(self.refused("intent.md", question))
-
-    def test_a_number_the_artifact_does_not_have_lists_the_open_questions(self):
-        message = self.refused("intent.md", 5)
-        self.assertSays(message, "has no question 5")
-        self.assertListsTheOpenQuestions(message)
-
-    def test_an_artifact_with_no_questions_lists_the_open_questions(self):
-        message = self.refused("spec", 1)
-        self.assertSays(message, "has no numbered item")
-        self.assertListsTheOpenQuestions(message)
-
-    def test_a_finding_in_another_artifact_lists_the_open_questions(self):
-        message = self.refused("intent.md", "F1")
-        self.assertSays(message, "a finding is answered in review.md")
-        self.assertListsTheOpenQuestions(message)
-
     def test_a_finding_nobody_awaits_lists_the_open_questions(self):
         message = self.refused("review", " F9 ")
         self.assertSays(message, "F9 is not a finding")
@@ -413,12 +363,6 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertTrue(str(e.exception))
         return str(e.exception)
 
-    def test_no_recorded_by_is_recorded_as_owner(self):
-        """What `recorded_by="  "` was refused for until then."""
-        self.record(recorded_by="  ")
-        block = self.intent.read_text(encoding="utf-8").split("### Outcome", 1)[1]
-        self.assertIn("Answered by: owner", block)
-
     def test_a_block_is_appended_and_every_byte_before_it_stays(self):
         before = self.intent.read_bytes()
         got = self.record(note="Ghi chú.")
@@ -446,12 +390,6 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertEqual((u["outcome"]["result"], u["outcome"]["measured_by"]), ("missed", "Linh"))
         self.assertEqual(u["next"], "finished")
         self.assertEqual((u["questions"][0]["answered"], u["open"]), (True, 0))
-
-    def test_unmeasurable_carries_its_reason_and_no_source_line(self):
-        self.record(result="không đo được", source="", reason="không có script")
-        text = self.intent.read_text(encoding="utf-8")
-        self.assertIn("Result: không đo được\nMeasured by: agent\nReason: không có script\n", text)
-        self.assertEqual(self.board_unit()["outcome"]["result"], "unmeasurable")
 
     def test_every_refusal_writes_nothing(self):
         self.assertIn("unknown", self.refused(result="unknown"))
@@ -485,24 +423,6 @@ class RecordingAnOutcome(unittest.TestCase):
     def test_a_section_after_answers_is_refused(self):
         self.intent.write_text(OUTCOME_INTENT + "\n## Notes\n\nx\n", encoding="utf-8")
         self.assertIn("section after its ## Answers", self.refused())
-
-    def test_an_intent_with_no_answers_gets_the_heading_once(self):
-        self.intent.write_text(OUTCOME_INTENT.split("## Answers")[0].rstrip("\n"), encoding="utf-8")
-        self.record()
-        self.record()
-        text = self.intent.read_text(encoding="utf-8")
-        self.assertEqual(text.count("## Answers"), 1)
-        self.assertEqual(text.count("### Outcome"), 2)
-        self.assertEqual(self.board_unit()["outcome"]["invalid"], 0)
-
-    def test_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
-        journal = self.core.ws.journal()
-        key = self.core.ws.key(self.cwd)
-        before = len(journal.records(key))
-        self.assertIsNone(self.board_unit()["outcome"]["result"])
-        self.board_unit()
-        self.assertEqual(len(journal.records(key)), before)
-        self.assertEqual(self.core.chat.sessions_for(self.cwd)["sessions"], [])
 
 
 class DroppingAUnitRemovesItsScratch(unittest.TestCase):

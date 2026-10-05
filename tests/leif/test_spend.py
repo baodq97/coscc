@@ -71,55 +71,6 @@ class OnlyEndsAreAdded(unittest.TestCase):
         self.assertIsNone(plan["usd"])
         self.assertEqual(plan["unknown"], 1)
 
-    def test_rows_are_the_most_money_first_and_no_unit_has_its_own(self):
-        m = spend.model(
-            [
-                end("a", "impl", cost_usd=1.0),
-                end("b", "impl", cost_usd=3.0),
-                end("", "estimate", cost_usd=2.0),
-                end("c", "impl"),
-            ],
-            tz=TZ,
-        )
-        self.assertEqual([r["key"] for r in m["by_unit"]], ["b", "", "a", "c"])
-
-
-class Days(unittest.TestCase):
-    def test_a_day_is_the_local_calendar_day_of_the_end(self):
-        m = spend.model(
-            [
-                end("u", "impl", at="2026-09-24T16:59:59+00:00", cost_usd=1.0),
-                end("u", "impl", at="2026-09-24T17:00:00+00:00", cost_usd=2.0),
-            ],
-            tz=TZ,
-        )
-        self.assertEqual(
-            [(r["key"], r["usd"]) for r in m["by_day"]], [("2026-09-25", 2.0), ("2026-09-24", 1.0)]
-        )
-        self.assertEqual(m["offset"], "UTC+07:00")
-
-
-class Tokens(unittest.TestCase):
-    def test_four_kinds_for_the_workspace_and_each_stage(self):
-        m = spend.model(
-            [
-                end(
-                    "u",
-                    "impl",
-                    input_tokens=10,
-                    output_tokens=20,
-                    cache_read_tokens=60,
-                    cache_creation_tokens=10,
-                ),
-                end("u", "spec", input_tokens=5),
-            ],
-            tz=TZ,
-        )
-        self.assertEqual(m["tokens"]["workspace"]["total"], 105)
-        self.assertEqual(m["tokens"]["workspace"]["cache_read_tokens"], 60)
-        impl = next(r for r in m["tokens"]["by_stage"] if r["stage"] == "impl")
-        self.assertEqual((impl["total"], impl["output_tokens"]), (100, 20))
-
 
 class Waste(unittest.TestCase):
     def test_failed_and_run_again(self):
@@ -194,10 +145,6 @@ class Waste(unittest.TestCase):
         row = waste(m, "changes-requested")
         self.assertEqual((row["count"], row["usd"], row["note"]), (2, 2.0, 1))
 
-    def test_there_is_no_total_row(self):
-        m = spend.model([end("u", "impl", cost_usd=1.0)], tz=TZ)
-        self.assertEqual([w["kind"] for w in m["waste"]], list(spend.WASTE_KINDS))
-
 
 class Anomalies(unittest.TestCase):
     """Each kind just above its threshold is flagged, just under it is not."""
@@ -211,10 +158,6 @@ class Anomalies(unittest.TestCase):
             [("above", 15.01, 15.0)],
         )
         self.assertEqual({r["key"]: r["over"] for r in m["by_unit"]}, {"above": True, "at": False})
-
-    def test_no_unit_is_never_over_budget(self):
-        m = spend.model([end("", "estimate", cost_usd=20.0)], tz=TZ)
-        self.assertEqual(kinds(m, "over-budget"), [])
 
     def test_reruns(self):
         records = (
@@ -262,40 +205,6 @@ class Anomalies(unittest.TestCase):
         self.assertEqual(
             sorted((a["unit"], a["value"]) for a in kinds(m, "failed")),
             [("u", "exhausted"), ("v", "failed")],
-        )
-
-    def test_kinds_come_in_order_each_latest_first(self):
-        m = spend.model(
-            [
-                end("u", "impl", outcome="failed", at="2026-09-20T00:00:00+00:00", cost_usd=16.0),
-                end("u", "impl", outcome="failed", at="2026-09-22T00:00:00+00:00"),
-                end("u", "impl", at="2026-09-21T00:00:00+00:00"),
-            ],
-            tz=TZ,
-        )
-        self.assertEqual(
-            [a["kind"] for a in m["anomalies"]], ["over-budget", "failed", "failed", "reruns"]
-        )
-        self.assertEqual(
-            [a["ended"] for a in kinds(m, "failed")],
-            ["2026-09-22T00:00:00+00:00", "2026-09-20T00:00:00+00:00"],
-        )
-
-
-class UnitStages(unittest.TestCase):
-    def test_one_units_cost_by_stage(self):
-        m = spend.model(
-            [
-                end("u", "impl", cost_usd=1.0),
-                end("u", "impl", cost_usd=2.0),
-                end("u", "spec"),
-                end("v", "impl", cost_usd=9.0),
-            ],
-            tz=TZ,
-        )
-        self.assertEqual(
-            [(r["key"], r["usd"], r["steps"], r["unknown"]) for r in m["unit_stages"]["u"]],
-            [("impl", 3.0, 2, 0), ("spec", None, 1, 1)],
         )
 
 

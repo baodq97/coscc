@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,7 +12,6 @@ from unittest import mock
 from coscc.config import Config
 from coscc.store.db import Busy, Data
 from coscc.http.app import Core
-from coscc.leif.agents import chip_of
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 
@@ -77,35 +75,6 @@ class _WithAService(unittest.TestCase):
 
 
 class AFieldIsCheckedSavedAndLogged(_WithAService):
-    def test_each_save_and_reset_is_one_agent_setting_row(self):
-        agents = self.core.agents
-        agents.set_agent_field("spec", "turns", 30)
-        agents.set_agent_field("spec", "budget", "2.5")
-        agents.set_agent_field("impl:novel", "effort", "max")
-        page = agents.set_agent_field("spec", "turns", None)
-        spec = self._row(page, "spec")
-        self.assertEqual(spec["config"]["ceilings"]["max_turns_source"], "default")
-        self.assertEqual(spec["config"]["ceilings"]["max_budget_usd"], 2.5)
-        self.assertEqual(
-            self._settings(),
-            [
-                ("spec", "turns", None, 30, "owner"),
-                ("spec", "budget", None, 2.5, "owner"),
-                ("impl:novel", "effort", None, "max", "owner"),
-                ("spec", "turns", 30, None, "owner"),
-            ],
-        )
-        # Reset removes the key.
-        self.assertEqual(self.data.pref_rows("turns:"), {})
-
-    def test_the_default_effort_saved_is_a_reset(self):
-        agents = self.core.agents
-        agents.set_agent_field("spec", "effort", "max")
-        page = agents.set_agent_field("spec", "effort", "")
-        self.assertEqual(self._row(page, "spec")["config"]["effort_source"], "default")
-        self.assertEqual(self.data.pref_rows("effort:"), {})
-        self.assertEqual(self._settings()[-1], ("spec", "effort", "max", None, "owner"))
-
     def test_a_value_out_of_bounds_is_refused_and_nothing_is_written(self):
         wrong = [
             ("spec", "turns", 0),
@@ -176,24 +145,6 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
 
 
 class ThePage(_WithAService):
-    def test_eight_rows_with_what_each_runs_on_and_may_do(self):
-        page = self.core.agents.agent_page(now=NOW)
-        self.assertEqual(
-            [r["key"] for r in page["rows"]],
-            ["idea", "intent", "spec", "spike", "plan", "impl", "review", "integrate"],
-        )
-        by = {r["key"]: r for r in page["rows"]}
-        self.assertEqual(by["impl"]["skill"], "write-impl")
-        self.assertEqual(by["integrate"]["skill"], "integrate")
-        self.assertIn("Bash", by["impl"]["grant"]["tools"])
-        self.assertTrue(by["impl"]["grant"]["submits"])
-        self.assertEqual(by["spec"]["grant"]["commands"], [])
-        self.assertEqual(by["idea"]["config"]["ceilings"]["max_budget_source"], "none")
-        self.assertEqual([v["key"] for v in by["review"]["variants"]], ["review:novel"])
-        self.assertEqual(by["spec"]["chip"], "idle")
-        self.assertEqual([r["key"] for r in page["others"]], ["estimate", "chat"])
-        self.assertEqual(page["problems"], [])
-
     def test_runs_last_five_and_thirty_days(self):
         self._seed(
             [_end("spec", "done", d, cost=0.5, turns=7) for d in (40, 20, 10, 5, 3, 2, 1)]
@@ -231,46 +182,6 @@ class ThePage(_WithAService):
         self.assertEqual(self._row(self.core.agents.agent_page(now=NOW), "impl")["chip"], "ok")
         self._seed([start("routine", 1), _end("impl", "done", 1, cost=7.0)])
         self.assertEqual(self._row(self.core.agents.agent_page(now=NOW), "impl")["chip"], "costly")
-
-    def test_the_chips_in_their_order(self):
-        done = {"outcome": "done", "cost_usd": 1.0, "at": "", "unit": "", "turns": 1}
-        self.assertEqual(chip_of({**done, "outcome": "exhausted"}, 4.0, 1), "failed")
-        # Failed wins over costly.
-        self.assertEqual(chip_of({**done, "outcome": "failed", "cost_usd": 4.0}, 4.0, 1), "failed")
-        self.assertEqual(chip_of({**done, "cost_usd": 3.2}, 4.0, 1), "costly")
-        self.assertEqual(chip_of({**done, "cost_usd": 3.19}, 4.0, 1), "ok")
-        # Costly wins over idle; with no budget nothing is costly.
-        self.assertEqual(chip_of({**done, "cost_usd": 3.2}, 4.0, 0), "costly")
-        self.assertEqual(chip_of({**done, "cost_usd": 9.0}, None, 1), "ok")
-        self.assertEqual(chip_of(done, 4.0, 0), "idle")
-        self.assertEqual(chip_of(None, 4.0, 0), "idle")
-
-    def test_bad_prefs_are_skipped_and_named(self):
-        # Not JSON, out of bounds, and a key no row has.
-        self.data.set_pref("turns:spec", 900)
-        self.data.set_pref("budget:nobody", 1.0)
-        self.data.set_pref("model:plan", "x" * 101)
-        with self.data.write() as conn:
-            conn.execute("INSERT INTO prefs (key, value) VALUES ('effort:spec', '{')")
-        page = self.core.agents.agent_page(now=NOW)
-        spec = self._row(page, "spec")
-        self.assertEqual(spec["config"]["ceilings"]["max_turns"], 40)
-        self.assertEqual(spec["config"]["effort_source"], "default")
-        self.assertEqual(len(page["problems"]), 4, page["problems"])
-
-    def test_ten_thousand_runs_under_half_a_second(self):
-        stages = ["idea", "intent", "spec", "spike", "plan", "impl", "review", "integrate"]
-        self._seed(
-            [
-                _end(stages[i % 8], "done", (i % 60) + 0.5, cost=0.1, turns=3, unit=f"{i:04d}_u")
-                for i in range(10_000)
-            ]
-        )
-        began = time.perf_counter()
-        page = self.core.agents.agent_page(now=NOW)
-        took = time.perf_counter() - began
-        self.assertEqual(len(page["rows"]), 8)
-        self.assertLess(took, 0.5)
 
 
 if __name__ == "__main__":

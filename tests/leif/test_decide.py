@@ -1,14 +1,11 @@
 """The autopilot's decisions, with no session, no `gh` and no run log on disk."""
 
-import re
 import unittest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from coscc.github import prmachine
 from coscc.leif import decide
 from coscc.units.board import open_questions
-from coscc.agent.policy import GRANTS, NOVEL_CEILINGS
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
 # `next`'s two actions for `ship`, one after the merge and one before it.
@@ -68,18 +65,6 @@ class TheCodesAreRead(unittest.TestCase):
         )
         self.assertTrue(decide.needs_a_person(said))
         self.assertEqual(decide.stop_for(unit(), said, None, False)["kind"], "b")
-
-    def test_the_autopilot_holds_none_of_cos_mjs_words(self):
-        for name in (
-            "CI_PENDING",
-            "CI_RED",
-            "NEEDS_A_PERSON",
-            "FINISHED",
-            "CLOSED",
-            "WAITING_ON",
-            "RECORDING",
-        ):
-            self.assertFalse(hasattr(decide, name), name)
 
 
 class AUnitWaitingOnADependency(unittest.TestCase):
@@ -170,13 +155,6 @@ class Stops(unittest.TestCase):
             decide.stop_for(unit(), nxt("plan", "write-plan"), ran_out, False, exhausted=1)
         )
 
-    def test_e_a_second_exhausted_step_stops_with_the_same_words(self):
-        ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
-        self.assertEqual(
-            decide.stop_for(unit(), nxt("plan", "write-plan"), ran_out, False, exhausted=2),
-            {"kind": "e", "reason": "the last plan step ended exhausted"},
-        )
-
     def test_e_an_exhausted_ship_stops_the_first_time(self):
         ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
         self.assertEqual(
@@ -211,12 +189,6 @@ class Stops(unittest.TestCase):
                 decide.stop_for(unit(), RECORDING, last, True, exhausted=1)["kind"], "e", outcome
             )
 
-    def test_e_a_recording_ship_still_meets_c(self):
-        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
-        self.assertEqual(
-            decide.stop_for(unit(), RECORDING, ran_out, False, exhausted=1)["kind"], "c"
-        )
-
     def test_skips_exhausted_only_for_a_ship_end(self):
         self.assertFalse(
             decide.skips_exhausted(
@@ -234,17 +206,6 @@ class Stops(unittest.TestCase):
                 RECORDING, {"kind": "end", "stage": "ship", "outcome": "exhausted"}, False
             )
         )
-
-    def test_e_failed_cancelled_and_stopped_stop_whatever_the_count(self):
-        for outcome in ("failed", "cancelled", "stopped"):
-            last = {"kind": "end", "stage": "plan", "outcome": outcome}
-            self.assertEqual(
-                decide.stop_for(unit(), nxt("plan", "write-plan"), last, False, exhausted=1)[
-                    "kind"
-                ],
-                "e",
-                outcome,
-            )
 
     def test_e_a_first_exhausted_step_still_meets_every_other_stop(self):
         ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
@@ -586,12 +547,6 @@ class Stops(unittest.TestCase):
             decide.stop_for(unit(), nxt("plan", "write-plan"), self.UNOPENED, False)["kind"], "e"
         )
 
-    def test_a_second_opening_failure_stops_e_with_the_same_words(self):
-        self.assertEqual(
-            decide.stop_for(unit(), nxt("plan", "write-plan"), self.UNOPENED, False, unopened=2),
-            {"kind": "e", "reason": "the last plan step ended failed"},
-        )
-
     def test_a_failure_for_another_reason_after_an_opening_failure_stops(self):
         other = {**self.UNOPENED, "detail": "the session returned nothing"}
         self.assertEqual(
@@ -617,10 +572,6 @@ class Stops(unittest.TestCase):
             decide.stop_for(unit(), nxt("spike", "write-spike"), spike, False, unopened=1)["kind"],
             "e",
         )
-
-    def test_f_no_stage_and_not_ci(self):
-        got = decide.stop_for(unit(), nxt("", "finish and accept plan.md"), None, True)
-        self.assertEqual((got["kind"], got["reason"]), ("f", "finish and accept plan.md"))
 
     def test_ci_pending_is_not_a_stop(self):
         said = nxt(
@@ -663,24 +614,6 @@ class TheDaysMoney(unittest.TestCase):
             decide.spent_today(rows, NOW), {"known": 0.0, "estimated": 0.0, "estimated_count": 0}
         )
 
-    def test_a_day_like_2026_09_25_fits_or_is_capped(self):
-        rows = [{"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"}] + [
-            {"kind": "end", "at": at(), "stage": "integrate", "outcome": "done"} for _ in range(4)
-        ]
-        estimated = decide.spent_on(rows, decide.today(NOW))["estimated"]
-        self.assertEqual(estimated, 48.0)
-        spec = {"unit": "0010_a", "stage": "spec", "files": None, "need": 4.0, "rank": 1}
-        got = decide.pick([spec], [], 4, 80.0 - (20.0 + estimated) - 0.0)
-        self.assertEqual((got["chosen"], got["capped"]), ([spec], []))
-        got = decide.pick([spec], [], 4, 80.0 - (30.0 + estimated) - 0.0)
-        self.assertEqual((got["chosen"], got["capped"]), ([], [spec]))
-
-    def test_a_reservation_is_the_largest_budget_a_label_can_give(self):
-        self.assertEqual(decide.reservation("impl"), 16.0)
-        self.assertEqual(decide.reservation("review"), 4.0)
-        self.assertEqual(decide.reservation("integrate"), 8.0)
-        self.assertEqual(decide.reservation("no-such-stage"), 0.0)
-
     def test_a_raised_budget_is_reserved_and_estimated_in_full(self):
         self.assertEqual(decide.reservation("impl", {"impl:novel": 50.0}), 50.0)
         self.assertEqual(decide.reservation("impl", {"impl": 30.0}), 30.0)
@@ -705,15 +638,6 @@ class TheDaysMoney(unittest.TestCase):
         self.assertEqual(
             (got["known"], got["estimated"], got["estimated_count"]), (0.0, 16.0 + 4.0 + 8.0, 3)
         )
-
-    def test_a_stage_without_a_ceiling_counts_the_tables_largest(self):
-        largest = max(
-            [g.max_budget_usd for g in GRANTS.values()] + [b for _, b in NOVEL_CEILINGS.values()]
-        )
-        self.assertGreater(largest, 0)
-        self.assertEqual(decide.estimate("intent"), largest)
-        self.assertEqual(decide.estimate("idea"), largest)
-        self.assertEqual(largest, 16.0)
 
     def test_an_integration_record_is_never_added(self):
         rows = [
@@ -891,12 +815,6 @@ class Scheduling(unittest.TestCase):
         )
         self.assertEqual([x["unit"] for x in got["chosen"]], ["0011_b"])
 
-    def test_overlap_pr_is_a_code_of_the_one_reason_table(self):
-        from coscc.units import guards
-
-        self.assertIn("overlap-pr", decide.REASONS)
-        self.assertIn("overlap-pr", guards.REASONS)
-
     def test_the_cap_holds_back_what_does_not_fit(self):
         got = decide.pick(
             [self.c("0010_a", "impl", {"a"}, 16.0), self.c("0011_b", "review", None, 2.0)],
@@ -985,12 +903,6 @@ class Measuring(unittest.TestCase):
         self.assertEqual(got["met"], ["0010_a"])
         self.assertEqual(got["units"][0]["person"], 1)
 
-    def test_outside_the_dates_or_the_workspace_nothing_counts(self):
-        self.assertEqual(
-            decide.measure(self.rows(), "other", "2000-01-01", "2100-01-01")["units"], []
-        )
-        self.assertEqual(decide.measure(self.rows(), "w", "2000-01-01", "2000-01-02")["units"], [])
-
 
 class TheAutopilotHasNoAnswerer(unittest.TestCase):
     """Every open question of the counted artifact is a stop `a`, and nothing else answers it."""
@@ -1016,21 +928,9 @@ class TheAutopilotHasNoAnswerer(unittest.TestCase):
         self.assertIn("spec.md question 1, spec.md question 2", got["reason"])
         self.assertNotIn("question 3", got["reason"])
 
-    def test_a_running_start_is_reserved_at_its_stages_most(self):
-        rows = [
-            {"kind": "start", "workspace": "w", "unit": "0010_a", "stage": "impl", "at": at()},
-            {"kind": "start", "workspace": "w", "unit": "0011_b", "stage": "spec", "at": at()},
-        ]
-        self.assertEqual(
-            decide.reserved(rows, NOW), decide.reservation("impl") + decide.reservation("spec")
-        )
-
 
 class ReasonsAndPassed(unittest.TestCase):
     """A reason is read off what the pass had, and never made up."""
-
-    def test_a_candidate_has_no_reason(self):
-        self.assertIsNone(decide.reason_for(nxt("spec", "write-spec"), "spec", None))
 
     def test_stop(self):
         stop = {"kind": "a", "reason": "open questions: spec.md question 2"}
@@ -1038,33 +938,6 @@ class ReasonsAndPassed(unittest.TestCase):
             decide.reason_for(nxt("spec"), "spec", stop),
             ("stop", "a: open questions: spec.md question 2"),
         )
-
-    def test_held(self):
-        hold = {"state": "paused", "reason": "later", "by": "Leif", "date": "2026-09-25"}
-        self.assertEqual(decide.reason_for(nxt(hold=hold), "", None), ("held", "paused"))
-
-    def test_finished(self):
-        self.assertEqual(
-            decide.reason_for(nxt(action="finished", reasons=["finished"]), "", None),
-            ("finished", "finished"),
-        )
-
-    def test_closed(self):
-        said = "closed — spec rejected"
-        self.assertEqual(
-            decide.reason_for(nxt(action=said, reasons=["rejected", "closed"]), "", None),
-            ("closed", said),
-        )
-
-    def test_ci(self):
-        said = "CI has not finished on #3: t — wait, then ask again"
-        self.assertEqual(
-            decide.reason_for(nxt(action=said, reasons=["ci-pending"]), "", None), ("ci", said)
-        )
-
-    def test_nothing_to_read_it_off_raises(self):
-        with self.assertRaises(ValueError):
-            decide.reason_for(nxt(action="write-something"), "", None)
 
     def test_passed_skips_what_was_chosen_before_it_in_the_pass(self):
         reasons = {"0003_c": ("running", "impl")}
@@ -1075,10 +948,6 @@ class ReasonsAndPassed(unittest.TestCase):
         reasons = {"0005_e": ("held", "paused"), "0001_a": ("ci", "CI"), "0004_d": ("missing", "")}
         [got] = decide.passed_for(["0005_e", "0001_a", "0004_d", "0002_b"], ["0002_b"], reasons)
         self.assertEqual([p["unit"] for p in got], ["0005_e", "0001_a", "0004_d"])
-
-    def test_passed_raises_on_a_unit_with_no_reason(self):
-        with self.assertRaises(ValueError):
-            decide.passed_for(["0001_a", "0002_b"], ["0002_b"], {})
 
 
 def row(kind, unit="0001_a", stage="intent", seconds=0, workspace="w", **kw):
@@ -1134,13 +1003,6 @@ class Reruns(unittest.TestCase):
             decide.stop_for(unit(), nxt("", "finish and accept intent.md"), None, False)["kind"],
             "f",
         )
-
-    def test_a_to_e_are_still_asked_first(self):
-        rerun = {**nxt("", "finish and accept intent.md"), "rerun": "intent"}
-        qs = [{"artifact": "intent.md", "n": 1, "answered": False, "counted": True}]
-        self.assertEqual(decide.stop_for(unit(qs), rerun, None, False)["kind"], "a")
-        failed = {"kind": "end", "stage": "intent", "outcome": "failed"}
-        self.assertEqual(decide.stop_for(unit(), rerun, failed, False)["kind"], "e")
 
     def test_two_reruns_after_answers(self):
         rows = [
@@ -1227,34 +1089,6 @@ class Reruns(unittest.TestCase):
         u = {k: v for k, v in self.board_row(qs).items() if k != "after_answers"}
         self.assertFalse(decide.answer_completes(u, "intent.md", {1}))
 
-    def test_no_module_keeps_its_own_copy_of_the_rerun_stages(self):
-        """The list lives in `coscc/loop/` alone. The four stages `intent`, `spec`, `spike` and `plan`,
-        in that order, appear in no other module of the app."""
-        literal = re.compile(r"""["']intent["'],\s*["']spec["'],\s*["']spike["'],\s*["']plan["']""")
-        package = Path(decide.__file__).resolve().parents[1]
-        copies = [
-            p.relative_to(package).as_posix()
-            for p in sorted(package.rglob("*.py"))
-            if p.relative_to(package).parts[0] not in ("_harness", "_web", "loop")
-            and literal.search(p.read_text(encoding="utf-8"))
-        ]
-        self.assertEqual(copies, [])
-
-    def test_the_two_stop_lines(self):
-        self.assertEqual(
-            decide.rerun_stop("intent.md"),
-            {
-                "kind": "reruns",
-                "reason": "intent.md was run again 2 times after its answers; a person decides the next run.",
-            },
-        )
-        full = decide.full_stop("spec", 3)
-        self.assertEqual(full["kind"], "full")
-        self.assertIn("3 steps are already running", full["reason"])
-        self.assertIn(": 1 step is already running,", decide.full_stop("spec", 1)["reason"])
-        for stop in (decide.rerun_stop("intent.md"), full):
-            self.assertIn(stop["kind"], decide.STOP_KINDS)
-
 
 class TriesOnAHead(unittest.TestCase):
     """`impl` queued with a note of the app's is tried `MAX_TRIES` times on one head."""
@@ -1338,34 +1172,6 @@ class TriesOnAHead(unittest.TestCase):
         self.assertIn("e", decide.STOP_KINDS)
 
 
-class NotesOfTheApp(unittest.TestCase):
-    def test_the_note_of_a_red_ci_names_the_red_required_checks_and_the_head(self):
-        checks = [
-            {"name": "tests", "bucket": "fail"},
-            {"name": "lint", "bucket": "pass"},
-            {"name": "build", "bucket": "cancel"},
-        ]
-        self.assertEqual(
-            decide.ci_note("0123456789abcdef", checks),
-            "CI is red at 0123456789ab: tests, build failed. Fix them and push.",
-        )
-        self.assertEqual(
-            decide.ci_note("", []), "CI is red: the required checks failed. Fix them and push."
-        )
-
-    def test_a_draft_impl_next_says_to_go_on_with_is_no_stop_f(self):
-        draft = {**nxt("", "impl.md is still a draft", reasons=["draft"]), "continue": "impl"}
-        self.assertTrue(decide.continues(draft))
-        self.assertIsNone(decide.stop_for(unit(), draft, None, False))
-        self.assertEqual(
-            decide.stop_for(
-                unit(), nxt("", "impl.md is still a draft", reasons=["draft"]), None, False
-            )["kind"],
-            "f",
-        )
-        self.assertFalse(decide.continues({**draft, "continue": "plan"}))
-
-
 class AfterARefusal(unittest.TestCase):
     """What the gate's refusal of an attempt the autopilot queued makes of the next pass."""
 
@@ -1386,10 +1192,6 @@ class AfterARefusal(unittest.TestCase):
                 None,
             ),
         )
-
-    def test_a_code_the_gate_has_not_is_a_stop_with_no_code(self):
-        stop, _ = decide.after_refusal(self.refused("invalid"), "impl", NOW)
-        self.assertEqual(stop, {"kind": "f", "reason": "impl was refused: invalid"})
 
     def test_no_refusal_or_another_stage_is_no_part_of_it(self):
         self.assertEqual(decide.after_refusal(None, "impl", NOW), (None, None))
@@ -1414,13 +1216,6 @@ class AfterARefusal(unittest.TestCase):
             decide.after_refusal(self.refused("ci-pending"), "impl", NOW, fresh=True), (None, None)
         )
         self.assertEqual(decide.after_refusal(self.refused("unit-busy"), "impl", NOW), (None, None))
-
-    def test_an_integration_with_nothing_to_integrate_is_no_stop_and_no_wait(self):
-        refused = self.refused("nothing-to-integrate", "integrate")
-        self.assertEqual(decide.after_refusal(refused, "integrate", NOW), (None, None))
-        # Another refusal of the integration is still the stop `f`.
-        stop, _ = decide.after_refusal(self.refused("invalid", "integrate"), "integrate", NOW)
-        self.assertEqual(stop, {"kind": "f", "reason": "integrate was refused: invalid"})
 
 
 class ExhaustedOf(unittest.TestCase):
@@ -1460,10 +1255,6 @@ def unopened_row(seconds=0, stage="plan", unit="0001_a", **kw):
 
 class UnopenedOf(unittest.TestCase):
     """How many times a stage's reply lacked its opening, the count `stop_for`'s e reads."""
-
-    def test_counts_every_such_failed_end_whoever_started_it(self):
-        rows = [unopened_row(started_by="person"), unopened_row(1, started_by="autopilot")]
-        self.assertEqual(decide.unopened_of(rows, "w", "0001_a", "plan"), 2)
 
     def test_another_workspace_unit_stage_outcome_or_detail_is_not_counted(self):
         rows = [

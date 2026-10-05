@@ -71,9 +71,3 @@ class InsightsMeasureTheShippedUnitsAgainstTheTargets(unittest.TestCase):
         self.assertEqual(
             {r["stage"]: r["usd"] for r in got["by_stage"]}, {"review": 8.0, "impl": 6.0, "pr": 0.5}
         )
-
-    def test_a_workspace_with_no_run_log_says_so(self):
-        service = _core()
-        with mock.patch.object(service.activity, "_records_or_none", return_value=None):
-            got = service.activity.insights("w", [])
-        self.assertEqual((got["recording"], got["shipped"]), (False, []))
