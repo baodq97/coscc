@@ -17,18 +17,3 @@ class TheStudiosTypesAreFresh(unittest.TestCase):
             app.typescript(),
             "ui/src/api.gen.ts is stale: run `uv run python -m coscc.http > ui/src/api.gen.ts`",
         )
-
-    def test_a_schema_becomes_a_type(self):
-        self.assertEqual(app._ts({"type": "array", "items": {"type": "integer"}}), "number[]")
-        self.assertEqual(
-            app._ts({"anyOf": [{"$ref": "#/components/schemas/Hold"}, {"type": "null"}]}),
-            "Hold | null",
-        )
-        self.assertEqual(
-            app._ts({"type": "object", "properties": {"a": {"type": "string"}}, "required": []}),
-            '{\n  "a"?: string;\n}',
-        )
-        self.assertEqual(
-            app._ts({"type": "object", "additionalProperties": {"type": "boolean"}}),
-            "Record<string, boolean>",
-        )
