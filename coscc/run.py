@@ -1,31 +1,17 @@
-"""Starting the app: one process, one port, not `reflex run`.
+"""Starting the app: one process, one port, the FastAPI app behind the login guard.
 
-Reflex's dev mode starts a vite server that binds every interface with no host setting, so
-it is unsupported. The compiled frontend is mounted into the ASGI app that serves `/api/*`
-(`__REFLEX_MOUNT_FRONTEND_COMPILED_APP`), and uvicorn binds it to the host in `config.py`.
-
-A checkout refuses a bundle that disagrees with the source (build with `uv run coscc-build`,
-which leaves a fingerprint). A packaged install cannot rebuild, so the address baked into
-the bundle is rewritten to the one being served (`coscc/frontend.py`).
+The studio is built into the package (`coscc/_studio/`, `coscc/studio.py`), so the process
+needs no Node and nothing to rebuild; uvicorn binds the app to the host in `config.py`.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import sys
-from pathlib import Path
-
-# Imports nothing from Reflex, so it cannot disturb the ordering the environment variables need.
-from coscc import frontend
 
 # Standard library only.
 from coscc import update
 from coscc.config import LOOPBACK
-
-MOUNT_FLAG = "__REFLEX_MOUNT_FRONTEND_COMPILED_APP"
-
-REPO = Path(__file__).resolve().parent.parent
 
 log = logging.getLogger(__name__)
 
@@ -45,28 +31,14 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("coscc").setLevel(logging.INFO)
 
-    # Set before importing the app: Reflex reads it while composing the ASGI stack.
-    os.environ.setdefault(MOUNT_FLAG, "1")
-
     from coscc.config import from_env
 
     config = from_env()
 
-    # Handed to Reflex rather than computed twice. Reflex reads this on every call, so
-    # setting it before the app factory runs makes the mount and this file agree.
-    os.environ[frontend.WEB_WORKDIR_VAR] = str(frontend.web_dir(REPO))
-    static = frontend.static_dir(REPO)
-
-    if frontend.is_packaged():
-        _point_the_bundle_here(static, config)
-    else:
-        _refuse_a_bundle_that_does_not_match_the_source(static, config)
-
     # Ends the steps the app went down under, before the purge takes the events their turns
     # are counted from.
     recover_steps(config)
-    # The only time step events are purged. Not in `api.py`'s lifespan, which the real stack
-    # never runs.
+    # The only time step events are purged: before anything can write one.
     purge_events(config)
     # Nothing is running yet, so every scratch directory of a unit that is gone is an orphan.
     sweep_scratch(config)
@@ -82,7 +54,7 @@ def main(argv: list[str] | None = None) -> None:
     # `X-Forwarded-Proto` itself, for the cookie's `Secure`.
     server = uvicorn.Server(
         uvicorn.Config(
-            "coscc.coscc:served",
+            "coscc.run:served",
             factory=True,
             host=config.host,
             port=config.port,
@@ -99,6 +71,17 @@ def main(argv: list[str] | None = None) -> None:
     handoff = update.take_handoff()
     if handoff is not None:
         raise SystemExit(update.finish(handoff))
+
+
+def served():
+    """What uvicorn serves: the app behind the login guard, which sees every scope."""
+    from coscc import api
+    from coscc.auth import Guard
+    from coscc.config import from_env
+    from coscc.data import Data
+
+    config = from_env()
+    return Guard(api.build(config, starting=True), Data(config.data_dir))
 
 
 def recover_steps(config) -> None:
@@ -156,7 +139,6 @@ def installed_version() -> str:
 def _answer_and_stop(args: list[str]) -> None:
     """`--version`, the shell-only subcommands, and a refusal for anything else.
 
-    `--version` answers before the frontend is resolved, so it works with a broken bundle.
     An unrecognised argument is refused: a mistyped flag must not start a network-reachable
     server. `reset-password` is here rather than on a route because it needs a shell on this
     machine; it clears the password and every session in the database.
@@ -513,52 +495,6 @@ def banner(config) -> list[str]:
     lines.append(f"env workspaces: {', '.join(config.workspaces) or '(none)'}")
     lines.append(f"tools: {config.effective_tools() or 'none (chat only)'}")
     return lines
-
-
-def _point_the_bundle_here(static: Path, config) -> None:
-    """A packaged bundle is built once and served wherever it lands."""
-    # Without this, Reflex recompiles on every start and shells out to Bun or npm, which a
-    # packaged install lacks; the service still looks healthy.
-    os.environ[frontend.SKIP_COMPILE_VAR] = "1"
-
-    absent = frontend.missing_compile_marker(REPO)
-    if absent is not None:
-        print(
-            f"this packaged install has no {absent.name} at {absent} — the release that "
-            "built it copied the static bundle but not the build state beside it, so "
-            "Reflex would enter its compile anyway and stop on a missing Node. The wheel "
-            "is incomplete; reinstall from a release built after 2026-09-22.",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
-
-    try:
-        frontend.rewrite_address(static, config.host, config.port)
-    except frontend.NoEnvChunk as missing:
-        # Must stop the process: serving on gives a page that renders and a socket that never connects.
-        print(str(missing), file=sys.stderr)
-        raise SystemExit(2)
-    except OSError as denied:
-        print(
-            f"the packaged frontend could not be written ({denied}) — it lives inside the "
-            "installed package, so this usually means the install is read-only",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
-
-
-def _refuse_a_bundle_that_does_not_match_the_source(static: Path, config) -> None:
-    """A checkout can rebuild, so a mismatch is an error.
-
-    The page bakes in the `/_event` WebSocket address, so a bundle built elsewhere never
-    connects while the API stays healthy. The fingerprint also catches an outdated bundle.
-    """
-    from coscc import build
-
-    state, message = build.check(config, static)
-    if state != build.OK:
-        print(message, file=sys.stderr)
-        raise SystemExit(2)
 
 
 if __name__ == "__main__":

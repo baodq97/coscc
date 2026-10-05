@@ -1,21 +1,21 @@
-"""The JSON surface, as a FastAPI app that stands on its own.
+"""The app: the JSON surface and the studio, as one FastAPI app.
 
-Reflex mounts this object via `api_transformer`; being a plain ASGI app, tests drive it
-in-process with `httpx.ASGITransport` and no frontend or Node. Nothing here reads the
-environment, returns configuration or runs anything the caller names, and nothing decides:
-every route translates a request into a `Service` call and the result back into JSON.
+Being a plain ASGI app, tests drive it in-process with `httpx.ASGITransport` and no Node.
+Nothing here reads the environment, returns configuration or runs anything the caller names,
+and nothing decides: every route translates a request into a `Service` call and the result
+back into JSON.
 
-The studio (`/next`, `ui/`) reads and acts only through here, and hears changes on
-`/api/stream`. The Reflex page's buttons still reach `Service` over its socket until it is
-removed (`docs/architecture/target.md`). The owner's own tools, the updater's trial of a new
-build and `scripts/install.sh` use these routes too; a route nobody calls is not kept.
+The studio (`ui/`, served by `coscc/studio.py` at every path no route takes) reads and acts
+only through here, and hears changes on `/api/stream`. The owner's own tools, the updater's
+trial of a new build and `scripts/install.sh` use these routes too; a route nobody calls is
+not kept.
 
-Reflex reserves `/ping/`, `/_event` and `/_upload`; the guard in `coscc/auth.py` serves
-`/login`, `/setup` and `/logout`. Nothing here may use them. Every route sits behind that
-guard: without a live session only `GET /api/health` gets through. One password, one user:
-whoever holds it or a session cookie can call every route below. A name a body carries
-(`answered_by`, `by`, `stopped_by`, `recorded_by`) is written as sent, or as `kernel.OWNER`
-when absent; neither is an identity. Tests that build this app alone drive it without the guard.
+The guard in `coscc/auth.py` serves `/login`, `/setup` and `/logout`; nothing here may use
+them. Every route sits behind that guard: without a live session only `GET /api/health` gets
+through. One password, one user: whoever holds it or a session cookie can call every route
+below. A name a body carries (`answered_by`, `by`, `stopped_by`, `recorded_by`) is written as
+sent, or as `kernel.OWNER` when absent; neither is an identity. Tests that build this app alone
+drive it without the guard.
 
 A refusal is `Invalid` raised by `Service` and answered in one place: 400, or 503 while an
 update is under way (`Updating`), or 409 when this install cannot be updated (`NotUpdatable`).
@@ -33,7 +33,7 @@ from typing import Any, AsyncIterator, NotRequired, TypedDict
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from coscc import kernel
+from coscc import auth, kernel
 from coscc import features, plugin, studio
 from coscc.config import Config, from_env
 from coscc.service import Service
@@ -151,9 +151,8 @@ class Decided(TypedDict):
 STREAM_PING_SECONDS = 10.0
 # How long one stream lasts before it ends and the page connects again. Bounded because the
 # server, stopping for an update, waits for every open response to end: an endless stream held
-# an Apply for 7 minutes (10-04). It also bounds a session signed out while connected. Chosen,
-# as the websocket's recheck (`auth.WS_RECHECK`).
-STREAM_LIFETIME_SECONDS = 30.0
+# an Apply for 7 minutes (10-04). It also bounds a session signed out while connected.
+STREAM_LIFETIME_SECONDS = auth.STREAM_SECONDS
 
 
 async def _refused(_: Request, e: Exception) -> JSONResponse:
@@ -919,16 +918,29 @@ async def build_local(request: Request) -> Any:
     return _service(request).update_build_local((await _update_body(request))["by"])
 
 
-def build(config: Config | None = None) -> FastAPI:
+def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
+    """The app. `starting` is the served one (`run.served`): its start makes the features'
+    tables, takes up what an update paused, reads every board once and runs the schedules."""
     config = config or from_env()
     sessions = Sessions(config)
     service = Service(config, sessions)
 
+    async def schedules() -> None:
+        # The first round waits one period, so a start spends nothing at once.
+        while True:
+            await asyncio.sleep(plugin.TICK_SECONDS)
+            await plugin.tick(service, ctx, features.FEATURES)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        # Every client is a CLI process holding a long-lived login credential, so shutdown is
-        # wired to the server's lifecycle. Nothing to do on the way up.
+        tasks: list[asyncio.Task] = []
+        if starting:
+            plugin.create_tables(ctx, tables)
+            work = (service.resume.resume_after_update(), service.warm_boards(), schedules())
+            tasks = [asyncio.create_task(w) for w in work]
         yield
+        for task in tasks:
+            task.cancel()
         # Steps first: each is a task that would otherwise write its `end` after its client
         # was closed. `shutdown` writes none, on purpose.
         await service.shutdown()
@@ -939,21 +951,29 @@ def build(config: Config | None = None) -> FastAPI:
     ctx = plugin.ctx_of(service, features.FEATURES)
     plugin.add_sessions(service, features.FEATURES)
     service.steps.hooks = plugin.hooks_of(features.FEATURES, ctx)
-    # Checked now, created when the app starts (`coscc.py`): building the page imports this
-    # module in processes that may not open the database.
+    # Checked now, created when the app starts: `typescript()` and the tests build an app
+    # that never opens the database.
     tables = plugin.tables_of(features.FEATURES)
+    # The studio last: it answers every path no route took.
     routes = [
         *router.routes,
-        *studio.router.routes,
         *(r for f in features.FEATURES for r in f.routes(ctx)),
+        *studio.router.routes,
     ]
-    api = FastAPI(title="coscc", lifespan=lifespan, routes=routes)
+    # No `/docs` or `/openapi.json`: the studio answers those paths; `typescript()` reads the schema.
+    api = FastAPI(
+        title="coscc",
+        lifespan=lifespan,
+        routes=routes,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     api.state.config = config
     api.state.sessions = sessions
     api.state.service = service
     api.state.tables = tables
-    # The names for Settings and the pages for `/feature`: only this module and the page shell
-    # import `features`.
+    # The names for Settings and the pages for `/feature`: only this module imports `features`.
     api.state.features = tuple(f.name for f in features.FEATURES)
     api.state.pages = {f.name: f.page for f in features.FEATURES if f.page}
     api.state.scripts = tuple(js for f in features.FEATURES for js in f.scripts)
@@ -961,11 +981,6 @@ def build(config: Config | None = None) -> FastAPI:
     api.state.ctx = ctx
     api.state.plugins = features.FEATURES
     api.add_exception_handler(Invalid, _refused)
-
-    # No route for `/` and no static mount: `/` has to fall through to Reflex's compiled-frontend
-    # mount, and a route defined here would win over it. The new studio is under `/next`
-    # (`coscc/studio.py`) until it replaces that page.
-
     return api
 
 

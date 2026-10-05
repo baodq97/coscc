@@ -498,12 +498,6 @@ class TheServerIsHeld(unittest.TestCase):
             )
             stack.enter_context(mock.patch("uvicorn.Server", FakeServer))
             stack.enter_context(mock.patch("uvicorn.Config", lambda *a, **k: (a, k)))
-            stack.enter_context(mock.patch.object(run.frontend, "is_packaged", lambda: False))
-            stack.enter_context(
-                mock.patch.object(
-                    run, "_refuse_a_bundle_that_does_not_match_the_source", lambda *a: None
-                )
-            )
             stack.enter_context(
                 mock.patch.object(update, "finish", lambda h: finished.append(h) or 75)
             )
@@ -580,7 +574,7 @@ class TheServerIsHeld(unittest.TestCase):
 
         self.main_with(capture)
         ((args, kwargs),) = seen
-        self.assertEqual(args, ("coscc.coscc:served",))
+        self.assertEqual(args, ("coscc.run:served",))
         self.assertIs(kwargs["factory"], True)
         self.assertIs(kwargs["proxy_headers"], False)
 

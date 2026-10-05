@@ -1,8 +1,8 @@
 """The one door: every request this app serves is decided here first.
 
-One master password stands in front of everything. `coscc.coscc.served` wraps what `rx.App`
-returns and uvicorn serves the wrapper, the position that sees every scope (`/api/*`, the
-page, static files, `/_event`, `/_upload`, `/ping`, CORS preflight, unknown paths).
+One master password stands in front of everything. `coscc.run.served` wraps the app and
+uvicorn serves the wrapper, the position that sees every scope (`/api/*`, the page, its
+assets, CORS preflight, unknown paths). The app has no socket: a websocket is closed.
 
 Default is refusal: the guard knows only the closed list `EXEMPT` and refuses everything
 else without a live session, so a later route is behind the door automatically. Exempt
@@ -72,8 +72,9 @@ HASH_CONCURRENCY = 2
 # A request that waits longer than this for a slot gets 429, is not hashed and is not counted as a failure.
 HASH_WAIT = 5.0
 
-# How often an open websocket's session is asked about again. Read at each sleep, so a test can shorten it.
-WS_RECHECK = 30.0
+# How long an open response may stream: the guard asks for a live session once per request, so
+# a stream ends within this and its reader asks again. Chosen, not measured.
+STREAM_SECONDS = 30.0
 
 # 5 failures inside a sliding 60 s lock the address for 60 s; the first failure after a lock
 # ends doubles it, up to an hour.
@@ -333,22 +334,20 @@ class Guard:
         if kind == "lifespan":
             await self.inner(scope, receive, send)
             return
-        if kind not in ("http", "websocket"):
+        if kind == "websocket":
+            await self._close_socket(receive, send)
+            return
+        if kind != "http":
             return
         path = scope.get("path", "")
-        method = scope.get("method", "GET").upper() if kind == "http" else "WEBSOCKET"
+        method = scope.get("method", "GET").upper()
 
-        if kind == "http" and path == HEALTH and (method, path) in EXEMPT:
+        if path == HEALTH and (method, path) in EXEMPT:
             await self.inner(scope, receive, send)
             return
 
-        if (kind == "websocket" or method not in ("GET", "HEAD", "OPTIONS")) and not _origin_ok(
-            scope
-        ):
-            if kind == "websocket":
-                await self._close_socket(receive, send)
-            else:
-                await _json(send, 403, "origin")
+        if method not in ("GET", "HEAD", "OPTIONS") and not _origin_ok(scope):
+            await _json(send, 403, "origin")
             return
 
         sha = _sha(_cookie(scope)) if _cookie(scope) else ""
@@ -357,47 +356,36 @@ class Guard:
         now = self.clock()
         live = self._live(has_password, row, now)
 
-        if kind == "http":
-            if (method, path) in EXEMPT and path == LOGIN:
-                await self._login(scope, receive, send, method, has_password, live)
+        if (method, path) in EXEMPT and path == LOGIN:
+            await self._login(scope, receive, send, method, has_password, live)
+            return
+        if (method, path) in SETUP_EXEMPT:
+            if not has_password:
+                await self._setup(scope, receive, send, method)
                 return
-            if (method, path) in SETUP_EXEMPT:
-                if not has_password:
-                    await self._setup(scope, receive, send, method)
-                    return
-                if live:
-                    # A password exists; with a session this does nothing.
-                    await _redirect(send, "/")
-                    return
-            if (method, path) == ("POST", LOGOUT) and live:
-                await asyncio.to_thread(self.data.auth_session_delete, sha)
-                await _redirect(send, LOGIN, [self._cookie_header(scope, "", 0)])
+            if live:
+                # A password exists; with a session this does nothing.
+                await _redirect(send, "/")
                 return
+        if (method, path) == ("POST", LOGOUT) and live:
+            await asyncio.to_thread(self.data.auth_session_delete, sha)
+            await _redirect(send, LOGIN, [self._cookie_header(scope, "", 0)])
+            return
 
         if not live:
-            await self._refuse(scope, receive, send, method, has_password)
+            await self._refuse(scope, send, method, has_password)
             return
 
         if now - row["last_used_at"] >= TOUCH_EVERY:
             await self._touch(sha, now)
             cookie = self._cookie_header(scope, _cookie(scope), SESSION_TTL)
             send = _with_header(send, cookie)
-            touched_at = now
-        else:
-            touched_at = row["last_used_at"]
-
-        if kind == "websocket":
-            await self._serve_socket(scope, receive, send, sha, touched_at)
-            return
         await self.inner(scope, receive, _revalidate_pages(send))
 
     # -- refusal ----------------------------------------------------------------
 
-    async def _refuse(self, scope, receive, send, method: str, has_password: bool) -> None:
-        """The three shapes of refusal, and nothing of the app in any of them."""
-        if scope["type"] == "websocket":
-            await self._close_socket(receive, send)
-            return
+    async def _refuse(self, scope, send, method: str, has_password: bool) -> None:
+        """The two shapes of refusal, and nothing of the app in either."""
         if method == "GET" and "text/html" in (_header(scope, b"accept") or ""):
             await _redirect(send, LOGIN if has_password else SETUP)
             return
@@ -494,7 +482,7 @@ class Guard:
         if not stored:
             # Another request set one first. That is a refusal, not an overwrite.
             self._token = None
-            await self._refuse(scope, receive, send, "POST", True)
+            await self._refuse(scope, send, "POST", True)
             return
         self._token = None
         self.limiter.clear(ip)
@@ -504,85 +492,10 @@ class Guard:
     async def _page(send, status: int, html: str) -> None:
         await _respond(send, status, list(_HTML), html.encode("utf-8"))
 
-    # -- a socket that got through --------------------------------------------------
-
-    async def _serve_socket(self, scope, receive, send, sha: str, touched_at: float) -> None:
-        """An open socket closes within `WS_RECHECK` of its session ending.
-
-        A watcher asks the database again every `WS_RECHECK` seconds. When the session is
-        gone, the next `receive` (raced against the watcher) sends `websocket.close` (1008)
-        and hands the app a `websocket.disconnect`.
-
-        Use through the socket counts as use: a tab may make no HTTP request for a month. When
-        a message arrived since the last touch and it is `TOUCH_EVERY` old, the watcher pushes
-        the expiry forward. It cannot refresh the browser's cookie (only a response can), so
-        that happens at the next handshake or page load.
-        """
-        gone = asyncio.Event()
-        closed = False
-        used = False
-
-        async def watch() -> None:
-            nonlocal used, touched_at
-            while True:
-                await asyncio.sleep(WS_RECHECK)
-                try:
-                    has_password, row = await self._state(sha)
-                    now = self.clock()
-                    if not self._live(has_password, row, now):
-                        gone.set()
-                        return
-                    if used and now - touched_at >= TOUCH_EVERY:
-                        await self._touch(sha, now)
-                        touched_at, used = now, False
-                except Exception:
-                    log.exception("the session could not be checked; asked again next time")
-                    # A busy database is not a logout; ask again next time.
-                    continue
-
-        async def kick() -> dict:
-            nonlocal closed
-            if not closed:
-                closed = True
-                try:
-                    await send({"type": "websocket.close", "code": 1008})
-                except Exception:  # noqa: BLE001, S110 - the socket may be gone already
-                    pass
-            return {"type": "websocket.disconnect", "code": 1008}
-
-        async def guarded_receive() -> dict:
-            nonlocal used
-            if gone.is_set():
-                return await kick()
-            real = asyncio.ensure_future(receive())
-            ended = asyncio.ensure_future(gone.wait())
-            done, _ = await asyncio.wait({real, ended}, return_when=asyncio.FIRST_COMPLETED)
-            if real in done:
-                ended.cancel()
-                message = real.result()
-                if message["type"] == "websocket.receive":
-                    used = True
-                return message
-            real.cancel()
-            return await kick()
-
-        async def guarded_send(message: dict) -> None:
-            if closed:
-                return
-            await send(message)
-
-        watcher = asyncio.ensure_future(watch())
-        try:
-            await self.inner(scope, guarded_receive, guarded_send)
-        finally:
-            watcher.cancel()
-
 
 def _with_header(send, header: tuple[bytes, bytes]):
-    # A websocket's refreshed cookie rides its `101`: ASGI's `websocket.accept` carries
-    # headers, and uvicorn's wsproto adds them to the handshake reply.
     async def wrapped(message: dict) -> None:
-        if message["type"] in ("http.response.start", "websocket.accept"):
+        if message["type"] == "http.response.start":
             message = {**message, "headers": list(message.get("headers") or []) + [header]}
         await send(message)
 
@@ -592,9 +505,9 @@ def _with_header(send, header: tuple[bytes, bytes]):
 def _revalidate_pages(send):
     """A page let through is marked `no-cache`, so the browser asks the door again next time.
 
-    The static mount sends `index.html` with `Last-Modified` and no `Cache-Control`, so a
-    browser may reuse it: after logging out, `/` came back from the cache as the board and
-    never reached `/login`. Assets keep their caching; their names carry a content hash.
+    A page sent with `Last-Modified` and no `Cache-Control` may be reused by a browser: after
+    logging out, `/` came back from the cache as the board and never reached `/login`. Assets
+    keep their caching; their names carry a content hash.
     """
 
     async def wrapped(message: dict) -> None:

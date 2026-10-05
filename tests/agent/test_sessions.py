@@ -16,7 +16,6 @@ from unittest import mock
 import claude_agent_sdk as sdk
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
-from coscc import frontend
 from coscc.agent import sessions
 from coscc.config import PROTECTED_DB_VAR, Config
 from coscc.data import Data
@@ -1240,13 +1239,7 @@ if __name__ == "__main__":
 
 
 class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
-    """`REFLEX_WEB_WORKDIR` reaching a session is what destroyed a served bundle, twice.
-
-    Measured 2026-09-23: `coscc/run.py` sets it process-wide, a board step inherited it,
-    ran a build, and Reflex compiled into the installed package instead of the workspace.
-    The page answered 404 while the API stayed healthy.
-
-    **These assertions are about the value the child would read, not about this dict.**
+    """**These assertions are about the value the child would read, not about this dict.**
     The first version of this class asserted the key was absent from `child_env` and
     passed while the bug shipped: `claude_agent_sdk` inherits `os.environ` and lays
     `options.env` on top, so a key left out is a key inherited. A test for a boundary has
@@ -1258,10 +1251,6 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
         inherited = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         inherited.update(_child_env(cwd))
         return inherited
-
-    def test_the_web_workdir_the_child_reads_is_the_workspace_not_this_app(self):
-        with mock.patch.dict(os.environ, {frontend.WEB_WORKDIR_VAR: "/installed/_web"}):
-            self.assertEqual(self.child("/w")[frontend.WEB_WORKDIR_VAR], str(Path("/w") / ".web"))
 
     def test_no_setting_of_this_app_reaches_the_child_with_a_value(self):
         """Every `COS_*` is blank but one: `COS_DATA_DIR` is the session's own."""
@@ -1327,18 +1316,6 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
             os.environ, {"PATH": os.pathsep.join(["/ws/.venv/bin", pkg, "/usr/bin"])}
         ):
             self.assertEqual(self.unit_child("/wt", "/ws")["PATH"], "/usr/bin")
-
-    def test_no_reflex_flag_of_this_process_reaches_the_child_with_a_value(self):
-        with mock.patch.dict(
-            os.environ,
-            {
-                "__REFLEX_SKIP_COMPILE": "1",
-                "__REFLEX_MOUNT_FRONTEND_COMPILED_APP": "1",
-            },
-        ):
-            child = self.unit_child("/wt", "/ws")
-            self.assertEqual([k for k, v in child.items() if k.startswith("__REFLEX_") and v], [])
-            self.assertEqual(child[frontend.WEB_WORKDIR_VAR], str(Path("/wt") / ".web"))
 
 
 class _EnvClient(_CountingClient):

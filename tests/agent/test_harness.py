@@ -12,7 +12,6 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from coscc import frontend
 from coscc.agent import harness
 from coscc.agent.harness import MissingRules
 
@@ -31,11 +30,9 @@ def _wheel(path: Path, names, stamp: str = GOOD_STAMP) -> Path:
 
 
 RUNNABLE = (
-    f"coscc/_web/{frontend._LAYOUT.as_posix()}/index.html",
-    f"coscc/_web/{frontend.MARKER.as_posix()}",
     "coscc/_harness/skills/write-spec/SKILL.md",
     "coscc/_studio/index.html",
-    # Committed rather than generated, unlike the four above, and checked anyway: an installed copy
+    # Committed rather than generated, unlike the two above, and checked anyway: an installed copy
     # cannot tell how a missing file came to be missing.
     "coscc/units/states.json",
     "coscc/units/lanes.json",
@@ -140,7 +137,7 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertEqual(harness.wheel_complaints(wheel), [])
 
     def test_the_v0_2_2_shape_is_caught(self):
-        # Exactly what shipped: frontend present, harness absent. Three releases passed
+        # Exactly what shipped: page present, harness absent. Three releases passed
         # every check there was, and this is the check there was not.
         with tempfile.TemporaryDirectory() as tmp:
             names = [n for n in RUNNABLE if "_harness" not in n]
@@ -157,7 +154,7 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertEqual(harness.wheel_complaints(wheel), [])
 
     def test_a_wheel_without_the_studio_is_caught(self):
-        # `/next` would answer 503 on an install that is otherwise whole.
+        # The page would answer 503 on an install that is otherwise whole.
         with tempfile.TemporaryDirectory() as tmp:
             names = [n for n in RUNNABLE if "_studio" not in n]
             wheel = _wheel(Path(tmp) / "nostudio.whl", names)
@@ -192,13 +189,6 @@ class AWheelIsChecked(unittest.TestCase):
             complaints = harness.wheel_complaints(wheel)
             self.assertEqual(len(complaints), 1, complaints)
             self.assertIn("agents.json", complaints[0])
-
-    def test_a_wheel_with_no_frontend_is_caught_too(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            names = [n for n in RUNNABLE if "_web" not in n]
-            wheel = _wheel(Path(tmp) / "noweb.whl", names)
-            complaints = harness.wheel_complaints(wheel)
-            self.assertEqual(len(complaints), 2, complaints)
 
     def test_skills_are_counted_not_named(self):
         # Nine is today's number. A tenth skill must not need this file edited.

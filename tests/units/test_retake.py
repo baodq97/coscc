@@ -283,23 +283,13 @@ def _alive(pid: int) -> bool:
     return "\nState:\tZ" not in state
 
 
-class TheEnvironmentIsTheAppsWithReflexBlanked(unittest.TestCase):
-    def test_reflex_names_are_blank_and_the_apps_database_protected(self):
+class TheEnvironmentIsTheAppsWithItsDatabaseProtected(unittest.TestCase):
+    def test_the_apps_database_is_protected_and_nothing_else_narrowed(self):
         with (
             tempfile.TemporaryDirectory() as tmp,
-            mock.patch.dict(
-                os.environ,
-                {
-                    "__REFLEX_SKIP_COMPILE": "1",
-                    "__REFLEX_MOUNT_FRONTEND_COMPILED_APP": "1",
-                    "COS_PORT": "8790",
-                },
-            ),
+            mock.patch.dict(os.environ, {"COS_PORT": "8790"}),
         ):
             e = retake.env(tmp)
-        self.assertEqual(e["__REFLEX_SKIP_COMPILE"], "")
-        self.assertEqual(e["__REFLEX_MOUNT_FRONTEND_COMPILED_APP"], "")
-        # Nothing else is narrowed: that is the environment the spike measured.
         self.assertEqual(e["COS_PORT"], "8790")
         self.assertEqual(e["PATH"], os.environ["PATH"])
         self.assertIn(str((Path(tmp) / "cos.db").resolve()), e[config.PROTECTED_DB_VAR])

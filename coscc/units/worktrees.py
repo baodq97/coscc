@@ -13,7 +13,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import tomllib
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -24,7 +23,6 @@ from coscc import config, units
 from coscc.agent import harness
 from coscc.git import fetches, gh, gitops
 from coscc.data import Data
-from coscc.frontend import WEB_WORKDIR_VAR
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 
@@ -381,20 +379,17 @@ async def refresh_base(
 def commands(tree: Path) -> list[list[str]]:
     """What makes this tree able to run its tests, guessed from the files in it.
 
-    `uv.lock` gives `uv sync --frozen`, `package-lock.json` gives `npm ci`, and the frontend is
-    built when `coscc-build` is under `[project.scripts]`.
+    `uv.lock` gives `uv sync --frozen`, and a `package-lock.json` at the top or one folder down
+    gives `npm ci` there.
     """
     out: list[list[str]] = []
     if (tree / "uv.lock").is_file():
         out.append(["uv", "sync", "--frozen"])
     if (tree / "package-lock.json").is_file():
         out.append(["npm", "ci"])
-    try:
-        project = tomllib.loads((tree / "pyproject.toml").read_text(encoding="utf-8"))
-    except OSError, ValueError:
-        project = {}
-    if "coscc-build" in ((project.get("project") or {}).get("scripts") or {}):
-        out.append(["uv", "run", "coscc-build"])
+    for lock in sorted(tree.glob("*/package-lock.json")):
+        if lock.parent.name != "node_modules":
+            out.append(["npm", "--prefix", lock.parent.name, "ci"])
     return out
 
 
@@ -405,12 +400,11 @@ def prepare_env(
 ) -> dict[str, str]:
     """The environment a preparing command runs in. Built from nothing.
 
-    `VIRTUAL_ENV` and `REFLEX_WEB_WORKDIR` point into the tree: a build reading this process's
-    `REFLEX_WEB_WORKDIR` compiles into the installed package. `config.PROTECTED_DB_VAR` names
+    `VIRTUAL_ENV` points into the tree. `config.PROTECTED_DB_VAR` names
     this app's `cos.db` so a `Data` in the branch's install scripts refuses to open it.
     `data_dir` is the app's data root, `None` meaning `~/.cos`.
 
-    No `CLAUDE*`, `ANTHROPIC*`, `COS_*` or `__REFLEX_*` name reaches the command because none of
+    No `CLAUDE*`, `ANTHROPIC*`, or `COS_*` name reaches the command because none of
     the names below is one; nothing filters. `test_worktrees.py` asserts this.
     """
     return {
@@ -418,7 +412,6 @@ def prepare_env(
         "HOME": os.environ.get("HOME", "/tmp"),
         "LC_ALL": "C.UTF-8",
         "VIRTUAL_ENV": str(tree / ".venv"),
-        WEB_WORKDIR_VAR: str(tree / ".web"),
         config.PROTECTED_DB_VAR: config.protect(Data(data_dir).db_path),
     }
 

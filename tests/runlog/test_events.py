@@ -5,6 +5,8 @@ here as a kind that fell into `system` (`plan.md` Risk 7)."""
 
 from __future__ import annotations
 
+import re
+
 import json
 import tempfile
 import unittest
@@ -377,7 +379,9 @@ class Collapsing(unittest.TestCase):
 
     def test_every_label_is_english(self):
         """The labels the pane shows are the app's own text (S6)."""
-        from tests.screens.test_screens import VIETNAMESE
+        VIETNAMESE = re.compile(
+            r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]", re.I
+        )
 
         kinds = [
             {"kind": "text", "text": "x"},

@@ -1,11 +1,14 @@
-"""The notice script in `coscc/features/notices.py`, as the shell carries it."""
+"""The notice script in `coscc/features/notices.py`, as the studio loads it."""
 
 from __future__ import annotations
 
-import json
+import tempfile
 import unittest
 
-from coscc import screens
+from fastapi.testclient import TestClient
+
+from coscc.api import build
+from coscc.config import Config
 from coscc.features import notices
 
 # The script's last statements, so a render that cut it short is not counted as carrying it.
@@ -13,10 +16,11 @@ _NOTICE_TAIL = "return cursor(); }});\n})();"
 
 
 class TheNoticeScript(unittest.TestCase):
-    def test_the_shell_carries_the_notice_script_once_and_it_touches_no_reflex_state(self):
+    def test_the_studio_loads_the_notice_script_once(self):
         """What it does in a browser is `scripts/e2e.py`'s to show."""
         js = notices._NOTICE_JS
-        shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
+        with tempfile.TemporaryDirectory() as tmp:
+            shell = TestClient(build(Config(data_dir=tmp))).get("/api/features/scripts").text
         self.assertEqual(shell.count("window.__coscc_notices = true;"), 1)
         self.assertIn(_NOTICE_TAIL, js)
         for said in (
@@ -26,8 +30,6 @@ class TheNoticeScript(unittest.TestCase):
             'aria-label", "Dismiss',
         ):
             self.assertIn(said, js)
-        for reflex in ("_rx_state_", "addEvents", "__reflex"):
-            self.assertNotIn(reflex, js)
         self.assertNotIn(
             "__",
             js.replace("__coscc_", "").replace("__proto__", ""),

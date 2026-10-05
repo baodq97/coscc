@@ -15,7 +15,6 @@ import zipfile
 from pathlib import Path
 
 import coscc
-from coscc import frontend
 from coscc.agent import agents, models
 
 # The package root, `coscc/`: the wheel holds `_harness/` there, and the checkout's `.claude/`
@@ -112,8 +111,6 @@ def read_skill(*names: str) -> str:
 
 # --- what a runnable wheel must contain --------------------------------------
 
-# Uses `frontend._LAYOUT` rather than repeating "build/client".
-_WEB = frontend.PACKAGE_WEB.name
 _HARNESS = PACKAGE_HARNESS.name
 
 # The build stamp `scripts/build_wheel.sh` writes; an installed copy learns its commit only here.
@@ -128,8 +125,8 @@ def _posix(*parts: object) -> str:
 def wheel_complaints(wheel: str | Path) -> list[str]:
     """Everything wrong with `wheel`, as sentences. Empty means it would run.
 
-    Each entry names a wheel that installs cleanly and then fails differently: no frontend
-    (page 404s), no compile marker (service is `active` and serves nothing), no skills, no
+    Each entry names a wheel that installs cleanly and then fails differently: no studio
+    (no page), no skills, no
     `states.json`, no build stamp with a 40-hex commit. The stamp is checked though committed:
     whether a file arrives by `git` or by a copy step is invisible to the installed copy. Skills
     are counted, not listed by name.
@@ -141,22 +138,16 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     except (OSError, zipfile.BadZipFile) as e:
         return [f"{path} could not be read as a wheel: {e}"]
 
-    index = _posix(_WEB, frontend._LAYOUT, "index.html")
-    marker = _posix(_WEB, frontend.MARKER)
+    index = _posix("_studio", "index.html")
     skills_prefix = _posix(_HARNESS, _SKILLS) + "/"
     state_set = _posix(STATES_PATH.relative_to(_HERE))
 
     out = []
     if index not in names:
         out.append(f"no {index} — it would install and serve no page")
-    if marker not in names:
-        out.append(f"no {marker} — it would report active and never serve")
     found = sum(1 for n in names if n.startswith(skills_prefix) and n.endswith("/" + SKILL_FILE))
     if not found:
         out.append(f"no {skills_prefix}*/{SKILL_FILE} — every step would refuse to run")
-    studio = _posix("_studio", "index.html")
-    if studio not in names:
-        out.append(f"no {studio} — /next would serve no page")
     if state_set not in names:
         out.append(f"no {state_set} — no transition could be read or written")
     # Without it no guard is chosen for any transition.

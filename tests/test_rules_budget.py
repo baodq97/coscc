@@ -7,12 +7,12 @@ why. Red here is the point: the files grew quietly until now."""
 
 from __future__ import annotations
 
-import fnmatch
 import re
 import unittest
 from pathlib import Path
 
 from coscc.agent.instructions import scoped_patterns
+from coscc.loop import probe
 
 REPO = Path(__file__).resolve().parents[1]
 CLAUDE = REPO / ".claude" / "CLAUDE.md"
@@ -30,15 +30,13 @@ AREA_MAX = 1_500
 WRITING_MAX = 600
 DOC_MAX = 8_000
 
-APP_PATHS = ["coscc/**", "coscc/**/*", "rxconfig.py", "scripts/*.py"]
+APP_PATHS = ["coscc/**", "coscc/**/*", "scripts/*.py"]
 
 # Files nearly every unit passes through. A rule scoped to one of them would be read by nearly every
 # step, which is what tier 2 already is. The spec's list, not measured.
 HOT = {
     "coscc/service/__init__.py",
     "coscc/runner/step.py",
-    "coscc/state/__init__.py",
-    "coscc/screens/__init__.py",
     "coscc/api.py",
 }
 
@@ -96,27 +94,29 @@ class TheScopes(unittest.TestCase):
                     self.assertTrue((REPO / p).is_file(), p)
 
 
-class TheUiStandardFollowsTheSplit(unittest.TestCase):
-    """A module of `screens` or `state`, or a feature's page, that the UI standard's globs do not
-    match is code it is not loaded for, and a unit that changes only that file is not a UI unit to
+class TheUiStandardCoversEveryScreen(unittest.TestCase):
+    """A studio file, or a feature's script or page, that the UI standard's globs do not match is
+    code it is not loaded for, and a unit that changes only that file is not a UI unit to
     `coscc/units/board.py`."""
 
-    def test_every_module_they_were_split_into_is_named(self):
+    def test_every_screen_file_is_named(self):
         globs = scoped_patterns(UI.read_text(encoding="utf-8")) or []
-        split = [
+        screens = [
             p.relative_to(REPO).as_posix()
-            for name in ("screens", "state")
-            for p in sorted((REPO / "coscc" / name).glob("*.py"))
-            if p.name not in ("__init__.py", "store.py")
-        ] + [
-            p.relative_to(REPO).as_posix()
-            for p in sorted((REPO / "coscc" / "features").glob("*/page.py"))
+            for pattern in (
+                "ui/src/**/*.tsx",
+                "ui/src/**/*.ts",
+                "ui/src/*.css",
+                "coscc/features/*.js",
+                "coscc/features/*/page.py",
+            )
+            for p in sorted(REPO.glob(pattern))
         ]
-        self.assertIn("coscc/state/views.py", split)
+        self.assertIn("ui/src/screens/UnitPage.tsx", screens)
         self.assertEqual(
-            [m for m in split if not any(fnmatch.fnmatch(m, g) for g in globs)],
+            [m for m in screens if not any(probe.glob_match(g, m) for g in globs)],
             [],
-            "add a glob for the new module to `paths:` in `.claude/rules/ui-standard.md`",
+            "add a glob for the new file to `paths:` in `.claude/rules/ui-standard.md`",
         )
 
 

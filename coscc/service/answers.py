@@ -822,8 +822,8 @@ class Answers:
 
     # -- the person's decisions ------------------------
     #
-    # Called only by the Settings screen's handlers (`coscc/state/answers.py`). No route
-    # reaches these: over HTTP an agent could make "the person's decision" itself.
+    # No route reaches these: over HTTP an agent could make "the person's decision" itself.
+    # The table goes with the decisions rebuild.
 
     def decisions_table(self) -> dict[str, Any]:
         """Every decision, withdrawn and expired included, each with its `state` and its

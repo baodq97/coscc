@@ -10,14 +10,18 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
+from fastapi.testclient import TestClient
 
 from coscc import kernel
-from coscc import auth, screens, vault
+from coscc import auth, vault
 from coscc.agent import policy
+from coscc.api import build
+from coscc.config import Config
 from coscc.features import vault as feature
 from coscc.features.vault import page
 from coscc.vault.store import NAME
@@ -447,10 +451,10 @@ class TheSlots(unittest.TestCase):
     def test_the_sidebar_entry_frames_the_page(self):
         self.assertEqual(feature.FEATURE.page, kernel.Page("Vault", "key-round", "/vault"))
 
-    def test_the_shell_carries_it_once_and_the_slots_are_there(self):
-        shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
+    def test_the_studio_loads_it_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shell = TestClient(build(Config(data_dir=tmp))).get("/api/features/scripts").text
         self.assertEqual(shell.count("__coscc_vault = true"), 1)
-        self.assertIn("slot-topbar", shell)
 
 
 class ThePlugin(unittest.TestCase):

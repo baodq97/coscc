@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 import unittest
@@ -13,7 +12,6 @@ import httpx
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
-from coscc import screens
 from coscc.data import Data
 from coscc import features
 from coscc.kernel import Block, Ctx, Feature, Guard, Parts, Schedule, Tool, arm_of
@@ -58,13 +56,14 @@ class TakingTheLineOutRemovesTheFeature(Setup):
                 self.assertEqual((await client.get("/api/health")).status_code, 200)
                 board = await client.get("/api/board", params={"cwd": str(self.ws)})
                 self.assertEqual(board.status_code, 200)
-            shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
+                shell = (await client.get("/api/features/scripts")).text
         self.assertNotIn("__coscc_notices", shell)
 
     async def test_with_the_list_as_shipped_both_are_there(self):
         async with self.client() as client:
             self.assertEqual((await client.get("/api/notices/follow")).status_code, 200)
-        self.assertIn("__coscc_notices", json.dumps(screens.index().render(), default=str))
+            shell = (await client.get("/api/features/scripts")).text
+        self.assertIn("__coscc_notices", shell)
 
 
 def table_exists(config: Config, name: str) -> bool:
@@ -259,7 +258,7 @@ class AFeatureHandsTheAgentItsParts(Setup):
             async with self.client() as client:
                 self.assertEqual((await client.get("/api/fake/ping")).status_code, 404)
                 hooks = client._transport.app.state.service.steps.hooks
-            shell = json.dumps(screens.index().render(), ensure_ascii=False, default=str)
+                shell = (await client.get("/api/features/scripts")).text
         self.assertEqual(hooks.for_step("impl", str(self.ws)), Parts())
         self.assertNotIn("__fake", shell)
 

@@ -14,15 +14,9 @@
 #
 # The last line of stdout is the wheel's path. Exit non-zero means no wheel to trust.
 #
-# A wheel with no `coscc/_web/` in it still builds, still installs, and just has no
-# frontend: `uv build` does not know that directory is supposed to exist, and
-# `pyproject.toml` declares no package data on purpose — `uv_build` already includes
-# everything under `coscc/`, `.gz` sidecars included, measured 2026-09-22 by building a
-# wheel with a probe file under `coscc/_web/` and finding it in `unzip -l`. So the copy
-# steps below are the only thing that puts the compiled frontend where the wheel will pick
-# it up, and `check_wheel.py` at the end is the only thing that would notice if a copy
-# silently found nothing to do — see `.cos/0011_no-install-path-on-a-clean-machine/spec.md`
-# R13 and `plan.md`, `## Risks` item 4.
+# `pyproject.toml` declares no package data: `uv_build` includes everything under `coscc/`,
+# so the steps below put what the app reads there, and `check_wheel.py` at the end is what
+# notices a step that found nothing to do.
 set -euo pipefail
 
 out=dist
@@ -49,40 +43,12 @@ fi
 
 uv sync --frozen
 
-# Wraps `reflex export --frontend-only --no-zip` (see coscc/build.py) and writes the bundle
-# to .web/build/client/. Reflex fetches its own Node/Bun the first time this runs, so
-# nothing upstream of this step needs to provision one.
-uv run coscc-build >&2
-
-# The studio (`ui/`, served under `/next` by `coscc/studio.py`) builds straight into
-# `coscc/_studio/`, inside the package, so `uv build` carries it. `npm ci` installs exactly the
-# lock file; `check_wheel.py` refuses a wheel without the page.
+# The studio (`ui/`, served by `coscc/studio.py`) builds straight into `coscc/_studio/`, inside
+# the package, so `uv build` carries it. `npm ci` installs exactly the lock file.
 npm --prefix ui ci --no-audit --no-fund >&2
 npm --prefix ui run build >&2
 
-# `.web/` is gitignored and never committed (see .gitignore), so this copy is the only thing
-# that puts the bundle somewhere `uv build` will include it — `pyproject.toml` declares
-# `module-name = "coscc"`, so only what lands under `coscc/` travels in the wheel (0011
-# spec.md R1).
-# The `build/client` segment is preserved deliberately, not out of habit.
-# `REFLEX_WEB_WORKDIR` names a *web directory*, and Reflex's static mount appends
-# `Dirs.STATIC` — `build/client` — to whatever it names (read from
-# reflex/utils/exec.py:376-380, 2026-09-22). Flattening the copy here would leave
-# `coscc/frontend.py` pointing that variable at a tree whose `build/client` does not exist,
-# and the page would 404 while the API stayed healthy.
-rm -rf coscc/_web
-mkdir -p coscc/_web/build/client
-cp -r .web/build/client/. coscc/_web/build/client/
-# `.web/backend/` is not part of the static bundle and is easy to read as build scratch. It
-# is not. `stateful_pages.json` is the marker that lets Reflex take its short path when the
-# compile is skipped; without it, `compile_app` falls through to a full compile and ends on
-# `Bun or npm not found` (reflex/compiler/compiler.py:1254-1267, read 2026-09-22). Measured
-# on a clean Debian 13 VM the same day: a wheel carrying only `build/client` installs,
-# reports `active`, and serves nothing at all.
-mkdir -p coscc/_web/backend
-cp -r .web/backend/. coscc/_web/backend/
-
-# The second thing this app reads from outside `coscc/`, and the one that shipped missing
+# The one thing this app reads from outside `coscc/`, and the one that shipped missing
 # three times. `.cos/0012_installed-copy-runs-no-stage/intent.md` measured v0.2.2: the
 # Board answered 400 and every step ran with no rules in its prompt, because
 # `coscc/units/board.py` and `coscc/runner/step.py` were reaching for a `.claude/` that only exists in

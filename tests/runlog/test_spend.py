@@ -11,7 +11,6 @@ from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from coscc.state import present
 from coscc.runlog import spend
 from coscc.config import Config
 from coscc.data import DB_FILENAME
@@ -315,12 +314,8 @@ BY_DAY = (
 BY_UNIT_STAGE = BY_UNIT + " AND stage = :stage"
 
 
-def _read_money(text: str) -> float:
-    return float(text.lstrip("$").replace(",", ""))
-
-
 class MatchesTheRunsTable(unittest.TestCase):
-    """Every figure within 1% of SQLite's sum, `NULL` as `—`, midnight where SQLite puts it."""
+    """Every figure within 1% of SQLite's sum, `NULL` as `None`, midnight where SQLite puts it."""
 
     def setUp(self):
         self._tz = os.environ.get("TZ")
@@ -380,11 +375,9 @@ class MatchesTheRunsTable(unittest.TestCase):
     def _same(self, served, sql, where):
         if sql is None:
             self.assertIsNone(served, where)
-            self.assertEqual(present.money(served), "—", where)
             return
         self.assertIsNotNone(served, where)
         self.assertLessEqual(abs(served - sql), 0.01 * abs(sql), where)
-        self.assertLessEqual(abs(_read_money(present.money(served)) - sql), 0.01 * abs(sql), where)
 
     def test_every_unit_stage_and_day_matches_the_reference_queries(self):
         self._write()

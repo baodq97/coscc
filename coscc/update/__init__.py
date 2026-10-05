@@ -79,6 +79,11 @@ def build_commit(stamp: Path = BUILD_STAMP) -> str | None:
     return commit if isinstance(commit, str) and _FULL_SHA.fullmatch(commit) else None
 
 
+def is_packaged(repo: Path = REPO) -> bool:
+    """Whether this is an installed wheel: a checkout has its `pyproject.toml` beside `coscc/`."""
+    return not (repo / "pyproject.toml").is_file()
+
+
 def checkout_commit(repo: Path = REPO) -> str | None:
     try:
         out = subprocess.run(

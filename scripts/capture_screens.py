@@ -19,7 +19,8 @@ page matched one of the six patterns of the UI standard that can be measured (`s
 A hit is reported, never an exit code.
 
 The app runs on a temporary data root with one workspace, `proj`, a clone of a bare
-directory, and five units in it, always the same, so a spec can name its addresses:
+directory, and five units in it, always the same, so a spec can name its addresses (the studio's paths are
+`/`, `/up-next`, `/work/proj`, `/unit/proj/2`, ...; `ui/src/routes.tsx` lists them):
 
     0001_fresh-intent      an accepted intent, nothing else
     0002_open-question     an intent with one open question nobody answered
@@ -59,42 +60,34 @@ visible text as `<address slug>-<W>x<H>.txt`.
 only with `npm` on `PATH`, else the feature is locked and the row shows `off`.
 
 `proj` holds a `pyproject.toml` at `0.1.0` tagged
-`v0.1.0`, then a `feat` and a `build(deps)` commit of no unit (`seed_release`), so `/board`
+`v0.1.0`, then a `feat` and a `build(deps)` commit of no unit (`seed_release`), so `/work/proj`
 shows its *Release* panel ready with `0.2.0` proposed.
 
-The autopilot is on for `proj` and its shortlist names `0008` and `0009` alone, so `/board`
-shows its strip with stop `e` on the first and stop `f` on the second, and it starts nothing.
+The autopilot is on for `proj` and its shortlist names `0008` and `0009` alone, so `/up-next`
+shows both on its shortlist, and it starts nothing.
 **Add a unit to the shortlist, or let one of the two leave its stop, and the app under the
 camera starts real steps**, sessions that spend quota.
 
-For example `/board`, `/settings`, or `/unit?ws=proj&id=0002_open-question&tab=questions`
-(`tab` is one of `coscc/state/place.py`'s `TABS`, lowercase; any other value opens `overview`).
-An address ending in `#<id>` of a closed part (`<details>`) is taken with that part open:
-`/board#guide-lists` opens the autopilot's *running* and *needs you* lists.
+For example `/`, `/up-next`, `/work/proj` or `/unit/proj/2`.
+An address ending in `#<id>` of a closed part (`<details>`) is taken with that part open.
 The fixture's paths live under `/tmp/`, so a screen that shows the workspace's path today
 hits the standard on every run; say so rather than hide it.
 
-A page is taken full length, except one with a dialog open: the dialog scrolls inside
-itself over a fixed backdrop, so a full-page image would cut it at the viewport and show
-the page behind it instead. That one is taken as the viewport shows it, and what the
-dialog holds below its fold is not in the image (`full_page` in the manifest says which).
+A page is taken full length (the viewport is grown to the page's scroll height), except one
+with a dialog open: it is taken as the viewport shows it, and what the dialog holds below its
+fold is not in the image (`full_page` in the manifest says which).
 
 It logs in by writing a password hash and one session into that root before the app
-starts, puts a `gh` first on `PATH` that answers
-`pr list` with `[]` and refuses the rest, and drops blank `__REFLEX_*` as
-the same way. No session, no quota, no network.
+starts, and puts a `gh` first on `PATH` that answers `pr list` with `[]` and refuses the
+rest. No session, no quota, no network.
 
-**It overwrites `<repo>/.web`.** `coscc.run` always serves `<repo>/.web`, so the bundle
-built for this port replaces the one the checkout had. When
-that one was current for this environment's `COS_HOST`/`COS_PORT` before the run, it is
-built again at the end (about 26 s, measured there) and a line says so; a failed rebuild
-prints the command to run and does not change the exit code.
+The studio (`coscc/_studio/`) is built first when it is missing or older than `ui/src`; a
+failed build is exit 2.
 
     0  every address taken at both sizes
     1  a page did not open: the login page, or no `#studio-shell` in time
     2  the environment is not ready — too many addresses, one not starting with `/`, an
-       `<out>` this command did not write, uncommitted changes, the port in use, no build,
-       no browser
+       `<out>` this command did not write, uncommitted changes, no studio build, no browser
 """
 
 from __future__ import annotations
@@ -116,34 +109,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 REPO = Path(__file__).resolve().parent.parent
 
-# `run.py` points Reflex at `<repo>/.web` whatever the environment says; the build must
-# write where the app will read. Set before anything imports Reflex.
-from coscc import frontend
-
-os.environ[frontend.WEB_WORKDIR_VAR] = str(frontend.web_dir(REPO))
-
 import httpx
 
-from coscc import build
 from coscc import auth
-from coscc.config import from_env
 from scripts.proof_harness import (
     EXIT_BROKEN,
     EXIT_ENV,
     EXIT_PASS,
     RealApp,
+    ensure_studio,
     ingest_fixture,
     make_repo,
-    port_free,
     require_browser,
     seed_session,
 )
 
-HOST, PORT = "127.0.0.1", 18783  # chosen: a port no other proof here uses
 SIZES = ((1440, 900), (390, 844))  # the two sizes measured before
 MAX_ADDRESSES = 6  # 6 × 2 sizes = 12 images, the ceiling (chosen, not measured)
 PAGE_TIMEOUT_MS = 20_000
-SETTLE_MS = 1_500  # for the socket to fill the page after `#studio-shell` shows
+MAX_HEIGHT = 12_000  # a taller page is cut here (chosen)
+SETTLE_MS = 1_500  # for the page's reads to fill it after `#studio-shell` shows
 OPEN_MS = 300  # for a closed part opened by the address to lay out (chosen, not measured)
 
 # What the standard forbids that a pattern can find in visible text.
@@ -265,7 +250,7 @@ def seed_release(proj: Path) -> None:
     git(proj, "tag", "v0.1.0")
     for subject, name in (
         ("feat: search the board (#21)", "search.txt"),
-        ("build(deps): bump reflex (#22)", "deps.txt"),
+        ("build(deps): bump deps (#22)", "deps.txt"),
     ):
         (proj / name).write_text(subject + "\n", encoding="utf-8")
         git(proj, "add", "-A")
@@ -329,15 +314,6 @@ def git_out(*args: str) -> str:
 
 def with_env(**values: str) -> dict[str, str]:
     return {**os.environ, **values}
-
-
-def bundle_state(config) -> str:
-    return build.check(config, build.web_dir() / "build" / "client")[0]
-
-
-def run_build(env: dict[str, str]) -> bool:
-    """`coscc-build` in a child, so it reads `env` as a fresh process would."""
-    return subprocess.run([sys.executable, "-m", "coscc.build"], cwd=REPO, env=env).returncode == 0
 
 
 def make_fixture(
@@ -679,7 +655,7 @@ def shoot(
     context.add_cookies([{"name": auth.COOKIE, "value": token, "url": base}])
     try:
         page = context.new_page()
-        page.goto(base + address, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+        page.goto(base + address, wait_until="load", timeout=PAGE_TIMEOUT_MS)
         try:
             page.wait_for_selector("#studio-shell", timeout=PAGE_TIMEOUT_MS)
         except Exception as e:
@@ -703,6 +679,15 @@ def shoot(
             page.wait_for_timeout(OPEN_MS)
         path = out / f"{slug(address)}-{size[0]}x{size[1]}.png"
         full = page.locator("[role=dialog]").count() == 0
+        if full:
+            # The studio scrolls inside `.scroll`, so the page itself is one viewport tall.
+            height = page.evaluate(
+                "() => { const s = document.querySelector('.scroll'); "
+                "return s ? Math.ceil(s.scrollHeight + s.getBoundingClientRect().top) : 0; }"
+            )
+            if height > size[1]:
+                page.set_viewport_size({"width": size[0], "height": min(height, MAX_HEIGHT)})
+                page.wait_for_timeout(OPEN_MS)
         page.screenshot(path=str(path), full_page=full)
         text = page.inner_text("body")
         # The visible text beside the image, so a proof can count what the page says.
@@ -747,48 +732,13 @@ def run(argv: list[str]) -> int:
         )
         return EXIT_ENV
 
-    for name in [k for k, v in os.environ.items() if k.startswith("__REFLEX") and not v]:
-        del os.environ[name]
-    # The bundle this checkout had, and whether it was current for this environment: only
-    # a current one is worth the rebuild at the end.
-    before_env = {k: os.environ.get(k, "") for k in ("COS_HOST", "COS_PORT")}
-    before = from_env()
-    restore = bundle_state(before) == build.OK and (before.host, before.port) != (HOST, PORT)
-
-    os.environ["COS_HOST"], os.environ["COS_PORT"] = HOST, str(PORT)
-    config = from_env()
-    if not port_free(HOST, PORT):
-        print(
-            f"{HOST}:{PORT} is already in use — another capture, or something else, holds it",
-            file=sys.stderr,
-        )
-        return EXIT_ENV
-
+    ensure_studio()
     roots: list[Path] = []
-    code = EXIT_ENV
     try:
-        if bundle_state(config) != build.OK and not run_build(with_env()):
-            print("the bundle for the capture port could not be built", file=sys.stderr)
-            return EXIT_ENV
-        code = capture(args, config, roots)
-        return code
+        return capture(args, roots)
     finally:
         for d in roots:
             shutil.rmtree(d, ignore_errors=True)
-        if restore:
-            rebuild = with_env(**before_env)
-            if run_build(rebuild):
-                print(
-                    f"restored the bundle for {before.host}:{before.port} in {frontend.web_dir(REPO)}"
-                )
-            else:
-                print(
-                    f"could not restore the bundle for {before.host}:{before.port} — run:\n"
-                    f"    COS_HOST={before_env['COS_HOST']} COS_PORT={before_env['COS_PORT']} uv run coscc-build",
-                    file=sys.stderr,
-                )
-        else:
-            print("no bundle to restore: the checkout had none current for this environment")
 
 
 def out_refused(out: Path) -> str | None:
@@ -809,7 +759,7 @@ def clear_out(out: Path) -> None:
         old.unlink(missing_ok=True)
 
 
-def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
+def capture(args: argparse.Namespace, roots: list[Path]) -> int:
     out = args.out.resolve()
     clear_out(out)
 
@@ -823,7 +773,7 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
     (bin_dir / "gh").write_text(FAKE_GH, encoding="utf-8")
     (bin_dir / "gh").chmod(0o755)
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-    # `RealApp` hands `os.environ` to the app (`scripts/proof_harness.py:132-137`).
+    # `RealApp` hands `os.environ` to the app (`scripts/proof_harness.py`).
     os.environ["CLAUDE_CONFIG_DIR"] = str(outside / "claude")
 
     shots, hits = [], []
@@ -834,7 +784,7 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
         token = seed_session(data_dir)
         seed_conversation(proj)
         seed_refusal(data_dir, proj)
-        with RealApp(config, work, data_dir) as app:
+        with RealApp(work, data_dir) as app:
             with httpx.Client(base_url=app.base, timeout=30, cookies={auth.COOKIE: token}) as api:
                 added = api.post("/api/workspaces", json={"name": "proj"})
                 if added.status_code != 200:

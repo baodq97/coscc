@@ -1,17 +1,17 @@
 ---
 paths:
-  - "coscc/screens/*.py"
-  - "coscc/state/*.py"
-  - "coscc/coscc.py"
-  - "coscc/ui.py"
+  - "ui/src/**"
+  - "ui/index.html"
   - "coscc/auth.py"
+  - "coscc/features/*.js"
   - "coscc/features/*/page.py"
 ---
 
 # The UI standard
 
-What a screen may show. The `paths:` globs above are the files that count as screens: the loop
-reads them to tell a UI unit from any other, and a feature's page text obeys the same rules.
+What a screen may show. The `paths:` globs above are the files that count as screens (the
+studio in `ui/`, the login page, a feature's script and page): the loop reads them to tell a UI
+unit from any other.
 A feature's page lives in `coscc/features/<name>/page.py` (a single-file feature that needs a page
 splits it out there).
 
@@ -74,8 +74,7 @@ A UI unit changes a file under `paths:`.
 - `impl`, with a clean tree after its last UI commit, captures the spec's addresses, reads every
   PNG against S1-S9, fixes, commits and captures again, so the manifest's `head` is the last UI
   commit. `## Screens` records the command, its exit code, the `head`, each image path and the
-  reason for every manifest `hit` left; an unexplained hit is a `high` finding. If the last
-  line says the `.web` rebuild failed, run the command it prints before any browser proof.
+  reason for every manifest `hit` left; an unexplained hit is a `high` finding.
 - `review` reads `.screens/manifest.json` and every PNG in it, and adds `### Screens`: first
   line exactly `Taken at: <manifest head>. Standard: .claude/rules/ui-standard.md. Looked at by:
   <agent session>, from screenshots.`, then `- <path>.png — <W>×<H> — <address> — <what you

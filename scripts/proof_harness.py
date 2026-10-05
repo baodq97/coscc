@@ -14,21 +14,18 @@ broken" — which is the exit-code split both proofs are built around.
 
 from __future__ import annotations
 
-import asyncio
 import io
 import os
 import secrets
 import socket
 import subprocess
 import sys
-import threading
 import time
 from contextlib import closing
 from pathlib import Path
 
 import httpx
 
-from coscc import build
 from coscc import auth
 from coscc.data import Data
 
@@ -86,27 +83,23 @@ def wait_closed(host: str, port: int, timeout: float = 15.0) -> bool:
     return False
 
 
-def require_free_port(config) -> None:
-    """Both proofs need the configured port, and neither can move off it."""
-    if port_free(config.host, config.port):
+def ensure_studio() -> None:
+    """Build the studio (`coscc/_studio/`) when it is missing or older than `ui/src` or
+    `ui/index.html`; a failed build is exit 2."""
+    ui, built = REPO / "ui", REPO / "coscc" / "_studio" / "index.html"
+    sources = [*(ui / "src").rglob("*"), ui / "index.html"]
+    newest = max((f.stat().st_mtime for f in sources if f.is_file()), default=0.0)
+    if built.is_file() and built.stat().st_mtime >= newest:
         return
-    print(
-        f"{config.host}:{config.port} is already in use — stop the running app first.\n"
-        "A checkout's bundle hardcodes that address, so this proof cannot move to a free\n"
-        "port. (A packaged install rewrites it at startup instead — `coscc/frontend.py` —\n"
-        "but these proofs measure a checkout.)",
-        file=sys.stderr,
-    )
-    raise SystemExit(EXIT_ENV)
-
-
-def require_build(config) -> Path:
-    built = build.web_dir() / "build" / "client"
-    state, message = build.check(config, built)
-    if state != build.OK:
-        print(message, file=sys.stderr)
-        raise SystemExit(EXIT_ENV)
-    return built
+    if not (ui / "node_modules").is_dir():
+        steps = [["npm", "--prefix", str(ui), "ci"]]
+    else:
+        steps = []
+    steps.append(["npm", "--prefix", str(ui), "run", "build"])
+    for step in steps:
+        if subprocess.run(step, cwd=REPO, capture_output=True, text=True).returncode != 0:
+            print(f"the studio could not be built: {' '.join(step)}", file=sys.stderr)
+            raise SystemExit(EXIT_ENV)
 
 
 def require_browser():
@@ -129,32 +122,26 @@ def require_browser():
         raise SystemExit(EXIT_ENV)
 
 
+def free_port(host: str) -> int:
+    with closing(socket.socket()) as s:
+        s.bind((host, 0))
+        return s.getsockname()[1]
+
+
 class RealApp:
-    """The app started the way a person starts it, through `coscc.run`.
+    """The app, `coscc.run:served`, under uvicorn on a free loopback port, the way
+    `coscc.run` serves it (same factory, `proxy_headers=False`).
 
-    Going through `coscc.run` means this also exercises the build guard and the
-    loopback bind, rather than reaching past them into the ASGI object.
-
-    `data_dir` defaults to `working_dir` so a proof run keeps its database in the same
-    scratch folder and never touches the data root a real run would use.
-
-    `behind` (`0113`): a port to serve on instead of the bundle's, so a `Cut` can stand on the
-    bundle's address in front of it. The app is then started as `coscc.run` starts it — the
-    same guarded factory and `proxy_headers=False` — but through `uvicorn.run`, so the build
-    guard is not exercised (plan Risk 10). `base` stays the bundle's address; `direct` is
-    where the app itself answers.
+    `data_dir` defaults to `working_dir` so a proof keeps its database in its own scratch
+    folder and never touches the data root a real run would use.
     """
 
-    def __init__(
-        self, config, working_dir: Path, data_dir: Path | None = None, behind: int | None = None
-    ):
-        self.config = config
+    def __init__(self, working_dir: Path, data_dir: Path | None = None, host: str = "127.0.0.1"):
         self.working_dir = working_dir
         self.data_dir = working_dir if data_dir is None else data_dir
-        self.behind = behind
+        self.host, self.port = host, free_port(host)
         self.proc: subprocess.Popen | None = None
-        self.base = f"http://{config.host}:{config.port}"
-        self.direct = self.base if behind is None else f"http://{config.host}:{behind}"
+        self.base = f"http://{host}:{self.port}"
 
     def start(self) -> "RealApp":
         env = {
@@ -162,22 +149,16 @@ class RealApp:
             "COS_WORKING_DIR": str(self.working_dir),
             "COS_DATA_DIR": str(self.data_dir),
             "COS_WORKSPACES": "",
+            "COS_HOST": self.host,
+            "COS_PORT": str(self.port),
         }
-        command = [sys.executable, "-m", "coscc.run"]
-        if self.behind is not None:
-            env["__REFLEX_MOUNT_FRONTEND_COMPILED_APP"] = "1"
-            command = [
-                sys.executable,
-                "-c",
-                (
-                    "import os, uvicorn; from coscc import frontend; from coscc.run import REPO; "
-                    "os.environ[frontend.WEB_WORKDIR_VAR] = str(frontend.web_dir(REPO)); "
-                    f"uvicorn.run('coscc.coscc:served', factory=True, host={self.config.host!r}, "
-                    f"port={self.behind}, log_level='warning', proxy_headers=False)"
-                ),
-            ]
+        code = (
+            "import uvicorn; "
+            f"uvicorn.run('coscc.run:served', factory=True, host={self.host!r}, "
+            f"port={self.port}, log_level='warning', proxy_headers=False)"
+        )
         self.proc = subprocess.Popen(
-            command,
+            [sys.executable, "-c", code],
             cwd=REPO,
             env=env,
             stdout=subprocess.DEVNULL,
@@ -192,7 +173,7 @@ class RealApp:
                 print(f"the app exited before serving:\n{err}", file=sys.stderr)
                 raise SystemExit(EXIT_ENV)
             try:
-                if httpx.get(f"{self.direct}/api/health", timeout=2).status_code == 200:
+                if httpx.get(f"{self.base}/api/health", timeout=2).status_code == 200:
                     return self
             except httpx.HTTPError:
                 time.sleep(0.3)
@@ -206,135 +187,7 @@ class RealApp:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
                 self.proc.wait(timeout=10)
-        # A restart, and the broken scene, both need the address actually released —
-        # a lingering server would let the next page connect and make the claim vacuous.
-        wait_closed(self.config.host, self.config.port if self.behind is None else self.behind)
-
-    def __enter__(self):
-        return self.start()
-
-    def __exit__(self, *exc):
-        self.stop()
-        return False
-
-
-def free_port(host: str) -> int:
-    with closing(socket.socket()) as s:
-        s.bind((host, 0))
-        return s.getsockname()[1]
-
-
-class Cut:
-    """`0113`, after `spike.md ## U2`'s `drive.py`: a TCP proxy from `listen` to `target` that a
-    proof can cut, on its own thread and loop so a sync proof can drive it. It carries the
-    page's `fetch` and Reflex's websocket alike.
-
-    `close()`: every socket is aborted and new ones are refused until `restore()`.
-    `stall()`: every socket open now, and every one opened until `restore()`, stops moving
-    bytes and is never closed — a slept laptop, dropped Wi-Fi. Only a reader's own watchdog
-    notices. Sockets opened after `restore()` relay as normal.
-    """
-
-    def __init__(self, host: str, listen: int, target: int):
-        self.host, self.listen, self.target = host, listen, target
-        self.down = False
-        self.outage = False
-        self.pairs: list[dict] = []
-        self.loop = asyncio.new_event_loop()
-        self._ready = threading.Event()
-        self._thread = threading.Thread(target=self._serve, daemon=True)
-        self._server = None
-
-    def _serve(self) -> None:
-        asyncio.set_event_loop(self.loop)
-        self._server = self.loop.run_until_complete(
-            asyncio.start_server(self._handle, self.host, self.listen)
-        )
-        self._ready.set()
-        self.loop.run_forever()
-
-    async def _handle(self, reader, writer) -> None:
-        if self.down:
-            writer.transport.abort()
-            return
-        try:
-            up_r, up_w = await asyncio.open_connection(self.host, self.target)
-        except OSError:
-            writer.transport.abort()
-            return
-        pair = {"w": writer, "uw": up_w, "stalled": self.outage}
-        self.pairs.append(pair)
-
-        async def pipe(src, dst):
-            try:
-                while data := await src.read(65536):
-                    while pair["stalled"]:
-                        await asyncio.sleep(0.05)
-                    dst.write(data)
-                    await dst.drain()
-            except Exception:  # noqa: BLE001, S110 - a cut socket is the point
-                pass
-            finally:
-                if not pair["stalled"]:
-                    dst.close()
-
-        await asyncio.gather(pipe(reader, up_w), pipe(up_r, writer))
-
-    def _do(self, fn) -> None:
-        async def go():
-            fn()
-
-        asyncio.run_coroutine_threadsafe(go(), self.loop).result(timeout=10)
-
-    def start(self) -> "Cut":
-        self._thread.start()
-        if not self._ready.wait(10):
-            raise SystemExit(EXIT_ENV)
-        return self
-
-    def close(self) -> None:
-        def go():
-            self.down = True
-            for p in self.pairs:
-                p["w"].transport.abort()
-                p["uw"].transport.abort()
-            self.pairs.clear()
-
-        self._do(go)
-
-    def stall(self) -> None:
-        def go():
-            self.outage = True
-            for p in self.pairs:
-                p["stalled"] = True
-
-        self._do(go)
-
-    def restore(self) -> None:
-        def go():
-            self.down = self.outage = False
-
-        self._do(go)
-
-    def stop(self) -> None:
-        async def go():
-            if self._server is not None:
-                self._server.close()
-            for p in self.pairs:
-                p["w"].transport.abort()
-                p["uw"].transport.abort()
-            self.pairs.clear()
-            # A stalled relay waits for ever; it is cancelled here rather than left pending
-            # when the loop stops.
-            left = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-            for t in left:
-                t.cancel()
-            await asyncio.gather(*left, return_exceptions=True)
-
-        asyncio.run_coroutine_threadsafe(go(), self.loop).result(timeout=10)
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        self._thread.join(timeout=10)
-        wait_closed(self.host, self.listen)
+        wait_closed(self.host, self.port)
 
     def __enter__(self):
         return self.start()

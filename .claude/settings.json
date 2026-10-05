@@ -1,7 +1,4 @@
 {
-  "enabledPlugins": {
-    "reflex@reflex-agent-skills": true
-  },
   "permissions": {
     "allow": [
       "Bash(git log:*)",

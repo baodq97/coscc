@@ -20,7 +20,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from starlette.routing import BaseRoute
 
-from coscc.auth import WS_RECHECK
+from coscc.auth import STREAM_SECONDS
 from coscc.kernel import BELL, Busy, Ctx, Feature, Invalid, is_step, line
 
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
@@ -33,7 +33,7 @@ BEAT_SECONDS = 15.0
 # Seconds one stream lasts before it ends and its listener reconnects with `after`.
 # `auth.Guard` checks the session once per request, so without an end a logged-out listener
 # would keep hearing.
-LIFETIME_SECONDS = WS_RECHECK
+LIFETIME_SECONDS = STREAM_SECONDS
 # How many rows one read of the stream takes at most. Chosen, not measured.
 PAGE = 500
 
@@ -225,10 +225,10 @@ class Notices:
                 BELL.disarm(ticket)
 
 
-# The colours are the Radix variables of `screens/studio.py`'s roles: INK gray 12, MUTED gray 11,
-# SURFACE gray 2, LINE gray 5. A feature may not import `screens`, so they are written out.
-# One stream of `/api/notices/follow` per tab, over the page kit (`plugin.KIT_JS`) and outside
-# Reflex, so no hydration or route change touches the stack appended to `document.body`. The
+# The colours are Radix names, which the studio aliases to its tokens: INK gray 12, MUTED gray 11,
+# SURFACE gray 2, LINE gray 5. One stream of `/api/notices/follow` per tab, over the page kit
+# (`plugin.KIT_JS`), outside React, so no route change touches the stack appended to
+# `document.body`. The
 # cursor moves only once the notice's node is in the DOM, and never down; a `head` line sets it.
 _NOTICE_JS = """
 (function () {

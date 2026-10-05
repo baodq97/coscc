@@ -5,13 +5,14 @@ in it."""
 
 from __future__ import annotations
 
+import asyncio
+
 import tempfile
 import unittest
 from pathlib import Path
 
 import httpx
 
-import coscc.coscc as composed  # at collection: Reflex registers its states in the main context
 from coscc.api import build
 from coscc.config import Config
 
@@ -204,28 +205,34 @@ class TheHeldBoard(unittest.IsolatedAsyncioTestCase):
         self.assertIn("9999_made-outside", [u["name"] for u in fresh["units"]])
 
 
-class TheBoardIsReadWhenTheAppStarts(unittest.TestCase):
-    """The Reflex lifespan task, since the real stack never runs `api.py`'s. Synchronous:
-    Reflex registers its states in a context an async test's task lacks."""
+class TheBoardIsReadWhenTheAppStarts(unittest.IsolatedAsyncioTestCase):
+    """The served app's start reads every board once; an app built for a test does not."""
 
-    def test_the_first_board_opened_finds_one_held(self):
-        import asyncio
-
-        from coscc.state.app import API
-
-        self.assertIn(composed.warm_boards, composed.app._lifespan_tasks)
+    async def test_the_first_board_opened_finds_one_held(self):
         with tempfile.TemporaryDirectory() as tmp:
-            service = build(Config(workspaces=(str(REPO),), data_dir=tmp)).state.service
+            app = build(Config(workspaces=(str(REPO),), data_dir=tmp), starting=True)
+            service = app.state.service
             seed_store(tmp)
-            real = API.state.service
-            API.state.service = service
-            try:
-                asyncio.run(composed.warm_boards())
-            finally:
-                API.state.service = real
+            warmed = asyncio.Event()
+            real = service.warm_boards
+
+            async def warm() -> None:
+                await real()
+                warmed.set()
+
+            service.warm_boards = warm
+            async with app.router.lifespan_context(app):
+                await asyncio.wait_for(warmed.wait(), 60)
             held = service.boards.held[service.ws.key(str(REPO))]
             self.assertTrue(held["read_at"])
             self.assertEqual(held["data"]["stages"], STAGES)
+
+    async def test_an_app_not_starting_reads_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = build(Config(workspaces=(str(REPO),), data_dir=tmp))
+            async with app.router.lifespan_context(app):
+                pass
+            self.assertEqual(app.state.service.boards.held, {})
 
 
 class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
