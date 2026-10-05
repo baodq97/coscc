@@ -132,7 +132,7 @@ class ANumberCountsOnlyAsAUnitDirectory(Store):
 
     def test_a_path_in_the_text_builds_no_path(self):
         paths, note = self.found("../../0050_unnamed/intent.md 0050x")
-        # `0050` names the one directory with that number; the text around it builds nothing.
+        # The number picks the one directory that carries it; the text around it builds nothing.
         self.assertEqual(paths, (str(self.unnamed / "idea.md"), str(self.unnamed / "intent.md")))
         self.assertNotIn("..", note)
 

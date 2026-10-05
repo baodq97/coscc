@@ -2274,6 +2274,53 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
         self.assertTrue(units.spike_dir(str(self.repo), self.unit, core.config.data_dir).is_dir())
 
 
+class EveryStageReadsTheUnitsItsUnitNames(unittest.TestCase):
+    """`_link_kwargs` adds the named units' `idea.md` and `intent.md` to `read_also` for every
+    stage, after the siblings `impl` reads."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        (self.repo / ".git").mkdir(parents=True)
+        config = Config(
+            workspaces=(str(self.repo),),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.root / "data"),
+        )
+        self.core = Core(config, Sessions(config))
+        self.other = create_sync(self.core, str(self.repo), "other", "words")["unit"]
+        self.unit = create_sync(self.core, str(self.repo), "me", "words")["unit"]
+        own = self.core.ws.unit_dir(str(self.repo), self.unit)
+        (own / "idea.md").write_text(f"Như {self.other[:4]}.\n", encoding="utf-8")
+        self.named = self.core.ws.unit_dir(str(self.repo), self.other) / "idea.md"
+
+    def link(self, stage: str) -> dict:
+        return asyncio.run(self.core.steps._link_kwargs(str(self.repo), self.unit, stage))
+
+    def test_a_stage_other_than_impl_is_handed_the_paths_and_the_note(self):
+        kw = self.link("plan")
+        self.assertEqual(kw["read_also"], (str(self.named),))
+        self.assertIn(f"- {self.other} (idea.md): {self.named}", kw["mentions_note"])
+
+    def test_impl_keeps_its_siblings_beside_them(self):
+        async def siblings(cwd, unit):
+            return ("/sibling",), "- api: /sibling"
+
+        with mock.patch.object(self.core.steps.ideas, "siblings", siblings):
+            kw = self.link("impl")
+        self.assertEqual(kw["read_also"], ("/sibling", str(self.named)))
+        self.assertEqual(kw["siblings_note"], "- api: /sibling")
+
+    def test_a_unit_that_names_none_is_handed_neither(self):
+        own = self.core.ws.unit_dir(str(self.repo), self.unit)
+        (own / "idea.md").write_text("words\n", encoding="utf-8")
+        kw = self.link("plan")
+        self.assertNotIn("read_also", kw)
+        self.assertNotIn("mentions_note", kw)
+
+
 class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
     """The guards of the features are asked once the gate is open, and a denial hands the unit
     back before anything starts."""

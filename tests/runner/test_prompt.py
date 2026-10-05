@@ -583,3 +583,28 @@ class TheAppsNoteIsApartFromAPersons(unittest.TestCase):
     def test_no_note_adds_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self.prompt(d, app_note="  "), self.prompt(d))
+
+
+class EveryStageIsToldTheUnitsItsUnitNames(unittest.TestCase):
+    """`mentions_note` is one block for every stage, and nothing when it is empty."""
+
+    HEADING = "# The units this unit names"
+    NOTE = "This unit names these units.\n\n- 0082_x (idea.md): /store/0082_x/idea.md"
+
+    def prompt(self, d: str, stage: str, artifact: str, **kw) -> str:
+        make_unit(Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS")
+        return build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, stage, STAGES, artifact, **kw)[0]
+
+    def test_the_block_names_each_unit_for_any_stage(self):
+        for stage, artifact in (("plan", "plan.md"), ("review", "review.md")):
+            with tempfile.TemporaryDirectory() as d:
+                prompt = self.prompt(d, stage, artifact, mentions_note=self.NOTE)
+            self.assertIn(f"{self.HEADING}\n\n{self.NOTE}", prompt, stage)
+            self.assertLess(prompt.index(self.HEADING), prompt.index("# Your task"))
+
+    def test_no_unit_named_adds_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(
+                self.prompt(d, "plan", "plan.md", mentions_note=""),
+                self.prompt(d, "plan", "plan.md"),
+            )

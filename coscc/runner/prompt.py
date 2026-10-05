@@ -440,15 +440,17 @@ def _what_it_follows(
     return blocks
 
 
-def _shared(stage: str, idea_note: str, siblings_note: str) -> list[str]:
+def _shared(stage: str, idea_note: str, siblings_note: str, mentions_note: str) -> list[str]:
     """Right after the stage before: a child unit has no `idea.md`, and the idea it shares
-    stands where that would have.
+    stands where that would have. The units this unit names follow, for every stage.
     """
     blocks: list[str] = []
     if idea_note and stage == "intent":
         blocks.append(f"# The idea this unit was opened from\n\n{idea_note.rstrip()}")
     if siblings_note and stage == "impl":
         blocks.append(f"# The sibling repositories this step may read\n\n{siblings_note.rstrip()}")
+    if mentions_note:
+        blocks.append(f"# The units this unit names\n\n{mentions_note.rstrip()}")
     return blocks
 
 
@@ -875,6 +877,7 @@ def compose_prompt(
     unfinished_round: dict[str, Any] | None = None,
     idea_note: str = "",
     siblings_note: str = "",
+    mentions_note: str = "",
     runs_commands: bool = False,
     agent: dict[str, Any] | None = None,
     unit_meta: dict[str, Any] | None = None,
@@ -889,7 +892,8 @@ def compose_prompt(
 
     `agent` is the stage's resolved row of the agent table; its section opens the prompt.
     `idea_note` is the shared idea a unit was opened from (`intent` only); `siblings_note` the
-    sibling checkouts `impl` may read (`impl` only). `rerun` is true only for a stage a person
+    sibling checkouts `impl` may read (`impl` only); `mentions_note` the units this unit names
+    and the files of each the step may read. `rerun` is true only for a stage a person
     ran again from the board, with `rerun_note` their note; `app_note` is the autopilot's own,
     under its own heading. `plan_map` is what `planmap.for_step` built and
     `commands` the words of the step's grant (`impl` only). `unfinished_round` is
@@ -915,7 +919,7 @@ def compose_prompt(
     parts += [
         *_already_asked(gate_said, base_note, drift_note),
         *_what_it_follows(directory, stage, stages, unit_meta, included),
-        *_shared(stage, idea_note, siblings_note),
+        *_shared(stage, idea_note, siblings_note, mentions_note),
         *_second_artifact(directory, stage, unit_meta, included),
         *_where_you_work(stage, workspace, worktree, ceilings),
         *_tools(stage, directory, plan_map, commands, runs_commands, state_file, included),
