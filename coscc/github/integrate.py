@@ -670,6 +670,22 @@ async def open_prs(root: str) -> list[dict]:
     return [r for r in rows if isinstance(r, dict)]
 
 
+def open_prs_once(cwd: str):
+    """`open_prs` for `cwd`, asked at most once however often it is awaited; `gh`'s error as
+    a string."""
+    held: list[Any] = []
+
+    async def prs() -> list[dict] | str:
+        if not held:
+            try:
+                held.append(await open_prs(str(Path(cwd).expanduser().resolve())))
+            except IntegrateError as e:
+                held.append(str(e))
+        return held[0]
+
+    return prs
+
+
 async def required_checks(tree: str, n: int) -> list[dict]:
     """The same call the `review` gate makes (the loop, `pr checks --required`)."""
     code, out, err = await _gh(

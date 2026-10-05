@@ -22,7 +22,7 @@ from coscc.units import worktrees
 from coscc.config import Config
 from coscc.runner.reply import RunError
 from coscc.service import Service
-from coscc.service.common import Refused
+from coscc.runner.queue import Refused
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 from coscc.units.board import unit_state
@@ -132,11 +132,11 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
                 self.items.append(item)
 
         with (
-            mock.patch.object(self.service.steps, "pr_machine", machine),
+            mock.patch.object(self.service.integration, "pr_machine", machine),
             mock.patch.object(gitops, "current_branch", on_branch),
-            mock.patch("coscc.service.steps.Runner", StandIn),
-            mock.patch.object(self.service.answers, "worktree", tree),
-            mock.patch.object(self.service.answers, "sync_pr", no_sync),
+            mock.patch("coscc.runner.steps.Runner", StandIn),
+            mock.patch.object(self.service.steps, "worktree", tree),
+            mock.patch.object(self.service.steps, "sync_pr", no_sync),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
         ):
             asyncio.run(go())

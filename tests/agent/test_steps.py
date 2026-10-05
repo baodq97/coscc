@@ -1,5 +1,5 @@
 """Tests for what this process holds of a launched step (`Running`, `seal`) and for the attempt
-that holds the unit (`coscc.service.attempts`): one per unit, the sentence a busy unit gets,
+that holds the unit (`coscc.runner.queue`): one per unit, the sentence a busy unit gets,
 and what a Stop records."""
 
 import tempfile
@@ -8,9 +8,9 @@ import unittest
 from coscc.agent import steps
 from coscc.agent.steps import Running
 from coscc.bus import Bus
-from coscc.service import attempts as attempts_mod
-from coscc.service.attempts import Attempts
-from coscc.service.common import Refused
+from coscc.runner import queue as attempts_mod
+from coscc.runner.queue import Attempts
+from coscc.runner.queue import Refused
 
 
 def running(unit: str = "0001_a", stage: str = "spec") -> Running:

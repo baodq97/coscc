@@ -432,5 +432,12 @@ class TheReaderRecordsWhatChanged(Fixture):
         self.assertEqual(len(self.history.transitions(WS, NAME)), before)
 
 
+class TheRunnerKnowsTheStagesTheMachineDoes(unittest.TestCase):
+    def test_the_runner_hands_exactly_these_stages_to_the_machine(self):
+        from coscc.runner.steps import MECHANICAL
+
+        self.assertEqual(MECHANICAL, prmachine.STAGES)
+
+
 if __name__ == "__main__":
     unittest.main()

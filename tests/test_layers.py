@@ -295,7 +295,7 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
 
     def test_a_feature_that_imports_the_app_is_told_to_use_ctx(self):
         for src in (
-            "from coscc.service.steps import Steps\n",
+            "from coscc.runner.steps import Steps\n",
             "from coscc import api\n",
             "from coscc.plugin import ctx_of\n",
         ):
@@ -334,7 +334,7 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
     def test_only_the_api_imports_the_list_and_only_one_way(self):
         ok = "from coscc import features\n"
         self.assertEqual(feature_import_problems({"api.py": ok}), [])
-        (msg,) = feature_import_problems({"service/steps.py": ok})
+        (msg,) = feature_import_problems({"service/autopilot.py": ok})
         self.assertIn("only coscc/api.py knows the list", msg)
         (msg,) = feature_import_problems({"api.py": "from coscc.features import FEATURES\n"})
         self.assertIn("import the list as `from coscc import features`", msg)

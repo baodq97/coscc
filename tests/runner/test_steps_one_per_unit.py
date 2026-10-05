@@ -208,7 +208,7 @@ class TenAtOnce(_OneUnit):
             return None
 
         with (
-            mock.patch.object(self.service.answers, "worktree", fake_worktree),
+            mock.patch.object(self.service.steps, "worktree", fake_worktree),
             mock.patch.object(worktrees, "refresh_base", fake_refresh_base),
         ):
             tasks, _ = await self.race()
@@ -334,7 +334,7 @@ class TheUnitIsAlwaysGivenBack(_OneUnit):
         def broken(base):
             raise RuntimeError("stand-in: describing the base broke")
 
-        with mock.patch("coscc.service.steps.describe_base", broken):
+        with mock.patch("coscc.runner.steps.describe_base", broken):
             with self.assertRaises(RuntimeError):
                 async for _ in self.service.steps.run_step(self.ws, self.unit, "spec"):
                     pass

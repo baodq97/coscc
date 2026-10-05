@@ -120,7 +120,7 @@ intent, spec, spike, plan, pr can be rerun from the board when accepted and not 
 appends `### Rerun` with `Stale:` hashes for that artifact and every later one on disk — so
 they all become stale.
 
-## 2. Step (per run) — app, `coscc/service/steps.py`, `coscc/runner/__init__.py`
+## 2. Step (per run) — app, `coscc/runner/steps.py`, `coscc/runner/step.py`
 
 ```mermaid
 stateDiagram-v2
@@ -135,14 +135,14 @@ stateDiagram-v2
 
 | Transition | Decided by | Recorded |
 |---|---|---|
-| refuse before spend: busy mark, held, `coscc.loop gate` non-zero, impl tree prep fails, review screenshot retake fails (`steps.py:764-1106`) | CODE | none / `screens` |
+| refuse before spend: busy mark, held, `coscc.loop gate` non-zero, impl tree prep fails, review screenshot retake fails (`coscc/runner/steps.py` `_open`, `_prepare`) | CODE | none / `screens` |
 | prompt assembly (skill + gate text + artifacts + answers + review history + note) (`runner/prompt.py:409-823`) | CODE | `start` (`included`, `pointed`, model, effort, grant) |
 | the work itself, and the artifact's `Status:` | **AGENT** | the file |
 | prose stages: app writes the file from the reply, checks the title + header `Status:` (`reply.py:36,118-130`) | CODE on AGENT text | `end.opening` |
 | tool stages: file must exist with `Status:` anywhere (`runner/__init__.py:680-684`) | CODE on AGENT file | — |
 | ceilings (turns, $ per grant, `policy.py:253-397`) → exhausted | CODE | `end` |
 | Stop (`POST /api/board/stop`) | PERSON | `end.stopped_by` |
-| after `end`: post review rounds as PR comments; `pr-sync` title/body; worktree cleanup after ship; write `questions` and `ship` rows; nudge autopilot (`steps.py:1222-1293`) | CODE | `pr-comment`, `pr-sync`, `questions`, `ship` |
+| after `end`: post review rounds as PR comments; `pr-sync` title/body; worktree cleanup after ship; write `questions` and `ship` rows; nudge autopilot (`coscc/runner/steps.py` `after_end`) | CODE | `pr-comment`, `pr-sync`, `questions`, `ship` |
 | startup recovery: a `start` with a dead pid and no `end` → `end{failed, recovered}` (`runlog/recovery.py:55-76`) | CODE | `end` |
 
 ## 3. Autopilot (per workspace) — `coscc/service/autopilot.py`, `coscc/units/autopilot.py`
@@ -197,7 +197,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 |---|---|---|---|
 | **Questions & answers** | open → answered | detection CODE (`coscc.loop`); answer PERSON `POST /api/units/answer` appends `### Câu N` / `### F<n>` (`answers.py:299-544`) | `questions`, `answer` |
 | **Holds** | active, paused, dropped | PERSON `POST /api/units/hold`; dropped → CODE closes the PR and removes the worktree (`units/hold.py:99-165`) | `### Paused…` block + `hold` row |
-| **PR / CI / integrate** | unknown, conflicting, red-after-integration, behind, current (`github/integrate.py:80-111`) | read by `gh pr list` on each board read, `gh pr checks` ≤ every 60 s per head, and the 300 s pass — no dedicated poller. `behind` → CODE `gh pr update-branch`; conflicting / red / refused / diverged head → **AGENT Gebo** (120 turns, $8, leased push) (`steps.py:417-594`); Gebo's `[needs-person]` lines set the outcome (since `0136`, the object it hands back through `submit`) | `integration`, `start`/`end` |
+| **PR / CI / integrate** | unknown, conflicting, red-after-integration, behind, current (`github/integrate.py:80-111`) | read by `gh pr list` on each board read, `gh pr checks` ≤ every 60 s per head, and the 300 s pass — no dedicated poller. `behind` → CODE `gh pr update-branch`; conflicting / red / refused / diverged head → **AGENT Gebo** (120 turns, $8, leased push) (`coscc/github/integration.py` `_integrate_body`, `integrate_gebo`); Gebo's `[needs-person]` lines set the outcome (since `0136`, the object it hands back through `submit`) | `integration`, `start`/`end` |
 | **Review loop** | round n: changes-requested → impl → CI → review n+1 … pass → ship | verdict and severities AGENT; rounds counted CODE; clean-rebase re-review skip CODE (0067) | review.md, `pr-comment` |
 | **Ship** | open → merged → recorded | CODE: the PR machine runs `gh pr merge --match-head-commit` behind guard `ship-ready` (`0136`); no session, skill or grant since `0139` R12; merged outside → "record, do not merge" (0116) | ship.md, `ship` row |
 | **Update** | idle → pending → applying → handoff / fail; release channel (6 h check), local channel (build-local) | CODE checks; PERSON applies (`update/updater.py:148-757`) | `update` rows |

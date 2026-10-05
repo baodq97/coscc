@@ -4,7 +4,7 @@
 
 - **Checker**: a daemon thread, started only when this install is the `install.sh` shape and `COS_UPDATE_CHECK` is not `0`. One `releases/latest` call at start and every six hours; offline or rate-limited keeps the old state and says nothing.
 - **LocalBuilder**: `scripts/build_wheel.sh --local` of the configured workspace's `origin/main`, in a throwaway worktree, only when someone presses the button.
-- **Apply**: wait only for a mechanical integration or a screenshot retake; refuse new sessions from the start of the trial; try the new version beside the old one; pause every agent session (`Sessions.suspend_all`) and cancel a local build; then hand the install to `run.main` and stop uvicorn. The next start takes each paused session up again (`coscc/service/resume.py`).
+- **Apply**: wait only for a mechanical integration or a screenshot retake; refuse new sessions from the start of the trial; try the new version beside the old one; pause every agent session (`Sessions.suspend_all`) and cancel a local build; then hand the install to `run.main` and stop uvicorn. The next start takes each paused session up again (`coscc/runner/resume.py`).
 
 **It is not an approval and it starts nothing**: no path here asks a gate, reads `next` or runs a step.
 """

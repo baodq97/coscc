@@ -13,7 +13,7 @@ from unittest import mock
 from coscc.config import Config
 from coscc.github import integrate
 from coscc.service import Service
-from tests.service.test_steps_integrate import StandIn, git
+from tests.github.test_integration import StandIn, git
 
 SMALL, LARGE, ROUNDS, FINDINGS = 8, 300, 5, 4
 
@@ -82,7 +82,7 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
 
     async def ended(self, service: Service) -> None:
         """Every read running now ended, and the reads an answer starts."""
-        while running := [*service.boards.reads.values(), *service.steps.ci_asks.values()]:
+        while running := [*service.boards.reads.values(), *service.integration.ci_asks.values()]:
             await asyncio.gather(*running)
             for _ in range(5):
                 await asyncio.sleep(0)

@@ -20,7 +20,7 @@ from coscc.git import gh, gitops
 from coscc.service import Service
 from coscc.units import board as board_reader
 from coscc.units import worktrees
-from tests.service.test_steps_integrate import StandIn, git
+from tests.github.test_integration import StandIn, git
 
 # A child that outlives any test unless it is killed.
 SLEEPER = [sys.executable, "-c", "import time; time.sleep(60)"]

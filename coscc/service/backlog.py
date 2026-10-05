@@ -5,19 +5,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-from pathlib import Path
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
-from typing import Any, TypedDict
+from typing import Any
 
 from coscc.units import backlog
 from coscc.units import board as board_reader
-from coscc.git import fetches, gitops
 from coscc.units import hold as hold_rules
 from coscc.units import submit as submit_mod
 from coscc.units.submit import RUN_SUBMITTED, submitted
 from coscc.units.board import Unavailable
-from coscc.git.gitops import GitError
 from coscc.store.journal import BadRecord, Journal, timelines_of
 from coscc.store.db import Busy
 from coscc.agent.policy import grant_for
@@ -25,12 +21,9 @@ from coscc.agent import models
 from coscc.runner.attempt import Denials, permission_gate
 from coscc.runner.reply import CEILING_MARKERS
 from coscc.agent.sessions import StepHandle, Suspended
-from coscc.service.resume import nothing, resume_kwargs
-from coscc import units
-from coscc.units import worktrees
-from coscc.units import BadUnit, CannotCreate
+from coscc.runner.resume import resume_kwargs
+from coscc.runner.step import nothing
 from coscc.service.update import refuse_while_updating
-from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK
 from coscc.kernel import OWNER
 from coscc.kernel import Invalid, Submitted
 
@@ -39,7 +32,8 @@ from coscc.config import Config
 
 from coscc.units.workspaces import Workspaces
 
-from coscc.service.common import Holds
+from coscc.runner.queue import Holds
+from coscc.runner.steps import Cut, cut_branch
 
 from coscc.agent.sessions import Sessions
 
@@ -48,69 +42,6 @@ from coscc.update.updater import Updater
 from coscc.service.models import Models
 
 log = logging.getLogger(__name__)
-
-
-class Cut(TypedDict):
-    """A branch `cut_branch` cut: its name, the commit and tree it was cut in, and the prepare."""
-
-    cwd: str
-    unit: str
-    branch: str
-    base: str
-    sha: str
-    output: str
-    worktree: str
-    switched: bool
-    prepare: dict[str, Any]
-
-
-async def cut_branch(
-    cwd: str, unit: str, data_dir: str | os.PathLike[str] | None, state: Any
-) -> Cut:
-    """Cut the unit's branch in its worktree from the freshly fetched trunk, and prepare it.
-
-    One path for the "Cut this unit's branch" button and for an `impl` that starts on a
-    detached tree. It raises `Invalid` with the words of what failed; nothing is cut then."""
-    try:
-        name = units.branch_name(cwd, unit, data_dir, state)
-    except (CannotCreate, BadUnit) as e:
-        raise Invalid(str(e)) from e
-    # Cut in the unit's own worktree, never in the workspace: cutting there took one unit's
-    # branch away from another. The workspace stays on `main`.
-    try:
-        tree = await worktrees.ensure(cwd, unit, None, data_dir)
-    except (GitError, BadUnit) as e:
-        raise Invalid(f"Could not open {unit}'s worktree, so no branch was cut. {e}") from e
-    repo = Path(tree["path"])
-    # Through the coordinator, so a step starting beside this does not race it for
-    # `refs/remotes/origin/main`; a fetch under 30s old is reused here too.
-    try:
-        await fetches.fetch(repo, BRANCH_REMOTE, BRANCH_TRUNK)
-    except GitError as e:
-        raise Invalid(
-            f"Could not update {BRANCH_TRUNK} from {BRANCH_REMOTE}, so no branch was cut. "
-            f"Nothing in the repository changed. git said: {e}"
-        ) from e
-    try:
-        sha = await gitops.rev_parse(repo, f"refs/remotes/{BRANCH_REMOTE}/{BRANCH_TRUNK}")
-        output = await gitops.create_branch(repo, name, sha)
-    except GitError as e:
-        raise Invalid(str(e)) from e
-    # Prepared here rather than when the tree was made: the lockfiles an `impl` works with are
-    # the ones at the commit just cut from. A failure is returned, not raised (the branch is cut
-    # either way), and `run_step` refuses `impl` until preparing succeeds.
-    prepared = await worktrees.prepare(repo, cwd, data_dir=data_dir)
-    return {
-        "cwd": cwd,
-        "unit": unit,
-        "branch": name,
-        "base": f"{BRANCH_REMOTE}/{BRANCH_TRUNK}",
-        "sha": sha[:7],
-        "output": output,
-        "worktree": str(repo),
-        "switched": bool(tree.get("switched")),
-        "prepare": prepared,
-    }
 
 
 class Backlog:

@@ -6,7 +6,7 @@ schedule's tick and the Backlog script are all in it.
 ## What one scan does
 
 1. Reads the workspace's interventions past its cursor (`Ctx.interventions`, from
-   `coscc/service/interventions.py`): `refused`, `ci-red`, `rerun`, `review-round`,
+   `coscc/runner/interventions.py`): `refused`, `ci-red`, `rerun`, `review-round`,
    `impl-draft`, `integrate`. A tool a session was denied is none.
 2. With none, records `skipped` and stops: no session, $0.
 3. Builds one prompt of at most 12,000 characters: the instructions, the proposals already made

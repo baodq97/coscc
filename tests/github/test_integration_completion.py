@@ -22,7 +22,7 @@ from unittest import mock
 from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
-from tests.service.test_steps_integrate import BRANCH, PR, SLUG, StandIn, git
+from tests.github.test_integration import BRANCH, PR, SLUG, StandIn, git
 from coscc.service import Service
 from coscc.kernel import Invalid
 from tests.service.test_service import use_sessions, use_config
@@ -160,7 +160,7 @@ class ACutIntegration(unittest.TestCase):
 
         async def go():
             done = {}
-            async for kind, payload in self.service.steps.integrate(self.cwd, self.unit):
+            async for kind, payload in self.service.integration.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done

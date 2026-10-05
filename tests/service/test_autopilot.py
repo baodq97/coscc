@@ -20,7 +20,7 @@ from coscc.store.journal import Journal
 from coscc.store.db import Busy
 from coscc.service import Service
 from coscc.kernel import Invalid
-from coscc.service.common import Refused
+from coscc.runner.queue import Refused
 from coscc.agent.sessions import Sessions
 from tests.units.test_submit import submits as _submits
 from tests.service.test_service import use_sessions, use_config
@@ -1213,7 +1213,7 @@ class Scripted(_Base):
         )
         with (
             mock.patch.object(self.service.steps, "run_step") as run,
-            mock.patch.object(self.service.steps, "integrate") as integrate,
+            mock.patch.object(self.service.integration, "integrate") as integrate,
         ):
             await self.pass_()
         self.assertEqual(
@@ -2272,7 +2272,7 @@ class Scripted(_Base):
             head=head,
             files=read_files,
         )
-        self.service.steps.pr_machine = lambda: machine
+        self.service.integration.pr_machine = lambda: machine
         return machine
 
     async def an_open_pr(self, machine, name):
@@ -2349,7 +2349,7 @@ class Scripted(_Base):
             cleaned.append(unit)
             return {"removed": True}
 
-        self.service.steps.cleanup = cleanup
+        self.service.integration.cleanup = cleanup
         self.assertEqual(
             (await self.service.autopilot.pr_read(self.key)).moved, [("0001_a", "merged")]
         )
@@ -2382,8 +2382,8 @@ class Scripted(_Base):
             cleaned.append(unit)
             return {"removed": True}
 
-        self.service.steps.cleanup = cleanup
-        got = await self.service.steps.reconcile_prs()
+        self.service.integration.cleanup = cleanup
+        got = await self.service.integration.reconcile_prs()
         self.assertEqual([o["result"] for o in got], ["recorded"])
         ships = [(r["unit"], r["result"]) for r in self.service.ws.journal().records(kind="ship")]
         self.assertEqual(

@@ -10,8 +10,8 @@ import unittest
 from unittest import mock
 
 from coscc.bus import Bus
-from coscc.service.attempts import Attempts, Illegal
-from coscc.service.common import Refused
+from coscc.runner.queue import Attempts, Illegal
+from coscc.runner.queue import Refused
 
 
 class _Store(unittest.TestCase):

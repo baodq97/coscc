@@ -33,7 +33,7 @@ ATTENTION = ("failed", "costly")
 
 def skill_of(key: str) -> str:
     """The skill a step of `key` loads: `write-<stage>` (`coscc/runner/prompt.py`), and Gebo's
-    own `integrate` (`coscc/service/steps.py`)."""
+    own `integrate` (`coscc/github/integration.py`)."""
     return key if key == "integrate" else f"write-{key}"
 
 

@@ -19,7 +19,7 @@ from coscc.units import BadUnit
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable
 from coscc.service.update import refuse_while_updating
-from coscc.service.common import open_prs_once
+from coscc.github.integrate import open_prs_once
 from coscc.units.board import CONSEQUENCE
 from coscc.units.read import Asked
 from coscc.kernel import Invalid

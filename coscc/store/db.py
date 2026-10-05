@@ -384,7 +384,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
 )""",
     """CREATE INDEX IF NOT EXISTS pull_requests_unit ON pull_requests (root, workspace, unit)""",
     """-- One try at a step, an integration, a hold, a review round or an estimate, from the
--- click to its end (`coscc/service/attempts.py`). What it is now is its last move, never a
+-- click to its end (`coscc/runner/queue.py`). What it is now is its last move, never a
 -- column here; `stop_asked_at` is a Stop recorded, not a state. `workspace` is the journal
 -- key; `run` the step's events once it launched; `road` an integration's, `rebase` or `gebo`.
 -- `started_by`, `rerun` and `note` are what a queued one is launched with, by this process or

@@ -16,7 +16,7 @@ from unittest import mock
 
 from coscc.bus import Bus
 from coscc.units import hold
-from coscc.service import attempts
+from coscc.runner import queue as attempts
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.store.db import Data

@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from coscc.store.journal import Intervention, Journal
-from coscc.service.attempts import Attempts
+from coscc.runner.queue import Attempts
 from coscc.units.meta import UnitMeta
 
 # The kinds, as the scan's prompt and Backlog name them.
