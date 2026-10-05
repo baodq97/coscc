@@ -75,3 +75,17 @@ class TheOpeningIsCheckedBeforeAnArtifactIsWritten(unittest.TestCase):
         got = self.cut("```markdown\n" + self.PLAN + "```\n")
         self.assertEqual(got, self.PLAN.strip())
         self.assertIsNone(self.problem(got))
+
+    def test_text_with_no_title_comes_back_whole(self):
+        from coscc.runner.reply import from_title
+
+        self.assertEqual(from_title("## Body\nR1.\n", "plan.md"), "## Body\nR1.\n")
+
+    def test_the_reason_names_the_artifact_what_is_missing_and_the_blocks(self):
+        from coscc.runner.reply import opening_reason
+
+        got = opening_reason("plan.md", "no `Status:` line in its header", 3)
+        for part in ("plan.md", "no `Status:` line", "3 blocks"):
+            self.assertIn(part, got)
+        self.assertIn("1 block)", opening_reason("plan.md", "x", 1))
+        self.assertNotIn("(", opening_reason("plan.md", "x", None))

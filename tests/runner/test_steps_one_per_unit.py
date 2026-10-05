@@ -219,6 +219,27 @@ class TenAtOnce(_OneUnit):
             (self.calls["gate"], self.calls["_worktree"], self.calls["refresh_base"]), (1, 1, 1)
         )
 
+    async def test_the_winner_is_listed_and_stops(self):
+        tasks, _ = await self.race()
+        winners = [t for t in tasks if not t.done()]
+        self.assertEqual(len(winners), 1)
+        # Listed is not yet driven: a Stop before `drive`'s first turn cancels a step that never
+        # began, and that road writes no `end` by design.
+        try:
+            await asyncio.wait_for(self.fake.entered.wait(), 20)
+        except asyncio.TimeoutError:
+            self.fail("timed out waiting for the winning step's session to open")
+        stop = await self.client.post(
+            "/api/board/stop", json={"cwd": self.ws, "unit": self.unit, "by": "Proof person"}
+        )
+        self.assertEqual(stop.status_code, 200, stop.text)
+        await asyncio.gather(*tasks)
+        self.assertEqual(winners[0].result().status_code, 200, winners[0].result().text)
+        self.assertEqual(len(self.records("start")), 1)
+        [end] = self.records("end")
+        self.assertEqual(end.get("outcome"), "stopped")
+        self.assertEqual(end.get("stopped_by"), "Proof person")
+
 
 class AnyStageOfTheUnit(_OneUnit):
     async def test_another_stage_is_refused_while_the_winner_runs(self):
@@ -357,6 +378,22 @@ class TheUnitIsAlwaysGivenBack(_OneUnit):
         task = await self.one_running()
         self.fake.release.set()
         self.assertEqual((await task).status_code, 200)
+
+    async def test_after_the_winner_ends_done_and_after_it_is_stopped(self):
+        task = await self.one_running()
+        stop = await self.client.post(
+            "/api/board/stop", json={"cwd": self.ws, "unit": self.unit, "by": "Proof person"}
+        )
+        self.assertEqual(stop.status_code, 200, stop.text)
+        await task
+        self.nothing_held()
+        self.assertNotIn("is busy:", (await self.post_run("plan")).text)
+
+        task = await self.one_running()
+        self.fake.release.set()
+        self.assertEqual((await task).status_code, 200)
+        self.nothing_held()
+        self.assertNotIn("is busy:", (await self.post_run("plan")).text)
 
 
 class WhatElseHoldsTheUnit(_OneUnit):

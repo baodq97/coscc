@@ -15,6 +15,7 @@ from coscc.agent.policy import decide
 from coscc.runner.prompt import (
     build_prompt,
     compose_prompt,
+    _LANGUAGE,
 )
 from tests.runner.test_step import (
     REVIEW_R1,
@@ -69,6 +70,51 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
             self.assertEqual(pointed, [])
             self.assertIn("# The intent it follows\n\nStatus: accepted.\nINTENT", prompt)
             self.assertNotIn("SPEC-IS-NEAREST", prompt)
+
+
+class ThePromptSaysTheGateWasAlreadyAsked(unittest.TestCase):
+    """Every stage's skill opens by telling it to run `coscc.loop gate` and stop on non-zero.
+    The four toolless prose stages can never run it, and `ship` responded the only honest
+    way left to it: it wrote `Status: draft` and gave the unasked gate as a reason. Its
+    gate was open. The app knew, and never said."""
+
+    def scene(self, d):
+        make_unit(Path(d), intent_md="Status: accepted.\nTHE-INTENT-BODY")
+        return Path(d) / ".cos" / UNIT
+
+    def test_the_gates_own_words_reach_the_stage(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = build_prompt(
+                d,
+                self.scene(d),
+                UNIT,
+                "review",
+                STAGES,
+                "review.md",
+                gate_said="open: review may proceed for " + UNIT,
+            )
+            self.assertIn("open: review may proceed", prompt)
+
+    def test_it_tells_the_stage_not_to_hold_back_over_a_gate_it_cannot_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = build_prompt(
+                d,
+                self.scene(d),
+                UNIT,
+                "review",
+                STAGES,
+                "review.md",
+                gate_said="open: review may proceed",
+            )
+            # The instruction, not the transcript. Without it the stage reads "ask the
+            # gate" in its own rules and has no way to know the question is already behind it.
+            self.assertIn("Do not ask it again", prompt)
+
+    def test_a_prompt_built_without_a_gate_answer_says_nothing_about_one(self):
+        """Callers that do not ask must not imply an answer they never got."""
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = build_prompt(d, self.scene(d), UNIT, "impl", STAGES, "impl.md")
+            self.assertNotIn("The gate, already asked", prompt)
 
 
 class AnAnswerReachesTheStageThatReadsItsArtifact(unittest.TestCase):
@@ -151,6 +197,13 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
             self.assertNotIn("review.md", included)
             self.assertIn("review.md", pointed)
 
+    def test_impl_is_told_to_push_the_fix(self):
+        """`coscc.loop next` offers `review` only once a fix reaches the pull request, so a fix
+        committed and never pushed keeps the button on `impl` (plan, Risk 2)."""
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = self.prompt(d, "changes-requested")
+            self.assertIn("then push the branch", prompt)
+
     def test_a_review_that_passed_is_not_sent_back(self):
         with tempfile.TemporaryDirectory() as d:
             prompt, included = self.prompt(d, "accepted")
@@ -177,7 +230,71 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
             self.assertNotIn("review.md", included)
 
 
+class ShipIsNotToldItIsInARepository(unittest.TestCase):
+    """`ship` opens no session, so it is told nothing of a repository; `impl` still names its
+    repository."""
+
+    def prompt(self, d, stage, artifact):
+        make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+        directory = Path(d) / ".cos" / UNIT
+        return build_prompt(directory, directory, UNIT, stage, STAGES, artifact, writes_own=True)
+
+    def test_impl_still_names_its_repository(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = self.prompt(d, "impl", "impl.md")
+            self.assertIn("in the repository at", prompt)
+            self.assertNotIn("URL in `pr.md`'s `PR:` field", prompt)
+
+
+class ImplAndShipKeepTheirTaskByteForByte(unittest.TestCase):
+    """`pr` gets its own *Your task*, and the two stages that write their own artifact beside it
+    keep theirs exactly as they were."""
+
+    def task(self, d, stage):
+        directory = make_unit(
+            Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP"
+        )
+        prompt, _ = build_prompt(d, directory, UNIT, stage, STAGES, f"{stage}.md", writes_own=True)
+        # The stages that hand back a stage result have *Hand back your judgement* after.
+        return next(
+            p for p in prompt.split("\n\n---\n\n") if p.startswith("# Your task")
+        ), directory
+
+    def test_impl(self):
+        with tempfile.TemporaryDirectory() as d:
+            task, directory = self.task(d, "impl")
+            self.assertEqual(
+                task,
+                (
+                    "# Your task\n\n"
+                    f"Do the work this unit's plan authorises, in the repository at "
+                    f"`{Path(d).expanduser().resolve()}`, then write `{directory / 'impl.md'}` "
+                    "recording what you did.\n\n"
+                    "That file must carry the `Status:` line the rules above describe. "
+                    f"{_LANGUAGE} Write it yourself with your "
+                    "tools — do not paste it into your reply."
+                ),
+            )
+
+
 OLD_LANGUAGE = "Prose in Vietnamese; filenames and headings in English."
+
+
+class EveryStageAsksForTheLanguageOfTheProjectInstructions(unittest.TestCase):
+    """One sentence, shared by every stage, and none that forces Vietnamese."""
+
+    def test_the_sentence_defers_to_the_project_instructions(self):
+        self.assertIn("the language the project instructions set", _LANGUAGE)
+        self.assertIn("filenames and headings in English", _LANGUAGE)
+        self.assertNotEqual(_LANGUAGE, OLD_LANGUAGE)
+
+    def test_every_stage_carries_it_once_and_not_the_old_one(self):
+        for stage in ("intent", "spec", "spike", "plan", "impl", "review", "pr", "ship"):
+            with self.subTest(stage=stage):
+                text = _golden_prompt(stage)
+                self.assertEqual(text.count(_LANGUAGE), 1)
+                self.assertNotIn(OLD_LANGUAGE, text)
+                self.assertNotIn("Prose in Vietnamese", text)
 
 
 def _golden_prompt(stage: str) -> str:
@@ -290,6 +407,32 @@ class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):
         self.assertNotIn("review-incomplete", included)
         self.assertNotIn("# The incomplete round", prompt)
 
+    def test_the_unit_files_it_names_can_still_be_read(self):
+        incomplete = incomplete_reply("b" * 40).split("\n\n", 1)[1]
+        with tempfile.TemporaryDirectory() as d:
+            directory = _golden_unit(Path(d) / "store")
+            (directory / "review.md").write_text(REVIEW_R1 + "\n" + incomplete, encoding="utf-8")
+            tree = Path(d) / "worktree"
+            tree.mkdir()
+            grant = policy.grant_for_step("review", "routine")
+            prompt, included, _ = compose_prompt(
+                str(tree), directory, UNIT, "review", STAGES, "review.md"
+            )
+            self.assertIn("review-incomplete", included)
+            block = prompt.split("# The unit's files\n\n")[1].split("\n\n")[0]
+            for line in block.splitlines():
+                p = line[2:].removesuffix(" (above)")
+                self.assertEqual(
+                    decide(grant, "Read", {"file_path": p}, str(tree), str(directory)), "", p
+                )
+
+
+class TheNextReviewIsToldWhyARoundDidNotCount(unittest.TestCase):
+    """`service.steps.run_step` hands over the round the loop read as unfinished; this module only places
+    it."""
+
+    HEADING = "# The round that did not count"
+
 
 class AnswersComeFromTheDatabase(unittest.TestCase):
     """A stage's prompt renders a unit's answers and holds from its rows in `cos.db` where the
@@ -398,3 +541,34 @@ class AnswersComeFromTheDatabase(unittest.TestCase):
         self.assertIsNone(
             answers_for(b"# Spec\nStatus: draft.\n", "spec.md", {"answers": [], "holds": []})
         )
+
+
+class TheAppsNoteIsApartFromAPersons(unittest.TestCase):
+    """The autopilot's note (`note_by=app`) has its own heading, never the rerun's: the agent must not read it as a person's wish."""
+
+    HEADING = "# What the app noted"
+
+    def prompt(self, d: str, **kw) -> str:
+        make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+        return build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", **kw)[0]
+
+    def test_the_apps_note_has_its_own_heading_before_the_task(self):
+        note = "APP-NOTE-0154: CI is red on abc1234: tests"
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self.prompt(d, app_note=note)
+        self.assertIn(note, prompt)
+        self.assertIn("not a person's request or decision", prompt)
+        self.assertNotIn("# Why this stage runs again", prompt)
+        self.assertLess(prompt.index(self.HEADING), prompt.index("# Your task"))
+
+    def test_a_reruns_note_stays_out_of_the_apps_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self.prompt(d, rerun=True, rerun_note="PERSON-0154", app_note="APP-0154")
+        rerun = prompt[prompt.index("# Why this stage runs again") : prompt.index("# Your task")]
+        app = prompt[prompt.index(self.HEADING) : prompt.index("# Why this stage runs again")]
+        self.assertNotIn("APP-0154", rerun)
+        self.assertNotIn("PERSON-0154", app)
+
+    def test_no_note_adds_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.prompt(d, app_note="  "), self.prompt(d))

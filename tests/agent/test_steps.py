@@ -64,6 +64,27 @@ class OneStepPerUnit(WithAttempts):
         self.assertEqual(self.attempts.holding("w", "0001_a")["id"], new["id"])
 
 
+class Describe(unittest.TestCase):
+    """Every refusal of a busy unit names what holds it and since when."""
+
+    def test_describe_names_the_kind_the_stage_the_phase_and_the_time(self):
+        t = "2026-09-24T01:02:03+00:00"
+        cases = [
+            ("step", "spec", "preparing", "a spec step is being prepared since "),
+            ("step", "spec", "running", "a spec step is running since "),
+            ("step", "spec", "queued", "a spec step is queued since "),
+            ("step", "spec", "ending", "a spec step is writing its artifact since "),
+            ("integration", "integrate", "running", "it is being integrated since "),
+            ("hold", "", "running", "a hold is being recorded since "),
+        ]
+        for machine, stage, state, said in cases:
+            with self.subTest(machine=machine, state=state):
+                row = {"machine": machine, "stage": stage, "state": state, "since": t}
+                text = attempts_mod.describe("0001_a", row)
+                self.assertTrue(text.startswith("0001_a is busy: "), text)
+                self.assertIn(said + t, text)
+
+
 class Stopping(WithAttempts):
     def test_nothing_running_is_refused(self):
         with self.assertRaises(attempts_mod.Illegal):

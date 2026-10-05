@@ -123,6 +123,16 @@ class AWheelIsChecked(unittest.TestCase):
             wheel = _wheel(Path(tmp) / "ok.whl", RUNNABLE)
             self.assertEqual(harness.wheel_complaints(wheel), [])
 
+    def test_the_v0_2_2_shape_is_caught(self):
+        # Exactly what shipped: page present, harness absent. Three releases passed
+        # every check there was, and this is the check there was not.
+        with tempfile.TemporaryDirectory() as tmp:
+            names = [n for n in RUNNABLE if "_harness" not in n]
+            wheel = _wheel(Path(tmp) / "v022.whl", names)
+            complaints = harness.wheel_complaints(wheel)
+            self.assertEqual(len(complaints), 1, complaints)
+            self.assertIn("SKILL.md", complaints[0])
+
     def test_a_wheel_without_the_studio_is_caught(self):
         # The page would answer 503 on an install that is otherwise whole.
         with tempfile.TemporaryDirectory() as tmp:
@@ -142,6 +152,13 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertEqual(len(complaints), 1, complaints)
             self.assertIn("states.json", complaints[0])
 
+    def test_skills_are_counted_not_named(self):
+        # Nine is today's number. A tenth skill must not need this file edited.
+        with tempfile.TemporaryDirectory() as tmp:
+            names = list(RUNNABLE) + ["coscc/_harness/skills/write-tenth/SKILL.md"]
+            wheel = _wheel(Path(tmp) / "ten.whl", names)
+            self.assertEqual(harness.wheel_complaints(wheel), [])
+
     def test_a_wheel_carrying_settings_is_refused(self):
         # `plan.md` Risk 6: the copy step takes two named directories, never `.claude/`
         # whole, and a wheel is published.
@@ -150,6 +167,15 @@ class AWheelIsChecked(unittest.TestCase):
             wheel = _wheel(Path(tmp) / "leak.whl", names)
             complaints = harness.wheel_complaints(wheel)
             self.assertTrue(any("settings" in c for c in complaints), complaints)
+
+    def test_a_skill_named_after_settings_is_not_mistaken_for_one(self):
+        # The first version of the leak check matched the substring "settings" anywhere in
+        # the path, which would have refused a release over a perfectly ordinary skill. A
+        # check that fires on correct input gets deleted, and then it checks nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            names = list(RUNNABLE) + ["coscc/_harness/skills/write-settings/SKILL.md"]
+            wheel = _wheel(Path(tmp) / "skill.whl", names)
+            self.assertEqual(harness.wheel_complaints(wheel), [])
 
     def test_a_wheel_without_a_build_stamp_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -172,6 +198,14 @@ class AWheelIsChecked(unittest.TestCase):
                     complaints = harness.wheel_complaints(wheel)
                     self.assertEqual(len(complaints), 1, complaints)
                     self.assertIn("40-hex", complaints[0])
+
+    def test_something_that_is_not_a_wheel_is_one_complaint_not_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            junk = Path(tmp) / "not.whl"
+            junk.write_text("not a zip", encoding="utf-8")
+            complaints = harness.wheel_complaints(junk)
+            self.assertEqual(len(complaints), 1)
+            self.assertIn("could not be read as a wheel", complaints[0])
 
 
 if __name__ == "__main__":

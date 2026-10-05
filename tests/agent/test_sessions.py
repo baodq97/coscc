@@ -123,6 +123,12 @@ class TranscriptExcerptIsWhatTheSessionDid(unittest.TestCase):
         self.assertNotIn("do the thing", excerpt)
         self.assertEqual(total, len(excerpt))
 
+    def test_a_bare_string_tool_result_is_kept(self):
+        msgs = [_raw_msg("user", [{"type": "tool_result", "content": "plain string"}], "u1")]
+        with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
+            excerpt, _ = sessions.transcript_excerpt("s1", "/p", 8000)
+        self.assertIn("plain string", excerpt)
+
     def test_subagent_traffic_is_excluded(self):
         msgs = [
             _raw_msg("assistant", [{"type": "text", "text": "outer"}], "u1"),
@@ -182,12 +188,58 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         self.assertEqual(options.mcp_servers["cos"]["type"], "sdk")
         self.assertIs(options.strict_mcp_config, True)
 
+    def test_the_prompt_reaches_the_model_as_written(self):
+        """No `@path` expansion and no slash-command dispatch, for every session.
+
+        Measured 2026-09-23: with this off, a session holding no tools at all was sent
+        `@/tmp/canary.txt` and repeated the word inside the file."""
+        self.assertTrue(_options(Config(), "/p", None).verbatim_prompts)
+        # A board step's options are built by the same function; asserting it here too
+        # keeps a future special case for steps from quietly turning it back off.
+        step = _options(Config(), "/p", None, max_turns=50, tools=["Read"])
+        self.assertTrue(step.verbatim_prompts)
+
     def test_write_tools_are_stripped_on_the_way_to_the_sdk(self):
         c = Config(tools=("Read", "Bash"))
         self.assertEqual(_options(c, "/p", None).tools, ["Read"])
 
     # A board step with tools runs on Claude Code's own system prompt; nothing else does, and the
     # preset must not move any knob that decides what a step may do.
+
+    def test_no_system_prompt_is_set_unless_asked(self):
+        # Chat and tool-less steps keep the SDK's default, as before.
+        self.assertIsNone(_options(Config(), "/p", None).system_prompt)
+
+    def test_a_preset_reaches_the_options_as_given(self):
+        # No `append`: the spec keeps the preset bare.
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
+
+        got = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET).system_prompt
+        self.assertEqual(got, {"type": "preset", "preset": "claude_code"})
+        self.assertNotIn("append", got)
+        # A copy, so nothing downstream can edit the module's constant through it.
+        self.assertIsNot(got, CLAUDE_CODE_PRESET)
+
+    def test_a_preset_changes_nothing_else(self):
+        # The grant is `tools` + `can_use_tool` + `permission_mode`, and project settings stay out.
+        # The preset may move none of them, in either permission mode.
+        from coscc.agent import policy
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
+
+        def gate(name, data, ctx):  # never called; compared by identity
+            raise AssertionError("not called")
+
+        for config in (Config(), Config(bypass_permissions=True)):
+            common = dict(max_turns=40, tools=list(policy.READ_TOOLS), can_use_tool=gate)
+            bare = _options(config, "/p", None, **common)
+            preset = _options(config, "/p", None, system_prompt=CLAUDE_CODE_PRESET, **common)
+            self.assertEqual(preset.tools, bare.tools)
+            self.assertIs(preset.can_use_tool, gate)
+            self.assertIs(bare.can_use_tool, gate)
+            self.assertEqual(preset.setting_sources, [])
+            self.assertTrue(preset.verbatim_prompts)
+            self.assertEqual(preset.permission_mode, bare.permission_mode)
+            self.assertEqual(preset.max_turns, bare.max_turns)
 
     def test_settings_are_set_only_beside_a_preset(self):
         from coscc.agent import agents, policy
@@ -239,6 +291,17 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         self.assertEqual(bare.extra_args, {})
         # The module's constant is still bare.
         self.assertNotIn("append", CLAUDE_CODE_PRESET)
+
+    def test_a_directory_with_no_instructions_leaves_the_prompt_as_it_was(self):
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
+
+        with tempfile.TemporaryDirectory() as data:
+            self.assertIsNone(_options(Config(), "/p", None, data_dir=data).system_prompt)
+            got = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET, data_dir=data)
+            self.assertNotIn("append", got.system_prompt)
+            self.assertEqual(got.extra_args, {})
+            # Nothing is written when there is nothing to carry.
+            self.assertEqual(list(Path(data).iterdir()), [])
 
     def test_instructions_past_the_argument_limit_never_reach_argv(self):
         # Linux refuses one argument over `MAX_ARG_STRLEN` (32 pages, 128 KiB at 4 KiB pages) with
@@ -320,6 +383,13 @@ class OptionsCarryTheKnobs(unittest.TestCase):
 
     # One screenshot is one stdout line; every session gets the same ceiling on it.
 
+    def test_the_installed_sdk_has_a_max_buffer_size_field(self):
+        # Known only from the SDK's own source, so the installed one is asked.
+        import dataclasses
+
+        fields = {f.name for f in dataclasses.fields(sdk.ClaudeAgentOptions)}
+        self.assertIn("max_buffer_size", fields)
+
     def test_every_combination_carries_the_buffer(self):
         # Whatever the caller asks for, the ceiling is the same.
         import itertools
@@ -355,6 +425,36 @@ class OptionsCarryTheKnobs(unittest.TestCase):
                     max_budget_usd=budget,
                 )
                 self.assertEqual(options.max_buffer_size, sessions.MAX_BUFFER)
+
+    def test_options_are_built_only_in_one_place(self):
+        # Chat, a board step, Gebo and an estimate all reach the SDK through `_options`; a second
+        # `ClaudeAgentOptions(` anywhere else in the package would be a session without the ceiling.
+        # `_harness/` and `_web/` are built, not committed.
+        import ast
+
+        package = Path(sessions.__file__).parents[1]
+        found = []
+        for path in sorted(package.rglob("*.py")):
+            relative = path.relative_to(package)
+            if path.name.endswith("_test.py") or relative.parts[0] in ("_harness", "_web"):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+                if name == "ClaudeAgentOptions":
+                    found.append((relative, node.lineno, tree))
+        self.assertEqual(len(found), 1, [(str(r), n) for r, n, _ in found])
+        relative, line, tree = found[0]
+        self.assertEqual(relative, Path("agent/sessions.py"))
+        builder = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_options"
+        )
+        self.assertTrue(builder.lineno <= line <= builder.end_lineno)
 
 
 class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
@@ -451,6 +551,18 @@ class TheSessionIdIsToldBeforeTheStepIsOver(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kinds.count("session"), 1)
         self.assertLess(kinds.index("session"), kinds.index("done"))
         self.assertEqual(dict(items)["session"], "sid-1")
+
+    async def test_the_result_is_still_accounted_after_the_id_was_told(self):
+        items = await self._run([_assistant("a", "sid-2"), _result("sid-2", turns=7)])
+        done = dict(items)["done"]
+        self.assertEqual(done["cost"]["turns"], 7)
+        self.assertEqual(done["cost"]["cost_usd"], 0.5)
+
+    async def test_a_resumed_session_is_told_first_and_still_accounted(self):
+        items = await self._run([_result("sid-3", turns=4)], session_id="sid-3", adopt="sid-3")
+        self.assertEqual(items[0], ("session", "sid-3"))
+        self.assertEqual([k for k, _ in items].count("session"), 1)
+        self.assertEqual(dict(items)["done"]["cost"]["turns"], 4)
 
 
 class _CountingClient(_FakeClient):
@@ -660,6 +772,13 @@ class ACliThatOutlastsTheSdksCloseIsStillEnded(unittest.IsolatedAsyncioTestCase)
         self.assertEqual(process.signals, ["TERM", "KILL"])
         self.assertEqual(process.returncode, -9)
 
+    async def test_one_that_exits_in_time_is_not_signalled(self):
+        process = _Process()
+        process._exit(0)
+        h = sessions.StepHandle(client=_StubbornClient(process))
+        await h.close()
+        self.assertEqual(process.signals, [])
+
     async def test_cancelling_the_caller_does_not_cancel_the_closing(self):
         process = _Process(obeys=False)
         client = _StubbornClient(process)
@@ -780,6 +899,15 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.s._steps, set())
         self.assertTrue(self.s.created_here("sid-s"))
 
+    async def test_a_step_that_raises_is_closed_once(self):
+        _CountingClient.fail = True
+        with self.assertRaises(RuntimeError):
+            async for _ in self.s.stream("/tmp", "hi", step=sessions.StepHandle()):
+                pass
+        [client] = _CountingClient.made
+        self.assertEqual(client.disconnects, 1)
+        self.assertEqual(self.s._live, {})
+
     async def test_a_step_abandoned_by_its_reader_is_closed_once(self):
         _CountingClient.hold = asyncio.Event()
         agen = self.s.stream("/tmp", "hi", step=sessions.StepHandle())
@@ -790,6 +918,27 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
         [client] = _CountingClient.made
         self.assertEqual(client.disconnects, 1)
         self.assertEqual(self.s._steps, set())
+
+    async def test_a_cancelled_step_is_closed_once(self):
+        _CountingClient.hold = asyncio.Event()
+        h = sessions.StepHandle()
+        started = asyncio.Event()
+
+        async def run():
+            async for kind, _ in self.s.stream("/tmp", "hi", step=h):
+                started.set()
+
+        task = asyncio.create_task(run())
+        await started.wait()
+        self.assertEqual(self.s.live_in("/tmp"), ["(running step)"])
+        await h.close()
+        await h.close()  # a second Stop is the same Stop
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        [client] = _CountingClient.made
+        self.assertEqual(client.disconnects, 1)
+        self.assertEqual(self.s.live_in("/tmp"), [])
 
     async def test_a_handle_closed_before_connect_sends_no_prompt(self):
         h = sessions.StepHandle()
@@ -851,6 +1000,11 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
         await h.close()  # the closing the cancel did not reach
         self.assertEqual(client.disconnects, 1)
         self.assertFalse(client.cancelled)
+
+    async def test_chat_still_keeps_its_client_for_resuming(self):
+        [_ async for _ in self.s.stream("/tmp", "hi")]
+        self.assertIn("sid-s", self.s._live)
+        self.assertEqual(_CountingClient.made[0].disconnects, 0)
 
     async def test_close_all_closes_a_step_in_flight(self):
         _CountingClient.hold = asyncio.Event()
@@ -932,6 +1086,16 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
             )
             self.assertEqual(child["COS_DATA_DIR"], tempfile.gettempdir())
 
+    def test_the_settings_the_child_reads_still_load(self):
+        """The child reads `COS_PORT=""`, and `config.from_env` must take that as unset. A
+        worktree's own `npm test` loads the config, and `int("")` errored seven of its tests
+        whenever the app had been given a port."""
+        from coscc import config
+
+        with mock.patch.dict(os.environ, {"COS_HOST": "127.0.0.1", "COS_PORT": "9999"}):
+            c = config.from_env(self.child())
+            self.assertEqual((c.host, c.port), ("0.0.0.0", 8790))
+
     def test_the_unit_scratch_directories_reach_the_child_and_tmpdir_is_the_disk_one(self):
         """Set after every `COS_*` is blanked, so an inherited value of the same name is replaced."""
         with mock.patch.dict(
@@ -948,6 +1112,13 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
             env = _child_env("/w")
             self.assertEqual(env["COS_SCRATCH_RAM"], "")
             self.assertNotIn("TMPDIR", env)
+
+    def test_everything_else_is_left_alone(self):
+        """Overridden, not replaced. A session that loses `HOME` cannot sign in."""
+        with mock.patch.dict(os.environ, {"HOME": "/home/someone", "PATH": "/bin"}):
+            child = self.child()
+            self.assertEqual(child["HOME"], "/home/someone")
+            self.assertEqual(child["PATH"], "/bin")
 
     # -- a unit's session reads its own tree, not the workspace's --------
 
@@ -1109,6 +1280,12 @@ class EverySessionGetsADataRootOfItsOwn(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(root.is_dir())
         await self.s.close("sid-d")
         self.assertFalse(root.exists())
+
+    async def test_a_chat_whose_client_cannot_be_built_leaves_nothing(self):
+        _EnvClient.boom = True
+        with self.assertRaises(RuntimeError):
+            [_ async for _ in self.s.stream("/tmp", "hi")]
+        self.assertFalse(self._root(_EnvClient.envs[0]).exists())
 
     async def test_the_apps_database_is_protected_and_an_outer_one_kept(self):
         with mock.patch.dict(os.environ, {PROTECTED_DB_VAR: "/outer/cos.db"}):

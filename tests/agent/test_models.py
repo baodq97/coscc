@@ -148,6 +148,15 @@ class TheShippedDefaultsMatchTheLoop(unittest.TestCase):
         self.assertEqual(set(defaults) - base, {"impl:novel", "review:novel"})
         self.assertEqual(table(names, defaults=defaults)["problems"], [])
 
+    def test_every_default_is_the_1m_variant(self):
+        # Mọi stage phải báo `contextWindow` 1000000, không riêng gì bản nào — mọi id mặc định kết
+        # thúc bằng `[1m]`.
+        defaults, problems = models.load_defaults()
+        self.assertEqual(problems, [])
+        self.assertTrue(defaults, "load_defaults() trả về rỗng")
+        for stage, entry in defaults.items():
+            self.assertTrue(entry["model"].endswith("[1m]"), (stage, entry))
+
 
 class TheCeilingsResolveInOnePlace(unittest.TestCase):
     """Override, else the grant's own, the `SUBMIT_TURNS` floor after either."""

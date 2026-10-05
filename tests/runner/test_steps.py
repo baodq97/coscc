@@ -408,6 +408,17 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         self.assertNotIn("-- b.py", prompt)
         self.assertEqual(start["agents"], 1)
 
+    def test_a_merge_under_thirty_seconds_after_the_plans_fetch_is_not_seen(self):
+        # `main_sha` says which tip was measured.
+        unit = self._planned()
+        self._advance_remote("a.py", "changed\n")
+        self.now[0] -= fetches.REUSE_SECONDS  # `_impl` adds it back: the same instant
+        _, start = self._impl(unit)
+        self.assertEqual(start["base"]["fetch"]["outcome"], "reused")
+        self.assertEqual(start["plan_drift"]["files"], [])
+        self.assertTrue(start["plan_drift"]["checked"])
+        self.assertEqual(start["plan_drift"]["main_sha"], start["plan_drift"]["plan_sha"])
+
 
 class AStepRecordsTheTransitionItCaused(unittest.TestCase):
     """`.cos/0013_.../ship.md` said the loop would come back here: history imported from git
@@ -618,6 +629,9 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.assertEqual(
             (row["result"], row["stage"], row["workspace"]), ("shipped", "ship", self.key)
         )
+
+    def test_a_ship_still_merging_records_no_ship(self):
+        self.assertEqual(self._after_end_with("ship-merging"), [])
 
     async def _ended(self, after_end) -> asyncio.Task:
         """A step run to its `done` with `after_end` as its `after_end`, returned once its
@@ -929,6 +943,24 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         self.assertEqual(self.sessions.calls, 1)
         self.assertEqual(self._ends(b["unit"]), [])
 
+    def test_stopping_nothing_is_refused_and_no_name_stops_as_owner(self):
+        """A Stop with no name used to be refused; it now records `owner`."""
+        a = self.units[0]
+
+        async def go():
+            with self.assertRaises(Invalid):
+                await self.core.steps.stop_step(self.ws, a["unit"], "Lan")
+            agen = await self._first_chunk(a)
+            done = await self.core.steps.stop_step(self.ws, a["unit"], "  ")
+            self.assertEqual(done["stopped_by"], "owner")
+            self._release(a)
+            try:
+                [i async for i in agen]
+            except Invalid, asyncio.CancelledError:
+                pass
+
+        asyncio.run(go())
+
     def test_shutdown_cancels_a_running_step_and_writes_no_end(self):
         a = self.units[0]
 
@@ -1000,6 +1032,44 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
         self._run("spec")
         self.assertIn("# The attempt before this one", probe.seen)
         self.assertIn("sess-fail", probe.seen)
+
+    def test_a_run_after_done_carries_no_attempt_section(self):
+        class Replies:
+            bus = Bus()
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                await _submits(kw)
+                yield ("done", {"session_id": "sess-1", "cost": {}})
+
+        use_sessions(self.core, Replies())
+        self._run("spec")
+
+        class Probe:
+            bus = Bus()
+
+            def __init__(self):
+                self.seen = ""
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                self.seen = text
+                yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                await _submits(kw)
+                yield ("done", {"session_id": "sess-2", "cost": {}})
+
+        probe = Probe()
+        use_sessions(self.core, probe)
+        self._run("spec")
+        self.assertNotIn("# The attempt before this one", probe.seen)
+
+    def test_board_distinguishes_a_failed_stage_from_a_never_run_one(self):
+        self._run("spec")
+        board = asyncio.run(self.core.board(str(self.repo)))
+        [unit] = [u for u in board["units"] if u["name"] == self.made["unit"]]
+        rows = {r["stage"]: r for r in unit["stages"]}
+        self.assertIsNotNone(rows["spec"]["last_run"])
+        self.assertNotEqual(rows["spec"]["last_run"]["outcome"], "done")
+        self.assertIsNone(rows["plan"]["last_run"])
 
     def test_the_excerpt_never_reaches_a_route(self):
         # The transcript is faked via the runner's own read function, so this does not depend on a
@@ -1086,6 +1156,24 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
         with self.assertRaises(Invalid) as caught:
             self._run("ship")
         self.assertTrue(str(caught.exception).strip())
+
+    def test_the_refusal_names_what_is_missing_rather_than_only_saying_no(self):
+        with self.assertRaises(Invalid) as caught:
+            self._run("ship")
+        # The gate's own words. A refusal a person cannot act on is a refusal that sends
+        # them to read the source.
+        self.assertIn("spec.md", str(caught.exception))
+
+    def test_no_session_is_created_for_a_step_the_gate_refused(self):
+        """The whole point of asking in `run_step` and not inside `Runner`."""
+        with self.assertRaises(Invalid):
+            self._run("ship")
+        self.assertEqual(self.sessions.calls, 0)
+
+    def test_a_stage_the_gate_opens_still_runs(self):
+        # The guard must not close the ordinary path. `spec` follows an accepted intent.
+        self._run("spec")
+        self.assertEqual(self.sessions.calls, 1)
 
 
 class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
@@ -1412,6 +1500,11 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
             with self.subTest(cwd=cwd, unit=unit), self.assertRaises(Invalid):
                 self._next(unit=unit, cwd=cwd)
 
+    def test_a_unit_that_is_not_there_or_not_a_name_is_invalid(self):
+        for unit in ("0099_not-here", "../escape"):
+            with self.subTest(unit=unit), self.assertRaises(Invalid):
+                self._next(unit=unit)
+
     def test_next_reads_the_same_checkout_the_gate_reads(self):
         from coscc.units import board as board_reader
 
@@ -1435,6 +1528,76 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         self.assertEqual(seen["next"], seen["gate"])
         self.assertEqual(seen["next"][1], str(self.repo))
 
+    def test_waiting_is_copied_and_absent_reads_as_none(self):
+        """The findings a person is awaited on reach the page as the loop named them."""
+        from coscc.units import board as board_reader
+
+        answers = [
+            {
+                "unit": "u",
+                "stage": "",
+                "action": "needs a person — F3: x",
+                "blocked": True,
+                "waiting": ["F3"],
+            },
+            {"unit": "u", "stage": "review", "action": "a", "blocked": True},
+        ]
+
+        async def fake_next(units_root, unit, repo=None, **kw):
+            # `next_step` first asks with no `--repo` whether the unit is held.
+            if repo is None:
+                return {"unit": "u", "stage": "", "action": "", "blocked": True, "hold": None}
+            return answers.pop(0)
+
+        with mock.patch.object(board_reader, "next_step", fake_next):
+            first, second = self._next(), self._next()
+        self.assertEqual((first["stage"], first["waiting"]), ("", ["F3"]))
+        self.assertEqual(second["waiting"], [])
+
+    def test_continue_is_copied_and_absent_reads_as_empty(self):
+        """An `impl` left a draft reaches the autopilot as the loop named it."""
+        from coscc.units import board as board_reader
+
+        answers = [
+            {"unit": "u", "stage": "", "action": "a", "blocked": True, "continue": "impl"},
+            {"unit": "u", "stage": "review", "action": "a", "blocked": True},
+        ]
+
+        async def fake_next(units_root, unit, repo=None, **kw):
+            if repo is None:
+                return {"unit": "u", "stage": "", "action": "", "blocked": True, "hold": None}
+            return answers.pop(0)
+
+        with mock.patch.object(board_reader, "next_step", fake_next):
+            first, second = self._next(), self._next()
+        self.assertEqual((first["continue"], second["continue"]), ("impl", ""))
+
+    def test_dropped_is_copied_and_absent_reads_as_none(self):
+        """The ids the last round left out reach the page as the loop listed them, not inside
+        `action`."""
+        from coscc.units import board as board_reader
+
+        answers = [
+            {
+                "unit": "u",
+                "stage": "review",
+                "action": "a",
+                "blocked": True,
+                "dropped": ["F2", "F3"],
+            },
+            {"unit": "u", "stage": "review", "action": "a", "blocked": True},
+        ]
+
+        async def fake_next(units_root, unit, repo=None, **kw):
+            if repo is None:
+                return {"unit": "u", "stage": "", "action": "", "blocked": True, "hold": None}
+            return answers.pop(0)
+
+        with mock.patch.object(board_reader, "next_step", fake_next):
+            first, second = self._next(), self._next()
+        self.assertEqual(first["dropped"], ["F2", "F3"])
+        self.assertEqual(second["dropped"], [])
+
 
 class ShipRunsOutsideTheWorktree(unittest.TestCase):
     """Inside a worktree, `gh pr merge --delete-branch` merged and then exited 1 on `'main' is
@@ -1442,6 +1605,10 @@ class ShipRunsOutsideTheWorktree(unittest.TestCase):
 
     def test_ship_runs_in_the_units_directory(self):
         self.assertEqual(step_cwd("ship", "/w/tree", Path("/store/0017_x")), "/store/0017_x")
+
+    def test_every_other_stage_keeps_the_worktree(self):
+        for stage in ("idea", "intent", "spec", "plan", "impl", "pr", "review"):
+            self.assertEqual(step_cwd(stage, "/w/tree", Path("/store/0017_x")), "/w/tree")
 
     def test_spike_runs_in_its_scratch(self):
         self.assertEqual(
@@ -2419,6 +2586,14 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         )
         self.assertIn(done.code, (0, 1), done.err)
 
+    def test_no_retake_records_nothing_and_the_step_runs(self):
+        self.step(
+            {"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None
+        )
+        self.assertEqual(len(self.seen), 1)
+        self.assertEqual(self.seen[0]["screens_note"], "")
+        self.assertEqual((self.taken, self.screens_records()), ([], []))
+
     def test_a_retake_taken_is_recorded_and_the_prompt_carries_it(self):
         result = {
             "code": 0,
@@ -2521,6 +2696,37 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                     )
                 )
         return str(refused.exception)
+
+    def test_a_failed_retake_the_run_log_could_not_record_says_it_failed(self):
+        # It must not say the screenshots were taken again.
+        from coscc.runner.steps import RETAKE_REFUSED
+
+        said = self._unrecorded(
+            {
+                "code": 2,
+                "seconds": 0.3,
+                "tail": "",
+                "head_before_run": "b" * 40,
+                "manifest_after": self.OLD,
+                "status_before": "",
+                "status_after": "",
+            }
+        )
+        self.assertEqual(said, RETAKE_REFUSED)
+
+    def test_a_taken_retake_the_run_log_could_not_record_says_so(self):
+        said = self._unrecorded(
+            {
+                "code": 0,
+                "seconds": 21.0,
+                "tail": "",
+                "head_before_run": "b" * 40,
+                "manifest_after": self.NEW,
+                "status_before": "",
+                "status_after": "",
+            }
+        )
+        self.assertIn("taken again, but the run log could not record it", said)
 
     def test_a_pending_update_waits_for_a_retake(self):
         # Listed as a job while it runs, never cut, gone once it ends.
@@ -2638,3 +2844,23 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         ):
             asyncio.run(go())
         self.assertEqual(held, [True, True, True])
+
+
+class AReviewAfterAnUnfinishedRoundIsToldWhy(_AReviewStep, unittest.TestCase):
+    """Which round the loop read as unfinished reaches `Runner.run` as it was read; `service_steps`
+    compares no ids itself."""
+
+    NO_RETAKE = {"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}
+    ROUND1 = (
+        "## Round 1\n\nReviewed: abcdef1. Verdict: changes-requested.\n\n"
+        "### Findings\n\n- F1 [open] a.py:1 — high — x\n- F2 [open] b.py:2 — high — y\n"
+    )
+
+    def review(self, round2_findings: str) -> None:
+        (self.dir / "review.md").write_text(
+            "# Review: x\nStatus: changes-requested.\n\n"
+            + self.ROUND1
+            + "\n## Round 2\n\nReviewed: abcdef2. Verdict: changes-requested.\n\n"
+            f"### Findings\n\n{round2_findings}",
+            encoding="utf-8",
+        )

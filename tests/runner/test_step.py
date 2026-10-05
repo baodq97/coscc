@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,9 +22,12 @@ from coscc.agent import policy
 from coscc.kernel import Facts, Hooks, Parts, Tool
 from coscc.store.journal import Journal
 from coscc.agent.policy import decide, grant_for
+from coscc.runner.prompt import compose_prompt
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner
 from coscc.runner.prompt import answers_section
+from coscc.runner.prompt import build_prompt
+from coscc.runner.prompt import skill_for
 from tests.units.test_submit import a_head, submits as _submits
 
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
@@ -148,6 +152,11 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
         self.assertEqual(final["outcome"], "done", final)
         self.assertEqual(sessions.granted, policy.READ_TOOLS)
 
+    def test_the_app_still_writes_the_plan_artifact(self):
+        """The reason `plan` gets no write tools. If the session wrote `plan.md` itself,
+        an unaccepted plan could author the thing that authorizes it."""
+        self.assertTrue(policy.grant_for("plan").app_writes_artifact)
+
     def test_an_unknown_stage_is_locked_rather_than_open(self):
         grant = policy.grant_for("a-stage-invented-tomorrow")
         self.assertFalse(grant.opens_anything)
@@ -189,6 +198,58 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
         finally:
             policy.GRANTS.clear()
             policy.GRANTS.update(original)
+
+
+class AStepRecordsTheCommitItRanOn(unittest.TestCase):
+    """The outcome checks a spec's citations at the commit the stage read."""
+
+    class Replies:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+            await _submits(kw)
+            yield ("done", {"session_id": "s-spec", "cost": {}})
+
+    def _start_record(self, d: str, **extra) -> dict:
+        make_unit(Path(d), intent_md="Status: accepted.\nI")
+        journal = Journal(d, d)
+        r = Runner(sessions=self.Replies(), journal=journal)
+
+        async def go():
+            async for _ in r.run(
+                workspace=d,
+                directory=Path(d) / ".cos" / UNIT,
+                journal_key=d,
+                unit=UNIT,
+                stage="spec",
+                artifact="spec.md",
+                stages=STAGES,
+                mode="manual",
+                **extra,
+            ):
+                pass
+
+        asyncio.run(go())
+        [start] = journal.records(d, kind="start")
+        return start
+
+    def test_a_step_records_the_commit_it_ran_on(self):
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as d:
+            git = ["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t"]
+            subprocess.run(["git", "init", "-q", d], check=True)
+            (Path(d) / "a.txt").write_text("a\n", encoding="utf-8")
+            subprocess.run(git + ["add", "a.txt"], check=True)
+            subprocess.run(git + ["commit", "-qm", "a"], check=True)
+            head = subprocess.run(
+                ["git", "-C", d, "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+            self.assertEqual(self._start_record(d)["head"], head)
+
+    def test_a_step_outside_git_records_no_commit(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._start_record(d)["head"], "")
 
 
 class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
@@ -251,6 +312,45 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
             self.assertEqual(type(verdict).__name__ == "PermissionResultAllow", allowed, tool)
         self.assertEqual(options.tools, [])
 
+    def test_the_start_row_names_the_instructions_the_session_was_given(self):
+        # Verbatim first, scoped after, relative to the step's `cwd`.
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d))
+            rules = Path(d) / ".claude" / "rules"
+            rules.mkdir(parents=True)
+            (Path(d) / ".claude" / "CLAUDE.md").write_text("PROJECT\n", encoding="utf-8")
+            (rules / "app.md").write_text('---\npaths: ["x/**"]\n---\nAPP\n', encoding="utf-8")
+            journal = Journal(d, d)
+            self._run(d, self.Replies(), journal)
+            [start] = journal.records(d, kind="start")
+        self.assertEqual(
+            start["instructions"],
+            {"verbatim": [".claude/CLAUDE.md"], "scoped": [".claude/rules/app.md"]},
+        )
+
+    def test_the_prompt_is_build_prompts_own_byte_for_byte(self):
+        # The runner hands on exactly what `build_prompt` made from the arguments it was given, and
+        # the project's block goes to the system prompt, not here.
+        from coscc.runner import step as runner_mod
+
+        replies = self.Replies()
+        built: list[str] = []
+
+        def spy(*args, **kwargs):
+            # Called again with the same arguments, before the step writes its artifact.
+            again, _, _ = compose_prompt(*args, **kwargs)
+            built.append(again)
+            return compose_prompt(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), idea_md="Status: accepted.\nI")
+            (Path(d) / "CLAUDE.md").write_text("PROJECT\n", encoding="utf-8")
+            with mock.patch.object(runner_mod, "compose_prompt", spy):
+                self._run(d, replies, stage="intent")
+        self.assertEqual(len(built), 1)
+        self.assertEqual(replies.prompt.encode("utf-8"), built[0].encode("utf-8"))
+        self.assertNotIn("# Project instructions", replies.prompt)
+
 
 class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
     """Every step runs in the unit's git worktree, whose `.git` is a file naming a directory under
@@ -285,6 +385,62 @@ class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
                 grant_for("review"), "Read", {"file_path": gitdir + "/HEAD"}, str(tree), str(unit)
             )
             self.assertIn("reading outside the workspace", reason)
+
+    def test_a_review_run_in_a_worktree_is_handed_its_head(self):
+        seen = {}
+
+        class Replies:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                seen["prompt"] = text
+                yield ("chunk", "# Review: x\nStatus: accepted.\n\n## Round 1\n")
+                await _submits(kw)
+                yield ("done", {"session_id": "s-r", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as d:
+            tree, head = self._worktree(d)
+            store = Path(d) / "store"
+            make_unit(store, intent_md="Status: accepted.\nI")
+            journal = Journal(str(tree), str(tree))
+            r = Runner(sessions=Replies(), journal=journal)
+
+            async def go():
+                async for _ in r.run(
+                    workspace=str(tree),
+                    directory=store / ".cos" / UNIT,
+                    journal_key=str(tree),
+                    unit=UNIT,
+                    stage="review",
+                    artifact="review.md",
+                    stages=STAGES,
+                    mode="manual",
+                    cwd=str(tree),
+                ):
+                    pass
+
+            asyncio.run(go())
+            self.assertIn("# The commit you are reviewing", seen["prompt"])
+            self.assertIn(f"    {head}\n", seen["prompt"])
+            [start] = journal.records(str(tree), kind="start")
+            self.assertEqual(start["head"], head)
+
+    def test_no_head_is_said_rather_than_left_to_a_guess(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "review", STAGES, "review.md"
+            )
+            self.assertIn("# The commit you are reviewing", prompt)
+            self.assertIn("could not read the head", prompt)
+            self.assertIn("Do not guess one", prompt)
+
+    def test_only_review_is_handed_the_head(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md", head="a" * 40
+            )
+            self.assertNotIn("# The commit you are reviewing", prompt)
+            self.assertNotIn("a" * 40, prompt)
 
 
 if __name__ == "__main__":
@@ -370,6 +526,12 @@ class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
             chunks = [p for k, p in items if k == "chunk"]
             self.assertIn("Reading the board reader and the page handlers.", chunks)
 
+    def test_the_tool_signal_is_not_forwarded_as_a_row_of_its_own(self):
+        """`coscc/http/routes.py` reads every kind that is not `chunk` as the terminal `done`."""
+        with tempfile.TemporaryDirectory() as d:
+            items, _ = self.go(d)
+            self.assertEqual([k for k, _ in items if k not in ("chunk", "done")], [])
+
 
 class ReviewRoundsAccumulate(unittest.TestCase):
     """The app writes `review.md` from the reply, and the reply carried only what that run
@@ -442,6 +604,15 @@ class ReviewRoundsAccumulate(unittest.TestCase):
             body = written.read_text(encoding="utf-8")
             self.assertTrue(body.startswith("# Review: x\nStatus: accepted.\n\n## Round 1"))
             self.assertLess(body.index("ROUND-ONE-MARKER"), body.index("## Round 2"))
+
+    def test_the_prompt_no_longer_asks_for_a_copy(self):
+        with tempfile.TemporaryDirectory() as d:
+            session, _, go = self.run_review(
+                d, "# Review: x\nStatus: accepted.\n\n## Round 2\n\nok\n"
+            )
+            asyncio.run(go())
+            self.assertIn("Do not copy them", session.prompt)
+            self.assertNotIn("byte for byte", session.prompt)
 
     def test_a_reply_that_changes_round_one_leaves_the_file_as_it_was(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1203,6 +1374,26 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
         _, final = asyncio.run(go())[-1]
         return probe, final
 
+    def test_every_stage_with_tools_gets_the_preset(self):
+        with_tools = [s for s in STAGES if grant_for(s).opens_anything]
+        # Pinned, so a change to the grant table turns this red rather than quietly
+        # leaving a stage out of what it checks.
+        self.assertEqual(with_tools, ["spec", "spike", "plan", "impl", "review"])
+        for stage in with_tools:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
+                probe, _ = self.run_stage(d, stage)
+                # Asserted on what the session was handed, before the runner looks at
+                # the artifact, so the outcome is not what this depends on.
+                self.assertEqual(probe.kw.get("system_prompt"), self.PRESET)
+                self.assertNotIn("append", probe.kw["system_prompt"])
+
+    def test_a_stage_without_tools_gets_none(self):
+        for stage in ("idea", "intent"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
+                probe, _ = self.run_stage(d, stage)
+                self.assertIsNotNone(probe.kw)
+                self.assertNotIn("system_prompt", probe.kw)
+
     def test_the_read_only_stage_is_still_refused_writes_and_commands(self):
         import claude_agent_sdk as sdk
 
@@ -1218,6 +1409,16 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
             ):
                 verdict = asyncio.run(gate(tool, data, None))
                 self.assertIsInstance(verdict, sdk.PermissionResultDeny, tool)
+
+    def test_the_start_record_says_which_prompt_ran(self):
+        with tempfile.TemporaryDirectory() as d:
+            journal = Journal(d, d)
+            self.run_stage(d, "impl", journal)
+            self.run_stage(d, "idea", journal)
+            starts = journal.records(d, kind="start")
+            by_stage = {s["stage"]: s for s in starts}
+            self.assertEqual(by_stage["impl"]["system_prompt"], "claude_code")
+            self.assertEqual(by_stage["idea"]["system_prompt"], "")
 
 
 def _git_repo(root: Path) -> Path:
@@ -1264,6 +1465,88 @@ SPIKE_REPLY = (
     "# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Round: 1. Status: accepted.\n\n"
     "## U1\n\nVerdict: holds.\n\n```\n$ python -c 'print(1)'\n1\n```\n"
 )
+
+
+class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
+    """The prompts that need a second artifact get it, and `included` says so."""
+
+    def unit(self, d: str, **files: str) -> Path:
+        return make_unit(
+            Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nSPEC", **files
+        )
+
+    def test_the_spike_prompt_names_its_progress_file_and_its_ceilings(self):
+        # The numbers are the grant's, not a second copy.
+        g = grant_for("spike")
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d)
+            prompt, _ = build_prompt(
+                d,
+                directory,
+                UNIT,
+                "spike",
+                STAGES,
+                "spike.md",
+                worktree="/the/tree",
+                ceilings=(g.max_turns, g.max_budget_usd),
+            )
+            self.assertIn(f"`{Path(d).resolve() / 'spike.md'}`", prompt)
+            self.assertIn(f"{g.max_turns} turns", prompt)
+            self.assertIn(f"${g.max_budget_usd:.2f}", prompt)
+            self.assertIn("the app writes `spike.md` from this file", prompt)
+
+    def test_no_other_stage_prompt_changes_by_a_byte(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d, spike_md="Status: accepted.\nR")
+            for stage in SESSION_STAGES:
+                if stage == "spike":
+                    continue
+                artifact = f"{stage}.md"
+                self.assertEqual(
+                    build_prompt(d, directory, UNIT, stage, STAGES, artifact, ceilings=(80, 8.0)),
+                    build_prompt(d, directory, UNIT, stage, STAGES, artifact),
+                    stage,
+                )
+
+    def test_the_step_hands_the_grants_ceilings_to_the_prompt(self):
+        g = grant_for("spike")
+        seen = []
+
+        class Fake:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                seen.append((text, max_turns, kw.get("max_budget_usd")))
+                yield ("chunk", SPIKE_REPLY)
+                await _submits(kw)
+                yield ("done", {"session_id": "s", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as scratch:
+            directory = self.unit(d)
+            r = Runner(sessions=Fake(), journal=None)
+
+            async def go():
+                return [
+                    ev
+                    async for ev in r.run(
+                        workspace=d,
+                        directory=directory,
+                        journal_key=d,
+                        unit=UNIT,
+                        stage="spike",
+                        artifact="spike.md",
+                        stages=STAGES,
+                        mode="autonomous",
+                        cwd=scratch,
+                    )
+                ]
+
+            asyncio.run(go())
+        [(text, turns, budget)] = seen
+        self.assertEqual((turns, budget), (g.max_turns, g.max_budget_usd))
+        self.assertIn(f"This step has {g.max_turns} turns and ${g.max_budget_usd:.2f}.", text)
+
+    def test_the_spike_skill_carries_the_progress_file(self):
+        # Red too when a stale `coscc/_harness/` hides `.claude/`.
+        self.assertIn("## The progress file", skill_for("spike"))
 
 
 # One unit holding every artifact, each prose one carrying `## Answers`, and a review sent back with
@@ -1321,6 +1604,128 @@ def incomplete_reply(
         f"# Review: x\nSpec: spec.md. Author: t. Status: {status}.\n\n"
         f"## Round {number}\n\nReviewed: {head}. Verdict: {verdict}.\n\n{body}"
     )
+
+
+class AReviewAfterAnUnfinishedRoundIsHandedIt(unittest.TestCase):
+    """`Runner.run` passes `unfinished_round` to the prompt and nowhere else."""
+
+    class Replies:
+        def __init__(self):
+            self.prompts: list[str] = []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.prompts.append(text)
+            yield ("chunk", "# Review: x\nStatus: changes-requested.\n")
+            await _submits(kw)
+            yield ("done", {"session_id": "s-review", "cost": {}})
+
+    def _run(self, d: str, **run_kw) -> tuple[str, dict]:
+        make_unit(Path(d), intent_md="Status: accepted.\nI", review_md=REVIEW_R1)
+        journal = Journal(d, d)
+        replies = self.Replies()
+        r = Runner(sessions=replies, journal=journal)
+
+        async def go():
+            async for _ in r.run(
+                workspace=d,
+                directory=Path(d) / ".cos" / UNIT,
+                journal_key=d,
+                unit=UNIT,
+                stage="review",
+                artifact="review.md",
+                stages=STAGES,
+                mode="manual",
+                **run_kw,
+            ):
+                pass
+
+        asyncio.run(go())
+        [start] = journal.records(d, kind="start")
+        return replies.prompts[0], start
+
+    def test_the_round_handed_in_reaches_the_prompt(self):
+        with tempfile.TemporaryDirectory() as d:
+            plain, plain_start = self._run(d)
+        with tempfile.TemporaryDirectory() as d:
+            told, start = self._run(d, unfinished_round={"n": 1, "dropped": ["F9"]})
+        self.assertNotIn("# The round that did not count", plain)
+        self.assertIn("Round 1 asked for changes but does not list `F9`", told)
+        self.assertIn("review-unfinished", start["included"])
+        self.assertNotIn("review-unfinished", plain_start["included"])
+        self.assertEqual(set(start), set(plain_start))
+
+
+class TheScreenshotsTakenAgain(unittest.TestCase):
+    """`service.steps.run_step` builds the section after a retake; this module places it for `review`
+    only, after the integration's, and every other prompt is what it was."""
+
+    NOTE = "# The screenshots, taken again\n\nSCREENS-MARKER"
+
+    def test_review_carries_it_after_the_integration_and_says_so(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = _golden_unit(Path(d))
+            prompt, included, _ = compose_prompt(
+                d,
+                directory,
+                UNIT,
+                "review",
+                STAGES,
+                "review.md",
+                integration_note="# INTEGRATION\n\nINTEGRATION-NOTE",
+                screens_note=self.NOTE,
+            )
+        self.assertEqual(prompt.count("SCREENS-MARKER"), 1)
+        self.assertLess(prompt.index("INTEGRATION-NOTE"), prompt.index("SCREENS-MARKER"))
+        self.assertLess(prompt.index("SCREENS-MARKER"), prompt.index("# Your task"))
+        self.assertIn("screens", included)
+
+    def test_no_other_stage_carries_it_and_none_handed_is_no_byte(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = _golden_unit(Path(d))
+            for stage in SESSION_STAGES:
+                with self.subTest(stage=stage):
+                    args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
+                    handed = compose_prompt(*args, screens_note=self.NOTE)
+                    if stage == "review":
+                        self.assertEqual(
+                            compose_prompt(*args, screens_note=""), compose_prompt(*args)
+                        )
+                    else:
+                        self.assertEqual(handed, compose_prompt(*args))
+
+    def test_runner_run_hands_it_to_the_prompt(self):
+        seen = []
+
+        class Replies:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                seen.append(text)
+                yield (
+                    "chunk",
+                    "# Review: x\nStatus: changes-requested.\n\n## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n",
+                )
+                await _submits(kw)
+                yield ("done", {"session_id": "s-review", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+
+            async def go():
+                async for _ in Runner(sessions=Replies(), journal=journal).run(
+                    workspace=d,
+                    directory=Path(d) / ".cos" / UNIT,
+                    journal_key=d,
+                    unit=UNIT,
+                    stage="review",
+                    artifact="review.md",
+                    stages=STAGES,
+                    mode="manual",
+                    screens_note=self.NOTE,
+                ):
+                    pass
+
+            asyncio.run(go())
+        self.assertIn("SCREENS-MARKER", seen[0])
 
 
 class TheCommandsAStepMayRun(unittest.TestCase):
@@ -1384,6 +1789,37 @@ class TheCommandsAStepMayRun(unittest.TestCase):
                     self.assertIn(f"{COMMANDS_HEADING}\n\n{words}\n\n", replies.prompt)
                 else:
                     self.assertNotIn(COMMANDS_HEADING, replies.prompt)
+
+
+class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
+    """A step with `Bash` is handed the command that runs this app's loop and its unit's `--root`,
+    so it never goes looking for them (a `find /` once held a step seven minutes)."""
+
+    def test_the_path_and_root_are_in_the_prompt_of_every_stage_with_bash(self):
+        from coscc.runner.prompt import HARNESS_HEADING
+
+        root = Path("/store")
+        for stage in ("impl", "spike"):
+            with self.subTest(stage=stage):
+                prompt = compose_prompt(
+                    "/w",
+                    root / ".cos" / UNIT,
+                    UNIT,
+                    stage,
+                    STAGES,
+                    f"{stage}.md",
+                    runs_commands=True,
+                )[0]
+                self.assertEqual(prompt.count(HARNESS_HEADING), 1)
+                self.assertIn(
+                    f"`{sys.executable} -P -m coscc.loop <command> --root {root}`", prompt
+                )
+
+    def test_a_prose_stage_is_not_told(self):
+        from coscc.runner.prompt import HARNESS_HEADING
+
+        prompt = compose_prompt("/w", "/store/.cos/" + UNIT, UNIT, "spec", STAGES, "spec.md")[0]
+        self.assertNotIn(HARNESS_HEADING, prompt)
 
 
 class AStepAnUpdatePaused(unittest.TestCase):

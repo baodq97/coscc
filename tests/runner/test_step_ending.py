@@ -20,7 +20,8 @@ from coscc.git import gitops
 from coscc.store.journal import Journal
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner
-from coscc.runner.prompt import answers_section, skill_for
+from coscc.runner.prompt import answers_section, build_prompt, skill_for
+from coscc.runner.attempt import snapshot
 from tests.runner.test_step import (
     REVIEW_R1,
     SPIKE_REPLY,
@@ -209,6 +210,12 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
         self.assertIn("no-such-stage", str(caught.exception))
         self.assertIn("SKILL.md", str(caught.exception))
 
+    def test_the_prompt_always_carries_the_rules_section(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md")
+            self.assertIn("# The rules for this stage", prompt)
+
     def test_it_refuses_before_the_journal_is_touched_or_a_session_is_made(self):
         # The two things a step costs: a row saying it started, and a request that bills.
         # Both come after `build_prompt` in `Runner.run`, and this is what holds them there.
@@ -395,6 +402,41 @@ class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
         self.assertIsNone(written)
 
 
+class AFencedAnswerAfterNarrationIsUnwrapped(unittest.TestCase):
+    """Narration, a tool call, then the artifact in a fence: it is written whole, not as only the
+    fenced piece that `_unfence` would take out."""
+
+    BODY = "# Plan: x\nIntent: i. Status: accepted.\n\n## Body\n\n```\n# Plan: quoted\n```\n"
+
+    class Fenced:
+        def __init__(self, last):
+            self.last = last
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "Để tôi đọc lại plan.")
+            yield ("tool", "Read")
+            yield ("chunk", self.last)
+            await _submits(kw)
+            yield ("done", {"session_id": "s-1", "cost": {}})
+
+    def go(self, last):
+        return AnAnswerInPiecesIsWrittenWhole.go(self, self.Fenced(last))
+
+    def test_the_fenced_artifact_is_written_out_of_its_fence(self):
+        final, _, written = self.go("```markdown\n" + self.BODY + "```\n")
+        self.assertEqual(final["outcome"], "done")
+        self.assertEqual(written.decode("utf-8"), self.BODY)
+
+    def test_a_piece_that_is_only_a_code_block_keeps_its_fence(self):
+        # A fence whose top is not the title is the body's, not a wrapper.
+        from coscc.runner.reply import _joined
+
+        pieces = ["# Plan: x\nStatus: accepted.\n\n## Body\n", "```\ncode\n```"]
+        self.assertEqual(
+            _joined(pieces, "plan.md"), "# Plan: x\nStatus: accepted.\n\n## Body\n```\ncode\n```"
+        )
+
+
 class AFailedStepLeavesASnapshot(unittest.TestCase):
     def test_max_turns_leaves_an_attempt_before_end_with_matching_cost(self):
         class HitCeiling:
@@ -557,6 +599,49 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
 
             asyncio.run(go())
             self.assertEqual(journal.records(d, UNIT, kind="attempt"), [])
+
+    def test_last_attempt_is_recorded_in_the_start_record_when_given(self):
+        class Replies:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                self.seen_prompt = text
+                yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                await _submits(kw)
+                yield ("done", {"session_id": "s-ok", "cost": {}})
+
+        probe = Replies()
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            r = Runner(sessions=probe, journal=journal)
+
+            async def go():
+                return [
+                    ev
+                    async for ev in r.run(
+                        workspace=d,
+                        directory=Path(d) / ".cos" / UNIT,
+                        journal_key=d,
+                        unit=UNIT,
+                        stage="spec",
+                        artifact="spec.md",
+                        stages=STAGES,
+                        mode="manual",
+                        last_attempt="PREVIOUS-ATTEMPT-TEXT",
+                    )
+                ]
+
+            asyncio.run(go())
+            self.assertIn("PREVIOUS-ATTEMPT-TEXT", probe.seen_prompt)
+            [start] = journal.records(d, UNIT, kind="start")
+            self.assertIn("last-attempt", start["included"])
+
+    def test_snapshot_on_a_non_git_directory_names_the_reason_and_still_tries_the_excerpt(self):
+        with tempfile.TemporaryDirectory() as d:
+            fields, pending = asyncio.run(snapshot(d, ""))
+        self.assertIsNone(pending)
+        self.assertIsNone(fields["head"])
+        self.assertIn(f"git: {d} is not a git checkout", fields["snapshot_errors"])
+        self.assertIn("excerpt: no session id", fields["snapshot_errors"][-1])
 
 
 class ASpikeThatTouchesTheWorktreeFails(unittest.TestCase):
@@ -840,6 +925,23 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
             [end] = [x for x in journal.records() if x["kind"] == "end"]
             self.assertEqual((end["outcome"], end["spike_md"]), ("stopped", "withheld"))
 
+    def test_d_no_progress_file_is_none(self):
+        final, written, end, _ = self.run_spike(progress=None)
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "none"))
+
+    def test_e_a_progress_file_with_no_status_is_unusable(self):
+        final, written, end, _ = self.run_spike(progress="# Spike: x\n\n## U1\n\nChưa đo.\n")
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unusable"))
+        self.assertIn("the progress file was not an artifact", end["detail"])
+
+    def test_f_a_usable_reply_wins_over_the_progress_file(self):
+        final, written, end, attempts = self.run_spike(reply=SPIKE_REPLY, terminal="success")
+        self.assertEqual(written, SPIKE_REPLY.encode("utf-8"))
+        self.assertEqual((final["outcome"], end["spike_md"]), ("done", "reply"))
+        self.assertEqual(attempts, [])
+
     def test_g_the_answers_on_disk_stay_byte_for_byte(self):
         section = (
             "## Answers\n\n### Câu 1\nAnswered by: Lan. Date: 2026-09-25. Via: product.\n\nCó.\n"
@@ -851,6 +953,64 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
             answers_section((SPIKE_REPLY + "\n" + section).encode("utf-8")),
         )
         self.assertTrue(written.startswith(PROGRESS.encode("utf-8")))
+
+    def test_a_worktree_not_read_before_the_step_is_unchecked(self):
+        # No reading to compare with, so nothing is written -- and it is the app's failure, not a
+        # Stop's or the spike's.
+        final, written, end, _ = self.run_spike(tree_fails_from=1)
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("failed", "unchecked"))
+        self.assertIn("the worktree's state was not read before the step", end["detail"])
+
+    def test_a_worktree_not_read_again_after_the_step_is_unchecked(self):
+        # The first two readings (before the session, and on the reply's road) agree; the
+        # one `_from_progress` makes fails.
+        final, written, end, _ = self.run_spike(tree_fails_from=3)
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unchecked"))
+        self.assertIn(
+            "spike.md not written from the progress file: could not read the worktree's state: git broke",
+            end["detail"],
+        )
+
+    def test_a_session_that_broke_after_writing_it_is_progress(self):
+        final, written, end, _ = self.run_spike(
+            raise_after=RuntimeError("the stream broke"), terminal=""
+        )
+        self.assertEqual(written, PROGRESS.encode("utf-8"))
+        self.assertEqual((final["outcome"], end["spike_md"]), ("failed", "progress"))
+
+    def test_another_stages_end_carries_no_spike_md(self):
+        class Fake:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "# Plan: x\nStatus: accepted.\n")
+                await _submits(kw)
+                yield ("done", {"session_id": "s", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS")
+            journal = Journal(d, d)
+            r = Runner(sessions=Fake(), journal=journal)
+
+            async def go():
+                return [
+                    ev
+                    async for ev in r.run(
+                        workspace=d,
+                        directory=Path(d) / ".cos" / UNIT,
+                        journal_key=d,
+                        unit=UNIT,
+                        stage="plan",
+                        artifact="plan.md",
+                        stages=STAGES,
+                        mode="autonomous",
+                    )
+                ]
+
+            asyncio.run(go())
+            [end] = [x for x in journal.records() if x["kind"] == "end"]
+            self.assertEqual(end["outcome"], "done")
+            self.assertNotIn("spike_md", end)
 
     def test_a_spike_without_its_opening_gets_no_repair_turn(self):
         # A spike has its progress file instead.
@@ -1107,6 +1267,15 @@ class ADeadStepKeepsItsTurns(unittest.TestCase):
         self.assertEqual(end["run"], "r-dead")
         self.assertIn("the stream broke", end["detail"])
 
+    def test_a_killed_cli_is_the_same(self):
+        from claude_agent_sdk._errors import ProcessError
+
+        start, attempt, end, stored = self._run(
+            ProcessError("Command failed with exit code -9", exit_code=-9)
+        )
+        self._no_cost(end, attempt, stored)
+        self.assertIn("exit code -9", end["detail"])
+
     def test_a_ceiling_keeps_the_clis_count_apart(self):
         start, attempt, end, stored = self._run(
             {
@@ -1331,6 +1500,36 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertEqual((end["outcome"], end["review_md"]), ("done", "round"))
         self.assertNotIn("closing", end)
 
+    def test_a_stop_gets_no_closing_turn(self):
+        sessions = self.Closes()
+        _, [end], review, _, _ = self.run_review(sessions, stop=True)
+        self.assertEqual(len(sessions.calls), 1)
+        self.assertEqual((end["outcome"], end["review_md"]), ("stopped", "withheld"))
+        self.assertEqual(review, REVIEW_R1)
+
+    def test_another_stage_gets_no_closing_turn(self):
+        sessions = self.Closes()
+        _, [end], _, _, _ = self.run_review(sessions, stage="plan")
+        self.assertEqual(len(sessions.calls), 1)
+        self.assertEqual(end["outcome"], "exhausted")
+        self.assertNotIn("review_md", end)
+        self.assertNotIn("closing", end)
+
+    def test_no_head_gets_no_closing_turn(self):
+        sessions = self.Closes()
+        _, [end], review, _, _ = self.run_review(sessions, git=False)
+        self.assertEqual(len(sessions.calls), 1)
+        self.assertEqual(end["review_md"], "none")
+        self.assertEqual(review, REVIEW_R1)
+
+    def test_a_full_round_from_the_closing_turn_is_not_written(self):
+        sessions = self.Closes(closing=lambda head: incomplete_reply(head, verdict="pass"))
+        _, [end], review, _, _ = self.run_review(sessions)
+        self.assertEqual(review, REVIEW_R1)
+        self.assertEqual(end["review_md"], "none")
+        self.assertIn("closing", end)
+        self.assertIn("does not open with Verdict: incomplete", end["detail"])
+
     def test_a_closing_turn_that_breaks_still_leaves_an_end(self):
         sessions = self.Closes(raises=RuntimeError("the CLI died"))
         _, [end], review, _, _ = self.run_review(sessions)
@@ -1338,6 +1537,19 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "none"))
         self.assertTrue(end["closing"]["cost_unknown"])
         self.assertEqual(end["cost_usd"], 1.0)
+
+    def test_a_closing_turn_with_no_result_keeps_the_main_cost(self):
+        _, [end], _, _, _ = self.run_review(self.Closes(closing_terminal=""))
+        self.assertEqual(end["review_md"], "incomplete")
+        self.assertEqual(end["closing"], {"cost_unknown": True})
+        self.assertEqual(end["cost_usd"], 1.0)
+
+    def test_a_closing_turn_that_hangs_is_cut_at_the_timeout(self):
+        with mock.patch("coscc.runner.step.CLOSING_TIMEOUT", 0.05):
+            _, [end], review, _, _ = self.run_review(self.Closes(waits=True))
+        self.assertEqual(end["review_md"], "none")
+        self.assertTrue(end["closing"]["cost_unknown"])
+        self.assertEqual(review, REVIEW_R1)
 
     def test_the_app_going_down_during_the_closing_turn_writes_no_end(self):
         async def cancel_in_closing(running, sessions):
@@ -1559,6 +1771,45 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         self.assertEqual(out[-1], ("cancelled", None))
         self.assertEqual(ends, [])
         self.assertIsNone(written)
+
+
+class TheOtherTwoWritesAreCheckedTheSame(unittest.TestCase):
+    """A spike's progress file and a review's closing turn are held to the opening a reply is, and
+    an opening that fails writes nothing."""
+
+    def test_a_progress_file_with_no_title_is_unusable(self):
+        untitled = PROGRESS.split("\n", 1)[1]
+        final, written, end, _ = ASpikeLeavesWhatItMeasured.run_spike(self, progress=untitled)
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unusable"))
+        self.assertIn("spike.md lacks its opening: no `# Spike:` title", end["detail"])
+
+    def test_a_closing_round_with_no_title_is_not_written(self):
+        def untitled(head):
+            return incomplete_reply(head).split("\n", 1)[1]
+
+        closes = AReviewThatRunsOutGetsAClosingTurn.Closes(closing=untitled)
+        _, [end], review, _, _ = AReviewThatRunsOutGetsAClosingTurn.run_review(self, closes)
+        self.assertEqual(review, REVIEW_R1)
+        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "none"))
+        self.assertIn("review.md lacks its opening: no `# Review:` title", end["detail"])
+
+    def test_a_refused_write_leaves_the_file_and_its_answers_byte_for_byte(self):
+        from coscc.runner.attempt import _write_artifact
+
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d))
+            before = (
+                "# Plan: x\nIntent: i. Status: draft.\n\nBODY\n\n## Answers\n\n"
+                "### Câu 1\nAnswered by: Lan. Date: 2026-09-26. Via: product.\n\ncó\n"
+            ).encode("utf-8")
+            (directory / "plan.md").write_bytes(before)
+            with self.assertRaises(RunError) as caught:
+                _write_artifact(
+                    directory, "plan.md", "## Files that change\n\nStatus: accepted.\n", blocks=2
+                )
+            self.assertIn("(the session replied in 2 blocks)", str(caught.exception))
+            self.assertEqual((directory / "plan.md").read_bytes(), before)
 
 
 class AnAnswerCutAtItsCeilingIsNotWritten(unittest.TestCase):

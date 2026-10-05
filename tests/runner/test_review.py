@@ -92,6 +92,15 @@ class MergeReview(unittest.TestCase):
         body = merge_review("", "# Review: x\nStatus: accepted.\n\n## Round 1\n\nok\n")
         self.assertEqual(body, "# Review: x\nStatus: accepted.\n\n## Round 1\n\nok\n")
 
+    def test_the_header_is_the_replys(self):
+        body = merge_review(
+            "# Review: x\nStatus: changes-requested.\n\n## Round 1\n\nF1\n",
+            "# Review: x\nStatus: accepted.\n\n## Round 2\n\nok\n",
+        )
+        self.assertEqual(
+            body, "# Review: x\nStatus: accepted.\n\n## Round 1\n\nF1\n\n## Round 2\n\nok\n"
+        )
+
 
 class OpenFindings(unittest.TestCase):
     """The header, the last round's number and what it left open."""
