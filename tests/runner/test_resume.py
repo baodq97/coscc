@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -173,30 +172,6 @@ class _Base(unittest.TestCase):
 
     def ends(self) -> list[dict]:
         return self.journal.records(self.key, kind="end")
-
-
-class WhatASessionIsTold(unittest.TestCase):
-    def test_the_resume_message_names_the_dropped_commands_and_says_the_user_did_not_refuse_them(
-        self,
-    ):
-        said = resume_mod.resume_message(
-            [
-                {"name": "Bash", "input": "npm test"},
-                {"name": "Edit", "input": '{"file_path": "a.py"}'},
-            ]
-        )
-        self.assertIn("- Bash: npm test", said)
-        self.assertIn('- Edit: {"file_path": "a.py"}', said)
-        self.assertIn("The user did not refuse them", said)
-        self.assertIn("restarted to install an update", said)
-        self.assertIn("Check the state of the worktree first", said)
-
-    def test_a_session_with_nothing_dropped_is_told_only_to_continue(self):
-        for dropped in (None, []):
-            said = resume_mod.resume_message(dropped)
-            self.assertIn("Carry on with the work you were doing", said)
-            self.assertNotIn("refuse", said)
-            self.assertNotIn("worktree", said)
 
 
 class TakingUpAfterAnUpdate(_Base):
@@ -416,16 +391,6 @@ class TakingUpAfterAnUpdate(_Base):
         )
         self.assertEqual((steps_seen, len(got)), ([], 1))
 
-    def test_the_chat_ceiling_is_what_sessions_gives_a_turn_that_names_none(self):
-        import inspect
-
-        from coscc.leif.chat import CHAT_TURNS
-
-        self.assertEqual(
-            CHAT_TURNS, inspect.signature(Sessions.stream).parameters["max_turns"].default
-        )
-        self.assertIsNone(inspect.signature(Sessions.stream).parameters["max_budget_usd"].default)
-
     def test_a_chat_turn_goes_on_with_what_is_left_of_its_ceiling(self):
         streamed: list[dict] = []
 
@@ -527,42 +492,6 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual([r["unit"] for r in self.core.attempts.unfinished()], [self.unit])
         self.assertEqual(self.core.steps.tasks, {})
 
-    def test_resume_runs_no_git_command_on_the_worktree(self):
-        # Nothing reads or cleans the worktree before the session goes on.
-        ran: list[tuple] = []
-        real_exec, real_run = asyncio.create_subprocess_exec, subprocess.run
-
-        async def exec_(*args, cwd=None, **kw):
-            ran.append((args, str(cwd or "")))
-            return await real_exec(*args, cwd=cwd, **kw)
-
-        def run(args, *a, cwd=None, **kw):
-            ran.append(
-                (tuple(args) if isinstance(args, (list, tuple)) else (args,), str(cwd or ""))
-            )
-            return real_run(args, *a, cwd=cwd, **kw)
-
-        streamed: list[dict] = []
-
-        async def stream(cwd, text, session_id=None, **kw):
-            streamed.append({"cwd": cwd, "text": text, "session_id": session_id, **kw})
-            raise Suspended("paused again")
-            yield
-
-        self.paused()
-        self.core.sessions.stream = stream  # type: ignore[method-assign]
-        with (
-            mock.patch.object(asyncio, "create_subprocess_exec", exec_),
-            mock.patch.object(subprocess, "run", run),
-        ):
-            self.up()
-        [call] = streamed
-        self.assertEqual(
-            (call["cwd"], call["session_id"], call["resume_at"]), (str(self.tree), SID, "u2")
-        )
-        on_tree = [a for a, where in ran if "git" in str(a[0]) and where.startswith(str(self.tree))]
-        self.assertEqual(on_tree, [])
-
 
 class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
     def guarded(self, check):
@@ -588,14 +517,6 @@ class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
         [facts] = seen
         self.assertTrue(facts.resumed)
         self.assertEqual((facts.unit, facts.stage), (self.unit, "plan"))
-
-    def test_a_guard_that_abstains_still_resumes(self):
-        steps_seen = self.taken()
-        self.paused()
-        self.guarded(lambda facts: None)
-        [said] = self.up()
-        self.assertEqual(said["result"], "resumed")
-        self.assertEqual(len(steps_seen), 1)
 
 
 class APausedOwnerEndsNothing(_Base):

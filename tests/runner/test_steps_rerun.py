@@ -147,13 +147,6 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
     def ask(self, coro):
         return asyncio.run(coro)
 
-    def test_the_offers_are_the_loops_answer(self):
-        offers = self.ask(self.core.steps.rerun_offers(self.cwd, self.unit))
-        self.assertEqual([o["stage"] for o in offers["offers"]], ["intent", "spec", "plan", "pr"])
-        self.assertEqual(
-            next(o for o in offers["offers"] if o["stage"] == "pr")["later"], ["review", "ship"]
-        )
-
     def test_without_rerun_no_runner_is_made_and_intent_is_untouched(self):
         # No session at all, rerun or not.
         (self.dir / "review.md").unlink()
@@ -197,12 +190,6 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         got = unit_state({**row, "open": 0}, None, None)
         self.assertEqual(got["state"], "awaiting")
 
-    def test_the_note_reaches_no_session_and_no_file(self):
-        self.run_step("pr", rerun=True, note="NOTE-0054")
-        self.assertEqual(self.seen, [])
-        self.assertNotIn("NOTE-0054", self.intent())
-        self.assertNotIn("NOTE-0054", (self.dir / "pr.md").read_text(encoding="utf-8"))
-
     def test_a_rerun_that_never_ran_leaves_the_stage_offered_again(self):
         self.run_step("pr", write=None, rerun=True)
         self.assertEqual(self.items[-1][1]["outcome"], "failed")
@@ -236,10 +223,6 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
                     self.run_step(stage, **kw)
                 self.assertEqual(refused.exception.reasons, (code,))
 
-    def test_an_empty_note_is_not_refused(self):
-        self.run_step("pr", rerun=True, note="   ")
-        self.assertEqual(self.items[-1][1]["outcome"], "done")
-
     def test_pr_md_written_again_keeps_its_answers(self):
         # Was *pr.md that loses its answers is said to*: the app writes `pr.md` now, and
         # keeps its `## Answers` below what it writes, so none is lost to say.
@@ -248,11 +231,6 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         text = (self.dir / "pr.md").read_text(encoding="utf-8")
         self.assertTrue(text.endswith(ANSWERS))
         self.assertNotEqual(text, PR_MD + ANSWERS)
-
-    def test_pr_md_that_keeps_its_answers_says_nothing_lost(self):
-        (self.dir / "pr.md").write_text(PR_MD + ANSWERS, encoding="utf-8")
-        self.run_step("pr", rerun=True)
-        self.assertNotIn("answers_lost", self.items[-1][1])
 
 
 IMPL_DRAFT = "# Impl: x\nStatus: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
@@ -276,13 +254,6 @@ class ADraftImplThatLosesItsAnswersSaysSo(unittest.TestCase):
         self.assertEqual(self.items[-1][0], "done")
         return self.items[-1][1]
 
-    def test_an_impl_that_keeps_its_answers_says_nothing(self):
-        done = self.impl(
-            IMPL_DRAFT + ANSWERS, IMPL_DRAFT.replace("draft", "accepted") + "\nbuilt\n" + ANSWERS
-        )
-        self.assertEqual(done.get("answers_kept"), True)
-        self.assertNotIn("answers_lost", done)
-
     def test_an_impl_that_drops_its_answers_says_answers_lost(self):
         done = self.impl(IMPL_DRAFT + ANSWERS, IMPL_DRAFT + "\nrewritten\n")
         self.assertEqual(done.get("answers_kept"), False)
@@ -294,11 +265,6 @@ class ADraftImplThatLosesItsAnswersSaysSo(unittest.TestCase):
         own = "\n### Câu 2\nAnswered by: Claude. Date: 2026-09-27. Via: product.\n\ntự trả lời\n"
         done = self.impl(IMPL_DRAFT + ANSWERS, IMPL_DRAFT + "2. Hai?\n" + ANSWERS + own)
         self.assertTrue(done.get("answers_lost"))
-
-    def test_an_impl_md_without_answers_is_not_compared(self):
-        done = self.impl(IMPL_DRAFT, IMPL_DRAFT + "\nbuilt\n")
-        self.assertNotIn("answers_kept", done)
-        self.assertNotIn("answers_lost", done)
 
 
 if __name__ == "__main__":

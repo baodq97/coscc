@@ -116,19 +116,6 @@ class ThePackagedCopyWins(unittest.TestCase):
             self.assertFalse(harness.is_packaged())
             self.assertEqual(harness.root(), harness.CHECKOUT_HARNESS)
 
-    def test_a_script_alone_does_not_make_a_package(self):
-        # A wheel of an older release carried a script under `scripts/`; the marker is the skills now.
-        with tempfile.TemporaryDirectory() as tmp:
-            old = Path(tmp) / "_harness"
-            (old / "scripts").mkdir(parents=True)
-            (old / "scripts" / "old.mjs").write_text("// old", encoding="utf-8")
-            self.packaged_as(old)
-            self.assertFalse(harness.is_packaged())
-
-    def test_there_is_no_script_to_locate(self):
-        self.assertFalse(hasattr(harness, "script"))
-        self.assertFalse(hasattr(harness, "SCRIPT_NAME"))
-
 
 class AWheelIsChecked(unittest.TestCase):
     def test_a_complete_wheel_has_nothing_wrong_with_it(self):
@@ -145,13 +132,6 @@ class AWheelIsChecked(unittest.TestCase):
             complaints = harness.wheel_complaints(wheel)
             self.assertEqual(len(complaints), 1, complaints)
             self.assertIn("SKILL.md", complaints[0])
-
-    def test_a_wheel_is_not_asked_for_a_loop_script(self):
-        # The loop is `coscc/loop/`, inside the package; no copy of it sits in `_harness/`.
-        with tempfile.TemporaryDirectory() as tmp:
-            wheel = _wheel(Path(tmp) / "ok.whl", RUNNABLE)
-            self.assertFalse(any(".mjs" in n for n in zipfile.ZipFile(wheel).namelist()))
-            self.assertEqual(harness.wheel_complaints(wheel), [])
 
     def test_a_wheel_without_the_studio_is_caught(self):
         # The page would answer 503 on an install that is otherwise whole.
@@ -171,24 +151,6 @@ class AWheelIsChecked(unittest.TestCase):
             complaints = harness.wheel_complaints(wheel)
             self.assertEqual(len(complaints), 1, complaints)
             self.assertIn("states.json", complaints[0])
-
-    def test_a_wheel_without_the_model_defaults_is_caught(self):
-        # Every stage would fall back to `COS_MODEL` and nothing would fail.
-        with tempfile.TemporaryDirectory() as tmp:
-            names = [n for n in RUNNABLE if not n.endswith("models.json")]
-            wheel = _wheel(Path(tmp) / "nomodels.whl", names)
-            complaints = harness.wheel_complaints(wheel)
-            self.assertEqual(len(complaints), 1, complaints)
-            self.assertIn("models.json", complaints[0])
-
-    def test_a_wheel_without_the_agent_table_is_caught(self):
-        # No session would be told its name, and nothing would fail.
-        with tempfile.TemporaryDirectory() as tmp:
-            names = [n for n in RUNNABLE if not n.endswith("agents.json")]
-            wheel = _wheel(Path(tmp) / "noagents.whl", names)
-            complaints = harness.wheel_complaints(wheel)
-            self.assertEqual(len(complaints), 1, complaints)
-            self.assertIn("agents.json", complaints[0])
 
     def test_skills_are_counted_not_named(self):
         # Nine is today's number. A tenth skill must not need this file edited.

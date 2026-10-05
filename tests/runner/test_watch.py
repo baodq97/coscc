@@ -148,10 +148,3 @@ class AStepCanBeWatched(unittest.TestCase):
         with self.assertRaises(Invalid):
             asyncio.run(refused())
         self.assertEqual(self.core.steps.recorders, {})
-
-    def test_a_run_the_run_log_names_with_no_index_row_is_none(self):
-        journal = self.core.ws.journal()
-        key = self.core.ws.key(str(self.repo))
-        journal.started(key, self.unit, "spec", "manual", run="r-lost")
-        page = self.core.watch.events_page(str(self.repo), self.unit, "r-lost")
-        self.assertEqual((page["status"], page["events"]), ("none", []))

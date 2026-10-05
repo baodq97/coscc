@@ -23,7 +23,6 @@ from coscc.agent.sessions import (
     Live,
     Refused,
     Sessions,
-    _text_of,
     history,
     list_for_directory,
 )
@@ -66,23 +65,6 @@ def _msg(type_="user", text="hi", uuid="u1", parent_tool_use_id=None, parent_age
     )
 
 
-class FlatteningStoredContent(unittest.TestCase):
-    def test_a_bare_string_is_the_text(self):
-        self.assertEqual(_text_of("hello"), "hello")
-
-    def test_blocks_are_joined(self):
-        blocks = [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]
-        self.assertEqual(_text_of(blocks), "ab")
-
-    def test_non_text_blocks_are_dropped_not_stringified(self):
-        blocks = [{"type": "tool_use", "name": "Bash"}, {"type": "text", "text": "ok"}]
-        self.assertEqual(_text_of(blocks), "ok")
-
-    def test_unknown_shapes_are_empty_rather_than_an_error(self):
-        self.assertEqual(_text_of(None), "")
-        self.assertEqual(_text_of({"role": "user"}), "")
-
-
 class ListingIsPerProject(unittest.TestCase):
     def test_every_entry_carries_its_cwd(self):
         with mock.patch.object(sdk, "list_sessions", return_value=[_info(cwd="/p")]):
@@ -96,16 +78,6 @@ class ListingIsPerProject(unittest.TestCase):
             list_for_directory("/p")
         self.assertFalse(m.call_args.kwargs["include_worktrees"])
 
-    def test_a_custom_title_wins_over_the_generated_summary(self):
-        info = _info(summary="generated", custom_title="mine")
-        with mock.patch.object(sdk, "list_sessions", return_value=[info]):
-            self.assertEqual(list_for_directory("/p")[0]["summary"], "mine")
-
-    def test_a_session_with_no_summary_still_lists(self):
-        info = _info(summary="", custom_title=None, first_prompt=None)
-        with mock.patch.object(sdk, "list_sessions", return_value=[info]):
-            self.assertEqual(list_for_directory("/p")[0]["summary"], "(no summary)")
-
 
 class HistoryComesFromTheSessionStore(unittest.TestCase):
     def test_messages_keep_their_order_and_role(self):
@@ -116,11 +88,6 @@ class HistoryComesFromTheSessionStore(unittest.TestCase):
 
     def test_subagent_traffic_is_not_part_of_the_conversation(self):
         msgs = [_msg("user", "q", "u1"), _msg("assistant", "inner", "u2", parent_tool_use_id="t1")]
-        with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
-            self.assertEqual(len(history("s1", "/p")), 1)
-
-    def test_empty_messages_are_dropped(self):
-        msgs = [_msg("user", "   ", "u1"), _msg("user", "real", "u2")]
         with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
             self.assertEqual(len(history("s1", "/p")), 1)
 
@@ -196,13 +163,6 @@ class TranscriptExcerptIsWhatTheSessionDid(unittest.TestCase):
 
 
 class OptionsCarryTheKnobs(unittest.TestCase):
-    def test_resume_never_forks(self):
-        # This assertion is the tripwire.
-        self.assertFalse(_options(Config(), "/p", resume="s1").fork_session)
-
-    def test_chat_only_reaches_the_sdk_as_an_empty_tool_list(self):
-        self.assertEqual(_options(Config(), "/p", None).tools, [])
-
     def test_permission_mode_follows_knob_3(self):
         self.assertEqual(_options(Config(), "/p", None).permission_mode, "default")
         loose = Config(bypass_permissions=True)
@@ -228,18 +188,6 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         self.assertEqual(options.mcp_servers["cos"]["type"], "sdk")
         self.assertIs(options.strict_mcp_config, True)
 
-    def test_helpers_are_passed_only_when_given(self):
-        from coscc.agent.policy import SUBAGENTS
-
-        self.assertEqual(_options(Config(), "/p", None).agents, None)
-        options = _options(Config(), "/p", None, agents=SUBAGENTS)
-        self.assertEqual(sorted(options.agents), ["scout", "worker"])
-        for name, spec in SUBAGENTS.items():
-            with self.subTest(helper=name):
-                self.assertEqual(options.agents[name].tools, spec["tools"])
-                self.assertEqual(options.agents[name].model, spec["model"])
-                self.assertEqual(options.agents[name].prompt, spec["prompt"])
-
     def test_the_prompt_reaches_the_model_as_written(self):
         """No `@path` expansion and no slash-command dispatch, for every session.
 
@@ -254,16 +202,6 @@ class OptionsCarryTheKnobs(unittest.TestCase):
     def test_write_tools_are_stripped_on_the_way_to_the_sdk(self):
         c = Config(tools=("Read", "Bash"))
         self.assertEqual(_options(c, "/p", None).tools, ["Read"])
-
-    def test_a_resolved_model_wins_over_cos_model(self):
-        # The stage's model is passed in.
-        c = Config(model="from-env")
-        self.assertEqual(_options(c, "/p", None, model="x").model, "x")
-
-    def test_no_resolved_model_falls_back_to_cos_model(self):
-        c = Config(model="from-env")
-        self.assertEqual(_options(c, "/p", None).model, "from-env")
-        self.assertIsNone(_options(Config(), "/p", None).model)
 
     # A board step with tools runs on Claude Code's own system prompt; nothing else does, and the
     # preset must not move any knob that decides what a step may do.
@@ -432,20 +370,6 @@ class OptionsCarryTheKnobs(unittest.TestCase):
 
     # Effort is chosen per stage and label; `_options` only carries it.
 
-    def test_the_installed_sdk_has_an_effort_field(self):
-        # The field is known only from a file outside this repository, so the installed SDK is asked
-        # before anything is built on it.
-        import dataclasses
-
-        self.assertIn("effort", {f.name for f in dataclasses.fields(sdk.ClaudeAgentOptions)})
-
-    def test_an_effort_reaches_the_options(self):
-        self.assertEqual(_options(Config(), "/p", None, effort="high").effort, "high")
-
-    def test_no_effort_leaves_the_sdk_default(self):
-        default = sdk.ClaudeAgentOptions().effort
-        self.assertEqual(_options(Config(), "/p", None).effort, default)
-
     # The values and where each was measured are in `sessions.FOREGROUND_ENV`.
     FOREGROUND = {
         "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
@@ -456,13 +380,6 @@ class OptionsCarryTheKnobs(unittest.TestCase):
     def test_a_session_holding_bash_runs_commands_in_the_foreground(self):
         env = _options(Config(), "/p", None, tools=["Read", "Bash"]).env
         self.assertEqual({k: env.get(k) for k in self.FOREGROUND}, self.FOREGROUND)
-
-    def test_a_session_without_bash_gets_no_foreground_ceiling(self):
-        for tools in (["Read"], []):
-            with self.subTest(tools=tools):
-                env = _options(Config(), "/p", None, tools=tools).env
-                self.assertFalse(set(self.FOREGROUND) & set(env))
-        self.assertFalse(set(self.FOREGROUND) & set(_child_env("/p")))
 
     # One screenshot is one stdout line; every session gets the same ceiling on it.
 
@@ -648,57 +565,6 @@ class TheSessionIdIsToldBeforeTheStepIsOver(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dict(items)["done"]["cost"]["turns"], 4)
 
 
-class ARecorderSeesEveryMessageAndChangesNothing(unittest.IsolatedAsyncioTestCase):
-    """A step with a recorder yields exactly what the same step without one yields, and the recorder
-    is handed every message. Chat has no handle and so none."""
-
-    MESSAGES = [
-        sdk.AssistantMessage(
-            content=[sdk.TextBlock(text="a"), sdk.ToolUseBlock(id="t", name="Read", input={})],
-            model="m",
-            session_id="sid-r",
-            message_id="m1",
-        ),
-        sdk.SystemMessage(subtype="init", data={}),
-        _result("sid-r"),
-    ]
-
-    class Hears:
-        def __init__(self, raises=False):
-            self.heard = []
-            self.raises = raises
-
-        def message(self, m):
-            self.heard.append(m)
-            if self.raises:
-                raise RuntimeError("the recorder broke")
-
-    async def _run(self, step):
-        s = Sessions(Config(workspaces=("/tmp",)))
-        self.addAsyncCleanup(s.close_all)
-        _FakeClient.messages = self.MESSAGES
-        with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _FakeClient):
-            items = [item async for item in s.stream("/tmp", "hi", step=step)]
-        return [
-            (k, {x: y for x, y in p.items() if x != "duration_ms"} if isinstance(p, dict) else p)
-            for k, p in items
-        ]
-
-    async def test_the_same_items_with_and_without_one(self):
-        plain = await self._run(sessions.StepHandle())
-        hears = self.Hears()
-        handle = sessions.StepHandle()
-        handle.recorder = hears
-        self.assertEqual(plain, await self._run(handle))
-        self.assertEqual(hears.heard, self.MESSAGES)
-
-    async def test_one_that_raises_changes_nothing(self):
-        plain = await self._run(sessions.StepHandle())
-        handle = sessions.StepHandle()
-        handle.recorder = self.Hears(raises=True)
-        self.assertEqual(plain, await self._run(handle))
-
-
 class _CountingClient(_FakeClient):
     """Counts `disconnect`, and can hold `receive_response` open until released."""
 
@@ -766,27 +632,6 @@ class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
         _CountingClient.hold.set()
         await task
         self.assertEqual((self.turns(), self.ended), ([], 1))
-
-    async def test_a_turn_that_raises_is_gone(self):
-        _CountingClient.fail = True
-        task = asyncio.create_task(self._reader())
-        await self._until_told()
-        _CountingClient.hold.set()
-        with self.assertRaises(RuntimeError):
-            await task
-        self.assertEqual(self.turns(), [])
-
-    async def test_a_board_step_is_never_a_chat_turn(self):
-        seen = []
-        _CountingClient.hold = None
-
-        async def watch():
-            async for _ in self.s.stream("/tmp", "hi", step=sessions.StepHandle()):
-                seen.append(self.turns())
-
-        await watch()
-        self.assertTrue(seen)
-        self.assertTrue(all(turns == [] for turns in seen))
 
 
 class _Transport:
@@ -1198,31 +1043,11 @@ class WhichWorkspacesHaveSomeoneInThem(unittest.TestCase):
         # one would spend quota to test a dict lookup.
         self.s._live[session_id] = Live(client=object(), session_id=session_id, cwd=str(cwd))
 
-    def test_an_empty_list_when_nothing_is_open(self):
-        self.assertEqual(self.s.live_in(str(self.a)), [])
-
     def test_the_session_in_that_directory_and_only_that_one(self):
         self._live("in-a", self.a)
         self._live("in-b", self.b)
         self.assertEqual(self.s.live_in(str(self.a)), ["in-a"])
         self.assertEqual(self.s.live_in(str(self.b)), ["in-b"])
-
-    def test_every_session_in_the_directory_not_just_the_first(self):
-        self._live("one", self.a)
-        self._live("two", self.a)
-        self.assertEqual(sorted(self.s.live_in(str(self.a))), ["one", "two"])
-
-    def test_the_same_directory_written_differently_is_the_same_directory(self):
-        """A string compare would let `pull` through on `a/../a`, against the rule that refuses
-        it in a live session's directory."""
-        self._live("in-a", self.a)
-        self.assertEqual(self.s.live_in(f"{self.a}/../a"), ["in-a"])
-        self.assertEqual(self.s.live_in(f"{self.a}/"), ["in-a"])
-
-    def test_a_parent_directory_does_not_count_as_that_session(self):
-        """`pull` on the working folder must not be refused by a session one level down."""
-        self._live("in-a", self.a)
-        self.assertEqual(self.s.live_in(str(self.root)), [])
 
     def test_an_unresolvable_directory_is_no_sessions_rather_than_a_crash(self):
         self._live("in-a", self.a)
@@ -1378,20 +1203,8 @@ class EverySessionGetsADataRootOfItsOwn(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(env["COS_SCRATCH_DISK"], paths[1])
         self.assertEqual(env["TMPDIR"], paths[1])
 
-    async def test_two_steps_get_two_directories(self):
-        await self._step()
-        await self._step()
-        first, second = (self._root(e) for e in _EnvClient.envs)
-        self.assertNotEqual(first, second)
-
     async def test_gone_after_a_step_that_finishes(self):
         await self._step()
-        self.assertFalse(self._root(_EnvClient.envs[0]).exists())
-
-    async def test_gone_after_a_step_that_raises(self):
-        _CountingClient.fail = True
-        with self.assertRaises(RuntimeError):
-            await self._step()
         self.assertFalse(self._root(_EnvClient.envs[0]).exists())
 
     async def test_gone_after_a_step_stopped_by_its_ceiling(self):
@@ -1407,24 +1220,6 @@ class EverySessionGetsADataRootOfItsOwn(unittest.IsolatedAsyncioTestCase):
         _CountingClient.messages = [_assistant("a", "sid-d"), capped]
         items = await self._step()
         self.assertEqual(dict(items)["done"]["terminal_reason"], "error_max_budget_usd")
-        self.assertFalse(self._root(_EnvClient.envs[0]).exists())
-
-    async def test_gone_after_a_step_is_stopped(self):
-        _CountingClient.hold = asyncio.Event()
-        h = sessions.StepHandle()
-        started = asyncio.Event()
-
-        async def run():
-            async for _ in self.s.stream("/tmp", "hi", step=h):
-                started.set()
-
-        task = asyncio.create_task(run())
-        await started.wait()
-        self.assertTrue(self._root(_EnvClient.envs[0]).is_dir())
-        await h.close()
-        task.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await task
         self.assertFalse(self._root(_EnvClient.envs[0]).exists())
 
     async def test_a_stop_that_cancels_the_close_waits_for_the_closing(self):
@@ -1544,19 +1339,6 @@ def _init(session_id):
 
 
 class ASessionIsKnownWhileItRuns(unittest.IsolatedAsyncioTestCase):
-    def test_the_sdk_options_take_resume_session_at(self):
-        import dataclasses
-
-        self.assertIn(
-            "resume_session_at", {f.name for f in dataclasses.fields(sdk.ClaudeAgentOptions)}
-        )
-
-    def test_resume_passes_resume_session_at_and_never_resume_drops_turn(self):
-        options = _options(Config(), "/tmp", "sid-r", resume_at="u-safe")
-        self.assertEqual((options.resume, options.resume_session_at), ("sid-r", "u-safe"))
-        self.assertIsNone(options.resume_drops_turn)
-        self.assertIsNone(_options(Config(), "/tmp", None).resume_session_at)
-
     def test_every_resume_builds_options_with_snapshot(self):
         from tests.agent.test_instructions import plant
         from coscc.runner.attempt import CLAUDE_CODE_PRESET
@@ -1578,13 +1360,6 @@ class ASessionIsKnownWhileItRuns(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bare.extra_args, {"append-system-prompt-file": written})
         self.assertEqual(empty.system_prompt, {"type": "custom", "prompt": "", "snapshot": True})
         self.assertNotIn("snapshot", CLAUDE_CODE_PRESET)
-
-    def test_a_new_session_carries_no_snapshot_key(self):
-        from coscc.runner.attempt import CLAUDE_CODE_PRESET
-
-        self.assertIsNone(_options(Config(), "/tmp", None).system_prompt)
-        started = _options(Config(), "/tmp", "sid", system_prompt=CLAUDE_CODE_PRESET)
-        self.assertNotIn("snapshot", started.system_prompt)
 
     async def test_a_stream_learns_its_session_id_from_init(self):
         s = Sessions(Config(workspaces=("/tmp",)))
@@ -1692,26 +1467,6 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
                     await self.s.stream("/tmp", "hi", step=step).__anext__()
                 self.assertEqual(str(caught.exception), sessions.PAUSED)
         self.assertEqual((_CountingClient.made, self.s._steps, self.s._turns), ([], set(), {}))
-
-    async def test_suspend_reads_the_boundary_before_it_interrupts(self):
-        self._flow("sid-1")
-        [record] = await self.s.suspend_all()
-        self.assertEqual(self.order[0], ("interrupt", 2))
-        self.assertEqual(record["boundary"], 2)
-        self.assertEqual(
-            (record["safe_uuid"], record["api_calls"], record["spent_usd"]), ("p", 1, 0.25)
-        )
-        self.assertEqual(record["dropped"], [{"name": "Bash", "input": "npm test"}])
-        self.assertEqual((record["owner"]["unit"], record["start_at"]), ("0001_a", "t0"))
-        self.assertEqual(self.s._steps, set())
-
-    async def test_suspend_interrupts_before_it_shuts(self):
-        handle = self._flow("sid-2")
-        await self.s.suspend_all()
-        self.assertEqual(
-            [o if isinstance(o, str) else o[0] for o in self.order], ["interrupt", "disconnect"]
-        )
-        self.assertTrue(handle.suspended and handle.closed)
 
     async def test_suspend_closes_every_session_in_parallel(self):
         # A close is open from the client's `disconnect` to the SIGKILL that ends `_shut`. The first

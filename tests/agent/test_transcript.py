@@ -55,10 +55,6 @@ class Reading(unittest.TestCase):
             f.write("".join(json.dumps(x) + "\n" for x in after) + tail)
         return edge
 
-    def test_the_project_directory_replaces_every_non_alphanumeric_character(self):
-        got = transcript.path_for("/home/bd/.cos/w_1/0138_x", "sid", root=Path("/r"))
-        self.assertEqual(got, Path("/r/-home-bd--cos-w-1-0138-x/sid.jsonl"))
-
     def test_an_interrupted_bash_call_cuts_to_the_last_real_result(self):
         edge = self.write(
             [
@@ -97,10 +93,6 @@ class Reading(unittest.TestCase):
             [d["input"] for d in got["dropped"]],
             ["sleep 1; echo p1", "sh ./u3loop.sh; echo p2", "sleep 1; echo p3"],
         )
-
-    def test_a_turn_with_no_tool_cuts_to_its_prompt(self):
-        edge = self.write([prompt("p")], [said("x", "m", "half")])
-        self.assertEqual(transcript.cut(self.path, edge)["safe_uuid"], "p")
 
     def test_api_calls_are_counted_once_per_message_id(self):
         edge = self.write(

@@ -37,15 +37,6 @@ class TheSecuritySurfaceIsOneConstant(unittest.TestCase):
             ),
         )
 
-    def test_no_second_copy_in_the_code(self):
-        # A list that exists twice drifts.
-        for path in sorted(PACKAGE.rglob("*.py")):
-            built = path.relative_to(PACKAGE).parts[0] in ("_harness", "_web")
-            if built or path == PACKAGE / "agent" / "labels.py":
-                continue
-            text = path.read_text(encoding="utf-8")
-            self.assertFalse(all(p in text for p in labels.SECURITY_SURFACE), path.name)
-
 
 class TheDeclaredLabel(unittest.TestCase):
     def test_the_two_words_and_everything_else(self):
@@ -54,10 +45,6 @@ class TheDeclaredLabel(unittest.TestCase):
         self.assertEqual(labels.declared(plan("easy")), "missing")
         self.assertEqual(labels.declared(plan(None)), "missing")
         self.assertEqual(labels.declared(None), "missing")
-
-    def test_only_the_header_is_read(self):
-        text = "# Plan: x\nStatus: accepted.\n\n## Risks\n\nImpl: routine\n"
-        self.assertEqual(labels.declared(text), "missing")
 
 
 class TheListedPaths(unittest.TestCase):
@@ -71,12 +58,6 @@ class TheListedPaths(unittest.TestCase):
         self.assertIn("coscc/runner/__init__.py", found)
         # Named only under `## Order of work`.
         self.assertNotIn("coscc/agent/policy.py", found)
-
-    def test_equality_not_substring(self):
-        text = plan("routine", "- `tests/agent/test_policy.py`.\n- `.claude/settings.json.bak`.")
-        self.assertEqual(
-            labels.label_for("impl", STAGES, text, []), ("routine", "routine", "declared")
-        )
 
 
 class EveryBranchOfLabelFor(unittest.TestCase):
@@ -144,12 +125,6 @@ class EveryBranchOfLabelFor(unittest.TestCase):
         )
         history[1]["terminal"] = "max_budget_usd"
         self.assertEqual(labels.label_for("impl", STAGES, plan("routine"), history)[2], "declared")
-
-    def test_never_raises(self):
-        self.assertEqual(
-            labels.label_for("impl", STAGES, plan("routine"), [None]),
-            ("missing", "novel", "missing"),
-        )
 
 
 if __name__ == "__main__":

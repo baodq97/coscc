@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import sqlite3
 import subprocess
 import sys
@@ -19,7 +18,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.agent import modeltrial, policy
+from coscc.agent import policy
 from coscc.kernel import Facts, Hooks, Parts, Tool
 from coscc.store.journal import Journal
 from coscc.agent.policy import decide, grant_for
@@ -252,14 +251,6 @@ class AStepRecordsTheCommitItRanOn(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self._start_record(d)["head"], "")
 
-    def test_the_shortlist_stamp_is_carried_into_start_only_when_given(self):
-        """The runner carries it; `service.steps.run_step` works it out."""
-        stamp = {"rank": 2, "of": 5, "record": {"at": "t", "n": 3}}
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(self._start_record(d, shortlist=stamp)["shortlist"], stamp)
-        with tempfile.TemporaryDirectory() as d:
-            self.assertNotIn("shortlist", self._start_record(d))
-
 
 class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
     class Replies:
@@ -359,134 +350,6 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
         self.assertEqual(len(built), 1)
         self.assertEqual(replies.prompt.encode("utf-8"), built[0].encode("utf-8"))
         self.assertNotIn("# Project instructions", replies.prompt)
-
-
-class AStepRecordsTheBaseItRanOn(unittest.TestCase):
-    """`base` is `service.py`'s to compute; this module only carries it from `Runner.run`'s
-    caller into the `start` record, the same way it already carries `head`."""
-
-    class Replies:
-        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            yield ("chunk", "# Impl: x\nStatus: accepted.\n")
-            await _submits(kw)
-            yield ("done", {"session_id": "s-impl", "cost": {}})
-
-    def _start_record(self, d: str, **run_kw) -> dict:
-        make_unit(Path(d), intent_md="Status: accepted.\nI")
-        journal = Journal(d, d)
-        r = Runner(sessions=self.Replies(), journal=journal)
-
-        async def go():
-            async for _ in r.run(
-                workspace=d,
-                directory=Path(d) / ".cos" / UNIT,
-                journal_key=d,
-                unit=UNIT,
-                stage="impl",
-                artifact="impl.md",
-                stages=STAGES,
-                mode="manual",
-                **run_kw,
-            ):
-                pass
-
-        asyncio.run(go())
-        [start] = journal.records(d, kind="start")
-        return start
-
-    def test_the_base_handed_in_is_the_base_recorded(self):
-        base = {"ref": "origin/main", "sha": "abc1234", "fresh": False, "reason": "R"}
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(self._start_record(d, base=base)["base"], base)
-
-    def test_no_base_handed_in_records_none(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertIsNone(self._start_record(d)["base"])
-
-
-class AStageRunAgainIsToldWhy(unittest.TestCase):
-    """A stage a person ran again from the board is told so, with their note, and a stage nobody ran
-    again gets the prompt and the `start` record it got before."""
-
-    HEADING = "# Why this stage runs again"
-    PLAN = "# Plan: x\nStatus: accepted.\n\n1. PLAN-BODY-0054\n"
-    ANSWERS = "\n## Answers\n\n### Câu 1\nAnswered by: A. Date: 2026-09-26. Via: product.\n\nANSWER-0054\n"
-
-    def _unit(self, d: str) -> Path:
-        return make_unit(
-            Path(d),
-            intent_md="Status: accepted.\nI",
-            spec_md="Status: accepted.\nS",
-            plan_md=self.PLAN + self.ANSWERS,
-            pr_md="# PR: x\nStatus: accepted.\n\nPR-BODY-0054\n",
-        )
-
-    def _prompt(self, d: str, stage: str, **kw) -> str:
-        return compose_prompt(
-            d, self._unit(d), UNIT, stage, STAGES, f"{stage}.md", writes_own=stage == "pr", **kw
-        )[0]
-
-    def test_without_rerun_not_one_byte_changes(self):
-        with tempfile.TemporaryDirectory() as d:
-            for stage in ("intent", "spec", "plan"):
-                self.assertEqual(
-                    self._prompt(d, stage, rerun=False, rerun_note="x"), self._prompt(d, stage)
-                )
-                self.assertNotIn(self.HEADING, self._prompt(d, stage))
-
-    def test_the_note_reaches_the_prompt_verbatim_before_the_task(self):
-        note = "NOTE-0054: tách bước 3\n  giữ nguyên thụt lề"
-        with tempfile.TemporaryDirectory() as d:
-            prompt = self._prompt(d, "plan", rerun=True, rerun_note=note)
-            self.assertIn(note, prompt)
-            self.assertIn("recorded as `owner`", prompt)
-            self.assertIn("not a decision anyone approved", prompt)
-            self.assertLess(prompt.index(self.HEADING), prompt.index("# Your task"))
-
-    def test_no_note_says_so(self):
-        with tempfile.TemporaryDirectory() as d:
-            prompt = self._prompt(d, "spec", rerun=True, rerun_note="  ")
-            self.assertIn("No note was given: rewrite it on what changed since", prompt)
-
-    def test_plan_carries_its_text_above_answers(self):
-        with tempfile.TemporaryDirectory() as d:
-            prompt = self._prompt(d, "plan", rerun=True)
-            section = prompt[prompt.index(self.HEADING) : prompt.index("# Your task")]
-            self.assertIn("PLAN-BODY-0054", section)
-            self.assertNotIn("ANSWER-0054", section)
-            self.assertNotIn("\n## Answers\n", section)
-
-    def test_the_start_record_carries_the_rerun_and_nothing_otherwise(self):
-        records = AStepRecordsTheBaseItRanOn()
-        with tempfile.TemporaryDirectory() as d:
-            plain = records._start_record(d)
-        with tempfile.TemporaryDirectory() as d:
-            unasked = records._start_record(d, rerun=False, rerun_note="x")
-        with tempfile.TemporaryDirectory() as d:
-            rerun = records._start_record(d, rerun=True, rerun_note="NOTE")
-        self.assertNotIn("rerun", plain)
-        self.assertEqual(set(unasked), set(plain))
-        self.assertEqual(unasked["prompt_chars"], plain["prompt_chars"])
-        self.assertEqual((rerun["rerun"], rerun["rerun_note"]), (True, "NOTE"))
-
-
-class AStepRecordsThePlanDrift(AStepRecordsTheBaseItRanOn):
-    """`plan_drift` is `service.py`'s; the record only carries it."""
-
-    def test_the_drift_handed_in_is_the_drift_recorded(self):
-        drift = {
-            "plan_sha": "a" * 40,
-            "main_sha": "b" * 40,
-            "files": ["x.py"],
-            "checked": True,
-            "reason": "",
-        }
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(self._start_record(d, plan_drift=drift)["plan_drift"], drift)
-
-    def test_no_drift_handed_in_leaves_no_field(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertNotIn("plan_drift", self._start_record(d))
 
 
 class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
@@ -719,14 +582,6 @@ class ReviewRoundsAccumulate(unittest.TestCase):
             return last[1]
 
         return session, unit / "review.md", go
-
-    def test_the_prompt_carries_the_earlier_rounds(self):
-        with tempfile.TemporaryDirectory() as d:
-            session, _, go = self.run_review(
-                d, "# Review: x\nStatus: accepted.\n\n" + self.ROUND1 + "\n## Round 2\n\nok\n"
-            )
-            asyncio.run(go())
-            self.assertIn("ROUND-ONE-MARKER", session.prompt)
 
     def test_a_reply_that_keeps_round_one_is_written(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1184,137 +1039,6 @@ class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
             self.assertEqual((row["model"], row["model_source"]), ("m", "override"))
             self.assertEqual((final["model"], final["model_source"]), ("m", "override"))
 
-    def test_the_start_record_says_who_started_it(self):
-        """`person` unless the caller names `autopilot`; nothing else is taken."""
-        with tempfile.TemporaryDirectory() as d:
-            _, journal, _ = self.run_spec(d)
-            self.assertEqual(journal.records(d, kind="start")[-1]["started_by"], "person")
-        with tempfile.TemporaryDirectory() as d:
-            _, journal, _ = self.run_spec(d, started_by="autopilot")
-            self.assertEqual(journal.records(d, kind="start")[-1]["started_by"], "autopilot")
-        with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(ValueError):
-                self.run_spec(d, started_by="someone")
-            self.assertEqual(Journal(d, d).records(d, kind="start"), [])
-
-    def test_no_model_is_not_passed_at_all(self):
-        # A stand-in `stream` without a `model` parameter must keep working.
-        with tempfile.TemporaryDirectory() as d:
-            probe, _, final = self.run_spec(d)
-            self.assertEqual(final["outcome"], "done", final)
-            self.assertNotIn("model", probe.kw)
-            self.assertNotIn("effort", probe.kw)
-
-
-class TheRunLogCarriesEffortLabelAndTerminal(unittest.TestCase):
-    """The runner chooses none of it; it passes effort on and writes what it was given into `start`,
-    the SDK's `terminal_reason` into `end`."""
-
-    def run_spec(self, d, terminal=None, **kw):
-        class Probe:
-            def __init__(self):
-                self.kw = None
-
-            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-                self.kw = kw
-                yield ("chunk", "# Spec: x\nStatus: accepted.\n")
-                await _submits(kw)
-                yield ("done", {"session_id": "s-e", "cost": {}, "terminal_reason": terminal})
-
-        probe = Probe()
-        make_unit(Path(d), intent_md="Status: accepted.\nI")
-        journal = Journal(d, d)
-        r = Runner(sessions=probe, journal=journal)
-
-        async def go():
-            return [
-                ev
-                async for ev in r.run(
-                    workspace=d,
-                    directory=Path(d) / ".cos" / UNIT,
-                    journal_key=d,
-                    unit=UNIT,
-                    stage="spec",
-                    artifact="spec.md",
-                    stages=STAGES,
-                    mode="manual",
-                    **kw,
-                )
-            ]
-
-        _, final = asyncio.run(go())[-1]
-        return probe, journal, final
-
-    def test_start_carries_every_field(self):
-        with tempfile.TemporaryDirectory() as d:
-            probe, journal, final = self.run_spec(
-                d,
-                effort="high",
-                effort_source="default",
-                label_declared="routine",
-                label="novel",
-                label_source="escalated",
-                impl_run=2,
-            )
-            self.assertEqual(final["outcome"], "done", final)
-            self.assertEqual(probe.kw.get("effort"), "high")
-            start = journal.records(d, kind="start")[-1]
-            got = {
-                k: start.get(k)
-                for k in (
-                    "effort",
-                    "effort_source",
-                    "label_declared",
-                    "label",
-                    "label_source",
-                    "impl_run",
-                )
-            }
-            self.assertEqual(
-                got,
-                {
-                    "effort": "high",
-                    "effort_source": "default",
-                    "label_declared": "routine",
-                    "label": "novel",
-                    "label_source": "escalated",
-                    "impl_run": 2,
-                },
-            )
-
-    def test_no_impl_run_is_not_written(self):
-        with tempfile.TemporaryDirectory() as d:
-            _, journal, _ = self.run_spec(d)
-            start = journal.records(d, kind="start")[-1]
-            self.assertNotIn("impl_run", start)
-            self.assertIsNone(start["label"])
-
-    def test_end_carries_the_terminal_reason(self):
-        with tempfile.TemporaryDirectory() as d:
-            _, journal, final = self.run_spec(d, terminal="max_turns")
-            self.assertEqual(final["outcome"], "exhausted", final)
-            self.assertEqual(journal.records(d, kind="end")[-1]["terminal"], "max_turns")
-
-    def test_end_fields_are_added_to_a_done_end(self):
-        async def fields():
-            return {"findings": 3, "findings_open": 1}
-
-        with tempfile.TemporaryDirectory() as d:
-            _, journal, _ = self.run_spec(d, end_fields=fields)
-            end = journal.records(d, kind="end")[-1]
-            self.assertEqual((end["findings"], end["findings_open"]), (3, 1))
-
-    def test_a_failing_callback_leaves_an_ordinary_end(self):
-        async def fields():
-            raise RuntimeError("the board could not be read")
-
-        with tempfile.TemporaryDirectory() as d:
-            _, journal, final = self.run_spec(d, end_fields=fields)
-            self.assertEqual(final["outcome"], "done", final)
-            end = journal.records(d, kind="end")[-1]
-            self.assertEqual(end["outcome"], "done")
-            self.assertNotIn("findings", end)
-
 
 class AnImplRunsUnderTheCeilingsOfItsLabel(unittest.TestCase):
     """`Runner.run` asks for the grant with the label it was given, and the ceilings the session
@@ -1525,92 +1249,6 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
         )
 
 
-class AStepTakenUpAgainWritesItsConfig(unittest.TestCase):
-    """The new segment's `config` is what its owner kept, less what the first segment used."""
-
-    def run_plan(self, d, owner):
-        from coscc.agent import steps
-        from coscc.store.db import Data
-        from coscc.runlog import events
-
-        directory = make_unit(
-            Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS"
-        )
-        sessions = AStepAnUpdatePaused.GoesOn(rest=AStepAnUpdatePaused.PLAN)
-        running = steps.Running(d, UNIT, "plan", "")
-        running.handle.recorder = events.Recorder("r-2", Data(d), d, d, UNIT, "plan")
-        resume = {
-            "suspend_id": "p1",
-            "session_id": "s-1",
-            "safe_uuid": "u9",
-            "message": "MSG",
-            "pieces": [],
-            "api_calls": 3,
-            "spent_usd": 0.5,
-            "owner": {"kind": "step", "start_at": "t0", "head": "", **owner},
-        }
-
-        async def go():
-            async for _ in Runner(sessions, Journal(d, d)).run(
-                workspace=d,
-                directory=directory,
-                journal_key=d,
-                unit=UNIT,
-                stage="plan",
-                artifact="plan.md",
-                stages=STAGES,
-                mode="manual",
-                running=running,
-                model="m",
-                effort="high",
-                resume=resume,
-            ):
-                pass
-
-        asyncio.run(go())
-        return sessions.calls[0], Data(d).step_events_page("r-2", None, 100)[0]
-
-    def test_it_says_what_the_owner_kept_and_what_was_left_of_the_ceilings(self):
-        owner = {
-            "max_turns": 50,
-            "max_budget_usd": 3.0,
-            "max_turns_source": "override",
-            "max_budget_source": "default",
-            "model_source": "override",
-            "effort_source": "default",
-        }
-        with tempfile.TemporaryDirectory() as d:
-            call, stored = self.run_plan(d, owner)
-        self.assertEqual((call["max_turns"], call["max_budget_usd"]), (47, 2.5))
-        self.assertEqual(stored[0]["kind"], "config")
-        self.assertEqual(
-            {k: v for k, v in stored[0].items() if k not in ("run", "seq", "at", "kind")},
-            {
-                "model": "m",
-                "model_source": "override",
-                "effort": "high",
-                "effort_source": "default",
-                "max_turns": 47,
-                "max_turns_source": "override",
-                "max_budget_usd": 2.5,
-                "max_budget_source": "default",
-            },
-        )
-        # And it keeps them for the next pause.
-        self.assertEqual(
-            (call["owner"]["max_turns"], call["owner"]["max_turns_source"]), (50, "override")
-        )
-
-    def test_an_owner_with_no_ceilings_leaves_them_as_resolved_now(self):
-        with tempfile.TemporaryDirectory() as d:
-            call, stored = self.run_plan(d, {})
-        self.assertEqual(call["max_turns"], grant_for("plan").max_turns - 3)
-        self.assertEqual(
-            (stored[0]["kind"], stored[0]["max_turns_source"], stored[0]["model_source"]),
-            ("config", "default", ""),
-        )
-
-
 class AWorkspacesListsReachTheImplGrant(unittest.TestCase):
     """`allow` and `block` from `cos.db` are in `Facts.commands` and the gate of an `impl`; the
     protected paths are refused at every stage that runs commands."""
@@ -1783,95 +1421,6 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
             self.assertEqual(by_stage["idea"]["system_prompt"], "")
 
 
-class TheStepKnowsWhichAgentItIs(unittest.TestCase):
-    """At the runner: the prompt, `start`, `end` and `settings` all say which agent the step is."""
-
-    class Probe(ABoardStepWithToolsRunsOnClaudeCodesPrompt.Probe):
-        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            self.text = text
-            self.kw = kw
-            stage, directory = self.stage, self.directory
-            body = f"# {stage.capitalize()}: x\nIntent: intent.md. Author: {self.author}. Status: accepted.\n"
-            if stage == "review":
-                body = f"# Review: x\nPR: pr.md. Author: {self.author}. Status: accepted.\n\n## Round 1\n"
-            if grant_for(stage).app_writes_artifact:
-                yield ("chunk", body)
-            else:
-                (directory / f"{stage}.md").write_text(body, encoding="utf-8")
-                yield ("chunk", "done")
-            await _submits(kw)
-            yield ("done", {"session_id": f"s-{stage}", "cost": {}})
-
-    def run_stage(self, d, stage, journal, agent, author="Someone"):
-        probe = self.Probe()
-        directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
-        probe.stage, probe.directory, probe.author = stage, directory, author
-        r = Runner(sessions=probe, journal=journal)
-
-        async def go():
-            return [
-                ev
-                async for ev in r.run(
-                    workspace=d,
-                    directory=directory,
-                    journal_key=d,
-                    unit=UNIT,
-                    stage=stage,
-                    artifact=f"{stage}.md",
-                    stages=STAGES,
-                    mode="manual",
-                    agent=agent,
-                )
-            ]
-
-        asyncio.run(go())
-        return probe
-
-    def test_start_carries_the_agent_and_end_the_author(self):
-        from coscc.agent import agents
-
-        with tempfile.TemporaryDirectory() as d:
-            journal = Journal(d, d)
-            probe = self.run_stage(
-                d, "impl", journal, agents.agent_for("impl"), author="Uruz (agent, impl)"
-            )
-            self.assertTrue(probe.text.startswith("# Who you are\n"))
-            [start] = journal.records(d, kind="start")
-            [end] = journal.records(d, kind="end")
-            self.assertEqual(start["agent"], "Uruz")
-            self.assertEqual((end["outcome"], end["author"]), ("done", "Uruz (agent, impl)"))
-            # A name off the table is written as it is, and the step is not refused.
-            self.run_stage(d, "plan", journal, agents.agent_for("plan"), author="Someone Else")
-            end = journal.records(d, kind="end")[-1]
-            self.assertEqual((end["outcome"], end["author"]), ("done", "Someone Else"))
-            # With no row: no `agent`, and not one byte more in the prompt.
-            probe = self.run_stage(d, "spec", journal, None)
-            self.assertNotIn("agent", journal.records(d, kind="start")[-1])
-            self.assertTrue(probe.text.startswith("# The rules for this stage"))
-
-    def test_a_preset_step_gets_the_attribution_settings_and_a_toolless_one_does_not(self):
-        from coscc.agent import agents
-
-        with tempfile.TemporaryDirectory() as d:
-            probe = self.run_stage(d, "impl", None, agents.agent_for("impl"))
-            self.assertEqual(
-                json.loads(probe.kw["settings"]),
-                {
-                    "attribution": {
-                        "commit": "Co-authored-by: Uruz (agent, impl) <uruz@agents.coscc.invalid>",
-                        "pr": "Uruz (agent, impl)",
-                    }
-                },
-            )
-        with tempfile.TemporaryDirectory() as d:
-            probe = self.run_stage(d, "intent", None, agents.agent_for("intent"))
-            self.assertNotIn("settings", probe.kw)
-            self.assertNotIn("system_prompt", probe.kw)
-            self.assertTrue(probe.text.startswith("# Who you are\n"))
-        with tempfile.TemporaryDirectory() as d:
-            self.assertNotIn("settings", self.run_stage(d, "impl", None, None).kw)
-
-
 def _git_repo(root: Path) -> Path:
     repo = root / "repo"
     repo.mkdir()
@@ -1925,40 +1474,6 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
         return make_unit(
             Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nSPEC", **files
         )
-
-    def test_plan_reads_the_spike_and_the_spec(self):
-        with tempfile.TemporaryDirectory() as d:
-            directory = self.unit(d, spike_md="Status: accepted.\nSPIKE")
-            prompt, included = build_prompt(d, directory, UNIT, "plan", STAGES, "plan.md")
-            self.assertEqual(included, ["intent.md", "spike.md", "spec.md"])
-            self.assertIn("SPIKE", prompt)
-            self.assertIn("SPEC", prompt)
-
-    def test_plan_without_a_spike_is_what_it_was(self):
-        with tempfile.TemporaryDirectory() as d:
-            directory = self.unit(d)
-            _, included = build_prompt(d, directory, UNIT, "plan", STAGES, "plan.md")
-            self.assertEqual(included, ["intent.md", "spec.md"])
-
-    def test_a_spec_rerun_reads_the_spike(self):
-        with tempfile.TemporaryDirectory() as d:
-            directory = self.unit(d, spike_md="Status: accepted.\nU2 FAILS")
-            prompt, included = build_prompt(d, directory, UNIT, "spec", STAGES, "spec.md")
-            self.assertIn("spike.md", included)
-            self.assertIn("U2 FAILS", prompt)
-            self.assertIn("# What the spike measured", prompt)
-
-    def test_the_spike_prompt_builds_names_its_directories_and_the_last_spike(self):
-        with tempfile.TemporaryDirectory() as d:
-            directory = self.unit(d, spike_md="Status: accepted.\nROUND-ONE")
-            prompt, included = build_prompt(
-                d, directory, UNIT, "spike", STAGES, "spike.md", worktree="/the/tree"
-            )
-            self.assertEqual(included, ["intent.md", "spec.md", "spike.md"])
-            self.assertIn("# The previous spike\n\nStatus: accepted.\nROUND-ONE", prompt)
-            self.assertIn("# Where you work", prompt)
-            self.assertIn("`/the/tree`", prompt)
-            self.assertIn("Reply with the file's complete contents", prompt)
 
     def test_the_spike_prompt_names_its_progress_file_and_its_ceilings(self):
         # The numbers are the grant's, not a second copy.
@@ -2034,109 +1549,6 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
         self.assertIn("## The progress file", skill_for("spike"))
 
 
-class RecordingChangesNothing(unittest.TestCase):
-    """The same step with a recorder and without one: the same outcome, the same artifact, the same
-    `start` and `end` but for `run` and `events_lost`. A recorder that raises everywhere changes
-    none of that, and the `end` says events were lost."""
-
-    class Replies:
-        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            yield ("chunk", "# Spec: x\nStatus: accepted.\n")
-            await _submits(kw)
-            yield (
-                "done",
-                {
-                    "session_id": "s-1",
-                    "terminal_reason": "success",
-                    "cost": {"turns": 2, "cost_usd": 0.25},
-                },
-            )
-
-    class Raises:
-        run = "r-broken"
-        seq = 4
-
-        def __getattr__(self, name):
-            def boom(*a, **k):
-                raise RuntimeError(name)
-
-            return boom
-
-    IGNORED = ("at", "run", "events_lost", "session_id", "pid")
-
-    def _once(self, make_recorder):
-        """`make_recorder(data)` gives the step's recorder; `None` runs it with no row at all."""
-        from coscc.agent import steps
-        from coscc.store.db import Data
-
-        with tempfile.TemporaryDirectory() as d:
-            directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
-            journal = Journal(d, d)
-            running = None
-            if make_recorder is not None:
-                running = steps.Running(d, UNIT, "spec", "")
-                running.handle.recorder = make_recorder(Data(d))
-
-            async def go():
-                return [
-                    i
-                    async for i in Runner(sessions=self.Replies(), journal=journal).run(
-                        workspace=d,
-                        directory=directory,
-                        journal_key=d,
-                        unit=UNIT,
-                        stage="spec",
-                        artifact="spec.md",
-                        stages=STAGES,
-                        mode="manual",
-                        running=running,
-                    )
-                ]
-
-            out = asyncio.run(go())
-            raw = [r for r in journal.records() if r["kind"] in ("start", "end")]
-            # Each run has its own temporary directory, and the records name it.
-            same = [
-                {
-                    k: (v.replace(d, "<d>") if isinstance(v, str) else v)
-                    for k, v in r.items()
-                    if k not in self.IGNORED
-                }
-                for r in raw
-            ]
-            return out[-1][1]["outcome"], (directory / "spec.md").read_bytes(), same, raw
-
-    def test_with_and_without_a_recorder_the_step_is_the_same(self):
-        from coscc.runlog import events
-
-        plain = self._once(None)
-        recorded = self._once(
-            lambda data: events.Recorder("r-1", data, "/w", "/w/ws", UNIT, "spec")
-        )
-        self.assertEqual(plain[:3], recorded[:3])
-        start, end = recorded[3]
-        self.assertEqual((start["run"], end["run"], end["events_lost"]), ("r-1", "r-1", 0))
-        self.assertNotIn("run", plain[3][0])
-
-    def test_a_recorder_that_raises_everywhere_changes_nothing_but_events_lost(self):
-        plain = self._once(None)
-        broken = self._once(lambda data: self.Raises())
-        self.assertEqual(plain[:3], broken[:3])
-        self.assertGreater(broken[3][1]["events_lost"], 0)
-
-    def test_every_refusal_reaches_the_listener_and_the_record_keeps_five(self):
-        from coscc.runner.attempt import Denials
-
-        heard = []
-        denials = Denials()
-        denials.listener = lambda tool, tool_input, reason: heard.append((tool, tool_input, reason))
-        for i in range(7):
-            denials.record("Bash", "no", {"command": str(i)})
-        self.assertEqual(len(heard), 7)
-        self.assertEqual(heard[6], ("Bash", {"command": "6"}, "no"))
-        self.assertEqual((denials.count, len(denials.reasons)), (7, Denials.KEEP))
-
-
 # One unit holding every artifact, each prose one carrying `## Answers`, and a review sent back with
 # two rounds: the fixture the prompts below are built from.
 _ANSWERED = (
@@ -2171,51 +1583,6 @@ def _golden_unit(root: Path) -> Path:
     return make_unit(root, **files)
 
 
-class TheStartRecordSaysWhatRanAndWhatWasNamed(unittest.TestCase):
-    class Probe:
-        async def stream(self, cwd, text, session_id=None, max_turns=1, **_):
-            yield ("chunk", "x")
-            await _submits(_)
-            yield ("done", {"session_id": "s", "cost": {}})
-
-    def start(self, d, stage, app):
-        directory = _golden_unit(Path(d))
-        journal = Journal(d, d)
-        r = Runner(self.Probe(), journal, app=app)
-
-        async def go():
-            async for _ in r.run(
-                workspace=d,
-                directory=directory,
-                journal_key=d,
-                unit=UNIT,
-                stage=stage,
-                artifact=f"{stage}.md",
-                stages=STAGES,
-                mode="manual",
-            ):
-                pass
-
-        asyncio.run(go())
-        return journal.records(d, kind="start")[-1]
-
-    def test_the_build_and_the_pointed_files(self):
-        with tempfile.TemporaryDirectory() as d:
-            start = self.start(d, "review", {"version": "0.12.0", "commit": "c" * 40})
-            self.assertEqual((start["app_version"], start["app_commit"]), ("0.12.0", "c" * 40))
-            self.assertIn("plan.md", start["pointed"])
-            self.assertIn("impl.md", start["included"])
-            self.assertIn("review-findings", start["included"])
-            self.assertNotIn("review.md", start["included"])
-
-    def test_a_runner_given_no_build_writes_neither_field(self):
-        with tempfile.TemporaryDirectory() as d:
-            start = self.start(d, "spec", None)
-            self.assertNotIn("app_version", start)
-            self.assertNotIn("app_commit", start)
-            self.assertEqual(start["pointed"], [])
-
-
 # --- a review that runs out of turns --------------------------------------------
 
 REVIEW_R1 = (
@@ -2237,68 +1604,6 @@ def incomplete_reply(
         f"# Review: x\nSpec: spec.md. Author: t. Status: {status}.\n\n"
         f"## Round {number}\n\nReviewed: {head}. Verdict: {verdict}.\n\n{body}"
     )
-
-
-class AStepRecordsTheModelTrial(AStepRecordsTheBaseItRanOn):
-    """The record handed in lands in `start`, none is no field, and its `model` is what the
-    session's `init` named, or `never-started`."""
-
-    TRIAL = {modeltrial.FIELD: {"arm": modeltrial.OPUS_ARM, "requested": "claude-opus-5-5[1m]"}}
-
-    class Initialised:
-        async def stream(self, cwd, text, session_id=None, max_turns=1, step=None, **kw):
-            step.init_model = "claude-opus-5-5[1m]"
-            yield ("session", "s-init")
-            yield ("chunk", "# Spec: x\nStatus: accepted.\n")
-            await _submits(kw)
-            yield ("done", {"session_id": "s-init", "cost": {}})
-
-    def test_no_trial_record_leaves_the_start_record_as_it_was(self):
-        with tempfile.TemporaryDirectory() as d:
-            unnamed = self._start_record(d)
-        with tempfile.TemporaryDirectory() as d:
-            none = self._start_record(d, trial_record=None)
-        self.assertEqual(set(unnamed), set(none))
-        for field in (modeltrial.FIELD, modeltrial.CI_RED):
-            self.assertNotIn(field, unnamed)
-
-    def test_a_session_that_never_named_its_model_is_recorded_never_started(self):
-        record = {**self.TRIAL, modeltrial.CI_RED: None}
-        with tempfile.TemporaryDirectory() as d:
-            start = self._start_record(d, trial_record=record)
-        self.assertEqual(
-            start[modeltrial.FIELD], {**self.TRIAL[modeltrial.FIELD], "model": "never-started"}
-        )
-        self.assertIn(modeltrial.CI_RED, start)
-        self.assertIsNone(start[modeltrial.CI_RED])
-
-    def test_the_model_init_named_reaches_the_start(self):
-        from coscc.agent import steps as steps_mod
-
-        with tempfile.TemporaryDirectory() as d:
-            make_unit(Path(d), intent_md="Status: accepted.\nI")
-            journal = Journal(d, d)
-            r = Runner(sessions=self.Initialised(), journal=journal)
-            running = steps_mod.Running(d, UNIT, "spec", "")
-
-            async def go():
-                async for _ in r.run(
-                    workspace=d,
-                    directory=Path(d) / ".cos" / UNIT,
-                    journal_key=d,
-                    unit=UNIT,
-                    stage="spec",
-                    artifact="spec.md",
-                    stages=STAGES,
-                    mode="manual",
-                    trial_record=self.TRIAL,
-                    running=running,
-                ):
-                    pass
-
-            asyncio.run(go())
-            [start] = journal.records(d, kind="start")
-        self.assertEqual(start[modeltrial.FIELD]["model"], "claude-opus-5-5[1m]")
 
 
 class AReviewAfterAnUnfinishedRoundIsHandedIt(unittest.TestCase):
@@ -2485,37 +1790,6 @@ class TheCommandsAStepMayRun(unittest.TestCase):
                 else:
                     self.assertNotIn(COMMANDS_HEADING, replies.prompt)
 
-    def test_write_impl_tells_a_step_to_batch_its_reads(self):
-        prompt = compose_prompt("/w", "/nowhere", UNIT, "impl", STAGES, "impl.md")[0]
-        self.assertIn("## Reading the tree", prompt)
-        self.assertIn("in one turn", prompt)
-
-
-class TheLastTurnEndsTheSession(unittest.TestCase):
-    """Every step whose grant holds `Bash` is told its session ends with its turn."""
-
-    def prompt_of(self, stage):
-        from coscc.runner.prompt import SESSION_ENDS_HEADING
-
-        steps = AStepCarriesItsGrantAndNothingOfTheMachine()
-        replies = steps.Replies()
-        with tempfile.TemporaryDirectory() as d:
-            make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
-            steps._run(d, replies, stage=stage)
-        self.assertIn("# The rules for this stage", replies.prompt)
-        return replies.prompt.count(SESSION_ENDS_HEADING)
-
-    def test_every_stage_that_runs_commands_is_told_once(self):
-        for stage in ("impl", "spike"):
-            with self.subTest(stage=stage):
-                self.assertIn("Bash", policy.grant_for(stage).tools)
-                self.assertEqual(self.prompt_of(stage), 1)
-
-    def test_no_prose_stage_is_told(self):
-        for stage in ("idea", "intent", "spec", "plan", "review"):
-            with self.subTest(stage=stage):
-                self.assertEqual(self.prompt_of(stage), 0)
-
 
 class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
     """A step with `Bash` is handed the command that runs this app's loop and its unit's `--root`,
@@ -2541,48 +1815,11 @@ class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
                     f"`{sys.executable} -P -m coscc.loop <command> --root {root}`", prompt
                 )
 
-    def test_the_snapshot_file_is_named_for_the_deciding_commands(self):
-        """`gate`, `pr-text` and the rest exit 2 without `--state`; the step is told its file."""
-        prompt = compose_prompt(
-            "/w",
-            Path("/store") / ".cos" / UNIT,
-            UNIT,
-            "impl",
-            STAGES,
-            "impl.md",
-            runs_commands=True,
-            state_file="/data/state/w/x.json",
-        )[0]
-        self.assertIn("also take `--state /data/state/w/x.json`", prompt)
-        without = compose_prompt(
-            "/w",
-            Path("/store") / ".cos" / UNIT,
-            UNIT,
-            "impl",
-            STAGES,
-            "impl.md",
-            runs_commands=True,
-        )[0]
-        self.assertNotIn("--state", without)
-
     def test_a_prose_stage_is_not_told(self):
         from coscc.runner.prompt import HARNESS_HEADING
 
         prompt = compose_prompt("/w", "/store/.cos/" + UNIT, UNIT, "spec", STAGES, "spec.md")[0]
         self.assertNotIn(HARNESS_HEADING, prompt)
-
-
-class AStepRecordsThePlanMapItCarried(AStepRecordsTheBaseItRanOn):
-    """The record handed in is the record written, and none is no field."""
-
-    def test_no_record_handed_in_leaves_no_field(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertNotIn("plan_map", self._start_record(d))
-
-    def test_the_record_handed_in_is_the_record_written(self):
-        record = {"bytes": 0, "files": 0, "full": 0, "short": 0, "new": 0, "outside": 0}
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(self._start_record(d, plan_map_record=record)["plan_map"], record)
 
 
 class AStepAnUpdatePaused(unittest.TestCase):

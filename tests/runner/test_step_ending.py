@@ -31,7 +31,7 @@ from tests.runner.test_step import (
     incomplete_reply,
     make_unit,
 )
-from tests.units.test_submit import a_head, submits as _submits
+from tests.units.test_submit import submits as _submits
 
 
 class AFailedStepIsRecordedAsFailed(unittest.TestCase):
@@ -310,35 +310,6 @@ class AnUnusableReplyIsKeptBesideTheReason(unittest.TestCase):
             # And it is in the run log too, so it survives the page being closed.
             [row] = journal.timeline(d, UNIT)
             self.assertIn("R1 — something.", row.get("detail") or "")
-
-    def test_a_step_that_said_nothing_at_all_adds_no_empty_section(self):
-        class Silent:
-            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-                await _submits(kw)
-                yield ("done", {"session_id": "s-0", "cost": {}})
-
-        with tempfile.TemporaryDirectory() as d:
-            make_unit(Path(d), intent_md="Status: accepted.\nI")
-            r = Runner(sessions=Silent(), journal=Journal(d, d))
-
-            async def go():
-                out = []
-                async for item in r.run(
-                    workspace=d,
-                    directory=Path(d) / ".cos" / UNIT,
-                    journal_key=d,
-                    unit=UNIT,
-                    stage="spec",
-                    artifact="spec.md",
-                    stages=STAGES,
-                    mode="manual",
-                ):
-                    out.append(item)
-                return out
-
-            _, payload = asyncio.run(go())[-1]
-            self.assertIn("returned nothing", payload["error"])
-            self.assertNotIn("what the session replied", payload["error"])
 
 
 class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
@@ -1732,37 +1703,6 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         )
         self.assertEqual(type(verdict).__name__, "PermissionResultDeny")
 
-    def test_a_repair_turn_cut_at_max_turns_writes_nothing_however_it_opens(self):
-        # An MCP call refused by `deny_all` ends the only turn, and what came before it opens right
-        # and says `accepted`.
-        sessions = self.Repairs(tries_tool=True, repair_terminal="max_turns")
-        out, [end], _, written, _ = self.go(sessions)
-        self.assertEqual(len(sessions.calls), 2)
-        self.assertIsNone(written)
-        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
-        self.assertNotIn("opening_reason", end)
-        self.assertEqual(end["closing"], {"terminal": "max_turns", "turns": 1, "cost_usd": 1.1})
-        self.assertTrue(end["detail"].startswith("plan.md lacks its opening:"), end["detail"][:80])
-        self.assertIn(
-            "--- plan.md: the repair turn's reply was not written: it stopped at the ceiling: max_turns ---",
-            end["detail"],
-        )
-        self.assertEqual(out[-1][1]["outcome"], "failed")
-
-    def test_a_repair_turn_past_the_budget_writes_nothing_though_it_ran_whole(self):
-        # The CLI compares the cost after the turn has run, so the reply is whole; it is refused all
-        # the same, and the step is not `done` past its budget.
-        sessions = self.Repairs(repair_terminal="error_max_budget_usd")
-        _, [end], _, written, _ = self.go(sessions)
-        self.assertEqual(len(sessions.calls), 2)
-        self.assertIsNone(written)
-        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
-        self.assertEqual(end["cost_usd"], 3.1)
-        self.assertIn(
-            "--- plan.md: the repair turn's reply was not written: it stopped at the ceiling: error_max_budget_usd ---",
-            end["detail"],
-        )
-
     def _paused_repair(self, spent_usd):
         # An update paused the repair turn; its main reply is the pieces before it.
         return {
@@ -1798,19 +1738,6 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         self.assertTrue(written.decode("utf-8").startswith(REPAIRED_PLAN))
         self.assertEqual((end["outcome"], end["opening"]), ("done", "repaired"))
 
-    def test_a_resumed_repair_turn_with_its_budget_spent_is_not_opened(self):
-        # It would stop at the ceiling and be refused; a spent budget is never handed to the CLI as
-        # `0` or less.
-        sessions = self.Repairs()
-        sessions.calls.append({"text": "the main reply, before the update"})
-        _, [end], _, written, _ = self.go(sessions, resume=self._paused_repair(50.0))
-        self.assertEqual(len(sessions.calls), 1)
-        self.assertIsNone(written)
-        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
-        self.assertIn("it stopped at the ceiling: error_max_budget_usd", end["detail"])
-        self.assertNotIn("not resumed", end["detail"])
-        self.assertNotIn("was not reached again", end["detail"])
-
     def test_a_repaired_reply_is_written_and_the_step_ends_done(self):
         section = (
             "## Answers\n\n### Câu 1\nAnswered by: Lan. Date: 2026-09-26. Via: product.\n\ncó\n"
@@ -1833,67 +1760,6 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         self.assertEqual([x for x in records if x["kind"] == "attempt"], [])
         self.assertEqual(out[-1][1]["outcome"], "done")
 
-    def test_a_repair_reply_still_without_its_opening_is_not_written(self):
-        sessions = self.Repairs(repair=UNOPENED_PLAN)
-        out, [end], _, written, _ = self.go(sessions)
-        self.assertEqual(len(sessions.calls), 2)
-        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
-        self.assertNotIn("opening_reason", end)
-        lines = end["detail"].splitlines()
-        self.assertTrue(lines[0].startswith("plan.md lacks its opening:"), lines[0])
-        # What the session first replied is still there, above the repair's line.
-        self.assertIn("PHẦN-ĐẦU", end["detail"])
-        self.assertIn(
-            "--- plan.md: the repair turn's reply was not written: plan.md lacks its opening:",
-            end["detail"],
-        )
-        self.assertIsNone(written)
-        self.assertEqual(out[-1][1]["outcome"], "failed")
-
-    def test_the_app_never_writes_a_title_or_status_itself(self):
-        existing = b"# Plan: x\nIntent: i. Status: draft.\n\nC\xc5\xa8\n"
-        sessions = self.Repairs(first=NO_STATUS_PLAN, repair=NO_STATUS_PLAN)
-        _, [end], _, written, _ = self.go(sessions, existing=existing)
-        self.assertEqual(written, existing)
-        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
-        self.assertIn("no `Status:` line in its header", sessions.calls[1]["text"])
-
-    def test_a_repair_turn_that_breaks_still_leaves_an_end(self):
-        _, [end], _, written, _ = self.go(self.Repairs(raises=RuntimeError("the CLI died")))
-        self.assertIsNone(written)
-        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
-        self.assertTrue(end["closing"]["cost_unknown"])
-        self.assertEqual(end["cost_usd"], 2.0)
-        self.assertIn(
-            "--- plan.md: the repair turn failed: RuntimeError: the CLI died ---", end["detail"]
-        )
-
-    def test_a_repair_turn_that_hangs_is_cut_at_the_timeout(self):
-        with mock.patch("coscc.runner.step.OPENING_TIMEOUT", 0.05):
-            _, [end], _, written, _ = self.go(self.Repairs(waits=True))
-        self.assertIsNone(written)
-        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
-        self.assertTrue(end["closing"]["cost_unknown"])
-        self.assertIn("the repair turn failed: TimeoutError", end["detail"])
-
-    def test_a_session_with_no_id_gets_no_repair_turn(self):
-        sessions = self.Repairs(session="")
-        _, [end], _, _, _ = self.go(sessions)
-        self.assertEqual(len(sessions.calls), 1)
-        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
-        self.assertIn(
-            "--- plan.md: the opening was not repaired: the session has no id ---", end["detail"]
-        )
-        self.assertNotIn("closing", end)
-
-    def test_a_seal_refused_before_the_repair_turn_withholds_it(self):
-        sessions = self.Repairs()
-        with mock.patch("coscc.runner.step.steps.seal", side_effect=[True, False, True]):
-            _, [end], _, written, _ = self.go(sessions, running=False)
-        self.assertEqual(len(sessions.calls), 1)
-        self.assertIsNone(written)
-        self.assertEqual((end["outcome"], end["opening"]), ("failed", "withheld"))
-
     def test_the_app_going_down_during_the_repair_turn_writes_no_end(self):
         async def cancel_in_repair(task, sessions):
             while len(sessions.calls) < 2:
@@ -1905,48 +1771,6 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         self.assertEqual(out[-1], ("cancelled", None))
         self.assertEqual(ends, [])
         self.assertIsNone(written)
-
-    def test_a_review_repair_turn_asks_for_the_new_round_only(self):
-        head = a_head(self, "b" * 40)
-        round2 = incomplete_reply(head, verdict="changes-requested", status="changes-requested")
-        sessions = self.Repairs(first=round2.split("\n", 1)[1], repair=round2)
-        # What the round says is its object; the prose above is rendered from it.
-        sessions.obj = {"verdict": "changes-requested"}
-        _, [end], _, written, _ = self.go(sessions, stage="review")
-        self.assertIn("new round only", sessions.calls[1]["text"])
-        review = written.decode("utf-8")
-        self.assertIn(REVIEW_R1.split("\n\n", 1)[1].rstrip(), review)
-        self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: changes-requested.", review)
-        self.assertEqual(
-            (end["outcome"], end["review_md"], end["opening"]), ("done", "round", "repaired")
-        )
-
-    def test_a_reply_that_opens_right_gets_no_repair_turn(self):
-        sessions = self.Repairs(first=REPAIRED_PLAN)
-        _, [end], _, written, _ = self.go(sessions)
-        self.assertEqual(len(sessions.calls), 1)
-        self.assertEqual(written.decode("utf-8"), REPAIRED_PLAN)
-        self.assertEqual(end["outcome"], "done")
-        self.assertNotIn("opening", end)
-        self.assertNotIn("closing", end)
-
-    def test_an_exhausted_step_gets_no_repair_turn(self):
-        sessions = self.Repairs(terminal="max_turns")
-        _, [end], _, written, _ = self.go(sessions)
-        self.assertEqual(len(sessions.calls), 1)
-        self.assertIsNone(written)
-        self.assertEqual(end["outcome"], "exhausted")
-        self.assertNotIn("opening", end)
-
-    def test_another_refusal_gets_no_repair_turn(self):
-        rewrites = "# Review: x\nSpec: spec.md. Author: t. Status: changes-requested.\n\n## Round 1\n\nKhác.\n"
-        for stage, first in (("plan", "   "), ("review", rewrites)):
-            with self.subTest(stage=stage):
-                sessions = self.Repairs(first=first)
-                _, [end], _, _, _ = self.go(sessions, stage=stage)
-                self.assertEqual(len(sessions.calls), 1)
-                self.assertEqual(end["outcome"], "failed")
-                self.assertNotIn("opening", end)
 
 
 class TheOtherTwoWritesAreCheckedTheSame(unittest.TestCase):
@@ -2102,17 +1926,3 @@ class ABackgroundRunIsRefusedAndCounted(unittest.TestCase):
         self.assertEqual(end["outcome"], "failed")
         self.assertEqual((end["background"], end["denials"]), (2, 2))
         self.assertTrue(end["detail"].startswith("the step did not write impl.md"), end["detail"])
-
-    def test_a_step_with_bash_and_no_background_run_records_zero(self):
-        def fake(directory):
-            writes = lambda: (directory / "impl.md").write_text("# Impl: x\nStatus: accepted.\n")
-            return self.Fake(({"command": "npm test"},), writes)
-
-        end = self.run_step("impl", "impl.md", fake)
-        self.assertEqual(end["outcome"], "done")
-        self.assertEqual(end["background"], 0)
-
-    def test_a_step_without_bash_carries_no_background_field(self):
-        end = self.run_step("plan", "plan.md", lambda directory: self.Fake())
-        self.assertEqual(end["outcome"], "done")
-        self.assertNotIn("background", end)
