@@ -16,11 +16,17 @@ edited but `intent.md`. From the board the input and earlier answers are in the 
 through `questions` as the prompt says, and never re-ask a question that has a block under
 `## Answers` (cite it as `<artifact> ## Answers, câu N`).
 
+From the board there is no shell: `Read`, `Glob` and `Grep` only, so no `git log`. The worktree
+is the code as it stands; an idea may describe code that has moved since.
+
 ## The interview
 
 1. Let them describe it in their own words first.
 2. Before each round, look: `Grep`/`Read` the code the problem names, `git log` for what was
    tried, the idea or incident they point at. Read only what the next question needs.
+   Before writing `## Problem`, check the problem still holds in the worktree's code. Cite only
+   files you opened in this step. If it no longer holds, say so in `## Problem` with the
+   path:lines that show it fixed, or the file gone.
 3. Ask at most three questions a round, each with what you found and your recommended answer.
    Dig where the answer is thin: the evidence, who pays, how done is measured, what must not
    change.

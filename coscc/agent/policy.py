@@ -226,8 +226,8 @@ ESTIMATE_WARNING = (
     "can rewrite any estimate, relation or the shortlist under any name they type."
 )
 
-# Only stages that appear here get anything. The rest (`idea`, `intent`, any stage invented
-# later) falls through to `Grant()`. Keyed by stage alone.
+# Only stages that appear here get anything. The rest (`idea`, any stage invented later) falls
+# through to `Grant()`. Keyed by stage alone.
 GRANTS: dict[str, Grant] = {
     # The one entry whose ceilings are measured rather than chosen. Fifty turns ended three of
     # four `impl` steps mid-work (51/50 turns, $1.8-2.5, no `impl.md`); the one that finished did
@@ -258,6 +258,15 @@ GRANTS: dict[str, Grant] = {
     # figure to name its source and every citation a path and line range. No write tools and no
     # commands; the app writes `spec.md` from the reply. Both ceilings are `plan`'s, not measured.
     "spec": Grant(
+        tools=READ_TOOLS,
+        max_turns=40,
+        max_budget_usd=4.0,
+    ),
+    # `intent` reads, and only reads: `write-intent` checks the idea's problem against the
+    # worktree's code before `## Problem` is written, and without read tools it restates the idea
+    # about code it never opened. No write tools and no commands; the app writes `intent.md` from
+    # the reply. Both ceilings are `spec`'s, chosen, not measured.
+    "intent": Grant(
         tools=READ_TOOLS,
         max_turns=40,
         max_budget_usd=4.0,
@@ -308,7 +317,7 @@ GRANTS: dict[str, Grant] = {
         push_needs_lease=True,
     ),
     # Not a stage either: the backlog's *Propose estimates* button, one session per press. No
-    # tools and no commands, like `idea` and `intent`; it hands its estimate back through
+    # tools and no commands, like `idea`; it hands its estimate back through
     # `submit` (`SUBMITTING_SESSIONS`) and the reply is not read. Ceilings chosen, not measured.
     "estimate": Grant(
         max_turns=1,

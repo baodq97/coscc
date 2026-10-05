@@ -62,9 +62,9 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
             self.assertEqual(grant.commands, (), f"{stage} carries commands")
             self.assertEqual(policy.beyond_reading(grant), (), f"{stage} carries more than reading")
 
-    def test_spec_plan_and_review_read_and_idea_and_intent_do_not(self):
-        # All three only read, in any mode.
-        readers = ("spec", "plan", "review")
+    def test_intent_spec_plan_and_review_read_and_idea_does_not(self):
+        # All four only read, in any mode.
+        readers = ("intent", "spec", "plan", "review")
         for reader in readers:
             self.assertEqual(policy.grant_for(reader).tools, policy.READ_TOOLS)
         for stage in policy.PROSE_STAGES:
@@ -103,6 +103,45 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                     unit=UNIT,
                     stage="plan",
                     artifact="plan.md",
+                    stages=STAGES,
+                    mode="autonomous",
+                ):
+                    out.append(ev)
+                return out
+
+            _, final = asyncio.run(go())[-1]
+
+        self.assertEqual(final["outcome"], "done", final)
+        self.assertEqual(sessions.granted, policy.READ_TOOLS)
+
+    def test_the_guard_lets_the_intent_stage_through_with_its_read_tools(self):
+        """A real `intent` run reaches the session holding `READ_TOOLS`: it checks the idea's
+        problem against the worktree before it writes `## Problem`."""
+
+        class Replies:
+            def __init__(self):
+                self.granted = None
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, tools=None, **kw):
+                self.granted = tuple(tools or ())
+                yield ("chunk", "# Intent: x\nStatus: accepted.\n")
+                await _submits(kw)
+                yield ("done", {"session_id": "s-intent", "cost": {}})
+
+        sessions = Replies()
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), idea_md="Status: accepted.\nI")
+            r = Runner(sessions=sessions, journal=None)
+
+            async def go():
+                out = []
+                async for ev in r.run(
+                    workspace=d,
+                    directory=Path(d) / ".cos" / UNIT,
+                    journal_key=d,
+                    unit=UNIT,
+                    stage="intent",
+                    artifact="intent.md",
                     stages=STAGES,
                     mode="autonomous",
                 ):
@@ -1378,7 +1417,7 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
         with_tools = [s for s in STAGES if grant_for(s).opens_anything]
         # Pinned, so a change to the grant table turns this red rather than quietly
         # leaving a stage out of what it checks.
-        self.assertEqual(with_tools, ["spec", "spike", "plan", "impl", "review"])
+        self.assertEqual(with_tools, ["intent", "spec", "spike", "plan", "impl", "review"])
         for stage in with_tools:
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
                 probe, _ = self.run_stage(d, stage)
@@ -1388,11 +1427,10 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
                 self.assertNotIn("append", probe.kw["system_prompt"])
 
     def test_a_stage_without_tools_gets_none(self):
-        for stage in ("idea", "intent"):
-            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
-                probe, _ = self.run_stage(d, stage)
-                self.assertIsNotNone(probe.kw)
-                self.assertNotIn("system_prompt", probe.kw)
+        with tempfile.TemporaryDirectory() as d:
+            probe, _ = self.run_stage(d, "idea")
+            self.assertIsNotNone(probe.kw)
+            self.assertNotIn("system_prompt", probe.kw)
 
     def test_the_read_only_stage_is_still_refused_writes_and_commands(self):
         import claude_agent_sdk as sdk
