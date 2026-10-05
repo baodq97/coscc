@@ -2,7 +2,7 @@
 paths:
   - "ui/src/**"
   - "ui/index.html"
-  - "coscc/auth.py"
+  - "coscc/http/auth.py"
   - "coscc/features/*.js"
   - "coscc/features/*/page.py"
 ---

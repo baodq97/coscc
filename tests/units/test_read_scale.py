@@ -12,7 +12,7 @@ from unittest import mock
 
 from coscc.config import Config
 from coscc.github import integrate
-from coscc.service import Service
+from coscc.http.app import Core
 from tests.github.test_integration import StandIn, git
 
 SMALL, LARGE, ROUNDS, FINDINGS = 8, 300, 5, 4
@@ -40,19 +40,19 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
-        self.services: list[Service] = []
+        self.cores: list[Core] = []
         patch = mock.patch.object(integrate, "_gh", self._gh)
         patch.start()
         self.addCleanup(patch.stop)
 
     async def asyncTearDown(self):
-        for service in self.services:
-            await service.shutdown()
+        for core in self.cores:
+            await core.shutdown()
 
     async def _gh(self, argv, cwd):
         return 0, "[]", ""
 
-    async def store(self, name: str, units: int) -> tuple[Service, str]:
+    async def store(self, name: str, units: int) -> tuple[Core, str]:
         """A workspace of `units` units the loop reads as `finished`, each with a long review."""
         workspace = self.root / name / "proj"
         workspace.mkdir(parents=True)
@@ -64,9 +64,9 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
             working_dir=str(self.root / name),
             data_dir=str(self.root / name / "data"),
         )
-        service = Service(config, StandIn(None))
-        self.services.append(service)
-        first = Path((await service.answers.create_unit(cwd, "scale-0", "fixture"))["path"])
+        core = Core(config, StandIn(None))
+        self.cores.append(core)
+        first = Path((await core.answers.create_unit(cwd, "scale-0", "fixture"))["path"])
         for n in range(units):
             unit = f"{n + 1:04d}_scale-{n}"
             directory = first.parent / (first.name if n == 0 else unit)
@@ -78,30 +78,30 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
                     f"# X: {unit}\nAuthor: t.{extra} Status: {status}.\n", encoding="utf-8"
                 )
             (directory / "review.md").write_text(review(unit), encoding="utf-8")
-        return service, cwd
+        return core, cwd
 
-    async def ended(self, service: Service) -> None:
+    async def ended(self, core: Core) -> None:
         """Every read running now ended, and the reads an answer starts."""
-        while running := [*service.boards.reads.values(), *service.integration.ci_asks.values()]:
+        while running := [*core.boards.reads.values(), *core.integration.ci_asks.values()]:
             await asyncio.gather(*running)
             for _ in range(5):
                 await asyncio.sleep(0)
 
     async def warm(self, name: str, units: int) -> tuple[dict, int]:
         """The board after one read, and the reads a held answer made."""
-        service, cwd = await self.store(name, units)
-        board = await service.board(cwd)
-        await self.ended(service)
-        reads = service.boards.read
+        core, cwd = await self.store(name, units)
+        board = await core.board(cwd)
+        await self.ended(core)
+        reads = core.boards.read
         calls = []
 
         async def counted(*args, **kw):
             calls.append(args)
             return await reads(*args, **kw)
 
-        with mock.patch.object(service.boards, "read", counted):
-            held = await service.board(cwd, "held")
-        await self.ended(service)
+        with mock.patch.object(core.boards, "read", counted):
+            held = await core.board(cwd, "held")
+        await self.ended(core)
         self.assertEqual(held["read_at"], board["read_at"])
         return held, len(calls)
 

@@ -167,8 +167,8 @@ DICT_ANY: set[str] = {
     "coscc.runner.review:finding_line",
     "coscc.runner.review:render_round",
     "coscc.runner.step:Runner.run",
-    "coscc.service.agents:Agents.agent",
-    "coscc.service.agents:Agents.agent_table",
+    "coscc.leif.agents:Agents.agent",
+    "coscc.leif.agents:Agents.agent_table",
     "coscc.leif.answers:Answers.answer",
     "coscc.leif.answers:Answers.create_unit",
     "coscc.leif.answers:Answers.hold",
@@ -187,11 +187,11 @@ DICT_ANY: set[str] = {
     "coscc.leif.autopilot:Autopilot.settings",
     "coscc.leif.autopilot:Autopilot.show",
     "coscc.leif.autopilot:autopilot_values",
-    "coscc.service.backlog:Backlog._append_checked.refuse",
-    "coscc.service.backlog:Backlog.propose_estimates",
-    "coscc.service.backlog:Backlog.record_estimate",
-    "coscc.service.backlog:Backlog.record_relation",
-    "coscc.service.backlog:Backlog.record_shortlist",
+    "coscc.leif.backlog:Backlog._append_checked.refuse",
+    "coscc.leif.backlog:Backlog.propose_estimates",
+    "coscc.leif.backlog:Backlog.record_estimate",
+    "coscc.leif.backlog:Backlog.record_relation",
+    "coscc.leif.backlog:Backlog.record_shortlist",
     "coscc.units.read:Board.get",
     "coscc.units.read:Board.read",
     "coscc.units.read:Board.running",
@@ -203,10 +203,10 @@ DICT_ANY: set[str] = {
     "coscc.units.ideas:Ideas.create_idea",
     "coscc.units.ideas:Ideas.idea",
     "coscc.units.ideas:Ideas.idea_link",
-    "coscc.service.models:Models.findings_added",
-    "coscc.service.models:Models.stage_config",
-    "coscc.service.release:Release._release_press.write",
-    "coscc.service.release:Release.attach_release",
+    "coscc.leif.agents:Models.findings_added",
+    "coscc.leif.agents:Models.stage_config",
+    "coscc.github.release:Release._release_press.write",
+    "coscc.github.release:Release.attach_release",
     "coscc.runner.resume:Resume.resume_after_update",
     "coscc.github.integration:Integration.resume",
     "coscc.github.integration:Integration.resume.write",
@@ -235,21 +235,17 @@ DICT_ANY: set[str] = {
     "coscc.runner.steps:Steps.stop_running",
     "coscc.runner.steps:Steps.stop_step",
     "coscc.github.integration:integration_since_review",
-    "coscc.service.update:update_words",
-    "coscc.service.watch:Watch.events_page",
+    "coscc.update.updater:update_words",
+    "coscc.runner.watch:Watch.events_page",
     "coscc.units.workspaces:Workspaces.add",
     "coscc.units.workspaces:Workspaces.meta_of",
     "coscc.units.workspaces:Workspaces.pull",
     "coscc.units.workspaces:Workspaces.remove",
     "coscc.units.workspaces:Workspaces.set_label",
     "coscc.units.workspaces:Workspaces.snapshot",
-    "coscc.service:Service.board",
-    "coscc.service:Service.settle_after_suspend",
-    "coscc.service:Service.suspend_sessions",
-    "coscc.service:Service.update_apply",
-    "coscc.service:Service.update_build_local",
-    "coscc.service:Service.update_cancel",
-    "coscc.service:Service.update_status",
+    "coscc.http.app:Core.board",
+    "coscc.runner.resume:Resume.settle_after_suspend",
+    "coscc.runner.resume:Resume.suspend_sessions",
     "coscc.leif.decide:after_own_integration",
     "coscc.leif.decide:answer_completes",
     "coscc.leif.decide:answered_since_start",
@@ -690,9 +686,9 @@ class CoreNamesNoFeature(unittest.TestCase):
             'Z = "a scan of this workspace"\n'
             'W = "scratch"\n'
         )
-        found = feature_names_in_core({"coscc/service/m.py": ast.parse(src)}, ("scan", "scratch"))
+        found = feature_names_in_core({"coscc/leif/m.py": ast.parse(src)}, ("scan", "scratch"))
         self.assertEqual(
-            [f.split(" names")[0] for f in found], ["coscc/service/m.py:2", "coscc/service/m.py:3"]
+            [f.split(" names")[0] for f in found], ["coscc/leif/m.py:2", "coscc/leif/m.py:3"]
         )
         self.assertEqual(
             feature_names_in_core({"coscc/features/scan.py": ast.parse(src)}, ("scan",)), []

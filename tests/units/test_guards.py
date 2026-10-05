@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from coscc.runner.queue import Refused
-from coscc.service.common import Updating
+from coscc.runner.queue import Updating
 from coscc.units import guards, states
 from coscc.units.guards import OPEN, BadVerdict, Verdict
 
@@ -269,7 +269,7 @@ class ThePackagedLaneUsesEveryGuardAMachineNeeds(unittest.TestCase):
         self.assertEqual(lane.end, "shipped")
 
     def test_ci_poll_seconds_is_sixty(self):
-        # The precedent of `CI_REFRESH` (`coscc/service/steps.py`), chosen, not measured.
+        # The precedent of `CI_REFRESH` (`coscc/runner/steps.py`), chosen, not measured.
         self.assertEqual(states.default_lanes().ci_poll_seconds, 60.0)
 
 

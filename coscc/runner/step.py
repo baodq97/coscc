@@ -1558,7 +1558,7 @@ class Runner:
         `settings`) and `meta` (the unit's snapshot entry) are carried into the prompt or the
         `start` record and nowhere else; this module reads no git and decides no meaning.
         `base_note` is `service.describe_base(base)`, already worked out, so `build_prompt` does not
-        import `service`. `end_fields`, an async callable, is awaited only for a `done` step and its
+        import the app's assembly. `end_fields`, an async callable, is awaited only for a `done` step and its
         fields added to `end`; if it raises they are left out. `model_trial.model` is filled in once
         the session's `init` names it. `ci_red` may come alone.
 
@@ -1571,7 +1571,7 @@ class Runner:
         `impl` may read, and the paths the read boundary lets through (never writes, never
         `git -C`). `unfinished_round` is `{n, dropped}` for a `review` prompt only.
 
-        `running` is the step's row in `Service.steps`. With it the client is closed when the step
+        `running` is the step's row in `Core.steps`. With it the client is closed when the step
         ends, and a person's Stop ends it as `stopped`, decided by `running.stop_requested`, never
         by the kind of exception. A stop is honoured only before `steps.seal`, which is called
         before anything of the artifact is written or read, so a stopped step leaves no artifact
@@ -1582,7 +1582,7 @@ class Runner:
         before its safe point. The step goes on in the same session under what is left of the
         grant's two ceilings and writes no `start`; one whose ceiling is used up opens no session and
         ends `exhausted`. A row whose `owner.kind` is `opening` or `closing` goes through the main
-        reply again from those pieces and takes up that one turn. `owner_extra` is what `Service`
+        reply again from those pieces and takes up that one turn. `owner_extra` is what `Core`
         adds to the owner a `suspend` row carries.
         """
         was = dict((resume or {}).get("owner") or {})
@@ -1763,7 +1763,7 @@ class Runner:
                         running.handle.init_model if running is not None else "",
                     )
                 elif kind == "tool":
-                    # Not forwarded: `coscc/api.py` treats every kind that is not `chunk` as the terminal
+                    # Not forwarded: `coscc/http/routes.py` treats every kind that is not `chunk` as the terminal
                     # `done` row, so a third kind would arrive at the client as a malformed `done`.
                     after_submit = _after_call(pieces, payload, after_submit)
                 else:

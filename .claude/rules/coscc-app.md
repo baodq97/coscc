@@ -14,7 +14,7 @@ npm --prefix ui run build                   # the studio, into coscc/_studio/
 npm --prefix ui run dev                     # the studio on vite, against the app on :8790
 COS_WORKING_DIR=~/projects uv run coscc
 uv run coscc reset-password                 # clears the master password and every session
-uv run python -m coscc.api > ui/src/api.gen.ts   # after changing a route's shape
+uv run python -m coscc.http > ui/src/api.gen.ts   # after changing a route's shape
 uv run python scripts/capture_screens.py / /up-next   # into .screens/
 ```
 
@@ -22,7 +22,7 @@ uv run python scripts/capture_screens.py / /up-next   # into .screens/
 
 ## Invariants
 
-- A route that decides anything calls `Service`; the studio only shows, navigates and calls routes.
+- A route that decides anything calls `Core`; the studio only shows, navigates and calls routes.
 - Sessions spend account quota: nothing unattended talks to the app except its own autopilot;
   a `--paid` script spends money.
 - In-memory state (marks, the running list, holds) is per process: a second copy of the app on

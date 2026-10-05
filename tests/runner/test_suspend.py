@@ -1,5 +1,5 @@
-"""Tests for updating the app through `Service` (`coscc/service/__init__.py`,
-`coscc/service/update.py`), split from `tests/service/test_service.py`."""
+"""Tests for pausing the app's sessions for an update (`Resume.suspend_sessions`,
+`settle_after_suspend`, `update_waited`) and the refusals while one waits."""
 
 from __future__ import annotations
 
@@ -9,23 +9,23 @@ import unittest
 from pathlib import Path
 
 from coscc.config import Config
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 
 
 class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
-    """The update window and the one Apply per channel, at the `Service` seam."""
+    """The update window and the one Apply per channel, at the `Core` seam."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         config = Config(workspaces=(self.tmp.name,), data_dir=str(Path(self.tmp.name) / "data"))
-        self.s = Service(config, Sessions(config))
+        self.s = Core(config, Sessions(config))
 
     def tearDown(self):
         self.tmp.cleanup()
 
     async def test_run_integrate_and_send_refuse_with_updating(self):
-        from coscc.service.common import Updating
+        from coscc.runner.queue import Updating
 
         self.s.updater.window = True
         with self.assertRaises(Updating):
@@ -46,15 +46,15 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         held.open("estimate", "/w", "", "estimate", state="running")
         self.s.sessions._begin_turn("/w", "sid")
         self.s.steps.retakes["r"] = {"workspace": "/w", "unit": "0005_e", "started": "t"}
-        waited = sorted((j["stage"], j["unit"]) for j in self.s._update_waited())
+        waited = sorted((j["stage"], j["unit"]) for j in self.s.resume.update_waited())
         self.assertEqual(waited, [("integrate", "0002_b"), ("screens", "0005_e")])
 
     async def test_a_gebo_integration_is_suspended_not_waited_for(self):
         row = self.s.attempts.open("integration", "/w", "0002_b", "integrate", state="running")
-        self.assertEqual(len(self.s._update_waited()), 1)
-        # `service/steps.py`: GitHub refused the rebase and the press agreed to Gebo.
+        self.assertEqual(len(self.s.resume.update_waited()), 1)
+        # `runner/steps.py`: GitHub refused the rebase and the press agreed to Gebo.
         self.s.attempts.set_road(row["id"], "gebo")
-        self.assertEqual(self.s._update_waited(), [])
+        self.assertEqual(self.s.resume.update_waited(), [])
 
     async def test_suspend_rows_are_written_before_hand_off(self):
         # One `suspend` row per paused session, with who pressed Apply; a stream whose caller named
@@ -63,7 +63,7 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         config = Config(
             workspaces=(self.tmp.name,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
-        s = Service(config, Sessions(config))
+        s = Core(config, Sessions(config))
         owner = {
             "kind": "step",
             "workspace": "/w",
@@ -97,7 +97,7 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
             ]
 
         s.sessions.suspend_all = suspend_all  # type: ignore[method-assign]
-        written = await s.suspend_sessions("an")
+        written = await s.resume.suspend_sessions("an")
         self.assertEqual(len(written), 1)
         rows = s.ws.journal().unresumed()
         self.assertEqual(
@@ -116,62 +116,22 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
             self.s.attempts.move(row["id"], "ended", "done")
 
         task = asyncio.create_task(posts_its_round())
-        self.assertEqual(await self.s.settle_after_suspend(5), [])
+        self.assertEqual(await self.s.resume.settle_after_suspend(5), [])
         self.assertTrue(task.done())
 
     async def test_what_outlives_the_settle_is_returned_to_be_named(self):
         row = self.s.attempts.open("integration", "/w", "0002_b", "integrate", state="running")
         self.s.attempts.set_road(row["id"], "gebo")
-        left = await self.s.settle_after_suspend(0.05)
+        left = await self.s.resume.settle_after_suspend(0.05)
         self.assertEqual(
             [(j["kind"], j["unit"], j["stage"]) for j in left], [("gebo", "0002_b", "integrate")]
         )
 
     def test_the_routes_seam_refuses_where_updates_are_not_available(self):
-        from coscc.service.common import NotUpdatable
+        from coscc.update.updater import NotUpdatable, refusals
 
-        self.assertEqual(self.s.update_status()["shape"], "unavailable")
-        self.assertFalse(hasattr(self.s, "update_cut_list"))
-        with self.assertRaises(NotUpdatable):
-            asyncio.run(self.s.update_apply("release", "an"))
-        with self.assertRaises(NotUpdatable):
-            self.s.update_build_local("an")
-
-
-class WhatThePanelSays(unittest.TestCase):
-    def test_the_updates_section_shows_one_apply_per_channel(self):
-        from coscc.service.update import update_words
-
-        words = update_words(
-            {
-                "shape": "service",
-                "state": "idle",
-                "release": {"state": "ready", "version": "0.13.0"},
-                "local": {"state": "ready", "version": "0.12.0+gabc"},
-            }
-        )
-        self.assertEqual(
-            [a for a in words["actions"] if a.startswith(("apply-", "now-"))],
-            ["apply-release", "apply-local"],
-        )
-
-    def test_pending_says_what_it_waits_for_in_one_sentence(self):
-        from coscc.service.update import update_words
-        from coscc.update import updater
-
-        words = update_words(
-            {"shape": "service", "state": "pending", "release": {"state": "ready"}, "local": {}}
-        )
-        self.assertEqual(
-            words["line"], "An update waits for an integration or a screenshot retake to finish."
-        )
-        self.assertEqual(words["line"], updater.WAITING_WARNING)
-        self.assertEqual(words["line"].count("."), 1)
-        self.assertNotIn("apply-release", words["actions"])
-        self.assertIn("cancel", words["actions"])
-        self.assertEqual(
-            update_words({"shape": "service", "state": "applying", "release": {}, "local": {}})[
-                "line"
-            ],
-            "Updating now.",
-        )
+        self.assertEqual(self.s.updater.status()["shape"], "unavailable")
+        with self.assertRaises(NotUpdatable), refusals():
+            asyncio.run(self.s.updater.apply("release", "an"))
+        with self.assertRaises(NotUpdatable), refusals():
+            self.s.updater.build_local("an")

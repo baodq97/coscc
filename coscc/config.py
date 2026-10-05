@@ -1,13 +1,14 @@
 """The one place configuration is read; nothing else in `coscc/` may read the environment.
 
 Defaults are the safe posture: each capability is off. `host` is the exception (`0.0.0.0`):
-the master password in `coscc/auth.py` stands in front, and `coscc/run.py` warns at
+the master password in `coscc/http/auth.py` stands in front, and `coscc/run.py` warns at
 startup whenever the address is not loopback.
 """
 
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,11 @@ _ENV_PREFIX = "COS_"
 # The `cos.db` files a child of this app must not open, separated by `os.pathsep`. Not a
 # `COS_*` name: those are blanked for every child (`child_env`), and this one is written for it.
 PROTECTED_DB_VAR = "COSCC_PROTECTED_DB"
+
+# The login cookie's name, and the line `coscc` prints once, at its first start, to say how to set the
+# password. The updater's trial of a new build reads both.
+COOKIE = "coscc_session"
+SETUP_LINE = re.compile(r"^coscc setup token: (\S+)$")
 
 # Addresses that reach this machine and nowhere else. `0.0.0.0` is absent on purpose.
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})

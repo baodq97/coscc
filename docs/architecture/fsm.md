@@ -178,7 +178,7 @@ A pass, all CODE (`Autopilot.run_pass`):
    `started_by=autopilot`. A stop row is written only when a unit's stop kind changes; it
    clears itself when the cause is gone.
 
-## 4. Backlog — `coscc/service/backlog.py`, `coscc/units/backlog.py`
+## 4. Backlog — `coscc/leif/backlog.py`, `coscc/units/backlog.py`
 
 | Transition | Decided by | Recorded |
 |---|---|---|

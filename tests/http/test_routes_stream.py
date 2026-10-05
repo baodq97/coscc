@@ -6,7 +6,7 @@ import json
 import unittest
 from types import SimpleNamespace
 
-from coscc import api
+from coscc.http import routes as api
 from coscc.bus import Bus, Event
 
 
@@ -14,7 +14,7 @@ class TheStreamForwardsTheBus(unittest.IsolatedAsyncioTestCase):
     async def test_an_event_arrives_as_data_and_closing_stops_the_watch(self):
         bus = Bus()
         request = SimpleNamespace(
-            app=SimpleNamespace(state=SimpleNamespace(service=SimpleNamespace(bus=bus)))
+            app=SimpleNamespace(state=SimpleNamespace(core=SimpleNamespace(bus=bus)))
         )
         response = await api.stream(request)
         self.assertEqual(response.media_type, "text/event-stream")
@@ -32,7 +32,7 @@ class TheStreamForwardsTheBus(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_quiet_stream_says_it_is_alive(self):
         request = SimpleNamespace(
-            app=SimpleNamespace(state=SimpleNamespace(service=SimpleNamespace(bus=Bus())))
+            app=SimpleNamespace(state=SimpleNamespace(core=SimpleNamespace(bus=Bus())))
         )
         old, api.STREAM_PING_SECONDS = api.STREAM_PING_SECONDS, 0.01
         try:
@@ -48,7 +48,7 @@ class AStreamEnds(unittest.IsolatedAsyncioTestCase):
     async def test_it_ends_with_an_end_event_and_stops_its_watch(self):
         bus = Bus()
         request = SimpleNamespace(
-            app=SimpleNamespace(state=SimpleNamespace(service=SimpleNamespace(bus=bus)))
+            app=SimpleNamespace(state=SimpleNamespace(core=SimpleNamespace(bus=bus)))
         )
         old, api.STREAM_LIFETIME_SECONDS = api.STREAM_LIFETIME_SECONDS, 0.05
         try:

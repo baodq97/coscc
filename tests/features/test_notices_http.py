@@ -8,9 +8,10 @@ from unittest import mock
 
 import httpx
 
-from coscc.api import build
+from coscc.config import COOKIE
+from coscc.http.app import build
 from coscc.config import Config
-from tests.test_api import _tmp_config
+from tests.http.test_routes import _tmp_config
 
 
 async def _drain(lines):
@@ -59,7 +60,7 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await client.get("/api/notices/follow")).status_code, 400)
 
     async def test_the_notice_route_is_behind_the_login(self):
-        from coscc import auth
+        from coscc.http import auth
 
         paths = {r.path for r in self.app.routes}
         self.assertIn("/api/notices/follow", paths)
@@ -72,7 +73,7 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
         import io
         import time
 
-        from coscc import auth
+        from coscc.http import auth
         from coscc.features import notices
         from coscc.store.db import Data
         from coscc.store.journal import Journal
@@ -83,7 +84,7 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
         token = "t" * 43
         data.auth_session_add(auth._sha(token), now, now + auth.SESSION_TTL)
         guard = auth.Guard(self.app, data, err=io.StringIO())
-        cookie = {"cookie": f"{auth.COOKIE}={token}"}
+        cookie = {"cookie": f"{COOKIE}={token}"}
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=guard), base_url="http://t"
         ) as client:

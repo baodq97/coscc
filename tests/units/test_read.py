@@ -1,4 +1,4 @@
-"""Tests for `Board` in `coscc.units.read.py`, split from `tests/service/test_service.py`."""
+"""Tests for `Board` in `coscc.units.read.py`, split from `tests/http/test_app.py`."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.github import integrate
 from coscc.kernel import Invalid
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
 from tests.leif.test_answers import REVIEW_ONE
-from tests.service.test_service import create_sync
+from tests.http.test_app import create_sync
 from tests.github.test_integration import PR, SLUG, StandIn, git
 from tests.units.test_submit import submits as _submits
 
@@ -44,7 +44,7 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
                 await _submits(kw)
                 yield ("done", {"session_id": "sess-51", "cost": {}})
 
-        self.service = Service(
+        self.core = Core(
             Config(
                 workspaces=(str(self.repo),),
                 working_dir=str(self.root / "work"),
@@ -52,7 +52,7 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
             ),
             Looks(),
         )
-        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = self.made["unit"]
         (Path(self.made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
@@ -60,14 +60,14 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
 
     def held(self) -> list[dict]:
         """What the board shows as running in this workspace now, one row per attempt."""
-        key = self.service.ws.key(str(self.repo))
-        running = self.service.boards.running_here(key, {})
+        key = self.core.ws.key(str(self.repo))
+        running = self.core.boards.running_here(key, {})
         return [{**row, "unit": unit} for unit, rows in running.items() for row in rows]
 
     def _run(self, stage: str, stop_after: int | None = None, until_ended: bool = False):
         async def go():
             out = []
-            agen = self.service.steps.run_step(str(self.repo), self.unit, stage)
+            agen = self.core.steps.run_step(str(self.repo), self.unit, stage)
             try:
                 async for item in agen:
                     out.append(item)
@@ -78,7 +78,7 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
             if until_ended:
                 # The step is its attempt's own task: it goes on when its reader has gone.
                 for _ in range(500):
-                    if not self.service.attempts.unfinished():
+                    if not self.core.attempts.unfinished():
                         break
                     await asyncio.sleep(0.01)
             return out
@@ -93,7 +93,7 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
         )
         self.assertIsNone(entry["turns"])
         self.assertIsNone(entry["cost_usd"])
-        self.assertEqual(self.service.attempts.unfinished(), [])
+        self.assertEqual(self.core.attempts.unfinished(), [])
 
     def test_none_after_a_run_error(self):
         from coscc.runner.reply import RunError
@@ -107,24 +107,24 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
             with self.assertRaises(Invalid):
                 self._run("spec")
         self.assertEqual(len(self.seen[0]), 1)
-        self.assertEqual(self.service.attempts.unfinished(), [])
+        self.assertEqual(self.core.attempts.unfinished(), [])
 
     def test_none_after_the_caller_goes_away_mid_step(self):
         # (the attempt, not its reader, is the step's life): a reader that goes away takes its queue with it and nothing else, so the attempt
         # runs on to its own end, and then none is left.
         self._run("spec", stop_after=1, until_ended=True)
         self.assertEqual(len(self.seen[0]), 1)
-        self.assertEqual(self.service.attempts.unfinished(), [])
-        self.assertEqual(self.service.steps.tasks, {})
+        self.assertEqual(self.core.attempts.unfinished(), [])
+        self.assertEqual(self.core.steps.tasks, {})
 
     def test_a_step_the_gate_refuses_leaves_none(self):
         with self.assertRaises(Invalid):
             self._run("ship")
-        self.assertEqual(self.service.attempts.unfinished(), [])
+        self.assertEqual(self.core.attempts.unfinished(), [])
 
     def test_a_step_refused_as_busy_leaves_none_and_keeps_the_other(self):
-        key = self.service.ws.key(str(self.repo))
-        attempts = self.service.attempts
+        key = self.core.ws.key(str(self.repo))
+        attempts = self.core.attempts
         # The unit's own is being prepared; another unit's is running.
         mine = attempts.open("step", key, self.unit, "spec")
         attempts.move(mine["id"], "preparing")
@@ -151,15 +151,15 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
             working_dir=str(root / "work"),
             data_dir=str(root / "data"),
         )
-        self.service = Service(config, Sessions(config))
+        self.core = Core(config, Sessions(config))
         self.cwd = str(self.repo)
-        self.key = self.service.ws.key(self.cwd)
-        self.journal = self.service.ws.journal()
+        self.key = self.core.ws.key(self.cwd)
+        self.journal = self.core.ws.journal()
 
     def test_an_entry_and_its_own_start_show_only_as_running(self):
-        self.service.attempts.open("step", self.key, "0009_x", "impl", state="running")
+        self.core.attempts.open("step", self.key, "0009_x", "impl", state="running")
         self.journal.started(self.key, "0009_x", "impl", "manual")
-        got = self.service.boards.running(self.cwd)
+        got = self.core.boards.running(self.cwd)
         [row] = got["running"]["0009_x"]
         self.assertEqual(row["stage"], "impl")
         self.assertEqual(row["agent"], {"glyph": "ᚢ", "name": "Uruz"})
@@ -170,7 +170,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
 
     def test_an_orphan_start_shows_as_ended_unknown(self):
         rec = self.journal.started(self.key, "0009_x", "plan", "manual")
-        got = self.service.boards.running(self.cwd)
+        got = self.core.boards.running(self.cwd)
         self.assertEqual(got["running"], {})
         # A start with no `agent` is named from its stage.
         self.assertEqual(
@@ -180,15 +180,15 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
 
     def test_an_orphan_start_keeps_the_name_it_was_written_with(self):
         self.journal.started(self.key, "0009_x", "plan", "manual", agent="Wayfarer")
-        [row] = self.service.boards.running(self.cwd)["unknown_end"]["0009_x"]
+        [row] = self.core.boards.running(self.cwd)["unknown_end"]["0009_x"]
         self.assertEqual(row["agent"], "Wayfarer")
 
     def test_an_override_reaches_the_running_line(self):
         # The running line reads the one lookup, overrides included.
-        self.service.agents.set_agent_field("impl", "name", "Builder")
-        self.service.agents.set_agent_field("impl", "glyph", "ᛒ")
-        self.service.attempts.open("step", self.key, "0009_x", "impl", state="running")
-        [row] = self.service.boards.running(self.cwd)["running"]["0009_x"]
+        self.core.agents.set_agent_field("impl", "name", "Builder")
+        self.core.agents.set_agent_field("impl", "glyph", "ᛒ")
+        self.core.attempts.open("step", self.key, "0009_x", "impl", state="running")
+        [row] = self.core.boards.running(self.cwd)["running"]["0009_x"]
         self.assertEqual(row["agent"], {"glyph": "ᛒ", "name": "Builder"})
 
     def test_a_later_start_retires_the_orphan(self):
@@ -204,7 +204,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
         )
         self.journal.started(self.key, "0009_x", "impl", "manual")
         self.journal.finished(self.key, "0009_x", "impl", "done")
-        self.assertEqual(self.service.boards.running(self.cwd)["unknown_end"], {})
+        self.assertEqual(self.core.boards.running(self.cwd)["unknown_end"], {})
 
     def test_an_orphan_older_than_a_day_is_not_shown(self):
         self.journal.append(
@@ -217,47 +217,47 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
                 "at": "2020-01-01T00:00:00+00:00",
             }
         )
-        self.assertEqual(self.service.boards.running(self.cwd)["unknown_end"], {})
+        self.assertEqual(self.core.boards.running(self.cwd)["unknown_end"], {})
 
     def test_two_workspaces_do_not_mix(self):
-        other_key = self.service.ws.key(str(self.other))
-        self.service.attempts.open("step", other_key, "0009_x", "spec", state="running")
+        other_key = self.core.ws.key(str(self.other))
+        self.core.attempts.open("step", other_key, "0009_x", "spec", state="running")
         self.journal.started(other_key, "0010_y", "spec", "manual")
-        self.assertEqual(self.service.boards.running(self.cwd), {"running": {}, "unknown_end": {}})
-        got = self.service.boards.running(str(self.other))
+        self.assertEqual(self.core.boards.running(self.cwd), {"running": {}, "unknown_end": {}})
+        got = self.core.boards.running(str(self.other))
         self.assertEqual(list(got["running"]), ["0009_x"])
         self.assertEqual(list(got["unknown_end"]), ["0010_y"])
 
     def test_gebo_is_named_and_a_rebase_is_not(self):
-        gebo = self.service.attempts.open(
+        gebo = self.core.attempts.open(
             "integration", self.key, "0009_x", "integrate", state="running"
         )
-        self.service.attempts.set_road(gebo["id"], "gebo")
-        self.service.attempts.open("integration", self.key, "0010_y", "integrate", state="running")
-        got = self.service.boards.running(self.cwd)["running"]
+        self.core.attempts.set_road(gebo["id"], "gebo")
+        self.core.attempts.open("integration", self.key, "0010_y", "integrate", state="running")
+        got = self.core.boards.running(self.cwd)["running"]
         self.assertEqual(got["0009_x"][0]["agent"], {"glyph": "ᚷ", "name": "Gebo"})
         self.assertIsNone(got["0010_y"][0]["agent"])
         self.assertEqual(got["0010_y"][0]["kind"], "rebase")
 
     def test_a_workspace_outside_the_list_is_refused(self):
         with self.assertRaises(Invalid):
-            self.service.boards.running("/nonexistent/elsewhere")
+            self.core.boards.running("/nonexistent/elsewhere")
 
     def test_a_busy_run_log_is_a_note_not_a_refusal(self):
         from coscc.store.journal import Journal
         from coscc.store.db import Busy
 
-        self.service.attempts.open("step", self.key, "0009_x", "impl", state="running")
+        self.core.attempts.open("step", self.key, "0009_x", "impl", state="running")
         with mock.patch.object(Journal, "open_starts", side_effect=Busy("locked")):
-            got = self.service.boards.running(self.cwd)
+            got = self.core.boards.running(self.cwd)
         self.assertEqual(got["note"], "locked")
         self.assertEqual(list(got["running"]), ["0009_x"])
         self.assertEqual(got["unknown_end"], {})
 
     def test_no_working_folder_means_no_unknown_end(self):
         config = Config(workspaces=(self.cwd,), data_dir=str(Path(self._tmp.name) / "bare"))
-        service = Service(config, Sessions(config))
-        self.assertEqual(service.boards.running(self.cwd), {"running": {}, "unknown_end": {}})
+        core = Core(config, Sessions(config))
+        self.assertEqual(core.boards.running(self.cwd), {"running": {}, "unknown_end": {}})
 
 
 class TheGuide(unittest.TestCase):
@@ -273,19 +273,19 @@ class TheGuide(unittest.TestCase):
             working_dir=str(root / "work"),
             data_dir=str(root / "data"),
         )
-        self.service = Service(config, Sessions(config))
+        self.core = Core(config, Sessions(config))
         self.cwd = str(root / "work" / "proj")
-        self.key = self.service.ws.key(self.cwd)
-        self.journal = self.service.ws.journal()
+        self.key = self.core.ws.key(self.cwd)
+        self.journal = self.core.ws.journal()
 
     def block(self, units=()) -> dict:
         with mock.patch("coscc.leif.autopilot.autopilot_values", return_value={"autopilot": True}):
-            return self.service.autopilot.guide_block(self.key, units)
+            return self.core.autopilot.guide_block(self.key, units)
 
     def test_guide_lists_running_steps(self):
-        self.service.attempts.open("step", self.key, "0009_x", "impl", state="running")
-        self.service.attempts.open("step", self.key, "0010_y", "spec", state="running")
-        self.service.attempts.open("step", "/elsewhere", "0011_z", "spec", state="running")
+        self.core.attempts.open("step", self.key, "0009_x", "impl", state="running")
+        self.core.attempts.open("step", self.key, "0010_y", "spec", state="running")
+        self.core.attempts.open("step", "/elsewhere", "0011_z", "spec", state="running")
         got = self.block()["running"]
         self.assertEqual(
             [(r["unit"], r["stage"], r["agent"]) for r in got],
@@ -295,16 +295,16 @@ class TheGuide(unittest.TestCase):
 
     def test_guide_turns_every_stop_but_full_into_one_thing_to_do(self):
         kinds = ("a", "b", "c", "d", "e", "f", "cap", "reruns", "full")
-        self.service.autopilot.stops[self.key] = {
+        self.core.autopilot.stops[self.key] = {
             f"00{n:02d}_u": {"unit": f"00{n:02d}_u", "kind": k, "reason": f"why {k}"}
             for n, k in enumerate(kinds, 1)
         }
-        self.service.autopilot.stops[self.key][""] = {
+        self.core.autopilot.stops[self.key][""] = {
             "unit": "",
             "kind": "shortlist",
             "reason": "none",
         }
-        self.service.autopilot.stops[self.key]["0099_w"] = {
+        self.core.autopilot.stops[self.key]["0099_w"] = {
             "unit": "",
             "kind": "cap",
             "reason": "spent",
@@ -326,14 +326,14 @@ class TheGuide(unittest.TestCase):
 
     def test_a_needs_you_unit_with_a_step_running_is_counted_as_running(self):
         """The card lays `Running` over `Needs you`; the guide counts what the card says."""
-        self.service.attempts.open("step", self.key, "0001_u", "impl", state="running")
+        self.core.attempts.open("step", self.key, "0001_u", "impl", state="running")
         got = self.block([{"name": "0001_u", "state": {"state": "needs-you"}}])
         self.assertEqual((got["needs_you"], len(got["running"])), ([], 1))
 
     def test_guide_says_only_that_the_autopilot_is_off_when_it_is(self):
-        self.service.attempts.open("step", self.key, "0009_x", "impl", state="running")
-        self.assertEqual(self.service.autopilot.guide_block(self.key), {"on": False})
-        self.assertEqual(asyncio.run(self.service.board(self.cwd))["guide"], {"on": False})
+        self.core.attempts.open("step", self.key, "0009_x", "impl", state="running")
+        self.assertEqual(self.core.autopilot.guide_block(self.key), {"on": False})
+        self.assertEqual(asyncio.run(self.core.board(self.cwd))["guide"], {"on": False})
 
 
 class AUnitThatEndedLosesItsScratch(unittest.TestCase):
@@ -353,7 +353,7 @@ class AUnitThatEndedLosesItsScratch(unittest.TestCase):
         config = Config(
             workspaces=(str(self.repo),), working_dir=str(root / "work"), data_dir=self.data
         )
-        self.service = Service(config, Sessions(config))
+        self.core = Core(config, Sessions(config))
 
     def made(self, unit: str) -> tuple[Path, Path]:
         ram, disk = scratch.ensure(self.repo, unit, self.data)
@@ -361,7 +361,7 @@ class AUnitThatEndedLosesItsScratch(unittest.TestCase):
         return ram, disk
 
     def read(self, rows: list[dict]) -> None:
-        asyncio.run(self.service.boards._attach_worktrees(str(self.repo), rows))
+        asyncio.run(self.core.boards._attach_worktrees(str(self.repo), rows))
 
     def test_finished_and_rejected_lose_both_and_a_running_unit_keeps_them(self):
         places = {
@@ -401,9 +401,9 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         config = Config(
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
-        self.service = Service(config, StandIn(None))
-        self.key = self.service.ws.key(self.cwd)
-        made = await self.service.answers.create_unit(self.cwd, SLUG, "fixture")
+        self.core = Core(config, StandIn(None))
+        self.key = self.core.ws.key(self.cwd)
+        made = await self.core.answers.create_unit(self.cwd, SLUG, "fixture")
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
@@ -422,7 +422,7 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patch.stop)
 
     async def asyncTearDown(self):
-        await self.service.shutdown()
+        await self.core.shutdown()
 
     async def _gh(self, argv, cwd):
         self.calls.append(argv[:2])
@@ -436,85 +436,83 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
     def counted(self) -> list[str]:
         """Every `Board.read` from now on, by cwd."""
         reads: list[str] = []
-        real = self.service.boards.read
+        real = self.core.boards.read
 
         async def read(cwd, fresh=False):
             reads.append(cwd)
             return await real(cwd, fresh)
 
-        self.service.boards.read = read
+        self.core.boards.read = read
         return reads
 
     async def ended(self) -> None:
         """Every board read and CI ask running now ended, and the reads an answer starts."""
         while running := [
-            *self.service.boards.reads.values(),
-            *self.service.integration.ci_asks.values(),
+            *self.core.boards.reads.values(),
+            *self.core.integration.ci_asks.values(),
         ]:
             await asyncio.gather(*running)
             for _ in range(5):
                 await asyncio.sleep(0)
 
     async def test_a_round_on_the_board_carries_no_text(self):
-        [u] = (await self.service.board(self.cwd))["units"]
+        [u] = (await self.core.board(self.cwd))["units"]
         [rnd] = u["rounds"]
         self.assertNotIn("text", rnd)
         self.assertEqual((rnd["verdict"], rnd["open_ids"]), ("changes-requested", ["F1", "F2"]))
 
     async def test_a_gh_that_hangs_holds_neither_the_held_board_nor_a_read(self):
-        first = await self.service.board(self.cwd)
+        first = await self.core.board(self.cwd)
         self.assertEqual(first["units"][0]["integration"]["pr_head"], "a" * 40)
         self.hang = True
         began = time.monotonic()
-        held = await self.service.board(self.cwd, "held")
+        held = await self.core.board(self.cwd, "held")
         self.assertLessEqual(time.monotonic() - began, 0.5)
         self.assertEqual(held["read_at"], first["read_at"])
         # The read it started takes the held list and asks `gh` again in the background.
         await asyncio.wait_for(self.ended(), 5)
         self.assertEqual(
-            self.service.boards.held[self.key]["data"]["units"][0]["integration"]["pr_head"],
+            self.core.boards.held[self.key]["data"]["units"][0]["integration"]["pr_head"],
             "a" * 40,
         )
-        self.assertEqual(len(self.service.boards.prs.asks), 1)
+        self.assertEqual(len(self.core.boards.prs.asks), 1)
 
     async def test_two_asks_while_a_read_runs_start_one_read(self):
-        await self.service.board(self.cwd)
+        await self.core.board(self.cwd)
         await self.ended()
         reads = self.counted()
-        await asyncio.gather(
-            self.service.board(self.cwd, "held"), self.service.board(self.cwd, "held")
-        )
+        await asyncio.gather(self.core.board(self.cwd, "held"), self.core.board(self.cwd, "held"))
         await self.ended()
         self.assertEqual(reads, [self.cwd])
 
     async def test_a_new_ask_while_a_read_runs_reads_once_more_after_it(self):
-        await self.service.board(self.cwd)
+        await self.core.board(self.cwd)
         await self.ended()
         reads = self.counted()
-        await self.service.board(self.cwd, "held")
-        await self.service.board(self.cwd)
+        await self.core.board(self.cwd, "held")
+        await self.core.board(self.cwd)
         self.assertEqual(reads, [self.cwd, self.cwd])
 
     async def test_a_change_the_app_makes_starts_a_read_and_next_waits_for_it(self):
-        await self.service.board(self.cwd)
+        await self.core.board(self.cwd)
         await self.ended()
         reads = self.counted()
-        waiting = asyncio.ensure_future(self.service.board(self.cwd, "next"))
+        waiting = asyncio.ensure_future(self.core.board(self.cwd, "next"))
         await asyncio.sleep(0)
         self.assertFalse(waiting.done())
         self.assertEqual(reads, [])
-        await self.service.steps.set_mode(self.cwd, self.unit, "impl", "autonomous")
+        await self.core.steps.set_mode(self.cwd, self.unit, "impl", "autonomous")
         await asyncio.wait_for(waiting, 5)
         self.assertEqual(reads, [self.cwd])
 
     async def test_a_change_before_any_read_starts_none(self):
         reads = self.counted()
-        self.service.bus.publish(Event("answer.written", self.key, self.unit))
-        self.assertEqual((reads, self.service.boards.reads), ([], {}))
+        self.core.bus.publish(Event("answer.written", self.key, self.unit))
+        self.assertEqual((reads, self.core.boards.reads), ([], {}))
 
     async def test_every_read_logs_how_long_each_part_took(self):
         with self.assertLogs("coscc.units.read", "INFO") as logs:
-            await self.service.board(self.cwd)
+            await self.core.board(self.cwd)
         [line] = [m for m in logs.output if " read in " in m]
         for part in (
             "snapshot",

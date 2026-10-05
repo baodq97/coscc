@@ -1,7 +1,6 @@
 ---
 paths:
   - "coscc/github/release.py"
-  - "coscc/service/release.py"
 ---
 
 # Things that break here

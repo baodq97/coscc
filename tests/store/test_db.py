@@ -586,7 +586,7 @@ class Preferences(unittest.TestCase):
 
 
 class TheLoginStore(unittest.TestCase):
-    """What the guard in `coscc/auth.py` stands on."""
+    """What the guard in `coscc/http/auth.py` stands on."""
 
     def test_prefs_never_see_the_password_hash(self):
         with tempfile.TemporaryDirectory() as d:

@@ -64,10 +64,10 @@ def kept_fields(unit: dict) -> dict:
     }
 
 
-def ingest(service, cwd: str, unit: str) -> None:
+def ingest(core, cwd: str, unit: str) -> None:
     """Test glue (plan Risk 4): a file a test wrote by hand reaches `cos.db` the way a finished
     step's does, through `Answers.ingest`."""
-    done = asyncio.run(service.answers.ingest(cwd, unit, {"outcome": "done", "stage": "test"}))
+    done = asyncio.run(core.answers.ingest(cwd, unit, {"outcome": "done", "stage": "test"}))
     assert not done, done
 
 
@@ -524,7 +524,7 @@ class TheImportReport(unittest.TestCase):
         from coscc import units
         from coscc.config import Config
         from coscc.agent.sessions import Sessions
-        from coscc.service import Service
+        from coscc.http.app import Core
 
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp)
@@ -533,7 +533,7 @@ class TheImportReport(unittest.TestCase):
         config = Config(
             workspaces=(self.cwd,), working_dir=str(tmp / "work"), data_dir=str(tmp / "data")
         )
-        self.service = Service(config, Sessions(config))
+        self.core = Core(config, Sessions(config))
         self.store = units.root(self.cwd, config.data_dir)
 
     def test_an_import_that_fails_names_the_workspace_and_logs_the_error(self):
@@ -541,16 +541,16 @@ class TheImportReport(unittest.TestCase):
         from coscc.kernel import Invalid
 
         shutil.copytree(FIXTURE, self.store)
-        busy = Busy(self.service.config.data_dir + "/cos.db")
+        busy = Busy(self.core.config.data_dir + "/cos.db")
         with (
             mock.patch("coscc.units.meta.UnitMeta.import_store", side_effect=busy),
             self.assertLogs("coscc", "WARNING") as log,
         ):
             with self.assertRaises(Invalid) as said:
-                self.service.ws.snapshot(self.cwd)
+                self.core.ws.snapshot(self.cwd)
         self.assertEqual(str(said.exception), "the units of proj could not be imported")
         self.assertIn("cos.db", log.output[-1])
-        self.assertIn(self.service.ws.key(self.cwd), log.output[-1])
+        self.assertIn(self.core.ws.key(self.cwd), log.output[-1])
 
 
 if __name__ == "__main__":

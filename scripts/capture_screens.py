@@ -111,7 +111,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 import httpx
 
-from coscc import auth
+from coscc.config import COOKIE
 from scripts.proof_harness import (
     EXIT_BROKEN,
     EXIT_ENV,
@@ -393,7 +393,7 @@ def make_unread_fixture(api: httpx.Client, proj: Path) -> None:
 
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     """One ended `plan` run of `0004_finished` in the running app's run log, keyed
-    as `Service._journal_key` keys it. `at` is when it is written, so the page reads "just now"."""
+    as `Workspaces.key` keys it. `at` is when it is written, so the page reads "just now"."""
     import uuid
 
     from coscc.store.journal import Journal
@@ -596,7 +596,7 @@ def seed_pilot(data_dir: Path, proj: Path) -> None:
     install its engine (about 290 MB, over the network). The row shows `pilot` only when `npm`
     is on `PATH`; without it the feature is locked and the row shows `off`."""
     from coscc.store.db import Data
-    from coscc.plugin import STATE_PREF
+    from coscc.http.plugin import STATE_PREF
 
     Data(data_dir).set_pref(STATE_PREF, {"codegraph": {str(proj.resolve()): "pilot"}})
 
@@ -652,7 +652,7 @@ def shoot(
     """One address at one size: the PNG, the URL it ended on, the visible text, and whether
     the image is the full page. Raises `RuntimeError` when the page is not the app's."""
     context = browser.new_context(viewport={"width": size[0], "height": size[1]})
-    context.add_cookies([{"name": auth.COOKIE, "value": token, "url": base}])
+    context.add_cookies([{"name": COOKIE, "value": token, "url": base}])
     try:
         page = context.new_page()
         page.goto(base + address, wait_until="load", timeout=PAGE_TIMEOUT_MS)
@@ -785,7 +785,7 @@ def capture(args: argparse.Namespace, roots: list[Path]) -> int:
         seed_conversation(proj)
         seed_refusal(data_dir, proj)
         with RealApp(work, data_dir) as app:
-            with httpx.Client(base_url=app.base, timeout=30, cookies={auth.COOKIE: token}) as api:
+            with httpx.Client(base_url=app.base, timeout=30, cookies={COOKIE: token}) as api:
                 added = api.post("/api/workspaces", json={"name": "proj"})
                 if added.status_code != 200:
                     print(f"could not adopt the workspace: {added.text}", file=sys.stderr)

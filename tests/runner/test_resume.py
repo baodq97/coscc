@@ -1,4 +1,4 @@
-"""Tests for `coscc/service/resume.py`: taking up at start-up what an update paused.
+"""Tests for `coscc/runner/resume.py`: taking up at start-up what an update paused.
 
 `transcript.projects_root` is a temporary directory throughout, so nothing here reads or
 writes `~/.claude`. No session opens: an owner is a stand-in, or `Sessions.stream` is."""
@@ -17,10 +17,10 @@ from coscc.bus import Bus
 from coscc.agent import transcript
 from coscc.agent.sessions import Refused, Sessions, Suspended
 from coscc.config import Config
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.runner import resume as resume_mod
 from coscc.runner.queue import describe
-from tests.service.test_service import create_sync
+from tests.http.test_app import create_sync
 from tests.units.test_submit import submits as _submits
 
 SID = "5f1c2d3e-0000-4000-8000-000000000001"
@@ -101,10 +101,10 @@ class _Base(unittest.TestCase):
             working_dir=str(self.root / "work"),
             data_dir=str(self.root / "data"),
         )
-        self.service = Service(config, Sessions(config))
-        self.journal = self.service.ws.journal()
-        self.key = self.service.ws.key(self.cwd)
-        self.unit = create_sync(self.service, self.cwd, "a-problem", "words")["unit"]
+        self.core = Core(config, Sessions(config))
+        self.journal = self.core.ws.journal()
+        self.key = self.core.ws.key(self.cwd)
+        self.unit = create_sync(self.core, self.cwd, "a-problem", "words")["unit"]
         self.tree = self.root / "tree"
         self.tree.mkdir()
 
@@ -156,7 +156,7 @@ class _Base(unittest.TestCase):
 
     def up(self) -> list[dict]:
         async def go():
-            said = await self.service.resume.resume_after_update()
+            said = await self.core.resume.resume_after_update()
             for _ in range(20):
                 await asyncio.sleep(0)
             return said
@@ -166,7 +166,7 @@ class _Base(unittest.TestCase):
     def taken(self) -> list[dict]:
         """`resume_step` replaced: what it was handed, and nothing run."""
         calls: list[dict] = []
-        patcher = mock.patch.object(self.service.steps, "resume_step", calls.append)
+        patcher = mock.patch.object(self.core.steps, "resume_step", calls.append)
         patcher.start()
         self.addCleanup(patcher.stop)
         return calls
@@ -216,9 +216,9 @@ class TakingUpAfterAnUpdate(_Base):
             got["chat"].append(record)
 
         with (
-            mock.patch.object(self.service.integration, "resume", lambda r: integration(r)),
-            mock.patch.object(self.service.backlog, "propose_estimates", estimates),
-            mock.patch.object(self.service, "_resume_chat", chat),
+            mock.patch.object(self.core.integration, "resume", lambda r: integration(r)),
+            mock.patch.object(self.core.backlog, "propose_estimates", estimates),
+            mock.patch.object(self.core, "_resume_chat", chat),
         ):
             for kind in resume_mod.KINDS:
                 self.paused(kind)
@@ -308,7 +308,7 @@ class TakingUpAfterAnUpdate(_Base):
         # The `resume` row says what happened, not what was about to.
         steps_seen = self.taken()
         self.paused()
-        held = self.service.attempts.open(
+        held = self.core.attempts.open(
             "integration", self.key, self.unit, "integrate", state="running"
         )
         [said] = self.up()
@@ -336,15 +336,15 @@ class TakingUpAfterAnUpdate(_Base):
 
         cases = {
             "the workspace was taken off the list": lambda: mock.patch.object(
-                self.service.ws, "is_member", lambda cwd: False
+                self.core.ws, "is_member", lambda cwd: False
             ),
             "an update is being applied": lambda: mock.patch.object(
-                self.service.updater, "window", True
+                self.core.updater, "window", True
             ),
         }
         with (
-            mock.patch.object(self.service.backlog, "propose_estimates", estimates),
-            mock.patch.object(self.service, "_resume_chat", chat),
+            mock.patch.object(self.core.backlog, "propose_estimates", estimates),
+            mock.patch.object(self.core, "_resume_chat", chat),
         ):
             for why, refusal in cases.items():
                 with self.subTest(why), refusal():
@@ -374,25 +374,25 @@ class TakingUpAfterAnUpdate(_Base):
         # `suspend_all` closed `Sessions` to new streams; after a failed hand-off this same process
         # takes its rows up, and must open them again.
         self.taken()
-        self.service.sessions.paused = True
+        self.core.sessions.paused = True
         self.paused()
         self.up()
-        self.assertFalse(self.service.sessions.paused)
+        self.assertFalse(self.core.sessions.paused)
 
     def test_taking_up_again_leaves_a_live_hold_round_or_estimate_to_its_own_task(self):
         # A failed hand-off: the coroutine that opened each short attempt still runs here and
         # ends it itself, so Resume must not end it `interrupted` under it.
-        attempts = self.service.attempts
+        attempts = self.core.attempts
         live = []
         for machine, unit in (("hold", self.unit), ("rounds", "other"), ("estimate", "")):
             live.append(attempts.open(machine, self.key, unit)["id"])
             attempts.move(live[-1], "running")
-        self.service.sessions.paused = True
+        self.core.sessions.paused = True
         self.up()
         self.assertEqual([attempts.get(a)["state"] for a in live], ["running"] * 3)
 
     def test_a_fresh_start_ends_a_hold_the_last_process_left(self):
-        attempts = self.service.attempts
+        attempts = self.core.attempts
         mark = attempts.open("hold", self.key, self.unit)["id"]
         attempts.move(mark, "running")
         self.up()
@@ -409,7 +409,7 @@ class TakingUpAfterAnUpdate(_Base):
 
         self.paused(cwd=self.root / "gone", write=False)
         self.paused("integrate")
-        with mock.patch.object(self.service.integration, "resume", lambda r: integration(r)):
+        with mock.patch.object(self.core.integration, "resume", lambda r: integration(r)):
             said = self.up()
         self.assertEqual(
             [(s["kind"], s["result"]) for s in said], [("step", "failed"), ("integrate", "resumed")]
@@ -434,7 +434,7 @@ class TakingUpAfterAnUpdate(_Base):
             await _submits(kw)
             yield ("done", {"session_id": SID})
 
-        self.service.sessions.stream = stream  # type: ignore[method-assign]
+        self.core.sessions.stream = stream  # type: ignore[method-assign]
         self.paused("chat", api_calls=0)
         [said] = self.up()
         self.assertEqual(said["result"], "resumed")
@@ -449,7 +449,7 @@ class TakingUpAfterAnUpdate(_Base):
             await _submits(kw)
             yield ("done", {"session_id": SID})
 
-        self.service.sessions.stream = stream  # type: ignore[method-assign]
+        self.core.sessions.stream = stream  # type: ignore[method-assign]
         self.paused("chat", api_calls=1)
         [said] = self.up()
         self.assertEqual(streamed, [])
@@ -477,7 +477,7 @@ class TakingUpAfterAnUpdate(_Base):
         async def go():
             async for _ in Runner(sessions, self.journal).run(
                 workspace=self.cwd,
-                directory=self.service.ws.unit_dir(self.cwd, self.unit),
+                directory=self.core.ws.unit_dir(self.cwd, self.unit),
                 journal_key=self.key,
                 unit=self.unit,
                 stage="plan",
@@ -511,21 +511,21 @@ class TakingUpAfterAnUpdate(_Base):
                 yield
 
         def autopilot_resume():
-            held.append([r["unit"] for r in self.service.attempts.unfinished()])
+            held.append([r["unit"] for r in self.core.attempts.unfinished()])
             gate.set()
             return []
 
         self.paused()
         with (
             mock.patch("coscc.runner.step.Runner", Waits),
-            mock.patch.object(self.service.autopilot, "resume", autopilot_resume),
+            mock.patch.object(self.core.autopilot, "resume", autopilot_resume),
         ):
             self.up()
         self.assertEqual(held, [[self.unit]])
         # paused again, the app is going down, so the attempt is left as it is for the next
         # start to end; no task of it is left.
-        self.assertEqual([r["unit"] for r in self.service.attempts.unfinished()], [self.unit])
-        self.assertEqual(self.service.steps.tasks, {})
+        self.assertEqual([r["unit"] for r in self.core.attempts.unfinished()], [self.unit])
+        self.assertEqual(self.core.steps.tasks, {})
 
     def test_resume_runs_no_git_command_on_the_worktree(self):
         # Nothing reads or cleans the worktree before the session goes on.
@@ -550,7 +550,7 @@ class TakingUpAfterAnUpdate(_Base):
             yield
 
         self.paused()
-        self.service.sessions.stream = stream  # type: ignore[method-assign]
+        self.core.sessions.stream = stream  # type: ignore[method-assign]
         with (
             mock.patch.object(asyncio, "create_subprocess_exec", exec_),
             mock.patch.object(subprocess, "run", run),
@@ -568,7 +568,7 @@ class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
     def guarded(self, check):
         from coscc.kernel import Guard, Hooks, Parts
 
-        self.service.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
+        self.core.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
 
     def test_a_denial_ends_the_step_failed_with_the_guards_words_and_no_claim(self):
         steps_seen = self.taken()
@@ -583,8 +583,8 @@ class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
         self.assertEqual(row["detail"], "g: the precondition is gone")
         [end] = self.ends()
         self.assertEqual(end["outcome"], "failed")
-        self.assertFalse(self.service.holds.busy(self.key, self.unit))
-        self.assertEqual(self.service.attempts.unfinished(self.key, self.unit), [])
+        self.assertFalse(self.core.holds.busy(self.key, self.unit))
+        self.assertEqual(self.core.attempts.unfinished(self.key, self.unit), [])
         [facts] = seen
         self.assertTrue(facts.resumed)
         self.assertEqual((facts.unit, facts.stage), (self.unit, "plan"))
@@ -608,8 +608,8 @@ class APausedOwnerEndsNothing(_Base):
             yield ("chunk", "working")
             raise Suspended("paused for an update")
 
-        self.service.sessions.stream = stream  # type: ignore[method-assign]
-        unit_dir = self.service.ws.unit_dir(self.cwd, self.unit)
+        self.core.sessions.stream = stream  # type: ignore[method-assign]
+        unit_dir = self.core.ws.unit_dir(self.cwd, self.unit)
         (unit_dir / "intent.md").write_text(
             "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n",
             encoding="utf-8",
@@ -618,7 +618,7 @@ class APausedOwnerEndsNothing(_Base):
         row = {**self.paused("integrate"), "message": "MSG"}
 
         async def gebo():
-            async for _ in self.service.integration.integrate_gebo(
+            async for _ in self.core.integration.integrate_gebo(
                 self.cwd,
                 self.key,
                 self.unit,
@@ -638,7 +638,7 @@ class APausedOwnerEndsNothing(_Base):
                 pass
 
         async def estimate():
-            async for _ in self.service.backlog.propose_estimates(self.cwd):
+            async for _ in self.core.backlog.propose_estimates(self.cwd):
                 pass
 
         for name, run in (("integrate", gebo), ("estimate", estimate)):
@@ -646,7 +646,7 @@ class APausedOwnerEndsNothing(_Base):
                 with self.assertRaises(Suspended):
                     asyncio.run(run())
                 self.assertEqual([e for e in self.ends() if e.get("stage") == name], [])
-                self.assertEqual(self.service.attempts.unfinished(), [])
+                self.assertEqual(self.core.attempts.unfinished(), [])
 
 
 if __name__ == "__main__":

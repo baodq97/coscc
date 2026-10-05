@@ -8,7 +8,7 @@ anything.
 
 A feature (`coscc/features/<name>.py`, or a package `<name>/`, ending in one `FEATURE`) is a plug-in, so three more rules:
 it imports only its own `coscc.features.<name>` and `coscc.kernel`, plus the `KERNEL_GAPS` the kernel does not give yet;
-only `coscc/api.py` imports `coscc.features`, as
+only `coscc/http/app.py` imports `coscc.features`, as
 `from coscc import features`; and it is at most 3 files of at most 800 lines. Each check takes
 text or a listing, so a test can feed it a planted case.
 """
@@ -25,9 +25,8 @@ ROOT = Path(__file__).resolve().parents[1] / "coscc"
 
 LAYERS = (
     ("run", "loop"),
-    ("api",),
-    ("features", "plugin"),
-    ("service",),
+    ("http",),
+    ("features",),
     ("leif",),
     ("vault",),
     ("github", "update"),
@@ -36,7 +35,7 @@ LAYERS = (
     ("units",),
     ("git", "runlog"),
     ("agent",),
-    ("auth", "bus", "studio"),
+    ("bus",),
     ("store",),
     ("config",),
 )
@@ -160,13 +159,12 @@ FEATURE_MAY_IMPORT = {"coscc.kernel"}
 # Core modules a feature still imports because the kernel does not give it yet. The list only
 # shrinks: an entry no feature imports any more fails `test_every_kernel_gap_is_still_used`.
 KERNEL_GAPS = {
-    "coscc.auth": "notices' lifetime is the socket's recheck bound; both go with the Reflex page",
     "coscc.units.turnstats": "codegraph's turn statistics; codegraph already has its 3 files",
     "coscc.vault": "the vault's store, rules and runner; a feature has at most 3 files",
 }
 FEATURE_FILES = 3
 FEATURE_LINES = 800
-FEATURE_READERS = {"api.py"}
+FEATURE_READERS = {"http/app.py"}
 
 
 def _coscc_imports(tree: ast.AST):
@@ -210,7 +208,7 @@ def feature_import_problems(sources: dict[str, str]) -> list[str]:
             elif name.startswith("coscc.features") and not path.startswith("features/"):
                 if path not in FEATURE_READERS:
                     out.append(
-                        f"{at}: only coscc/api.py knows the list of "
+                        f"{at}: only coscc/http/app.py knows the list of "
                         "features. Get what you need through `Ctx` in coscc/kernel.py."
                     )
                 elif name != "coscc.features" or not plain:
@@ -297,8 +295,8 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
     def test_a_feature_that_imports_the_app_is_told_to_use_ctx(self):
         for src in (
             "from coscc.runner.steps import Steps\n",
-            "from coscc import api\n",
-            "from coscc.plugin import ctx_of\n",
+            "from coscc.http import app\n",
+            "from coscc.http.plugin import ctx_of\n",
         ):
             (msg,) = feature_import_problems({"features/a.py": src})
             self.assertIn("imports only coscc.kernel: add what it needs there", msg)
@@ -334,10 +332,10 @@ class FeaturesAreAddedAndRemovedWithoutReachingIn(unittest.TestCase):
 
     def test_only_the_api_imports_the_list_and_only_one_way(self):
         ok = "from coscc import features\n"
-        self.assertEqual(feature_import_problems({"api.py": ok}), [])
-        (msg,) = feature_import_problems({"service/autopilot.py": ok})
-        self.assertIn("only coscc/api.py knows the list", msg)
-        (msg,) = feature_import_problems({"api.py": "from coscc.features import FEATURES\n"})
+        self.assertEqual(feature_import_problems({"http/app.py": ok}), [])
+        (msg,) = feature_import_problems({"leif/autopilot.py": ok})
+        self.assertIn("only coscc/http/app.py knows the list", msg)
+        (msg,) = feature_import_problems({"http/app.py": "from coscc.features import FEATURES\n"})
         self.assertIn("import the list as `from coscc import features`", msg)
 
     def test_a_feature_of_four_files_or_a_long_one_says_the_fix(self):

@@ -29,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
-from coscc import auth
+from coscc.config import COOKIE
+from coscc.http import auth
 from scripts.proof_harness import (
     EXIT_BROKEN,
     EXIT_PASS,
@@ -146,9 +147,7 @@ def fixture_app(stack):
     repos = [make_repo(root, outside, n, f"{n}.git", "e2e\n") for n in ("proj", "other")]
     token = seed_session(data_dir)
     app = stack.enter_context(RealApp(root, data_dir))
-    api = stack.enter_context(
-        httpx.Client(base_url=app.base, timeout=60, cookies={auth.COOKIE: token})
-    )
+    api = stack.enter_context(httpx.Client(base_url=app.base, timeout=60, cookies={COOKIE: token}))
     load_fixture(api, root, data_dir, *repos)
     return app, token, api
 
@@ -161,7 +160,7 @@ def main() -> int:
     if serving:
         with ExitStack() as stack:
             app, token, _ = fixture_app(stack)
-            cookie = {"name": auth.COOKIE, "value": token, "domain": app.host, "path": "/"}
+            cookie = {"name": COOKIE, "value": token, "domain": app.host, "path": "/"}
             Path(sys.argv[2]).write_text(json.dumps({"cookies": [cookie], "origins": []}))
             print(f"serving {app.base}", flush=True)
             signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
@@ -174,7 +173,7 @@ def main() -> int:
             app, token, api = fixture_app(stack)
             context = browser.new_context(viewport=SIZE)
             context.set_default_timeout(TIMEOUT_MS)
-            context.add_cookies([{"name": auth.COOKIE, "value": token, "url": app.base}])
+            context.add_cookies([{"name": COOKIE, "value": token, "url": app.base}])
             try:
                 results.append(
                     run(a_page_without_a_session_is_sent_to_the_login, browser, app.base)

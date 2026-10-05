@@ -21,7 +21,7 @@ from pathlib import Path
 
 import httpx
 
-from coscc import auth
+from coscc.http import auth
 from coscc.store.db import Data
 
 REPO = Path(__file__).resolve().parent.parent

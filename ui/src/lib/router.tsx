@@ -1,5 +1,5 @@
 // Path routing with no library: the app serves `index.html` for every path no route takes
-// (`coscc/studio.py`), and the page reads `location.pathname`.
+// (`coscc/http/studio.py`), and the page reads `location.pathname`.
 
 import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 

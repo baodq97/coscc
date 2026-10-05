@@ -1,5 +1,5 @@
 """Tests for `Workspaces` in `coscc/units/workspaces.py`, split from
-`tests/service/test_service.py`."""
+`tests/http/test_app.py`."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from unittest import mock
 
 from coscc.config import Config
 from coscc.kernel import Invalid
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.agent.sessions import Live, Sessions
 from coscc.units import scratch
 
@@ -25,7 +25,7 @@ class PullStopsAtALiveSession(unittest.TestCase):
         self.root = Path(self.tmp.name).resolve()
         self.addCleanup(self.tmp.cleanup)
         config = Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root))
-        self.s = Service(config, Sessions(config))
+        self.s = Core(config, Sessions(config))
         self.s.ws.store.add("repo")
         self._repo(self.root / "repo")
 
@@ -94,7 +94,7 @@ class RemovingAWorkspaceSweepsScratch(unittest.TestCase):
         self.addCleanup(patch.stop)
         self.data = str(self.root / "data")
         config = Config(workspaces=(), working_dir=str(self.root / "work"), data_dir=self.data)
-        self.s = Service(config, Sessions(config))
+        self.s = Core(config, Sessions(config))
         store = self.s.ws.store
         assert store is not None
         for name in ("one", "two"):

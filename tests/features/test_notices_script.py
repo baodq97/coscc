@@ -7,7 +7,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from coscc.api import build
+from coscc.http.app import build
 from coscc.config import Config
 from coscc.features import notices
 

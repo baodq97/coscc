@@ -43,7 +43,7 @@ fi
 
 uv sync --frozen
 
-# The studio (`ui/`, served by `coscc/studio.py`) builds straight into `coscc/_studio/`, inside
+# The studio (`ui/`, served by `coscc/http/studio.py`) builds straight into `coscc/_studio/`, inside
 # the package, so `uv build` carries it. `npm ci` installs exactly the lock file.
 npm --prefix ui ci --no-audit --no-fund >&2
 npm --prefix ui run build >&2

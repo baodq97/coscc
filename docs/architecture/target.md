@@ -223,6 +223,7 @@ Each step is one PR, and the app runs after each one.
    - Delete `screens/`, `state/`, `coscc.py`, `build.py`, `frontend.py`, `ui.py`, `rxconfig.py`, Reflex's auth parts, and their tests: about 11k lines of code and 5.5k of tests.
    - Move the lifespan tasks into `http`.
    - Dissolve `service/` into its owners. The board becomes one cached read.
+     Done: `service/` is gone and `coscc/http/` (`app.py`, `routes.py`, `auth.py`, `studio.py`, `plugin.py`) is the top.
    - Remove the `reflex` dependency.
    - Delete the `decisions` table, its form and the `delegated` path (§5a).
 4. **Features to folders.** `backlog`, `release`, `update`, `scratch` and `model-trial` move under `features/`, and the `proposals` feature comes out of scan.

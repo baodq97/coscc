@@ -13,10 +13,10 @@ from pathlib import Path
 
 import httpx
 
-from coscc.api import build
+from coscc.http.app import build
 from coscc.config import Config
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 
 
@@ -67,11 +67,11 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
         # A change re-reads the board in the background; it must end before its folder goes.
-        await self.app.state.service.shutdown()
+        await self.app.state.core.shutdown()
         self._tmp.cleanup()
 
     async def test_the_board_carries_every_unit_with_all_eight_stages(self):
-        body = await self.app.state.service.board(str(REPO), "held")
+        body = await self.app.state.core.board(str(REPO), "held")
         self.assertEqual(body["stages"], STAGES)
         self.assertEqual(body["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
         for unit in body["units"]:
@@ -83,18 +83,18 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertIn("not a configured workspace", r.json()["error"])
 
     async def test_a_mode_set_over_http_is_what_the_run_log_holds_for_that_step_alone(self):
-        first = await self.app.state.service.board(str(REPO), "held")
+        first = await self.app.state.core.board(str(REPO), "held")
         unit = _a_unit(first)
         payload = {"cwd": str(REPO), "unit": unit, "stage": "impl", "mode": "autonomous"}
         r = await self.client.post("/api/board/mode", json=payload)
         self.assertEqual(r.status_code, 200, r.text)
-        service = self.app.state.service
-        modes = service.ws.journal().modes(service.ws.key(str(REPO)))
+        core = self.app.state.core
+        modes = core.ws.journal().modes(core.ws.key(str(REPO)))
         self.assertEqual(modes[(unit, "impl")], "autonomous")
         self.assertNotIn((unit, "spec"), modes)
 
     async def test_a_mode_is_validated_against_the_board_not_a_second_list(self):
-        body = await self.app.state.service.board(str(REPO), "held")
+        body = await self.app.state.core.board(str(REPO), "held")
         unit = _a_unit(body)
         for bad, expected in (
             ({"unit": "9999_not-here", "stage": "impl", "mode": "manual"}, "no such work unit"),
@@ -127,9 +127,7 @@ class TheHeldBoard(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.client.aclose)
 
     async def get(self, **params):
-        return await self.app.state.service.board(
-            str(REPO), "new" if params.get("fresh") else "held"
-        )
+        return await self.app.state.core.board(str(REPO), "new" if params.get("fresh") else "held")
 
     async def test_the_board_says_when_it_was_read(self):
         self.assertTrue((await self.get())["read_at"])
@@ -155,19 +153,19 @@ class TheBoardIsReadWhenTheAppStarts(unittest.IsolatedAsyncioTestCase):
     async def test_the_first_board_opened_finds_one_held(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = build(Config(workspaces=(str(REPO),), data_dir=tmp), starting=True)
-            service = app.state.service
+            core = app.state.core
             seed_store(tmp)
             warmed = asyncio.Event()
-            real = service.boards.warm
+            real = core.boards.warm
 
             async def warm() -> None:
                 await real()
                 warmed.set()
 
-            service.boards.warm = warm
+            core.boards.warm = warm
             async with app.router.lifespan_context(app):
                 await asyncio.wait_for(warmed.wait(), 60)
-            held = service.boards.held[service.ws.key(str(REPO))]
+            held = core.boards.held[core.ws.key(str(REPO))]
             self.assertTrue(held["read_at"])
             self.assertEqual(held["data"]["stages"], STAGES)
 
@@ -176,7 +174,7 @@ class TheBoardIsReadWhenTheAppStarts(unittest.IsolatedAsyncioTestCase):
             app = build(Config(workspaces=(str(REPO),), data_dir=tmp))
             async with app.router.lifespan_context(app):
                 pass
-            self.assertEqual(app.state.service.boards.held, {})
+            self.assertEqual(app.state.core.boards.held, {})
 
 
 class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
@@ -197,11 +195,11 @@ class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def test_the_board_still_reads(self):
-        body = await self.app.state.service.board(str(REPO), "held")
+        body = await self.app.state.core.board(str(REPO), "held")
         self.assertEqual(body["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
 
     async def test_setting_a_mode_is_refused_with_the_same_reason(self):
-        body = await self.app.state.service.board(str(REPO), "held")
+        body = await self.app.state.core.board(str(REPO), "held")
         r = await self.client.post(
             "/api/board/mode",
             json={"cwd": str(REPO), "unit": _a_unit(body), "stage": "impl", "mode": "autonomous"},

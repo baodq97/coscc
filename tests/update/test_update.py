@@ -122,7 +122,7 @@ class TheServiceShape(unittest.TestCase):
         self.tmp.cleanup()
 
     def write_unit(self, text):
-        self.unit.write_text(f"[Service]\nType=simple\n{text}", encoding="utf-8")
+        self.unit.write_text(f"[Core]\nType=simple\n{text}", encoding="utf-8")
 
     def env(self, **extra):
         return from_env(

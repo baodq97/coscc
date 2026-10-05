@@ -21,7 +21,7 @@ board_reader = WithSnapshot(_board)
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.runner.reply import RunError
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.runner.queue import Refused
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
@@ -55,15 +55,15 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
             working_dir=str(root / "work"),
             data_dir=str(root / "data"),
         )
-        self.service = Service(config, Sessions(config))
+        self.core = Core(config, Sessions(config))
         self.cwd = str(self.repo)
-        self.unit = asyncio.run(
-            self.service.answers.create_unit(self.cwd, "awaiting-ship", "words")
-        )["unit"]
-        self.dir = self.service.ws.unit_dir(self.cwd, self.unit)
+        self.unit = asyncio.run(self.core.answers.create_unit(self.cwd, "awaiting-ship", "words"))[
+            "unit"
+        ]
+        self.dir = self.core.ws.unit_dir(self.cwd, self.unit)
         for name, text in ARTIFACTS.items():
             (self.dir / name).write_text(text, encoding="utf-8")
-        self.store = self.service.ws.units_root(self.cwd)
+        self.store = self.core.ws.units_root(self.cwd)
         self.seen: list[dict] = []
         self.items: list[tuple] = []
 
@@ -119,24 +119,24 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
             return SHA
 
         def machine():
-            meta = self.service.ws.unit_meta()
+            meta = self.core.ws.unit_meta()
             return prmachine.Machine(
-                meta.history, self.service.ws.journal(), gh=gh, push=pushed, head=head
+                meta.history, self.core.ws.journal(), gh=gh, push=pushed, head=head
             )
 
         async def on_branch(*a, **k):
             return "feat/awaiting-ship"
 
         async def go():
-            async for item in self.service.steps.run_step(self.cwd, self.unit, stage, **kw):
+            async for item in self.core.steps.run_step(self.cwd, self.unit, stage, **kw):
                 self.items.append(item)
 
         with (
-            mock.patch.object(self.service.integration, "pr_machine", machine),
+            mock.patch.object(self.core.integration, "pr_machine", machine),
             mock.patch.object(gitops, "current_branch", on_branch),
             mock.patch("coscc.runner.steps.Runner", StandIn),
-            mock.patch.object(self.service.steps, "worktree", tree),
-            mock.patch.object(self.service.steps, "sync_pr", no_sync),
+            mock.patch.object(self.core.steps, "worktree", tree),
+            mock.patch.object(self.core.steps, "sync_pr", no_sync),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
         ):
             asyncio.run(go())
@@ -148,7 +148,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         return asyncio.run(coro)
 
     def test_the_offers_are_the_loops_answer(self):
-        offers = self.ask(self.service.steps.rerun_offers(self.cwd, self.unit))
+        offers = self.ask(self.core.steps.rerun_offers(self.cwd, self.unit))
         self.assertEqual([o["stage"] for o in offers["offers"]], ["intent", "spec", "plan", "pr"])
         self.assertEqual(
             next(o for o in offers["offers"] if o["stage"] == "pr")["later"], ["review", "ship"]

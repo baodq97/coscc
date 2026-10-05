@@ -11,7 +11,7 @@ from coscc.bus import Bus
 from coscc.store.db import Data
 from coscc.agent import policy
 from coscc.features import scan
-from coscc.plugin import create_tables
+from coscc.http.plugin import create_tables
 from coscc.kernel import Ctx, Invalid, Submitted
 from coscc.store.journal import Intervention, Journal
 from coscc.units import backlog, submit

@@ -203,7 +203,7 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
     leave a record identical to a step that had them."""
 
     def test_a_stage_with_no_skill_raises_rather_than_dropping_the_section(self):
-        # `RunError`, not `MissingRules`: `coscc/service/__init__.py` maps this module's refusals
+        # `RunError`, not `MissingRules`: `coscc/http/routes.py` maps this module's refusals
         # with one `except RunError`, and anything else reaches the route as a 500.
         with self.assertRaises(RunError) as caught:
             skill_for("no-such-stage")
@@ -1161,7 +1161,7 @@ class AStoppedStepEndsStopped(unittest.TestCase):
 
     def test_a_stop_after_the_seal_is_not_honoured_and_the_step_is_done(self):
         # a Stop that reaches a sealed (`ending`) step is no longer refused; the
-        # attempt records it (`stop_late`, tested in tests/service/test_steps.py) and
+        # attempt records it (`stop_late`, tested in tests/runner/test_steps.py) and
         # `Steps.stop_running` does not set `stop_requested`, so the runner finishes the step.
         async def release_then_stop(running, sessions):
             sessions.release.set()

@@ -15,21 +15,21 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.service.test_service import unit_history
+from tests.http.test_app import unit_history
 from tests.units.test_submit import a_head, finding, submits
 from coscc.bus import Bus
 from coscc.loop import run as loop_run
 from tests.github.test_prmachine import HEAD, FakeGh, run
 from tests.github.test_prmachine import Fixture as _PrFixture
 from coscc.config import Config
-from coscc.service import Service
-from tests.service.test_service import create_sync
+from coscc.http.app import Core
+from tests.http.test_app import create_sync
 from coscc.leif import decide
 from coscc.units import board as board_reader
 from coscc.units import guards
 from tests.units.test_board import _store
 from tests.units.test_meta import snapshot_of
-from tests.service.test_service import use_sessions
+from tests.http.test_app import use_sessions
 
 
 class _Nobody:
@@ -57,8 +57,8 @@ class Place1(unittest.TestCase):
             working_dir=str(root / "work"),
             data_dir=str(root / "data"),
         )
-        self.service = Service(self.config, _Nobody())
-        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        self.core = Core(self.config, _Nobody())
+        made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = made["unit"]
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
@@ -73,12 +73,11 @@ class Place1(unittest.TestCase):
                 await submits(kw, judgement=judgement)
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
-        use_sessions(self.service, Replies())
+        use_sessions(self.core, Replies())
 
         async def go():
             return [
-                item
-                async for item in self.service.steps.run_step(str(self.repo), self.unit, "spec")
+                item async for item in self.core.steps.run_step(str(self.repo), self.unit, "spec")
             ]
 
         return asyncio.run(go())[-1][1]
@@ -87,16 +86,16 @@ class Place1(unittest.TestCase):
         repo = str(self.repo)
         opened, _ = asyncio.run(
             board_reader.gate(
-                self.service.ws.units_root(repo),
+                self.core.ws.units_root(repo),
                 self.unit,
                 "plan",
-                state=self.service.ws.snapshot(repo, [self.unit]),
+                state=self.core.ws.snapshot(repo, [self.unit]),
             )
         )
         return opened
 
     def _spec_row(self) -> dict:
-        rows = unit_history(self.service, str(self.repo), self.unit)["transitions"]
+        rows = unit_history(self.core, str(self.repo), self.unit)["transitions"]
         return [r for r in rows if r["artifact"] == "spec.md"][-1]
 
     def test_prose_saying_accepted_does_not_open_the_gate_an_object_saying_not_ready_closes(self):
@@ -129,21 +128,20 @@ class Place1(unittest.TestCase):
                 await submits(kw, judgement="ready", unmeasured=["U1"])
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
-        use_sessions(self.service, Replies())
+        use_sessions(self.core, Replies())
 
         async def go():
             return [
-                item
-                async for item in self.service.steps.run_step(str(self.repo), self.unit, "spec")
+                item async for item in self.core.steps.run_step(str(self.repo), self.unit, "spec")
             ]
 
         self.assertEqual(asyncio.run(go())[-1][1]["outcome"], "done")
         repo = str(self.repo)
         said = asyncio.run(
             board_reader.next_step(
-                self.service.ws.units_root(repo),
+                self.core.ws.units_root(repo),
                 self.unit,
-                state=self.service.ws.snapshot(repo, [self.unit]),
+                state=self.core.ws.snapshot(repo, [self.unit]),
             )
         )
         self.assertEqual(said["stage"], "spike")
@@ -158,12 +156,11 @@ class Place1(unittest.TestCase):
                 yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n")
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
-        use_sessions(self.service, Silent())
+        use_sessions(self.core, Silent())
 
         async def go():
             return [
-                item
-                async for item in self.service.steps.run_step(str(self.repo), self.unit, "spec")
+                item async for item in self.core.steps.run_step(str(self.repo), self.unit, "spec")
             ]
 
         done = asyncio.run(go())[-1][1]
@@ -172,7 +169,7 @@ class Place1(unittest.TestCase):
         self.assertIn("without handing back its object", Silent.prompts[1])
         self.assertEqual(done["outcome"], "failed")
         self.assertIn("no-submission", done["error"])
-        rows = unit_history(self.service, str(self.repo), self.unit)["transitions"]
+        rows = unit_history(self.core, str(self.repo), self.unit)["transitions"]
         self.assertEqual([r for r in rows if r["artifact"] == "spec.md"], [])
         self.assertFalse(self._plan_gate())
 
@@ -192,8 +189,8 @@ class _Review(unittest.TestCase):
             working_dir=str(root / "work"),
             data_dir=str(root / "data"),
         )
-        self.service = Service(self.config, _Nobody())
-        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        self.core = Core(self.config, _Nobody())
+        made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit, self.dir = made["unit"], Path(made["path"])
         for name, title in (
             ("intent", "Intent"),
@@ -221,21 +218,21 @@ class _Review(unittest.TestCase):
                 await submits(kw, **obj)
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
-        use_sessions(self.service, Replies())
+        use_sessions(self.core, Replies())
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, f"open: {stage} may proceed"
 
         async def go():
             return [
-                item async for item in self.service.steps.run_step(str(self.repo), self.unit, stage)
+                item async for item in self.core.steps.run_step(str(self.repo), self.unit, stage)
             ]
 
         with mock.patch.object(board_reader, "gate", open_gate):
             return asyncio.run(go())[-1][1]
 
     def _row(self, artifact: str) -> dict:
-        rows = unit_history(self.service, str(self.repo), self.unit)["transitions"]
+        rows = unit_history(self.core, str(self.repo), self.unit)["transitions"]
         row = dict([r for r in rows if r["artifact"] == artifact][-1])
         return {
             **row,
@@ -245,16 +242,16 @@ class _Review(unittest.TestCase):
         }
 
     def _unit(self) -> dict:
-        [u] = asyncio.run(self.service.board(str(self.repo)))["units"]
+        [u] = asyncio.run(self.core.board(str(self.repo)))["units"]
         return u
 
     def _status(self) -> dict:
         """The unit as `coscc.loop status --json` reads it from the app's snapshot."""
         repo = str(self.repo)
-        source, stdin = board_reader._source(self.service.ws.snapshot(repo, [self.unit]))
+        source, stdin = board_reader._source(self.core.ws.snapshot(repo, [self.unit]))
         argv = [
             "--root",
-            str(self.service.ws.units_root(repo)),
+            str(self.core.ws.units_root(repo)),
             *source,
             "status",
             "--json",
@@ -377,11 +374,11 @@ class Place4(unittest.TestCase):
         async def act(tree, gate):
             return reply
 
-        use_sessions(self.service, StandIn(act, said=said))
+        use_sessions(self.core, StandIn(act, said=said))
 
         async def go():
             done = {}
-            async for kind, payload in self.service.integration.integrate(self.cwd, self.unit):
+            async for kind, payload in self.core.integration.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done
@@ -414,9 +411,9 @@ class _Asked(unittest.TestCase):
             working_dir=str(root / "work"),
             data_dir=str(root / "data"),
         )
-        self.service = Service(self.config, _Nobody())
+        self.core = Core(self.config, _Nobody())
         intent = "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n"
-        made = create_sync(self.service, str(self.repo), "asked", "x")
+        made = create_sync(self.core, str(self.repo), "asked", "x")
         self.unit = made["unit"]
         (Path(made["path"]) / "intent.md").write_text(intent, encoding="utf-8")
         (Path(made["path"]) / "spec.md").write_text(
@@ -432,13 +429,13 @@ class _Asked(unittest.TestCase):
                     await submits(kw, **obj)
                 yield ("done", {"session_id": "s1", "cost": {"cost_usd": 0.02, "turns": 1}})
 
-        use_sessions(self.service, Session())
+        use_sessions(self.core, Session())
 
     def _end(self, stage: str, unit: str) -> dict:
         from coscc.store.journal import Journal
 
         journal = Journal(Path(self.config.working_dir), Path(self.config.data_dir))
-        key = self.service.ws.key(str(self.repo))
+        key = self.core.ws.key(str(self.repo))
         return [r for r in journal.records(key, unit, kind="end") if r.get("stage") == stage][-1]
 
 
@@ -453,7 +450,7 @@ class Place5(_Asked):
         self._stream(prose, obj)
 
         async def go():
-            return [item async for item in self.service.backlog.propose_estimates(str(self.repo))]
+            return [item async for item in self.core.backlog.propose_estimates(str(self.repo))]
 
         return asyncio.run(go())[-1][1]["estimate"]
 
@@ -461,7 +458,7 @@ class Place5(_Asked):
         from coscc.store.journal import Journal
 
         journal = Journal(Path(self.config.working_dir), Path(self.config.data_dir))
-        return journal.records(self.service.ws.key(str(self.repo)), kind="estimate-value")
+        return journal.records(self.core.ws.key(str(self.repo)), kind="estimate-value")
 
     def _one(self, value: int) -> dict:
         return {

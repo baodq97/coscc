@@ -1,6 +1,6 @@
 """Starting the app: one process, one port, the FastAPI app behind the login guard.
 
-The studio is built into the package (`coscc/_studio/`, `coscc/studio.py`), so the process
+The studio is built into the package (`coscc/_studio/`, `coscc/http/studio.py`), so the process
 needs no Node and nothing to rebuild; uvicorn binds the app to the host in `config.py`.
 """
 
@@ -16,7 +16,7 @@ from coscc.config import LOOPBACK
 log = logging.getLogger(__name__)
 
 
-# Longer than the studio's stream lasts (`api.STREAM_LIFETIME_SECONDS`), so a stop lets it end
+# Longer than the studio's stream lasts (`routes.STREAM_LIFETIME_SECONDS`), so a stop lets it end
 # on its own first.
 STOP_WAIT_SECONDS = 40
 
@@ -75,13 +75,13 @@ def main(argv: list[str] | None = None) -> None:
 
 def served():
     """What uvicorn serves: the app behind the login guard, which sees every scope."""
-    from coscc import api
-    from coscc.auth import Guard
+    from coscc.http.app import build
+    from coscc.http.auth import Guard
     from coscc.config import from_env
     from coscc.store.db import Data
 
     config = from_env()
-    return Guard(api.build(config, starting=True), Data(config.data_dir))
+    return Guard(build(config, starting=True), Data(config.data_dir))
 
 
 def recover_steps(config) -> None:

@@ -678,7 +678,7 @@ class Sessions:
     def __init__(self, config: Config, bus: Bus | None = None):
         self.config = config
         self.bus = bus if bus is not None else Bus()
-        # Who counts as a workspace. Defaults to the env list; `Service` replaces it with the
+        # Who counts as a workspace. Defaults to the env list; `Core` replaces it with the
         # union of env and store. Injected so a store-backed workspace that passed the service
         # gate is not refused here; the guard stays as the last thing before a CLI spawns.
         self.membership: Callable[[str], bool] = config.is_workspace

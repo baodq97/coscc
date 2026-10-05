@@ -163,7 +163,7 @@ def stop_for(
 ) -> dict[str, str] | None:
     """The first stop that holds for one unit, as `{kind, reason}`, or `None`.
 
-    `unit_row` is the unit as `Service.board` has it; `nxt` is `Steps.next_step`'s answer;
+    `unit_row` is the unit as `Core.board` has it; `nxt` is `Steps.next_step`'s answer;
     `last` the unit's latest `end`, `integration`, `screens` or `prmachine.RECORD_KIND` record, or
     `None`. `None` back means no stop, which is not the same as something to run.
     `exhausted` and `unopened` are how many steps of `last`'s stage ended `exhausted` or

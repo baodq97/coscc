@@ -136,7 +136,7 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
 class TheAnswersSectionIsFound(unittest.TestCase):
     """The three functions the write path is built from, tested apart from it.
 
-    Every reader of "the Answers section" -- `coscc/service/__init__.py:900`, `coscc/loop/`'s
+    Every reader of "the Answers section" -- `coscc/leif/answers.py`, `coscc/loop/`'s
     own reader, and this module -- must agree on where it starts, or a section one of them keeps
     is a section another cannot find."""
 
@@ -193,7 +193,7 @@ class TheAnswersSectionIsFound(unittest.TestCase):
 class ThePromptNamesTheBaseWhenItMightBeStale(unittest.TestCase):
     """`service.describe_base` decides the sentence; this module only places it. So the two
     cases worth pinning here are structural — present when there is something to say,
-    absent when there is not — not the wording, which belongs to `test_service.py`."""
+    absent when there is not — not the wording, which belongs to `tests/http/test_app.py`."""
 
     def test_a_base_note_is_placed_in_the_prompt(self):
         with tempfile.TemporaryDirectory() as d:

@@ -1,6 +1,6 @@
 ---
 paths:
-  - "coscc/auth.py"
+  - "coscc/http/auth.py"
   - "coscc/run.py"
 ---
 

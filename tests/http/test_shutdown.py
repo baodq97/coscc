@@ -1,4 +1,4 @@
-"""`Service.shutdown` returns once nothing it started still writes: a board read's thread, a
+"""`Core.shutdown` returns once nothing it started still writes: a board read's thread, a
 tree being removed and a child process are waited for, never left running."""
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from unittest import mock
 
 from coscc.config import Config
 from coscc.git import gh, gitops
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.units import board as board_reader
 from coscc.units import worktrees
 from tests.github.test_integration import StandIn, git
@@ -98,13 +98,13 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
             # The autopilot runs only on a local address.
             host="127.0.0.1",
         )
-        self.service = Service(config, StandIn(None))
-        self.boards = self.service.boards
+        self.core = Core(config, StandIn(None))
+        self.boards = self.core.boards
         # The thread a board read runs `cos.db` in, held on `release` until a test lets it go.
         self.release = threading.Event()
         self.entered = threading.Event()
         self.running = 0
-        real = self.service.ws.snapshot
+        real = self.core.ws.snapshot
 
         def snapshot(*args, **kwargs):
             self.running += 1
@@ -116,7 +116,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
             finally:
                 self.running -= 1
 
-        patch = mock.patch.object(self.service.ws, "snapshot", snapshot)
+        patch = mock.patch.object(self.core.ws, "snapshot", snapshot)
         patch.start()
         self.addCleanup(patch.stop)
         # A finished unit's tree being removed, held on `removed` until a test lets it go.
@@ -135,7 +135,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.removed.set()
         self.release.set()
-        await self.service.shutdown()
+        await self.core.shutdown()
 
     async def a_read_in_its_thread(self) -> asyncio.Task:
         read = self.boards.refresh(self.cwd)
@@ -148,7 +148,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_read_in_its_thread_holds_shutdown_until_the_thread_returned(self):
         read = await self.a_read_in_its_thread()
-        down = asyncio.ensure_future(self.service.shutdown())
+        down = asyncio.ensure_future(self.core.shutdown())
         self.assertTrue(await self.still_running(down))
         self.release.set()
         await asyncio.wait_for(down, 5)
@@ -156,10 +156,10 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(read.cancelled())
 
     async def test_an_autopilot_pass_in_a_board_read_holds_shutdown_too(self):
-        self.service.autopilot.set_setting(self.cwd, "autopilot", True)
+        self.core.autopilot.set_setting(self.cwd, "autopilot", True)
         self.assertTrue(await asyncio.to_thread(self.entered.wait, 5))
-        [pass_] = self.service.autopilot.tasks.values()
-        down = asyncio.ensure_future(self.service.shutdown())
+        [pass_] = self.core.autopilot.tasks.values()
+        down = asyncio.ensure_future(self.core.shutdown())
         self.assertTrue(await self.still_running(down))
         self.release.set()
         await asyncio.wait_for(down, 5)
@@ -180,7 +180,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
     async def test_a_removal_ends_as_it_would_and_none_starts_once_shutdown_began(self):
         self.boards._remove_later(self.cwd, {"name": "0001_done", "why": "finished"})
         [removal] = self.boards._removing.values()
-        down = asyncio.ensure_future(self.service.shutdown())
+        down = asyncio.ensure_future(self.core.shutdown())
         self.assertTrue(await self.still_running(down))
         # What a read that ends late would start.
         self.boards._remove_later(self.cwd, {"name": "0002_late", "why": "finished"})
@@ -193,7 +193,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_read_starts_once_shutdown_began(self):
         self.release.set()
-        await self.service.shutdown()
+        await self.core.shutdown()
         with self.assertRaises(asyncio.CancelledError):
             await self.boards.refresh(self.cwd)
         self.assertFalse(self.entered.is_set())
@@ -206,7 +206,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(asyncio, "create_subprocess_exec", children):
             self.boards.refresh(self.cwd)
             await asyncio.wait_for(children.started.wait(), 5)
-            await asyncio.wait_for(self.service.shutdown(), 5)
+            await asyncio.wait_for(self.core.shutdown(), 5)
         [proc] = children.procs
         self.assertIsNotNone(proc.returncode)
         with self.assertRaises(ProcessLookupError):
@@ -214,11 +214,11 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
 
     async def test_an_ask_begun_while_shutdown_waits_is_cancelled_and_waited_for(self):
         await self.a_read_in_its_thread()
-        down = asyncio.ensure_future(self.service.shutdown())
+        down = asyncio.ensure_future(self.core.shutdown())
         self.assertTrue(await self.still_running(down))
         # What a request the server still took starts: the release panel's `gh`, held.
         never = asyncio.Event()
-        ask = self.service.release.details.ask((self.cwd, "status", "v0.1.0"), never.wait)
+        ask = self.core.release.details.ask((self.cwd, "status", "v0.1.0"), never.wait)
         self.release.set()
         await asyncio.wait_for(down, 5)
         self.assertTrue(ask.cancelled())
@@ -226,10 +226,10 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
     async def test_what_outlives_the_deadline_is_logged_by_name(self):
         await self.a_read_in_its_thread()
         with (
-            mock.patch("coscc.service.SHUTDOWN_WITHIN", 0.3),
-            self.assertLogs("coscc.service", "WARNING") as logs,
+            mock.patch("coscc.http.app.SHUTDOWN_WITHIN", 0.3),
+            self.assertLogs("coscc.http.app", "WARNING") as logs,
         ):
-            await asyncio.wait_for(self.service.shutdown(), 5)
+            await asyncio.wait_for(self.core.shutdown(), 5)
         [line] = logs.output
         self.assertIn("shutdown returns with the board read of ", line)
         self.assertIn("still running after 0.3s", line)
@@ -237,7 +237,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
     async def test_nothing_writes_once_shutdown_returned(self):
         self.boards._remove_later(self.cwd, {"name": "0001_done", "why": "finished"})
         await self.a_read_in_its_thread()
-        down = asyncio.ensure_future(self.service.shutdown())
+        down = asyncio.ensure_future(self.core.shutdown())
         await self.still_running(down)
         self.release.set()
         self.removed.set()

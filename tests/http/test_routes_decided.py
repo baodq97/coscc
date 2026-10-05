@@ -8,7 +8,7 @@ from unittest import mock
 
 import httpx
 
-from coscc.api import build
+from coscc.http.app import build
 from coscc.config import Config
 
 
@@ -60,7 +60,7 @@ class Routes(unittest.IsolatedAsyncioTestCase):
             ]
         }
         with mock.patch.object(
-            self.app.state.service.boards, "get", mock.AsyncMock(return_value=board)
+            self.app.state.core.boards, "get", mock.AsyncMock(return_value=board)
         ):
             r = await self.client.get("/api/decided", params={"cwd": self.cwd})
         self.assertEqual(

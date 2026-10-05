@@ -1,4 +1,4 @@
-"""Tests for `Agents` in `coscc/service/agents.py`."""
+"""Tests for `Agents` in `coscc/leif/agents.py`."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from unittest import mock
 
 from coscc.config import Config
 from coscc.store.db import Busy, Data
-from coscc.service import Service
-from coscc.service.agents import chip_of
+from coscc.http.app import Core
+from coscc.leif.agents import chip_of
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 
@@ -41,9 +41,9 @@ class _WithAService(unittest.TestCase):
         root = Path(self._tmp.name)
         config = Config(workspaces=(), working_dir=str(root / "work"), data_dir=str(root / "data"))
         (root / "work").mkdir()
-        self.service = Service(config, Sessions(config))
+        self.core = Core(config, Sessions(config))
         self.data = Data(config.data_dir)
-        self.journal = self.service.ws.journal()
+        self.journal = self.core.ws.journal()
 
     def _seed(self, records):
         """Write `records` as they are, `at` included, the way `Journal.append` stores them."""
@@ -78,7 +78,7 @@ class _WithAService(unittest.TestCase):
 
 class AFieldIsCheckedSavedAndLogged(_WithAService):
     def test_each_save_and_reset_is_one_agent_setting_row(self):
-        agents = self.service.agents
+        agents = self.core.agents
         agents.set_agent_field("spec", "turns", 30)
         agents.set_agent_field("spec", "budget", "2.5")
         agents.set_agent_field("impl:novel", "effort", "max")
@@ -99,7 +99,7 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
         self.assertEqual(self.data.pref_rows("turns:"), {})
 
     def test_the_default_effort_saved_is_a_reset(self):
-        agents = self.service.agents
+        agents = self.core.agents
         agents.set_agent_field("spec", "effort", "max")
         page = agents.set_agent_field("spec", "effort", "")
         self.assertEqual(self._row(page, "spec")["config"]["effort_source"], "default")
@@ -127,13 +127,13 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
         ]
         for key, field, value in wrong:
             with self.assertRaises(Invalid, msg=(key, field, value)):
-                self.service.agents.set_agent_field(key, field, value)
+                self.core.agents.set_agent_field(key, field, value)
         for prefix in ("model:", "effort:", "turns:", "budget:"):
             self.assertEqual(self.data.pref_rows(prefix), {}, prefix)
         self.assertEqual(self._settings(), [])
 
     def test_identity_fields_keep_their_rules(self):
-        agents = self.service.agents
+        agents = self.core.agents
         agents.set_agent_field("review", "name", "Judge")
         self.assertEqual(agents.agent("review")["name"], "Judge")
         for key, field, value in (
@@ -166,18 +166,18 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
         )
 
     def test_an_unreadable_store_writes_nothing(self):
-        self.service.agents.set_agent_field("review", "name", "Judge")
+        self.core.agents.set_agent_field("review", "name", "Judge")
         with mock.patch.object(Data, "pref_rows", side_effect=Busy("locked")):
             for field, value in (("role", "Reads it all."), ("turns", 10)):
                 with self.assertRaises(Invalid):
-                    self.service.agents.set_agent_field("review", field, value)
+                    self.core.agents.set_agent_field("review", field, value)
         self.assertEqual(self.data.pref_rows("agent:"), {"agent:review": '{"name": "Judge"}'})
         self.assertEqual(len(self._settings()), 1)
 
 
 class ThePage(_WithAService):
     def test_eight_rows_with_what_each_runs_on_and_may_do(self):
-        page = self.service.agents.agent_page(now=NOW)
+        page = self.core.agents.agent_page(now=NOW)
         self.assertEqual(
             [r["key"] for r in page["rows"]],
             ["idea", "intent", "spec", "spike", "plan", "impl", "review", "integrate"],
@@ -199,7 +199,7 @@ class ThePage(_WithAService):
             [_end("spec", "done", d, cost=0.5, turns=7) for d in (40, 20, 10, 5, 3, 2, 1)]
             + [_end("impl", "done", 2, cost=1.0), _end("impl", "failed", 1, cost=0.25)]
         )
-        page = self.service.agents.agent_page(now=NOW)
+        page = self.core.agents.agent_page(now=NOW)
         by = {r["key"]: r for r in page["rows"]}
         spec = by["spec"]
         self.assertEqual(len(spec["runs"]), 5)
@@ -228,11 +228,9 @@ class ThePage(_WithAService):
 
         # $7 is 88 % of the plain $8 but 44 % of the novel $16.
         self._seed([start("novel", 2), _end("impl", "done", 2, cost=7.0)])
-        self.assertEqual(self._row(self.service.agents.agent_page(now=NOW), "impl")["chip"], "ok")
+        self.assertEqual(self._row(self.core.agents.agent_page(now=NOW), "impl")["chip"], "ok")
         self._seed([start("routine", 1), _end("impl", "done", 1, cost=7.0)])
-        self.assertEqual(
-            self._row(self.service.agents.agent_page(now=NOW), "impl")["chip"], "costly"
-        )
+        self.assertEqual(self._row(self.core.agents.agent_page(now=NOW), "impl")["chip"], "costly")
 
     def test_the_chips_in_their_order(self):
         done = {"outcome": "done", "cost_usd": 1.0, "at": "", "unit": "", "turns": 1}
@@ -254,7 +252,7 @@ class ThePage(_WithAService):
         self.data.set_pref("model:plan", "x" * 101)
         with self.data.write() as conn:
             conn.execute("INSERT INTO prefs (key, value) VALUES ('effort:spec', '{')")
-        page = self.service.agents.agent_page(now=NOW)
+        page = self.core.agents.agent_page(now=NOW)
         spec = self._row(page, "spec")
         self.assertEqual(spec["config"]["ceilings"]["max_turns"], 40)
         self.assertEqual(spec["config"]["effort_source"], "default")
@@ -269,7 +267,7 @@ class ThePage(_WithAService):
             ]
         )
         began = time.perf_counter()
-        page = self.service.agents.agent_page(now=NOW)
+        page = self.core.agents.agent_page(now=NOW)
         took = time.perf_counter() - began
         self.assertEqual(len(page["rows"]), 8)
         self.assertLess(took, 0.5)

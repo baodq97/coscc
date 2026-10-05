@@ -35,9 +35,9 @@ APP_PATHS = ["coscc/**", "coscc/**/*", "scripts/*.py"]
 # Files nearly every unit passes through. A rule scoped to one of them would be read by nearly every
 # step, which is what tier 2 already is. The spec's list, not measured.
 HOT = {
-    "coscc/service/__init__.py",
+    "coscc/http/app.py",
     "coscc/runner/step.py",
-    "coscc/api.py",
+    "coscc/http/routes.py",
 }
 
 DOC_REF = re.compile(r"\.claude/docs/[\w./-]+\.md")

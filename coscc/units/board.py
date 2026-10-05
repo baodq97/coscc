@@ -678,7 +678,7 @@ def _state(state: str, label: str = "") -> dict[str, str]:
 def unit_state(
     unit: dict[str, Any], last_end: dict[str, Any] | None, ci: dict[str, Any] | None
 ) -> dict[str, str]:
-    """The one state `Service.board` decides for a unit: rules 1-3 and 5-8.
+    """The one state `Core.board` decides for a unit: rules 1-3 and 5-8.
 
     `unit` is the board's dict with `integration` attached; `last_end` the unit's latest ended
     run-log row; `ci` the held answer of `integrate.required_checks` for the pull request's

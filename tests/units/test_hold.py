@@ -21,12 +21,12 @@ from coscc.units import worktrees
 from coscc.config import Config
 from coscc.store.db import Data
 from coscc.store.journal import Journal
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
 
 SLUG = "proof-of-hold"
-# What `Service` hands `hold.refusal` while a spec step runs on the unit.
+# What `Core` hands `hold.refusal` while a spec step runs on the unit.
 BUSY = attempts.describe(
     "0001_x",
     {
@@ -292,8 +292,8 @@ class Repo(unittest.TestCase):
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
         self.sessions = NoSession()
-        self.service = Service(self.config, self.sessions)
-        made = asyncio.run(self.service.answers.create_unit(self.cwd, SLUG, "fixture"))
+        self.core = Core(self.config, self.sessions)
+        made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, self.directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
@@ -304,8 +304,8 @@ class Repo(unittest.TestCase):
             f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
             encoding="utf-8",
         )
-        self.tree = Path(asyncio.run(self.service.answers.worktree(self.cwd, self.unit))["path"])
-        self.key = self.service.ws.key(self.cwd)
+        self.tree = Path(asyncio.run(self.core.answers.worktree(self.cwd, self.unit))["path"])
+        self.key = self.core.ws.key(self.cwd)
         self.gh = FakeGh()
         gh_patch = mock.patch("coscc.git.gh.run", self.gh)
         gh_patch.start()
@@ -318,14 +318,14 @@ class Repo(unittest.TestCase):
         return (self.directory / "intent.md").read_bytes()
 
     def move(self, to: str, reason: str = "lý do", by: str = "Leif") -> dict:
-        return asyncio.run(self.service.answers.hold(self.cwd, self.unit, to, reason, by))
+        return asyncio.run(self.core.answers.hold(self.cwd, self.unit, to, reason, by))
 
     def board_unit(self) -> dict:
-        data = asyncio.run(self.service.board(self.cwd))
+        data = asyncio.run(self.core.board(self.cwd))
         return next(u for u in data["units"] if u["name"] == self.unit)
 
     def records(self) -> list[dict]:
-        return self.service.ws.journal().records(self.key, kind="hold")
+        return self.core.ws.journal().records(self.key, kind="hold")
 
     def holds(self) -> list[dict]:
         with Data(self.config.data_dir).connect() as conn:
@@ -421,7 +421,7 @@ class HoldThroughTheService(Repo):
         self.assertIsNotNone(self.find())
         self.move("active")
         self.assertEqual(self.sessions.opened, 0)
-        self.assertEqual(self.service.ws.journal().records(self.key, kind="start"), [])
+        self.assertEqual(self.core.ws.journal().records(self.key, kind="start"), [])
 
     def test_a_refusal_changes_no_byte(self):
         before = self.intent()
@@ -446,18 +446,18 @@ class HoldThroughTheService(Repo):
         self.assertEqual(len(self.records()), 1)
 
     def test_a_running_step_refuses_and_keeps_its_attempt(self):
-        row = self.service.attempts.open("step", self.key, self.unit, "spec", state="running")
+        row = self.core.attempts.open("step", self.key, self.unit, "spec", state="running")
         before = self.intent()
         with self.assertRaises(Invalid) as said:
             self.move("paused")
         self.assertIn("its Stop button on the Board (0034)", str(said.exception))
         self.assertEqual(self.intent(), before)
-        held = self.service.attempts.holding(self.key, self.unit)
+        held = self.core.attempts.holding(self.key, self.unit)
         self.assertEqual((held["id"], held["state"]), (row["id"], "running"))
-        self.service.attempts.move(row["id"], "ended", "done")
+        self.core.attempts.move(row["id"], "ended", "done")
         self.move("paused")
         # The hold's own attempt is over too: nothing holds the unit.
-        self.assertEqual(self.service.attempts.unfinished(), [])
+        self.assertEqual(self.core.attempts.unfinished(), [])
 
     def test_a_section_after_answers_no_longer_refuses_a_hold(self):
         # It is a row now, and the file is not read for it.
@@ -477,13 +477,13 @@ class HoldThroughTheService(Repo):
         self.assertIn(BRANCH, git(self.workspace, "branch", "--list", BRANCH))
         rec = self.records()[-1]
         self.assertEqual([e["effect"] for e in rec["effects"]], ["close-pr", "remove-worktree"])
-        nxt = asyncio.run(self.service.steps.next_step(self.cwd, self.unit))
+        nxt = asyncio.run(self.core.steps.next_step(self.cwd, self.unit))
         self.assertEqual(nxt["stage"], "")
         self.assertEqual(nxt["hold"]["state"], "dropped")
         self.assertEqual(self.board_unit()["hold"]["state"], "dropped")
 
         async def run():
-            async for _ in self.service.steps.run_step(self.cwd, self.unit, "review"):
+            async for _ in self.core.steps.run_step(self.cwd, self.unit, "review"):
                 pass
 
         with self.assertRaises(Invalid) as said:

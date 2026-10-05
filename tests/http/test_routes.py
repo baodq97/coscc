@@ -17,9 +17,9 @@ import httpx
 
 from coscc.kernel import Feature
 from coscc import update
-from coscc.api import build
+from coscc.http.app import build
 from coscc.config import Config
-from tests.service.test_service import use_sessions
+from tests.http.test_app import use_sessions
 
 
 def _tmp_config(test: unittest.TestCase) -> Config:
@@ -92,7 +92,7 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         # Terminal sessions are visible because the read layer sees them, but the page has to be
         # able to tell which ones it may write to.
         with mock.patch.object(sdk, "list_sessions", return_value=[_info()]):
-            body = self.app.state.service.chat.sessions_for("/tmp")
+            body = self.app.state.core.chat.sessions_for("/tmp")
         self.assertEqual(len(body["sessions"]), 1)
         self.assertFalse(body["sessions"][0]["resumable"])
 
@@ -191,7 +191,7 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
         cwd = str(self.root / "repo")
         r = await self.client.get("/api/release", params={"cwd": cwd})
         self.assertEqual((r.status_code, r.json()), (200, None))
-        await self.app.state.service.board(cwd, "new")
+        await self.app.state.core.board(cwd, "new")
 
 
 class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
@@ -309,7 +309,7 @@ class NoHandWrittenMarkup(unittest.TestCase):
     GENERATED = ("_web", "_studio")
 
     def test_the_app_ships_no_hand_written_html_or_css(self):
-        repo = Path(__file__).resolve().parents[1]
+        repo = Path(__file__).resolve().parents[2]
         found = [
             p.relative_to(repo)
             for p in list(repo.glob("coscc/**/*.html")) + list(repo.glob("coscc/**/*.css"))
@@ -373,11 +373,11 @@ class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
         # A step's task goes first, so it is not left writing after its client was closed under it.
         app = self.app
         order = []
-        app.state.service.shutdown = mock.AsyncMock(side_effect=lambda: order.append("steps"))
+        app.state.core.shutdown = mock.AsyncMock(side_effect=lambda: order.append("steps"))
         app.state.sessions.close_all.side_effect = lambda: order.append("sessions")
         async with app.router.lifespan_context(app):
-            app.state.service.shutdown.assert_not_awaited()
-        app.state.service.shutdown.assert_awaited_once()
+            app.state.core.shutdown.assert_not_awaited()
+        app.state.core.shutdown.assert_awaited_once()
         self.assertEqual(order, ["steps", "sessions"])
 
 
@@ -386,7 +386,7 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.app = build(_tmp_config(self))
-        self.service = self.app.state.service
+        self.core = self.app.state.core
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
@@ -410,12 +410,12 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_a_stop_of_a_running_step_is_a_200_naming_it(self):
         from coscc.agent.steps import Running
 
-        key = self.service.ws.key("/tmp")
-        row = self.service.attempts.open("step", key, "0001_a", "spec", state="running")
+        key = self.core.ws.key("/tmp")
+        row = self.core.attempts.open("step", key, "0001_a", "spec", state="running")
         # The live part of the attempt: its session handle and task, by attempt id.
         running = Running(workspace=key, unit="0001_a", stage="spec", started_at=row["since"])
         running.attempt = row["id"]
-        self.service.steps.tasks[row["id"]] = running
+        self.core.steps.tasks[row["id"]] = running
         r = await self.client.post(
             "/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": "Lan"}
         )
@@ -423,32 +423,28 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.json(), {"unit": "0001_a", "stage": "spec", "stopped_by": "Lan"})
         self.assertTrue(running.stop_requested)
         # the Stop is recorded on the attempt, with the name that asked.
-        self.assertEqual(self.service.attempts.get(row["id"])["stop_asked_by"], "Lan")
+        self.assertEqual(self.core.attempts.get(row["id"])["stop_asked_by"], "Lan")
 
     async def test_the_running_list_is_what_the_attempts_hold(self):
         self.assertEqual(
             (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), []
         )
-        self.service.attempts.open(
-            "step", self.service.ws.key("/tmp"), "0001_a", "plan", state="running"
-        )
+        self.core.attempts.open("step", self.core.ws.key("/tmp"), "0001_a", "plan", state="running")
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual((row["unit"], row["stage"], row["stopping"]), ("0001_a", "plan", False))
         self.assertEqual(row["kind"], "step")
 
     async def test_an_integration_is_on_the_running_list_until_it_ends(self):
-        key = self.service.ws.key("/tmp")
-        held = self.service.attempts.open(
-            "integration", key, "0001_a", "integrate", state="running"
-        )
-        self.service.attempts.set_road(held["id"], "gebo")
+        key = self.core.ws.key("/tmp")
+        held = self.core.attempts.open("integration", key, "0001_a", "integrate", state="running")
+        self.core.attempts.set_road(held["id"], "gebo")
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual(
             (row["unit"], row["stage"], row["stopping"], row["run"], row["kind"]),
             ("0001_a", "integrate", False, None, "integration"),
         )
         self.assertEqual(row["started_at"], held["since"])
-        self.service.attempts.move(held["id"], "ended", "done")
+        self.core.attempts.move(held["id"], "ended", "done")
         self.assertEqual(
             (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), []
         )
@@ -465,15 +461,15 @@ class WatchingARunOverHttp(unittest.IsolatedAsyncioTestCase):
         from coscc.runlog.events import Recorder
 
         self.app = build(_tmp_config(self))
-        self.service = self.app.state.service
+        self.core = self.app.state.core
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
-        key = self.service.ws.key("/tmp")
+        key = self.core.ws.key("/tmp")
         self.recorder = Recorder("r1", None, "/tmp", key, "0001_a", "impl")
         for i in range(3):
             self.recorder.denied("Bash", {"command": f"c{i}"}, "not granted")
-        self.service.watch.recorders["r1"] = self.recorder
+        self.core.watch.recorders["r1"] = self.recorder
 
     async def asyncTearDown(self):
         await self.client.aclose()
@@ -516,7 +512,7 @@ class TalkingOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.app = build(_tmp_config(self))
-        self.service = self.app.state.service
+        self.core = self.app.state.core
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
@@ -545,7 +541,7 @@ class TalkingOverHttp(unittest.IsolatedAsyncioTestCase):
             yield ("chunk", "llo")
             yield ("done", {"session_id": "s1"})
 
-        with mock.patch.object(self.service.chat, "stream", turn):
+        with mock.patch.object(self.core.chat, "stream", turn):
             r = await self.client.post(
                 "/api/chat", json={"cwd": "/tmp", "text": "hi", "session_id": "s0"}
             )
@@ -580,7 +576,7 @@ class FeaturesInTheStudio(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_the_scripts_are_the_kit_then_each_feature_s(self):
-        from coscc.plugin import KIT_JS
+        from coscc.http.plugin import KIT_JS
 
         r = await self.client.get("/api/features/scripts")
         self.assertEqual(r.headers["content-type"].split(";")[0], "text/javascript")
@@ -718,10 +714,10 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.rows(), self.intent.read_bytes()), ([], before))
 
     async def test_the_board_then_counts_one_fewer_open(self):
-        board = await self.app.state.service.board(self.cwd, "new")
+        board = await self.app.state.core.board(self.cwd, "new")
         self.assertEqual(board["units"][0]["open"], 3)
         await self.post()
-        board = await self.app.state.service.board(self.cwd, "new")
+        board = await self.app.state.core.board(self.cwd, "new")
         self.assertEqual(board["units"][0]["open"], 2)
 
     async def test_a_second_answer_is_a_second_row(self):
@@ -870,7 +866,7 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
         after = self.intent.read_bytes()
         self.assertTrue(after.startswith(before))
         self.assertIn("### Outcome", after[len(before) :].decode("utf-8"))
-        board = await self.app.state.service.board(self.cwd, "new")
+        board = await self.app.state.core.board(self.cwd, "new")
         self.assertEqual(board["units"][0]["outcome"]["result"], "missed")
 
     async def test_a_refusal_is_a_400_and_writes_nothing(self):
@@ -1018,7 +1014,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 400)
         self.assertIn("has not used all its review rounds", got.json()["error"])
         self.assertEqual((self.first / "review.md").read_bytes(), before)
-        board = await self.app.state.service.board(self.cwd, "new")
+        board = await self.app.state.core.board(self.cwd, "new")
         [row] = [u for u in board["units"] if u["name"] == self.first.name]
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (False, 1))
         # A fourth round asking for changes, written above `## Answers` as the runner writes
@@ -1028,7 +1024,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         (self.first / "review.md").write_text(
             f"{head}{round4}\n## Answers\n{answers}", encoding="utf-8"
         )
-        board = await self.app.state.service.board(self.cwd, "new")
+        board = await self.app.state.core.board(self.cwd, "new")
         [row] = [u for u in board["units"] if u["name"] == self.first.name]
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (True, 1))
         self.assertEqual((await self.allow()).status_code, 200)
@@ -1092,7 +1088,7 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
 
     async def test_the_board_then_waits_on_the_other_one_only(self):
         await self.finding()
-        board = await self.app.state.service.board(self.cwd, "new")
+        board = await self.app.state.core.board(self.cwd, "new")
         [u] = board["units"]
         self.assertEqual(u["waiting"], ["F3"])
         self.assertEqual([p["answered"] for p in u["person_findings"]], [True, False])
@@ -1252,7 +1248,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(made.status_code, 200, made.text)
         name = made.json()["unit"]
-        board = await self.app.state.service.board(self.cwd, "new")
+        board = await self.app.state.core.board(self.cwd, "new")
         self.assertEqual([u["name"] for u in board["units"]], [name])
 
     async def test_the_brief_is_stored_as_the_idea_the_intent_step_will_read(self):
@@ -1297,7 +1293,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(cut.json()["sha"]), 7)
         # The workspace stays on `main`; the branch is on the unit's worktree, and the board says
         # so.
-        board = await self.app.state.service.board(self.cwd, "new")
+        board = await self.app.state.core.board(self.cwd, "new")
         tree = next(u["worktree"] for u in board["units"] if u["name"] == made["unit"])
         self.assertEqual(tree["branch"], "feat/a-problem")
         self.assertEqual(tree["path"], cut.json()["worktree"])
@@ -1305,7 +1301,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_something_that_is_not_json_is_refused_before_anything_is_made(self):
         got = await self.client.post("/api/units", content=b"not json")
         self.assertEqual(got.status_code, 400)
-        board = await self.app.state.service.board(self.cwd, "new")
+        board = await self.app.state.core.board(self.cwd, "new")
         self.assertEqual(board["count"], 0)
 
 
@@ -1345,10 +1341,10 @@ class WhatIsRunning(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
 
     async def test_both_keys_and_no_session_id_prompt_or_path(self):
-        service = self.app.state.service
-        key = service.ws.key(self.cwd)
-        service.attempts.open("step", key, self.unit, "impl", state="running")
-        service.ws.journal().started(
+        core = self.app.state.core
+        key = core.ws.key(self.cwd)
+        core.attempts.open("step", key, self.unit, "impl", state="running")
+        core.ws.journal().started(
             key,
             "0099_other",
             "plan",
@@ -1356,7 +1352,7 @@ class WhatIsRunning(unittest.IsolatedAsyncioTestCase):
             session_id="sess-secret",
             prompt_chars=10,
         )
-        body = json.loads(json.dumps(service.boards.running(self.cwd)))
+        body = json.loads(json.dumps(core.boards.running(self.cwd)))
         self.assertEqual(set(body), {"running", "unknown_end"})
         self.assertEqual(body["running"][self.unit][0]["agent"], {"glyph": "ᚢ", "name": "Uruz"})
         self.assertEqual(list(body["unknown_end"]), ["0099_other"])
@@ -1392,15 +1388,15 @@ class IntegratingOverHttp(PostingAReviewRoundOverHttp):
 
     async def test_a_unit_outside_the_window_is_a_400_and_leaves_a_record(self):
         # A draft pr.md: the loop says the unit is not between pr and ship, so no gh is asked.
-        pr_md = Path(self.app.state.service.ws.unit_dir(self.cwd, self.unit)) / "pr.md"
+        pr_md = Path(self.app.state.core.ws.unit_dir(self.cwd, self.unit)) / "pr.md"
         pr_md.write_text(f"# PR\nStatus: draft.\nPR: {self.PR_URL}\n", encoding="utf-8")
         got = await self.client.post(
             "/api/units/integrate", json={"cwd": self.cwd, "unit": self.unit}
         )
         self.assertEqual(got.status_code, 400)
         self.assertIn("not between pr and ship", got.json()["error"])
-        service = self.app.state.service
-        rows = service.ws.journal().records(service.ws.key(self.cwd), kind="integration")
+        core = self.app.state.core
+        rows = core.ws.journal().records(core.ws.key(self.cwd), kind="integration")
         self.assertEqual([r["outcome"] for r in rows], ["refused"])
 
     async def test_unknown_arguments_are_a_400(self):
@@ -1431,8 +1427,8 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
         self.app = build(
             Config(workspaces=(self.tmp.name,), data_dir=str(Path(self.tmp.name) / "d"))
         )
-        self.service = self.app.state.service
-        self.updater = self.service.updater
+        self.core = self.app.state.core
+        self.updater = self.core.updater
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
@@ -1524,7 +1520,7 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
 
 class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
     """Each route is 200 on a valid body and 400 on a refusal; what is refused is `backlog.py`'s and
-    `Service`'s decision, tested there."""
+    `Core`'s decision, tested there."""
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1589,7 +1585,7 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
             ).status_code,
             400,
         )
-        board = await self.app.state.service.board(self.cwd, "new")
+        board = await self.app.state.core.board(self.cwd, "new")
         self.assertEqual([e["unit"] for e in board["backlog"]["shortlist"]], [self.a])
         self.assertTrue(board["backlog"]["propose_warning"])
         up = (await self.client.get("/api/backlog", params={"cwd": self.cwd})).json()
@@ -1599,7 +1595,7 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(up["shortlist_record"]["reason"], "r")
         # A held read starts the next; a new read begins after it, so both end before the
         # data root is removed.
-        await self.app.state.service.board(self.cwd, "new")
+        await self.app.state.core.board(self.cwd, "new")
         self.assertEqual(
             (await self.client.post("/api/backlog/shortlist", content=b"nope")).status_code, 400
         )
@@ -1611,7 +1607,7 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
                 yield ("chunk", "not json")
                 yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01}})
 
-        use_sessions(self.app.state.service, Replies())
+        use_sessions(self.app.state.core, Replies())
         got = await self.client.post("/api/backlog/propose", json={"cwd": self.cwd})
         self.assertEqual(got.status_code, 200)
         last = json.loads(got.text.strip().splitlines()[-1])
@@ -1631,9 +1627,9 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
             workspaces=("/tmp",), data_dir=tmp.name, working_dir=tmp.name, host=host
         )
         app = build(self.config)
-        self.service = app.state.service
+        self.core = app.state.core
         self.started: list[str] = []
-        self.service.autopilot.start = self.started.append
+        self.core.autopilot.start = self.started.append
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
         self.addAsyncCleanup(client.aclose)
         return client
@@ -1681,7 +1677,7 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
         from coscc.kernel import Invalid
 
         with self.assertRaises(Invalid):
-            self.service.autopilot.set_setting("/tmp", "daily_cap_usd", float("inf"))
+            self.core.autopilot.set_setting("/tmp", "daily_cap_usd", float("inf"))
         self.assertEqual(self.prefs(), {})
         self.assertEqual(self.started, [])
 
@@ -1734,9 +1730,9 @@ class NoRequestIsTheAutopilot(unittest.IsolatedAsyncioTestCase):
             called.append(("integrate", args, kwargs))
             yield ("done", {"integration": {}})
 
-        service = app.state.service
-        service.steps.run_step = run_step
-        service.integration.integrate = integrate
+        core = app.state.core
+        core.steps.run_step = run_step
+        core.integration.integrate = integrate
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://t"
         ) as client:
@@ -1761,7 +1757,7 @@ class ARerunIsReadOffTheBodyOnlyWhenItSaysTrue(unittest.IsolatedAsyncioTestCase)
             called.append((args, kwargs))
             yield ("done", {"outcome": "done"})
 
-        app.state.service.steps.run_step = run_step
+        app.state.core.steps.run_step = run_step
         base = {"cwd": "/tmp", "unit": "0001_a", "stage": "pr"}
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://t"
@@ -1827,7 +1823,7 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         return await self.client.post(route, json=body)
 
     async def board(self, ws: str) -> dict:
-        return await self.app.state.service.board(self.cwd[ws], "new")
+        return await self.app.state.core.board(self.cwd[ws], "new")
 
     async def test_post_api_ideas_makes_and_an_empty_brief_is_400(self):
         r = await self.post(
@@ -1928,7 +1924,7 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((b["idea"], b["repo"]), (idea["ref"], "api"))
         self.assertEqual(b["problems"], [])
 
-        page = await self.app.state.service.ideas.idea(self.cwd["proj"], "0001_one-feature")
+        page = await self.app.state.core.ideas.idea(self.cwd["proj"], "0001_one-feature")
         self.assertEqual(
             [(r["ref"], r["repo"], r["waits_for"]) for r in page["units"]],
             [
@@ -1945,7 +1941,7 @@ class ReleasingOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         from coscc.git import fetches
-        from tests.service.test_release import Fixture
+        from tests.github.test_release_press import Fixture
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -1978,8 +1974,8 @@ class ReleasingOverHttp(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(got.status_code, 400)
                 self.assertIn("prerelease", got.json()["error"])
-        service = self.app.state.service
-        rows = service.ws.journal().records(service.ws.key(self.fx.cwd), kind="release")
+        core = self.app.state.core
+        rows = core.ws.journal().records(core.ws.key(self.fx.cwd), kind="release")
         self.assertEqual(
             [(r["phase"], r["outcome"]) for r in rows],
             [("prepare", "refused"), ("publish", "refused")],

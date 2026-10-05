@@ -23,7 +23,7 @@ from coscc.runner.reply import CEILING_MARKERS
 from coscc.agent.sessions import StepHandle, Suspended
 from coscc.runner.resume import resume_kwargs
 from coscc.runner.step import nothing
-from coscc.service.update import refuse_while_updating
+from coscc.update.updater import refuse_while_updating
 from coscc.kernel import OWNER
 from coscc.kernel import Invalid, Submitted
 
@@ -39,7 +39,7 @@ from coscc.agent.sessions import Sessions
 
 from coscc.update.updater import Updater
 
-from coscc.service.models import Models
+from coscc.leif.agents import Models
 
 log = logging.getLogger(__name__)
 
