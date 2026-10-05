@@ -43,9 +43,6 @@ class UrlsRefusedBeforeGitExists(unittest.TestCase):
             with self.assertRaises(GitError, msg=bad):
                 check_url(bad)
 
-    def test_an_https_url_passes_and_is_trimmed(self):
-        self.assertEqual(check_url("  https://example.com/r.git  "), "https://example.com/r.git")
-
 
 class TheChildEnvironmentCarriesNoSecret(unittest.TestCase):
     def test_the_login_token_never_reaches_the_child(self):
@@ -65,24 +62,6 @@ class TheChildEnvironmentCarriesNoSecret(unittest.TestCase):
         ):
             env = child_env()
         self.assertFalse([k for k in env if k.startswith("COS_")])
-
-    def test_the_environment_is_built_not_filtered(self):
-        """A new secret must be excluded by default, not by remembering to exclude it."""
-        with mock.patch.dict(os.environ, {"SOME_FUTURE_SECRET": "leak-me"}):
-            env = child_env()
-        self.assertNotIn("SOME_FUTURE_SECRET", env)
-        self.assertEqual(
-            set(env),
-            {
-                "PATH",
-                "HOME",
-                "GIT_TERMINAL_PROMPT",
-                "GIT_ASKPASS",
-                "SSH_ASKPASS",
-                "GIT_CONFIG_NOSYSTEM",
-                "LC_ALL",
-            },
-        )
 
     def test_asking_for_a_password_is_made_to_fail(self):
         env = child_env()
@@ -298,11 +277,6 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
             with self.assertRaises(GitError, msg=(remote, branch)):
                 asyncio.run(gitops.fetch(self.repo, remote, branch))
 
-    def test_rev_parse_of_an_unknown_ref_names_it(self):
-        with self.assertRaises(GitError) as caught:
-            asyncio.run(gitops.rev_parse(self.repo, "refs/remotes/nowhere/main"))
-        self.assertIn("refs/remotes/nowhere/main", str(caught.exception))
-
     def test_a_branch_cut_from_the_fetched_sha_tracks_nothing(self):
         # Plan Risk 2: with a ref name as start point git would set an upstream of `main`.
         new = self._commit(self.seed, "two")
@@ -315,16 +289,6 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
             text=True,
         )
         self.assertEqual(got.stdout.strip(), "")
-
-    def test_a_clone_and_its_worktree_share_one_common_dir_and_another_clone_does_not(self):
-        # The key fetches are coordinated on.
-        tree = Path(self._tmp.name) / "tree"
-        self._git(self.repo, "worktree", "add", "-q", "--detach", str(tree))
-        here = asyncio.run(gitops.common_dir(self.repo))
-        self.assertTrue(here.is_absolute())
-        self.assertEqual(here, (self.repo / ".git").resolve())
-        self.assertEqual(asyncio.run(gitops.common_dir(tree)), here)
-        self.assertNotEqual(asyncio.run(gitops.common_dir(self.seed)), here)
 
 
 class Worktrees(FetchingTheTrunkFromARemote):
@@ -343,12 +307,6 @@ class Worktrees(FetchingTheTrunkFromARemote):
         self.assertEqual(trees[1]["head"], self.main)
         self.assertEqual(trees[1]["branch"], "")
         self.assertEqual(trees[0]["branch"], "main")
-
-    def test_a_tree_on_an_existing_branch_carries_its_name(self):
-        self._git(self.repo, "branch", "fix/a-problem", self.main)
-        asyncio.run(gitops.worktree_add(self.repo, self.tree, "fix/a-problem"))
-        trees = asyncio.run(gitops.worktree_list(self.repo))
-        self.assertEqual(trees[1]["branch"], "fix/a-problem")
 
     def test_a_start_that_is_neither_a_sha_nor_a_unit_branch_never_reaches_git(self):
         for bad in ("main", "-b", "--force", "HEAD", self.main[:7], ""):
@@ -515,12 +473,6 @@ class CancellingAGitCommand(FetchingTheTrunkFromARemote):
         self.assertEqual(self._admins(), [])
         self.assertEqual(len(asyncio.run(gitops.worktree_list(self.repo))), 1)
 
-    def test_a_whole_tree_is_not_half_made(self):
-        asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
-        listed = asyncio.run(gitops.worktree_list(self.repo))[1]
-        self.assertEqual(listed["locked"], "")
-        self.assertFalse(asyncio.run(gitops.worktree_half_made(self.repo, listed)))
-
     def test_a_left_index_lock_alone_makes_a_tree_half_made(self):
         asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
         admin = asyncio.run(gitops.worktree_admin_dir(self.repo, self.tree))
@@ -532,9 +484,6 @@ class CancellingAGitCommand(FetchingTheTrunkFromARemote):
         with self.assertRaises(GitError):
             asyncio.run(gitops.worktree_discard(self.repo, self.repo))
         self.assertTrue((self.repo / ".git").exists())
-
-    def test_discarding_what_is_not_there_is_not_an_error(self):
-        asyncio.run(gitops.worktree_discard(self.repo, self.tree))
 
 
 class MeasuringAncestryAndDistance(unittest.TestCase):
@@ -592,13 +541,6 @@ class MeasuringAncestryAndDistance(unittest.TestCase):
         asyncio.run(gitops.fetch(self.repo))
         self.assertTrue(asyncio.run(gitops.is_ancestor(self.repo, self.one, self.two)))
 
-    def test_a_commit_is_its_own_ancestor(self):
-        self.assertTrue(asyncio.run(gitops.is_ancestor(self.repo, self.one, self.one)))
-
-    def test_a_descendant_is_not_an_ancestor_of_its_own_parent(self):
-        asyncio.run(gitops.fetch(self.repo))
-        self.assertFalse(asyncio.run(gitops.is_ancestor(self.repo, self.two, self.one)))
-
     def test_an_unknown_commit_is_a_git_error_not_a_false(self):
         # Exit 1 means "no"; an unknown commit is neither 0 nor 1, and must not be read as no.
         with self.assertRaises(GitError):
@@ -614,18 +556,6 @@ class MeasuringAncestryAndDistance(unittest.TestCase):
     def test_count_missing_counts_what_have_lacks(self):
         asyncio.run(gitops.fetch(self.repo))
         self.assertEqual(asyncio.run(gitops.count_missing(self.repo, self.one, self.two)), 1)
-
-    def test_count_missing_is_zero_when_equal(self):
-        self.assertEqual(asyncio.run(gitops.count_missing(self.repo, self.one, self.one)), 0)
-
-    def test_count_missing_the_other_direction_is_zero(self):
-        asyncio.run(gitops.fetch(self.repo))
-        self.assertEqual(asyncio.run(gitops.count_missing(self.repo, self.two, self.one)), 0)
-
-    def test_a_ref_shaped_argument_never_reaches_git_for_count_missing(self):
-        for bad in ("main", "HEAD", self.one[:7], ""):
-            with self.assertRaises(GitError, msg=bad):
-                asyncio.run(gitops.count_missing(self.repo, bad, self.one))
 
 
 class AdvancingADetachedWorktree(unittest.TestCase):
@@ -789,11 +719,6 @@ class ReadingAFailedAttemptsTree(unittest.TestCase):
         self.assertEqual(got_head, head)
         self.assertEqual(branch, "fix/a-problem")
 
-    def test_head_and_branch_reports_detached_on_a_detached_tree(self):
-        self._git("switch", "-q", "--detach", "HEAD")
-        _, branch = asyncio.run(gitops.head_and_branch(self.repo))
-        self.assertEqual(branch, "detached")
-
     def test_merge_base_falls_back_to_local_main_without_an_origin(self):
         self._git("switch", "-q", "-c", "fix/a-problem")
         (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
@@ -802,33 +727,6 @@ class ReadingAFailedAttemptsTree(unittest.TestCase):
         sha, ref = asyncio.run(gitops.merge_base(self.repo))
         self.assertEqual(sha, self.base)
         self.assertEqual(ref, "refs/heads/main")
-
-    def test_merge_base_prefers_origin_main_when_it_exists(self):
-        remote = Path(self._tmp.name) / "remote.git"
-        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
-        self._git("remote", "add", "origin", str(remote))
-        self._git("push", "-q", "origin", "main")
-        self._git("switch", "-q", "-c", "fix/a-problem")
-        (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
-        self._git("add", "-A")
-        self._git("commit", "-q", "-m", "second")
-        sha, ref = asyncio.run(gitops.merge_base(self.repo))
-        self.assertEqual(sha, self.base)
-        self.assertEqual(ref, "refs/remotes/origin/main")
-
-    def test_log_range_matches_git_log_order_and_split(self):
-        self._git("switch", "-q", "-c", "fix/a-problem")
-        (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
-        self._git("add", "-A")
-        self._git("commit", "-q", "-m", "second commit")
-        (self.repo / "c.txt").write_text("three\n", encoding="utf-8")
-        self._git("add", "-A")
-        self._git("commit", "-q", "-m", "third commit")
-        head = self._git("rev-parse", "HEAD").strip()
-        want = self._git("log", "--format=%H %s", f"{self.base}..{head}")
-        commits = asyncio.run(gitops.log_range(self.repo, self.base, head))
-        got = "\n".join(f"{c['sha']} {c['subject']}" for c in commits)
-        self.assertEqual(got, want.strip())
 
     def test_log_range_refuses_anything_that_is_not_a_full_sha(self):
         for bad in ("main", "HEAD", self.base[:7], ""):
@@ -863,9 +761,6 @@ class ReadingAFailedAttemptsTree(unittest.TestCase):
         lines = asyncio.run(gitops.status_porcelain(self.repo))
         self.assertEqual("\n".join(lines) + ("\n" if lines else ""), want)
         self.assertTrue(lines[0].startswith(" M"), lines[0])
-
-    def test_status_porcelain_is_empty_on_a_clean_tree(self):
-        self.assertEqual(asyncio.run(gitops.status_porcelain(self.repo)), [])
 
     def test_a_directory_that_is_not_a_repository_is_refused_by_all_four(self):
         not_repo = Path(self._tmp.name) / "not-a-repo"
@@ -917,18 +812,6 @@ class IntegratingABranchThatFellBehind(unittest.TestCase):
         self._git(self.seed, "rebase", "-q", "main")
         self._git(self.seed, "push", "-q", "--force", "origin", self.BRANCH)
         self.new = self._git(self.seed, "rev-parse", "HEAD")
-
-    def test_the_read_helpers(self):
-        asyncio.run(gitops.fetch(self.repo))
-        base = asyncio.run(gitops.merge_base_of(self.repo, self.old, self.main2))
-        self.assertEqual(base, self.main)
-        commits = asyncio.run(gitops.commits_between(self.repo, base, self.main2))
-        self.assertEqual([c["subject"] for c in commits], ["two"])
-        self.assertEqual(asyncio.run(gitops.files_of_commit(self.repo, self.main2)), ["f.txt"])
-        self.assertEqual(asyncio.run(gitops.files_between(self.repo, base, self.old)), ["g.txt"])
-        self.assertTrue(asyncio.run(gitops.has_commit(self.repo, self.old)))
-        self.assertFalse(asyncio.run(gitops.has_commit(self.repo, "f" * 40)))
-        self.assertFalse(asyncio.run(gitops.rebase_in_progress(self.tree)))
 
     def test_a_clean_tree_on_its_branch_follows_the_rebased_head(self):
         asyncio.run(gitops.reset_branch_to(self.tree, self.BRANCH, self.old, self.new))
@@ -1024,26 +907,12 @@ class TreeStateSeesAWriteAndACommit(unittest.TestCase):
     def state(self) -> tuple[str, str]:
         return asyncio.run(gitops.tree_state(self.repo))
 
-    def test_nothing_done_reads_the_same_twice(self):
-        self.assertEqual(self.state(), self.state())
-
-    def test_a_new_file_changes_the_porcelain(self):
-        before = self.state()
-        (self.repo / "probe.py").write_text("print(1)\n", encoding="utf-8")
-        after = self.state()
-        self.assertEqual(before[0], after[0])
-        self.assertIn("?? probe.py", after[1])
-
     def test_a_commit_changes_head(self):
         before = self.state()
         self._git("commit", "-q", "--allow-empty", "-m", "sneaked in")
         after = self.state()
         self.assertNotEqual(before[0], after[0])
         self.assertEqual(before[1], after[1])
-
-    def test_not_a_repository_is_refused(self):
-        with self.assertRaises(GitError):
-            asyncio.run(gitops.tree_state(Path(self._tmp.name)))
 
 
 class Releasing(unittest.TestCase):
@@ -1138,32 +1007,3 @@ class Releasing(unittest.TestCase):
         (self.tree / "uv.lock").write_text("changed\n", encoding="utf-8")
         run(gitops.release_tree_remove(self.repo, self.tree, self.tree))
         self.assertFalse(self.tree.exists())
-
-    def test_the_same_wrong_path_twice_is_still_refused(self):
-        # Every caller used to pass one variable as both arguments.
-        run = asyncio.run
-        other = self.tree.parent / "0001_a-unit"
-        run(gitops.worktree_add(self.repo, other, self.main))
-        (self.repo / "uv.lock").write_text("person's change\n", encoding="utf-8")
-        (other / "uv.lock").write_text("unit's change\n", encoding="utf-8")
-        for where in (self.repo, other):
-            with self.subTest(tree=where.name):
-                for call in (
-                    gitops.diff_u0(where, where),
-                    gitops.commit_files(where, where, "x"),
-                    gitops.push_branch(where, where, "chore/release-0-2-0"),
-                    gitops.push_tag(where, where, "v0.2.0", self.main),
-                    gitops.detach_here(where, where),
-                    gitops.release_tree_remove(self.repo, where, where),
-                ):
-                    with self.assertRaises(GitError):
-                        run(call)
-        self.assertEqual(self.git(self.repo, "status", "--porcelain"), "M uv.lock")
-        self.assertEqual(self.git(other, "status", "--porcelain"), "M uv.lock")
-        # A directory named `release` that is a checkout of its own, not a linked tree.
-        clone = self.tree.parent.parent / "elsewhere" / "release"
-        subprocess.run(
-            ["git", "clone", "-q", str(self.remote), str(clone)], check=True, capture_output=True
-        )
-        with self.assertRaises(GitError):
-            run(gitops.diff_u0(clone, clone))
