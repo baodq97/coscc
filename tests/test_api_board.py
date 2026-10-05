@@ -66,6 +66,8 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.aclose()
+        # A change re-reads the board in the background; it must end before its folder goes.
+        await self.app.state.service.shutdown()
         self._tmp.cleanup()
 
     async def test_the_board_carries_every_unit_with_all_eight_stages(self):
