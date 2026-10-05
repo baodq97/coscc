@@ -57,8 +57,8 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
 to measure is not impl's work: name it under `## Risks`>
 
 ## Verification
-<the commands impl runs at the end, and their healthy output: lint and the tests of the modules
-that change, never the whole suite, which CI runs>
+<the commands impl runs at the end, and their healthy output: lint, `tests/test_*.py` and the
+tests of the modules that change, never the whole suite, which CI runs>
 
 ## Parallelization
 (a) <title>
