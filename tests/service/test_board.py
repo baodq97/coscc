@@ -615,7 +615,7 @@ class AUnitPageShowsItsRuns(unittest.TestCase):
                     "n": 1,
                     "text": "This one",
                     "by": "Leif",
-                    "authority": "delegated",
+                    "authority": "agent",
                 }
             ],
             "worktree": {"branch": "fix/x", "path": "/w/x", "prepare": None},
@@ -635,5 +635,5 @@ class AUnitPageShowsItsRuns(unittest.TestCase):
         got = detail(unit, timeline)
         self.assertEqual((got["runs"][0]["cost_usd"], got["runs"][0]["turns"]), (None, 3))
         self.assertEqual(got["runs"][1]["ended"], "")
-        self.assertEqual(got["answers"][0]["authority"], "delegated")
+        self.assertEqual(got["answers"][0]["authority"], "agent")
         self.assertEqual(got["worktree"], {"branch": "fix/x", "path": "/w/x"})

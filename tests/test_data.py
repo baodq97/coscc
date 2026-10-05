@@ -163,20 +163,22 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual(data.pref("density"), "compact")
             self.assertEqual(data.auth_password_hash(), "h")
 
-    def test_a_version_4_database_gains_the_decisions_table_and_keeps_its_rows(self):
-        """5 adds `decisions` the way 4 added its two."""
+    def test_a_version_10_database_loses_the_decisions_table_and_keeps_the_rest(self):
+        """11 drops `decisions`, which nothing read or wrote."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.set_pref("density", "compact")
-            data.auth_set_password("h", 1)
             with data.connect() as conn:
-                conn.execute("DROP TABLE decisions")
-                conn.execute("PRAGMA user_version=4")
+                conn.execute("CREATE TABLE decisions (id INTEGER PRIMARY KEY, text TEXT)")
+                conn.execute("PRAGMA user_version=10")
 
             self.assertEqual(data.version(), SCHEMA_VERSION)
-            self.assertEqual(data.decisions(), [])
+            with data.connect() as conn:
+                gone = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE name = 'decisions'"
+                ).fetchone()
+            self.assertIsNone(gone)
             self.assertEqual(data.pref("density"), "compact")
-            self.assertEqual(data.auth_password_hash(), "h")
 
     def test_a_v5_database_rises_to_6_keeping_every_runs_and_transitions_row(self):
         """6 adds the `unit_*` tables and `idea_meta`; the rows a v5 database already had in `runs`
@@ -290,31 +292,6 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 conn.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
             with self.assertRaises(Incompatible):
                 data.version()
-
-
-class ThePersonsDecisions(unittest.TestCase):
-    """`D<n>` is never reused, and nothing is deleted."""
-
-    def _add(self, data: Data, text: str = "t") -> int:
-        return data.decision_add(kind="decision", text=text, source="s", from_day="2026-09-28")
-
-    def test_a_decision_id_is_never_reused_after_the_last_row_goes(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            first = self._add(data)
-            with data.connect() as conn:
-                conn.execute("DELETE FROM decisions")
-            self.assertGreater(self._add(data), first)
-
-    def test_withdrawing_a_decision_keeps_its_row_and_writes_its_day_once(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            n = self._add(data)
-            self.assertTrue(data.decision_withdraw(n, "2026-10-01"))
-            self.assertFalse(data.decision_withdraw(n, "2026-10-05"))
-            self.assertFalse(data.decision_withdraw(n + 99, "2026-10-05"))
-            [row] = data.decisions()
-            self.assertEqual((row["id"], row["withdrawn"], row["text"]), (n, "2026-10-01", "t"))
 
 
 class AStepsEvents(unittest.TestCase):

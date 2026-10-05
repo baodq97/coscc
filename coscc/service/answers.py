@@ -21,10 +21,9 @@ from coscc.github import prcomment, prscope, prsync
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
-from coscc.data import Data
-from coscc.units.meta import DELEGATION, MetaError, UnitMeta
+from coscc.units.meta import MetaError, UnitMeta
 from coscc.runlog.journal import BadRecord, Journal
-from coscc.data import Busy, Unusable
+from coscc.data import Busy
 from coscc.units import submit
 from coscc.units import transitions
 from coscc.service.attempts import Attempt, describe
@@ -44,32 +43,6 @@ from coscc.service.ideas import Ideas
 from coscc.bus import Bus, Event
 
 log = logging.getLogger(__name__)
-
-# The kinds of a decision, the longest text one may carry (chosen, not measured), and the
-# agent a delegation may name: Leif answers in the person's place from outside the app.
-DECISION_KINDS = ("decision", "delegation")
-DECISION_TEXT_MAX = 2000
-DELEGATES = ("Leif",)
-
-
-def decision_id(d: Any) -> str:
-    return f"D{d.get('id')}"
-
-
-def in_force(d: Any, day: str, workspace: str) -> bool:
-    """Decision `d` holds on `day` (ISO) in `workspace` (a slot): from its first day,
-    to its last if it has one, before the day it was withdrawn, and in its workspace or all."""
-    day = str(day or "")
-    start, until = str(d.get("from_day") or ""), str(d.get("until_day") or "")
-    gone, where = str(d.get("withdrawn") or ""), str(d.get("workspace") or "")
-    return (
-        bool(day)
-        and bool(start)
-        and start <= day
-        and (not until or day <= until)
-        and (not gone or day < gone)
-        and (not where or where == workspace)
-    )
 
 
 def opens_with(by: Any, names: Any) -> bool:
@@ -529,7 +502,6 @@ class Answers:
         question: Any,
         answer: str,
         answered_by: str,
-        delegation: str = "",
     ) -> dict[str, Any]:
         """A person answers one item under an artifact's `## Open questions`.
 
@@ -542,10 +514,6 @@ class Answers:
         `question` may be `"F<n>"`, a finding the loop lists in the unit's `personFindings`;
         then `artifact` must be `review.md`. That row is read by `coscc.loop next` and the
         `ship` gate.
-
-        With `delegation` `D<n>`, the answer is an agent's under a delegation the person
-        entered on Settings; `_append_one` checks it and ends the row's text with
-        `Theo ủy quyền: D<n>`, which is what reads it back as `delegated`.
         """
         self.ws.check(cwd)
         name = str(answered_by or "").strip() or OWNER
@@ -557,7 +525,6 @@ class Answers:
             "product",
             f"human:{name}",
             "answer",
-            delegation=str(delegation or "").strip(),
         )
         written = done["written"][0]
         # The answer itself starts nothing; a pass may, if the switch is on.
@@ -579,16 +546,12 @@ class Answers:
         via: str,
         actor: str,
         source: str,
-        delegation: str = "",
     ) -> dict[str, Any]:
         """The one place that records an answer: `items` is `[(artifact, question, text)]`, all
         checked and written under one hold of `_answer_lock` and one board read. A refusal
-        raises. Returns `{written: [{artifact, question}], date}`.
-
-        Each row says whose answer it is by the road it came, never by the name typed: one
-        under a delegation `delegated`, any other `person`.
+        raises. Returns `{written: [{artifact, question}], date}`. Each row is a `person`'s.
         """
-        authority = "delegated" if delegation else "person"
+        authority = "person"
         name = answered_by
         today = date.today().isoformat()
         written: list[dict[str, Any]] = []
@@ -612,8 +575,6 @@ class Answers:
                     question,
                     str(answer or "").strip("\n"),
                     name,
-                    today,
-                    delegation,
                 )
                 written.append({"artifact": artifact, "question": finding or number})
                 texts.append(text)
@@ -725,8 +686,6 @@ class Answers:
         question: Any,
         text: str,
         name: str,
-        today: str,
-        delegation: str = "",
     ) -> tuple[int | str, str, str]:
         """Check one answer against the board read `found`. Raises `Invalid`; returns
         `(number, finding, text)`, the text as its row keeps it. `_record_answers` writes it."""
@@ -790,152 +749,7 @@ class Answers:
                     f"{artifact} cannot be answered while the {held['stage']} step that writes it "
                     "is running; answer it once the step ends"
                 )
-        if delegation:
-            # Last of the refusals, before the row is written.
-            text = (
-                f"{text}\n\n{DELEGATION} {self._delegation_or_refuse(cwd, name, delegation, today)}"
-            )
         return number, finding, text.strip()
-
-    def _delegation_or_refuse(self, cwd: str, name: str, delegation: str, today: str) -> str:
-        """The `D<n>` an answer under `name` may cite today in `cwd`, or `Invalid` naming why
-        not. What the delegation `covers` is not checked."""
-        cited = str(delegation or "").strip()
-        if not re.fullmatch(r"D\d+", cited):
-            raise Invalid(f"a delegation is named D<n>, got {delegation!r}")
-        try:
-            rows = Data(self.config.data_dir).decisions()
-        except (Unusable, sqlite3.Error, OSError) as e:
-            raise Invalid(f"the decisions could not be read, so nothing was written: {e}") from e
-        d = next((d for d in rows if decision_id(d) == cited), None)
-        if d is None:
-            raise Invalid(f"there is no decision {cited}")
-        if d["kind"] != "delegation":
-            raise Invalid(f"{cited} is a decision, not a delegation")
-        if d["workspace"] and d["workspace"] != units.slot(cwd):
-            raise Invalid(f"{cited} does not cover this workspace")
-        if not in_force(d, today, units.slot(cwd)):
-            raise Invalid(f"{cited} is not in force today")
-        if not opens_with(name, [d["agent"]]):
-            raise Invalid(f"{cited} delegates to {d['agent']}, and this answer is under {name}")
-        return cited
-
-    # -- the person's decisions ------------------------
-    #
-    # No route reaches these: over HTTP an agent could make "the person's decision" itself.
-    # The table goes with the decisions rebuild.
-
-    def decisions_table(self) -> dict[str, Any]:
-        """Every decision, withdrawn and expired included, each with its `state` and its
-        workspace by name, and the workspace names the form offers."""
-        today = date.today().isoformat()
-        rows = self.ws.all()["workspaces"]
-        names = {units.slot(r["path"]): str(r["name"]) for r in rows}
-        try:
-            found = Data(self.config.data_dir).decisions()
-        except (Unusable, sqlite3.Error, OSError) as e:
-            raise Invalid(f"The decisions could not be read: {e}") from e
-        out = []
-        for d in found:
-            if d["withdrawn"]:
-                state = "withdrawn"
-            elif d["until_day"] and d["until_day"] < today:
-                state = "expired"
-            elif d["from_day"] > today:
-                state = "not yet"
-            else:
-                state = "in force"
-            out.append(
-                {
-                    **d,
-                    "id": decision_id(d),
-                    "state": state,
-                    "workspace_name": names.get(d["workspace"], "a removed workspace")
-                    if d["workspace"]
-                    else "All workspaces",
-                }
-            )
-        return {"rows": out, "workspaces": sorted(dict.fromkeys(names.values()))}
-
-    def add_decision(self, fields: dict[str, Any]) -> dict[str, Any]:
-        """One new decision from the Settings form, or `Invalid` with one sentence. `from` is
-        today, set here: a form that took it could date a decision before the blocks it relabels."""
-        get = lambda k: str(fields.get(k) or "").strip()
-        kind, text, source, until, where = (
-            get("kind"),
-            get("text"),
-            get("source"),
-            get("until"),
-            get("workspace"),
-        )
-        agent, covers = get("agent"), get("covers")
-        today = date.today().isoformat()
-        if kind not in DECISION_KINDS:
-            raise Invalid("Choose decision or delegation.")
-        if not text:
-            raise Invalid("Write what was decided.")
-        if len(text) > DECISION_TEXT_MAX:
-            raise Invalid(f"The text is longer than {DECISION_TEXT_MAX} characters.")
-        if not source:
-            raise Invalid("Say where it was decided.")
-        if "\n" in source or "\r" in source:
-            raise Invalid("The source must fit on one line.")
-        if until:
-            try:
-                valid = len(until) == 10 and date.fromisoformat(until).isoformat() == until
-            except ValueError:
-                valid = False
-            if not valid:
-                raise Invalid("The end date must be a date such as 2026-12-31.")
-            if until < today:
-                raise Invalid("The end date is before today.")
-        slot = ""
-        if where and where.casefold() not in ("all", "all workspaces"):
-            slot = next(
-                (units.slot(r["path"]) for r in self.ws.all()["workspaces"] if r["name"] == where),
-                "",
-            )
-            if not slot:
-                raise Invalid("Choose all workspaces or one of the app's workspaces.")
-        if kind == "delegation":
-            if agent not in DELEGATES:
-                raise Invalid(f"Choose {' or '.join(DELEGATES)} for a delegation.")
-            if not covers:
-                raise Invalid("Say which questions the delegation covers.")
-            if "\n" in covers or "\r" in covers:
-                raise Invalid("What it covers must fit on one line.")
-        else:
-            agent = covers = ""
-        try:
-            n = Data(self.config.data_dir).decision_add(
-                kind=kind,
-                text=text,
-                source=source,
-                workspace=slot,
-                agent=agent,
-                covers=covers,
-                from_day=today,
-                until_day=until,
-            )
-        except (Unusable, sqlite3.Error, OSError) as e:
-            raise Invalid(f"The decision could not be saved: {e}") from e
-        return {"added": f"D{n}", **self.decisions_table()}
-
-    def withdraw_decision(self, decision_id: Any) -> dict[str, Any]:
-        """Withdraw one decision in force: its row stays, with today's date."""
-        cited = str(decision_id or "").strip()
-        today = date.today().isoformat()
-        table = self.decisions_table()
-        row = next((r for r in table["rows"] if r["id"] == cited), None)
-        if row is None:
-            raise Invalid(f"There is no decision {cited or '(none)'}.")
-        if row["state"] in ("withdrawn", "expired"):
-            raise Invalid(f"{cited} is {row['state']} already.")
-        try:
-            Data(self.config.data_dir).decision_withdraw(int(cited[1:]), today)
-        except (Unusable, sqlite3.Error, OSError) as e:
-            raise Invalid(f"{cited} could not be withdrawn: {e}") from e
-        return {"withdrawn": cited, **self.decisions_table()}
 
     async def record_outcome(  # noqa: C901, PLR0915 - still to split
         self,

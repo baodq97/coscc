@@ -3,7 +3,7 @@
 // Delegations in the owner's words come with Leif's own backend.
 
 import { useState, type ReactNode } from "react";
-import type { Decision, Shown } from "../api.gen";
+import type { Shown } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { money } from "../lib/format";
@@ -30,9 +30,6 @@ export function MayDo() {
       </Section>
       <Section title="Each project">
         {loading ? <SkeletonRows rows={3} /> : boards.map((b) => <Project key={b.workspace.path} workspace={b.workspace} />)}
-      </Section>
-      <Section title="Your decisions and delegations">
-        <Decisions />
       </Section>
       <Section title="The app">
         <TheApp />
@@ -208,39 +205,3 @@ function TheApp() {
   );
 }
 
-/** The owner's standing decisions, which agents read as precedent, and delegations, which let
- * Leif answer a kind of question in the owner's place. Read only here: they are written on the
- * person's own Settings screen, which no route reaches, so no agent can widen its own mandate. */
-function Decisions() {
-  const table = useResource("/api/decisions");
-  if (table.state === "error") return <ErrorState error={table.error} onRetry={table.reload} />;
-  if (!table.data) return <SkeletonRows rows={3} />;
-  const live = table.data.rows.filter((d) => d.state === "in force" || d.state === "not yet").reverse();
-  const gone = table.data.rows.length - live.length;
-  return (
-    <div className="card">
-      {live.map((d) => (
-        <DecisionRow key={d.id} decision={d} />
-      ))}
-      {!live.length && <div className="card-b faint">None in force.</div>}
-      <div className="card-b faint" style={{ fontSize: 12 }}>
-        {gone > 0 ? `${gone} withdrawn or expired. ` : ""}Add or withdraw one on the Settings screen of the board.
-      </div>
-    </div>
-  );
-}
-
-function DecisionRow({ decision: d }: { decision: Decision }) {
-  return (
-    <div className="ny" style={{ alignItems: "flex-start" }}>
-      <span className="faint" style={{ width: 34, fontSize: 12, paddingTop: 1 }}>{d.id}</span>
-      <div className="grow" style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 500 }}>{d.text}</div>
-        <div className="prov" style={{ marginTop: 4 }}>
-          {d.kind === "delegation" ? `${d.agent} may answer: ${d.covers}` : "Decision"} · {d.workspace_name} · since {d.from_day}
-          {d.until_day ? ` until ${d.until_day}` : ""} · {d.source}
-        </div>
-      </div>
-    </div>
-  );
-}

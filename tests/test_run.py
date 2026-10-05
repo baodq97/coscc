@@ -168,7 +168,7 @@ class TheStateCommand(unittest.TestCase):
 
 
 class TheSkipCommand(unittest.TestCase):
-    """A spec is skipped on a person's decision, or their delegate's, and on no agent's. `coscc
+    """A spec is skipped on a person's decision and on no agent's. `coscc
     skip` is how a person records one."""
 
     UNIT = "0013_open-question"
@@ -245,13 +245,6 @@ class TheSkipCommand(unittest.TestCase):
         gate = self.gate_plan()
         self.assertEqual(gate.code, 0, gate.err)
 
-    def test_delegated_says_whose_it_is(self):
-        self.assertEqual(
-            self.coscc("skip", "proj", self.UNIT, "spec", "--delegated", "asked to")[0], 0
-        )
-        self.assertEqual(self.spec_rows()[-1]["authority"], "delegated")
-        self.assertEqual(self.gate_plan().code, 0)
-
     def test_a_skip_no_person_recorded_keeps_plan_shut(self):
         from coscc.units.history import History
 
@@ -272,7 +265,7 @@ class TheSkipCommand(unittest.TestCase):
         )
         gate = self.gate_plan()
         self.assertEqual(gate.code, 1)
-        self.assertIn("spec.md is skipped by unknown, not by a person or their delegate", gate.err)
+        self.assertIn("spec.md is skipped by unknown, not by a person", gate.err)
 
     def test_what_it_refuses(self):
         for args in (

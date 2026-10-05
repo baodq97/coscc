@@ -5,8 +5,7 @@ runner's `## Answers` guard.
 
 - **An answer is a row, rendered into the next prompt.** It carries `owner` unless the request
   names someone; anyone with the password can write text a stage will read as a person's
-  decision. A finding answer and a delegation also feed a gate. A delegation writes an answer
-  under a named agent; whether it covers the question is not checked.
+  decision. A finding answer also feeds a gate.
 - **A prose-stage rewrite keeps `## Answers` byte for byte;** a reply's own attempt at one is
   dropped silently. The runner reads the section right before it writes. `impl.md` and `pr.md`
   are written by the session, so their section is checked afterwards and not restored. A renumbered

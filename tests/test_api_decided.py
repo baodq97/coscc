@@ -1,5 +1,4 @@
-"""The owner's decisions, read over HTTP and never written there, and the log of what was
-decided in their place."""
+"""The log of what was decided in the owner's place."""
 
 from __future__ import annotations
 
@@ -26,14 +25,6 @@ class Routes(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
-    async def test_decisions_are_read_and_never_written_here(self):
-        r = await self.client.get("/api/decisions")
-        self.assertEqual(
-            r.json(),
-            {"rows": [], "workspaces": [self.app.state.service.ws.all()["workspaces"][0]["name"]]},
-        )
-        self.assertEqual((await self.client.post("/api/decisions", json={})).status_code, 405)
-
     async def test_decided_lists_answers_given_for_the_owner_newest_first(self):
         board = {
             "units": [
@@ -59,9 +50,9 @@ class Routes(unittest.IsolatedAsyncioTestCase):
                         {
                             "artifact": "plan.md",
                             "n": 1,
-                            "text": "delegated",
+                            "text": "inferred",
                             "by": "someone",
-                            "authority": "delegated",
+                            "authority": "agent",
                             "date": "2026-10-04",
                         },
                     ],
@@ -72,5 +63,5 @@ class Routes(unittest.IsolatedAsyncioTestCase):
             r = await self.client.get("/api/decided", params={"cwd": self.cwd})
         self.assertEqual(
             [(d["text"], d["date"]) for d in r.json()],
-            [("delegated", "2026-10-04"), ("Leif's", "2026-10-02")],
+            [("inferred", "2026-10-04"), ("Leif's", "2026-10-02")],
         )

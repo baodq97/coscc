@@ -61,7 +61,7 @@ class TheCodesAreRead(unittest.TestCase):
         # stop is `b`, a person's, never `f`'s "no stage it can name".
         said = nxt(
             "",
-            "spec.md is skipped by agent, not by a person or their delegate — …",
+            "spec.md is skipped by agent, not by a person — …",
             reasons=["agent-cannot-skip"],
         )
         self.assertTrue(ap.needs_a_person(said))

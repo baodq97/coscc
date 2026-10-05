@@ -273,7 +273,7 @@ class Answer(TypedDict):
     question: str
     text: str
     by: str
-    # Who decided: `person`, `delegated` or `agent-inferred`.
+    # Who decided: `person` or `agent-inferred`.
     authority: str
     via: str
     date: str
