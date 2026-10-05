@@ -13,7 +13,8 @@ from coscc.http.plugin import create_tables
 from coscc.kernel import Agents, Invalid, Runs, Settings, Submitted, Units
 from tests.features.ctx import ctx_for
 from coscc.store.journal import Intervention, Journal
-from coscc.units import backlog
+from coscc.agent import policy
+from coscc.units import backlog, submit
 
 WS = "/ws"
 PROBLEM = "Steps stop and a person runs them again by hand. " * 6
@@ -296,3 +297,41 @@ async def _submit(server, obj):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ItsSessionIsDeclaredHere(unittest.TestCase):
+    """What the core once named for scan: its grant, its `submit` schema, its slug rules."""
+
+    def setUp(self):
+        policy.add_session(scan.NAME, scan.SESSION.grant, scan.SESSION.own_turns)
+        submit.add_session(scan.NAME, scan.SESSION.schema, scan.SESSION.purpose)
+
+    def test_the_grant_opens_nothing_and_keeps_its_two_turns(self):
+        g = policy.grant_for(scan.NAME)
+        self.assertFalse(g.opens_anything)
+        self.assertTrue(g.submits)
+        self.assertEqual((g.max_turns, g.max_budget_usd), (2, 0.68))
+        self.assertIn("paid session", g.warning)
+        self.assertEqual(policy.decide(g, "mcp__cos__submit", {}, "/tmp/ws"), "")
+        for tool in ("Read", "Bash", "Write"):
+            self.assertIn("not granted", policy.decide(g, tool, {}, "/tmp/ws"), tool)
+
+    def test_the_collector_keeps_proposals_and_refuses_a_bare_one(self):
+        good = {
+            "proposals": [
+                {"type": "fix", "slug": "a-b", "title": "t", "problem": "p", "sources": ["x"]}
+            ]
+        }
+        for obj, fits in ((good, True), ({"proposals": [{"type": "fix"}]}, False)):
+            collector = submit.Collector(scan.NAME)
+            server = collector.server()
+            said = asyncio.run(_submit(server, obj))
+            self.assertEqual(not said.get("is_error"), fits)
+            self.assertEqual(collector.object(), obj if fits else None)
+
+    def test_the_rules_are_the_loops_own(self):
+        from coscc import loop
+
+        self.assertEqual(scan.SCAN_TYPES, tuple(loop.BRANCH_TYPES))
+        self.assertEqual(scan.SLUG.pattern, loop.SLUG_RE.pattern)
+        self.assertEqual(scan.SLUG_MAX, loop.SLUG_MAX)

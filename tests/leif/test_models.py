@@ -134,3 +134,9 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
             ("m", "override"),
         )
         self.assertEqual(review["config"]["model_source"], "default")
+
+    def test_settings_never_show_the_trial(self):
+        """The Agents page shows `models.json` and the overrides, never an arm's model."""
+        page = self.core.agents.agent_page()
+        rows = [r["config"] for r in page["rows"]] + page["others"]
+        self.assertFalse([r for r in rows if r["model_source"] == "trial"])

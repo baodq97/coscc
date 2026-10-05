@@ -453,6 +453,15 @@ class RecordingAnOutcome(unittest.TestCase):
         self.intent.write_text(OUTCOME_INTENT + "\n## Notes\n\nx\n", encoding="utf-8")
         self.assertIn("section after its ## Answers", self.refused())
 
+    def test_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
+        journal = self.core.ws.journal()
+        key = self.core.ws.key(self.cwd)
+        before = len(journal.records(key))
+        self.assertIsNone(self.board_unit()["outcome"]["result"])
+        self.board_unit()
+        self.assertEqual(len(journal.records(key)), before)
+        self.assertEqual(self.core.chat.sessions_for(self.cwd)["sessions"], [])
+
 
 class DroppingAUnitRemovesItsScratch(unittest.TestCase):
     def setUp(self):

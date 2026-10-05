@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.units.test_meta import ingest
+from coscc.agent.policy import grant_for
 from coscc.bus import Bus
 from coscc.github import integrate
 from coscc.git import fetches
@@ -554,6 +555,22 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(len(self.records("integration")), 0)
         self.integrate_with(self._no_act)
         self.assertEqual(len(self.records("start")), 1)
+
+    def test_gebo_with_nothing_overridden_runs_under_its_grants_ceilings(self):
+        async def act(tree, gate):
+            return "[needs-person] f.txt: both"
+
+        self.integrate_with(act)
+        grant = grant_for("integrate")
+        [kw] = self.core.sessions.kws
+        self.assertEqual(
+            (kw["max_turns"], kw["max_budget_usd"]), (grant.max_turns, grant.max_budget_usd)
+        )
+        _, stored = self.stored_config()
+        self.assertEqual(
+            (stored[0]["max_turns_source"], stored[0]["max_budget_source"]),
+            ("default", "default"),
+        )
 
 
 class AStaleOriginMain(unittest.TestCase):

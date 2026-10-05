@@ -58,6 +58,9 @@ class TheGate(unittest.TestCase):
             with self.assertRaises(Invalid):
                 call()
 
+    def test_a_configured_workspace_passes_the_gate(self):
+        self.assertEqual(_core().chat.sessions_for(REPO)["cwd"], REPO)
+
 
 class WhatCountsAsInvalid(unittest.TestCase):
     def test_history_needs_a_session_id(self):
@@ -207,3 +210,25 @@ def unit_history(core: Core, cwd: str, unit: str) -> dict:
 def timeline(core: Core, cwd: str, unit: str) -> dict:
     runs = core.ws.journal().timeline(core.ws.key(cwd), unit)
     return {"runs": runs, "cost": totals_of(runs)}
+
+
+class OneMembershipQuestion(unittest.TestCase):
+    """The session layer keeps its own guard — it is the last thing before a CLI process is
+    spawned — but it must answer the same question the core gate answers. Before this,
+    a store-backed workspace passed the gate and was refused one layer down, and only a
+    real clone-and-send found it."""
+
+    def test_the_session_layer_sees_store_workspaces_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "repo").mkdir()
+            config = Config(workspaces=(), working_dir=str(root), data_dir=str(root))
+            s = Core(config, Sessions(config))
+            s.ws.store.add("repo")
+            self.assertTrue(s.sessions.membership(str(root / "repo")))
+
+    def test_the_session_layer_still_refuses_what_the_gate_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = Config(workspaces=(), working_dir=d, data_dir=d)
+            s = Core(config, Sessions(config))
+            self.assertFalse(s.sessions.membership("/etc"))

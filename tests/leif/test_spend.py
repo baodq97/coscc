@@ -207,6 +207,10 @@ class Anomalies(unittest.TestCase):
             [("u", "exhausted"), ("v", "failed")],
         )
 
+    def test_no_unit_is_never_over_budget(self):
+        m = spend.model([end("", "estimate", cost_usd=20.0)], tz=TZ)
+        self.assertEqual(kinds(m, "over-budget"), [])
+
 
 BY_UNIT = (
     "SELECT SUM(json_extract(record, '$.cost_usd')) FROM runs "
@@ -344,3 +348,18 @@ class MatchesTheRunsTable(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Days(unittest.TestCase):
+    def test_a_day_is_the_local_calendar_day_of_the_end(self):
+        m = spend.model(
+            [
+                end("u", "impl", at="2026-09-24T16:59:59+00:00", cost_usd=1.0),
+                end("u", "impl", at="2026-09-24T17:00:00+00:00", cost_usd=2.0),
+            ],
+            tz=TZ,
+        )
+        self.assertEqual(
+            [(r["key"], r["usd"]) for r in m["by_day"]], [("2026-09-25", 2.0), ("2026-09-24", 1.0)]
+        )
+        self.assertEqual(m["offset"], "UTC+07:00")

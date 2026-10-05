@@ -229,6 +229,13 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         await s.aclose()
         self.assertEqual(len(BELL), before)
 
+    async def test_following_writes_nothing_to_the_run_log(self):
+        self.append(stop(self.key))
+        before = self.journal.last_id()
+        s = self.follow(after=0)
+        await self.lines(s, 3, within=BEAT * 10)
+        self.assertEqual(self.journal.last_id(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

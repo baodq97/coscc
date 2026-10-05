@@ -634,6 +634,17 @@ class Warnings(unittest.TestCase):
             ig.warnings([], "", True, "W", fallback=True)[0],
         )
 
+    def test_changes_asked_and_a_clean_rebase_spends_no_round(self):
+        # A patch left unchanged goes back to impl; only a changed one costs a round.
+        said = ig.warnings([{"verdict": "changes-requested"}], "changes-requested", False, "W")[0]
+        self.assertIn("If integrating leaves the unit's patch unchanged", said)
+        self.assertIn("the loop's next still offers impl, and no review round is spent", said)
+        self.assertIn(
+            "If it changes the patch, next offers review once CI is green, and that round counts toward COS_REVIEW_ROUNDS",
+            said,
+        )
+        self.assertNotIn("offers review, not impl", said)
+
 
 class ThePrompt(unittest.TestCase):
     def test_a_refused_update_carries_its_code_and_words(self):

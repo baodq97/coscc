@@ -2237,6 +2237,72 @@ class Scripted(_Base):
         got = await self.core.autopilot.pr_read(self.key)
         self.assertEqual((got.calls, len(gh.calls)), (0, calls))
 
+    async def test_a_unit_s_launch_failing_keeps_the_workspace_stop_and_logs_only_the_unit(self):
+        # A call that looked at one unit did not look at the workspace.
+        workspace = {"unit": "", "kind": "shortlist", "reason": decide.NO_SHORTLIST}
+        self.core.autopilot.set_stops(self.key, {"": workspace})
+        self.core.autopilot.set_stops(
+            self.key,
+            {"0001_a": {"unit": "0001_a", "kind": "f", "reason": "said"}},
+            {"0001_a"},
+        )
+        self.assertEqual(self.core.autopilot.stops[self.key][""], workspace)
+        self.assertEqual(self.logged(), [("", "shortlist"), ("0001_a", "f")])
+
+    async def test_no_record_no_start(self):
+        self.add("0001_a", "spec")
+        self.add("0002_b", "spec")
+        append = Journal.append
+
+        def refusing(journal, record, timeout=None):
+            if record.get("kind") == "autopilot-pick":
+                raise Busy("the run log is busy")
+            return append(journal, record, timeout)
+
+        self.listed()
+        with mock.patch.object(Journal, "append", refusing):
+            await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"": "f"}))
+        self.assertIn("could not record", self.core.autopilot.stops[self.key][""]["reason"])
+
+    async def test_no_answer_since_the_last_impl_is_the_stop_f(self):
+        self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {
+                "kind": "start",
+                "workspace": self.key,
+                "unit": "0001_a",
+                "stage": "impl",
+                "started_by": "autopilot",
+            }
+        )
+        await self.pass_()
+        self.assertEqual(self.launched, [])
+        self.assertEqual(
+            self.core.autopilot.stops[self.key]["0001_a"],
+            {"unit": "0001_a", "kind": "f", "reason": "finish and accept impl.md"},
+        )
+
+    async def test_an_old_exhausted_ship_still_stops_a_merging_ship(self):
+        self.core.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
+        self.shipped("0001_a")
+        self.add("0001_a", "ship", action=self.MERGING)
+        await self.pass_()
+        self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {"0001_a": "e"}))
+        self.assertEqual(
+            self.core.autopilot.stops[self.key]["0001_a"]["reason"],
+            "the last ship step ended exhausted",
+        )
+
+    async def test_the_stop_names_each_question_that_waits(self):
+        self.asks("0001_a", n=2)
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops(), self.picks()), ([], {"0001_a": "a"}, []))
+        self.assertEqual(
+            self.core.autopilot.stops[self.key]["0001_a"]["reason"],
+            "open questions: intent.md question 1, intent.md question 2",
+        )
+
 
 class TheGuideBlock(_Base):
     """`guide_block` over the units of one board read, with the autopilot on and no pass run."""

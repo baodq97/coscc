@@ -646,6 +646,16 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_answering_through_the_api_changes_no_byte_of_the_artifact(self):
+        before = self.intent.read_bytes()
+        got = await self.post()
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(got.json()["question"], 2)
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual(
+            self.rows(), [("intent.md", "2", "Phong", "product", "Tách ra. MARK-0016")]
+        )
+
 
 class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
     """The route appends one `### Outcome` block or writes nothing at all; what it refuses is
@@ -1244,6 +1254,10 @@ class IntegratingOverHttp(PostingAReviewRoundOverHttp):
     test_two_presses_make_one_comment = None  # type: ignore[assignment]
     test_the_board_then_shows_the_round_on_the_pr = None  # type: ignore[assignment]
     test_bad_requests_are_400_and_reach_no_gh = None  # type: ignore[assignment]
+
+    async def test_next_never_offers_it(self):
+        got = await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})
+        self.assertNotEqual(got.json().get("stage"), "integrate")
 
 
 class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
