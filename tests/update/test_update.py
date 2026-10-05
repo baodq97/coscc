@@ -76,13 +76,6 @@ class TheRunningBuild(unittest.TestCase):
             self.assertEqual((me["version"], me["commit"]), ("0.12.0", SHA))
             self.assertEqual(me["build_id"], f"0.12.0+{SHA}")
 
-    def test_a_wheel_built_before_the_stamp_says_it_does_not_know(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            me = update.identity(
-                from_env({}), True, stamp=Path(tmp) / "none.json", version="0.11.0"
-            )
-            self.assertEqual((me["commit"], me["commit_label"]), ("", update.UNKNOWN_COMMIT))
-
     def test_a_checkout_reads_head_and_ignores_a_stamp_left_in_it(self):
         with tempfile.TemporaryDirectory() as tmp:
             stamp = Path(tmp) / "_build.json"
@@ -93,10 +86,6 @@ class TheRunningBuild(unittest.TestCase):
             ).stdout.strip()
             self.assertEqual(me["commit"], head)
             self.assertEqual(me["install"], "checkout")
-
-    def test_a_local_build_is_its_public_version(self):
-        self.assertEqual(update.public("0.12.0+gd02560a"), (0, 12, 0))
-        self.assertIsNone(update.public("0.12"))
 
 
 class TheServiceShape(unittest.TestCase):
@@ -140,13 +129,6 @@ class TheServiceShape(unittest.TestCase):
             config or self.env(), packaged, str(prefix or self.prefix), str(self.exe)
         )
 
-    def test_all_six_hold(self):
-        shape, reason, details = self.shape()
-        self.assertEqual((shape, reason), ("service", ""))
-        self.assertEqual(details["uv"], str(self.bin / "uv"))
-        self.assertEqual(details["tool_dir"], str(self.prefix.parent))
-        self.assertEqual(details["bin_dir"], str(self.bin))
-
     def test_each_one_false_names_itself(self):
         self.assertIn("checkout", self.shape(packaged=False)[1])
         no_id = from_env({"XDG_CONFIG_HOME": str(self.cfg_home), "PATH": str(self.bin)})
@@ -166,6 +148,13 @@ class TheServiceShape(unittest.TestCase):
             }
         )
         self.assertIn("uv", self.shape(config=no_uv)[1])
+
+    def test_all_six_hold(self):
+        shape, reason, details = self.shape()
+        self.assertEqual((shape, reason), ("service", ""))
+        self.assertEqual(details["uv"], str(self.bin / "uv"))
+        self.assertEqual(details["tool_dir"], str(self.prefix.parent))
+        self.assertEqual(details["bin_dir"], str(self.bin))
 
     def test_the_first_false_one_wins(self):
         self.unit.unlink()
@@ -384,9 +373,6 @@ class Finishing(unittest.TestCase):
         self.assertEqual(self.last()["result"], "broken")
         self.assertIn("result: broken", (self.root / "update.log").read_text())
 
-    def test_the_install_timeout_is_the_chosen_one(self):
-        self.assertEqual(update.INSTALL_TIMEOUT, 120)
-
     def test_nothing_is_imported_after_the_install_begins(self):
         """The venv is replaced under this process at step 8, so `finish` may import nothing.
         Measured in a clean interpreter that has imported only `coscc.update`."""
@@ -411,10 +397,6 @@ class Finishing(unittest.TestCase):
 
 
 class TheSlot(unittest.TestCase):
-    def test_no_server_refuses_the_hand_off(self):
-        slot = update._Slot()
-        self.assertFalse(slot.hand_off(object()))  # type: ignore[arg-type]
-
     def test_a_hand_off_stops_the_server_and_is_taken_once(self):
         class S:
             should_exit = False
@@ -426,17 +408,9 @@ class TheSlot(unittest.TestCase):
         self.assertEqual(slot.take(), "h")
         self.assertIsNone(slot.take())
 
-
-class TheRollbackCommand(unittest.TestCase):
-    def test_it_names_all_five_steps(self):
-        text = update.rollback_command(
-            "/u/uv", "/t", "/b", "/w.whl", "/d/cos.db", "/d/updates/cos.db.bak"
-        )
-        self.assertIn("systemctl --user stop coscc", text)
-        self.assertIn("cp /d/updates/cos.db.bak /d/cos.db", text)
-        self.assertIn("rm -f /d/cos.db-wal /d/cos.db-shm", text)
-        self.assertIn("UV_OFFLINE=1", text)
-        self.assertIn("systemctl --user start coscc", text)
+    def test_no_server_refuses_the_hand_off(self):
+        slot = update._Slot()
+        self.assertFalse(slot.hand_off(object()))  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

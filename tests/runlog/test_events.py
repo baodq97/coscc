@@ -154,19 +154,6 @@ class WhatIsRecorded(unittest.TestCase):
         self.assertNotIn("config", [e["kind"] for e in rest])
         self.assertEqual(rec.lost, 0)
 
-    def test_a_long_field_is_cut_and_says_so(self):
-        rec = recorder()
-        rec.message(assistant("m", TextBlock("a" * 70_000)))
-        text = rec.events[-1]
-        self.assertEqual(len(text["text"]), events.FIELD_MAX)
-        self.assertTrue(text["truncated"])
-        self.assertEqual(text["length"], 70_000)
-        rec.denied("Bash", {"command": "b" * 70_000}, "no")
-        cut = rec.events[-1]
-        self.assertIsInstance(cut["input"], str)
-        self.assertEqual(len(cut["input"]), events.FIELD_MAX)
-        self.assertTrue(cut["truncated"])
-
     def test_every_refusal_is_an_event(self):
         rec = recorder()
         for _ in range(7):

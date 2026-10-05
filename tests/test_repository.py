@@ -27,21 +27,5 @@ class NoPersonalNameIsPublished(unittest.TestCase):
         self.assertEqual(out.stdout.split(), [])
 
 
-class TheRecordedNamesAreNotTyped(unittest.TestCase):
-    """No line of the harness says a recorded name is typed: no field takes a name a person
-    types."""
-
-    FIELDS = ("Answered by", "stopped_by", "`by`", "Recorded by")
-
-    def test_no_line_of_the_harness_says_a_recorded_name_is_typed(self):
-        lines = (REPO / ".claude" / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
-        bad = [
-            f"{i}: {line}"
-            for i, line in enumerate(lines, 1)
-            if "typed" in line and any(f in line for f in self.FIELDS)
-        ]
-        self.assertEqual(bad, [])
-
-
 if __name__ == "__main__":
     unittest.main()

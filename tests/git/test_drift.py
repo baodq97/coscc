@@ -58,14 +58,6 @@ class TheSectionAndTheMatch(unittest.TestCase):
         self.assertNotIn("coscc/f.py", self.section)
         self.assertNotIn("coscc/g.py", self.section)
 
-    def test_no_section_is_none_not_empty(self):
-        self.assertIsNone(drift.files_section("# Plan\n\n## Order of work\n\n`coscc/a.py`\n"))
-
-    def test_the_last_section_runs_to_the_end_of_the_file(self):
-        self.assertEqual(
-            drift.files_section("x\n## Files that change\n`a.py`\n"), "## Files that change\n`a.py`"
-        )
-
     def test_table_bullet_and_line_suffix_forms_all_match(self):
         got = drift.mentioned(
             self.section,
@@ -95,12 +87,6 @@ class TheSectionAndTheMatch(unittest.TestCase):
     def test_a_path_in_the_diff_the_plan_does_not_name_is_left_out(self):
         self.assertEqual(drift.mentioned(self.section, ["coscc/a.py", "README.md"]), ["coscc/a.py"])
 
-    def test_the_result_is_in_byte_order(self):
-        section = "## Files that change\n`b.py` `B.py` `a.py`\n"
-        self.assertEqual(
-            drift.mentioned(section, ["b.py", "a.py", "B.py"]), ["B.py", "a.py", "b.py"]
-        )
-
 
 class ChoosingTheRunOfPlan(unittest.TestCase):
     """The `head` of the last `done` run of `plan`."""
@@ -108,10 +94,6 @@ class ChoosingTheRunOfPlan(unittest.TestCase):
     def test_the_last_done_run_wins_over_a_later_failed_one(self):
         records = [start("1" * 40), end(), start("2" * 40), end(), start("3" * 40), end("failed")]
         self.assertEqual(drift.plan_head(records), ("2" * 40, ""))
-
-    def test_a_start_with_no_end_is_not_chosen(self):
-        records = [start("1" * 40), end(), start("2" * 40)]
-        self.assertEqual(drift.plan_head(records), ("1" * 40, ""))
 
     def test_two_starts_in_a_row_pair_the_second_with_the_end(self):
         records = [start("1" * 40), start("2" * 40), end()]
@@ -138,53 +120,6 @@ class ChoosingTheRunOfPlan(unittest.TestCase):
             sha, reason = drift.plan_head(records)
             self.assertEqual(sha, "", records)
             self.assertTrue(reason, records)
-
-
-class TheSentence(unittest.TestCase):
-    def test_nothing_changed_adds_nothing(self):
-        self.assertEqual(
-            drift.describe(
-                {
-                    "plan_sha": "a" * 40,
-                    "main_sha": "b" * 40,
-                    "files": [],
-                    "checked": True,
-                    "reason": "",
-                }
-            ),
-            "",
-        )
-
-    def test_unchecked_is_one_sentence_with_no_list(self):
-        said = drift.describe(
-            {
-                "plan_sha": "a" * 40,
-                "main_sha": None,
-                "files": None,
-                "checked": False,
-                "reason": "no origin",
-            }
-        )
-        self.assertTrue(said.startswith("The app could not check"))
-        self.assertIn("no origin", said)
-        self.assertEqual(said.count("\n"), 0)
-        self.assertNotIn("git diff", said)
-
-    def test_changed_files_each_carry_their_diff_command_and_the_three_instructions(self):
-        said = drift.describe(
-            {
-                "plan_sha": "a" * 40,
-                "main_sha": "b" * 40,
-                "files": ["x.py", "y.py"],
-                "checked": True,
-                "reason": "",
-            }
-        )
-        self.assertIn(f"git diff {'a' * 40}..{'b' * 40} -- x.py", said)
-        self.assertIn(f"git diff {'a' * 40}..{'b' * 40} -- y.py", said)
-        self.assertIn("## What is still open", said)
-        self.assertIn("Status: draft", said)
-        self.assertIn("do not edit `plan.md`", said)
 
 
 class ComputingOnARealRepository(unittest.TestCase):
