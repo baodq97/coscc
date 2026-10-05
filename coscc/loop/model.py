@@ -308,10 +308,6 @@ def join_answers(questions, answers):
     return out
 
 
-def answered_questions(text):
-    return join_answers(parse_questions(text), parse_answers(text))
-
-
 # --- the outcome a unit was measured against ------------------------------------------
 
 

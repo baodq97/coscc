@@ -118,7 +118,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                     for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 }
                 kept = conn.execute("SELECT name FROM workspaces").fetchall()
-            self.assertEqual({"transitions", "outputs"} - tables, set())
+            self.assertEqual({"transitions"} - tables, set())
             self.assertEqual([row["name"] for row in kept], ["keep-me"])
 
     def test_a_version_2_database_gains_the_login_tables_and_keeps_its_rows(self):
@@ -176,6 +176,23 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             with data.connect() as conn:
                 gone = conn.execute(
                     "SELECT name FROM sqlite_master WHERE name = 'decisions'"
+                ).fetchone()
+            self.assertIsNone(gone)
+            self.assertEqual(data.pref("density"), "compact")
+
+    def test_a_version_11_database_loses_the_outputs_table_and_keeps_the_rest(self):
+        """12 drops `outputs`, which nothing read."""
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.set_pref("density", "compact")
+            with data.connect() as conn:
+                conn.execute("CREATE TABLE outputs (id INTEGER PRIMARY KEY, path TEXT)")
+                conn.execute("PRAGMA user_version=11")
+
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                gone = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE name = 'outputs'"
                 ).fetchone()
             self.assertIsNone(gone)
             self.assertEqual(data.pref("density"), "compact")

@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.service.test_service import unit_history
 from tests.units.test_submit import a_head, finding, submits
 from coscc.bus import Bus
 from coscc.loop import run as loop_run
@@ -95,7 +96,7 @@ class Place1(unittest.TestCase):
         return opened
 
     def _spec_row(self) -> dict:
-        rows = self.service.backlog.unit_history(str(self.repo), self.unit)["transitions"]
+        rows = unit_history(self.service, str(self.repo), self.unit)["transitions"]
         return [r for r in rows if r["artifact"] == "spec.md"][-1]
 
     def test_prose_saying_accepted_does_not_open_the_gate_an_object_saying_not_ready_closes(self):
@@ -171,7 +172,7 @@ class Place1(unittest.TestCase):
         self.assertIn("without handing back its object", Silent.prompts[1])
         self.assertEqual(done["outcome"], "failed")
         self.assertIn("no-submission", done["error"])
-        rows = self.service.backlog.unit_history(str(self.repo), self.unit)["transitions"]
+        rows = unit_history(self.service, str(self.repo), self.unit)["transitions"]
         self.assertEqual([r for r in rows if r["artifact"] == "spec.md"], [])
         self.assertFalse(self._plan_gate())
 
@@ -234,7 +235,7 @@ class _Review(unittest.TestCase):
             return asyncio.run(go())[-1][1]
 
     def _row(self, artifact: str) -> dict:
-        rows = self.service.backlog.unit_history(str(self.repo), self.unit)["transitions"]
+        rows = unit_history(self.service, str(self.repo), self.unit)["transitions"]
         row = dict([r for r in rows if r["artifact"] == artifact][-1])
         return {
             **row,

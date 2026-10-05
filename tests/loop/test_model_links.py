@@ -1,9 +1,8 @@
 """Codes beside the words, the workflows a red check is read against, one idea over several units
 and repositories, the pull request's title, the metadata `meta` prints and the lane a unit walks.
 
-Ported from the `test(` calls of the loop's former JavaScript suite (`tests/loop/ported.txt` maps
-each one here). A deciding command is handed the snapshot the app would build of the files under
-`--root` and of the stores named as peers, from `meta`'s own readers, as the suite's glue built it.
+A deciding command is handed the snapshot the app would build of the files under
+`--root` and of the stores named as peers, from `meta`'s own readers.
 """
 
 from __future__ import annotations
@@ -35,9 +34,12 @@ from coscc.loop.model import (
 from coscc.loop.paths import parse_idea, read_ideas, unit_meta
 from coscc.loop.probe import make_probe
 from coscc.loop.repo_rules import branch_checks
-from coscc.loop.rules import gate_answer, next_action, next_answer, next_step, check_gate
+from coscc.loop.rules import gate_answer, next_answer
 from tests.loop.conftest import REPO, python
 from tests.loop.test_model import (
+    check_gate,
+    next_action,
+    next_step,
     CHAIN,
     FULL_LANE,
     NOT_ANCESTOR,
@@ -562,25 +564,6 @@ def test_a_missing_peer_a_missing_idea_file_and_an_unlisted_unit_each_land_in_pr
     )
     assert re.search(r"does not list b/0004_r under ## Units", said("0004_r"))
     assert re.search(r"declares no Repo:", said("0005_s"))
-
-
-@pytest.mark.parametrize(
-    "args",
-    [
-        ["status", "--peer", "a=/x"],
-        ["status", "--peer", "a/b=/x"],
-        ["status", "--peer"],
-        ["new-path", "x", "--peer", "a=/x"],
-    ],
-)
-def test_peer_exits_2_wherever_it_is_given(tmp_path, args):
-    root = make_store(tmp_path, {})
-    out = python(
-        ["--root", str(root), *args, "--state", "-"], stdin=json.dumps(state_of_roots(root))
-    )
-    assert out.code == 2, " ".join(args)
-    assert re.search(r"--peer is gone since 0135", out.err)
-    assert out.out == ""
 
 
 @pytest.mark.parametrize("ship", ["draft", None])

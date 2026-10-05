@@ -16,6 +16,8 @@ from coscc.config import Config
 from coscc.service import Service, common
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
+from coscc.store.journal import totals_of
+from coscc.units.history import History
 
 REPO = str(Path(__file__).resolve().parents[2])
 
@@ -269,3 +271,17 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def unit_history(service: Service, cwd: str, unit: str) -> dict:
+    """The transitions of a unit and where each artifact stands, read from the log."""
+    history = History(service.config.working_dir, service.config.data_dir)
+    rows = history.transitions(service.ws.key(cwd), unit)
+    state = {r["artifact"]: r["to_state"] for r in rows}
+    edits = sum(1 for r in rows if history.machine.is_settled(r["from_state"]))
+    return {"transitions": rows, "state": state, "settled_edits": edits}
+
+
+def timeline(service: Service, cwd: str, unit: str) -> dict:
+    runs = service.ws.journal().timeline(service.ws.key(cwd), unit)
+    return {"runs": runs, "cost": totals_of(runs)}

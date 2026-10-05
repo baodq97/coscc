@@ -121,10 +121,7 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
         for unit in rounds:
             for rnd in unit:
                 self.assertNotIn("text", rnd)
-                self.assertEqual(len(rnd["found"]), FINDINGS)
-                for found in rnd["found"]:
-                    self.assertNotIn("text", found)
-        # A round is a dozen counters and a sha, and `FINDINGS` ids with a label and a fix: about
-        # 450 bytes here. Its text alone (the file's lines, one per finding) would take it past 1 KB.
+        # A round is a dozen counters; its text alone (the file's lines, one per finding) would
+        # take it past 1 KB.
         size = len(json.dumps(rounds))
         self.assertLessEqual(size, LARGE * ROUNDS * 512)

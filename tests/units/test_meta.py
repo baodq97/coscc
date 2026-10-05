@@ -319,11 +319,10 @@ class TheIngest(Base):
             review.read_text().replace("Status: accepted", "Status: changes-requested")
         )
         self.ingest("0014_changes-requested")
-        state = History(self.tmp / "work", self.data).state(WS, "0014_changes-requested")
-        self.assertEqual(state["review.md"], "changes-requested")
         rows = History(self.tmp / "work", self.data).transitions(
             WS, "0014_changes-requested", "review.md"
         )
+        self.assertEqual(rows[-1]["to_state"], "changes-requested")
         self.assertEqual(
             (rows[-1]["actor"], rows[-1]["session"], rows[-1]["source"]),
             ("stage:review", "s1", "run:review"),
@@ -334,10 +333,10 @@ class TheIngest(Base):
         plan = self.store / ".cos" / "0014_changes-requested" / "plan.md"
         plan.write_text(plan.read_text().replace("Status: accepted", "Status: done"))
         self.ingest("0014_changes-requested")
-        self.assertEqual(
-            History(self.tmp / "work", self.data).state(WS, "0014_changes-requested")["plan.md"],
-            "done",
+        rows = History(self.tmp / "work", self.data).transitions(
+            WS, "0014_changes-requested", "plan.md"
         )
+        self.assertEqual(rows[-1]["to_state"], "done")
 
     def test_an_artifact_unchanged_since_the_last_ingest_is_not_read_again(self):
         self.meta.import_store(WS, self.store)
@@ -519,7 +518,7 @@ class AnImportedAnswerSaysWhoseItIs(Base):
 
 
 class TheImportReport(unittest.TestCase):
-    """Through `Activity.settings`: what the import could not read, by workspace name."""
+    """A store the import cannot read fails the snapshot with a sentence that names the workspace."""
 
     def setUp(self):
         from coscc import units
@@ -536,40 +535,6 @@ class TheImportReport(unittest.TestCase):
         )
         self.service = Service(config, Sessions(config))
         self.store = units.root(self.cwd, config.data_dir)
-
-    def test_settings_lists_each_unreadable_field_by_workspace_name_and_not_a_failed_ingest(self):
-        shutil.copytree(FIXTURE, self.store)
-        asyncio.run(self.service.board(self.cwd))
-        self.service.ws.unit_meta().ingest_failed(
-            self.service.ws.key(self.cwd), "0013_open-question", "boom"
-        )
-        report = self.service.activity.settings()["import_report"]
-        self.assertEqual(report["problem"], "")
-        found = {(r["workspace"], r["unit"], r["artifact"], r["field"]) for r in report["rows"]}
-        self.assertIn(("proj", "0016_bad-status", "spec.md", "status"), found)
-        self.assertIn(("proj", "0015_no-status", "intent.md", "status"), found)
-        self.assertNotIn("ingest", {r["field"] for r in report["rows"]})
-        self.assertFalse(any("/" in r["workspace"] for r in report["rows"]))
-
-    def test_a_store_read_cleanly_has_no_row(self):
-        self.store.mkdir(parents=True)
-        asyncio.run(self.service.answers.create_unit(self.cwd, "a-problem", "x"))
-        asyncio.run(self.service.board(self.cwd))
-        self.assertEqual(
-            self.service.activity.settings()["import_report"], {"rows": [], "problem": ""}
-        )
-
-    def test_a_database_that_cannot_be_read_is_one_sentence_without_its_path(self):
-        from coscc.store.db import Busy
-
-        busy = Busy(self.service.config.data_dir + "/cos.db")
-        with (
-            mock.patch("coscc.units.meta.UnitMeta.unknowns", side_effect=busy),
-            self.assertLogs("coscc", "WARNING") as log,
-        ):
-            report = self.service.activity.settings()["import_report"]
-        self.assertEqual(report, {"rows": [], "problem": "The import report could not be read."})
-        self.assertIs(log.records[-1].exc_info[1], busy)
 
     def test_an_import_that_fails_names_the_workspace_and_logs_the_error(self):
         from coscc.store.db import Busy

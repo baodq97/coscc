@@ -66,22 +66,24 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.aclose()
+        # A change re-reads the board in the background; it must end before its folder goes.
+        await self.app.state.service.shutdown()
         self._tmp.cleanup()
 
     async def test_the_board_carries_every_unit_with_all_eight_stages(self):
-        body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
+        body = await self.app.state.service.board(str(REPO), "held")
         self.assertEqual(body["stages"], STAGES)
         self.assertEqual(body["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
         for unit in body["units"]:
             self.assertEqual([r["stage"] for r in unit["stages"]], STAGES)
 
     async def test_a_directory_that_is_not_a_workspace_is_refused(self):
-        r = await self.client.get("/api/board", params={"cwd": "/etc"})
+        r = await self.client.get("/api/units", params={"cwd": "/etc"})
         self.assertEqual(r.status_code, 400)
         self.assertIn("not a configured workspace", r.json()["error"])
 
     async def test_a_mode_set_over_http_is_what_the_run_log_holds_for_that_step_alone(self):
-        first = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
+        first = await self.app.state.service.board(str(REPO), "held")
         unit = _a_unit(first)
         payload = {"cwd": str(REPO), "unit": unit, "stage": "impl", "mode": "autonomous"}
         r = await self.client.post("/api/board/mode", json=payload)
@@ -92,7 +94,7 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn((unit, "spec"), modes)
 
     async def test_a_mode_is_validated_against_the_board_not_a_second_list(self):
-        body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
+        body = await self.app.state.service.board(str(REPO), "held")
         unit = _a_unit(body)
         for bad, expected in (
             ({"unit": "9999_not-here", "stage": "impl", "mode": "manual"}, "no such work unit"),
@@ -110,18 +112,9 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("send a JSON object", r.json()["error"])
 
-    async def test_a_unit_that_never_ran_has_an_empty_timeline_and_no_cost(self):
-        board_body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
-        body = self.app.state.service.backlog.timeline(str(REPO), _a_unit(board_body))
-        self.assertEqual(body["runs"], [])
-        # Zeroed rather than empty: the page gets the same shape whether or not a unit has
-        # ever run, so it never has to branch on the difference.
-        self.assertEqual(body["cost"]["input_tokens"], 0)
-        self.assertEqual(body["cost"]["turns"], 0)
-
 
 class TheHeldBoard(unittest.IsolatedAsyncioTestCase):
-    """`/api/board` answers what the last read held; `?fresh=1` waits for a new one."""
+    """The board answers what the last read held; a `new` read waits for a fresh one."""
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -134,9 +127,9 @@ class TheHeldBoard(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.client.aclose)
 
     async def get(self, **params):
-        r = await self.client.get("/api/board", params={"cwd": str(REPO), **params})
-        self.assertEqual(r.status_code, 200, r.text)
-        return r.json()
+        return await self.app.state.service.board(
+            str(REPO), "new" if params.get("fresh") else "held"
+        )
 
     async def test_the_board_says_when_it_was_read(self):
         self.assertTrue((await self.get())["read_at"])
@@ -204,11 +197,11 @@ class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def test_the_board_still_reads(self):
-        body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
+        body = await self.app.state.service.board(str(REPO), "held")
         self.assertEqual(body["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
 
     async def test_setting_a_mode_is_refused_with_the_same_reason(self):
-        body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
+        body = await self.app.state.service.board(str(REPO), "held")
         r = await self.client.post(
             "/api/board/mode",
             json={"cwd": str(REPO), "unit": _a_unit(body), "stage": "impl", "mode": "autonomous"},

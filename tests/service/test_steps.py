@@ -25,7 +25,7 @@ from coscc.kernel import Invalid
 from coscc.service import Service
 from coscc.service.answers import Answers
 from coscc.agent.sessions import Sessions
-from tests.service.test_service import create_sync
+from tests.service.test_service import create_sync, timeline, unit_history
 from tests.units.test_submit import submits as _submits
 from tests.service.test_service import use_sessions
 
@@ -544,7 +544,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
     def test_the_row_names_the_stage_and_the_real_session(self):
         self._run("spec")
-        found = self.service.backlog.unit_history(str(self.repo), self.made["unit"])
+        found = unit_history(self.service, str(self.repo), self.made["unit"])
         [row] = [r for r in found["transitions"] if r["artifact"] == "spec.md"]
         self.assertEqual(row["to_state"], "accepted")
         self.assertEqual(row["actor"], "stage:spec")
@@ -553,13 +553,13 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
     def test_the_projection_moves_with_it(self):
         self._run("spec")
-        found = self.service.backlog.unit_history(str(self.repo), self.made["unit"])
+        found = unit_history(self.service, str(self.repo), self.made["unit"])
         self.assertEqual(found["state"]["spec.md"], "accepted")
 
     def test_running_the_same_stage_twice_is_two_events_not_one(self):
         self._run("spec")
         self._run("spec")
-        found = self.service.backlog.unit_history(str(self.repo), self.made["unit"])
+        found = unit_history(self.service, str(self.repo), self.made["unit"])
         rows = [r for r in found["transitions"] if r["artifact"] == "spec.md"]
         self.assertEqual(len(rows), 2)
         self.assertEqual(found["settled_edits"], 1)
@@ -639,7 +639,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         # what says whether anything happened.
         _, payload = asyncio.run(go())[-1]
         self.assertNotEqual(payload["outcome"], "done")
-        found = self.service.backlog.unit_history(str(self.repo), self.made["unit"])
+        found = unit_history(self.service, str(self.repo), self.made["unit"])
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
 
 
@@ -1016,7 +1016,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         self.assertFalse((Path(a["path"]) / "spec.md").exists())
         [end] = self._ends(a["unit"])
         self.assertEqual((end["outcome"], end["stopped_by"]), ("stopped", "Lan"))
-        found = self.service.backlog.unit_history(self.ws, a["unit"])
+        found = unit_history(self.service, self.ws, a["unit"])
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
         self.assertIn("Status: accepted.", (Path(a["path"]) / "intent.md").read_text())
         self.assertEqual(self.service.steps.running_steps(self.ws), [])
@@ -1224,11 +1224,8 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
 
         unit = self.made["unit"]
         board = asyncio.run(self.service.board(str(self.repo)))
-        timeline = self.service.backlog.timeline(str(self.repo), unit)
-        activity = self.service.activity.activity(str(self.repo))
-        usage = self.service.activity.usage(str(self.repo))
-        combo = self.service.activity.activity_and_usage(str(self.repo))
-        for payload in (board, timeline, activity, usage, combo):
+        runs = timeline(self.service, str(self.repo), unit)
+        for payload in (board, runs):
             self.assertNotIn("CANARY-0019-EXCERPT", json.dumps(payload))
         # And the attempt record itself does carry it — otherwise this test would pass
         # for the wrong reason.
@@ -3290,32 +3287,6 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         ):
             asyncio.run(go())
         self.assertEqual(held, [True, True, True])
-
-    def test_activity_shows_no_screens_record(self):
-        journal = self.service.ws.journal()
-        key = self.service.ws.key(str(self.repo))
-        journal.append(
-            {
-                "kind": "screens",
-                "workspace": key,
-                "unit": self.unit,
-                "stage": "review",
-                "outcome": "failed",
-            }
-        )
-        journal.append(
-            {
-                "kind": "start",
-                "workspace": key,
-                "unit": self.unit,
-                "stage": "plan",
-                "mode": "manual",
-            }
-        )
-        kinds = [e["kind"] for e in self.service.activity.activity(str(self.repo))["events"]]
-        self.assertEqual(kinds, ["start"])
-        both = self.service.activity.activity_and_usage(str(self.repo))
-        self.assertEqual([e["kind"] for e in both["events"]], ["start"])
 
 
 class AReviewAfterAnUnfinishedRoundIsToldWhy(_AReviewStep, unittest.TestCase):

@@ -14,7 +14,6 @@ There is no parser here: every read of a file is the loop's `meta`.
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
@@ -23,7 +22,7 @@ from typing import Any
 from coscc.store.db import Data, now
 from coscc.loop import run
 from coscc.store.journal import Intervention, Journal
-from coscc.units import backlog
+from coscc.units import UNIT_RE, backlog
 from coscc.units.history import History
 from coscc.units.states import Machine
 
@@ -40,7 +39,6 @@ MERGED = "merge-read"
 # the machine never touched is merged when its last `ship.md` transition is `accepted` from one.
 SHIPPED_BEFORE_THE_MACHINE = (SOURCE, "run:ship")
 
-_UNIT_RE = re.compile(r"(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)")
 _ONE = "root = ? AND workspace = ? AND unit = ?"
 
 
@@ -214,7 +212,7 @@ class UnitMeta:
         """Write one unit's `meta` output. Returns the fields it could not read."""
         scope = (self.root, workspace, unit)
         at = now()
-        match = _UNIT_RE.fullmatch(unit)
+        match = UNIT_RE.fullmatch(unit)
         conn.execute(
             "INSERT OR IGNORE INTO unit_meta (root, workspace, unit, type, lane, number, slug, imported_at) "
             "VALUES (?, ?, ?, 'unknown', 'full', ?, ?, ?)",

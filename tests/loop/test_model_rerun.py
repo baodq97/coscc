@@ -1,8 +1,7 @@
 """The stage a unit is at, the rerun of an accepted stage, the screenshots retake and the ship
 that a refused merge leaves, called directly or through the CLI, each held to fixed values.
 
-Ported from the `test(` calls of the loop's former JavaScript suite (`tests/loop/ported.txt` maps
-each one here). Helpers and constants come from `test_model`, as they did from one suite's glue.
+Helpers and constants come from `test_model`.
 """
 
 from __future__ import annotations
@@ -24,10 +23,13 @@ from coscc.loop.model import (
 )
 from coscc.loop.probe import UI_STANDARD
 from coscc.loop.repo_rules import screens_answer, screens_needs
-from coscc.loop.rules import check_gate, decide, next_action, next_answer, next_step, stage_at
+from coscc.loop.rules import decide, next_answer, stage_at
 from tests.loop.conftest import TZ, git
 from tests.loop.test_model_links import MERGE, merged_probe
 from tests.loop.test_model import (
+    check_gate,
+    next_action,
+    next_step,
     CHAIN,
     FULL_LANE,
     SHA,

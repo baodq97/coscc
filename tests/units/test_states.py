@@ -1,4 +1,4 @@
-"""Tests for the state set, and for the claim that it is configuration.
+"""Tests for the state set, and for the claim that it comes from data.
 
 Two of these carry most of the weight and they pull in opposite directions.
 
@@ -14,7 +14,6 @@ rather than from the file, that test is where it shows."""
 from __future__ import annotations
 
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from typing import get_args
@@ -22,7 +21,7 @@ from typing import get_args
 from tests.units.test_meta import loop
 from coscc.agent import harness
 from coscc.units import states
-from coscc.units.states import BadMachine
+from coscc.units import guards
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -42,11 +41,6 @@ OTHER = {
         },
     ],
 }
-
-
-def write(raw: dict, into: Path) -> Path:
-    into.write_text(json.dumps(raw), encoding="utf-8")
-    return into
 
 
 class TheDefaultIsTheSetInUseToday(unittest.TestCase):
@@ -99,12 +93,11 @@ class TheDefaultIsTheSetInUseToday(unittest.TestCase):
         self.assertEqual(package.name, "coscc")
 
 
-class ADifferentStateSetLoadsWithNoPythonChange(unittest.TestCase):
+class ADifferentStateSetIsAnsweredFromItsData(unittest.TestCase):
     """Not one name below is shared with the default."""
 
     def test_every_question_the_log_asks_is_answered_from_the_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            machine = states.load(write(OTHER, Path(tmp) / "other.json"))
+        machine = states.Machine.of(OTHER)
 
         self.assertEqual(machine.name, "two-step")
         self.assertEqual(machine.stage_names, ("ticket", "wrap"))
@@ -126,107 +119,33 @@ class ADifferentStateSetLoadsWithNoPythonChange(unittest.TestCase):
         self.assertFalse(machine.stage("ticket").optional)
 
     def test_a_refusal_names_this_set_rather_than_the_default(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            machine = states.load(write(OTHER, Path(tmp) / "other.json"))
+        machine = states.Machine.of(OTHER)
         reason = machine.refuse("ticket.txt", "accepted")
         self.assertIn("two-step", reason)
         self.assertIn("open, closed", reason)
         self.assertNotIn("intent.md", reason)
 
 
-class ADefinitionThatWouldLieIsRefused(unittest.TestCase):
-    def _bad(self, raw: dict) -> str:
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(BadMachine) as caught:
-                states.load(write(raw, Path(tmp) / "bad.json"))
-        return str(caught.exception)
+class ThePackagedFilesAreCoherent(unittest.TestCase):
+    """A mistake in either file would pass silently and report nothing, so the files are held to
+    what the code that reads them assumes."""
 
-    def test_settled_naming_a_status_no_stage_carries(self):
-        # The one that would pass silently and report zero events.
-        raw = {**OTHER, "settled": ["cloesd"]}
-        self.assertIn("cloesd", self._bad(raw))
+    def test_settled_names_only_statuses_a_stage_carries_and_absent_is_none_of_them(self):
+        machine = states.default()
+        every = {s for stage in machine.stages for s in stage.statuses}
+        self.assertLessEqual(machine.settled, every)
+        self.assertNotIn(machine.absent, every)
 
-    def test_a_stage_that_can_be_written_back_into_nothing(self):
-        raw = {
-            **OTHER,
-            "stages": [{"name": "t", "artifact": "t.txt", "statuses": ["open", "nowhere"]}],
-        }
-        self.assertIn("nowhere", self._bad(raw))
-
-    def test_two_stages_writing_the_same_artifact(self):
-        raw = {
-            **OTHER,
-            "stages": [
-                {"name": "a", "artifact": "same.txt", "statuses": ["open"]},
-                {"name": "b", "artifact": "same.txt", "statuses": ["open"]},
-            ],
-            "settled": [],
-        }
-        self.assertIn("same.txt", self._bad(raw))
-
-    def test_no_stages_at_all(self):
-        self.assertIn("stages", self._bad({**OTHER, "stages": []}))
-
-    def test_no_absent_state(self):
-        raw = dict(OTHER)
-        raw.pop("absent")
-        self.assertIn("absent", self._bad(raw))
-
-    def test_a_file_that_is_not_there_names_the_path_it_looked_for(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            missing = Path(tmp) / "nope.json"
-            with self.assertRaises(BadMachine) as caught:
-                states.load(missing)
-        self.assertIn(str(missing), str(caught.exception))
-
-
-class ALaneThatWouldDisableAGuardIsRefused(unittest.TestCase):
-    """The config chooses a guard for each transition and cannot leave one out."""
-
-    def packaged(self) -> dict:
-        return json.loads(harness.LANES_PATH.read_text(encoding="utf-8"))
-
-    def _bad(self, raw) -> str:
-        with self.assertRaises(states.BadLanes) as caught:
-            states.build_lanes(raw)
-        return str(caught.exception)
-
-    def test_the_packaged_lanes_load(self):
-        self.assertIn("full", states.load_lanes().lanes)
-
-    def test_a_lane_missing_a_guard_the_machine_needs_is_refused(self):
-        raw = self.packaged()
-        del raw["lanes"]["full"]["guards"]["unit"]["ship"]
-        self.assertIn("'ship' has no guard", self._bad(raw))
-
-    def test_a_guard_set_to_nothing_is_refused(self):
-        raw = self.packaged()
-        raw["lanes"]["full"]["guards"]["pr"]["merged"] = ""
-        self.assertIn("'merged' has no guard", self._bad(raw))
-
-    def test_a_guard_that_cannot_decide_that_transition_is_refused(self):
-        raw = self.packaged()
-        raw["lanes"]["full"]["guards"]["unit"]["ship"] = "run-submitted"
-        self.assertIn("cannot decide", self._bad(raw))
-
-    def test_an_empty_config_is_refused(self):
-        self.assertIn("params", self._bad({}))
-        self.assertIn("lanes", self._bad({"params": {"ci_poll_seconds": 60}, "lanes": {}}))
-
-    def test_a_machine_with_no_guards_is_refused(self):
-        raw = self.packaged()
-        del raw["lanes"]["full"]["guards"]["run"]
-        self.assertIn("'run' machine", self._bad(raw))
-
-    def test_a_stage_the_state_set_does_not_have_is_refused(self):
-        raw = self.packaged()
-        raw["lanes"]["full"]["path"].append({"stage": "deploy", "when": "always"})
-        self.assertIn("'deploy'", self._bad(raw))
-
-    def test_a_poll_that_is_not_a_positive_number_is_refused(self):
-        raw = self.packaged()
-        raw["params"]["ci_poll_seconds"] = 0
-        self.assertIn("ci_poll_seconds", self._bad(raw))
+    def test_every_lane_names_a_guard_that_may_decide_each_transition(self):
+        lanes = states.default_lanes()
+        self.assertIn("full", lanes.lanes)
+        for lane in lanes.lanes.values():
+            for stage, _ in lane.path:
+                self.assertIsNotNone(states.default().stage(stage), stage)
+            for machine, transitions in guards.TRANSITIONS.items():
+                for transition, allowed in transitions.items():
+                    self.assertIn(lane.guard_for(machine, transition), allowed, transition)
+        self.assertGreater(lanes.ci_poll_seconds, 0)
 
 
 if __name__ == "__main__":

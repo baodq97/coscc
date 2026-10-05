@@ -1,8 +1,7 @@
 """The loop's parsers, gates and branch grammar, called directly, each held to fixed values.
 
-Ported from the `test(` calls of the loop's former JavaScript suite (`tests/loop/ported.txt` maps
-each one here). A unit read from files gets the snapshot the app would build of them, from
-`meta`'s own readers, as the suite's glue built it.
+A unit read from files gets the snapshot the app would build of them, from
+`meta`'s own readers.
 """
 
 from __future__ import annotations
@@ -45,20 +44,25 @@ from coscc.loop.model import (
 )
 from coscc.loop import SPIKE_ROUNDS
 from coscc.loop.model import HOLD_MOVES, fold_holds, hold_blocks, non_blocking
-from coscc.loop.rules import (
-    between_pr_and_ship,
-    check_gate,
-    gate_answer,
-    next_action,
-    next_answer,
-    next_step,
-)
+from coscc.loop.rules import between_pr_and_ship, decide, gate_answer, next_answer
 from coscc.loop.run import ask
 from coscc.loop.model import parse_pr, parse_review, review_rounds
 from coscc.loop import REVIEW_ROUNDS
 from tests.loop.conftest import env, python
 
 # --- the suite's glue -------------------------------------------------------------------
+
+
+def next_action(unit, limit=REVIEW_ROUNDS):
+    return {k: v for k, v in decide(unit, limit).items() if k not in ("why", "rerun", "continue")}
+
+
+def check_gate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
+    return {k: v for k, v in gate_answer(unit, stage, probe, limit).items() if k != "reasons"}
+
+
+def next_step(unit, probe=None, limit=REVIEW_ROUNDS):
+    return {k: v for k, v in next_answer(unit, probe, limit).items() if k != "reasons"}
 
 
 def entry_from(m: dict) -> dict:

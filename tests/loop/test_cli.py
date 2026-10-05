@@ -16,7 +16,6 @@ STATE_READERS = ["status", "gate", "next", "rerun", "unit-branch", "pr-text", "s
         ["nope"],
         ["--root"],
         ["status", "--root", ""],
-        ["status", "--peer", "x"],
         ["gate", "--repo"],
         ["status", "--state"],
         ["new-path", "x", "--reserve-from"],

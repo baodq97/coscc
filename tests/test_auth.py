@@ -38,7 +38,7 @@ OTHER_PATHS = (
     ("GET", "/no/such/path"),
     ("GET", "/api/no-such"),
     ("POST", "/_upload"),
-    ("OPTIONS", "/api/board"),
+    ("OPTIONS", "/api/units"),
 )
 
 
@@ -273,7 +273,7 @@ class Door(unittest.IsolatedAsyncioTestCase):
                 reply = await self.call(method, target, headers=headers)
                 if not exempt and not refused(reply):
                     leaks.append(f"{method} {target} {headers} -> {reply.status}")
-        for target in ("/", "/api/board", "/no/such"):
+        for target in ("/", "/api/units", "/no/such"):
             before = len(self.recorder.seen)
             sent = await ws_handshake(self.guard, target)
             if len(self.recorder.seen) > before or sent[:1] != [

@@ -28,7 +28,7 @@ from coscc.service.common import Refused
 from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
 from coscc.service.steps import CI_REFRESH
-from tests.service.test_service import use_sessions, use_config
+from tests.service.test_service import timeline, unit_history, use_config, use_sessions
 
 SLUG = "proof-of-gebo"
 PR = 7
@@ -247,14 +247,10 @@ class GeboThroughTheService(unittest.TestCase):
         # A pull request GitHub calls conflicting opened this one.
         self.assertEqual(starts[0]["integrate_state"], "conflicting")
         self.assertEqual(ends[0]["outcome"], "done")
-        runs = self.service.backlog.timeline(self.cwd, self.unit)
+        runs = timeline(self.service, self.cwd, self.unit)
         self.assertEqual([r.get("stage") for r in runs["runs"]], ["integrate"])
         self.assertEqual(runs["cost"]["cost_usd"], 0.25)
-        self.assertEqual(
-            self.service.activity.usage(self.cwd)["per_unit"][self.unit]["cost_usd"], 0.25
-        )
-        self.service.backlog.unit_history(self.cwd, self.unit)
-        self.service.activity.activity(self.cwd)
+        unit_history(self.service, self.cwd, self.unit)
 
     @staticmethod
     async def _needs_person() -> str:

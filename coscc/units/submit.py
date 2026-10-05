@@ -107,7 +107,6 @@ def stage_result_schema(stage: str) -> dict[str, Any]:
 
 # The labels a finding may carry, the loop's own: `open`, `fixed` in a commit, or what the
 # review made of impl's claim or of a person's answer.
-FINDING_STATES: tuple[FindingState, ...] = get_args(FindingState)
 
 # The other kinds of object. The estimate's fields are checked by `backlog.parse_proposal`:
 # the schema holds types, the app its rules.

@@ -508,9 +508,7 @@ class HoldThroughTheService(Repo):
 
     def test_activity_carries_the_move(self):
         self.move("paused", reason="chờ 0034")
-        ev = next(
-            e for e in self.service.activity.activity(self.cwd)["events"] if e["kind"] == "hold"
-        )
+        ev = next(e for e in self.records() if e["kind"] == "hold")
         self.assertEqual(
             (ev["from"], ev["to"], ev["reason"], ev["by"], ev["effects"]),
             ("active", "paused", "chờ 0034", "Leif", []),

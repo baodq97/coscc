@@ -4,14 +4,13 @@ and a unit's history."""
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from pathlib import Path
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
 from typing import Any, TypedDict
 
-from coscc.units import backlog, guards
+from coscc.units import backlog
 from coscc.units import board as board_reader
 from coscc.git import fetches, gitops
 from coscc.units import hold as hold_rules
@@ -19,8 +18,7 @@ from coscc.units import submit as submit_mod
 from coscc.units.submit import RUN_SUBMITTED, submitted
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
-from coscc.units.history import History, settled_edits
-from coscc.store.journal import BadRecord, Journal, timelines_of, totals_of
+from coscc.store.journal import BadRecord, Journal, timelines_of
 from coscc.store.db import Busy
 from coscc.agent.policy import grant_for
 from coscc.agent import models
@@ -50,23 +48,6 @@ from coscc.update.updater import Updater
 from coscc.service.models import Models
 
 log = logging.getLogger(__name__)
-
-
-def _labelled(row: dict[str, Any]) -> dict[str, Any]:
-    """One transition row for the timeline: its `inputs` as an object, the label of its guard
-    (`""` for a guard `guards` does not know), and `head`, the SHA its guard read, if any."""
-    try:
-        inputs = json.loads(row.get("inputs") or "{}")
-    except TypeError, ValueError:
-        inputs = {}
-    inputs = inputs if isinstance(inputs, dict) else {}
-    known = guards.GUARDS.get(str(row.get("guard") or ""))
-    return {
-        **row,
-        "inputs": inputs,
-        "guard_label": known.label if known else "",
-        "head": str(inputs.get("merge_commit") or inputs.get("head") or ""),
-    }
 
 
 class Cut(TypedDict):
@@ -601,137 +582,3 @@ class Backlog:
         """
         self.ws.check(cwd)
         return await cut_branch(cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit]))
-
-    async def branch_here(self, cwd: str) -> dict[str, Any]:
-        """Which branch the workspace is on. A read."""
-        self.ws.check(cwd)
-        try:
-            return {
-                "cwd": cwd,
-                "branch": await gitops.current_branch(Path(cwd).expanduser().resolve()),
-            }
-        except GitError as e:
-            raise Invalid(str(e)) from e
-
-    def timeline(self, cwd: str, unit: str) -> dict[str, Any]:
-        """What has happened to one unit, oldest first.
-
-        `transitions` beside `runs`, each row of the log with the one-sentence label of the
-        guard that decided it; `""` for a row that names none.
-        """
-        self.ws.check(cwd)
-        journal = self.ws.journal()
-        history = self.history()
-        if journal is None or history is None:
-            return {"cwd": cwd, "unit": unit, "runs": [], "cost": {}, "transitions": []}
-        key = self.ws.key(cwd)
-        try:
-            runs = journal.timeline(key, unit)
-            rows = history.transitions(key, unit)
-        except Busy as e:
-            raise Invalid(str(e)) from e
-        return {
-            "cwd": cwd,
-            "unit": unit,
-            "runs": runs,
-            "cost": totals_of(runs),
-            "transitions": [_labelled(r) for r in rows],
-        }
-
-    def history(self) -> History | None:
-        """The transition log, or `None` when there is no working folder to keep it in.
-
-        Same reasoning as `Workspaces.journal`: with nothing set, the safe direction to fail in is read-only.
-        """
-        return (
-            History(self.config.working_dir, self.config.data_dir)
-            if self.config.working_dir
-            else None
-        )
-
-    def unit_history(self, cwd: str, unit: str) -> dict[str, Any]:
-        """Everything the log knows about one unit.
-
-        **Beside the board, not instead of it.** `board()` still asks the loop and reads state
-        out of the `Status:` line on disk; this answers from the transition log. Two sources
-        is deliberate and has a cost.
-
-        `state` is a projection over `transitions`, computed and never stored. It is returned
-        alongside the transitions so a caller can check one against the other.
-
-        `settled_edits` is the number of times an artifact was rewritten after it had been settled.
-        """
-        self.ws.check(cwd)
-        history = self.history()
-        key = self.ws.key(cwd)
-        if history is None:
-            return {
-                "cwd": cwd,
-                "unit": unit,
-                "recording": False,
-                "machine": "",
-                "written_under": [],
-                "mixed_state_sets": None,
-                "transitions": [],
-                "state": {},
-                "settled_edits": 0,
-                "sessions": [],
-                "unknown_transitions": 0,
-                "outputs": [],
-                "output_counts": {},
-            }
-        try:
-            rows = history.transitions(key, unit)
-            state = history.state(key, unit)
-            sessions = history.sessions_of(key, unit)
-            outputs = history.outputs(key, unit)
-            counts = history.output_counts(key, unit)
-            written_under = history.machines_in(key, unit)
-        except Busy as e:
-            raise Invalid(str(e)) from e
-        # Rows written under one state set and read under another compare words that never meant
-        # the same thing, and nothing about that failure looks like a failure: every query still
-        # returns rows. Said out loud in the payload rather than refused, because refusing a *read*
-        # would hide the only evidence there is. A caller that compares these against another source
-        # must stop here.
-        foreign = [name for name in written_under if name != history.machine.name]
-        return {
-            "cwd": cwd,
-            "unit": unit,
-            "recording": True,
-            "machine": history.machine.name,
-            "written_under": written_under,
-            "mixed_state_sets": (
-                None
-                if not foreign
-                else f"this unit holds transitions written under {', '.join(foreign)}, "
-                f"but is being read under {history.machine.name} — the states in "
-                "those rows do not mean what they appear to mean here"
-            ),
-            "transitions": rows,
-            "state": state,
-            "settled_edits": len(settled_edits(rows, history.machine)),
-            "sessions": sessions["sessions"],
-            "unknown_transitions": sessions["unknown_transitions"],
-            "outputs": outputs,
-            "output_counts": counts,
-        }
-
-    def units_with_history(self, cwd: str) -> dict[str, Any]:
-        """Every unit the log has a transition for, in the order they first appear.
-
-        Not the same list as `board()`'s: a unit retired from the working tree still has a
-        history, and this is the only place it can be seen.
-        """
-        self.ws.check(cwd)
-        history = self.history()
-        if history is None:
-            return {"cwd": cwd, "recording": False, "units": []}
-        try:
-            return {
-                "cwd": cwd,
-                "recording": True,
-                "units": history.units(self.ws.key(cwd)),
-            }
-        except Busy as e:
-            raise Invalid(str(e)) from e

@@ -21,10 +21,10 @@ import shutil
 import signal
 from pathlib import Path
 
-# # Measured cloning over https: about 4 MB/s, and a pull with nothing to fetch costs about a
-# # second whatever the size. Unverifiable beyond one network. These deadlines are derived:
-# # 120s covers about 480 MB of clone, 60s about 240 MB of fetch. They exist to stop a silent
-# # host, not to police size; lowering them makes ordinary clones fail.
+# Measured cloning over https: about 4 MB/s, and a pull with nothing to fetch costs about a
+# second whatever the size. Unverifiable beyond one network. These deadlines are derived:
+# 120s covers about 480 MB of clone, 60s about 240 MB of fetch. They exist to stop a silent
+# host, not to police size; lowering them makes ordinary clones fail.
 CLONE_TIMEOUT = 120.0
 PULL_TIMEOUT = 60.0
 

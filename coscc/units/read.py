@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import sqlite3
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
@@ -27,7 +26,7 @@ from coscc.git import gitops
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, now
 from coscc.store.journal import last_runs, timelines_of, totals_of
-from coscc.units import BadUnit, Invalid, backlog, prose_import, scratch, worktrees
+from coscc.units import BadUnit, Invalid, backlog, scratch, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable, attention_reason, unit_state
 from coscc.units.workspaces import Workspaces
@@ -345,7 +344,6 @@ class Round(TypedDict):
     verdict: str
     findings: int
     findings_open: int
-    reviewed: str
     unfinished: bool
 
 
@@ -459,7 +457,6 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
                 "verdict": _text(r.get("verdict")),
                 "findings": int(r.get("findings") or 0),
                 "findings_open": int(r.get("findings_open") or 0),
-                "reviewed": _text(r.get("reviewed")),
                 "unfinished": bool(r.get("unfinished")),
             }
             for r in unit.get("rounds") or []
@@ -500,13 +497,11 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
 
 
 def _brief_rounds(units_: list[dict[str, Any]]) -> None:
-    """Every review round without its text or its findings' text: what reads the whole text
-    (an import, a comment, an impl's claim) reads it from the store, never from the board."""
+    """Every review round without its text: what reads the whole text (a comment, an impl's
+    claim) reads it from the store, never from the board."""
     for u in units_:
         for rnd in u.get("rounds") or []:
             rnd.pop("text", None)
-            for f in rnd.get("found") or []:
-                f.pop("text", None)
 
 
 async def _in_thread[T](fn: Callable[..., T], *args: Any) -> T:
@@ -592,7 +587,7 @@ class Board:
 
         `new` waits for a read begun after this call, which asks `gh` anew. `held` answers with the
         last read and starts the next, so it waits only while nothing was read yet: what the page
-        and `/api/board` ask. `next` waits for the next read to end and starts none: what a tab
+        asks. `next` waits for the next read to end and starts none: what a tab
         that shows the board waits on. Every workspace has one read running at most.
         """
         self.ws.check(cwd)
@@ -698,32 +693,6 @@ class Board:
 
     # -- board --------------------------------------------------------------
 
-    async def _import_rounds(self, cwd: str, units_: list[dict[str, Any]]) -> None:
-        """The review rounds only the prose of a store holds, into `cos.db`, on the
-        first board read that finds the store unimported (`coscc/units/prose_import.py`). The
-        board this read shows is the same either way. One that cannot write goes to the log and
-        is tried on the next read. Its `cos.db` work runs off the event loop."""
-        meta = self.ws.unit_meta()
-        key = self.ws.key(cwd)
-        try:
-            if await _in_thread(meta.data.has_run, prose_import.key(meta.root, key)):
-                return
-            root = Path(cwd).expanduser().resolve()
-            heads: dict[str, str] = {}
-            for sha in {
-                str(r.get("reviewed"))
-                for u in units_
-                for r in u.get("rounds") or []
-                if r.get("reviewed")
-            }:
-                try:
-                    heads[sha] = await gitops.rev_parse(root, sha)
-                except GitError:
-                    pass
-            await _in_thread(prose_import.import_rounds, meta, key, units_, heads)
-        except (Busy, sqlite3.Error, OSError) as e:
-            log.warning("the review rounds of %s could not be imported: %s", key, e)
-
     async def read(self, cwd: str, fresh: bool = False) -> dict[str, Any]:
         """Every unit in this workspace, each with its eight stages and cost.
 
@@ -755,10 +724,7 @@ class Board:
         except Unavailable as e:
             raise Invalid(str(e)) from e
         lap("loop")
-        await self._import_rounds(cwd, data["units"])
-        # What the import read the whole text for; the board carries none of it.
         _brief_rounds(data["units"])
-        lap("import")
         data["read_at"] = read_at
         name = self.ws.name(cwd)
         for unit in data["units"]:

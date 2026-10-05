@@ -386,7 +386,6 @@ export type Round = {
   "verdict": string;
   "findings": number;
   "findings_open": number;
-  "reviewed": string;
   "unfinished": boolean;
 };
 

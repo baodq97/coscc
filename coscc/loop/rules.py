@@ -74,11 +74,6 @@ A = re.ASCII
 # --- one action per unit -----------------------------------------------------------------
 
 
-def next_action(unit, limit=REVIEW_ROUNDS):
-    """`nextAction`: `decide` without `why`, `rerun` and `continue`."""
-    return {k: v for k, v in decide(unit, limit).items() if k not in ("why", "rerun", "continue")}
-
-
 def decide(unit, limit=REVIEW_ROUNDS):
     """`nextAction`, plus `why`: which rule answered. `impl` waits on dependencies."""
     return wait_on_dependencies(unit, decide_files(unit, limit))
@@ -331,11 +326,6 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
 # --- does a stage have what it needs ----------------------------------------------------
 
 
-def check_gate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
-    """`checkGate`: `gate_answer` without `reasons`."""
-    return {k: v for k, v in gate_answer(unit, stage, probe, limit).items() if k != "reasons"}
-
-
 def gate_answer(unit, stage, probe=None, limit=REVIEW_ROUNDS):
     """`checkGate`, plus `reasons`, the codes `gate --json` hands out."""
     r = evaluate(unit, stage, probe, limit)
@@ -498,11 +488,6 @@ def evaluate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
 
 
 # --- the next stage to run --------------------------------------------------------------
-
-
-def next_step(unit, probe=None, limit=REVIEW_ROUNDS):
-    """`nextStep`: `next_answer` without `reasons`."""
-    return {k: v for k, v in next_answer(unit, probe, limit).items() if k != "reasons"}
 
 
 def next_answer(unit, probe=None, limit=REVIEW_ROUNDS):

@@ -208,12 +208,12 @@ dependencies = [
     { name = "argon2-cffi" },
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
-    { name = "httpx" },
     { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-xdist" },
@@ -226,12 +226,12 @@ requires-dist = [
     { name = "argon2-cffi", specifier = ">=25.1.0" },
     { name = "claude-agent-sdk", specifier = ">=0.2.161" },
     { name = "fastapi", specifier = ">=0.141.1" },
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "uvicorn", specifier = ">=0.53.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "playwright", specifier = ">=1.63.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },

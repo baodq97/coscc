@@ -194,12 +194,6 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         )
         self.assertEqual(review["config"]["model_source"], "default")
 
-    def test_model_prefs_are_not_preferences(self):
-        self.service.agents.set_agent_field("impl", "model", "a")
-        self.assertNotIn("model:impl", self.service.activity.preferences())
-        with self.assertRaises(Invalid):
-            self.service.activity.set_preference("model:impl", "b")
-
     def test_chat_uses_cos_model_and_is_logged(self):
         service = Service(
             Config(
@@ -218,14 +212,6 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertEqual(self.probe.models[-1], "env-model")
         [rec] = service.ws.journal().records(service.ws.key(str(self.repo)), kind="chat")
         self.assertEqual((rec["model"], rec["model_source"]), ("env-model", "COS_MODEL"))
-
-    def test_settings_names_cos_model_as_the_fallback(self):
-        self.assertIn("cos_model", self.service.activity.settings())
-        self.assertNotIn("model", self.service.activity.settings())
-
-    def test_settings_no_longer_lists_the_grants(self):
-        """They are on the Agents page, read only; one place shows them."""
-        self.assertNotIn("grants", self.service.activity.settings())
 
     def test_settings_never_show_the_trial(self):
         """The Agents page shows `models.json` and the overrides, never an arm's model."""

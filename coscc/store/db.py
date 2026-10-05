@@ -34,8 +34,8 @@ from typing import Any, Iterator
 # `500` on a database a newer one has touched**, so rolling the app back means rolling the
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
-# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped).
-SCHEMA_VERSION = 11
+# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped).
+SCHEMA_VERSION = 12
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -141,31 +141,8 @@ CREATE INDEX IF NOT EXISTS transitions_scope ON transitions (root, workspace, un
 -- column in the table.
 CREATE UNIQUE INDEX IF NOT EXISTS transitions_once
     ON transitions (once_key) WHERE once_key <> ''""",
-    """-- "How many files did this produce, and where". One table with a `kind` column
--- rather than two tables, because every "how many in total" question would otherwise have
--- to union them at the call site, and one of the call sites would forget.
---
--- `path` is recorded as given. This table never resolves a path against a repository:
--- a deliverable and a code change live in different trees, and a column that sometimes
--- meant one and sometimes the other would need a reader to know which before it could be
--- read.
-CREATE TABLE IF NOT EXISTS outputs (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    at        TEXT NOT NULL,
-    root      TEXT NOT NULL,
-    workspace TEXT NOT NULL,
-    unit      TEXT NOT NULL,
-    stage     TEXT NOT NULL,
-    kind      TEXT NOT NULL,
-    path      TEXT NOT NULL,
-    actor     TEXT NOT NULL,
-    session   TEXT NOT NULL,
-    source    TEXT NOT NULL,
-    once_key  TEXT NOT NULL DEFAULT ''
-)""",
-    """CREATE INDEX IF NOT EXISTS outputs_scope ON outputs (root, workspace, unit, id)""",
-    """CREATE UNIQUE INDEX IF NOT EXISTS outputs_once
-    ON outputs (once_key) WHERE once_key <> ''""",
+    # What a unit produced, never read; the `transitions` rows say who wrote what.
+    "DROP TABLE IF EXISTS outputs",
     """-- The master password, as an argon2id hash and nothing else. One row at
 -- most, which the CHECK makes a property of the table rather than of every writer. Not a
 -- `prefs` row: `prefs()` returns every row, and a Settings route that read widely would
