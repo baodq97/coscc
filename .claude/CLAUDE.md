@@ -20,7 +20,8 @@ on their words.
 
 ## Verifying your work
 
-`npm test` green before done. Never skip a test or switch a check off: fix the code.
+Lint and the tests of what you changed green before done; CI runs `npm test`, every test. Never
+skip a test or switch a check off: fix the code.
 
 ## Conventions
 

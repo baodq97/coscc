@@ -23,6 +23,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from tests.inprocess import in_process
+
 REPO = Path(__file__).resolve().parents[2]
 GOLDEN = Path(__file__).resolve().parent / "golden"
 # A fixed zone, so `rerun`'s local date is one date for every run of a day.
@@ -44,17 +46,26 @@ def env(**extra: str) -> dict[str, str]:
     return base
 
 
-def python(argv, *, environ=None, stdin=None, cwd=REPO) -> Ran:
-    r = subprocess.run(
-        [sys.executable, "-m", "coscc.loop", *argv],
-        input=stdin.encode() if isinstance(stdin, str) else stdin,
-        capture_output=True,
-        env=env() if environ is None else environ,
-        cwd=cwd,
-        timeout=60,
-        check=False,
-    )
-    return Ran(r.returncode, r.stdout.decode(), r.stderr.decode())
+def python(argv, *, environ=None, stdin=None, cwd=REPO, child=False) -> Ran:
+    """What `python -m coscc.loop argv` prints and exits with.
+
+    Run in this process: a child's start costs more than most answers, and the goldens hold
+    thousands of them. `child=True` runs the real command, for the tests of the command itself.
+    """
+    data = stdin.encode() if isinstance(stdin, str) else stdin
+    environ = env() if environ is None else environ
+    if child:
+        r = subprocess.run(
+            [sys.executable, "-m", "coscc.loop", *argv],
+            input=data,
+            capture_output=True,
+            env=environ,
+            cwd=cwd,
+            timeout=60,
+            check=False,
+        )
+        return Ran(r.returncode, r.stdout.decode(), r.stderr.decode())
+    return Ran(*in_process(argv, data, cwd, environ))
 
 
 class _Test:

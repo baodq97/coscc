@@ -59,8 +59,10 @@ class TakingTheLineOutRemovesTheFeature(Setup):
                 self.assertEqual(board.status_code, 200)
 
     async def test_with_the_list_as_shipped_the_route_is_there(self):
-        async with self.client() as client:
-            self.assertEqual((await client.get("/api/notices/follow")).status_code, 200)
+        # The route is a stream that ends at its lifetime; the test needs only its first answer.
+        with mock.patch("coscc.features.notices.LIFETIME_SECONDS", 0.1):
+            async with self.client() as client:
+                self.assertEqual((await client.get("/api/notices/follow")).status_code, 200)
 
 
 def table_exists(config: Config, name: str) -> bool:

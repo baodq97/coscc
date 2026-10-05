@@ -15,6 +15,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from coscc.config import Config
 from coscc.git import gh, gitops
 from coscc.http.app import Core
@@ -79,6 +81,7 @@ class Children:
             await proc.wait()
 
 
+@pytest.mark.real_loop
 class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -248,6 +251,7 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         shutil.rmtree(self.data_dir)
 
 
+@pytest.mark.real_loop
 class ACancelledCallKillsItsChild(unittest.IsolatedAsyncioTestCase):
     """Every runner that starts a child a cancellable task waits on kills and reaps it when
     that task is cancelled."""
