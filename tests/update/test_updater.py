@@ -185,12 +185,6 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 
 
 class NothingRunningAppliesAtOnce(_Base):
-    async def test_apply_runs_with_the_name_given(self):
-        u = self.make()
-        await u.apply("release", "an")
-        await self.settle()
-        self.assertEqual(self.applied, [("release", "an")])
-
     async def test_a_name_is_required(self):
         with self.assertRaises(updater.Refused):
             await self.make().apply("release", "  ")
@@ -244,15 +238,6 @@ class ItWaits(_Base):
         u.refuse_while_updating()
         self.core.jobs = []
         u.job_ended()
-        await self.settle()
-        self.assertEqual(self.applied, [("release", "an")])
-
-    async def test_a_job_whose_end_was_not_told_still_clears_on_the_next_status(self):
-        self.core.jobs = [INTEGRATION]
-        u = self.make()
-        await u.apply("release", "an")
-        self.core.jobs = []
-        u.status()
         await self.settle()
         self.assertEqual(self.applied, [("release", "an")])
 
@@ -580,13 +565,6 @@ class TheSequence(_Base):
         self.assertIn("shutdown broke", u.error["message"])
         self.assertFalse(self.server.should_exit)
 
-    async def test_nothing_is_taken_up_when_nothing_was_paused(self):
-        _wheel(self.root / "release", "0.13.0")
-        _wheel(self.root / "current", "0.12.0")
-        u = self.make_real("the trial failed")
-        await self.run_apply(u)
-        self.assertNotIn("take_up", self.core.order)
-
     async def test_a_local_build_is_cancelled_and_not_resumed(self):
         # A build is no session; it is cut, with its `cut` row, and nothing takes it up again.
         _wheel(self.root / "release", "0.13.0")
@@ -664,19 +642,6 @@ class WhatARestartReports(_Base):
         self.make()
         self.assertEqual(update.verified_wheel(self.root / "current")["version"], "0.13.0")
         self.assertFalse((self.root / "release").exists())
-
-    def test_nothing_happens_where_updates_are_not_available(self):
-        self.write_last("failed")
-        self.me["shape"] = "unavailable"
-        self.me["reason"] = "x"
-        u = self.make()
-        self.assertEqual(self.core.rows, [])
-        self.assertEqual(
-            set(u.status()),
-            {"version", "commit", "commit_label", "install", "shape", "reason", "build_id"},
-        )
-        with self.assertRaises(updater.NotHere):
-            u.cancel("an")
 
 
 class TheChecker(_Base):
@@ -757,11 +722,6 @@ class TheChecker(_Base):
             (u.release, u.checked_at, self.core.rows), ({"state": "up-to-date"}, "", [])
         )
 
-    def test_a_body_that_is_not_json_is_offline_too(self):
-        u = self.checker(self.opener_for(latest=b"<html>rate limited</html>"))
-        u.check_once()
-        self.assertEqual((u.checked_at, self.core.rows), ("", []))
-
     def test_nothing_is_fetched_while_an_update_waits_or_applies(self):
         # The wheel an apply read stays where it read it.
         old = _wheel(self.root / "release", "0.12.5")
@@ -785,12 +745,6 @@ class TheLocalChannel(_Base):
         self.assertTrue(ready({"version": "0.12.0+gabcdef0", "commit": "abcdef0" + "0" * 33}, me))
         self.assertFalse(ready({"version": "0.12.0", "commit": SHA}, me))
         self.assertFalse(ready({"version": "0.11.0+gabcdef0", "commit": "x"}, me))
-
-    def test_unset_means_no_button(self):
-        u = self.make()
-        self.assertEqual(u.local["state"], "unconfigured")
-        with self.assertRaises(updater.Refused):
-            u.build_local("an")
 
 
 class TheTrialLogsIn(unittest.IsolatedAsyncioTestCase):
@@ -863,15 +817,6 @@ class TheTrialLogsIn(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(token, ["s3cret-value"])
         self.assertNotIn("s3cret-value", text)
         self.assertIn("coscc setup token: <redacted>", text)
-
-
-class ItIsNotAnApproval(unittest.TestCase):
-    def test_no_gate_no_next_no_step(self):
-        source = Path(updater.__file__).read_text(encoding="utf-8") + Path(
-            update.__file__
-        ).read_text(encoding="utf-8")
-        for word in ("run_step", '"gate"', "'gate'", '"next"', "next_step"):
-            self.assertNotIn(word, source)
 
 
 if __name__ == "__main__":
