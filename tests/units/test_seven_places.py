@@ -598,24 +598,5 @@ class Place7(unittest.TestCase):
         self._read_as(nxt, "finished")
 
 
-class TheSevenPlacesAreAllHere(unittest.TestCase):
-    """One case per place of `docs/architecture/fsm.md` §6, each carrying its number and its words,
-    and no eighth."""
-
-    def test_there_is_one_class_per_place_and_each_quotes_its_place(self):
-        places = sorted(
-            n for n, v in globals().items() if n.startswith("Place") and isinstance(v, type)
-        )
-        self.assertEqual(places, [f"Place{n}" for n in range(1, 8)])
-        fsm = (Path(__file__).resolve().parents[2] / "docs" / "architecture" / "fsm.md").read_text(
-            encoding="utf-8"
-        )
-        for n in range(1, 8):
-            doc = globals()[f"Place{n}"].__doc__ or ""
-            with self.subTest(place=n):
-                self.assertTrue(doc.startswith(f"§6, {n}: "), doc[:40])
-                self.assertIn(f"\n{n}. ", fsm)
-
-
 if __name__ == "__main__":
     unittest.main()

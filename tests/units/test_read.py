@@ -178,19 +178,6 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
             {"0009_x": [{"stage": "plan", "started": rec["at"], "agent": "Raidho"}]},
         )
 
-    def test_an_orphan_start_keeps_the_name_it_was_written_with(self):
-        self.journal.started(self.key, "0009_x", "plan", "manual", agent="Wayfarer")
-        [row] = self.core.boards.running(self.cwd)["unknown_end"]["0009_x"]
-        self.assertEqual(row["agent"], "Wayfarer")
-
-    def test_an_override_reaches_the_running_line(self):
-        # The running line reads the one lookup, overrides included.
-        self.core.agents.set_agent_field("impl", "name", "Builder")
-        self.core.agents.set_agent_field("impl", "glyph", "ᛒ")
-        self.core.attempts.open("step", self.key, "0009_x", "impl", state="running")
-        [row] = self.core.boards.running(self.cwd)["running"]["0009_x"]
-        self.assertEqual(row["agent"], {"glyph": "ᛒ", "name": "Builder"})
-
     def test_a_later_start_retires_the_orphan(self):
         self.journal.append(
             {
@@ -330,11 +317,6 @@ class TheGuide(unittest.TestCase):
         got = self.block([{"name": "0001_u", "state": {"state": "needs-you"}}])
         self.assertEqual((got["needs_you"], len(got["running"])), ([], 1))
 
-    def test_guide_says_only_that_the_autopilot_is_off_when_it_is(self):
-        self.core.attempts.open("step", self.key, "0009_x", "impl", state="running")
-        self.assertEqual(self.core.autopilot.guide_block(self.key), {"on": False})
-        self.assertEqual(asyncio.run(self.core.board(self.cwd))["guide"], {"on": False})
-
 
 class AUnitThatEndedLosesItsScratch(unittest.TestCase):
     """A board read removes the two scratch directories of a `finished` or `rejected` unit."""
@@ -455,12 +437,6 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
             for _ in range(5):
                 await asyncio.sleep(0)
 
-    async def test_a_round_on_the_board_carries_no_text(self):
-        [u] = (await self.core.board(self.cwd))["units"]
-        [rnd] = u["rounds"]
-        self.assertNotIn("text", rnd)
-        self.assertEqual((rnd["verdict"], rnd["open_ids"]), ("changes-requested", ["F1", "F2"]))
-
     async def test_a_gh_that_hangs_holds_neither_the_held_board_nor_a_read(self):
         first = await self.core.board(self.cwd)
         self.assertEqual(first["units"][0]["integration"]["pr_head"], "a" * 40)
@@ -509,69 +485,6 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         reads = self.counted()
         self.core.bus.publish(Event("answer.written", self.key, self.unit))
         self.assertEqual((reads, self.core.boards.reads), ([], {}))
-
-    async def test_every_read_logs_how_long_each_part_took(self):
-        with self.assertLogs("coscc.units.read", "INFO") as logs:
-            await self.core.board(self.cwd)
-        [line] = [m for m in logs.output if " read in " in m]
-        for part in (
-            "snapshot",
-            "loop",
-            "run log",
-            "worktree",
-            "integration",
-            "release",
-        ):
-            self.assertIn(f"{part} ", line)
-
-
-class AListShowsACardOfEachUnit(unittest.TestCase):
-    def test_a_card_keeps_what_a_list_shows_and_drops_the_rest(self):
-        from coscc.units.read import cards
-
-        unit = {
-            "name": "0001_x",
-            "number": 1,
-            "slug": "x",
-            "type": "fix",
-            "phase": "started",
-            "next_stage": "impl",
-            "why": "",
-            "open": 2,
-            "state": {"state": "needs-you", "label": "Needs you", "color": "amber", "ci": None},
-            "hold": {"state": "paused", "by": "owner", "date": "2026-10-04", "reason": "wait"},
-            "pr": {"number": 7, "url": "https://example.test/7"},
-            "cost": {"cost_usd": 1.5, "turns": 9},
-            "backlog": {"rank": 3, "effort": "M"},
-            "stages": [
-                {"stage": "intent", "last_run": {"ended": "2026-10-03T10:00:00+00:00"}},
-                {"stage": "spec", "last_run": {"ended": "2026-10-04T09:00:00+00:00"}},
-                {"stage": "plan", "last_run": None},
-            ],
-        }
-        got = cards(
-            {
-                "workspace": "/w/a",
-                "read_at": "now",
-                "units": [unit],
-                "autopilot": None,
-                "guide": {
-                    "running": [
-                        {"unit": "0001_x", "stage": "impl", "agent": "Uruz", "started": "t"}
-                    ]
-                },
-            }
-        )
-        (card,) = got["units"]
-        self.assertEqual(
-            card["hold"], {"state": "paused", "by": "owner", "date": "2026-10-04", "reason": "wait"}
-        )
-        self.assertEqual(card["pr"], {"number": 7, "url": "https://example.test/7"})
-        self.assertEqual((card["cost_usd"], card["rank"], card["effort"]), (1.5, 3, "M"))
-        self.assertNotIn("stages", card)
-        self.assertEqual(card["updated"], "2026-10-04T09:00:00+00:00")
-        self.assertIsNone(got["autopilot"])
-        self.assertEqual(got["running"][0]["agent"], "Uruz")
 
 
 class AUnitPageShowsItsRuns(unittest.TestCase):

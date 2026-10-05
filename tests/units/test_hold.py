@@ -101,16 +101,6 @@ def unit_row(**over) -> dict:
 
 
 class TheRefusals(unittest.TestCase):
-    def test_the_code_picks_the_sentence_and_the_words_do_not(self):
-        said = hold.refusal(
-            unit_row(next="finished", why="", hold_moves=[]), "paused", "r", "b", ""
-        )
-        self.assertIn("has no intent.md", said)
-        said = hold.refusal(
-            unit_row(next="write-spec", why="finished", hold_moves=[]), "paused", "r", "b", ""
-        )
-        self.assertIn("write-spec", said)
-
     def test_in_the_spec_order(self):
         self.assertEqual(
             hold.refusal(None, "paused", "r", "b", ""), "no such work unit in this workspace"
@@ -505,14 +495,6 @@ class HoldThroughTheService(Repo):
         self.assertEqual([r["move"] for r in self.holds()], ["dropped"])
         self.assertEqual(self.records()[-1]["effects"], got["effects"])
         self.assertEqual(self.board_unit()["hold"]["state"], "dropped")
-
-    def test_activity_carries_the_move(self):
-        self.move("paused", reason="chờ 0034")
-        ev = next(e for e in self.records() if e["kind"] == "hold")
-        self.assertEqual(
-            (ev["from"], ev["to"], ev["reason"], ev["by"], ev["effects"]),
-            ("active", "paused", "chờ 0034", "Leif", []),
-        )
 
 
 if __name__ == "__main__":

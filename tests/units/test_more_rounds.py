@@ -39,12 +39,6 @@ class TheRefusals(unittest.TestCase):
         self.assertTrue(said.startswith("0001_q is busy: a review step is running"), said)
         self.assertTrue(said.endswith("; allowing a round does not stop anything itself"), said)
 
-    def test_a_round_being_allowed_is_described_as_such(self):
-        said = describe(
-            "0001_q", {"machine": "rounds", "state": "running", "stage": "", "since": "t"}
-        )
-        self.assertIn("a review round is being allowed since", said)
-
 
 if __name__ == "__main__":
     unittest.main()

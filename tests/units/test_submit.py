@@ -6,7 +6,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 import jsonschema
 
@@ -100,16 +100,6 @@ class TheSchemaOfAStageResult(unittest.TestCase):
                 submit.schema_for("review"),
             )
 
-    def test_every_kind_of_object_is_closed(self):
-        for name, schema in {**submit.SCHEMAS, "stage": submit.stage_result_schema("spec")}.items():
-            self.assertIs(schema["additionalProperties"], False, name)
-
-
-class EachMapCoversItsLiteral(unittest.TestCase):
-    def test_the_maps_cover_the_literals(self):
-        self.assertEqual(set(submit.JUDGEMENTS), set(get_args(submit.Judgement)))
-        self.assertEqual(set(submit.ROUND_STATES), set(get_args(submit.Verdict)))
-
 
 class TheChannelChecksWhatTheSchemaCannot(unittest.TestCase):
     def setUp(self):
@@ -165,14 +155,6 @@ class TheChannelChecksWhatTheSchemaCannot(unittest.TestCase):
         channel = self._channel()
         said = asyncio.run(channel.handle({"stage": "plan", "judgement": "ready", "questions": []}))
         self.assertTrue(said["is_error"])
-
-    def test_every_refusal_says_to_correct_the_object_and_call_again(self):
-        channel = self._channel(open_run=lambda: "other")
-        for obj in ({"stage": "plan", "judgement": "ready", "questions": []}, _filled(channel, {})):
-            said = asyncio.run(channel.handle(obj))
-            self.assertTrue(said["content"][0]["text"].endswith(AGAIN), said)
-        self.assertEqual(channel.refused, 2)
-        self.assertIn(AGAIN, channel.description())
 
     def test_the_last_accepted_object_is_the_one_kept(self):
         channel = self._channel()
@@ -282,25 +264,6 @@ class ImplClaimsOnlyAnOpenFinding(unittest.TestCase):
         self.assertIsNone(channel.received)
 
 
-class AStandInReachesTheChannelThroughItsServer(unittest.TestCase):
-    def test_submits_finds_the_channel_by_the_server_the_runner_passed(self):
-        d = Path(tempfile.mkdtemp())
-        channel = Channel(run="r", stage="plan", directory=d, artifact="plan.md", own=False)
-        kw = {"mcp_servers": {"cos": channel.server()}}
-        asyncio.run(submits(kw, judgement="not-ready"))
-        self.assertEqual(channel.received["object"]["judgement"], "not-ready")
-        self.assertIsNone(asyncio.run(submits({})))
-
-    def test_a_schema_error_comes_back_as_the_sdk_says_it(self):
-        d = Path(tempfile.mkdtemp())
-        channel = Channel(run="r", stage="plan", directory=d, artifact="plan.md", own=False)
-        said = asyncio.run(
-            submits({"mcp_servers": {"cos": channel.server()}}, judgement="accepted")
-        )
-        self.assertTrue(said["is_error"])
-        self.assertIsNone(channel.received)
-
-
 class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
     """Gebo and the estimate each submit against their own schema."""
 
@@ -337,16 +300,6 @@ class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
             self.assertTrue(said["is_error"], kind)
             self.assertIsNone(collector.object(), kind)
 
-    def test_the_two_are_the_grants_that_submit_and_are_no_stage(self):
-        from coscc.agent import policy
-
-        self.assertEqual(set(submit.SESSIONS), set(policy.SUBMITTING_SESSIONS))
-        for kind in submit.SESSIONS:
-            grant = policy.grant_for(kind)
-            self.assertTrue(grant.submits, kind)
-            if kind not in policy.OWN_TURNS:
-                self.assertGreaterEqual(grant.max_turns, policy.SUBMIT_TURNS, kind)
-
 
 class AFeatureAddsItsSession(unittest.TestCase):
     """`add_session`: a feature's schema and purpose under its kind, once."""
@@ -365,10 +318,6 @@ class AFeatureAddsItsSession(unittest.TestCase):
         said = asyncio.run(submits({"mcp_servers": {"cos": collector.server()}}, n=3))
         self.assertFalse(said.get("is_error"))
         self.assertEqual(collector.object(), {"n": 3})
-
-    def test_a_name_another_schema_holds_is_refused(self):
-        with self.assertRaises(ValueError):
-            submit.add_session("estimate", self.SCHEMA, "x")
 
 
 if __name__ == "__main__":

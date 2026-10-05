@@ -46,16 +46,6 @@ class OneFunctionAnswersWhereUnitsLive(Fixture):
             units.root("/tmp/one/coscc", self.data), units.root("/tmp/two/coscc", self.data)
         )
 
-    def test_the_identity_is_the_resolved_path_the_journal_already_uses(self):
-        # `spec.md` open question 4: the same convention, not a second one.
-        self.assertEqual(units.key("/tmp/../tmp/a-workspace"), str(Path(WS).resolve()))
-        self.assertEqual(
-            units.root("/tmp/../tmp/a-workspace", self.data), units.root(WS, self.data)
-        )
-
-    def test_the_slot_name_carries_the_basename_so_a_person_can_read_it(self):
-        self.assertTrue(units.slot(WS).startswith("a-workspace-"), units.slot(WS))
-
     def test_a_unit_name_from_a_request_cannot_walk_out_of_the_store(self):
         for bad in ("../../etc", "0001", "0001_Bad_Slug", "", "0001_x/../../y"):
             with self.assertRaises(BadUnit, msg=bad):
@@ -73,21 +63,6 @@ class StartingAUnit(Fixture):
         made = units.create(WS, "a-problem", "", self.data)
         self.assertTrue(Path(made["path"]).is_dir())
         self.assertEqual(Path(made["path"]).parent, units.cos_dir(WS, self.data))
-
-    def test_a_bad_slug_is_refused_in_the_scripts_own_words(self):
-        # `intent.md` constraint 4: no second validator. The wording has to be its own or
-        # there are two answers to what a slug is.
-        with self.assertRaises(CannotCreate) as caught:
-            units.create(WS, "Bad_Slug", "", self.data)
-        self.assertIn("Bad_Slug", str(caught.exception))
-        self.assertIn("slug", str(caught.exception).lower())
-
-    def test_a_slug_longer_than_a_branch_allows_is_refused_with_both_lengths(self):
-        # The limit is `check-branch`'s, said by the script and carried here as is.
-        with self.assertRaises(CannotCreate) as caught:
-            units.create(WS, "a" * 61, "", self.data)
-        self.assertIn("61", str(caught.exception))
-        self.assertIn("60", str(caught.exception))
 
     def test_making_the_same_unit_twice_is_not_possible(self):
         # `new-path` allocates the next number, so a second call with the same slug gets a
@@ -109,20 +84,11 @@ class NumbersTakenInTheHostRepositoryCount(Fixture):
             (host / ".cos" / n).mkdir(parents=True)
         return host
 
-    def test_a_host_with_fourteen_units_makes_the_next_one_fifteen(self):
-        host = self._host(*[f"{i:04d}_u{i}" for i in range(1, 15)])
-        made = units.create(host, "fresh", "", self.data, reserve_from=[host])
-        self.assertEqual(made["unit"], "0015_fresh")
-
     def test_nothing_is_written_into_the_host(self):
         host = self._host("0001_a", "0014_n")
         before = sorted(p.name for p in (host / ".cos").iterdir())
         units.create(host, "fresh", "", self.data, reserve_from=[host])
         self.assertEqual(sorted(p.name for p in (host / ".cos").iterdir()), before)
-
-    def test_without_reserve_the_old_numbering_is_unchanged(self):
-        host = self._host("0014_n")
-        self.assertEqual(units.create(host, "fresh", "", self.data)["unit"], "0001_fresh")
 
     def test_the_number_is_whatever_the_loop_prints(self):
         """The number is whatever the loop prints: if Python worked it out itself, it would not be

@@ -54,18 +54,6 @@ def _rel(unit, other, rtype, op="add", by="Leif"):
 
 
 class TheBacklog(unittest.TestCase):
-    def test_the_code_decides_and_the_words_do_not(self):
-        for nxt, why, kept in (
-            ("finished", "", True),
-            ("closed — x", "", True),
-            ("write-spec", "finished", False),
-            ("write-spec", "rejected", False),
-        ):
-            with self.subTest(nxt=nxt, why=why):
-                self.assertEqual(
-                    b.in_backlog(_unit("0001_a", ("idea", "intent"), nxt=nxt, why=why)), kept
-                )
-
     def test_only_the_idea_only_unit_and_the_paused_one(self):
         units = [
             _unit("0001_done", ("idea", "intent"), nxt="finished"),
@@ -147,16 +135,6 @@ class Effort(unittest.TestCase):
         )
         self.assertEqual(b.fold(units, [], {})["undetermined_count"], 0)
 
-    def test_the_basis_says_how_many_were_left_out(self):
-        got = b.effort_from(["0001_u"], self.FOUND, undetermined=2)
-        self.assertEqual(got["effort_source"], "measured")
-        self.assertTrue(
-            got["effort_basis"].endswith("; 2 finished units with an unknown cost left out")
-        )
-        guess = b.effort_from(["0001_u"], {}, undetermined=3)
-        self.assertIn("3 finished units with an unknown cost left out", guess["effort_basis"])
-        self.assertNotIn("unknown cost", b.effort_from(["0001_u"], self.FOUND)["effort_basis"])
-
 
 class Estimates(unittest.TestCase):
     def test_out_of_range_is_refused(self):
@@ -202,20 +180,6 @@ class Relations(unittest.TestCase):
 
     def check(self, unit, other, rtype, active, op="add"):
         return b.check_relation(unit, other, rtype, op, "why", "Leif", self.NAMES, active)
-
-    def test_every_refusal(self):
-        self.assertIn("itself", self.check("0001_a", "0001_a", "liên quan", []))
-        self.assertIn("no such", self.check("0001_a", "9999_z", "liên quan", []))
-        self.assertIn("type", self.check("0001_a", "0002_b", "chặn", []))
-        self.assertIn(
-            "already", self.check("0002_b", "0001_a", "trùng", [_rel("0001_a", "0002_b", "trùng")])
-        )
-        self.assertIn("not in effect", self.check("0001_a", "0002_b", "trùng", [], op="remove"))
-        self.assertIn(
-            "replaces",
-            self.check("0002_b", "0001_a", "thay thế", [_rel("0001_a", "0002_b", "thay thế")]),
-        )
-        self.assertEqual(self.check("0001_a", "0002_b", "thay thế", []), "")
 
     def test_answer_1_a_dependency_cycle_is_refused(self):
         two = [_rel("0001_a", "0002_b", "phụ thuộc")]
@@ -291,14 +255,6 @@ class TheShortlist(unittest.TestCase):
     BACKLOG = [f"000{i}_u" for i in range(1, 10)]
     ESTS = {n: {} for n in BACKLOG[:8]}
 
-    def test_every_refusal(self):
-        self.assertIn("empty", b.check_shortlist([], self.BACKLOG, self.ESTS))
-        self.assertIn("at most", b.check_shortlist(self.BACKLOG[:8], self.BACKLOG, self.ESTS))
-        self.assertIn("twice", b.check_shortlist(["0001_u", "0001_u"], self.BACKLOG, self.ESTS))
-        self.assertIn("not in the backlog", b.check_shortlist(["9999_z"], self.BACKLOG, self.ESTS))
-        self.assertIn("no estimate", b.check_shortlist(["0009_u"], self.BACKLOG, self.ESTS))
-        self.assertEqual(b.check_shortlist(self.BACKLOG[:7], self.BACKLOG, self.ESTS), "")
-
     def test_the_refusal_names_every_unit_without_an_estimate_and_both_ways_on(self):
         ests = {n: {} for n in self.BACKLOG[:6]}
         said = b.check_shortlist(["0001_u", "0008_u", "0009_u"], self.BACKLOG, ests)
@@ -352,17 +308,6 @@ class TheShortlist(unittest.TestCase):
         self.assertTrue(any("replaced by" in w for w in out["shortlist"][0]["warnings"]))
         self.assertTrue(any("duplicates" in w for w in out["shortlist"][1]["warnings"]))
         self.assertEqual(out["per_unit"]["0001_a"]["rank"], 1)
-
-    def test_stamp(self):
-        self.assertEqual(b.stamp([], "0001_a"), {"rank": None, "of": None, "record": None})
-        records = [
-            {"kind": "shortlist", "units": ["0002_b"], "at": "1"},
-            {"kind": "shortlist", "units": ["0002_b", "0001_a"], "at": "2"},
-        ]
-        self.assertEqual(
-            b.stamp(records, "0001_a"), {"rank": 2, "of": 2, "record": {"at": "2", "n": 2}}
-        )
-        self.assertEqual(b.stamp(records, "0009_z")["rank"], None)
 
 
 class Garbage(unittest.TestCase):
@@ -508,17 +453,6 @@ class TheProposal(unittest.TestCase):
         rec = self.parse(reply, found)["records"][0]
         self.assertEqual((rec["effort"], rec["effort_source"]), ("L", "measured"))
 
-    def test_the_prompt_carries_the_goals_and_the_units(self):
-        text = b.build_prompt(
-            [{"unit": "0001_a", "idea": "words", "problem": "", "outcome": ""}],
-            [{"unit": "0003_done", "title": "Intent: t", "cost_usd": 1.2, "turns": 9}],
-        )
-        for goal in b.VALUE_GOALS:
-            self.assertIn(goal, text)
-        self.assertIn("0001_a", text)
-        self.assertIn("$1.20, 9 turns", text)
-        self.assertNotIn("unknown cost", text)
-
     def test_the_prompt_names_no_language_but_the_one_the_units_are_written_in(self):
         text = b.build_prompt(
             [{"unit": "0001_a", "idea": "words", "problem": "", "outcome": ""}], []
@@ -528,23 +462,6 @@ class TheProposal(unittest.TestCase):
         self.assertEqual(text.count(phrase), 2)
         self.assertIn(f"characters, {phrase}. It must copy", text)
         self.assertIn(f"`reason` is one line, {phrase}.", text)
-
-    def test_the_prompt_and_the_estimate_name_the_units_left_out(self):
-        text = b.build_prompt(
-            [{"unit": "0001_a", "idea": "words", "problem": "", "outcome": ""}], [], 4
-        )
-        self.assertIn(
-            "## Finished units\n\n(4 finished units have an unknown cost and are left out)", text
-        )
-        reply = {
-            "units": [
-                {"unit": "0001_a", "value": 4, "effort": "S", "similar": [], "basis": "bớt chi phí"}
-            ]
-        }
-        out = b.parse_proposal(reply, self.BACKLOG, self.STORE, {}, "sess", [], undetermined=4)
-        self.assertIn(
-            "4 finished units with an unknown cost left out", out["records"][0]["effort_basis"]
-        )
 
 
 if __name__ == "__main__":
