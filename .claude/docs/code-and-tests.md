@@ -2,12 +2,15 @@
 
 ## The checks
 
-`npm test` runs lint, then the tests; CI runs it. Before a commit:
+`npm test` runs lint, then every test; CI runs it on every pull request. Before a commit:
 
 ```
-uv run ruff format && uv run ruff check --fix   # then npm test
-uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you changed
+uv run ruff format && uv run ruff check --fix
+uv run pytest tests/<pkg>/test_<module>.py      # the modules you changed
 ```
+
+`tests/conftest.py` gives every test its own data root and answers the loop in the process;
+a test of the loop's child itself is marked `real_loop`. A test that hangs fails at 60 s.
 
 Fix the code, not the check. A rule is switched off only in `pyproject.toml`, with its reason; a
 `# noqa` or `# ty: ignore` names its rule and why on the same line. No `cast`. Refuse first:

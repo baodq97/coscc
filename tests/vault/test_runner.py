@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -28,8 +30,9 @@ class Rig:
         self.store, self.root = make_store(test, ssh)
         self.work = self.root / "work"
         self.work.mkdir()
-        self.xdg = self.root / "xdg"
-        self.xdg.mkdir(mode=0o700)
+        # Short, as `/run/user/<uid>` is: an `ssh-agent` socket path past 108 bytes cannot bind.
+        self.xdg = Path(tempfile.mkdtemp(dir="/dev/shm" if os.path.isdir("/dev/shm") else None))
+        test.addCleanup(shutil.rmtree, self.xdg, True)
         self.journal = Journal(self.work, self.store.data)
         env = mock.patch.dict(os.environ, {**on_path(self.root), "XDG_RUNTIME_DIR": str(self.xdg)})
         env.start()

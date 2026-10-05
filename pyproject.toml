@@ -26,6 +26,7 @@ dev = [
     "httpx>=0.28.1",
     "playwright>=1.63.0",
     "pytest>=9.1.1",
+    "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.16.9",
     "ty>=0.0.84",
@@ -67,4 +68,7 @@ exclude = ["tests/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q -p no:cacheprovider"
+addopts = "-p no:cacheprovider"
+# A test that hangs fails with its name instead of holding the run until a caller gives up.
+timeout = 60
+markers = ["real_loop: the loop runs as a real child, not in this process"]

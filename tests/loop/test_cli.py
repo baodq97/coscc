@@ -1,4 +1,5 @@
-"""Every misuse `python -m coscc.loop` refuses with exit 2, as its goldens hold."""
+"""Every misuse `python -m coscc.loop` refuses with exit 2, as its goldens hold; where the
+process it stands in matters, the command runs as a real child."""
 
 from __future__ import annotations
 
@@ -87,7 +88,7 @@ def test_check_version_reads_the_checkout_of_the_cwd_not_the_installed_package(t
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "v")
     (repo / "deep" / "er").mkdir(parents=True)
-    r = python(["check-version"], environ=env(), cwd=repo / "deep" / "er")
+    r = python(["check-version"], environ=env(), cwd=repo / "deep" / "er", child=True)
     assert (r.code, r.out, r.err) == (0, "9.9.9\n", "")
 
 
@@ -95,5 +96,5 @@ def test_without_root_the_cos_of_the_checkout_of_the_cwd_is_read(tmp_path):
     repo = git_repo(tmp_path / "elsewhere")
     (repo / ".cos" / "0041_taken").mkdir(parents=True)
     (repo / "sub").mkdir()
-    r = python(["new-path", "next"], environ=env(), cwd=repo / "sub")
+    r = python(["new-path", "next"], environ=env(), cwd=repo / "sub", child=True)
     assert (r.code, r.out) == (0, ".cos/0042_next\n")
