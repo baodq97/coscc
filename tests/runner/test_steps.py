@@ -1175,6 +1175,22 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
         self._run("spec")
         self.assertEqual(self.sessions.calls, 1)
 
+    def test_the_gate_is_told_which_repository_the_unit_lives_beside(self):
+        """The store has no git, so `review` and `ship` read the workspace's."""
+        from coscc.units import board as board_reader
+
+        seen = {}
+
+        async def fake_gate(units_root, unit, stage, repo=None, **kw):
+            seen["repo"] = repo
+            return False, "blocked: stop here"
+
+        with mock.patch.object(board_reader, "gate", fake_gate):
+            with self.assertRaises(Invalid):
+                self._run("review")
+        self.assertEqual(seen["repo"], str(self.repo))
+        self.assertEqual(self.sessions.calls, 0)
+
 
 class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
     """The label is read after the gate and picks the configuration; the gate is stubbed open, as
