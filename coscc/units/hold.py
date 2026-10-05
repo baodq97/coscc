@@ -40,13 +40,8 @@ def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, busy: s
     now = (found.get("hold") or {}).get("state") or "active"
     if to not in moves:
         if not moves:
-            # The code decides which sentence; the words shown are `next`'s own.
-            code = str(found.get("why") or "")
-            why = (
-                str(found.get("next") or "")
-                if code in ("finished", "rejected")
-                else "has no intent.md to record it in"
-            )
+            # Only an ended unit has no move; the words shown are `next`'s own.
+            why = str(found.get("next") or "")
             return f"{found.get('name', 'this unit')} {why}; it cannot be paused or dropped"
         return f"{found.get('name', 'this unit')} is {now}; from there it can go to {', '.join(moves)}, not {to or 'nothing'}"
     for what, value in (("reason", reason), ("name", by)):

@@ -775,6 +775,23 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(self.rows("unit_holds", "decided_by"), [("owner",)])
 
+    async def test_an_idea_with_no_intent_is_dropped(self):
+        import subprocess
+
+        # A workspace is a repository; an idea has no branch and no worktree in it.
+        subprocess.run(["git", "init", "-q", "-b", "main", self.cwd], check=True)
+        self.intent.unlink()
+        idea = self.dir / "idea.md"
+        before = idea.read_bytes()
+        got = await self.hold(to="dropped", reason="gộp vào 0055")
+        self.assertEqual(got.status_code, 200, got.text)
+        effects = got.json()["effects"]
+        self.assertTrue(effects)
+        self.assertEqual({e["result"] for e in effects}, {"skipped"}, effects)
+        self.assertEqual(self.rows("unit_holds", "move, reason"), [("dropped", "gộp vào 0055")])
+        self.assertEqual(idea.read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["idea.md"])
+
 
 _ROUND_0028 = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
 REVIEW_STUCK = "# Review: q\nAuthor: t. Status: changes-requested.\n" + "".join(

@@ -128,7 +128,7 @@ class TheRefusals(unittest.TestCase):
                 "",
             ),
         )
-        self.assertIn(
+        self.assertNotIn(
             "no intent.md",
             hold.refusal(unit_row(next="write-intent", hold_moves=[]), "paused", "r", "b", ""),
         )

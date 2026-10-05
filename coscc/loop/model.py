@@ -1546,22 +1546,23 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
         unit["artifacts"]["impl.md"]["leftLane"] = True
     unit["outcome"] = None if intent_text is None else unit_outcome(intent_text)
 
-    held: Any = {"hold": None, "problems": []}
-    if intent_text is not None:
-        held = fold_holds(nullish(dig(known, "holds"), []))
-    unit["problems"].extend(f"intent.md: {p}" for p in held["problems"])
+    # An idea is held too; with no intent.md a problem names no file.
+    held = fold_holds(nullish(dig(known, "holds"), []))
+    where = "" if intent_text is None else "intent.md: "
+    unit["problems"].extend(f"{where}{p}" for p in held["problems"])
     unit["hold"] = held["hold"]
     # Only when true, so a unit that never shipped reads as it did before.
     if dig(known, "shipped") is True:
         unit["shipped"] = True
     ended = ended_of(unit)
     if ended and unit["hold"]:
+        carrier = "the unit" if intent_text is None else "intent.md"
         unit["problems"].append(
-            f"intent.md carries a hold block, but the unit is {ended} — it is ignored"
+            f"{carrier} carries a hold block, but the unit is {ended} — it is ignored"
         )
         unit["hold"] = None
     hold_state = dig(unit, "hold", "state") if unit["hold"] else "active"
-    unit["holdMoves"] = [] if ended or intent_text is None else list(HOLD_MOVES[hold_state])
+    unit["holdMoves"] = [] if ended else list(HOLD_MOVES[hold_state])
 
     rerun = parse_reruns(intent_text)
     unit["problems"].extend(f"intent.md: {p}" for p in rerun["problems"])
