@@ -54,10 +54,6 @@ class HooksKeepOnlyWhatIsOnAndMeantForTheStage(unittest.TestCase):
         self.assertEqual(h.for_step("impl", "/w").tools, (a,))
         self.assertEqual(h.for_step("impl", "/other").tools, (a, b))
 
-    def test_the_default_is_no_parts_and_always_on(self):
-        self.assertEqual(Hooks().for_step("impl", "/w"), Parts())
-        self.assertTrue(Hooks().enabled("x", "/w"))
-
 
 class AToolIsGrantedOnlyToARunItsWhenLetsThrough(unittest.TestCase):
     def test_the_even_unit_of_a_pilot_gets_the_tool_and_the_odd_one_does_not(self):

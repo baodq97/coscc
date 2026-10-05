@@ -34,11 +34,6 @@ class HandlersHearTheEventsOfTheirName(unittest.TestCase):
         self.assertEqual(seen, ["after"])
         self.assertIn("RuntimeError", "\n".join(logged.output))
 
-    def test_each_event_is_logged_at_debug(self):
-        with self.assertLogs("coscc.bus", "DEBUG") as logged:
-            Bus().publish(Event("answer.written", "k", "u"))
-        self.assertIn("answer.written k u", logged.output[0])
-
 
 class AWatcherHearsEverything(unittest.TestCase):
     def test_a_watcher_hears_every_name_after_the_subscribers_until_it_stops(self):

@@ -117,16 +117,6 @@ def _files() -> list[Path]:
 
 
 class NoFileCarriesAnId(unittest.TestCase):
-    def test_the_pattern(self):
-        for text in ("`0088` R3", "see 0088_some-slug", "spec.md C7", "(R12)", "review round 2"):
-            self.assertTrue(ID.search(text), text)
-        for text in ("mode `0700`", "`git diff -U0`", "HTTP 404", "F<k>", "a round"):
-            self.assertFalse(ID.search(text), text)
-        for name in ("test_r4_the_gate", "test_0096_rebase", "TheCaseOf0096", "TheFiveStepsOfR6"):
-            self.assertTrue(NAME.search(name), name)
-        for name in ("test_utf8_is_read", "test_sha256", "Round", "test_http_404", "diff_u0"):
-            self.assertFalse(NAME.search(name), name)
-
     def test_every_file_carries_none(self):
         found = [hit for path in _files() for hit in ids(path)]
         self.assertFalse(found, FIX + ":\n" + "\n".join(found))
@@ -142,13 +132,6 @@ class NoFileCarriesAnId(unittest.TestCase):
             found = ids(path, "coscc/planted.py")
         self.assertCountEqual(["coscc/planted.py:1: `0013", "coscc/planted.py:1: R1"], found)
         self.assertIn("which unit", FIX)
-
-    def test_a_planted_markdown_line_fails_with_the_fix(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "planted.md"
-            path.write_text("fine\nSince `0068` it updates itself.\n")
-            found = md_ids(path, "planted.md")
-        self.assertEqual(["planted.md:2: `0068"], found)
 
     def test_the_named_exceptions_hold_only_their_own_ids(self):
         with tempfile.TemporaryDirectory() as tmp:

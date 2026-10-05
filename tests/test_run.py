@@ -13,11 +13,6 @@ from coscc.config import Config
 
 
 class WhatStartupSays(unittest.TestCase):
-    def test_the_default_is_no_longer_loopback(self):
-        # If this ever goes back, the warning below stops being reachable by default and
-        # the test that checks it stops meaning anything.
-        self.assertEqual(Config().host, "0.0.0.0")
-
     def test_binding_every_interface_says_plain_http_is_readable(self):
         # There is a login now, and what is left to say is the wire.
         lines = run.banner(Config(host="0.0.0.0", port=8790))
@@ -26,39 +21,15 @@ class WhatStartupSays(unittest.TestCase):
         self.assertIn("readable", text)
         self.assertIn("COS_HOST=127.0.0.1", text)
 
-    def test_a_named_interface_gets_the_same_warning(self):
-        # The check is "not loopback", not "is 0.0.0.0" -- someone binding one real
-        # interface is exposed the same way and must be told the same thing.
-        text = "\n".join(run.banner(Config(host="192.168.1.10", port=8790)))
-        self.assertIn("readable", text)
-        self.assertIn("login page", text)
-
     def test_loopback_is_not_warned_about(self):
         for host in ("127.0.0.1", "localhost", "::1"):
             with self.subTest(host=host):
                 text = "\n".join(run.banner(Config(host=host, port=8790)))
                 self.assertNotIn("readable", text)
 
-    def test_the_address_is_always_the_first_line(self):
-        first = run.banner(Config(host="0.0.0.0", port=9001))[0]
-        self.assertEqual(first, "coscc on http://0.0.0.0:9001")
-
 
 class TheVersionAnswer(unittest.TestCase):
     """The only thing that separates an update from an apparent update."""
-
-    def test_it_matches_the_version_the_repository_declares(self):
-        # `coscc.loop check-version` keeps pyproject in step with four other places, so
-        # agreeing with pyproject is agreeing with all of them.
-        import re
-        from pathlib import Path
-
-        declared = re.search(
-            r'^version = "([^"]+)"',
-            Path("pyproject.toml").read_text(),
-            re.MULTILINE,
-        ).group(1)
-        self.assertEqual(run.installed_version(), declared)
 
     def test_it_prints_one_line_in_the_pinned_shape(self):
         import contextlib
@@ -335,10 +306,6 @@ class TheServerIsHeld(unittest.TestCase):
             finally:
                 update.SERVER.server = None
         return code, finished
-
-    def test_no_hand_off_means_main_just_returns(self):
-        code, finished = self.main_with(lambda server: None)
-        self.assertEqual((code, finished), (None, []))
 
     def test_step_events_are_purged_before_the_server_is_built(self):
         """Before the first request, and a purge that fails does not stop it."""

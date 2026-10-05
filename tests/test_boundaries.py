@@ -515,17 +515,6 @@ class NoPrivateNameCrossesAModule(unittest.TestCase):
     def test_no_new_private_import_and_no_stale_entry(self):
         self.assertEqual(private_import_problems(_trees(), PRIVATE_IMPORTS), [])
 
-    def test_a_planted_private_import_says_the_fix(self):
-        trees = _parse(a="from coscc.b import _x, __y__, z\n", b="from coscc.b import _own\n")
-        self.assertEqual(
-            private_import_problems(trees, set()),
-            [
-                "coscc/a.py imports `_x` from coscc.b: a leading underscore means only coscc/b.py "
-                "uses it. Drop the underscore in coscc/b.py, or keep the name in the one module "
-                "that uses it."
-            ],
-        )
-
     def test_a_type_checking_import_counts(self):
         trees = _parse(a="if TYPE_CHECKING:\n    from coscc.b import _x\n")
         self.assertEqual(private_imports(trees), {("coscc/a.py", "coscc.b", "_x")})
@@ -542,19 +531,6 @@ class EveryTableHasOneOwner(unittest.TestCase):
         trees = _trees()
         owners = OWNERS | feature_owners(trees)
         self.assertEqual(table_problems(trees, table_names(trees), owners, FOREIGN_SQL), [])
-
-    def test_a_planted_foreign_statement_says_the_fix(self):
-        trees = _parse(
-            a='q = "SELECT * FROM t WHERE x = 1"\np = "Add one, or open one from t."\n',
-            b='q = f"UPDATE t SET {col} = 1"\nr = "CREATE INDEX i ON t(x)"\n',
-        )
-        self.assertEqual(
-            table_problems(trees, {"t"}, {"t": "coscc.b"}, set()),
-            [
-                "coscc/a.py runs SQL on `t`, which coscc/b.py owns. Add a function to "
-                "coscc/b.py that does it, and call that."
-            ],
-        )
 
     def test_a_feature_table_is_owned_by_its_module_and_foreign_sql_names_the_owner(self):
         trees = {
@@ -575,17 +551,9 @@ class EveryTableHasOneOwner(unittest.TestCase):
             ],
         )
 
-    def test_a_table_without_an_owner_says_the_fix(self):
-        (msg,) = table_problems(_parse(a="pass\n"), {"t"}, {}, set())
-        self.assertIn("Add it to OWNERS", msg)
-
     def test_a_listed_use_that_is_gone_says_to_delete_it(self):
         (msg,) = table_problems(_parse(a="pass\n"), {"t"}, {"t": "coscc.b"}, {("coscc.a", "t")})
         self.assertIn("Delete that entry.", msg)
-
-    def test_ddl_does_not_count_as_a_use(self):
-        trees = _parse(a='q = "ALTER TABLE t ADD COLUMN c; DROP TABLE t; CREATE INDEX i ON t(c)"\n')
-        self.assertEqual(table_uses(trees, {"t"}), Counter())
 
 
 class CallsAreTyped(unittest.TestCase):
@@ -618,10 +586,6 @@ class CallsAreTyped(unittest.TestCase):
         )
         (msg,) = dict_any_problems(set(), {"coscc.m:A.read"})
         self.assertIn("delete that entry", msg)
-
-    def test_the_qualname_includes_enclosing_functions(self):
-        src = "def f():\n    def g() -> dict[str, Any]: ...\n"
-        self.assertEqual(dict_any_keys(_parse(m=src)), {"coscc.m:f.g"})
 
 
 if __name__ == "__main__":

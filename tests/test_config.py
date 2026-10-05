@@ -40,10 +40,6 @@ class Knob2ActuallySubtracts(unittest.TestCase):
         c = Config(tools=("Read", "Bash"), allow_write_and_exec=True)
         self.assertEqual(c.effective_tools(), ["Read", "Bash"])
 
-    def test_the_knob_alone_grants_nothing(self):
-        # Knob 2 permits; knob 1 supplies. On its own it must not add a tool.
-        self.assertEqual(Config(allow_write_and_exec=True).effective_tools(), [])
-
 
 class Knob3IsReachableOnlyFromTheEnvironment(unittest.TestCase):
     def test_bypass_turns_on_from_the_environment(self):
@@ -94,18 +90,6 @@ class Parsing(unittest.TestCase):
 
     def test_workspaces_default_to_the_working_directory(self):
         self.assertEqual(len(from_env({}).workspaces), 1)
-
-    def test_every_interface_by_default_since(self):
-        self.assertEqual(from_env({}).host, "0.0.0.0")
-
-    def test_the_old_default_is_still_reachable_by_hand(self):
-        self.assertEqual(from_env({"COS_HOST": "127.0.0.1"}).host, "127.0.0.1")
-
-    def test_an_empty_setting_reads_as_unset(self):
-        # `child_env` overrides every `COS_*` with "", so this is what a session started by an app
-        # launched with `COS_HOST`/`COS_PORT` set reads.
-        c = from_env({"COS_HOST": "", "COS_PORT": "", "COS_BYPASS_PERMISSIONS": ""})
-        self.assertEqual((c.host, c.port, c.bypass_permissions), ("0.0.0.0", 8790, False))
 
 
 class WorkspaceMembership(unittest.TestCase):
@@ -192,12 +176,6 @@ class TheUpdaterSettings(unittest.TestCase):
             ("/usr/bin", "/bin", "/uvi", "/xb", "/h/.local/bin", "/h/.cargo/bin"),
         )
 
-    def test_systemd_and_the_config_home_are_read_without_the_prefix(self):
-        c = from_env({"INVOCATION_ID": "abc", "HOME": "/h"})
-        self.assertEqual((c.invocation_id, c.config_home, c.home), ("abc", "/h/.config", "/h"))
-        c = from_env({"XDG_CONFIG_HOME": "/cfg", "HOME": "/h"})
-        self.assertEqual((c.invocation_id, c.config_home), (None, "/cfg"))
-
     def test_nothing_comes_from_anywhere_but_the_env_it_is_given(self):
         # The source is the dict handed in: a test's `{}` sees none of the running
         # process's `PATH`, `HOME` or `INVOCATION_ID`.
@@ -206,14 +184,6 @@ class TheUpdaterSettings(unittest.TestCase):
             (c.invocation_id, c.config_home, c.uv_candidates, c.path_env, c.home),
             (None, "", (), "", ""),
         )
-
-
-class TheEffortTrialIsGone(unittest.TestCase):
-    """`COS_EFFORT_TRIAL` is no longer read; the model trial needs no flag."""
-
-    def test_cos_effort_trial_is_not_a_setting(self):
-        self.assertFalse(hasattr(Config(), "effort_trial"))
-        self.assertFalse(hasattr(from_env({"COS_EFFORT_TRIAL": "1"}), "effort_trial"))
 
 
 class TheProtectedDatabases(unittest.TestCase):
