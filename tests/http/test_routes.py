@@ -591,6 +591,12 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_an_empty_answer_is_refused(self):  # (d)
         await self.refused(answer="   \n  ")
 
+    async def test_an_answer_with_no_name_is_recorded_as_owner(self):
+        await self.refused(answered_by="A\nStatus: rejected")
+        got = await self.post(answered_by="  ")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(got.json()["answered_by"], "owner")
+
     async def test_a_closed_unit_is_refused(self):  # (f)
         self.intent.write_text(
             QUESTIONS.replace("Status: accepted", "Status: rejected"), encoding="utf-8"
@@ -754,6 +760,12 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 400)
         self.assertEqual(self.intent.read_bytes(), before)
 
+    async def test_no_name_is_recorded_as_owner(self):
+        """What `{"by": ""}` was refused for until then."""
+        got = await self.hold(by="")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(self.rows("unit_holds", "decided_by"), [("owner",)])
+
 
 _ROUND_0028 = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
 REVIEW_STUCK = "# Review: q\nAuthor: t. Status: changes-requested.\n" + "".join(
@@ -909,6 +921,13 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
         self.assertEqual(
             self.rows(), [("review.md", "F2", "Phong", "product", "Tách ra. MARK-0016")]
         )
+
+    async def test_the_board_then_waits_on_the_other_one_only(self):
+        await self.finding()
+        board = await self.app.state.core.board(self.cwd, "new")
+        [u] = board["units"]
+        self.assertEqual(u["waiting"], ["F3"])
+        self.assertEqual([p["answered"] for p in u["person_findings"]], [True, False])
 
     async def refused_in_review(self, **over):
         before = self.review.read_bytes()
@@ -1123,6 +1142,16 @@ class TheNextStageOverHttp(unittest.IsolatedAsyncioTestCase):
     # The fixture of `AnsweringAQuestionOverHttp`, borrowed so its tests run once.
     asyncSetUp = AnsweringAQuestionOverHttp.asyncSetUp
     asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
+
+    async def test_the_route_names_the_stage_the_script_names(self):
+        got = await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})
+        self.assertEqual(got.status_code, 200, got.text)
+        body = got.json()
+        # QUESTIONS is an accepted intent, so the files alone say `spec`.
+        self.assertEqual((body["stage"], body["blocked"]), ("spec", True))
+        self.assertIn("write-spec", body["action"])
+        # Asking wrote nothing: the unit still holds only what the fixture put there.
+        self.assertFalse((self.dir / "spec.md").exists())
 
     async def test_missing_or_unknown_arguments_are_a_400(self):
         for params in (

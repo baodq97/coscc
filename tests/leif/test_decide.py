@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from coscc.github import prmachine
 from coscc.leif import decide
 from coscc.units.board import open_questions
+from coscc.agent.policy import GRANTS, NOVEL_CEILINGS
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
 # `next`'s two actions for `ship`, one after the merge and one before it.
@@ -206,6 +207,17 @@ class Stops(unittest.TestCase):
                 RECORDING, {"kind": "end", "stage": "ship", "outcome": "exhausted"}, False
             )
         )
+
+    def test_e_failed_cancelled_and_stopped_stop_whatever_the_count(self):
+        for outcome in ("failed", "cancelled", "stopped"):
+            last = {"kind": "end", "stage": "plan", "outcome": outcome}
+            self.assertEqual(
+                decide.stop_for(unit(), nxt("plan", "write-plan"), last, False, exhausted=1)[
+                    "kind"
+                ],
+                "e",
+                outcome,
+            )
 
     def test_e_a_first_exhausted_step_still_meets_every_other_stop(self):
         ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
@@ -614,6 +626,18 @@ class TheDaysMoney(unittest.TestCase):
             decide.spent_today(rows, NOW), {"known": 0.0, "estimated": 0.0, "estimated_count": 0}
         )
 
+    def test_a_day_like_2026_09_25_fits_or_is_capped(self):
+        rows = [{"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"}] + [
+            {"kind": "end", "at": at(), "stage": "integrate", "outcome": "done"} for _ in range(4)
+        ]
+        estimated = decide.spent_on(rows, decide.today(NOW))["estimated"]
+        self.assertEqual(estimated, 48.0)
+        spec = {"unit": "0010_a", "stage": "spec", "files": None, "need": 4.0, "rank": 1}
+        got = decide.pick([spec], [], 4, 80.0 - (20.0 + estimated) - 0.0)
+        self.assertEqual((got["chosen"], got["capped"]), ([spec], []))
+        got = decide.pick([spec], [], 4, 80.0 - (30.0 + estimated) - 0.0)
+        self.assertEqual((got["chosen"], got["capped"]), ([], [spec]))
+
     def test_a_raised_budget_is_reserved_and_estimated_in_full(self):
         self.assertEqual(decide.reservation("impl", {"impl:novel": 50.0}), 50.0)
         self.assertEqual(decide.reservation("impl", {"impl": 30.0}), 30.0)
@@ -638,6 +662,15 @@ class TheDaysMoney(unittest.TestCase):
         self.assertEqual(
             (got["known"], got["estimated"], got["estimated_count"]), (0.0, 16.0 + 4.0 + 8.0, 3)
         )
+
+    def test_a_stage_without_a_ceiling_counts_the_tables_largest(self):
+        largest = max(
+            [g.max_budget_usd for g in GRANTS.values()] + [b for _, b in NOVEL_CEILINGS.values()]
+        )
+        self.assertGreater(largest, 0)
+        self.assertEqual(decide.estimate("intent"), largest)
+        self.assertEqual(decide.estimate("idea"), largest)
+        self.assertEqual(largest, 16.0)
 
     def test_an_integration_record_is_never_added(self):
         rows = [
@@ -1172,6 +1205,34 @@ class TriesOnAHead(unittest.TestCase):
         self.assertIn("e", decide.STOP_KINDS)
 
 
+class NotesOfTheApp(unittest.TestCase):
+    def test_the_note_of_a_red_ci_names_the_red_required_checks_and_the_head(self):
+        checks = [
+            {"name": "tests", "bucket": "fail"},
+            {"name": "lint", "bucket": "pass"},
+            {"name": "build", "bucket": "cancel"},
+        ]
+        self.assertEqual(
+            decide.ci_note("0123456789abcdef", checks),
+            "CI is red at 0123456789ab: tests, build failed. Fix them and push.",
+        )
+        self.assertEqual(
+            decide.ci_note("", []), "CI is red: the required checks failed. Fix them and push."
+        )
+
+    def test_a_draft_impl_next_says_to_go_on_with_is_no_stop_f(self):
+        draft = {**nxt("", "impl.md is still a draft", reasons=["draft"]), "continue": "impl"}
+        self.assertTrue(decide.continues(draft))
+        self.assertIsNone(decide.stop_for(unit(), draft, None, False))
+        self.assertEqual(
+            decide.stop_for(
+                unit(), nxt("", "impl.md is still a draft", reasons=["draft"]), None, False
+            )["kind"],
+            "f",
+        )
+        self.assertFalse(decide.continues({**draft, "continue": "plan"}))
+
+
 class AfterARefusal(unittest.TestCase):
     """What the gate's refusal of an attempt the autopilot queued makes of the next pass."""
 
@@ -1192,6 +1253,10 @@ class AfterARefusal(unittest.TestCase):
                 None,
             ),
         )
+
+    def test_a_code_the_gate_has_not_is_a_stop_with_no_code(self):
+        stop, _ = decide.after_refusal(self.refused("invalid"), "impl", NOW)
+        self.assertEqual(stop, {"kind": "f", "reason": "impl was refused: invalid"})
 
     def test_no_refusal_or_another_stage_is_no_part_of_it(self):
         self.assertEqual(decide.after_refusal(None, "impl", NOW), (None, None))
@@ -1216,6 +1281,13 @@ class AfterARefusal(unittest.TestCase):
             decide.after_refusal(self.refused("ci-pending"), "impl", NOW, fresh=True), (None, None)
         )
         self.assertEqual(decide.after_refusal(self.refused("unit-busy"), "impl", NOW), (None, None))
+
+    def test_an_integration_with_nothing_to_integrate_is_no_stop_and_no_wait(self):
+        refused = self.refused("nothing-to-integrate", "integrate")
+        self.assertEqual(decide.after_refusal(refused, "integrate", NOW), (None, None))
+        # Another refusal of the integration is still the stop `f`.
+        stop, _ = decide.after_refusal(self.refused("invalid", "integrate"), "integrate", NOW)
+        self.assertEqual(stop, {"kind": "f", "reason": "integrate was refused: invalid"})
 
 
 class ExhaustedOf(unittest.TestCase):

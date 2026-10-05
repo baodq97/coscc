@@ -1115,6 +1115,16 @@ class Scripted(_Base):
         self.assertNotIn("cost_usd", stop["reason"])
         self.assertNotIn("reached", stop["reason"])
 
+    async def test_the_cap_block_carries_the_estimate(self):
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        log.finished(self.key, "0009_z", "spec", "done")
+        cap = self.core.autopilot.cap(log.records(), 80.0)
+        self.assertEqual(
+            set(cap), {"limit", "spent", "known", "estimated", "estimated_count", "running", "day"}
+        )
+        self.assertEqual(cap["spent"], round(cap["known"] + cap["estimated"], 2))
+        self.assertEqual((cap["estimated"], cap["estimated_count"]), (decide.estimate("spec"), 1))
+
     async def test_today_is_the_cap_figure_with_the_autopilot_off(self):
         log = Journal(self.config.working_dir, self.config.data_dir)
         log.finished(self.key, "0009_z", "spec", "done")
@@ -1553,6 +1563,42 @@ class Scripted(_Base):
             await self.settled()
             self.release.clear()
 
+    async def test_a_refusal_while_queueing_logs_one_line_and_a_race_only_at_info(self):
+        self.core.attempts.admitting = lambda: False
+        for code, level, stop in (
+            ("unit-busy", "INFO", {}),
+            ("ci-pending", "INFO", {}),
+            ("gate-closed", "WARNING", {"0001_a": "f"}),
+        ):
+            self.core.autopilot.stops.pop(self.key, None)
+            self.units.clear()
+            self.add("0001_a", "spec")
+
+            def refuse(cwd, unit, stage, note="", code=code):
+                raise Refused("refused", (code,))
+
+            with (
+                mock.patch.object(self.core.steps, "enqueue_step", side_effect=refuse),
+                self.assertLogs("coscc.leif.autopilot", "INFO") as logged,
+            ):
+                await self.pass_()
+            [record] = [r for r in logged.records if "queue" in r.getMessage()]
+            self.assertEqual((record.levelname, record.exc_info), (level, None), code)
+            self.assertEqual(self.stops(), stop, code)
+
+    async def test_a_coded_refusal_at_next_is_a_stop_with_its_code(self):
+        self.add("0001_a", "spec")
+
+        async def next_step(cwd, unit):
+            raise Refused("no tree", ("no-worktree",))
+
+        self.core.steps.next_step = next_step
+        await self.pass_()
+        self.assertEqual(
+            self.core.autopilot.stops[self.key]["0001_a"],
+            {"unit": "0001_a", "kind": "f", "reason": "no tree", "code": "no-worktree"},
+        )
+
     async def test_off_loopback_nothing_runs_and_the_board_says_why(self):
         use_config(self.core, dataclasses.replace(self.config, host="0.0.0.0"))
         self.add("0001_a", "spec")
@@ -1824,6 +1870,17 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
         self.assertEqual([(p["unit"], p["stage"]) for p in self.picks()], [("0001_a", "impl")])
         self.assertEqual(self.stops(), {})
+
+    async def test_two_impl_reruns_after_answers_stop_it(self):
+        self.add_rerun(
+            "0001_a", "impl", "start", "answer", "start", "answer", "start", plan="- `coscc/x.py`"
+        )
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "reruns"}))
+        self.assertEqual(
+            self.core.autopilot.stops[self.key]["0001_a"]["reason"],
+            "impl.md was run again 2 times after its answers; a person decides the next run.",
+        )
 
     async def test_off_starts_no_impl(self):
         self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
@@ -2203,6 +2260,10 @@ class TheGuideBlock(_Base):
             unit: {"unit": unit, "kind": kind, "reason": f"why {kind}"} for unit, kind in rows
         }
 
+    def test_off_it_is_only_that(self):
+        units = [self.card("0001_a", "needs-you")]
+        self.assertEqual(self.core.autopilot.guide_block(self.key, units), {"on": False})
+
     def test_needs_you_counts_the_cards_with_that_state_off_the_shortlist_too(self):
         # 0132 had a `Needs you` card, was not on the shortlist, and had no stop.
         self.listed("0001_a")
@@ -2248,6 +2309,31 @@ class TheGuideBlock(_Base):
         self.assertFalse(self.block()["shortlist_empty"])
         self.listed()
         self.assertTrue(self.block()["shortlist_empty"])
+
+    def test_shortlist_empty_is_read_on_each_call_with_no_pass_and_no_stop(self):
+        self.assertEqual(self.core.autopilot.stops.get(self.key), None)
+        self.assertTrue(self.block()["shortlist_empty"])
+        self.listed("0001_a")
+        self.assertFalse(self.block()["shortlist_empty"])
+
+    def test_another_workspace_shortlist_is_not_this_one(self):
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {"kind": "shortlist", "workspace": "/elsewhere", "unit": "", "units": ["0001_a"]}
+        )
+        self.assertTrue(self.block()["shortlist_empty"])
+
+    async def test_the_board_read_carries_it(self):
+        self.listed("0001_a")
+        units = [self.card("0001_a", "needs-you")]
+        data = {"units": units}
+        with mock.patch("coscc.leif.autopilot.autopilot_values", return_value=self.VALUES):
+            self.core.autopilot.show(self.key, data)
+        self.assertEqual(
+            (len(data["guide"]["needs_you"]), data["guide"]["shortlist_empty"]), (1, False)
+        )
+        self.assertEqual(
+            set(data["guide"]), {"on", "running", "needs_you", "held", "notes", "shortlist_empty"}
+        )
 
 
 class ResumedAtStartUp(unittest.IsolatedAsyncioTestCase):

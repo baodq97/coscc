@@ -96,6 +96,27 @@ class RefusalNamesTheFirstConditionMissing(unittest.TestCase):
             ig.refusal(**{**self.OK, "in_window": False, "busy": "0001_a is busy"})[0],
         )
 
+    def test_current_says_what_it_was_compared_with(self):
+        """The sentence names the ref and how it got there, and keeps its start."""
+        origin = ig.origin_note(MAIN, {"outcome": "fetched", "attempts": 1, "age": 0.4})
+        said, _ = ig.refusal(**{**self.OK, "state": "current", "origin": origin})
+        self.assertEqual(
+            said,
+            "the unit is current against origin/main ccccccc (fetched), which has nothing to integrate",
+        )
+        self.assertTrue(said.startswith("the unit is current"))
+
+    def test_without_an_origin_the_old_sentence_stands(self):
+        self.assertEqual(
+            ig.refusal(**{**self.OK, "state": "current"})[0],
+            "the unit is current, which has nothing to integrate",
+        )
+        # Only `current` carries the ref: `unknown` keeps its sentence.
+        self.assertEqual(
+            ig.refusal(**{**self.OK, "state": "unknown", "origin": "origin/main x"})[0],
+            "the unit is unknown, which has nothing to integrate",
+        )
+
     def test_ahead_or_diverged_is_the_completion_road_in_every_state(self):
         for how in ig.COMPLETION:
             for state in ig.STATES:
@@ -256,6 +277,20 @@ class NeedsPersonAndOutcome(unittest.TestCase):
 
 
 class Record(unittest.TestCase):
+    def test_the_code_is_always_written_and_empty_without_one(self):
+        kw = dict(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after="",
+            origin_sha=MAIN,
+            outcome="refused",
+        )
+        self.assertEqual(ig.record(**kw)["code"], "")
+        self.assertEqual(ig.record(**kw, code=ig.NOTHING)["code"], "nothing-to-integrate")
+
     def test_an_unknown_outcome_is_refused(self):
         with self.assertRaises(ValueError):
             ig.record(
@@ -349,6 +384,23 @@ class Record(unittest.TestCase):
                 started_by="cron",
             )
 
+    def test_an_old_record_without_them_still_describes(self):
+        old = ig.record(
+            workspace="w",
+            unit="u",
+            pr=7,
+            mode="mechanical",
+            head_before=HEAD,
+            head_after=NEW,
+            origin_sha=MAIN,
+            outcome="pushed",
+        )
+        for k in ("fetch", "merge_state", "update_branch"):
+            del old[k]
+        text = ig.describe_for_review(old)
+        self.assertIn("the app, mechanically", text)
+        self.assertIn(NEW, text)
+
     def test_a_completion_says_it_pushed_unpushed_commits_and_whose_word_it_is(self):
         rec = ig.record(
             workspace="w",
@@ -403,6 +455,16 @@ class MergeState(unittest.TestCase):
 
         self.assertEqual(self.ask(refused), "")
         self.assertEqual(self.ask(timed_out), "")
+
+    def test_broken_json_is_empty(self):
+        async def gh(argv, cwd):
+            return 0, "not json", ""
+
+        async def a_list(argv, cwd):
+            return 0, "[]", ""
+
+        self.assertEqual(self.ask(gh), "")
+        self.assertEqual(self.ask(a_list), "")
 
 
 class TheLatestIntegrationSinceTheLastRound(unittest.TestCase):
@@ -553,3 +615,64 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Warnings(unittest.TestCase):
+    def test_a_press_that_may_fall_to_gebo_says_so(self):
+        """A `behind` or `current` press may open Gebo; the page says so, with the grant."""
+        said = ig.warnings([], "", True, "W", fallback=True, name="Gebo")
+        self.assertEqual(len(said), 2)
+        self.assertIn(
+            "If GitHub refuses the rebase, the app opens Gebo, a paid agent session, to rebase",
+            said[0],
+        )
+        self.assertIn("pressing Integrate agrees to that session", said[0])
+        self.assertEqual(said[1], "W")
+        # The name is the table's, handed in; with none the sentence still reads.
+        self.assertIn(
+            "the app opens a paid agent session to rebase",
+            ig.warnings([], "", True, "W", fallback=True)[0],
+        )
+
+
+class ThePrompt(unittest.TestCase):
+    def test_a_refused_update_carries_its_code_and_words(self):
+        """The exit code and gh's words reach Gebo, and so does what they cannot say."""
+        text = ig.build_prompt(
+            skill="RULES",
+            unit="0035_x",
+            branch="feat/x",
+            pr=7,
+            state="behind",
+            reason="r",
+            head_before=HEAD,
+            origin_sha=MAIN,
+            rel={"merged": [], "open": []},
+            units_root=Path("/u"),
+            own_paths={},
+            refused_update={"code": 1, "said": "gh: merge conflict"},
+        )
+        for want in (
+            "# The mechanical rebase was refused",
+            "gh pr update-branch 7 --rebase",
+            "exited 1",
+            "gh: merge conflict",
+            "a login, the network, a permission",
+        ):
+            self.assertIn(want, text)
+
+    def completion_prompt(self, completion):
+        return ig.build_prompt(
+            skill="RULES",
+            unit="0035_x",
+            branch="feat/x",
+            pr=7,
+            state="current",
+            reason="",
+            head_before=HEAD,
+            origin_sha=MAIN,
+            rel={"merged": [], "open": []},
+            units_root=Path("/u"),
+            own_paths={},
+            completion=completion,
+        )

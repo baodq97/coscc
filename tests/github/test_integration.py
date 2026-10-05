@@ -686,6 +686,15 @@ class AStaleOriginMain(unittest.TestCase):
         board = asyncio.run(self.core.board(self.cwd))
         return next(u for u in board["units"] if u["name"] == self.unit).get("integration") or {}
 
+    def test_the_board_says_current_with_a_button(self):
+        info = self.integration()
+        self.assertEqual(
+            info["state"], "current", "a board read fetched: find who, do not bend the fixture"
+        )
+        self.assertIs(info["button"], True)
+        self.assertEqual(info["mode"], "mechanical")
+        self.assertTrue(any("opens Gebo" in w for w in info["warnings"]))
+
     def test_a_press_fetches_then_rebases_once(self):
         rec = self.press()
         self.assertEqual((rec["outcome"], rec["mode"]), ("pushed", "mechanical"), rec.get("detail"))
@@ -735,6 +744,17 @@ class AStaleOriginMain(unittest.TestCase):
         self.assertEqual(caught.exception.reasons, ("nothing-to-integrate",))
         ended = self.core.attempts.get(1)
         self.assertEqual((ended["state"], ended["outcome"]), ("refused", "nothing-to-integrate"))
+
+    def test_a_refusal_a_person_must_look_at_carries_no_code(self):
+        (self.tree / "g.txt").write_text("dirty\n", encoding="utf-8")
+        with self.assertRaises(Invalid) as caught:
+            self.press()
+        self.assertIn("uncommitted", str(caught.exception))
+        self.assertNotIsInstance(caught.exception, Refused)
+        [only] = self.records("integration")
+        self.assertEqual((only["outcome"], only["code"]), ("refused", ""))
+        ended = self.core.attempts.get(1)
+        self.assertEqual((ended["state"], ended["outcome"]), ("refused", "invalid"))
 
     def autopilot_pass_at_ship(self) -> tuple[dict, dict, list[tuple[str, str]], dict]:
         """One autopilot pass over this unit, passed and waiting at `ship`. `next` is a stand-in —

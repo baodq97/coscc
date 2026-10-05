@@ -372,6 +372,15 @@ class Setup(Door):
         self.assertNotIn(PASSWORD, self.err.getvalue())
         self.assertNotIn(stored, self.err.getvalue())
 
+    async def test_each_guard_without_a_password_prints_its_own_token(self):
+        """A new process with no password is a new token, flushed to stderr."""
+        other = io.StringIO()
+        auth.Guard(self.recorder, self.data, err=other)
+        self.assertEqual(len(tokens(self.err)), 1)
+        self.assertEqual(len(tokens(other)), 1)
+        self.assertNotEqual(tokens(self.err), tokens(other))
+        self.assertGreaterEqual(len(tokens(other)[0]), 22)  # 16 bytes, url-safe base64
+
     async def test_a_reset_takes_effect_on_the_next_request(self):
         """The database is the channel; no restart."""
         cookie = (await self.set_password()).cookie()
@@ -437,6 +446,25 @@ class Sessions(Door):
         self.assertIn("Max-Age=0", out.header("set-cookie"))
         self.assertTrue(refused(await self.call("GET", "/api/workspaces", cookie=cookie)))
         self.assertTrue(refused(await self.call("POST", "/logout", cookie=cookie)))
+
+    async def test_login_with_a_session_goes_home(self):
+        cookie = (await self.set_password()).cookie()
+        reply = await self.call("GET", "/login", cookie=cookie)
+        self.assertEqual((reply.status, reply.header("location")), (303, "/"))
+
+    async def test_the_login_page_warns_on_plain_http_off_loopback(self):
+        """`spec.md ## Answers, câu 11`: one line on the login page, off loopback only."""
+        await self.set_password()
+        self.assertIn(b"plain-http", (await self.call("GET", "/login")).body)
+
+        def page(host, scheme="http"):
+            return auth._login_page({"headers": [(b"host", host)], "scheme": scheme})
+
+        self.assertIn("plain-http", page(b"192.168.1.4:8790"))
+        self.assertNotIn("plain-http", page(b"127.0.0.1:8790"))
+        self.assertNotIn("plain-http", page(b"localhost:8790"))
+        self.assertNotIn("plain-http", page(b"[::1]:8790"))
+        self.assertNotIn("plain-http", page(b"coscc.example", "https"))
 
 
 class Origins(Door):

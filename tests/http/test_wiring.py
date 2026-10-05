@@ -35,3 +35,13 @@ class TheServiceWiresWhoListensToWhat(unittest.TestCase):
         self.core.bus.publish(Event("answer.written", "k", "u"))
         self.ended.assert_not_called()
         self.nudged.assert_called_once_with("k")
+
+    def test_a_refused_step_or_integration_wakes_the_updater_and_the_autopilot(self):
+        # The autopilot reads a refusal of what it queued from its row, on the pass this wakes.
+        for name in ("step.refused", "integration.refused"):
+            with self.subTest(name=name):
+                self.ended.reset_mock()
+                self.nudged.reset_mock()
+                self.core.bus.publish(Event(name, "k", "u"))
+                self.ended.assert_called_once_with()
+                self.nudged.assert_called_once_with("k")

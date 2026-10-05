@@ -71,6 +71,15 @@ class TheThreeLists(unittest.TestCase):
             self.assertEqual(set(r), {"unit", "kind", "do", "reason", "screen", "tab"})
             self.assertTrue(r["do"].endswith("."))
 
+    def test_a_stop_on_a_card_that_needs_you_says_what_to_do_in_its_words(self):
+        got = guide.needs_you(self.units, [stop("0003_c", "b")])
+        [item] = [r for r in got if r["unit"] == "0003_c"]
+        self.assertEqual(
+            (item["kind"], item["do"], item["reason"]),
+            ("b", guide.TODO["b"][0], "why b"),
+        )
+        self.assertEqual(len(got), 2)
+
     def test_a_stop_of_a_card_that_does_not_need_you_is_held(self):
         stops = [stop("0001_a", "a"), stop("0004_d", "e"), stop("0005_e", "f"), stop("", "full")]
         got = guide.held(self.units, stops)
@@ -93,3 +102,9 @@ class TheThreeLists(unittest.TestCase):
         self.assertEqual([r["kind"] for r in guide.notes(stops)], ["cap", "f"])
         self.assertEqual(guide.held(self.units, stops)[0]["unit"], "0004_d")
         self.assertEqual([r["kind"] for r in guide.held(self.units, stops)], ["e"])
+
+    def test_no_card_that_needs_you_and_no_stop_make_three_empty_lists(self):
+        self.assertEqual(
+            (guide.needs_you([card("0002_b", "ready")], []), guide.held([], []), guide.notes([])),
+            ([], [], []),
+        )

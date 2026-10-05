@@ -192,6 +192,12 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         # The local trunk was not moved to get there.
         self.assertEqual(self._git("rev-parse", "main").strip(), local)
 
+    def test_the_result_names_the_ref_and_the_commit_it_was_cut_from(self):
+        self._advance_remote()
+        got = asyncio.run(self.core.backlog.start_branch(str(self.repo), self._typed_unit()))
+        self.assertEqual(got["base"], "origin/main")
+        self.assertEqual(got["sha"], self._git("rev-parse", "--short=7", "origin/main").strip())
+
     def test_a_fetch_that_fails_cuts_nothing_and_says_so(self):
         """And, because there is no remote to reach, spec OQ4 too."""
         unit = self._typed_unit()

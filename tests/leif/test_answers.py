@@ -310,6 +310,29 @@ class HowAnAnswerNamesItsQuestion(unittest.TestCase):
             self.assertEqual((got["artifact"], got["question"]), ("intent.md", 1))
             self.assertEqual(self.answers(), [("intent.md", 1)])
 
+    def test_a_bad_artifact_lists_the_artifacts_of_the_unit(self):
+        message = self.refused("intnet", 1)
+        self.assertSays(message, "'intnet'", self.unit, "intent.md", "spec.md", "review.md")
+
+    def test_a_question_that_is_not_a_number_lists_the_open_questions(self):
+        for question in ("Câu 1", "One?", self.LONG, "1.0", 1.0, True, None, "", "-1", "١"):
+            self.assertListsTheOpenQuestions(self.refused("intent.md", question))
+
+    def test_a_number_the_artifact_does_not_have_lists_the_open_questions(self):
+        message = self.refused("intent.md", 5)
+        self.assertSays(message, "has no question 5")
+        self.assertListsTheOpenQuestions(message)
+
+    def test_an_artifact_with_no_questions_lists_the_open_questions(self):
+        message = self.refused("spec", 1)
+        self.assertSays(message, "has no numbered item")
+        self.assertListsTheOpenQuestions(message)
+
+    def test_a_finding_in_another_artifact_lists_the_open_questions(self):
+        message = self.refused("intent.md", "F1")
+        self.assertSays(message, "a finding is answered in review.md")
+        self.assertListsTheOpenQuestions(message)
+
     def test_a_finding_nobody_awaits_lists_the_open_questions(self):
         message = self.refused("review", " F9 ")
         self.assertSays(message, "F9 is not a finding")
@@ -362,6 +385,12 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertEqual(hashlib.sha256(self.intent.read_bytes()).hexdigest(), before)
         self.assertTrue(str(e.exception))
         return str(e.exception)
+
+    def test_no_recorded_by_is_recorded_as_owner(self):
+        """What `recorded_by="  "` was refused for until then."""
+        self.record(recorded_by="  ")
+        block = self.intent.read_text(encoding="utf-8").split("### Outcome", 1)[1]
+        self.assertIn("Answered by: owner", block)
 
     def test_a_block_is_appended_and_every_byte_before_it_stays(self):
         before = self.intent.read_bytes()
