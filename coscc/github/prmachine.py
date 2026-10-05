@@ -26,7 +26,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any, Literal, TypedDict, get_args
 
 from coscc.store.db import now as _now
 from coscc.git import gh, gitops
@@ -191,11 +191,26 @@ _RUN = re.compile(r"/actions/runs/(\d+)/job/\d+")
 _RERUNNING: set[tuple[int, str]] = set()
 
 
+class RedCheck(TypedDict):
+    name: str | None
+    completedAt: str | None
+
+
+class Rerun(TypedDict):
+    """What a `ci` transition records of the rerun it asked: the runs, the red checks it read,
+    what `gh` or the app said, and whether the rerun was made."""
+
+    runs: list[str]
+    red: list[RedCheck]
+    said: str
+    ok: bool
+
+
 def _red(checks: list[dict]) -> list[dict]:
     return [c for c in checks if str(c.get("bucket") or "") in ("fail", "cancel")]
 
 
-def rerun_at(history: History, workspace: str, unit: str, head: str) -> dict[str, Any] | None:
+def rerun_at(history: History, workspace: str, unit: str, head: str) -> Rerun | None:
     """The `rerun` a `ci` transition recorded at `head`; `None` when the app never reran it there.
     Read from the rows, so a restart does not rerun the head again.
     """
@@ -520,7 +535,7 @@ class Machine:
 
     async def _ci_after_rerun(
         self, u: Unit, number: int, head: str, checks: list[dict], tree: str
-    ) -> tuple[str, dict[str, Any] | None]:
+    ) -> tuple[str, Rerun | None]:
         """The `ci` to record for checks read at `head`, and the `rerun` to record with it.
 
         Red at a head the app never reran: `gh run rerun <run> --failed` for each run a red check
@@ -540,7 +555,7 @@ class Machine:
             return ("red" if newer or not done.get("ok") else "pending"), None
         if (number, head) in _RERUNNING:
             return "pending", None
-        rerun: dict[str, Any] = {
+        rerun: Rerun = {
             "runs": [],
             "red": [{"name": c.get("name"), "completedAt": c.get("completedAt")} for c in red],
             "said": "",
