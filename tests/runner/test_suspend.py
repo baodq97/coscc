@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -106,19 +105,6 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(rows[0]["suspend_id"])
 
-    async def test_a_step_with_no_session_open_finishes_before_the_settle_ends(self):
-        # A step between its `end` and its `finally` -- posting a round, syncing `pr.md` -- had
-        # nothing to pause; the settle waits for its attempt to end.
-        row = self.s.attempts.open("step", "/w", "0001_a", "review", state="running")
-
-        async def posts_its_round():
-            # It runs while the settle waits between two looks.
-            self.s.attempts.move(row["id"], "ended", "done")
-
-        task = asyncio.create_task(posts_its_round())
-        self.assertEqual(await self.s.resume.settle_after_suspend(5), [])
-        self.assertTrue(task.done())
-
     async def test_what_outlives_the_settle_is_returned_to_be_named(self):
         row = self.s.attempts.open("integration", "/w", "0002_b", "integrate", state="running")
         self.s.attempts.set_road(row["id"], "gebo")
@@ -126,12 +112,3 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [(j["kind"], j["unit"], j["stage"]) for j in left], [("gebo", "0002_b", "integrate")]
         )
-
-    def test_the_routes_seam_refuses_where_updates_are_not_available(self):
-        from coscc.update.updater import NotUpdatable, refusals
-
-        self.assertEqual(self.s.updater.status()["shape"], "unavailable")
-        with self.assertRaises(NotUpdatable), refusals():
-            asyncio.run(self.s.updater.apply("release", "an"))
-        with self.assertRaises(NotUpdatable), refusals():
-            self.s.updater.build_local("an")

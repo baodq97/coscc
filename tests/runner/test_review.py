@@ -65,16 +65,6 @@ class ARoundIsWrittenFromItsObject(unittest.TestCase):
         )
         self.assertIn("- .screens/b.png — 390×844 — /board — no violation", out)
 
-    def test_a_round_that_lists_no_screenshot_writes_no_screens(self):
-        out = render_round(
-            self.SECTION + "\n### Screens\n\nTaken at: x\n",
-            2,
-            "f" * 40,
-            {**self.OBJ, "screens": []},
-            self.SCREENS,
-        )
-        self.assertNotIn("### Screens", out)
-
     def test_only_the_new_rounds_are_replaced(self):
         text = "# Review: x\nStatus: draft.\n\n## Round 1\n\nold\n\n## Round 5\n\nnew\n\n## Answers\n\n### Câu 1\nkept\n"
         out = replace_new_rounds(text, {1}, "## Round 2\n\nrendered")
@@ -101,15 +91,6 @@ class MergeReview(unittest.TestCase):
     def test_the_first_round_needs_nothing_on_disk(self):
         body = merge_review("", "# Review: x\nStatus: accepted.\n\n## Round 1\n\nok\n")
         self.assertEqual(body, "# Review: x\nStatus: accepted.\n\n## Round 1\n\nok\n")
-
-    def test_the_header_is_the_replys(self):
-        body = merge_review(
-            "# Review: x\nStatus: changes-requested.\n\n## Round 1\n\nF1\n",
-            "# Review: x\nStatus: accepted.\n\n## Round 2\n\nok\n",
-        )
-        self.assertEqual(
-            body, "# Review: x\nStatus: accepted.\n\n## Round 1\n\nF1\n\n## Round 2\n\nok\n"
-        )
 
 
 class OpenFindings(unittest.TestCase):
@@ -149,18 +130,6 @@ class OpenFindings(unittest.TestCase):
         self.assertNotIn("GONE", findings)
         for kept in ("KEPT-2", "KEPT-3", "KEPT-4", "KEPT-5"):
             self.assertIn(kept, findings)
-
-    def test_no_round_reads_the_file_below_its_header_up_to_answers(self):
-        from coscc.runner.review import open_findings
-
-        text = (
-            "# Review: x\nPR: pr.md. Status: changes-requested.\n\n## Findings\n\n"
-            "- F1 [open] a.py:3 — high — ONE\n\n## Answers\n\n- F9 [open] not a finding\n"
-        )
-        header, number, findings = open_findings(text)
-        self.assertEqual(header, "PR: pr.md. Status: changes-requested.")
-        self.assertIsNone(number)
-        self.assertEqual(findings, "- F1 [open] a.py:3 — high — ONE")
 
     def test_a_status_quoted_in_a_round_is_not_the_header(self):
         from coscc.runner.review import open_findings

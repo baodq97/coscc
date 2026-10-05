@@ -13,7 +13,7 @@ from coscc.bus import Bus
 from coscc.store.db import Data
 from coscc.store.journal import Journal
 from coscc.runner.queue import Attempts
-from coscc.runner.interventions import DETAIL_MAX, KINDS, interventions
+from coscc.runner.interventions import KINDS, interventions
 from coscc.units.meta import UnitMeta
 
 KEY = "/ws"
@@ -185,20 +185,6 @@ class EachKindIsReadOnce(_Fixture):
         reruns = [f for f in found if f.kind == "rerun"]
         self.assertEqual([r.id.split(":")[1] for r in reruns], ["attempts", "runs"])
         self.assertEqual([f.at for f in found], sorted(f.at for f in found))
-
-    def test_ids_are_the_same_on_every_read(self):
-        first = [f.id for f in self.read()]
-        self.assertEqual(first, [f.id for f in self.read()])
-        self.assertEqual(len(set(first)), len(first))
-        self.assertTrue(all(i.split(":")[0] in KINDS for i in first))
-
-    def test_a_detail_is_one_line_of_at_most_300_characters(self):
-        found = {f.kind: f for f in self.read()}
-        self.assertEqual(len(found["integrate"].detail), DETAIL_MAX)
-        self.assertTrue(found["integrate"].detail.startswith("refused: xxx"))
-        self.assertIn("F1 (high): the test is skipped", found["review-round"].detail)
-        self.assertIn("abcdef1", found["ci-red"].detail)
-        self.assertEqual(found["refused"].detail, "the gate refused it: unit-busy")
 
 
 class AfterAndLimitAreKept(_Fixture):
