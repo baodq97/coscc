@@ -20,9 +20,9 @@ from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from coscc.data import Data, now
+from coscc.store.db import Data, now
 from coscc.loop import run
-from coscc.runlog.journal import Intervention, Journal
+from coscc.store.journal import Intervention, Journal
 from coscc.units import backlog
 from coscc.units.history import History
 from coscc.units.states import Machine

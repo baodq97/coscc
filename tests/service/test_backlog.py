@@ -28,7 +28,7 @@ class TheUnitHistoryReadPath(unittest.TestCase):
     """The log read through the one place logic lives.
 
     Written against a temporary working folder and data root rather than this repository's
-    real `~/.cos` — `coscc/runlog/journal.py:108-109` names that hazard and the two new tables
+    real `~/.cos` — `coscc/store/journal.py:108-109` names that hazard and the two new tables
     inherit it unchanged."""
 
     def setUp(self):
@@ -624,8 +624,8 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.assertEqual(second["shortlist"]["record"]["n"], 1)
 
     def test_a_busy_run_log_still_starts_the_step(self):
-        from coscc.runlog.journal import Journal
-        from coscc.data import Busy
+        from coscc.store.journal import Journal
+        from coscc.store.db import Busy
 
         real = Journal.records
 

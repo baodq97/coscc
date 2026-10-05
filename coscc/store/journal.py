@@ -30,7 +30,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, NamedTuple, get_args
 
-from coscc.data import BUSY_TIMEOUT, Data, now as _now
+from coscc.store.db import BUSY_TIMEOUT, Data, now as _now
 
 log = logging.getLogger(__name__)
 

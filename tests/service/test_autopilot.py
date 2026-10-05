@@ -16,8 +16,8 @@ from coscc.units import autopilot, guide
 from coscc.config import Config
 from coscc.github import prmachine
 from tests.github import test_prmachine
-from coscc.runlog.journal import Journal
-from coscc.data import Busy
+from coscc.store.journal import Journal
+from coscc.store.db import Busy
 from coscc.service import Service
 from coscc.kernel import Invalid
 from coscc.service.common import Refused

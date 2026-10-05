@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from coscc.config import PROTECTED_DB_VAR, Config, from_env, protect, protected_databases
-from coscc.data import Data
+from coscc.store.db import Data
 
 
 class DefaultsAreTheSafePosture(unittest.TestCase):

@@ -1,6 +1,6 @@
 """Tests for the transition log, and for the claim that the log is the only record.
 
-Every test here passes an explicit data root. `coscc/runlog/journal.py:108-109` records why:
+Every test here passes an explicit data root. `coscc/store/journal.py:108-109` records why:
 one that forgets writes into the real `~/.cos`, and these two tables inherit that hazard
 without changing it.
 
@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 
 from coscc.units import states
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.units.history import CODE, DELIVERABLE, UNKNOWN, BadTransition, History, settled_edits
 
 WS = "repo"

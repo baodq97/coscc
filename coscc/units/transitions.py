@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from coscc.runlog.journal import Journal
+from coscc.store.journal import Journal
 from coscc.units import guards
 from coscc.units import states
 from coscc.units.history import AUTHORITIES, UNKNOWN, BadTransition, History

@@ -8,9 +8,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.github import prmachine
-from coscc.runlog.journal import Journal
+from coscc.store.journal import Journal
 from coscc.units.history import History
 
 WS = "repo"

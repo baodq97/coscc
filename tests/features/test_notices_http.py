@@ -74,8 +74,8 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
 
         from coscc import auth
         from coscc.features import notices
-        from coscc.data import Data
-        from coscc.runlog.journal import Journal
+        from coscc.store.db import Data
+        from coscc.store.journal import Journal
 
         data = Data(self.config.data_dir)
         now = int(time.time())

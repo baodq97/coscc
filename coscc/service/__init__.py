@@ -30,8 +30,8 @@ from coscc.service.release import Release
 from coscc.service.resume import Resume
 from coscc.service.sessions import Chat
 from coscc.service.steps import Steps
-from coscc.runlog.journal import BadRecord
-from coscc.data import Busy
+from coscc.store.journal import BadRecord
+from coscc.store.db import Busy
 from coscc.kernel import OWNER
 from coscc.service.update import SETTLE_POLL, as_invalid, update_words
 from coscc.service.watch import Watch

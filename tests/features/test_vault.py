@@ -20,7 +20,7 @@ from coscc import plugin, vault
 from coscc.agent import policy
 from coscc.api import build
 from coscc.config import Config
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.features import vault as feature
 from coscc.kernel import Facts
 

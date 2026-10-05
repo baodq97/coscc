@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from coscc.agent import sessions
-from coscc.runlog.journal import Journal, totals_of
+from coscc.store.journal import Journal, totals_of
 
 
 @dataclass

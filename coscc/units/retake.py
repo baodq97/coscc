@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from coscc import config
-from coscc.data import Data
+from coscc.store.db import Data
 
 # About five times a cold run.
 RETAKE_TIMEOUT = 300.0

@@ -21,7 +21,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.config import PROTECTED_DB_VAR
-from coscc.data import SCHEMA_VERSION, Busy, Data, Incompatible, Protected
+from coscc.store.db import SCHEMA_VERSION, Busy, Data, Incompatible, Protected
 from coscc.github import prmachine
 from coscc.units.history import History
 
@@ -408,7 +408,7 @@ class AStepsEvents(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             child = (
                 "import sys; sys.path.insert(0, %r);"
-                "from coscc.data import Data;"
+                "from coscc.store.db import Data;"
                 "d = Data(sys.argv[1]);"
                 "d.set_pref(sys.argv[2], 1)" % str(REPO)
             )
@@ -633,7 +633,7 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
         `Journal`, `Store` and `History` all take the data root as a second argument and
         all default it to `Data(None)`, which is `~/.cos`. That default is right in
         production and wrong in every test, and the docstring at
-        `coscc/runlog/journal.py:108-109` has said so since the class was written.
+        `coscc/store/journal.py:108-109` has said so since the class was written.
 
         It happened anyway. `tests/runner/test_step.py:323` read `Journal(Path(d) / "cos.db")` —
         one argument, where every other call in that file passes two — and for as long as the schema
@@ -694,7 +694,10 @@ class TheRunningAppsDatabaseIsNotOpened(unittest.TestCase):
             with data.write():
                 pass
 
-        with self._protecting(root / "cos.db"), mock.patch("coscc.data.sqlite3.connect") as opened:
+        with (
+            self._protecting(root / "cos.db"),
+            mock.patch("coscc.store.db.sqlite3.connect") as opened,
+        ):
             for use in (data.version, write):
                 with self.assertRaises(Protected) as caught:
                     use()

@@ -656,7 +656,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self, table: str = "unit_answers", columns: str = "artifact, ref, answered_by, via, text"
     ) -> list[tuple]:
         """What the database holds for this unit, where the file's block once was."""
-        from coscc.data import Data
+        from coscc.store.db import Data
 
         with Data(self.data_dir).connect() as conn:
             return [
@@ -680,7 +680,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_an_answer_writes_its_journal_row_in_the_same_transaction(self):
         import sqlite3
 
-        from coscc.runlog.journal import Journal
+        from coscc.store.journal import Journal
 
         def answers() -> list:
             return Journal(str(Path(self.cwd).parent), self.data_dir).records(kind="answer")
@@ -701,7 +701,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_a_locked_database_before_the_answer_is_one_sentence_without_its_path(self):
         """The snapshot the answer is checked against reads `cos.db`, and `Busy` names the
         database's path. The dialog gets one sentence; the log gets the path."""
-        from coscc.data import Busy
+        from coscc.store.db import Busy
         from coscc.units.meta import UnitMeta
 
         held = "another process is holding /tmp/somewhere/cos.db"
@@ -1668,7 +1668,7 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
         return client
 
     def prefs(self) -> dict:
-        from coscc.data import Data
+        from coscc.store.db import Data
 
         return Data(self.config.data_dir).prefs()
 
@@ -1729,7 +1729,7 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ok.status_code, 200)
 
     async def test_a_change_is_stored_started_and_logged_with_old_and_new(self):
-        from coscc.runlog.journal import Journal
+        from coscc.store.journal import Journal
 
         client = await self.client_for("127.0.0.1")
         got = await client.post(

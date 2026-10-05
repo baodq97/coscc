@@ -19,8 +19,8 @@ from coscc.units import hold
 from coscc.service import attempts
 from coscc.units import worktrees
 from coscc.config import Config
-from coscc.data import Data
-from coscc.runlog.journal import Journal
+from coscc.store.db import Data
+from coscc.store.journal import Journal
 from coscc.service import Service
 from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits

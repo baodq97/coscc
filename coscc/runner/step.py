@@ -30,7 +30,7 @@ from coscc import kernel
 from coscc.agent import agents, instructions, models, modeltrial, steps, transcript
 from coscc.agent import sessions as sessions_mod
 from coscc.agent.helpers import DEFINITIONS, PROTOCOL, Helpers
-from coscc.runlog.journal import Journal, Outcome
+from coscc.store.journal import Journal, Outcome
 from coscc.units import scratch as scratch_mod
 from coscc.units import submit as submit_mod
 from coscc.agent.policy import (
@@ -45,7 +45,7 @@ from coscc.agent.policy import (
     protected_paths,
     with_lists,
 )
-from coscc.data import Data, Unusable
+from coscc.store.db import Data, Unusable
 from coscc.units import guards
 from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended

@@ -21,7 +21,7 @@ from pathlib import Path
 
 from coscc.agent import policy
 from coscc.config import from_env
-from coscc.data import Data, now
+from coscc.store.db import Data, now
 
 MODES = ("env", "file", "placeholder", "ssh")
 VAULT_STAGES = ("impl", "spike")

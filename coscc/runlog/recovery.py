@@ -24,8 +24,8 @@ import logging
 import os
 from typing import Any
 
-from coscc.data import Data
-from coscc.runlog.journal import Journal
+from coscc.store.db import Data
+from coscc.store.journal import Journal
 
 log = logging.getLogger(__name__)
 

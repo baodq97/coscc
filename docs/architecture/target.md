@@ -36,7 +36,7 @@ Nothing else is a concept: no service layer, no ports, no adapters.
 ```
 coscc/
   kernel.py        the one module a feature imports: Feature, Ctx, Tool, Guard, Block, the read models
-  store/           cos.db: connection, migrations, prefs, the run log           (data.py, runlog/journal.py)
+  store/           cos.db: connection, migrations, prefs, the run log           (data.py, store/journal.py)
   loop/            the state machine and its rules                             (unchanged)
   units/           units, transitions, holds, worktrees, the one board read
   runner/          runs one agent session: prompt, grant, attempt, cost, events (+ agent/)
@@ -58,7 +58,7 @@ ui/                the studio: shell, core screens; it loads features' ui/ by gl
 
 | Part | Owns | From today |
 |---|---|---|
-| **store** | `cos.db`, migrations, table ownership, prefs, the run log, and the `BELL` ring | `data.py`, `runlog/journal.py`, `service/store.py` |
+| **store** | `cos.db`, migrations, table ownership, prefs, the run log, and the `BELL` ring | `data.py`, `store/journal.py`, `store/workspaces.py` |
 | **units** | A unit's facts and its one read: `units.read(ws) -> Board`. The read is cached per workspace, and a bus event invalidates it. Card state (`service/common.py:398-460`) moves next to the loop's `why`. | `units/`, `service/board.py`, `service/ideas.py`, `service/workspaces.py` |
 | **runner** | Starts, resumes and stops one session for any Agent. It also owns the grant, the attempt machine, the step events and the cost. | `runner/`, `agent/`, `service/steps.py` (the step half), `service/attempts.py`, `service/resume.py`, `runlog/events.py`, `runlog/recovery.py` |
 | **leif** | The pass that decides what runs next. Decisions and delegations with provenance (`service/answers.py:47-80`, `:826-938`). Answers and holds. The inbox (what needs the person). The daily cap. Chat with Leif. | `service/autopilot.py`, `units/autopilot.py`, `units/guide.py`, `service/answers.py`, `runlog/spend.py`, `service/sessions.py` |

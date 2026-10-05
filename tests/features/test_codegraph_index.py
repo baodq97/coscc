@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.bus import Bus
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.features.codegraph import (
     DB_FILE,
     INDEX_TABLE,

@@ -15,8 +15,8 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.agent import harness
-from coscc.data import Data
-from coscc.runlog.journal import Journal
+from coscc.store.db import Data
+from coscc.store.journal import Journal
 from coscc.units.history import History
 from coscc.units.meta import SOURCE, MetaError, UnitMeta
 
@@ -560,7 +560,7 @@ class TheImportReport(unittest.TestCase):
         )
 
     def test_a_database_that_cannot_be_read_is_one_sentence_without_its_path(self):
-        from coscc.data import Busy
+        from coscc.store.db import Busy
 
         busy = Busy(self.service.config.data_dir + "/cos.db")
         with (
@@ -572,7 +572,7 @@ class TheImportReport(unittest.TestCase):
         self.assertIs(log.records[-1].exc_info[1], busy)
 
     def test_an_import_that_fails_names_the_workspace_and_logs_the_error(self):
-        from coscc.data import Busy
+        from coscc.store.db import Busy
         from coscc.kernel import Invalid
 
         shutil.copytree(FIXTURE, self.store)

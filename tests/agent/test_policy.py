@@ -104,7 +104,7 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
         }
         imported |= {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
         self.assertFalse(
-            imported & {"subprocess", "os", "shutil", "sqlite3", "coscc.data"}, imported
+            imported & {"subprocess", "os", "shutil", "sqlite3", "coscc.store.db"}, imported
         )
         called = {
             n.func.attr

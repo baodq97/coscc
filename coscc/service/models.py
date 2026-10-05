@@ -8,8 +8,8 @@ from typing import Any
 
 from coscc.units import autopilot
 from coscc.units import board as board_reader
-from coscc.data import Data
-from coscc.runlog.journal import Journal
+from coscc.store.db import Data
+from coscc.store.journal import Journal
 from coscc.agent import labels, models, modeltrial
 
 from coscc.config import Config

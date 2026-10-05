@@ -17,7 +17,7 @@ from unittest import mock
 
 from coscc.agent import harness
 from coscc.git import gitops
-from coscc.runlog.journal import Journal
+from coscc.store.journal import Journal
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner
 from coscc.runner.prompt import answers_section, build_prompt, skill_for
@@ -232,7 +232,7 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
             make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
             # Two arguments, like every other Journal in this file. With one, `data`
             # defaults to `Data(None)` and this test writes into the real `~/.cos` --
-            # the hazard `coscc/runlog/journal.py:108-109` names, found live 2026-09-22 after
+            # the hazard `coscc/store/journal.py:108-109` names, found live 2026-09-22 after
             # `SCHEMA_VERSION` went to 2: running `npm test` upgraded the developer's own
             # database, and the installed v0.2.3 then answered 500 on every route that
             # reads it while `/api/health` still said ok.
@@ -1247,7 +1247,7 @@ class ADeadStepKeepsItsTurns(unittest.TestCase):
     def _run(self, then):
         from coscc.agent import steps
         from coscc.runlog import events
-        from coscc.data import Data
+        from coscc.store.db import Data
 
         with tempfile.TemporaryDirectory() as d:
             repo = _git_repo(Path(d))

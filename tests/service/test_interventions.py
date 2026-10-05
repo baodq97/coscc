@@ -10,8 +10,8 @@ from collections import Counter
 from pathlib import Path
 
 from coscc.bus import Bus
-from coscc.data import Data
-from coscc.runlog.journal import Journal
+from coscc.store.db import Data
+from coscc.store.journal import Journal
 from coscc.service.attempts import Attempts
 from coscc.service.interventions import DETAIL_MAX, KINDS, interventions
 from coscc.units.meta import UnitMeta

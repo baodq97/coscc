@@ -313,14 +313,14 @@ class GeboThroughTheService(unittest.TestCase):
 
     def stored_config(self) -> tuple[dict, list[dict]]:
         """Gebo's `start`, and the events stored under its `run`."""
-        from coscc.data import Data
+        from coscc.store.db import Data
 
         [start] = [r for r in self.records("start") if r.get("stage") == "integrate"]
         stored, _ = Data(self.service.config.data_dir).step_events_page(start["run"], None, 100)
         return start, stored
 
     def test_gebo_runs_under_the_ceilings_overridden_for_it_and_writes_its_config(self):
-        from coscc.data import Data
+        from coscc.store.db import Data
 
         async def act(tree, gate):
             return "[needs-person] f.txt: both"

@@ -20,8 +20,8 @@ from coscc.units.submit import RUN_SUBMITTED, submitted
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import History, settled_edits
-from coscc.runlog.journal import BadRecord, Journal, timelines_of, totals_of
-from coscc.data import Busy
+from coscc.store.journal import BadRecord, Journal, timelines_of, totals_of
+from coscc.store.db import Busy
 from coscc.agent.policy import grant_for
 from coscc.agent import models
 from coscc.runner.attempt import Denials, permission_gate

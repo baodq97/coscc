@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any, Sequence
 
-# `coscc.data` and `coscc.loop.run` are imported where they are used: the loop child imports
+# `coscc.store.db` and `coscc.loop.run` are imported where they are used: the loop child imports
 # `coscc.units.guards`, so it runs this file, and must load neither the database nor the helper
 # that started it (`tests/test_layers.py`).
 
@@ -58,7 +58,7 @@ def slot(workspace: str | os.PathLike[str]) -> str:
 
 def root(workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None) -> Path:
     """The directory to hand `coscc.loop --root`. Its `.cos/` holds this workspace's units."""
-    from coscc.data import Data
+    from coscc.store.db import Data
 
     return Data(data_dir).root / UNITS_DIR / slot(workspace)
 
@@ -67,7 +67,7 @@ def spike_dir(
     workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLike[str] | None = None
 ) -> Path:
     """The throwaway directory a `spike` step runs in, beside `units/` and outside every checkout."""
-    from coscc.data import Data
+    from coscc.store.db import Data
 
     return Data(data_dir).root / "spikes" / slot(workspace) / unit
 

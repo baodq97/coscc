@@ -11,8 +11,8 @@ import statistics
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Iterable
 
-from coscc.runlog import journal
-from coscc.runlog.journal import TOKEN_FIELDS
+from coscc.store import journal
+from coscc.store.journal import TOKEN_FIELDS
 
 # Chosen, not measured, except the 15 USD, `review` > 3 and `spec` > 2. Leif (CoS) decides a
 # change to any of them.

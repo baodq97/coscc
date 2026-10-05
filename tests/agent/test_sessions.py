@@ -18,7 +18,7 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 
 from coscc.agent import sessions
 from coscc.config import PROTECTED_DB_VAR, Config
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.agent.sessions import (
     Live,
     Refused,

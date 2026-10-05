@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.config import Config
-from coscc.data import Busy, Data
+from coscc.store.db import Busy, Data
 from coscc.service import Service
 from coscc.service.agents import chip_of
 from coscc.kernel import Invalid

@@ -21,8 +21,8 @@ from collections.abc import Callable
 from typing import Any, TypedDict, cast
 
 from coscc.bus import NAMES, Bus, Event, Name
-from coscc.data import Data, now
-from coscc.runlog.journal import Intervention
+from coscc.store.db import Data, now
+from coscc.store.journal import Intervention
 from coscc.service.common import Refused
 
 log = logging.getLogger(__name__)

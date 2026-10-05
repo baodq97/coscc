@@ -899,7 +899,7 @@ class TheLatestIntegrationSinceTheLastRound(unittest.TestCase):
     def test_order_decides(self):
         import tempfile
 
-        from coscc.runlog.journal import Journal
+        from coscc.store.journal import Journal
         from coscc.service.steps import integration_since_review
 
         with tempfile.TemporaryDirectory() as d:

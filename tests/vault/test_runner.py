@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.agent.policy import Grant
-from coscc.runlog.journal import Journal
+from coscc.store.journal import Journal
 from coscc.vault.runner import Result, Use, record, run
 from coscc.vault.store import BadSecret
 from tests.vault.fakes import make_store, on_path
@@ -330,7 +330,7 @@ class EveryCallLeavesOneLineWithNoValueInIt(unittest.TestCase):
         self.assertIn("ws:tok", everything)
 
     def test_a_log_that_cannot_be_written_does_not_stop_the_call(self):
-        from coscc.data import Busy
+        from coscc.store.db import Busy
 
         journal = mock.Mock(spec=Journal)
         journal.append.side_effect = Busy("held")

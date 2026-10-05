@@ -599,7 +599,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
     def test_a_failed_ingest_on_the_database_names_no_path(self):
         from unittest import mock
 
-        from coscc.data import Busy
+        from coscc.store.db import Busy
 
         asyncio.run(self.service.board(str(self.repo)))
         busy = Busy(self.service.config.data_dir + "/cos.db")
@@ -694,7 +694,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         return asyncio.run(go())
 
     def records(self) -> list[dict]:
-        from coscc.runlog.journal import Journal
+        from coscc.store.journal import Journal
 
         return Journal(self.config.working_dir, self.config.data_dir).records(self.key, self.unit)
 
@@ -1547,7 +1547,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
     def _prefs(self):
         from coscc.agent import models
-        from coscc.data import Data
+        from coscc.store.db import Data
 
         data = Data(self.service.config.data_dir)
         return {**data.pref_rows(models.PREFIX), **data.pref_rows(models.EFFORT_PREFIX)}
@@ -2017,7 +2017,7 @@ class APrStepIsMechanical(unittest.TestCase):
     def _run_pr(self, gh: Gh) -> tuple[dict, str]:
         from coscc.units import board as board_reader
         from coscc.github import integrate
-        from coscc.runlog.journal import Journal
+        from coscc.store.journal import Journal
 
         unit = self._typed_unit()
         self._git("branch", "fix/a-problem")
@@ -3115,8 +3115,8 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
     def _unrecorded(self, result: dict) -> str:
         from coscc.units import board as board_reader
         from coscc.units import retake
-        from coscc.runlog.journal import Journal
-        from coscc.data import Busy
+        from coscc.store.journal import Journal
+        from coscc.store.db import Busy
 
         async def asked(*a, **kw):
             return {"retake": True, "manifest": self.OLD}
