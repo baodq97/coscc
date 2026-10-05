@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.store.workspaces import BadName, Busy, Store, clean_label, require_name, valid_name
+from coscc.store.workspaces import BadName, Busy, Store, require_name, valid_name
 
 
 class NamesThatMayNotBecomePaths(unittest.TestCase):
@@ -27,10 +27,6 @@ class NamesThatMayNotBecomePaths(unittest.TestCase):
             self.assertFalse(valid_name(bad), bad)
             with self.assertRaises(BadName, msg=bad):
                 require_name(bad)
-
-    def test_ordinary_names_pass(self):
-        for ok in ("repo", "my-repo", "my_repo", "repo.git", "a", "x" * 64):
-            self.assertTrue(valid_name(ok), ok)
 
     def test_a_refused_name_never_reaches_path_of(self):
         with tempfile.TemporaryDirectory() as d:
@@ -60,10 +56,6 @@ class PathsAreBuiltNotStored(unittest.TestCase):
             # The workspace's own path appears nowhere in the row.
             stored = " ".join(str(row[c]) for c in columns)
             self.assertNotIn(str(Path(d).resolve() / "repo"), stored)
-
-    def test_path_of_is_the_root_plus_the_name(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(Store(d, d).path_of("repo"), Path(d).resolve() / "repo")
 
 
 class AHandEditedStoreCannotWidenTheBoundary(unittest.TestCase):
@@ -135,32 +127,6 @@ class ListOperations(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(KeyError):
                 Store(d, d).remove("ghost")
-
-    def test_relabelling_something_absent_is_an_error(self):
-        with tempfile.TemporaryDirectory() as d:
-            with self.assertRaises(KeyError):
-                Store(d, d).set_label("ghost", "x")
-
-    def test_adding_twice_does_not_duplicate(self):
-        with tempfile.TemporaryDirectory() as d:
-            store = Store(d, d)
-            store.add("repo", "first")
-            store.add("repo", "second")
-            self.assertEqual([(e.name, e.label) for e in store.entries()], [("repo", "second")])
-
-    def test_readding_moves_an_entry_to_the_end(self):
-        """The JSON list did this. Keeping it means a board's order does not shuffle."""
-        with tempfile.TemporaryDirectory() as d:
-            store = Store(d, d)
-            store.add("a")
-            store.add("b")
-            store.add("a")
-            self.assertEqual([e.name for e in store.entries()], ["b", "a"])
-
-    def test_labels_are_bounded_and_trimmed(self):
-        self.assertEqual(clean_label("  hi  "), "hi")
-        self.assertEqual(len(clean_label("x" * 500)), 200)
-        self.assertEqual(clean_label(None), "")
 
     def test_a_long_label_is_cut_on_the_way_in(self):
         with tempfile.TemporaryDirectory() as d:

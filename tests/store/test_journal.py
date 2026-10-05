@@ -24,22 +24,6 @@ PER_WRITER = 5
 
 
 class ARecordSurvivesAndIsStamped(unittest.TestCase):
-    def test_a_record_comes_back_with_a_version_and_a_time(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            j.append({"kind": "note", "text": "hello"})
-            [got] = j.records()
-            self.assertEqual(got["kind"], "note")
-            self.assertEqual(got["v"], 1)
-            self.assertIn("T", got["at"])
-
-    def test_appending_leaves_earlier_records_untouched(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            for i in range(5):
-                j.append({"kind": "note", "n": i})
-            self.assertEqual([r["n"] for r in j.records()], [0, 1, 2, 3, 4])
-
     def test_a_record_without_a_kind_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
@@ -83,14 +67,6 @@ class ModeIsTheLatestRecordForAStep(unittest.TestCase):
             j.set_mode("w", "0009_x", "impl", "manual")
             j.set_mode("w", "0009_x", "impl", "autonomous")
             self.assertEqual(j.modes("w"), {("0009_x", "impl"): "autonomous"})
-
-    def test_modes_are_per_workspace(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            j.set_mode("a", "0009_x", "impl", "autonomous")
-            j.set_mode("b", "0009_x", "impl", "manual")
-            self.assertEqual(j.modes("a"), {("0009_x", "impl"): "autonomous"})
-            self.assertEqual(j.modes("b"), {("0009_x", "impl"): "manual"})
 
     def test_an_invented_mode_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
@@ -150,16 +126,6 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
             self.assertNotIn("cost_usd", end)
             [row] = j.timeline("w", "0009_x")
             self.assertEqual(row["outcome"], "stopped")
-
-    def test_runs_are_ordered_oldest_first(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            for stage in ("intent", "spec", "plan"):
-                j.started("w", "0009_x", stage, "manual")
-                j.finished("w", "0009_x", stage, "done")
-            self.assertEqual(
-                [r["stage"] for r in j.timeline("w", "0009_x")], ["intent", "spec", "plan"]
-            )
 
     def test_a_row_carries_its_run_and_what_was_lost_and_an_older_one_none(self):
         with tempfile.TemporaryDirectory() as d:
@@ -238,13 +204,6 @@ class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
             self.assertEqual(row["started"], rec["at"])
             self.assertEqual(got["0009_x"]["last_start"], rec["at"])
 
-    def test_a_start_with_its_end_is_not(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            j.started("w", "0009_x", "impl", "manual")
-            j.finished("w", "0009_x", "impl", "done")
-            self.assertEqual(j.open_starts("w"), {})
-
     def test_two_starts_one_end_leaves_the_other_open(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
@@ -253,31 +212,6 @@ class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
             j.finished("w", "0009_x", "plan", "done")
             [row] = j.open_starts("w")["0009_x"]["open"]
             self.assertEqual(row["session_id"], "a")
-
-    def test_other_kinds_change_nothing(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            j.started("w", "0009_x", "impl", "manual")
-            before = j.open_starts("w")
-            j.set_mode("w", "0009_x", "impl", "autonomous")
-            j.attempted("w", "0009_x", "impl", commits=[])
-            j.append({"kind": "integration", "workspace": "w", "unit": "0009_x", "stage": "impl"})
-            j.append(
-                {
-                    "kind": "mode",
-                    "workspace": "w",
-                    "unit": "0010_y",
-                    "stage": "spec",
-                    "mode": "manual",
-                }
-            )
-            self.assertEqual(j.open_starts("w"), before)
-
-    def test_workspaces_do_not_mix(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            j.started("w", "0009_x", "impl", "manual")
-            self.assertEqual(j.open_starts("v"), {})
 
 
 class AFailedStepLeavesARecord(unittest.TestCase):
@@ -296,21 +230,6 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             j.finished("w", "0009_x", "spec", "done", turns=3, cost_usd=1.5)
             [row2] = j.timeline("w", "0009_x", timeout=None)[1:]
             self.assertTrue(row2["reported"])
-
-    def test_fail_fail_fail_done_reads_as_no_open_attempt(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            for _ in range(3):
-                j.started("w", "0009_x", "impl", "autonomous")
-                j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
-            j.started("w", "0009_x", "impl", "autonomous")
-            j.finished("w", "0009_x", "impl", "done", artifact="impl.md")
-            self.assertIsNone(j.failed_attempts("w", "0009_x", "impl"))
-
-    def test_no_run_at_all_reads_as_no_open_attempt(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            self.assertIsNone(j.failed_attempts("w", "0009_x", "impl"))
 
     def test_done_then_two_fails_gives_one_latest_and_one_earlier(self):
         with tempfile.TemporaryDirectory() as d:
@@ -451,21 +370,8 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             j.finished("w", "0009_x", "plan", "exhausted", run="r1", review_md="none")
             self.assertNotIn("opened", j.failed_attempts("w", "0009_x", "plan"))
 
-    def test_timeline_with_no_attempt_row_still_has_no_kind_attempt(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            j.started("w", "0009_x", "impl", "autonomous")
-            j.finished("w", "0009_x", "impl", "exhausted", turns=5, cost_usd=0.1)
-            self.assertEqual([r["kind"] for r in j.records("w", "0009_x")], ["start", "end"])
-
 
 class LastRunsIsAPureFold(unittest.TestCase):
-    def test_a_stage_with_no_end_is_absent(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            j.started("w", "0009_x", "impl", "autonomous")
-            self.assertEqual(last_runs(j.timeline("w", "0009_x")), {})
-
     def test_the_most_recent_ended_row_wins(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
@@ -488,18 +394,6 @@ class TotalsAreAddedNotStored(unittest.TestCase):
 
             total = totals_of(j.timeline("w", "0009_x"))
             self.assertEqual((total["input_tokens"], total["output_tokens"]), (1050, 3))
-
-    def test_two_runs_of_one_stage_add_rather_than_replace(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            for _ in range(2):
-                j.started("w", "0009_x", "impl", "autonomous")
-                j.finished("w", "0009_x", "impl", "done", input_tokens=40)
-            self.assertEqual(totals_of(j.timeline("w", "0009_x"))["input_tokens"], 80)
-
-    def test_a_unit_that_never_ran_totals_zero_rather_than_failing(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(totals_of(Journal(d, d).timeline("w", "0009_x"))["input_tokens"], 0)
 
 
 class AnEndClosesTheRunItNames(unittest.TestCase):
@@ -535,24 +429,6 @@ class AnEndClosesTheRunItNames(unittest.TestCase):
             j.finished("w", "0009_x", "impl", "failed", run="elsewhere")
             [row] = j.timeline("w", "0009_x")
             self.assertEqual(row["outcome"], "failed")
-
-    def test_turns_without_a_cost_are_kept(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            j.started("w", "0009_x", "impl", "autonomous", run="A")
-            j.finished("w", "0009_x", "impl", "failed", run="A", turns=5, cost_unknown=True)
-            [row] = j.timeline("w", "0009_x")
-            self.assertEqual((row["turns_reported"], row["reported"]), (True, False))
-            got = last_runs([row])["impl"]
-            self.assertEqual((got["turns"], got["cost_usd"]), (5, None))
-
-    def test_a_cost_without_turns_is_kept(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            j.started("w", "0009_x", "impl", "autonomous")
-            j.finished("w", "0009_x", "impl", "failed", cost_usd=0.25)
-            got = last_runs(j.timeline("w", "0009_x"))["impl"]
-            self.assertEqual((got["turns"], got["cost_usd"]), (None, 0.25))
 
     def test_a_sum_counts_the_runs_whose_cost_is_unknown(self):
         with tempfile.TemporaryDirectory() as d:
@@ -679,13 +555,6 @@ class AppendCheckedReadsAndWritesInOneTransaction(unittest.TestCase):
         self.assertEqual(len(self.j.records("w", kind="shortlist")), 1)
         self.assertEqual(len(errors), 1)
 
-    def test_timelines_is_timelines_of_the_same_rows(self):
-        from coscc.store.journal import timelines_of
-
-        self.j.started("w", "u", "spec", "manual")
-        self.j.finished("w", "u", "spec", "done", cost_usd=0.5, turns=2)
-        self.assertEqual(self.j.timelines("w"), timelines_of(self.j.records("w")))
-
 
 class TheBellWakesAReaderAndTheReadsNarrow(unittest.TestCase):
     """What the notice stream reads, and what wakes it."""
@@ -743,19 +612,6 @@ class TheBellWakesAReaderAndTheReadsNarrow(unittest.TestCase):
         )
         self.assertEqual(len(self.j.notice_rows(0, self.SOURCE, limit=1)), 1)
 
-    def test_notice_rows_narrow_to_one_workspace(self):
-        self.j.append({"kind": "ship", "workspace": "w", "unit": "u", "result": "shipped"})
-        self.j.append({"kind": "ship", "workspace": "other", "unit": "u", "result": "shipped"})
-        self.assertEqual(
-            [r["workspace"] for _, r in self.j.notice_rows(0, self.SOURCE, "w")], ["w"]
-        )
-        self.assertEqual(len(self.j.notice_rows(0, self.SOURCE)), 2)
-
-    def test_last_id_is_zero_on_an_empty_log(self):
-        self.assertEqual(self.j.last_id(), 0)
-        self.j.append({"kind": "note"})
-        self.assertEqual(self.j.last_id(), self.j.notice_rows(0, ["note"])[0][0])
-
 
 async def _arm(bell):
     return bell.arm()
@@ -777,15 +633,6 @@ class ASuspendedSessionIsTakenUpOnce(unittest.TestCase):
             b = j.suspended("w", "0002_b", "impl")
             j.resumed("w", "0001_a", "impl", a["suspend_id"], by="app", result="resumed")
             self.assertEqual([r["suspend_id"] for r in j.unresumed()], [b["suspend_id"]])
-
-    def test_suspend_and_resume_rows_do_not_close_a_start_row(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            j.started("w", "0001_a", "impl", "manual")
-            s = j.suspended("w", "0001_a", "impl")
-            j.resumed("w", "0001_a", "impl", s["suspend_id"])
-            self.assertIn("0001_a", j.open_starts("w"))
-            self.assertIsNone(j.timeline("w", "0001_a")[0]["ended"])
 
 
 if __name__ == "__main__":

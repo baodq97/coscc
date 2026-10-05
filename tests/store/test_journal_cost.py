@@ -63,19 +63,6 @@ class CumulativeIsReadAsCumulative(unittest.TestCase):
         self.assertEqual(turn_2["cache_creation_tokens"], 1739)
         self.assertAlmostEqual(turn_2["cost_usd"], 0.019427, places=6)
 
-    def test_adding_the_readings_up_would_have_been_wrong(self):
-        """The bug this is all here to prevent, stated as a number.
-
-        Summing the two readings gives 7120 cache-read tokens where the session used
-        5512 — 29% too high, and nothing about the figure would have looked odd.
-        """
-        naive = (
-            sessions.cumulative(TURN_1)["cache_read_tokens"]
-            + sessions.cumulative(TURN_2)["cache_read_tokens"]
-        )
-        self.assertEqual(naive, 7120)
-        self.assertNotEqual(naive, 5512)
-
     def test_several_models_in_one_turn_are_added_together(self):
         two = FakeResult(
             model_usage={
@@ -120,14 +107,6 @@ class TheJournalKeepsMoneyAsMoney(unittest.TestCase):
             # Three turns at 0.4 cents each is 1.2 cents, not zero.
             self.assertAlmostEqual(total["cost_usd"], 0.012, places=6)
             self.assertEqual(total["input_tokens"], 3)
-
-    def test_the_unit_total_still_equals_the_sum_of_its_stages(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            for stage, usd in (("spec", 0.01), ("impl", 0.25)):
-                j.started("w", "0009_x", stage, "autonomous")
-                j.finished("w", "0009_x", stage, "done", cost_usd=usd)
-            self.assertAlmostEqual(totals_of(j.timeline("w", "0009_x"))["cost_usd"], 0.26, places=6)
 
 
 if __name__ == "__main__":

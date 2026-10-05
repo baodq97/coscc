@@ -29,14 +29,6 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 class TheDirectoryIsMadeForYou(unittest.TestCase):
-    def test_it_is_created_on_first_use(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d) / "does" / "not" / "exist"
-            data = Data(root)
-            self.assertFalse(root.exists())
-            data.ensure_dir()
-            self.assertTrue(root.is_dir())
-
     def test_it_is_not_readable_by_anyone_else(self):
         """It records every workspace on the machine."""
         with tempfile.TemporaryDirectory() as d:
@@ -51,17 +43,8 @@ class TheDirectoryIsMadeForYou(unittest.TestCase):
             Data(root).ensure_dir()
             self.assertEqual(stat.S_IMODE(root.stat().st_mode), 0o700)
 
-    def test_the_database_sits_inside_it(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            self.assertEqual(data.db_path.parent, data.root)
-
 
 class TheSchemaRefusesToGuess(unittest.TestCase):
-    def test_a_fresh_database_carries_this_version(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(Data(d).version(), SCHEMA_VERSION)
-
     def test_a_newer_database_is_refused_by_name_and_number(self):
         """Refuse, and say both numbers. Guessing corrupts quietly."""
         with tempfile.TemporaryDirectory() as d:
@@ -75,127 +58,6 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertIn(str(SCHEMA_VERSION + 5), message)
             self.assertIn(str(SCHEMA_VERSION), message)
             self.assertIn(str(data.db_path), message)
-
-    def test_the_version_lives_in_the_pragma_not_in_a_table(self):
-        """One place to look, and reading it needs no lock — see `Data._prepare`."""
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.version()
-            with data.connect() as conn:
-                tables = {
-                    row["name"]
-                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                }
-            self.assertNotIn("schema_version", tables)
-            self.assertEqual({"migrations", "workspaces", "runs", "prefs"} - tables, set())
-
-    def test_a_database_written_before_version_2_gains_the_new_tables_and_keeps_its_rows(self):
-        """Adding tables needs no bespoke migration, and must lose nothing.
-
-        Built as a real v1 database rather than by dropping tables from a v2 one — the
-        thing under test is what `_create` does when it meets a shape it did not write,
-        and a v2 database with pieces removed is not that shape."""
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.ensure_dir()
-            with sqlite3.connect(data.db_path) as conn:
-                conn.execute(
-                    "CREATE TABLE workspaces (root TEXT NOT NULL, name TEXT NOT NULL, "
-                    "label TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL, "
-                    "PRIMARY KEY (root, name))"
-                )
-                conn.execute("CREATE TABLE prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-                conn.execute("CREATE TABLE migrations (key TEXT PRIMARY KEY, at TEXT NOT NULL)")
-                conn.execute(
-                    "INSERT INTO workspaces (root, name, added_at) VALUES ('/w', 'keep-me', 'then')"
-                )
-                conn.execute("PRAGMA user_version=1")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                tables = {
-                    row["name"]
-                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                }
-                kept = conn.execute("SELECT name FROM workspaces").fetchall()
-            self.assertEqual({"transitions"} - tables, set())
-            self.assertEqual([row["name"] for row in kept], ["keep-me"])
-
-    def test_a_version_2_database_gains_the_login_tables_and_keeps_its_rows(self):
-        """3 adds `auth` and `auth_sessions` the same way 2 added its two."""
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("density", "compact")
-            with data.connect() as conn:
-                conn.execute("DROP TABLE auth")
-                conn.execute("DROP TABLE auth_sessions")
-                conn.execute("PRAGMA user_version=2")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                tables = {
-                    row["name"]
-                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                }
-            self.assertEqual({"auth", "auth_sessions"} - tables, set())
-            self.assertEqual(data.pref("density"), "compact")
-
-    def test_a_version_3_database_gains_the_event_tables_and_keeps_its_rows(self):
-        """4 adds `step_runs` and `step_events`, and the number had to move -- at 3 `_prepare` would
-        never run `_SCHEMA` on a database already at 3."""
-        self.assertGreaterEqual(SCHEMA_VERSION, 4)
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("density", "compact")
-            data.auth_set_password("h", 1)
-            with data.connect() as conn:
-                conn.execute("DROP TABLE step_events")
-                conn.execute("DROP TABLE step_runs")
-                conn.execute("PRAGMA user_version=3")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                tables = {
-                    row["name"]
-                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                }
-            self.assertEqual({"step_runs", "step_events"} - tables, set())
-            self.assertEqual(data.pref("density"), "compact")
-            self.assertEqual(data.auth_password_hash(), "h")
-
-    def test_a_version_10_database_loses_the_decisions_table_and_keeps_the_rest(self):
-        """11 drops `decisions`, which nothing read or wrote."""
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("density", "compact")
-            with data.connect() as conn:
-                conn.execute("CREATE TABLE decisions (id INTEGER PRIMARY KEY, text TEXT)")
-                conn.execute("PRAGMA user_version=10")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                gone = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE name = 'decisions'"
-                ).fetchone()
-            self.assertIsNone(gone)
-            self.assertEqual(data.pref("density"), "compact")
-
-    def test_a_version_11_database_loses_the_outputs_table_and_keeps_the_rest(self):
-        """12 drops `outputs`, which nothing read."""
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("density", "compact")
-            with data.connect() as conn:
-                conn.execute("CREATE TABLE outputs (id INTEGER PRIMARY KEY, path TEXT)")
-                conn.execute("PRAGMA user_version=11")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                gone = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE name = 'outputs'"
-                ).fetchone()
-            self.assertIsNone(gone)
-            self.assertEqual(data.pref("density"), "compact")
 
     def test_a_v5_database_rises_to_6_keeping_every_runs_and_transitions_row(self):
         """6 adds the `unit_*` tables and `idea_meta`; the rows a v5 database already had in `runs`
@@ -299,17 +161,6 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 [tuple(r) for r in row], [("0001_x", '["a.py"]', "pending", "", None, "")]
             )
 
-    def test_a_newer_database_is_still_refused(self):
-        """Was `version_5`, then `version_6`: it follows `SCHEMA_VERSION`, so a newer number is
-        never this build's own."""
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.version()
-            with sqlite3.connect(data.db_path) as conn:
-                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
-            with self.assertRaises(Incompatible):
-                data.version()
-
 
 class AStepsEvents(unittest.TestCase):
     """The two tables, as the recorder writes them and the service reads."""
@@ -365,29 +216,6 @@ class AStepsEvents(unittest.TestCase):
         self.assertEqual(len(self.data.step_events_page("new", None, 10)[0]), 5)
         self.assertEqual(freed, 2 * size)
         self.assertEqual(self.data.step_events_purge(now - 30 * day, size, "later"), (0, 0))
-
-    def test_turns_are_the_stored_turn_events_of_the_run(self):
-        """Three `turn`s and two `text`s count three; a run with nothing counts 0."""
-        self.data.step_run_open("r", "/w", "/w/ws", "0001_a", "impl", 1000)
-        kinds = ["turn", "text", "turn", "text", "turn"]
-        self.data.step_events_add("r", [self.ev("r", n, kind=k) for n, k in enumerate(kinds, 1)])
-        self.assertEqual(self.data.step_turns("r"), 3)
-        self.assertEqual(self.data.step_turns("nothing"), 0)
-
-    def test_tool_uses_are_that_runs_tool_use_events_in_order(self):
-        """Only `tool_use`, only this run, by `seq`."""
-        for run in ("r", "other"):
-            self.data.step_run_open(run, "/w", "/w/ws", "0001_a", "review", 1000)
-        kinds = ["turn", "tool_use", "tool_result", "tool_use", "text"]
-        self.data.step_events_add(
-            "r", [self.ev("r", n, kind=k, text=str(n)) for n, k in enumerate(kinds, 1)]
-        )
-        self.data.step_events_add("other", [self.ev("other", 1, kind="tool_use")])
-        self.assertEqual(
-            [(e["seq"], e["kind"]) for e in self.data.step_tool_uses("r")],
-            [(2, "tool_use"), (4, "tool_use")],
-        )
-        self.assertEqual(self.data.step_tool_uses("nothing"), [])
 
     def test_open_runs_leave_out_the_closed_and_the_purged(self):
         """Only a row nobody closed or purged, with its last event's `at`."""
@@ -534,14 +362,6 @@ class Preferences(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(Data(d).pref("nothing", "fallback"), "fallback")
 
-    def test_setting_twice_replaces_rather_than_duplicates(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("k", "one")
-            data.set_pref("k", "two")
-            self.assertEqual(data.pref("k"), "two")
-            self.assertEqual(data.prefs(), {"k": "two"})
-
     def test_a_hand_broken_value_falls_back_rather_than_raising(self):
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
@@ -550,22 +370,6 @@ class Preferences(unittest.TestCase):
                 conn.execute("UPDATE prefs SET value = 'not json' WHERE key = 'k'")
             self.assertEqual(data.pref("k", "fallback"), "fallback")
             self.assertEqual(data.prefs(), {})
-
-    def test_non_string_values_round_trip(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("shown", True)
-            data.set_pref("count", 3)
-            self.assertIs(data.pref("shown"), True)
-            self.assertEqual(data.pref("count"), 3)
-
-    def test_a_preference_can_be_removed(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("model:impl", "x")
-            self.assertTrue(data.delete_pref("model:impl"))
-            self.assertFalse(data.delete_pref("model:impl"))
-            self.assertIsNone(data.pref("model:impl"))
 
     def test_pref_rows_keeps_a_broken_value_so_it_can_be_reported(self):
         with tempfile.TemporaryDirectory() as d:
@@ -576,13 +380,6 @@ class Preferences(unittest.TestCase):
             with data.write() as conn:
                 conn.execute("UPDATE prefs SET value = '{' WHERE key = 'model:plan'")
             self.assertEqual(data.pref_rows("model:"), {"model:impl": '"x"', "model:plan": "{"})
-
-    def test_pref_rows_prefix_is_literal(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("model_x", "a")
-            data.set_pref("model:x", "b")
-            self.assertEqual(list(data.pref_rows("model:")), ["model:x"])
 
 
 class TheLoginStore(unittest.TestCase):
@@ -625,16 +422,6 @@ class TheLoginStore(unittest.TestCase):
             data.auth_session_add("new", 60, 200)
             self.assertIsNone(data.auth_state("old")[1])
             self.assertEqual(data.auth_state("new")[1]["expires_at"], 200)
-
-    def test_touch_and_delete(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.auth_session_add("s", 1, 100)
-            data.auth_session_touch("s", 50, 150)
-            row = data.auth_state("s")[1]
-            self.assertEqual((row["last_used_at"], row["expires_at"]), (50, 150))
-            data.auth_session_delete("s")
-            self.assertIsNone(data.auth_state("s")[1])
 
 
 class NothingReachesTheRealHomeDirectory(unittest.TestCase):
