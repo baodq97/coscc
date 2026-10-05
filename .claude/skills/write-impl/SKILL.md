@@ -26,7 +26,8 @@ From the board the gate was asked (the prompt says so); at a terminal ask
 
 1. Write the code from the plan, starting from an existing example of the same kind and its
    shared helpers. Run the tests of the files you change while working, and the plan's
-   `## Verification` at the end. The whole suite is CI's: a red CI sends the work back.
+   `## Verification` and `tests/test_*.py` (the repository's checks, ~25 s) at the end. The
+   whole suite is CI's: a red CI sends the work back.
 2. Commit. Each claim in `impl.md` names a commit.
 3. A file `main` changed that contradicts the plan: stop before editing it, record it under
    `## What is still open`, `Status: draft`, leave `plan.md` alone. Otherwise note what you

@@ -20,8 +20,8 @@ on their words.
 
 ## Verifying your work
 
-Lint and the tests of what you changed green before done; CI runs `npm test`, every test. Never
-skip a test or switch a check off: fix the code.
+Lint, `tests/test_*.py` and the tests of what you changed green before done; CI runs `npm test`,
+every test. Never skip a test or switch a check off: fix the code.
 
 ## Conventions
 
