@@ -723,6 +723,7 @@ class UnitMeta:
                     "answers": [],
                     "unknowns": [],
                     "merged": False,
+                    "shipped": False,
                 }
 
             def entry(r) -> dict[str, Any] | None:
@@ -768,6 +769,15 @@ class UnitMeta:
                     e["merged"] = (
                         r["to_state"] == "accepted" and r["source"] in SHIPPED_BEFORE_THE_MACHINE
                     )
+            # Whether the unit ever shipped, on either road: a later move of its pull request does not undo it.
+            for r in rows(
+                f"SELECT DISTINCT workspace, unit FROM transitions WHERE {{where}} AND ("
+                f"(source LIKE '{PR_SOURCE}' AND guard = '{MERGED}') OR (artifact = 'ship.md' "
+                f"AND to_state = 'accepted' AND source IN ({', '.join(repr(s) for s in SHIPPED_BEFORE_THE_MACHINE)})))"
+            ):
+                e = entry(r)
+                if e is not None:
+                    e["shipped"] = True
             # The last stage result of each stage, which the loop reads a spec's `U<n>` and a spike's verdicts from.
             for r in rows(
                 "SELECT workspace, unit, stage, object FROM stage_results WHERE id IN "

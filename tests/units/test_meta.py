@@ -459,6 +459,35 @@ class AMergeIsARow(Base):
             unit["dependsOn"], [{"ref": "0010_full-loop", "merged": True, "why": "merged"}]
         )
 
+    # `shipped` is whether a merge was ever recorded, on either road: what moved after it does not undo it.
+    def shipped(self, unit: str) -> bool:
+        return self.meta.snapshot(WS, NAMES)["units"][f"proj/{unit}"]["shipped"]
+
+    def test_a_merge_then_a_branch_named_is_shipped_and_not_merged(self):
+        self.meta.import_store(WS, self.store)
+        unit = "0013_open-question"
+        self.assertFalse(self.shipped(unit))
+        self.machine(unit, "ship.md", "accepted", "merged", "merge-read")
+        self.machine(unit, "pr.md", "accepted", "open", "branch-named")
+        self.assertTrue(self.shipped(unit))
+        self.assertFalse(self.merged(unit))
+
+    def test_a_ship_md_accepted_by_a_ship_session_is_shipped(self):
+        self.meta.import_store(WS, self.store)
+        unit = "0013_open-question"
+        (self.store / ".cos" / unit / "ship.md").write_text("# Ship\nStatus: accepted.\n")
+        self.meta.ingest(
+            WS, self.store, unit, actor="stage:ship", session="s1", source="run:ship", wrote="ship.md"
+        )
+        self.assertTrue(self.shipped(unit))
+
+    def test_a_unit_with_neither_is_not_shipped(self):
+        self.meta.import_store(WS, self.store)
+        unit = "0013_open-question"
+        self.machine(unit, "pr.md", "accepted", "open", "branch-named")
+        self.machine(unit, "ship.md", "draft", "merge-requested", "ship-ready")
+        self.assertFalse(self.shipped(unit))
+
 
 class AnswersAndHolds(Base):
     def test_an_answer_and_a_hold_reach_the_snapshot_in_order(self):
