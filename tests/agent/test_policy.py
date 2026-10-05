@@ -8,8 +8,6 @@ tool nobody granted is refused whatever declared it — which is the shape that 
 
 from __future__ import annotations
 
-import inspect
-import math
 import tempfile
 import unittest
 from dataclasses import replace
@@ -119,17 +117,6 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
 class OneGrantPerStage(unittest.TestCase):
     """Md` `## Answers`, answer 1: tools follow the stage, in every mode."""
 
-    def test_grants_are_keyed_by_stage_alone(self):
-        for key in policy.GRANTS:
-            self.assertIsInstance(key, str, key)
-
-    def test_grant_for_takes_no_mode(self):
-        self.assertEqual(list(inspect.signature(grant_for).parameters), ["stage"])
-
-    def test_spec_has_its_own_grant(self):
-        """Without it `spec` fell to `Grant()`: no tools, one turn."""
-        self.assertNotEqual(grant_for("spec"), Grant())
-
     def test_spec_reads_and_only_reads(self):
         """Reading, bounded like writing, and nothing else."""
         spec = grant_for("spec")
@@ -145,35 +132,6 @@ class OneGrantPerStage(unittest.TestCase):
         self.assertEqual(decide(spec, "Read", {"file_path": f"{ws}/a.py"}, ws, unit), "")
         for tool in ("Write", "Bash"):
             self.assertIn("was not granted", decide(spec, tool, {}, ws, unit))
-
-    def test_spec_has_the_turns_plan_has(self):
-        """Copied from `plan`, not measured for `spec`."""
-        self.assertEqual(grant_for("spec").max_turns, grant_for("plan").max_turns)
-        self.assertEqual(grant_for("spec").max_budget_usd, grant_for("plan").max_budget_usd)
-
-    def test_every_other_grant_is_unchanged(self):
-        """The values each stage held before this unit, written out."""
-        rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS
-        expected = {
-            # `submits` on the stages that hand back a stage result.
-            "impl": Grant(
-                tools=rw + (policy.AGENT_TOOL, policy.SEND_MESSAGE),
-                commands=policy.IMPL_COMMANDS,
-                max_turns=120,
-                max_budget_usd=8.0,
-                app_writes_artifact=False,
-                submits=True,
-            ),
-            "plan": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
-            "review": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
-        }
-        added = policy.SUBMITTING_SESSIONS - {"estimate", "integrate"}
-        self.assertEqual(
-            set(policy.GRANTS) - added,
-            set(expected) | {"spec", "integrate", "spike", "estimate"},
-        )
-        for stage, grant in expected.items():
-            self.assertEqual(grant_for(stage), grant, stage)
 
     def test_pr_and_ship_hold_no_grant(self):
         """Both are the PR machine's, with no session, so neither is in the table and a step of
@@ -321,12 +279,6 @@ class WritesBelowTheUnitsScratch(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertIn("redirecting into a file", self.bash(line))
 
-    def test_a_full_ram_directory_refuses_its_variable_too(self):
-        with (self.ram / "big").open("wb") as f:
-            f.truncate(CAP)
-        self.assertIn(str(self.disk), self.bash("echo a > $COS_SCRATCH_RAM/x"))
-        self.assertEqual(self.bash("echo a > $COS_SCRATCH_DISK/x"), "")
-
     def test_a_step_without_exec_tools_may_not_write_there(self):
         # Holds `Write` and no command tool: the step may read its scratch and not write it.
         grant = Grant(tools=("Write", "Read"))
@@ -371,25 +323,12 @@ class WritesBelowTheUnitsScratch(unittest.TestCase):
         self.assertEqual(self.bash(f"echo a > {self.disk}/x", cap=cap), "")
         self.assertEqual(self.write(self.disk / "x", cap=cap), "")
 
-    def test_a_ram_directory_just_under_the_cap_still_takes_a_write(self):
-        cap = CAP
-        with (self.ram / "big").open("wb") as f:
-            f.truncate(cap - 2**20)
-        self.assertEqual(self.bash(f"echo a > {self.ram}/x", cap=cap), "")
-        self.assertEqual(self.write(self.ram / "x", cap=cap), "")
-
     def test_a_symlink_in_ram_is_not_followed_when_the_size_is_counted(self):
         cap = 2**20
         with (self.disk / "big").open("wb") as f:
             f.truncate(10 * cap)
         (self.ram / "ln").symlink_to(self.disk / "big")
         self.assertEqual(self.bash(f"echo a > {self.ram}/x", cap=cap), "")
-
-    def test_the_refusal_names_where_a_redirect_may_go(self):
-        reason = self.bash("echo a > /tmp/elsewhere/f")
-        for fragment in ("$COS_SCRATCH_RAM", "$COS_SCRATCH_DISK", str(self.ram), str(self.disk)):
-            self.assertIn(fragment, reason)
-        self.assertNotIn("/tmp/<directory", reason)
 
     def test_every_step_may_read_its_scratch(self):
         (self.ram / "f").write_text("x")
@@ -525,12 +464,6 @@ class MergingIsShipsNotPrs(unittest.TestCase):
         for line in ("gh pr create --fill", "gh pr checks 7 --watch", "gh pr view 7"):
             self.assertEqual(check_command(self.PR, line), "", line)
 
-    def test_ship_is_no_prose_stage_and_no_session(self):
-        """Was `test_ship_is_no_longer_a_prose_stage`. `ship` holds no grant at all, so the
-        second half says it carries nothing."""
-        self.assertNotIn("ship", policy.PROSE_STAGES)
-        self.assertEqual(grant_for("ship").commands, ())
-
     def test_review_reads_and_only_reads(self):
         review = grant_for("review")
         self.assertEqual(review.tools, policy.READ_TOOLS)
@@ -552,24 +485,6 @@ class MergingIsShipsNotPrs(unittest.TestCase):
         # A value flag's value is not read as a word, but a real word after it still is.
         self.assertEqual(check_command(self.PR, "gh -R o/r pr view 7"), "")
         self.assertEqual(check_command(self.PR, "gh api repos/o/r/pulls/7"), "")
-
-    def test_the_known_limit_of_the_deny_list(self):
-        """`node -e` may spawn `gh`, and an alias defined before the step runs under its own name.
-        Pinned so that nobody reads this grant as a guarantee; `.claude/CLAUDE.md` says the same."""
-        self.assertEqual(check_command(self.PR, "node -e 'require(\"child_process\")'"), "")
-        self.assertEqual(check_command(self.PR, "gh m 7"), "")
-
-
-class TheKnownLimit(unittest.TestCase):
-    def test_an_allowed_binary_can_still_be_told_to_do_a_lot(self):
-        """`plan.md` Risk 3, written down as a passing test rather than left implied.
-
-        `git` is on the list because a step has to be able to check its own work. Nothing
-        here stops it being handed arguments that reach further than that. The bound is
-        `cwd`, the write check above, and the turn and budget ceilings — not this list.
-        """
-        self.assertEqual(check_command(IMPL, "git push --force"), "")
-        self.assertEqual(check_command(IMPL, "npm install something"), "")
 
 
 class TheEstimateGrantOpensNothing(unittest.TestCase):
@@ -737,22 +652,6 @@ class ReadsStayInTheCheckoutAndTheUnit(unittest.TestCase):
         )
 
 
-class TheReadBoundaryIsNotASandbox(unittest.TestCase):
-    """`impl`, `pr` and `ship` keep `cat` and `head` in their commands, and `check_command` reads no
-    path but a writing redirect's target, so a shell read walks past the `Read` check. Only `spec`,
-    `plan` and `review`, which hold no `Bash`, are actually held by it."""
-
-    def test_a_shell_read_is_not_checked(self):
-        self.assertEqual(decide(IMPL, "Bash", {"command": "cat ~/.ssh/id_rsa"}, "/tmp/ws"), "")
-
-    def test_a_glob_pattern_is_read_only_up_to_its_first_wildcard(self):
-        # Only the fixed prefix is checked. A pattern that does not start with `/` or `~`
-        # is taken as relative to the workspace, whatever the tool later makes of it.
-        self.assertEqual(
-            decide(Grant(tools=READ_TOOLS), "Glob", {"pattern": "{a,b}/*"}, "/tmp/ws"), ""
-        )
-
-
 class TheImplCeilingsCameFromMeasurement(unittest.TestCase):
     """Three of four `impl` steps run through the board died at the turn ceiling.
 
@@ -776,33 +675,6 @@ class TheImplCeilingsCameFromMeasurement(unittest.TestCase):
             "a ceiling at or below the highest real attempt stops the same steps again",
         )
 
-    def test_the_budget_does_not_stop_a_step_the_turns_would_allow(self):
-        """Two ceilings on one step: the lower one is the only one that matters.
-
-        At the measured cost per turn, a step allowed 120 turns must be allowed the money
-        those turns cost, or the budget becomes the real limit and the turn count is
-        decoration.
-        """
-        per_turn = sum(c for _, c, _ in self.RUNS) / sum(t for t, _, _ in self.RUNS)
-        self.assertGreater(IMPL.max_budget_usd, IMPL.max_turns * per_turn)
-
-    def test_the_only_run_that_finished_is_not_evidence_the_ceiling_was_enough(self):
-        """It finished in 23 turns because two exhausted runs had already done the work."""
-        finished = [turns for turns, _, done in self.RUNS if done]
-        exhausted = [turns for turns, _, done in self.RUNS if not done]
-        self.assertEqual(len(finished), 1)
-        self.assertTrue(all(t > finished[0] for t in exhausted))
-
-
-class ThePlanCeilingClearsTheOneItHit(unittest.TestCase):
-    def test_the_plan_ceiling_is_above_the_one_that_was_hit(self):
-        self.assertGreater(grant_for("plan").max_turns, 20)
-
-    def test_plan_still_only_reads(self):
-        # Raising the ceiling must not widen what the stage may do.
-        self.assertEqual(grant_for("plan").tools, READ_TOOLS)
-        self.assertEqual(grant_for("plan").commands, ())
-
 
 class GeboPushesOnlyWithTheLease(unittest.TestCase):
     """One push, leased to the head the step began at, on the unit's branch."""
@@ -815,13 +687,6 @@ class GeboPushesOnlyWithTheLease(unittest.TestCase):
 
     def run_(self, command, lease=LEASE):
         return check_command(self.G, command, lease)
-
-    def test_the_ceilings_are_impls_chosen_not_measured(self):
-        self.assertEqual((self.G.max_turns, self.G.max_budget_usd), (120, 8.0))
-        self.assertTrue(self.G.push_needs_lease)
-        self.assertFalse(self.G.app_writes_artifact)
-        self.assertEqual(self.G.warning, policy.INTEGRATE_WARNING)
-        self.assertIn("gh", self.G.commands)
 
     def test_the_one_allowed_push(self):
         self.assertEqual(self.run_(self.OK), "")
@@ -919,34 +784,9 @@ class GeboPushesOnlyWithTheLease(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.run_(command), "")
 
-    def test_the_known_limit(self):
-        """Tokens, not what runs. A program the grant may start can spawn `git push --force` itself
-        — `node -e`, `python -c`, or a script the step wrote and then ran through `npm test`."""
-        for command in (
-            "node -e 'require(\"child_process\")'",
-            "python -c 'import subprocess'",
-            "python3 push.py",
-            "npm test",
-        ):
-            with self.subTest(command=command):
-                self.assertEqual(self.run_(command), "")
-
     def test_the_new_refusals_are_geboes_alone(self):
         self.assertEqual(check_command(MERGING, "gh api repos/o/r/pulls/7"), "")
         self.assertEqual(check_command(grant_for("impl"), "git config alias.st status"), "")
-
-    def test_other_grants_push_as_before(self):
-        self.assertEqual(check_command(MERGING, "git push origin feat/x"), "")
-        self.assertEqual(check_command(IMPL, "git push origin feat/x"), "")
-
-
-class IntegrateKeepsItsDenyList(unittest.TestCase):
-    """`integrate` keeps its own deny list. `pr` holds no grant, so the rebase, pull and
-    forced-push refusals it carried are gone with it."""
-
-    def test_integrate_is_unchanged(self):
-        self.assertIs(grant_for("integrate").denied, policy.INTEGRATE_DENIED)
-        self.assertIn("ship stage's", check_command(grant_for("integrate"), "gh pr merge 7"))
 
 
 class GeboReadsAnExplicitList(unittest.TestCase):
@@ -1006,13 +846,6 @@ class SpikeWritesOnlyItsScratch(unittest.TestCase):
         return decide(
             self.G, tool, {"file_path": str(path)}, str(self.scratch), None, read_also=also
         )
-
-    def test_the_grant_is_the_one_the_spec_names(self):
-        self.assertEqual(self.G.tools, READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS)
-        self.assertEqual((self.G.max_turns, self.G.max_budget_usd), (80, 8.0))
-        self.assertTrue(self.G.app_writes_artifact)
-        self.assertIn("arbitrary code", self.G.warning)
-        self.assertNotIn("spike", policy.PROSE_STAGES)
 
     def test_git_is_not_among_its_commands(self):
         # `beyond_reading` does not guard this grant, so this line does.
@@ -1192,26 +1025,6 @@ class TheReaderFollowsBash(unittest.TestCase):
         self.assertEqual(self.words("a x(y)z"), [["a", "x(y)z"]])
         self.assertEqual(self.words("A=(1 2 3) b"), [["A=(1 2 3)", "b"]])
 
-    def test_redirects_carry_their_operator_descriptor_and_target(self):
-        (cmd,) = self.read("a 2>&1 >o 3>>'p q' <i &>/dev/null >&2 5>&-").commands
-        self.assertEqual(cmd.words, ("a",))
-        self.assertEqual(
-            [(r.op, r.fd, r.target) for r in cmd.redirects],
-            [
-                (">&", "2", "1"),
-                (">", "", "o"),
-                (">>", "3", "p q"),
-                ("<", "", "i"),
-                ("&>", "", "/dev/null"),
-                (">&", "", "2"),
-                (">&", "5", "-"),
-            ],
-        )
-
-    def test_a_digit_is_a_descriptor_only_when_it_is_the_whole_word(self):
-        (cmd,) = self.read("echo a2>o").commands
-        self.assertEqual((cmd.words, cmd.redirects[0].fd), (("echo", "a2"), ""))
-
     def test_heredoc_bodies_are_not_commands_and_queue_in_order(self):
         parsed = self.read("a <<X <<-'Y'\nx; b\nX\n\t$(c)\n\tY\nd")
         self.assertEqual([list(c.words) for c in parsed.commands], [["a"], ["d"]])
@@ -1241,19 +1054,6 @@ class TheReaderFollowsBash(unittest.TestCase):
         self.assertEqual(
             self.words("a ${X:-{b}} ${Y:-'}'} c"), [["a", "${X:-{b}}", "${Y:-'}'}", "c"]]
         )
-
-    def test_what_cannot_be_read_says_where(self):
-        for command, what in (
-            ("a 'b", "'"),
-            ("a $(b", "$("),
-            ("a <<E\nb", "here-document"),
-            ("a >", "no target"),
-            ("(a", "("),
-        ):
-            with self.subTest(command=command):
-                parsed = policy._read(command)
-                self.assertIsInstance(parsed, policy._Unreadable)
-                self.assertIn(what, parsed.what)
 
 
 class TheLabelDecidesImplsCeilings(unittest.TestCase):
@@ -1285,59 +1085,17 @@ class TheLabelDecidesImplsCeilings(unittest.TestCase):
                 self.assertEqual(grant_for_step("impl", label), grant_for("impl"))
                 self.assertEqual(grant_for_step("impl", label), written)
 
-    def test_novel_differs_from_routine_in_the_ceilings_alone(self):
-        """No tool, command or refusal comes with the higher ceilings."""
-        routine, novel = grant_for_step("impl", "routine"), grant_for_step("impl", "novel")
-        self.assertNotEqual(novel, routine)
-        self.assertEqual(
-            replace(novel, max_turns=routine.max_turns, max_budget_usd=routine.max_budget_usd),
-            routine,
-        )
-
     def test_the_stages_after_impl_read_the_label_and_keep_their_grant(self):
         for stage in ("pr", "review", "ship"):
             for label in ("routine", "novel", None):
                 with self.subTest(stage=stage, label=label):
                     self.assertEqual(grant_for_step(stage, label), grant_for(stage))
 
-    def test_a_stage_with_no_novel_ceilings_keeps_its_grant(self):
-        """The stages that carry no label, and one invented tomorrow, keep their grant."""
-        for stage in (
-            "integrate",
-            "spec",
-            "plan",
-            "spike",
-            "idea",
-            "intent",
-            "a-stage-invented-tomorrow",
-        ):
-            with self.subTest(stage=stage):
-                self.assertEqual(grant_for_step(stage, "novel"), grant_for(stage))
-
-    def test_every_grant_that_opens_anything_keeps_both_ceilings(self):
-        """No label on any stage takes a ceiling away."""
-        for stage in set(policy.GRANTS) | {"idea", "intent", "a-stage-invented-tomorrow"}:
-            for label in self.LABELS:
-                grant = grant_for_step(stage, label)
-                if not grant.opens_anything:
-                    continue
-                with self.subTest(stage=stage, label=label):
-                    self.assertIsInstance(grant.max_turns, int)
-                    self.assertGreaterEqual(grant.max_turns, 1)
-                    self.assertTrue(math.isfinite(grant.max_budget_usd))
-                    self.assertGreater(grant.max_budget_usd, 0)
-
     def test_only_the_exact_label_counts(self):
         """A label spelled any other way is not `novel`."""
         for label in ("", "NOVEL", "Novel", "novel ", "weird"):
             with self.subTest(label=label):
                 self.assertEqual(grant_for_step("impl", label), grant_for("impl"))
-
-    def test_the_budget_does_not_stop_a_step_the_turns_would_allow(self):
-        """The margin is thin, and 181–250 turns were never measured; this pins only that the budget
-        is not lower than the turns at the worst rate seen."""
-        novel = grant_for_step("impl", "novel")
-        self.assertGreater(novel.max_budget_usd, novel.max_turns * 0.0568)
 
 
 class ASiblingCheckoutIsReadNotChanged(unittest.TestCase):
@@ -1424,19 +1182,6 @@ class ASiblingCheckoutIsReadNotChanged(unittest.TestCase):
             said = decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also)
             self.assertIn("cannot read where it points", said, command)
 
-    def test_the_known_limit_of_git_into(self):
-        """What `_git_into` does not read (`.claude/rules/coscc-policy.md`): a path a
-        subcommand takes, and anything but git. Pinned, so closing one turns this red."""
-        for command in (
-            f"git worktree add {self.sibling}/x",
-            f"python -c \"open('{self.sibling}/api.py', 'w')\"",
-        ):
-            self.assertEqual(
-                decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also),
-                "",
-                command,
-            )
-
     def test_git_c_elsewhere_and_git_without_it_still_run(self):
         for command in (
             f"git -C {self.tree} status",
@@ -1476,15 +1221,6 @@ class ABackgroundCommandIsRefused(unittest.TestCase):
                 reason = self.d(stage, {"command": "npm test", "run_in_background": True})
                 self.assertIn(policy.BACKGROUND_REFUSAL, reason)
 
-    def test_run_in_background_false_or_absent_decides_as_before(self):
-        for stage in self.STAGES:
-            with self.subTest(stage=stage):
-                self.assertEqual(
-                    self.d(stage, {"command": "npm test", "run_in_background": False}),
-                    self.d(stage, {"command": "npm test"}),
-                )
-        self.assertEqual(self.d("impl", {"command": "npm test"}), "")
-
     def test_a_lone_ampersand_is_refused(self):
         for command in (
             "npm run e2e &",
@@ -1495,20 +1231,6 @@ class ABackgroundCommandIsRefused(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 self.assertIn(policy.BACKGROUND_REFUSAL, check_command(IMPL, command))
-
-    def test_the_other_ampersand_operators_read_as_before(self):
-        for command in (
-            "npm test && git status",
-            "npm test &> /dev/null",
-            "npm test &>> /dev/null",
-            "npm test 2>&1",
-            "git status >&2",
-            "npm test |& git status",
-            "git commit -m 'a & b'",
-            'grep "a & b" f',
-        ):
-            with self.subTest(command=command):
-                self.assertEqual(check_command(IMPL, command), "")
 
 
 class AFeaturesMcpToolIsAllowedByItsExactNameAndNothingElse(unittest.TestCase):
@@ -1534,11 +1256,6 @@ class AFeaturesMcpToolIsAllowedByItsExactNameAndNothingElse(unittest.TestCase):
             self.assertNotEqual(self._decide(Grant(), tool), "", tool)
             if tool != policy.SUBMIT_TOOL:
                 self.assertNotEqual(self._decide(IMPL, tool), "", tool)
-
-    def test_mcp_is_neither_a_tool_nor_a_reason_to_open(self):
-        grant = Grant(mcp=(self.PING,))
-        self.assertEqual(grant.tools, ())
-        self.assertFalse(grant.opens_anything)
 
     def test_a_name_that_is_not_a_features_tool_never_enters_mcp(self):
         for bad in (

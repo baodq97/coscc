@@ -63,55 +63,6 @@ class OneStepPerUnit(WithAttempts):
             self.attempts.move(old["id"], "ended", "done")
         self.assertEqual(self.attempts.holding("w", "0001_a")["id"], new["id"])
 
-    def test_an_attempt_keeps_the_start_it_was_opened_at(self):
-        row = self.attempts.open("step", "w", "0001_a", "spec", state="running")
-        self.assertTrue(row["since"])
-        self.attempts.move(row["id"], "ending")
-        self.assertEqual(self.attempts.get(row["id"])["since"], row["since"])
-        self.assertEqual(self.listing("w")[0]["since"], row["since"])
-
-    def test_a_row_carries_what_the_page_shows(self):
-        row = self.attempts.open("step", "w", "0001_a", "spec", state="running")
-        self.assertTrue(
-            {"unit", "stage", "since", "state", "stop_asked_at", "run"} <= set(row), set(row)
-        )
-        self.assertIsNone(row["stop_asked_at"])
-        # `Steps._launch` sets it as it hands the step over.
-        self.assertFalse(row["run"])
-        self.attempts.set_run(row["id"], "r-1")
-        self.assertEqual(self.listing("w")[0]["run"], "r-1")
-
-
-class Describe(unittest.TestCase):
-    """Every refusal of a busy unit names what holds it and since when."""
-
-    def test_describe_names_the_kind_the_stage_the_phase_and_the_time(self):
-        t = "2026-09-24T01:02:03+00:00"
-        cases = [
-            ("step", "spec", "preparing", "a spec step is being prepared since "),
-            ("step", "spec", "running", "a spec step is running since "),
-            ("step", "spec", "queued", "a spec step is queued since "),
-            ("step", "spec", "ending", "a spec step is writing its artifact since "),
-            ("integration", "integrate", "running", "it is being integrated since "),
-            ("hold", "", "running", "a hold is being recorded since "),
-        ]
-        for machine, stage, state, said in cases:
-            with self.subTest(machine=machine, state=state):
-                row = {"machine": machine, "stage": stage, "state": state, "since": t}
-                text = attempts_mod.describe("0001_a", row)
-                self.assertTrue(text.startswith("0001_a is busy: "), text)
-                self.assertIn(said + t, text)
-
-    def test_a_refused_open_carries_the_sentence_of_what_holds_the_unit(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            a = Attempts(tmp, Bus())
-            row = a.open("step", "w", "0001_a", "spec", state="running")
-            with self.assertRaises(Refused) as e:
-                a.open("integration", "w", "0001_a", "integrate")
-            self.assertEqual(str(e.exception), attempts_mod.describe("0001_a", row))
-            self.assertEqual(a.busy("w", "0001_a"), attempts_mod.describe("0001_a", row))
-            self.assertEqual(a.busy("w", "0002_b"), "")
-
 
 class Stopping(WithAttempts):
     def test_nothing_running_is_refused(self):

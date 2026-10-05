@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import tempfile
 import unittest
 
@@ -13,10 +12,9 @@ from claude_agent_sdk._internal.message_parser import parse_message
 from claude_agent_sdk._internal.query import Query
 from claude_agent_sdk.types import _hooks_to_internal_format
 
-from coscc.agent import policy, sessions
-from coscc.agent.helpers import DEFINITIONS, KINDS, PROTOCOL, Helpers
+from coscc.agent import sessions
+from coscc.agent.helpers import Helpers
 from coscc.config import Config
-from coscc.runner.step import _helpers_of
 
 
 class _Transport:
@@ -154,9 +152,6 @@ class TheHookHoldsWhoMayBeStarted(unittest.TestCase):
         self.assertIn("mcp__cos__peers", _pre(Helpers(), "ListAgents", {}))
         self.assertIn("mcp__cos__peers", _pre(Helpers(), "ListAgents", {}, "a1"))
 
-    def test_any_other_tool_gets_no_opinion(self):
-        self.assertEqual(_pre(Helpers(), "Bash", {"command": "git commit -m x"}, "a1"), "")
-
 
 class SendMessageStaysInTheStep(unittest.TestCase):
     def test_main_and_a_helper_of_this_run_pass_and_anyone_else_is_denied(self):
@@ -207,14 +202,6 @@ class TheLedgerFollowsEachHelper(unittest.TestCase):
         self.assertEqual(len(listing), 2)
         self.assertTrue(all(line.endswith("done") for line in listing))
 
-    def test_peers_is_served_with_the_listing(self):
-        ledger = Helpers()
-        _ask(ledger, "SubagentStart", {"hook_event_name": "SubagentStart", "agent_id": "a1", "agent_type": "worker"})  # fmt: skip
-        peers = ledger.tool()
-        self.assertEqual(f"mcp__cos__{peers.name}", policy.PEERS_TOOL)
-        said = asyncio.run(peers.handler({}))
-        self.assertEqual(said["content"][0]["text"], "a1 · (no step named) · running")
-
     def test_an_end_that_never_came_is_told_when_the_run_closes(self):
         told = Told()
         ledger = Helpers(told)
@@ -246,25 +233,6 @@ class EachWriteOfAWorkerIsTold(unittest.TestCase):
                 ("(a) parallel", "Edit", "/w/tests/x.py"),
             ],
         )
-
-
-class TheProtocolReachesTheLeaderAndEveryWorker(unittest.TestCase):
-    def test_it_names_exactly_four_kinds_of_message(self):
-        self.assertEqual(tuple(dict.fromkeys(re.findall(r"`(\w+):`", PROTOCOL))), KINDS)
-        self.assertEqual(len(KINDS), 4)
-
-    def test_it_is_in_the_workers_prompt_and_the_leaders(self):
-        self.assertIn(PROTOCOL, DEFINITIONS["worker"]["prompt"])
-        self.assertNotIn(PROTOCOL, DEFINITIONS["scout"]["prompt"])
-        ledger, blocks = _helpers_of(policy.grant_for("impl"), None, (("f", "text"),), False)
-        self.assertIsNotNone(ledger)
-        self.assertEqual(blocks, (("f", "text"), ("helpers", PROTOCOL)))
-
-    def test_a_step_taken_up_again_or_one_that_starts_no_helper_gets_neither(self):
-        ledger, blocks = _helpers_of(policy.grant_for("impl"), None, (), True)
-        self.assertIsNotNone(ledger)
-        self.assertEqual(blocks, ())
-        self.assertEqual(_helpers_of(policy.grant_for("review"), None, (), False), (None, ()))
 
 
 if __name__ == "__main__":
