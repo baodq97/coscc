@@ -261,7 +261,7 @@ class Ctx:
     # workspace is not known.
     main_tree: Callable[[str], Awaitable[tuple[str, str]]] = _no_main_tree
     # `(workspace path, after, limit)`: every time a person stepped in there past the time
-    # `after` (`""`: from the first), oldest first (`coscc/service/interventions.py`). Blocking.
+    # `after` (`""`: from the first), oldest first (`coscc/runner/interventions.py`). Blocking.
     interventions: Callable[[str, str, int], list[Intervention]] = _no_interventions
     # `(workspace path, kind, prompt)`: one paid session under the grant `kind` that hands its
     # object back through `submit`, recorded in the run log as the estimate is. `Invalid` while

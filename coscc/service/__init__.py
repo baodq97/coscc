@@ -9,33 +9,40 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
 from coscc.bus import Event
 from coscc.config import Config
 from coscc.agent.sessions import Sessions
+from coscc.github.integrate import open_prs_once
+from coscc.github.integration import Integration
+from coscc.runner.queue import Attempt, Attempts, Holds
+from coscc.runner.resume import Resume
+from coscc.runner.steps import Steps
 from coscc.update import updater as updater_mod
 
 from coscc.service.activity import Activity
 from coscc.service.agents import Agents
 from coscc.service.answers import Answers
-from coscc.service.attempts import Attempt, Attempts
 from coscc.service.autopilot import Autopilot, autopilot_values
 from coscc.service.backlog import Backlog
-from coscc.service.common import Holds, open_prs_once
 from coscc.service.models import Models
 from coscc.service.release import Release
-from coscc.service.resume import Resume
-from coscc.service.sessions import Chat
-from coscc.service.steps import Steps
+from coscc.service.sessions import CHAT_TURNS, Chat
 from coscc.store.journal import BadRecord
 from coscc.store.db import Busy
 from coscc.kernel import OWNER
 from coscc.units.ideas import Ideas
 from coscc.units.read import Board
 from coscc.units.workspaces import Workspaces
-from coscc.service.update import SETTLE_POLL, as_invalid, update_words
+from coscc.service.update import (
+    SETTLE_POLL,
+    as_invalid,
+    refuse_mechanical_while_updating,
+    refuse_while_updating,
+    update_words,
+)
 from coscc.service.watch import Watch
 
 log = logging.getLogger(__name__)
@@ -83,12 +90,32 @@ class Service:
             self.ws,
             self.holds,
             self.sessions,
-            self.updater,
-            self.agents,
-            self.models,
             self.ideas,
-            self.answers,
             self.bus,
+            agent_of=self.agents.agent,
+            stage_config=self.models.stage_config,
+            ci_red=self.models.ci_red,
+            findings_added=self.models.findings_added,
+            worktree=self.answers.worktree,
+            append_to_answers=self.answers.append_to_answers,
+            ingest=self.answers.ingest,
+            post_new_rounds=self.answers.post_new_rounds,
+            sync_pr=self.answers.sync_pr,
+            refuse_updating=lambda: refuse_while_updating(self.updater),
+            refuse_mechanical=lambda: refuse_mechanical_while_updating(self.updater),
+            identity=self._identity,
+        )
+        # Above `runner`: a unit's pull request, which runs its attempts on the steps.
+        self.integration = Integration(
+            self.config,
+            self.ws,
+            self.holds,
+            self.sessions,
+            self.steps,
+            self.bus,
+            agent_overrides=lambda: self.agents.agent_overrides()[0],
+            config_overrides=self.agents.config_overrides,
+            config_for=self.models.config_for,
         )
         self.watch = Watch(self.config, self.ws, self.steps.recorders)
         self.boards = Board(
@@ -102,7 +129,13 @@ class Service:
         )
         self.release.details.changed = self.boards.changed
         self.autopilot = Autopilot(
-            self.config, self.ws, self.holds, self.agents, self.steps, self.boards
+            self.config,
+            self.ws,
+            self.holds,
+            self.agents,
+            self.steps,
+            self.integration,
+            self.boards,
         )
         # Who listens to what. The updater hears every ending; the autopilot hears those that
         # free a unit or leave a person's answer, and not a step that ended because the app
@@ -134,15 +167,49 @@ class Service:
             self.ws,
             self.holds,
             self.sessions,
-            self.updater,
-            self.agents,
-            self.models,
-            self.backlog,
-            self.chat,
             self.steps,
-            self.autopilot,
-            self.bus,
+            takers={
+                "integrate": lambda _cwd, record: self.integration.resume(record),
+                "estimate": lambda cwd, record: _drain(
+                    self.backlog.propose_estimates(cwd, resume=record)
+                ),
+                "chat": lambda cwd, record: self._resume_chat(cwd, record),
+            },
+            refuse_updating=lambda: refuse_while_updating(self.updater),
+            chat_turns=CHAT_TURNS,
+            finish=self._resumed,
         )
+
+    def _identity(self) -> dict[str, str]:
+        """The running build's version and commit, for a step's `start` row.
+
+        `Updater.me` is `update.identity`, computed once and kept. Anything failing is two
+        empty strings; it never stops a step.
+        """
+        try:
+            me = self.updater.me()
+            return {"version": str(me.get("version") or ""), "commit": str(me.get("commit") or "")}
+        except Exception:
+            # A record field, never a reason to refuse a step.
+            log.exception("the version of the app could not be read")
+            return {"version": "", "commit": ""}
+
+    async def _resumed(self) -> None:
+        """Once every row is taken up: a merge asked for before the app went down is recorded
+        before the autopilot could ask for it again."""
+        await self.integration.reconcile_prs()
+        self.autopilot.resume()
+
+    async def _resume_chat(self, cwd: str, record: dict[str, Any]) -> None:
+        """Nobody is reading this turn now; its reply is in the session, and its `chat`
+        row is written as any turn's is."""
+        async for _ in self.chat.stream(
+            cwd,
+            str(record.get("message") or ""),
+            str(record.get("session_id") or ""),
+            resume=record,
+        ):
+            pass
 
     def _capacity(self, workspace: str, slot: str) -> int:
         """Agent sessions at once: the workspace's `max_parallel`. Heavy work: one."""
@@ -166,11 +233,15 @@ class Service:
     async def _attach(self, cwd, data, journal, key, prs, fresh) -> Callable[[], None]:
         """What the board read adds from above `units`: each unit's integration and the release
         block. Returns what starts the CI asks that found no answer, which the read calls last."""
-        asks = await self.steps.attach_integration(cwd, data["units"], journal, key, prs, fresh)
+        asks = await self.integration.attach_integration(
+            cwd, data["units"], journal, key, prs, fresh
+        )
         data["release"] = await self.release.attach_release(
             cwd, data["units"], journal, key, prs, fresh
         )
-        return lambda: self.steps.ask_ci(asks, ended=lambda tree: self.boards.changed((tree,)))
+        return lambda: self.integration.ask_ci(
+            asks, ended=lambda tree: self.boards.changed((tree,))
+        )
 
     async def board(
         self, cwd: str, which: Literal["new", "held", "next"] = "new"
@@ -305,7 +376,7 @@ class Service:
     def _asks(self) -> list[tuple[str, asyncio.Task]]:
         """The background `gh` asks running now: CI, the board's and the release panel's."""
         return [
-            *((f"CI ask of {u} in {ws}", t) for (ws, u), t in self.steps.ci_asks.items()),
+            *((f"CI ask of {u} in {ws}", t) for (ws, u), t in self.integration.ci_asks.items()),
             *((f"gh ask for {' '.join(k)}", t) for k, t in self.boards.prs.asks.items()),
             *((f"release ask for {' '.join(k)}", t) for k, t in self.release.details.asks.items()),
         ]
@@ -382,3 +453,8 @@ class Service:
                 log.warning(
                     "shutdown returns with the %s still running after %gs", label, SHUTDOWN_WITHIN
                 )
+
+
+async def _drain(agen: AsyncIterator[Any]) -> None:
+    async for _ in agen:
+        pass

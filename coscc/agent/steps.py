@@ -1,7 +1,7 @@
 """What this process holds of one launched step or integration, beside its attempt.
 
 In memory, this process only. Nothing here decides whether a step may run (`python -m coscc.loop gate`)
-or what holds a unit (its attempt, `coscc/service/attempts.py`): a `Running` is the session
+or what holds a unit (its attempt, `coscc/runner/queue.py`): a `Running` is the session
 handle a Stop closes, the task it cancels, the readers its items go to, and a copy of the
 Stop the runner reads between two `await`s.
 """

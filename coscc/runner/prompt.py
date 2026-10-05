@@ -663,7 +663,7 @@ def _unfinished_round(
     The last round asked for changes but dropped ids an earlier round raised, so the loop does
     not count it and sent the unit here again. The block above may say nothing is left open;
     this says why the review runs anyway. The ids are the loop's, carried by
-    `service.steps.run_step`.
+    `runner.steps.Steps.run_step`.
     """
     if stage != "review" or not unfinished_round:
         return []
@@ -771,9 +771,9 @@ def _handed(
     screens_note: str,
     included: list[str],
 ) -> list[str]:
-    """What `service.steps.run_step` built for this step; this only places it."""
+    """What `runner.steps.Steps.run_step` built for this step; this only places it."""
     blocks: list[str] = []
-    # Built by `service.steps.run_step`; placed only.
+    # Built by `runner.steps.Steps.run_step`; placed only.
     if last_attempt:
         included.append("last-attempt")
         blocks.append(f"# The attempt before this one\n\n{last_attempt}")

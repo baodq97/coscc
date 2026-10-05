@@ -12,8 +12,8 @@ from pathlib import Path
 from coscc.bus import Bus
 from coscc.store.db import Data
 from coscc.store.journal import Journal
-from coscc.service.attempts import Attempts
-from coscc.service.interventions import DETAIL_MAX, KINDS, interventions
+from coscc.runner.queue import Attempts
+from coscc.runner.interventions import DETAIL_MAX, KINDS, interventions
 from coscc.units.meta import UnitMeta
 
 KEY = "/ws"

@@ -9,37 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import Any
 
 from coscc.agent import transcript
-from coscc.agent import steps as steps_mod
-from coscc.store.db import Data, now as _now
-from coscc.kernel import Invalid, facts as facts_of
-from coscc.runlog import events
-from coscc.store.journal import BadRecord
-from coscc.runner.step import Runner
-from coscc.store.db import Busy
-from coscc.service.update import refuse_while_updating
-from coscc.service.attempts import Attempt, describe
-from coscc.units import worktrees
-from coscc.service.sessions import CHAT_TURNS
-from coscc.bus import Bus
-from coscc.config import Config
 from coscc.agent.sessions import Sessions
-from coscc.update.updater import Updater
-
-if TYPE_CHECKING:
-    # `backlog` takes estimates up again with the functions below, so the parts are types only.
-    from coscc.service.agents import Agents
-    from coscc.service.autopilot import Autopilot
-    from coscc.service.backlog import Backlog
-    from coscc.service.common import Holds
-    from coscc.service.models import Models
-    from coscc.service.sessions import Chat
-    from coscc.service.steps import Steps
-    from coscc.units.workspaces import Workspaces
+from coscc.config import Config
+from coscc.kernel import Invalid, facts as facts_of
+from coscc.runner.queue import Attempt, Holds, describe
+from coscc.runner.steps import Steps
+from coscc.store.db import Busy
+from coscc.store.journal import BadRecord
+from coscc.units import worktrees
+from coscc.units.workspaces import Workspaces
 
 # The kinds `Sessions.stream`'s `owner` names, and which of them hold a unit.
 STEP_KINDS = ("step", "opening", "closing")
@@ -64,12 +47,6 @@ def resume_message(dropped: list[dict[str, Any]] | None) -> str:
         "may have left files half written -- then run again whichever of them still needs to "
         "run, and carry on with the work."
     )
-
-
-async def nothing() -> AsyncIterator[tuple[str, Any]]:
-    """A session that is not opened: its ceiling was used up before the update."""
-    return
-    yield
 
 
 def resume_kwargs(resume: dict[str, Any] | None, grant: Any, prompt: str) -> dict[str, Any]:
@@ -149,33 +126,33 @@ def _spawn(coro: Any) -> asyncio.Task:
 
 
 class Resume:
+    """What is not a board step is taken up by its owner, handed in by kind: `takers` gives, of
+    `integrate`, `estimate` and `chat`, what claims the owner's hold and returns the coroutine
+    that runs it. `owner_refuses` is what an estimate or a chat turn refuses before its session,
+    and `finish` what follows once every row is taken up: the merges left open, the autopilot."""
+
     def __init__(
         self,
         config: Config,
         ws: Workspaces,
         holds: Holds,
         sessions: Sessions,
-        updater: Updater,
-        agents: Agents,
-        models: Models,
-        backlog: Backlog,
-        chat: Chat,
         steps: Steps,
-        autopilot: Autopilot,
-        bus: Bus,
+        *,
+        takers: dict[str, Callable[[str, dict[str, Any]], Any]],
+        refuse_updating: Callable[[], None],
+        chat_turns: int,
+        finish: Callable[[], Awaitable[None]],
     ) -> None:
         self.config = config
         self.ws = ws
         self.holds = holds
         self.sessions = sessions
-        self.updater = updater
-        self.agents = agents
-        self.models = models
-        self.backlog = backlog
-        self.chat = chat
         self.steps = steps
-        self.autopilot = autopilot
-        self.bus = bus
+        self.takers = takers
+        self.refuse_updating = refuse_updating
+        self.chat_turns = chat_turns
+        self.finish = finish
 
     def _feature_refuses(self, owner: dict[str, Any]) -> str:
         """What the guards of the features say to a step taken up again, from its owner; `""` when
@@ -220,8 +197,7 @@ class Resume:
         if journal is None:
             # No working folder: `suspend_sessions` wrote no row, so there is none to take up.
             self._end_unclaimed(handoff)
-            await self.steps.reconcile_prs()
-            self.autopilot.resume()
+            await self.finish()
             return []
         said: list[dict[str, Any]] = []
         starts: list[Any] = []
@@ -243,7 +219,7 @@ class Resume:
                 # What the claim would refuse, asked before the `resume` row
                 # so that row says what happened. Nothing awaits from here to the claim.
                 key, unit = str(owner.get("workspace") or ""), str(owner.get("unit") or "")
-                problem = self._unadoptable(
+                problem = self.steps.unadoptable(
                     "integration" if kind == "integrate" else "step", key, unit
                 )
                 if not problem and kind in STEP_KINDS:
@@ -252,7 +228,7 @@ class Resume:
                 problem = self._owner_refuses(kind, owner)
             if not problem and kind == "chat":
                 # A chat turn's used-up ceiling, said here so its `resume` row does.
-                used_up = transcript.ceilings_left(CHAT_TURNS, None, row)[2]
+                used_up = transcript.ceilings_left(self.chat_turns, None, row)[2]
                 if used_up:
                     problem = f"its ceiling was used up before the update: {used_up}"
             try:
@@ -292,8 +268,7 @@ class Resume:
         self._end_unclaimed(handoff)
         # A merge asked for before the app went down is recorded before the
         # autopilot could ask for it again.
-        await self.steps.reconcile_prs()
-        self.autopilot.resume()
+        await self.finish()
         return said
 
     def _owner_refuses(self, kind: str, owner: dict[str, Any]) -> str:
@@ -303,7 +278,7 @@ class Resume:
         cwd, key = str(owner.get("workspace_dir") or ""), str(owner.get("workspace") or "")
         try:
             self.ws.check(cwd)
-            refuse_while_updating(self.updater)
+            self.refuse_updating()
         except Invalid as e:
             return str(e)
         held = self.holds.attempts.holding(key, "") if kind == "estimate" else None
@@ -350,29 +325,6 @@ class Resume:
                 self.holds.attempts.move(row["id"], "ended", "interrupted")
         self.holds.attempts.wake_all()
 
-    def _unadoptable(self, machine: str, key: str, unit: str) -> str:
-        """Why the unit's attempt cannot be taken up by a resumed `machine`, or `""`: none, or
-        the one the last process left `running`, is what Resume takes up."""
-        row = self.holds.attempts.holding(key, unit)
-        if row is None or (
-            row["machine"] == machine
-            and row["state"] == "running"
-            and row["id"] not in self.steps.tasks
-        ):
-            return ""
-        return describe(unit, row)
-
-    def _adopt(self, machine: str, key: str, unit: str, stage: str) -> int:
-        """The attempt a resumed step or integration goes on in: the one left `running`, or a
-        new one in `running` when the process that went down had none (an older build)."""
-        problem = self._unadoptable(machine, key, unit)
-        if problem:
-            raise Invalid(problem)
-        row = self.holds.attempts.holding(key, unit)
-        if row is not None:
-            return int(row["id"])
-        return int(self.holds.attempts.open(machine, key, unit, stage, state="running")["id"])
-
     def _end_unresumed(self, journal: Any, row: dict[str, Any], kind: str, problem: str) -> None:
         """The step, integration or estimate ends `failed` and waits for a rerun; a
         chat turn has no `start`, and only its `resume` row says it failed."""
@@ -397,172 +349,7 @@ class Resume:
 
     def _take_up(self, kind: str, record: dict[str, Any]) -> Any:
         """Claim what the owner of `kind` holds, now, and return the coroutine that runs it."""
-        owner = record["owner"]
-        cwd = str(owner.get("workspace_dir") or "")
         if kind in STEP_KINDS:
-            self.resume_step(record)  # its task is already made
+            self.steps.resume_step(record)  # its task is already made
             return None
-        if kind == "integrate":
-            return self.resume_integration(record)
-        if kind == "estimate":
-            return _drain(self.backlog.propose_estimates(cwd, resume=record))
-        return self.resume_chat(cwd, record)
-
-    def resume_step(self, record: dict[str, Any]) -> steps_mod.Running:
-        """A board step, as `run_step` hands one to `drive`: the unit claimed, a new
-        recorder and `run`, and `Runner.run` with the row instead of a prompt. Synchronous up
-        to the task, so the unit is held when this returns."""
-        owner = record["owner"]
-        key, cwd = str(owner["workspace"]), str(owner["workspace_dir"])
-        unit, stage, artifact = str(owner["unit"]), str(owner["stage"]), str(owner["artifact"])
-        journal = self.ws.journal()
-        if journal is None:
-            raise Invalid("no working folder is set, so nothing can be taken up")
-        directory = self.ws.unit_dir(cwd, unit)
-        attempt = self._adopt("step", key, unit, stage)
-        running = steps_mod.Running(
-            workspace=key, unit=unit, stage=stage, started_at=_now(), attempt=attempt, cwd=cwd
-        )
-        self.steps.tasks[attempt] = running
-        self.steps.seal_attempt(running)
-        run = uuid.uuid4().hex
-        recorder = events.Recorder(
-            run, Data(self.config.data_dir), str(journal.working_dir), key, unit, stage
-        )
-        running.run, running.handle.recorder = run, recorder
-        self.steps.recorders[run] = recorder
-        self.holds.attempts.set_run(attempt, run)
-        rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
-        end_fields = None
-        if rounds is not None:
-
-            async def end_fields() -> dict[str, Any]:
-                return await self.models.findings_added(cwd, unit, rounds)
-
-        extra = {
-            k: owner.get(k)
-            for k in (
-                "workspace_dir",
-                "rounds_before",
-                "tree",
-                "watch",
-                "scratch",
-                "read_also",
-            )
-        }
-        kwargs: dict[str, Any] = dict(
-            workspace=cwd,
-            directory=directory,
-            journal_key=key,
-            unit=unit,
-            stage=stage,
-            artifact=artifact,
-            stages=[],
-            mode="manual",
-            cwd=str(record.get("cwd") or cwd),
-            model=record.get("model"),
-            effort=owner.get("effort"),
-            label=owner.get("label"),
-            agent=self.agents.agent(stage),
-            end_fields=end_fields,
-            read_also=tuple(owner.get("read_also") or ()),
-            resume=record,
-            owner_extra=extra,
-            **({"watch": owner["watch"]} if owner.get("watch") else {}),
-        )
-        scratch = Path(owner["scratch"]) if owner.get("scratch") else None
-        running.task = asyncio.create_task(
-            self.steps.drive(
-                running,
-                Runner(
-                    self.sessions,
-                    journal,
-                    app=self.steps.app_identity(),
-                    hooks=self.steps.hooks,
-                ),
-                cwd,
-                unit,
-                stage,
-                artifact,
-                directory,
-                None,
-                rounds,
-                scratch,
-                kwargs,
-                resumed=True,
-            )
-        )
-        running.task.add_done_callback(lambda _task: self.steps.never_driven(running))
-        return running
-
-    def resume_integration(self, record: dict[str, Any]) -> Any:
-        """Gebo, with the lease, the grant and the press's facts its owner kept. The unit is
-        claimed now; the returned coroutine runs the session and what follows it."""
-        owner = record["owner"]
-        key, cwd, unit = str(owner["workspace"]), str(owner["workspace_dir"]), str(owner["unit"])
-        journal = self.ws.journal()
-        if journal is None:
-            raise Invalid("no working folder is set, so nothing can be taken up")
-        attempt = self._adopt("integration", key, unit, "integrate")
-        self.holds.attempts.set_road(attempt, "gebo")
-        running = steps_mod.Running(
-            workspace=key, unit=unit, stage="integrate", started_at=_now(), attempt=attempt, cwd=cwd
-        )
-        self.steps.tasks[attempt] = running
-
-        def write(rec: dict[str, Any]) -> dict[str, Any]:
-            try:
-                return journal.append(rec)
-            except BadRecord, Busy:
-                return rec
-
-        async def go() -> None:
-            running.task = asyncio.current_task()
-            outcome = "failed"
-            try:
-                async for _ in self.steps.integrate_gebo(
-                    cwd,
-                    key,
-                    unit,
-                    None,
-                    None,
-                    None,
-                    int(owner["pr"]),
-                    Path(owner["tree"]),
-                    str(owner["branch"]),
-                    str(owner["head_before"]),
-                    str(owner["origin_sha"]),
-                    journal,
-                    write,
-                    dict(owner.get("seen") or {}),
-                    owner.get("refused_update"),
-                    completion=owner.get("completion"),
-                    resume=record,
-                ):
-                    pass
-                outcome = "done"
-            except asyncio.CancelledError:
-                # The app going down: the next start ends the attempt.
-                self.steps.tasks.pop(attempt, None)
-                raise
-            finally:
-                if self.steps.tasks.pop(attempt, None) is not None:
-                    self.steps.end_attempt(attempt, outcome)
-
-        return go()
-
-    async def resume_chat(self, cwd: str, record: dict[str, Any]) -> None:
-        """Nobody is reading this turn now; its reply is in the session, and its `chat`
-        row is written as any turn's is."""
-        async for _ in self.chat.stream(
-            cwd,
-            str(record.get("message") or ""),
-            str(record.get("session_id") or ""),
-            resume=record,
-        ):
-            pass
-
-
-async def _drain(agen: AsyncIterator[Any]) -> None:
-    async for _ in agen:
-        pass
+        return self.takers[kind](str(record["owner"].get("workspace_dir") or ""), record)

@@ -18,7 +18,7 @@ from typing import Literal, get_args
 log = logging.getLogger(__name__)
 
 Name = Literal[
-    # An attempt's moves (`coscc/service/attempts.py`), each published once its row is committed.
+    # An attempt's moves (`coscc/runner/queue.py`), each published once its row is committed.
     "step.queued",
     "step.preparing",
     "step.running",

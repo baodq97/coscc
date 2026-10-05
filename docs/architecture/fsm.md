@@ -120,7 +120,7 @@ intent, spec, spike, plan, pr can be rerun from the board when accepted and not 
 appends `### Rerun` with `Stale:` hashes for that artifact and every later one on disk — so
 they all become stale.
 
-## 2. Step (per run) — app, `coscc/service/steps.py`, `coscc/runner/__init__.py`
+## 2. Step (per run) — app, `coscc/runner/steps.py`, `coscc/runner/step.py`
 
 ```mermaid
 stateDiagram-v2

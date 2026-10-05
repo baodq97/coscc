@@ -1736,7 +1736,7 @@ class NoRequestIsTheAutopilot(unittest.IsolatedAsyncioTestCase):
 
         service = app.state.service
         service.steps.run_step = run_step
-        service.steps.integrate = integrate
+        service.integration.integrate = integrate
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://t"
         ) as client:

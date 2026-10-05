@@ -19,11 +19,11 @@ from coscc.git import fetches
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.units import autopilot
-from coscc.service.common import Refused, step_cwd
+from coscc.runner.queue import Refused
+from coscc.runner.steps import step_cwd
 from coscc.units.worktrees import describe_base
 from coscc.kernel import Invalid
 from coscc.service import Service
-from coscc.service.answers import Answers
 from coscc.agent.sessions import Sessions
 from tests.service.test_service import create_sync, timeline, unit_history
 from tests.units.test_submit import submits as _submits
@@ -293,7 +293,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
 
         with (
             mock.patch.object(board_reader, "gate", open_gate),
-            mock.patch("coscc.service.steps.Runner", StandIn),
+            mock.patch("coscc.runner.steps.Runner", StandIn),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
         ):
             asyncio.run(go())
@@ -1924,7 +1924,7 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
         tree = {"path": str(self.tree), "branch": "feat/a-problem", "base": None}
 
         async def go():
-            with mock.patch.object(Answers, "worktree", mock.AsyncMock(return_value=tree)):
+            with mock.patch.object(service.steps, "worktree", mock.AsyncMock(return_value=tree)):
                 return [i async for i in service.steps.run_step(str(self.repo), self.unit, "spike")]
 
         return asyncio.run(go())
@@ -2487,10 +2487,10 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
                 self.subTest(stage=stage),
                 mock.patch.object(board_reader, "gate", open_gate),
                 mock.patch(
-                    "coscc.service.steps.Runner", side_effect=AssertionError("a runner was made")
+                    "coscc.runner.steps.Runner", side_effect=AssertionError("a runner was made")
                 ),
-                mock.patch.object(service.answers, "worktree", tree),
-                mock.patch.object(service.answers, "sync_pr", mock.AsyncMock()),
+                mock.patch.object(service.steps, "worktree", tree),
+                mock.patch.object(service.steps, "sync_pr", mock.AsyncMock()),
                 mock.patch.object(service.steps, "mechanical", mechanical),
             ):
                 self.assertEqual(
@@ -2551,8 +2551,8 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
         before = len(self.seen)
         with (
             mock.patch.object(board_reader, "gate", open_gate),
-            mock.patch("coscc.service.steps.Runner", StandIn),
-            mock.patch.object(service.answers, "worktree", tree),
+            mock.patch("coscc.runner.steps.Runner", StandIn),
+            mock.patch.object(service.steps, "worktree", tree),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
         ):
             with self.assertRaises(Invalid) as refused:
@@ -2661,8 +2661,8 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
 
         with (
             mock.patch.object(board_reader, "gate", open_gate),
-            mock.patch("coscc.service.steps.Runner", StandIn),
-            mock.patch.object(service.answers, "worktree", tree),
+            mock.patch("coscc.runner.steps.Runner", StandIn),
+            mock.patch.object(service.steps, "worktree", tree),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
             mock.patch.object(service.steps, "after_end", after_end),
             mock.patch.object(service.autopilot, "nudge", nudged.append),
@@ -2724,7 +2724,7 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
         return self.service.ws.journal().records(self.key, kind="start")
 
     def refused(self, stage: str = "spec"):
-        from coscc.service.common import Refused
+        from coscc.runner.queue import Refused
 
         with self.assertRaises(Refused) as caught:
             self.run_stage(stage)
@@ -2743,7 +2743,7 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
             raise RuntimeError("nope")
 
         self.guarded(boom)
-        with self.assertLogs("coscc.service.steps", "ERROR"):
+        with self.assertLogs("coscc.runner.steps", "ERROR"):
             self.assertEqual(self.refused(), "g: failed (RuntimeError)")
 
     def test_the_guard_is_told_the_run_it_would_refuse(self):
@@ -2869,17 +2869,17 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
             await asyncio.gather(*others, return_exceptions=True)
 
         with (
-            mock.patch.object(service.steps, "pr_machine", Machine),
+            mock.patch.object(service.integration, "pr_machine", Machine),
             mock.patch.object(units, "branch_name", lambda *a, **kw: "feat/a-problem"),
             mock.patch.object(gitops, "current_branch", on_branch),
             mock.patch.object(board_reader, "gate", open_gate),
-            mock.patch("coscc.service.steps.Runner", StandIn),
-            mock.patch.object(service.answers, "worktree", tree),
+            mock.patch("coscc.runner.steps.Runner", StandIn),
+            mock.patch.object(service.steps, "worktree", tree),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
-            mock.patch.object(service.answers, "ingest", nothing),
-            mock.patch.object(service.steps, "cleanup", nothing),
+            mock.patch.object(service.steps, "ingest", nothing),
+            mock.patch.object(service.integration, "cleanup", nothing),
             mock.patch.object(service.steps, "after_end", nothing),
-            mock.patch.object(service.answers, "sync_pr", nothing),
+            mock.patch.object(service.steps, "sync_pr", nothing),
         ):
             asyncio.run(go())
 
@@ -2997,8 +2997,8 @@ class _AReviewStep:
             mock.patch.object(board_reader, "gate", open_gate),
             mock.patch.object(board_reader, "screens", asked),
             mock.patch.object(retake, "take", take),
-            mock.patch("coscc.service.steps.Runner", StandIn),
-            mock.patch.object(self.service.answers, "worktree", tree),
+            mock.patch("coscc.runner.steps.Runner", StandIn),
+            mock.patch.object(self.service.steps, "worktree", tree),
         ):
             with self.assertRaises(Invalid) as refused:
                 asyncio.run(go())
@@ -3065,7 +3065,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         self.assertIn("b" * 40, self.seen[0]["screens_note"])
 
     def test_a_retake_that_fails_refuses_review_before_the_session(self):
-        from coscc.service.steps import RETAKE_REFUSED
+        from coscc.runner.steps import RETAKE_REFUSED
 
         files = {p.name: p.read_bytes() for p in self.dir.iterdir()}
         result = {
@@ -3142,7 +3142,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
 
     def test_a_failed_retake_the_run_log_could_not_record_says_it_failed(self):
         # It must not say the screenshots were taken again.
-        from coscc.service.steps import RETAKE_REFUSED
+        from coscc.runner.steps import RETAKE_REFUSED
 
         said = self._unrecorded(
             {

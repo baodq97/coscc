@@ -91,7 +91,7 @@ class BadRecord(ValueError):
 class Intervention(NamedTuple):
     """One time a person had to step in, as the owner of the table that saw it reads it.
     `id` is `<kind>:<table>:<row id>`, the same on every read; `detail` is the row's own words,
-    uncut (`coscc/service/interventions.py` cuts it)."""
+    uncut (`coscc/runner/interventions.py` cuts it)."""
 
     id: str
     kind: str

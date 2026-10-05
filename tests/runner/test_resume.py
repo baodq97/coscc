@@ -18,8 +18,8 @@ from coscc.agent import transcript
 from coscc.agent.sessions import Refused, Sessions, Suspended
 from coscc.config import Config
 from coscc.service import Service
-from coscc.service import resume as resume_mod
-from coscc.service.attempts import describe
+from coscc.runner import resume as resume_mod
+from coscc.runner.queue import describe
 from tests.service.test_service import create_sync
 from tests.units.test_submit import submits as _submits
 
@@ -166,7 +166,7 @@ class _Base(unittest.TestCase):
     def taken(self) -> list[dict]:
         """`resume_step` replaced: what it was handed, and nothing run."""
         calls: list[dict] = []
-        patcher = mock.patch.object(self.service.resume, "resume_step", calls.append)
+        patcher = mock.patch.object(self.service.steps, "resume_step", calls.append)
         patcher.start()
         self.addCleanup(patcher.stop)
         return calls
@@ -216,9 +216,9 @@ class TakingUpAfterAnUpdate(_Base):
             got["chat"].append(record)
 
         with (
-            mock.patch.object(self.service.resume, "resume_integration", lambda r: integration(r)),
+            mock.patch.object(self.service.integration, "resume", lambda r: integration(r)),
             mock.patch.object(self.service.backlog, "propose_estimates", estimates),
-            mock.patch.object(self.service.resume, "resume_chat", chat),
+            mock.patch.object(self.service, "_resume_chat", chat),
         ):
             for kind in resume_mod.KINDS:
                 self.paused(kind)
@@ -344,7 +344,7 @@ class TakingUpAfterAnUpdate(_Base):
         }
         with (
             mock.patch.object(self.service.backlog, "propose_estimates", estimates),
-            mock.patch.object(self.service.resume, "resume_chat", chat),
+            mock.patch.object(self.service, "_resume_chat", chat),
         ):
             for why, refusal in cases.items():
                 with self.subTest(why), refusal():
@@ -409,7 +409,7 @@ class TakingUpAfterAnUpdate(_Base):
 
         self.paused(cwd=self.root / "gone", write=False)
         self.paused("integrate")
-        with mock.patch.object(self.service.resume, "resume_integration", lambda r: integration(r)):
+        with mock.patch.object(self.service.integration, "resume", lambda r: integration(r)):
             said = self.up()
         self.assertEqual(
             [(s["kind"], s["result"]) for s in said], [("step", "failed"), ("integrate", "resumed")]
@@ -618,7 +618,7 @@ class APausedOwnerEndsNothing(_Base):
         row = {**self.paused("integrate"), "message": "MSG"}
 
         async def gebo():
-            async for _ in self.service.steps.integrate_gebo(
+            async for _ in self.service.integration.integrate_gebo(
                 self.cwd,
                 self.key,
                 self.unit,

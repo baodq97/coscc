@@ -24,10 +24,10 @@ from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
 from coscc.service import Service
-from coscc.service.common import Refused
+from coscc.runner.queue import Refused
 from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
-from coscc.service.steps import CI_REFRESH
+from coscc.github.integration import CI_REFRESH
 from tests.service.test_service import timeline, unit_history, use_config, use_sessions
 
 SLUG = "proof-of-gebo"
@@ -195,7 +195,7 @@ class GeboThroughTheService(unittest.TestCase):
 
         async def go():
             done = {}
-            async for kind, payload in self.service.steps.integrate(self.cwd, self.unit):
+            async for kind, payload in self.service.integration.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done
@@ -276,7 +276,7 @@ class GeboThroughTheService(unittest.TestCase):
             return "[needs-person] f.txt: both"
 
         build = {"version": "9.9.9", "commit": "0123456789abcdef0123456789abcdef01234567"}
-        with mock.patch.object(self.service.steps, "app_identity", return_value=build):
+        with mock.patch.object(self.service.steps, "identity", return_value=build):
             self.integrate_with(act)
         starts = [r for r in self.records("start") if r.get("stage") == "integrate"]
         self.assertEqual(len(starts), 1)
@@ -654,7 +654,7 @@ class GeboThroughTheService(unittest.TestCase):
 
     def test_an_integration_is_refused_while_a_step_runs(self):
         """The attempt a step holds refuses Gebo `unit-busy`, and opens no session."""
-        from coscc.service.common import Refused
+        from coscc.runner.queue import Refused
 
         step = self.service.attempts.open("step", self.key, self.unit, "spec", state="running")
         with self.assertRaises(Refused) as caught:
@@ -673,7 +673,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.service.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
 
     def test_a_guard_that_denies_stops_an_integration_before_spend_and_push(self):
-        from coscc.service.common import Refused
+        from coscc.runner.queue import Refused
 
         seen = []
         self.guarded(lambda facts: seen.append(facts.stage) or "not today")
@@ -813,7 +813,7 @@ class AStaleOriginMain(unittest.TestCase):
     def press(self) -> dict:
         async def go():
             done = {}
-            async for kind, payload in self.service.steps.integrate(self.cwd, self.unit):
+            async for kind, payload in self.service.integration.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done
@@ -942,7 +942,7 @@ class AStaleOriginMain(unittest.TestCase):
                     "by": "proof",
                 }
             )
-            self.service.steps.enqueue_integration = enqueue_integration
+            self.service.integration.enqueue_integration = enqueue_integration
             self.service.steps.next_step = next_step
             before = (await self.service.board(self.cwd))["units"][0]
             # What the pass queues is written before it returns.
@@ -1076,12 +1076,12 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         # (a)
         self.assertEqual(u["state"]["state"], "awaiting")
-        self.assertEqual(len(self.service.steps.ci_asks), 1)
+        self.assertEqual(len(self.service.integration.ci_asks), 1)
         self.assertEqual(self.asked(), 1)
         # (b) A second read opens no second ask while the first is out.
         await self.read()
         await self.settle()
-        self.assertEqual((len(self.service.steps.ci_asks), self.asked()), (1, 1))
+        self.assertEqual((len(self.service.integration.ci_asks), self.asked()), (1, 1))
 
     async def test_a_red_check_is_an_error_from_the_next_read(self):
         """(d)"""
@@ -1089,7 +1089,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         first = await self.read()
         self.assertEqual(first["state"]["state"], "awaiting")
         await self.settle()
-        self.assertEqual(self.service.steps.ci_asks, {}, "the ask removed itself once done")
+        self.assertEqual(self.service.integration.ci_asks, {}, "the ask removed itself once done")
         u = await self.read()
         self.assertEqual(u["state"]["state"], "error")
         await self.settle()
@@ -1101,7 +1101,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self.checks = [{"name": "tests", "bucket": "fail"}]
         await self.read()
         await self.settle()
-        self.assertEqual(self.service.steps.ci, {}, "an answer is not held in memory")
+        self.assertEqual(self.service.integration.ci, {}, "an answer is not held in memory")
         held = prmachine.ci_held(
             self.service.ws.unit_meta().history, self.service.ws.key(self.cwd), PR, self.head
         )
@@ -1127,7 +1127,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         later = (datetime.now(timezone.utc) + timedelta(seconds=CI_REFRESH + 1)).isoformat(
             timespec="seconds"
         )
-        with mock.patch("coscc.service.steps._now", return_value=later):
+        with mock.patch("coscc.github.integration._now", return_value=later):
             await self.read()
         await self.settle()
         self.assertEqual(self.asked(), 3)
@@ -1135,10 +1135,10 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
     async def test_a_cancelled_ask_is_removed_so_the_unit_is_asked_again(self):
         await self.read()
         await self.settle()
-        [task] = self.service.steps.ci_asks.values()
+        [task] = self.service.integration.ci_asks.values()
         task.cancel()
         await self.settle()
-        self.assertEqual(self.service.steps.ci_asks, {})
+        self.assertEqual(self.service.integration.ci_asks, {})
         await self.read()
         await self.settle()
         self.assertEqual(self.asked(), 2)

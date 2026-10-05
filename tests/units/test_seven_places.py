@@ -360,7 +360,7 @@ class Place4(unittest.TestCase):
     through `submit`, else `failed`. A real conflict on a bare remote, as
     `steps_integrate_test.GeboThroughTheService` sets it up."""
 
-    from tests.service.test_steps_integrate import GeboThroughTheService as _G
+    from tests.github.test_integration import GeboThroughTheService as _G
 
     setUp, _gh, _no_act, remote_head, records = (
         _G.setUp,
@@ -372,7 +372,7 @@ class Place4(unittest.TestCase):
     del _G
 
     def _integrate(self, reply: str, said: list[dict]) -> dict:
-        from tests.service.test_steps_integrate import StandIn
+        from tests.github.test_integration import StandIn
 
         async def act(tree, gate):
             return reply
@@ -381,7 +381,7 @@ class Place4(unittest.TestCase):
 
         async def go():
             done = {}
-            async for kind, payload in self.service.steps.integrate(self.cwd, self.unit):
+            async for kind, payload in self.service.integration.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done

@@ -496,7 +496,7 @@ def seed_refusal(data_dir: Path, proj: Path) -> None:
     """The autopilot's `impl` of `0009_refused-impl`, refused by the gate with `gate-closed`.
     Written before the app starts, so its scheduler never sees the row `queued`."""
     from coscc.bus import Bus
-    from coscc.service.attempts import Attempts
+    from coscc.runner.queue import Attempts
 
     attempts = Attempts(data_dir, Bus())
     row = attempts.open("step", str(proj.resolve()), REFUSED_IMPL, "impl", started_by="autopilot")

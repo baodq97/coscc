@@ -19,7 +19,7 @@ from coscc.agent.sessions import Sessions
 from coscc.units import scratch
 from tests.service.test_answers import REVIEW_ONE
 from tests.service.test_service import create_sync
-from tests.service.test_steps_integrate import PR, SLUG, StandIn, git
+from tests.github.test_integration import PR, SLUG, StandIn, git
 from tests.units.test_submit import submits as _submits
 
 
@@ -451,7 +451,7 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         """Every board read and CI ask running now ended, and the reads an answer starts."""
         while running := [
             *self.service.boards.reads.values(),
-            *self.service.steps.ci_asks.values(),
+            *self.service.integration.ci_asks.values(),
         ]:
             await asyncio.gather(*running)
             for _ in range(5):

@@ -19,18 +19,19 @@ from coscc.store.journal import BadRecord
 from coscc.store.db import Busy
 from coscc.config import LOOPBACK, Config
 from coscc.store.db import Data
-from coscc.service.common import Refused, log_setting
+from coscc.service.common import log_setting
+from coscc.runner.queue import Refused
 from coscc.units.board import shown_state
 from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK
 from coscc.kernel import Invalid
 from coscc.units.workspaces import Workspaces
-from coscc.service.common import Holds
+from coscc.github.integration import Integration
+from coscc.runner.queue import Holds
+from coscc.runner.steps import Steps
 from coscc.service.agents import Agents
 
 if TYPE_CHECKING:
-    # `steps` imports `answers`, which reads the settings below.
     from coscc.units.read import Board
-    from coscc.service.steps import Steps
 
 log = logging.getLogger(__name__)
 
@@ -104,6 +105,7 @@ class Autopilot:
         holds: Holds,
         agents: Agents,
         steps: Steps,
+        integration: Integration,
         boards: Board,
     ) -> None:
         self.config = config
@@ -111,6 +113,7 @@ class Autopilot:
         self.holds = holds
         self.agents = agents
         self.steps = steps
+        self.integration = integration
         self.boards = boards
         # Per journal key: the lock every pass holds, the poll loop, the workspace directory it
         # was turned on for, the stops the last pass found by unit, the wake that no pass has
@@ -236,14 +239,14 @@ class Autopilot:
             except Invalid:
                 return self.ws.units_root(cwd) / unit
 
-        got = await self.steps.pr_machine().read(str(root), key, directory_of)
+        got = await self.integration.pr_machine().read(str(root), key, directory_of)
         if not got.moved:
             return got
         merged = [c for c in got.causes if c["transition"] == "merged"]
         # A merge made on GitHub is followed by no `ship` step, so its `ship` row and cleanup
         # are the reader's, before the pass it schedules.
         for c in merged:
-            await self.steps.shipped(cwd, key, c["unit"], "shipped")
+            await self.integration.shipped(cwd, key, c["unit"], "shipped")
         self.nudge(key, got.causes)
         if merged:
             for other in list(self.tasks):
@@ -290,7 +293,7 @@ class Autopilot:
         """The head the PR machine read for the unit, and the required checks it held at that head;
         `("", [])` when it has read none."""
         try:
-            history = self.steps.pr_machine().history
+            history = self.integration.pr_machine().history
             now = prmachine.state(history, key, unit)
             head, number = str(now.get("head") or ""), now.get("number")
             held = prmachine.ci_held(history, key, int(number), head) if number and head else None
@@ -662,7 +665,7 @@ class Autopilot:
             room = cap["limit"] - cap["spent"] - cap["running"]
             # The pull requests the PR machine holds open, with the files it read.
             try:
-                prs = prmachine.open_prs(self.steps.pr_machine().history, key)
+                prs = prmachine.open_prs(self.integration.pr_machine().history, key)
             except sqlite3.Error, OSError, Busy:
                 prs = []
             picked = autopilot.pick(
@@ -747,7 +750,7 @@ class Autopilot:
         unit, stage = c["unit"], c["stage"]
         try:
             if stage == "integrate":
-                self.steps.enqueue_integration(cwd, unit)
+                self.integration.enqueue_integration(cwd, unit)
             else:
                 self.steps.enqueue_step(cwd, unit, stage, c["note"])
         except Busy as e:

@@ -44,7 +44,7 @@ from coscc.agent.sessions import Sessions
 from coscc.bus import Event
 from coscc.service.agents import AgentPage
 from coscc.units.read import Cards, Detail, UpNext, cards, detail
-from coscc.service.steps import NextStep
+from coscc.runner.steps import NextStep
 from coscc.service.activity import Insights
 from coscc.service.release import ReleaseView
 from coscc.service.sessions import ChatHistory, ChatSessions
@@ -686,7 +686,9 @@ async def integrate_unit(request: Request) -> Any:
     unit's pull request, or open a paid Gebo session. A refusal is a 400 before anything changes.
     """
     body = await kernel.body(request)
-    stream = _service(request).steps.integrate(str(body.get("cwd", "")), str(body.get("unit", "")))
+    stream = _service(request).integration.integrate(
+        str(body.get("cwd", "")), str(body.get("unit", ""))
+    )
     return await kernel.ndjson(stream, "the integration")
 
 

@@ -265,7 +265,7 @@ def _unsubmitted(channel: submit_mod.Channel) -> str:
     return "" if ran.open else f"{', '.join(ran.reasons)}: no object reached submit"
 
 
-async def _nothing() -> AsyncIterator[tuple[str, Any]]:
+async def nothing() -> AsyncIterator[tuple[str, Any]]:
     """The main reply of an `opening` or `closing` turn taken up again: already said."""
     return
     yield
@@ -878,7 +878,7 @@ async def _spike_progress(
     """A spike's `spike.md` from its progress file, when its reply was not written:
     `(spike_md, detail, held)`.
 
-    Read here, before `service.steps.run_step` removes `cwd`, and not in the `except` branches: an
+    Read here, before `runner.steps.Steps.run_step` removes `cwd`, and not in the `except` branches: an
     exception raised inside one (a Stop's cancel landing on an `await`) is not caught by its
     siblings and would leave with no `end`. Wrapped like `snapshot`; `outcome` is never changed.
     `held` is the cancel of an app going down, which the caller raises once the `end` is written.
@@ -2040,7 +2040,7 @@ class Runner:
         if recorder is not None:
             tell_config(recorder, kw.get("model"), kw.get("effort"), owner, turns_left, budget_left)
         if turn_kind in ("opening", "closing"):
-            return _nothing()
+            return nothing()
         places = self._scratch(workspace, unit)
         # A spike writes only its `cwd`; the worktree and the unit are read. Only when a sibling was
         # named, so every other step's gate is unchanged.

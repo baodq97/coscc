@@ -21,11 +21,25 @@ from collections.abc import Callable
 from typing import Any, TypedDict, cast
 
 from coscc.bus import NAMES, Bus, Event, Name
+from coscc.kernel import Invalid
 from coscc.store.db import Data, now
 from coscc.store.journal import Intervention
-from coscc.service.common import Refused
+from coscc.units.guards import REASONS
 
 log = logging.getLogger(__name__)
+
+
+class Refused(Invalid):
+    """The gate refused a step. `reasons` are its codes (`guards.REASONS`), which the
+    autopilot reads instead of the words."""
+
+    def __init__(self, said: str, reasons: tuple[str, ...] = ()) -> None:
+        super().__init__(said)
+        for code in reasons:
+            if code not in REASONS:
+                raise ValueError(f"no reason code {code!r}")
+        self.reasons = tuple(reasons)
+
 
 # Each machine's moves: from a state, the states it may go to. `ended` and `refused` are the
 # ends; `ended` carries an outcome (`done`, `failed`, `stopped`, `stop_late`, `interrupted`, ...),
@@ -441,3 +455,18 @@ class Attempts:
                 except Exception:
                     log.exception("attempt %s could not be launched", row["id"])
                     self.move(row["id"], "ended", "failed")
+
+
+class Holds:
+    """What holds each unit now: its unfinished attempt, in `cos.db` (`attempts`), the only
+    thing a refusal of a busy unit reads. `finishing`: a step's `after_end`, run in its
+    attempt's `ending`, by attempt id; an Apply's settle and `shutdown` wait for it.
+    """
+
+    def __init__(self, attempts: Attempts) -> None:
+        self.attempts = attempts
+        self.finishing: dict[int, tuple[dict[str, Any], asyncio.Task]] = {}
+
+    def busy(self, key: str, unit: str) -> str:
+        """What holds this unit, in the one sentence every refusal carries, or `""`."""
+        return self.attempts.busy(key, unit)

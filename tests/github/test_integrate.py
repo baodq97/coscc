@@ -900,7 +900,7 @@ class TheLatestIntegrationSinceTheLastRound(unittest.TestCase):
         import tempfile
 
         from coscc.store.journal import Journal
-        from coscc.service.steps import integration_since_review
+        from coscc.github.integration import integration_since_review
 
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)

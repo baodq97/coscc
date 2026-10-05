@@ -6,7 +6,8 @@ import re
 import unittest
 from pathlib import Path
 
-from coscc.service.common import Refused, Updating
+from coscc.runner.queue import Refused
+from coscc.service.common import Updating
 from coscc.units import guards, states
 from coscc.units.guards import OPEN, BadVerdict, Verdict
 

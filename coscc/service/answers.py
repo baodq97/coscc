@@ -26,17 +26,18 @@ from coscc.store.journal import BadRecord, Journal
 from coscc.store.db import Busy
 from coscc.units import submit
 from coscc.units import transitions
-from coscc.service.attempts import Attempt, describe
+from coscc.runner.queue import Attempt, describe
 from coscc import units
 from coscc.units import scratch, worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
 from coscc.service.autopilot import autopilot_values
-from coscc.service.common import OUTCOME_RESULTS, Refused
+from coscc.service.common import OUTCOME_RESULTS
+from coscc.runner.queue import Refused
 from coscc.kernel import OWNER
 from coscc.kernel import Invalid
 from coscc.config import Config
 from coscc.units.workspaces import Workspaces
-from coscc.service.common import Holds
+from coscc.runner.queue import Holds
 from coscc.service.agents import Agents
 from coscc.service.backlog import Backlog
 from coscc.units.ideas import Ideas

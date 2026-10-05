@@ -31,7 +31,7 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(Updating):
             await self.s.steps.run_step(self.tmp.name, "0001_a", "impl").__anext__()
         with self.assertRaises(Updating):
-            await self.s.steps.integrate(self.tmp.name, "0001_a").__anext__()
+            await self.s.integration.integrate(self.tmp.name, "0001_a").__anext__()
         with self.assertRaises(Updating):
             self.s.chat.check_send(self.tmp.name, "hi")
         self.s.updater.window = False

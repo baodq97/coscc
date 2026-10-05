@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from coscc.units import more_rounds
-from coscc.service.attempts import describe
+from coscc.runner.queue import describe
 
 STUCK = {"name": "0001_q", "more_rounds": True}
 

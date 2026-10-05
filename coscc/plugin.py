@@ -35,8 +35,9 @@ from coscc.kernel import (
     Submitted,
     arm_of,
 )
-from coscc.service import Service, attempts
-from coscc.service.interventions import interventions
+from coscc.runner import queue
+from coscc.service import Service
+from coscc.runner.interventions import interventions
 from coscc.service.update import refuse_while_updating
 from coscc.units.workspaces import Workspaces
 from coscc.units import submit, worktrees
@@ -171,7 +172,7 @@ def add_sessions(service: Service, features: Sequence[Feature]) -> None:
         for s in f.sessions:
             policy.add_session(s.kind, s.grant, s.own_turns)
             submit.add_session(s.kind, s.schema, s.purpose)
-            attempts.add_session(s.kind)
+            queue.add_session(s.kind)
             for end in ("ended", "refused"):
                 service.bus.subscribe(
                     cast(Name, f"{s.kind}.{end}"), lambda _: service.updater.job_ended()
