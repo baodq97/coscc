@@ -1,9 +1,10 @@
-"""Both release presses through `Core`, against a bare remote and a fake `gh`.
+"""Both release presses and the three routes, against a bare remote and a fake `gh`.
 
 The fake `gh` is a script on a temporary `PATH`. It keeps its pull requests in a JSON file,
 reads heads off the bare remote, squashes a merge for real in a scratch clone and pushes it
 to `main`, and logs every call. It does not do what the real `gh pr merge --delete-branch`
-does to local branches (plan Risk 3). `scripts/verify_0046.py` drives the same `Fixture`."""
+does to local branches. The presses are driven through a `Release` on the feature's own `Ctx`;
+the routes through an app built with the feature."""
 
 from __future__ import annotations
 
@@ -18,13 +19,19 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import httpx
+
+from coscc import features
 from coscc.config import Config
+from coscc.features import release
 from coscc.git import fetches
 from coscc.github import integrate
-from coscc.http.app import Core
+from coscc.http import plugin
+from coscc.http.app import Core, build
 from coscc.kernel import Invalid
+from coscc.loop import run
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 ID = ("-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false")
 
 PYPROJECT = '[project]\nname = "fixture"\nversion = "0.1.0"\nrequires-python = ">=3.11"\ndependencies = []\n'
@@ -161,16 +168,21 @@ class Fixture:
         }
 
     def core(self) -> Core:
-        config = Config(
+        return Core(self.config(), mock.MagicMock())
+
+    def config(self) -> Config:
+        return Config(
             workspaces=(self.cwd,),
             working_dir=str(self.base / "work"),
             data_dir=str(self.base / "data"),
         )
-        return Core(config, mock.MagicMock())
 
     def units(self, service: Core) -> None:
+        asyncio.run(self.make_units(service))
+
+    async def make_units(self, service: Core) -> None:
         for slug, kind, pr in (("one-thing", "feat", 11), ("two-thing", "fix", 12)):
-            made = asyncio.run(service.answers.create_unit(self.cwd, slug, "fixture"))
+            made = await service.answers.create_unit(self.cwd, slug, "fixture")
             directory = Path(made["path"])
             (directory / "intent.md").write_text(
                 f"# Intent: {slug}\nAuthor: t. Type: {kind}. Status: accepted.\n", encoding="utf-8"
@@ -211,15 +223,11 @@ class Fixture:
         return p.stdout.strip()
 
 
-def press(service: Core, phase: str, cwd: str, version: str) -> dict:
+def press(rel: release.Release, phase: str, cwd: str, version: str) -> dict:
     """One press, as the route makes it: an `Invalid` before the first item, else the record."""
 
     async def go() -> dict:
-        run = (
-            service.release.release_prepare
-            if phase == "prepare"
-            else service.release.release_publish
-        )
+        run = rel.release_prepare if phase == "prepare" else rel.release_publish
         done: dict = {}
         async for kind, payload in run(cwd, version):
             if kind == "done":
@@ -230,7 +238,7 @@ def press(service: Core, phase: str, cwd: str, version: str) -> dict:
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is needed")
-class ReleasingThroughTheService(unittest.TestCase):
+class ReleasingThroughTheFeature(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -242,6 +250,7 @@ class ReleasingThroughTheService(unittest.TestCase):
         shared.start()
         self.addCleanup(shared.stop)
         self.core = self.fx.core()
+        self.rel = release.Release(plugin.ctx_of(self.core, release.FEATURE))
         self.fx.units(self.core)
         self.key = self.core.ws.key(self.fx.cwd)
 
@@ -249,7 +258,10 @@ class ReleasingThroughTheService(unittest.TestCase):
         return self.core.ws.journal().records(self.key, kind="release")
 
     def block(self) -> dict:
-        return asyncio.run(self.core.board(self.fx.cwd))["release"]
+        # `fresh`: the answers `gh` gives now, not the ones held from the last call.
+        block = asyncio.run(self.rel.view(self.fx.cwd, fresh=True))
+        assert block is not None
+        return block
 
     def test_the_board_shows_what_is_unreleased_and_proposes_a_minor(self):
         got = self.block()
@@ -270,23 +282,25 @@ class ReleasingThroughTheService(unittest.TestCase):
         fx = Fixture(Path(self._tmp.name) / "untagged")
         git(fx.workspace, "tag", "-d", "v0.1.0")
         with mock.patch.dict(os.environ, fx.env):
-            got = asyncio.run(fx.core().board(fx.cwd))["release"]
+            core = fx.core()
+            got = asyncio.run(release.Release(plugin.ctx_of(core, release.FEATURE)).view(fx.cwd))
+        assert got is not None
         self.assertEqual(got["state"], "nothing")
         self.assertEqual(fx.calls(), [])
 
     def test_refusals_leave_one_record_each_and_change_nothing(self):
         for version, said in (("0.2.0-rc.1", "prerelease"), ("0.1.0", "not greater")):
             with self.subTest(version=version), self.assertRaises(Invalid) as caught:
-                press(self.core, "prepare", self.fx.cwd, version)
+                press(self.rel, "prepare", self.fx.cwd, version)
             self.assertIn(said, str(caught.exception))
         self.assertEqual([r["outcome"] for r in self.records()], ["refused", "refused"])
         self.assertEqual(self.fx.remote_ref("refs/heads/chore/release-0-1-0"), "")
-        self.assertFalse(self.core.release._releasing)
+        self.assertFalse(self.rel._releasing)
 
     def test_gh_offline_is_named_as_gh_not_as_check_version(self):
         self.fx.state.write_text(json.dumps({"offline": True}), encoding="utf-8")
         with self.assertRaises(Invalid) as caught:
-            press(self.core, "prepare", self.fx.cwd, "0.2.0")
+            press(self.rel, "prepare", self.fx.cwd, "0.2.0")
         said = str(caught.exception)
         self.assertTrue(said.startswith("the release could not be read: "), said)
         self.assertIn("could not resolve api.github.com", said)
@@ -294,7 +308,7 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertEqual([r["outcome"] for r in self.records()], ["refused"])
 
     def test_prepare_then_publish(self):
-        rec = press(self.core, "prepare", self.fx.cwd, "0.2.0")
+        rec = press(self.rel, "prepare", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "opened", rec.get("detail"))
         branch = self.fx.remote_ref("refs/heads/chore/release-0-2-0")
         self.assertEqual(branch, rec["head"])
@@ -306,15 +320,15 @@ class ReleasingThroughTheService(unittest.TestCase):
             ["package-lock.json", "package.json", "pyproject.toml", "uv.lock"],
         )
         with self.assertRaises(Invalid) as caught:
-            press(self.core, "prepare", self.fx.cwd, "0.2.0")
+            press(self.rel, "prepare", self.fx.cwd, "0.2.0")
         self.assertIn("already open", str(caught.exception))
         self.fx.set_checks("pending")
         self.assertIn("still running", self.block()["disabled_reason"])
         with self.assertRaises(Invalid):
-            press(self.core, "publish", self.fx.cwd, "0.2.0")
+            press(self.rel, "publish", self.fx.cwd, "0.2.0")
         self.fx.set_checks("pass")
         self.assertTrue(self.block()["enabled"])
-        rec = press(self.core, "publish", self.fx.cwd, "0.2.0")
+        rec = press(self.rel, "publish", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "tagged", rec.get("detail"))
         self.assertEqual(self.fx.remote_ref("refs/tags/v0.2.0"), rec["merge_sha"])
         self.assertEqual(self.fx.remote_ref("refs/heads/main"), rec["merge_sha"])
@@ -328,19 +342,19 @@ class ReleasingThroughTheService(unittest.TestCase):
         hook = self.fx.remote / "hooks" / "pre-receive"
         hook.write_text("#!/bin/sh\necho 'no credentials here' >&2\nexit 1\n", encoding="utf-8")
         hook.chmod(0o755)
-        rec = press(self.core, "prepare", self.fx.cwd, "0.2.0")
+        rec = press(self.rel, "prepare", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "failed")
         self.assertIn("no credentials here", rec["detail"])
         self.assertEqual(git(self.fx.workspace, "branch", "--list", "chore/release-0-2-0"), "")
-        self.assertFalse(self.core.release.release_tree_path(self.fx.cwd).exists())
+        self.assertFalse(self.rel.release_tree_path(self.fx.cwd).exists())
         hook.unlink()
-        rec = press(self.core, "prepare", self.fx.cwd, "0.2.0")
+        rec = press(self.rel, "prepare", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "opened", rec.get("detail"))
         self.assertEqual(self.fx.remote_ref("refs/heads/chore/release-0-2-0"), rec["head"])
 
     def test_a_push_after_the_checks_passed_is_not_merged(self):
         # The merge used to read the pull request again and pin whatever head it found.
-        opened = press(self.core, "prepare", self.fx.cwd, "0.2.0")["head"]
+        opened = press(self.rel, "prepare", self.fx.cwd, "0.2.0")["head"]
         main = self.fx.remote_ref("refs/heads/main")
         real = integrate.required_checks
 
@@ -350,13 +364,184 @@ class ReleasingThroughTheService(unittest.TestCase):
             return got
 
         with mock.patch.object(integrate, "required_checks", then_somebody_pushes):
-            rec = press(self.core, "publish", self.fx.cwd, "0.2.0")
+            rec = press(self.rel, "publish", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "failed", rec)
         merges = [c for c in self.fx.calls() if c.startswith("pr merge")]
         self.assertEqual(len(merges), 1)
         self.assertIn(f"--match-head-commit {opened}", merges[0])
         self.assertEqual(self.fx.remote_ref("refs/heads/main"), main)
         self.assertEqual(self.fx.remote_ref("refs/tags/v0.2.0"), "")
+
+
+def with_release() -> tuple[features.Feature, ...]:
+    """The app's features, release among them whether or not it is registered yet."""
+    return (*(f for f in features.FEATURES if f.name != "release"), release.FEATURE)
+
+
+@unittest.skipUnless(shutil.which("uv"), "uv is needed")
+class OverHttp(unittest.IsolatedAsyncioTestCase):
+    """An app built with the fixture's workspace; a subclass says which features it carries."""
+
+    def carried(self) -> tuple[features.Feature, ...]:
+        return with_release()
+
+    async def asyncSetUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.fx = Fixture(Path(tmp.name))
+        for patch in (
+            mock.patch.dict(os.environ, self.fx.env),
+            mock.patch.object(fetches, "shared", fetches.Fetches()),
+            mock.patch.object(features, "FEATURES", self.carried()),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.app = build(self.fx.config())
+        self.core = self.app.state.core
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        self.addAsyncCleanup(self.client.aclose)
+
+    def records(self) -> list[dict]:
+        return self.core.ws.journal().records(self.core.ws.key(self.fx.cwd), kind="release")
+
+
+class ReleasingOverHttp(OverHttp):
+    """Over HTTP: a refusal is a 400 before any line of output, with one record."""
+
+    async def test_a_refused_press_is_a_400_and_one_record(self):
+        for route in ("/api/release/prepare", "/api/release/publish"):
+            with self.subTest(route=route):
+                got = await self.client.post(
+                    route, json={"cwd": self.fx.cwd, "version": "0.2.0-rc.1"}
+                )
+                self.assertEqual(got.status_code, 400)
+                self.assertIn("prerelease", got.json()["error"])
+        self.assertEqual(
+            [(r["phase"], r["outcome"]) for r in self.records()],
+            [("prepare", "refused"), ("publish", "refused")],
+        )
+
+    async def test_bad_bodies_are_400(self):
+        for body in ({"cwd": "/etc", "version": "0.2.0"}, [], {}):
+            with self.subTest(body=body):
+                got = await self.client.post("/api/release/prepare", json=body)
+                self.assertEqual(got.status_code, 400)
+
+    async def test_an_unknown_workspace_is_400_on_the_read_too(self):
+        got = await self.client.get("/api/release", params={"cwd": "/etc"})
+        self.assertEqual(got.status_code, 400)
+
+    async def test_the_read_is_the_block_of_the_workspace(self):
+        await self.fx.make_units(self.core)
+        got = await self.client.get("/api/release", params={"cwd": self.fx.cwd})
+        self.assertEqual(got.status_code, 200)
+        block = got.json()
+        self.assertEqual(
+            (block["state"], block["last_tag"], block["proposed"], block["button"]),
+            ("ready", "v0.1.0", "0.2.0", "prepare"),
+        )
+        self.assertNotIn("origin_sha", block)
+
+
+class ReleaseOffForAWorkspace(OverHttp):
+    """`off` is no panel, no press, no `git` and no record."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        got = await self.client.post(
+            "/api/features", json={"cwd": self.fx.cwd, "name": "release", "state": "off"}
+        )
+        self.assertEqual(got.status_code, 200)
+
+    async def test_the_read_is_null(self):
+        got = await self.client.get("/api/release", params={"cwd": self.fx.cwd})
+        self.assertEqual((got.status_code, got.json()), (200, None))
+
+    async def test_a_press_is_a_400_before_any_git_or_gh_and_leaves_no_record(self):
+        with mock.patch.object(release, "fetch_with_tags", side_effect=AssertionError("git ran")):
+            for route in ("/api/release/prepare", "/api/release/publish"):
+                with self.subTest(route=route):
+                    got = await self.client.post(
+                        route, json={"cwd": self.fx.cwd, "version": "0.2.0"}
+                    )
+                    self.assertEqual(got.status_code, 400)
+                    self.assertIn("release is off", got.json()["error"])
+        self.assertEqual(self.fx.calls(), [])
+        self.assertEqual(self.records(), [])
+
+
+class ReleaseNotCarried(OverHttp):
+    """An app built without the feature has no release routes and no `release` on its board."""
+
+    def carried(self) -> tuple[features.Feature, ...]:
+        return tuple(f for f in features.FEATURES if f.name != "release")
+
+    async def test_the_routes_are_not_there(self):
+        self.assertEqual(
+            (await self.client.get("/api/release", params={"cwd": self.fx.cwd})).status_code, 404
+        )
+        for route in ("/api/release/prepare", "/api/release/publish"):
+            got = await self.client.post(route, json={"cwd": self.fx.cwd, "version": "0.2.0"})
+            self.assertIn(got.status_code, (404, 405), route)
+        self.assertEqual(self.fx.calls(), [])
+
+    async def test_the_board_has_no_release(self):
+        self.assertNotIn("release", await self.core.board(self.fx.cwd))
+
+
+class ReadingCostsLittle(OverHttp):
+    """What a board read and the panel's read ask of `gh` and of the loop."""
+
+    def pr_lists(self) -> int:
+        return len([c for c in self.fx.calls() if c.startswith("pr list")])
+
+    async def test_a_board_read_asks_for_no_release_detail_and_the_panel_adds_one_pr_list_at_most(
+        self,
+    ):
+        await self.fx.make_units(self.core)
+        tags: list[list[str]] = []
+        real = run.ask
+
+        async def counting(args, **kwargs):
+            if args[:1] == ["check-tag"]:
+                tags.append(list(args))
+            return await real(args, **kwargs)
+
+        with mock.patch.object(run, "ask", counting):
+            await self.core.board(self.fx.cwd)
+            self.assertEqual(tags, [])
+            for word in ("pr checks", "release view", "run list"):
+                self.assertEqual([c for c in self.fx.calls() if c.startswith(word)], [], word)
+            lists = self.pr_lists()
+            self.assertLessEqual(lists, 1)
+            got = await self.client.get("/api/release", params={"cwd": self.fx.cwd})
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(tags, [["check-tag", "v0.1.0"]])
+        # The held answer is asked again in the background, once.
+        self.assertLessEqual(self.pr_lists() - lists, 1)
+
+
+class ShuttingDownWithAnAskRunning(unittest.IsolatedAsyncioTestCase):
+    async def test_an_ask_of_the_panel_is_cancelled_and_waited_for(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        workspace = Path(tmp.name) / "work" / "proj"
+        workspace.mkdir(parents=True)
+        core = Core(
+            Config(
+                workspaces=(str(workspace),),
+                working_dir=str(Path(tmp.name) / "work"),
+                data_dir=str(Path(tmp.name) / "data"),
+            ),
+            mock.MagicMock(),
+        )
+        ctx = plugin.ctx_of(core, release.FEATURE)
+        never = asyncio.Event()
+        ask = ctx.asks.ask((str(workspace), "status", "v0.1.0"), never.wait)
+        await asyncio.wait_for(core.shutdown(), 5)
+        self.assertTrue(ask.cancelled())
 
 
 if __name__ == "__main__":

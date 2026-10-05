@@ -49,7 +49,7 @@ from coscc.git.gitops import show_file as show_file
 from coscc.git.gitops import tags_merged as tags_merged
 from coscc.git.gitops import worktree_add as worktree_add
 from coscc.git.gitops import worktree_list as worktree_list
-from coscc.loop.run import ask as ask
+from coscc.loop import run as run
 from coscc.store.db import Busy as Busy
 from coscc.store.db import Data
 from coscc.store.db import now as now

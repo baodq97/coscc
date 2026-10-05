@@ -28,7 +28,6 @@ from coscc.bus import Event
 from coscc.config import Config, from_env
 from coscc.github.integrate import open_prs_once
 from coscc.github.integration import Integration
-from coscc.github.release import Release
 from coscc.http import plugin, routes, studio
 from coscc.kernel import Invalid
 from coscc.leif.agents import Agents, Models
@@ -91,7 +90,6 @@ class Core:
         self.backlog = Backlog(
             self.config, self.ws, self.holds, self.sessions, self.updater, self.models, self.bus
         )
-        self.release = Release(self.config, self.ws, lambda: refuse_while_updating(self.updater))
 
         # An answer written and a step or an integration ended each schedule an autopilot
         # pass; the autopilot, built after them, is looked up when the event comes.
@@ -140,7 +138,6 @@ class Core:
             lambda cwd: open_prs_once(cwd)(),
             self._attach,
         )
-        self.release.details.changed = self.boards.changed
         # Each feature's slow reads (`Ctx.asks`), by its name: `ctx_of` makes them.
         self.asks: dict[str, Asked] = {}
         self.autopilot = Autopilot(
@@ -247,12 +244,9 @@ class Core:
             self.autopilot.nudge(event.workspace)
 
     async def _attach(self, cwd, data, journal, key, prs, fresh) -> Callable[[], None]:
-        """What the board read adds from above `units`: each unit's integration and the release
-        block. Returns what starts the CI asks that found no answer, which the read calls last."""
+        """What the board read adds from above `units`: each unit's integration. Returns what
+        starts the CI asks that found no answer, which the read calls last."""
         asks = await self.integration.attach_integration(
-            cwd, data["units"], journal, key, prs, fresh
-        )
-        data["release"] = await self.release.attach_release(
             cwd, data["units"], journal, key, prs, fresh
         )
         return lambda: self.integration.ask_ci(
@@ -268,11 +262,10 @@ class Core:
         return data
 
     def _asks(self) -> list[tuple[str, asyncio.Task]]:
-        """The background `gh` asks running now: CI, the board's and the release panel's."""
+        """The background `gh` asks running now: CI, the board's and each feature's."""
         return [
             *((f"CI ask of {u} in {ws}", t) for (ws, u), t in self.integration.ci_asks.items()),
             *((f"gh ask for {' '.join(k)}", t) for k, t in self.boards.prs.asks.items()),
-            *((f"release ask for {' '.join(k)}", t) for k, t in self.release.details.asks.items()),
             *(
                 (f"{name} ask for {' '.join(k)}", t)
                 for name, asked in self.asks.items()
@@ -318,7 +311,7 @@ class Core:
             for r in self.steps.tasks.values()
             if r.stage != "integrate" and r.task is not None and not r.task.done()
         ]
-        # A step's task past `steps.release`, still in its `after_end`.
+        # A step's task in its attempt's `ending`, still in its `after_end` (`holds.finishing`).
         steps += [
             (f"after-end of {entry['unit']} in {entry['workspace']}", t)
             for entry, t in self.holds.finishing.values()

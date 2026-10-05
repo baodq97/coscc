@@ -22,6 +22,7 @@ from coscc.git import gh, gitops
 from coscc.http.app import Core
 from coscc.units import board as board_reader
 from coscc.units import worktrees
+from coscc.units.read import Asked
 from tests.github.test_integration import StandIn, git
 
 # A child that outlives any test unless it is killed.
@@ -219,9 +220,10 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         await self.a_read_in_its_thread()
         down = asyncio.ensure_future(self.core.shutdown())
         self.assertTrue(await self.still_running(down))
-        # What a request the server still took starts: the release panel's `gh`, held.
+        # What a request the server still took starts: a feature's `gh` ask, held.
         never = asyncio.Event()
-        ask = self.core.release.details.ask((self.cwd, "status", "v0.1.0"), never.wait)
+        asked = self.core.asks.setdefault("probe", Asked())
+        ask = asked.ask((self.cwd, "status", "v0.1.0"), never.wait)
         self.release.set()
         await asyncio.wait_for(down, 5)
         self.assertTrue(ask.cancelled())

@@ -155,7 +155,7 @@ class TurningAFeatureOffForAWorkspace(Setup):
             got = await client.get("/api/features", params={"cwd": str(self.ws), "detail": "1"})
         rows = got.json()
         self.assertEqual(set(rows), {f.name for f in features.FEATURES})
-        self.assertEqual(len(rows), 6)
+        self.assertEqual(len(rows), 7)
         for name, row in rows.items():
             with self.subTest(feature=name):
                 self.assertTrue(row["summary"])

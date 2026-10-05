@@ -9,7 +9,7 @@ import { slugOf } from "../screens/NewWork";
 import { inUnit, merged, toolSummary } from "../screens/RunLog";
 import { moved } from "../screens/UpNext";
 import { lastDays } from "../screens/Insights";
-import { kinds } from "../screens/Work";
+import { kinds } from "../../../coscc/features/release/ui/index";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -164,7 +164,8 @@ describe("release", () => {
 
 describe("features", () => {
   it("finds the UI of each feature that has one, by its folder", () => {
-    expect(Object.keys(FEATURE_UIS).sort()).toEqual(["notices", "scan", "vault"]);
+    expect(Object.keys(FEATURE_UIS).sort()).toEqual(["notices", "release", "scan", "vault"]);
+    expect(FEATURE_UIS.release.project).toBeTypeOf("function");
     expect(FEATURE_UIS.vault.page?.label).toBe("Vault");
     expect(FEATURE_UIS.vault.unit).toBeTypeOf("function");
     expect(FEATURE_UIS.scan.backlog).toBeTypeOf("function");

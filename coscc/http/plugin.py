@@ -259,9 +259,12 @@ def ctx_of(core: Core, feature: Feature) -> Ctx:
 
 
 async def _units(core: Core, workspace: str, fresh: bool) -> list[dict[str, Any]]:
-    """`Units.units`: the board held, or the loop asked again when `fresh`."""
+    """`Units.units`: the board held, read only when none is, or the loop asked again when
+    `fresh`."""
     if not fresh:
-        return (await core.boards.get(workspace, "held"))["units"]
+        held = core.boards.held.get(core.ws.key(core.ws.check(workspace)))
+        board = held["data"] if held else await core.boards.get(workspace, "held")
+        return board["units"]
     core.ws.check(workspace)
     try:
         read = await board_reader.read(
@@ -273,7 +276,11 @@ async def _units(core: Core, workspace: str, fresh: bool) -> list[dict[str, Any]
 
 
 async def _open_prs(core: Core, workspace: str, fresh: bool) -> list[dict[str, Any]] | str:
-    """`Units.open_prs`: the board's held `gh pr list`, the same key its reads use."""
+    """`Units.open_prs`: the board's held `gh pr list`, under the key its reads use; asked only
+    when none is held or `fresh`."""
+    held = core.boards.prs.held.get((workspace, "prs"))
+    if held is not None and not fresh:
+        return held[0]
     return await core.boards.prs.get(
         (workspace, "prs"), lambda: core.boards.open_prs(workspace), fresh
     )
