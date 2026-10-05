@@ -1458,6 +1458,13 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertIn(update.UNAVAILABLE, body["reason"])
         self.assertTrue(body["version"])
 
+    async def test_a_failed_update_is_reported_not_a_500(self):
+        self.as_a_service()
+        self.updater.error = {"message": "the trial failed", "log": "/l", "log_tail": "x"}
+        r = await self.client.get("/api/update")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["error"]["message"], "the trial failed")
+
     async def test_every_post_is_409_where_updates_are_unavailable(self):
         for path in ("/api/update/apply", "/api/update/cancel", "/api/update/build-local"):
             with self.subTest(path=path):

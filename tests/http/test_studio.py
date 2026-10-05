@@ -54,3 +54,11 @@ def test_an_unknown_api_path_is_not_found_not_the_page(built: Path, path: str) -
     res = client().get(path)
     assert res.status_code == 404
     assert res.json() == {"detail": "Not Found"}
+
+
+def test_the_studio_is_looked_for_where_ui_builds_it():
+    # The wheel check (`coscc/agent/harness.py`) and vite's `outDir` both name `coscc/_studio/`.
+    repo = Path(__file__).resolve().parents[2]
+    vite = (repo / "ui" / "vite.config.ts").read_text()
+    assert 'outDir: "../coscc/_studio"' in vite
+    assert studio.BUILT == repo / "coscc" / "_studio"

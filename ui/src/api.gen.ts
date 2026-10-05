@@ -550,6 +550,12 @@ export type UpNext = {
   "propose_warning": string;
 };
 
+export type UpdateError = {
+  "message": string;
+  "log": string;
+  "log_tail"?: string;
+};
+
 export type UpdateStatus = {
   "version": string;
   "build_id": string;
@@ -565,7 +571,7 @@ export type UpdateStatus = {
   "local"?: Build | null;
   "last"?: Record<string, unknown> | null;
   "checked_at"?: string | null;
-  "error"?: string | null;
+  "error"?: UpdateError | null;
   "warning"?: string;
   "log"?: string;
   "line": string;

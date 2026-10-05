@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-BUILT = Path(__file__).resolve().parent / "_studio"
+BUILT = Path(__file__).resolve().parents[1] / "_studio"
 
 router = APIRouter()
 
