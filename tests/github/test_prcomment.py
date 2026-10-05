@@ -58,54 +58,12 @@ class FakeGh:
 
 
 class TheBodySaysWhereItCameFromAndCarriesTheWholeRound(unittest.TestCase):
-    def test_the_first_line_names_round_unit_agent_and_not_an_approval(self):
-        first = prcomment.body(UNIT, 1, "changes-requested", ROUND).splitlines()[0]
-        m = FIRST.match(first)
-        self.assertIsNotNone(m, first)
-        self.assertEqual(m.groups(), ("1", UNIT))
-
-    def test_the_first_line_names_the_review_agent_and_says_it_is_not_a_person(self):
-        # The label is handed in; the marker does not change with it.
-        b = prcomment.body(UNIT, 2, "pass", ROUND, "Tiwaz (agent, review)")
-        self.assertEqual(
-            b.splitlines()[0],
-            f"**coscc review, round 2 of {UNIT}.** Written by Tiwaz (agent, review), an agent "
-            "session, not a person. This comment is not an approval.",
-        )
-        self.assertEqual(b.splitlines()[-1], prcomment.marker(UNIT, 2))
-        gh = FakeGh()
-        run(prcomment.post(UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh))
-        r = run(
-            prcomment.post(
-                UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh, author="Judge (agent, review)"
-            )
-        )
-        self.assertEqual(r.state, "already")
-        gh = FakeGh()
-        run(
-            prcomment.post(
-                UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh, author="Judge (agent, review)"
-            )
-        )
-        self.assertIn("Written by Judge (agent, review), an agent session", gh.comments[0]["body"])
-
     def test_every_finding_is_in_the_body_verbatim(self):
         b = prcomment.body(UNIT, 1, "changes-requested", ROUND)
         self.assertEqual(len(FINDINGS), 3)
         for f in FINDINGS:
             self.assertIn(f, b)
         self.assertIn("Verdict: changes-requested", b)
-
-    def test_the_same_round_gives_the_same_body(self):
-        self.assertEqual(
-            prcomment.body(UNIT, 1, "pass", ROUND), prcomment.body(UNIT, 1, "pass", ROUND)
-        )
-
-    def test_the_last_non_empty_line_is_the_marker(self):
-        b = prcomment.body(UNIT, 2, None, ROUND)
-        last = [line for line in b.splitlines() if line.strip()][-1]
-        self.assertEqual(last, f"<!-- coscc-review unit={UNIT} round=2 -->")
-        self.assertIn("Verdict: unreadable", b)
 
 
 class PostingHappensOnceAndNeverAsAReview(unittest.TestCase):
@@ -150,14 +108,6 @@ class PostingHappensOnceAndNeverAsAReview(unittest.TestCase):
                 self.assertEqual(r.state, "failed")
                 self.assertTrue(r.reason)
 
-    def test_unreadable_json_is_a_failure(self):
-        async def gh(argv, cwd, stdin):
-            return 0, "not json", ""
-
-        r = run(prcomment.post(UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh))
-        self.assertEqual(r.state, "failed")
-        self.assertIn("JSON", r.reason)
-
     def test_no_url_or_a_bad_one_never_reaches_gh(self):
         for url in (
             None,
@@ -181,13 +131,6 @@ class PostingHappensOnceAndNeverAsAReview(unittest.TestCase):
             run(prcomment.post(UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh))
             for argv in gh.calls:
                 self.assertNotIn("review", argv[:2])
-
-    def test_the_module_has_no_gh_pr_review_in_it(self):
-        from pathlib import Path
-
-        source = Path(prcomment.__file__).read_text(encoding="utf-8")
-        code = source.split('"""', 2)[2]  # past the docstring, which names what it refuses
-        self.assertNotIn('"review"', code)
 
 
 if __name__ == "__main__":

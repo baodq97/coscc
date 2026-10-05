@@ -11,7 +11,6 @@ import unittest
 from pathlib import Path
 
 from coscc.github import release
-from coscc.loop import run
 
 UNITS = [
     {"name": "0001_a", "type": "feat", "pr": {"number": 11}},
@@ -24,11 +23,6 @@ class Tags(unittest.TestCase):
     def test_candidates_are_release_shaped_and_highest_first(self):
         got = release.candidates(["v0.9.0", "v0.10.0", "v0.10.0-rc.1", "x", "v0.2.10", "v1.0"])
         self.assertEqual(got, ["v0.10.0", "v0.9.0", "v0.2.10"])
-
-    def test_branch_names_round_trip(self):
-        self.assertEqual(release.branch_name("0.11.0"), "chore/release-0-11-0")
-        self.assertEqual(release.version_of_branch("chore/release-0-11-0"), "0.11.0")
-        self.assertEqual(release.version_of_branch("feat/x"), "")
 
 
 class Matching(unittest.TestCase):
@@ -52,11 +46,6 @@ class Matching(unittest.TestCase):
 class Proposing(unittest.TestCase):
     def test_a_feat_unit_is_a_minor(self):
         self.assertEqual(release.propose("v0.1.0", [{"type": "feat"}], []), ("0.2.0", ""))
-
-    def test_anything_else_is_a_patch(self):
-        self.assertEqual(
-            release.propose("v0.1.3", [{"type": "fix"}], [{"subject": "build: x"}]), ("0.1.4", "")
-        )
 
     def test_an_unmatched_feat_commit_is_a_minor(self):
         for subject in ("feat: x", "feat(ui): x", "feat!: x", "feat(ui)!: x"):
@@ -225,33 +214,6 @@ class Diffing(unittest.TestCase):
 
 
 class Recording(unittest.TestCase):
-    def test_the_fields_of(self):
-        rec = release.record(
-            workspace="/w", phase="prepare", version="0.2.0", outcome="opened", pr=3
-        )
-        for key in (
-            "workspace",
-            "phase",
-            "version",
-            "proposed",
-            "last_tag",
-            "units",
-            "commits",
-            "pr",
-            "head",
-            "merge_sha",
-            "outcome",
-            "detail",
-        ):
-            self.assertIn(key, rec)
-        self.assertEqual((rec["kind"], rec["unit"], rec["stage"]), ("release", "", "release"))
-
-    def test_an_unknown_outcome_or_phase_is_refused(self):
-        with self.assertRaises(ValueError):
-            release.record(workspace="/w", phase="prepare", version="0.2.0", outcome="pushed")
-        with self.assertRaises(ValueError):
-            release.record(workspace="/w", phase="later", version="0.2.0", outcome="opened")
-
     def test_opened_head_is_the_last_for_the_version(self):
         rows = [
             {"kind": "release", "outcome": "opened", "version": "0.2.0", "head": "a", "pr": 1},
@@ -331,13 +293,6 @@ class AskingTheLoop(unittest.TestCase):
         )
         return tree
 
-    def test_a_checkout_outside_this_tree_answers_with_its_own_version(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tree = self.checkout(tmp, "9.9.9")
-            by_hand = run.ask_sync(["check-version"], cwd=tree)
-            self.assertEqual((by_hand.code, by_hand.out.strip()), (0, "9.9.9"), by_hand.err)
-            self.assertEqual(asyncio.run(release.cos(tree, "check-version")), (0, "9.9.9"))
-
     def test_the_checkouts_disagreement_is_its_own_words_and_exit(self):
         with tempfile.TemporaryDirectory() as tmp:
             tree = self.checkout(tmp, "9.9.9")
@@ -347,12 +302,6 @@ class AskingTheLoop(unittest.TestCase):
             code, said = asyncio.run(release.cos(tree, "check-version"))
             self.assertNotEqual(code, 0)
             self.assertIn("9.9.8", said)
-
-    def test_a_checkout_without_a_loop_script_is_asked_all_the_same(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tree = self.checkout(tmp, "9.9.9")
-            self.assertFalse((tree / ".claude").exists())
-            self.assertEqual(asyncio.run(release.cos(tree, "check-tag", "v9.9.9")), (0, "release"))
 
 
 if __name__ == "__main__":

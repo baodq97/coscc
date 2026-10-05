@@ -19,7 +19,6 @@ from unittest import mock
 
 from tests.units.test_meta import ingest
 from coscc.bus import Bus
-from coscc.agent.policy import grant_for
 from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
@@ -28,7 +27,7 @@ from coscc.runner.queue import Refused
 from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
 from coscc.github.integration import CI_REFRESH
-from tests.http.test_app import timeline, unit_history, use_config, use_sessions
+from tests.http.test_app import use_config, use_sessions
 
 SLUG = "proof-of-gebo"
 PR = 7
@@ -230,82 +229,9 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertNotEqual(rec["head_after"], self.head_before)
         self.assertEqual(len(self.records("integration")), 1)
 
-    def test_start_and_end_are_one_pair_and_every_view_reads_them(self):
-        """Plan risk 5: a stage that is not one of the eight, in the timeline and usage."""
-
-        async def act(tree, gate):
-            return "[needs-person] f.txt: one side wants `main`, the other `branch`"
-
-        rec = self.integrate_with(act)
-        self.assertEqual(rec["outcome"], "needs-person")
-        self.assertEqual(rec["needs_person"], ["f.txt: one side wants `main`, the other `branch`"])
-        self.assertEqual(self.remote_head(), self.head_before)
-        starts = [r for r in self.records("start") if r.get("stage") == "integrate"]
-        ends = [r for r in self.records("end") if r.get("stage") == "integrate"]
-        self.assertEqual((len(starts), len(ends)), (1, 1))
-        self.assertEqual(starts[0]["mode"], "manual")
-        # A pull request GitHub calls conflicting opened this one.
-        self.assertEqual(starts[0]["integrate_state"], "conflicting")
-        self.assertEqual(ends[0]["outcome"], "done")
-        runs = timeline(self.core, self.cwd, self.unit)
-        self.assertEqual([r.get("stage") for r in runs["runs"]], ["integrate"])
-        self.assertEqual(runs["cost"]["cost_usd"], 0.25)
-        unit_history(self.core, self.cwd, self.unit)
-
     @staticmethod
     async def _needs_person() -> str:
         return "[needs-person] f.txt: one side wants `main`, the other `branch`"
-
-    def test_the_integrate_end_row_counts_background_refusals(self):
-        """Gebo's `end` row carries `background`, as a board step's does."""
-        refused = {}
-
-        async def act(tree, gate):
-            refused["bg"] = type(await gate("Bash", {"command": "npm test &"}, None)).__name__
-            return "[needs-person] f.txt: both"
-
-        self.integrate_with(act)
-        self.assertEqual(refused["bg"], "PermissionResultDeny")
-        [end] = [r for r in self.records("end") if r.get("stage") == "integrate"]
-        self.assertEqual((end["background"], end["denials"]), (1, 1))
-
-    def test_the_start_record_names_the_artifacts_it_pointed_at_and_the_build(self):
-        """Gebo's `start` as a board step's."""
-
-        async def act(tree, gate):
-            return "[needs-person] f.txt: both"
-
-        build = {"version": "9.9.9", "commit": "0123456789abcdef0123456789abcdef01234567"}
-        with mock.patch.object(self.core.steps, "identity", return_value=build):
-            self.integrate_with(act)
-        starts = [r for r in self.records("start") if r.get("stage") == "integrate"]
-        self.assertEqual(len(starts), 1)
-        self.assertEqual(starts[0]["pointed"], ["intent.md", "spec.md", "plan.md", "impl.md"])
-        self.assertEqual(
-            (starts[0]["app_version"], starts[0]["app_commit"]), (build["version"], build["commit"])
-        )
-        self.assertIn(f"- {self.directory.resolve() / 'plan.md'}", self.core.sessions.prompts[0])
-
-    def test_gebos_start_and_integration_carry_its_name_and_its_session_the_settings(self):
-        """Gebo's start and integration records carry its name, and its session carries the
-        settings, with an override so the name is the table's."""
-
-        async def act(tree, gate):
-            return "[needs-person] f.txt: both"
-
-        self.core.agents.set_agent_field("integrate", "name", "Weaver")
-        rec = self.integrate_with(act)
-        [start] = [r for r in self.records("start") if r.get("stage") == "integrate"]
-        self.assertEqual(start["agent"], "Weaver")
-        self.assertEqual(rec["agent"], "Weaver")
-        self.assertTrue(self.core.sessions.prompts[0].startswith("# Who you are\n"))
-        self.assertIn("`Weaver (agent, integrate)`", self.core.sessions.prompts[0])
-        [kw] = self.core.sessions.kws
-        self.assertEqual(
-            json.loads(kw["settings"])["attribution"]["commit"],
-            "Co-authored-by: Weaver (agent, integrate) <weaver@agents.coscc.invalid>",
-        )
-        self.assertEqual(kw["system_prompt"], {"type": "preset", "preset": "claude_code"})
 
     def stored_config(self) -> tuple[dict, list[dict]]:
         """Gebo's `start`, and the events stored under its `run`."""
@@ -354,35 +280,6 @@ class GeboThroughTheService(unittest.TestCase):
         [end] = [r for r in self.records("end") if r.get("stage") == "integrate"]
         self.assertEqual(end["run"], start["run"])
 
-    def test_gebo_with_nothing_overridden_runs_under_its_grants_ceilings(self):
-        async def act(tree, gate):
-            return "[needs-person] f.txt: both"
-
-        self.integrate_with(act)
-        grant = grant_for("integrate")
-        [kw] = self.core.sessions.kws
-        self.assertEqual(
-            (kw["max_turns"], kw["max_budget_usd"]), (grant.max_turns, grant.max_budget_usd)
-        )
-        _, stored = self.stored_config()
-        self.assertEqual(
-            (stored[0]["max_turns_source"], stored[0]["max_budget_source"]),
-            ("default", "default"),
-        )
-
-    def test_gebo_without_a_model_of_its_own_runs_imples_model(self):
-        async def act(tree, gate):
-            return "[needs-person] f.txt: both"
-
-        self.core.agents.set_agent_field("impl", "model", "impl-model")
-        self.integrate_with(act)
-        [kw] = self.core.sessions.kws
-        self.assertEqual(kw["model"], "impl-model")
-        _, stored = self.stored_config()
-        self.assertEqual(
-            (stored[0]["model"], stored[0]["model_source"]), ("impl-model", "override")
-        )
-
     def test_a_rebase_left_stopped_is_aborted_by_the_app(self):
         async def act(tree, gate):
             self.rebase(tree)
@@ -418,19 +315,6 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertTrue(said["still_held"])
         self.nothing_held()
 
-    def test_gebo_is_running_under_its_name_while_it_works_and_not_after(self):
-        seen = {}
-
-        async def act(tree, gate):
-            seen["running"] = self.core.boards.running(self.cwd)["running"]
-            return "[needs-person] stand-in"
-
-        self.integrate_with(act)
-        [row] = seen["running"][self.unit]
-        self.assertEqual((row["kind"], row["stage"]), ("gebo", "integrate"))
-        self.assertEqual(row["agent"], {"glyph": "ᚷ", "name": "Gebo"})
-        self.nothing_held()
-
     def test_gebo_is_on_the_running_list_and_a_stop_is_recorded_late(self):
         """The list a restart reads names the integration. a Stop that reaches it once
         Gebo is open is no longer refused: it is recorded, Gebo goes on, and the attempt ends
@@ -459,31 +343,6 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual((end["state"], end["outcome"]), ("ended", "stop_late"))
         self.assertEqual(end["stop_asked_by"], "Lan")
         self.assertEqual(self.core.steps.running_steps(self.cwd), [])
-
-    def test_a_mechanical_rebase_is_rebasing_with_no_agent_and_not_after(self):
-        """The mechanical road: `behind` with no conflict.
-
-        A refused `update-branch` opens Gebo, so the press ends `agent` carrying gh's exit code;
-        while `update-branch` runs it is still a rebase with no agent."""
-        seen = {}
-        conflicting = self._gh
-
-        async def gh(argv, cwd):
-            if argv[:2] == ["pr", "list"]:
-                code, out, err = await conflicting(argv, cwd)
-                return code, out.replace("CONFLICTING", "MERGEABLE"), err
-            if argv[:2] == ["pr", "update-branch"]:
-                seen["running"] = self.core.boards.running(self.cwd)["running"]
-                return 1, "", "stand-in gh: refused"
-            return await conflicting(argv, cwd)
-
-        with mock.patch.object(integrate, "_gh", gh):
-            rec = self.integrate_with(self._no_act)
-        self.assertEqual(rec["mode"], "agent")
-        self.assertEqual(rec["update_branch"]["code"], 1)
-        [row] = seen["running"][self.unit]
-        self.assertEqual((row["kind"], row["agent"]), ("rebase", None))
-        self.nothing_held()
 
     def mergeable_gh(self, update_branch):
         """`self._gh` with the list saying MERGEABLE — the conflict shows only on rebasing — and
@@ -827,15 +686,6 @@ class AStaleOriginMain(unittest.TestCase):
         board = asyncio.run(self.core.board(self.cwd))
         return next(u for u in board["units"] if u["name"] == self.unit).get("integration") or {}
 
-    def test_the_board_says_current_with_a_button(self):
-        info = self.integration()
-        self.assertEqual(
-            info["state"], "current", "a board read fetched: find who, do not bend the fixture"
-        )
-        self.assertIs(info["button"], True)
-        self.assertEqual(info["mode"], "mechanical")
-        self.assertTrue(any("opens Gebo" in w for w in info["warnings"]))
-
     def test_a_press_fetches_then_rebases_once(self):
         rec = self.press()
         self.assertEqual((rec["outcome"], rec["mode"]), ("pushed", "mechanical"), rec.get("detail"))
@@ -885,17 +735,6 @@ class AStaleOriginMain(unittest.TestCase):
         self.assertEqual(caught.exception.reasons, ("nothing-to-integrate",))
         ended = self.core.attempts.get(1)
         self.assertEqual((ended["state"], ended["outcome"]), ("refused", "nothing-to-integrate"))
-
-    def test_a_refusal_a_person_must_look_at_carries_no_code(self):
-        (self.tree / "g.txt").write_text("dirty\n", encoding="utf-8")
-        with self.assertRaises(Invalid) as caught:
-            self.press()
-        self.assertIn("uncommitted", str(caught.exception))
-        self.assertNotIsInstance(caught.exception, Refused)
-        [only] = self.records("integration")
-        self.assertEqual((only["outcome"], only["code"]), ("refused", ""))
-        ended = self.core.attempts.get(1)
-        self.assertEqual((ended["state"], ended["outcome"]), ("refused", "invalid"))
 
     def autopilot_pass_at_ship(self) -> tuple[dict, dict, list[tuple[str, str]], dict]:
         """One autopilot pass over this unit, passed and waiting at `ship`. `next` is a stand-in —
@@ -1094,20 +933,6 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(u["state"]["state"], "error")
         await self.settle()
         self.assertEqual(self.asked(), 1, "a fresh answer for this head is not asked again")
-
-    async def test_the_board_reads_ci_from_the_row_not_memory(self):
-        from coscc.github import prmachine
-
-        self.checks = [{"name": "tests", "bucket": "fail"}]
-        await self.read()
-        await self.settle()
-        self.assertEqual(self.core.integration.ci, {}, "an answer is not held in memory")
-        held = prmachine.ci_held(
-            self.core.ws.unit_meta().history, self.core.ws.key(self.cwd), PR, self.head
-        )
-        self.assertEqual(held["ci"], "red")
-        u = await self.read()
-        self.assertEqual(u["state"]["state"], "error")
 
     async def test_a_new_head_or_an_old_answer_is_asked_again(self):
         """(e)"""

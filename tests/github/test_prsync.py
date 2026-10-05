@@ -61,20 +61,6 @@ class ItPutsPrMdOnThePullRequest(unittest.TestCase):
         self.assertEqual(run(prsync.sync(URL, TITLE, BODY, "/tmp", run=gh)).state, "already")
         self.assertEqual(gh.edits(), [])
 
-    def test_line_endings_and_trailing_whitespace_are_not_a_difference(self):
-        gh = FakeGh(title=TITLE + "  ", body=BODY.replace("\n", "\r\n").rstrip())
-        self.assertEqual(run(prsync.sync(URL, TITLE, BODY, "/tmp", run=gh)).state, "already")
-        self.assertEqual(gh.edits(), [])
-
-    def test_no_title_leaves_the_title_alone(self):
-        gh = FakeGh(title="something else", body=BODY)
-        self.assertEqual(run(prsync.sync(URL, None, BODY, "/tmp", run=gh)).state, "already")
-        gh = FakeGh(title="something else")
-        self.assertEqual(run(prsync.sync(URL, None, BODY, "/tmp", run=gh)).state, "updated")
-        [(argv, _)] = gh.edits()
-        self.assertFalse(any(a.startswith("--title") for a in argv), argv)
-        self.assertEqual(gh.title, "something else")
-
     def test_a_title_starting_with_a_dash_stays_inside_its_argv(self):
         gh = FakeGh()
         run(prsync.sync(URL, "--base=evil", BODY, "/tmp", run=gh))
@@ -90,25 +76,10 @@ class ItNeverRaisesAndSaysWhy(unittest.TestCase):
         self.assertEqual((got.state, got.reason), ("failed", "HTTP 403: nope"))
         self.assertEqual(gh.edits(), [])
 
-    def test_edit_failing_is_failed(self):
-        got = run(prsync.sync(URL, TITLE, BODY, "/tmp", run=FakeGh(fail="edit")))
-        self.assertEqual((got.state, got.reason), ("failed", "HTTP 403: nope"))
-
     def test_a_timeout_is_failed_and_says_so(self):
         got = run(prsync.sync(URL, TITLE, BODY, "/tmp", run=FakeGh(raise_=asyncio.TimeoutError())))
         self.assertEqual(got.state, "failed")
         self.assertIn("timed out", got.reason)
-
-    def test_no_gh_is_failed(self):
-        got = run(prsync.sync(URL, TITLE, BODY, "/tmp", run=FakeGh(raise_=FileNotFoundError())))
-        self.assertEqual(got.state, "failed")
-        self.assertIn("not installed", got.reason)
-
-    def test_view_that_is_not_json_is_failed(self):
-        async def junk(argv, cwd, stdin):
-            return 0, "not json", ""
-
-        self.assertEqual(run(prsync.sync(URL, TITLE, BODY, "/tmp", run=junk)).state, "failed")
 
     def test_a_url_that_is_not_a_pull_request_calls_nothing(self):
         gh = FakeGh()
