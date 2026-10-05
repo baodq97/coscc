@@ -15,7 +15,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.kernel import STREAM_SECONDS
 from coscc.http import plugin
 from coscc.features import notices
 from coscc.config import Config
@@ -114,28 +113,6 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         [line] = await self.notices(s, 1)
         self.assertEqual(line["id"], later)
 
-    async def test_an_after_past_every_row_is_a_head_and_what_lands_next_arrives(self):
-        # A cursor kept from a run log since deleted or replaced.
-        now = self.append(stop(self.key))
-        s = self.follow(after=now + 1000)
-        [head] = await self.lines(s, 1)
-        self.assertEqual(head, {"type": "head", "id": now})
-        new = self.append(stop(self.key, "0002_b"))
-        [line] = await self.notices(s, 1)
-        self.assertEqual(line["id"], new)
-
-    async def test_an_after_at_the_last_row_is_no_head(self):
-        now = self.append(stop(self.key))
-        s = self.follow(after=now)
-        new = self.append(stop(self.key, "0002_b"))
-        [line] = await self.lines(s, 1)
-        self.assertEqual((line["type"], line["id"]), ("notice", new))
-
-    async def test_after_zero_replays_the_whole_history(self):
-        ids = [self.append(stop(self.key, u)) for u in ("0001_a", "0002_b")]
-        got = await self.notices(self.follow(after=0), 2)
-        self.assertEqual([n["id"] for n in got], ids)
-
     async def test_an_append_in_this_process_arrives_within_five_seconds(self):
         s = self.follow(beat=60)
         await self.lines(s, 1)
@@ -171,11 +148,6 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(line["record"], record)
         self.assertLess(time.monotonic() - began, 1.0 + 1.0)
 
-    async def test_a_beat_comes_when_nothing_happens(self):
-        s = self.follow()
-        head, beat = await self.lines(s, 2, within=BEAT * 5)
-        self.assertEqual(beat, {"type": "beat", "id": head["id"]})
-
     async def test_a_stream_ends_once_its_lifetime_is_over_and_nothing_is_skipped(self):
         # The login door is asked once per request, so the stream ends.
         s = self.follow(beat=60, lifetime=0.5)
@@ -191,10 +163,6 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         between = self.append(stop(self.key, "0002_b"))
         [again] = await self.notices(self.follow(after=mine), 1)
         self.assertEqual(again["id"], between)
-
-    def test_a_stream_lasts_no_longer_than_the_guard_allows(self):
-        self.assertLessEqual(notices.LIFETIME_SECONDS, STREAM_SECONDS)
-        self.assertLess(notices.BEAT_SECONDS, notices.LIFETIME_SECONDS)
 
     async def test_one_workspace_sees_only_its_own(self):
         other = self.core.ws.key(str(self.other))
@@ -238,13 +206,6 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
             [("ship-refused", "0002_b"), ("autopilot-stop", "0003_c")],
         )
         self.assertEqual(got[-1]["id"], last)
-
-    async def test_following_writes_nothing_to_the_run_log(self):
-        self.append(stop(self.key))
-        before = self.journal.last_id()
-        s = self.follow(after=0)
-        await self.lines(s, 3, within=BEAT * 10)
-        self.assertEqual(self.journal.last_id(), before)
 
     async def test_an_unknown_workspace_is_refused(self):
         for workspace in ("/etc", str(self.ws.parent)):

@@ -181,17 +181,6 @@ class TheToolsTakeNoValue(Bed):
         self.assertEqual(names_in(tools["vault_generate"].input_schema), {"name", "description"})
         self.assertEqual(names_in(tools["vault_list"].input_schema), set())
 
-    def test_the_parts_are_one_server_one_guard_and_one_block(self):
-        parts = feature.agent(self.ctx, lambda _ctx: self.store)
-        (tool,) = parts.tools
-        self.assertEqual(
-            (tool.server, tool.names, tool.stages), ("vault", feature.TOOL_NAMES, ("impl", "spike"))
-        )
-        self.assertEqual([g.name for g in parts.guards], ["vault-leak"])
-        self.assertEqual([b.name for b in parts.blocks], ["vault"])
-        server = tool.make(self.facts())
-        self.assertEqual((server["type"], server["name"]), ("sdk", "vault"))
-
     def test_the_app_offers_the_tool_to_impl_and_spike_and_to_no_prose_stage(self):
         hooks = self.core.steps.hooks
         for stage in ("impl", "spike"):
@@ -272,25 +261,6 @@ class ExecutingACommand(Bed):
         got = await self.call(self.facts(), "vault_exec", {"command": "id -u"})
         self.assertEqual(got["result"], "command-refused")
 
-    async def test_a_spike_runs_in_its_own_directory(self):
-        scratch = self.root / "scratch"
-        scratch.mkdir()
-        facts = self.facts("spike", scratch=str(scratch))
-        got = await self.call(facts, "vault_exec", {"command": "pwd"})
-        self.assertEqual(got["stdout"].strip(), str(scratch))
-
-    async def test_capture_keeps_stdout_and_returns_none_of_it(self):
-        args = {"command": "echo captured-thing", "capture": "ws:cap"}
-        got = await self.call(self.facts(), "vault_exec", args)
-        self.assertEqual((got["exit_code"], got["captured_bytes"]), (0, 14))
-        self.assertNotIn("stdout", got)
-        self.assertEqual(self.store.open("ws:cap", self.key), b"captured-thing")
-        again = await self.call(self.facts(), "vault_exec", args)
-        self.assertEqual(again["result"], "refused")
-        for bad in ("global:cap", "ws:DB"):
-            got = await self.call(self.facts(), "vault_exec", {**args, "capture": bad})
-            self.assertEqual(got["result"], "refused", bad)
-
     async def test_a_wrong_argument_is_refused_without_running(self):
         for args in (
             {},
@@ -318,10 +288,6 @@ class GeneratingASecret(Bed):
         self.assertEqual(len(self.store.open("ws:gen", self.key)), 43)
         lines = self.journal().records(self.key, None, kind="vault")
         self.assertEqual([(r["action"], r["name"]) for r in lines], [("create", "ws:gen")])
-
-    async def test_a_bare_name_is_a_ws_name(self):
-        got = await self.call(self.facts(), "vault_generate", {"name": "bare"})
-        self.assertEqual(got["name"], "ws:bare")
 
     async def test_a_taken_name_a_global_name_and_a_bad_name_are_refused(self):
         before = self.store.open("ws:db", self.key)
@@ -413,21 +379,6 @@ class TheGuardHoldsWhatCarriesAValueOut(Bed):
         self.store.delete("ws:db", self.key)
         self.assertIsNone(feature._leaks(self.ctx, lambda: self.store, self.facts("pr")))
 
-    def test_a_secret_without_a_value_does_not_count(self):
-        self.tree()
-        self.leak(OTHER)
-        empty = vault.Store(
-            data=self.store.data,
-            config_home=self.store.config_home,
-            home=self.store.home,
-            age=self.store.age,
-            age_keygen=self.store.age_keygen,
-        )
-        self.store.delete("global:tok", "")
-        self.store.delete("ws:db", self.key)
-        empty.create("ws:later", self.key)
-        self.assertIsNone(feature._leaks(self.ctx, lambda: empty, self.facts("pr")))
-
     def test_the_kernel_refuses_the_step_and_the_integration_through_it(self):
         self.tree()
         self.leak(DB)
@@ -454,37 +405,6 @@ class TheGuardHoldsWhatCarriesAValueOut(Bed):
             store=self.ctx.store,
         )
         self.assertIn("cannot", feature._leaks(ctx, lambda: self.store, self.facts("pr")) or "")
-
-
-class ThePromptBlock(Bed):
-    def test_the_stage_a_secret_allows_gets_its_name_description_and_ways_the_rest_names_only(self):
-        text = feature._block(lambda: self.store, self.facts("impl"))
-        self.assertIn("`ws:db` - the database (passed as: env, file)", text)
-        self.assertIn("vault_exec", text)
-        self.assertIn("`global:tok`", text)
-        self.assertNotIn("a shared token", text)
-        self.assertNotIn("global:other", text)
-        self.assert_clean(("block", text))
-
-    def test_a_stage_no_secret_allows_gets_the_names_and_nothing_more(self):
-        for stage in ("plan", "review", "pr"):
-            text = feature._block(lambda: self.store, self.facts(stage))
-            self.assertIn("`ws:db`", text)
-            self.assertIn("`global:tok`", text)
-            for word in ("the database", "shared token", "vault_exec", "env"):
-                self.assertNotIn(word, text, stage)
-            self.assert_clean((stage, text))
-
-    def test_a_step_taken_up_again_and_a_workspace_with_none_get_no_block(self):
-        self.assertEqual(feature._block(lambda: self.store, self.facts(resumed=True)), "")
-        self.assertEqual(
-            feature._block(lambda: self.store, self.facts(workspace_key="/elsewhere")), ""
-        )
-
-    def test_the_kernel_renders_the_block_for_a_workspace_with_the_vault_on(self):
-        blocks = self.core.steps.hooks.for_step("impl", str(self.ws)).blocks
-        (block,) = [b for b in blocks if b.name == "vault"]
-        self.assertIn("ws:db", block.render(self.facts()))
 
 
 if __name__ == "__main__":

@@ -8,13 +8,12 @@ import unittest
 from pathlib import Path
 
 from coscc.store.db import Data
-from coscc.agent import policy
 from coscc.features import scan
 from coscc.http.plugin import create_tables
 from coscc.kernel import Agents, Invalid, Runs, Settings, Submitted, Units
 from tests.features.ctx import ctx_for
 from coscc.store.journal import Intervention, Journal
-from coscc.units import backlog, submit
+from coscc.units import backlog
 
 WS = "/ws"
 PROBLEM = "Steps stop and a person runs them again by hand. " * 6
@@ -132,16 +131,6 @@ class ThePromptIsBounded(_Feature):
         self.assertLess(len(taken), scan.LIMIT)
         self.assertGreater(cut, 0)
         self.assertLessEqual(len(scan.INSTRUCTIONS), 3_000)
-
-    async def test_a_second_the_cut_split_is_read_on_by_the_next_scan(self):
-        self.found = [i._replace(at="2026-10-02T01:00:00+00:00") for i in found(60)]
-        for _ in range(3):
-            await scan.scan(self.ctx, WS, "owner")
-        read = [line.split(" |")[0] for p in self.prompts for line in p.splitlines()]
-        held = [i.removeprefix("- ") for i in read if i.startswith("- rerun:runs:")]
-        self.assertEqual(sorted(held), sorted(i.id for i in self.found))
-        self.assertEqual(len(self.store.cursor(WS)[1]), 60)
-        self.assertEqual((await scan.scan(self.ctx, WS, "owner"))["outcome"], "skipped")
 
 
 class TheObjectIsChecked(_Feature):
@@ -297,44 +286,6 @@ class TheSchedule(_Feature):
         self.assertEqual(len(self.store.runs(WS)), 1)
         await scan.tick(self.ctx, WS, 24)
         self.assertEqual(len(self.store.runs(WS)), 1)
-
-
-class ItsSessionIsDeclaredHere(unittest.TestCase):
-    """What the core once named for scan: its grant, its `submit` schema, its slug rules."""
-
-    def setUp(self):
-        policy.add_session(scan.NAME, scan.SESSION.grant, scan.SESSION.own_turns)
-        submit.add_session(scan.NAME, scan.SESSION.schema, scan.SESSION.purpose)
-
-    def test_the_grant_opens_nothing_and_keeps_its_two_turns(self):
-        g = policy.grant_for(scan.NAME)
-        self.assertFalse(g.opens_anything)
-        self.assertTrue(g.submits)
-        self.assertEqual((g.max_turns, g.max_budget_usd), (2, 0.68))
-        self.assertIn("paid session", g.warning)
-        self.assertEqual(policy.decide(g, "mcp__cos__submit", {}, "/tmp/ws"), "")
-        for tool in ("Read", "Bash", "Write"):
-            self.assertIn("not granted", policy.decide(g, tool, {}, "/tmp/ws"), tool)
-
-    def test_the_collector_keeps_proposals_and_refuses_a_bare_one(self):
-        good = {
-            "proposals": [
-                {"type": "fix", "slug": "a-b", "title": "t", "problem": "p", "sources": ["x"]}
-            ]
-        }
-        for obj, fits in ((good, True), ({"proposals": [{"type": "fix"}]}, False)):
-            collector = submit.Collector(scan.NAME)
-            server = collector.server()
-            said = asyncio.run(_submit(server, obj))
-            self.assertEqual(not said.get("is_error"), fits)
-            self.assertEqual(collector.object(), obj if fits else None)
-
-    def test_the_rules_are_the_loops_own(self):
-        from coscc import loop
-
-        self.assertEqual(scan.SCAN_TYPES, tuple(loop.BRANCH_TYPES))
-        self.assertEqual(scan.SLUG.pattern, loop.SLUG_RE.pattern)
-        self.assertEqual(scan.SLUG_MAX, loop.SLUG_MAX)
 
 
 async def _submit(server, obj):

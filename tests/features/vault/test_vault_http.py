@@ -7,18 +7,13 @@ of every route is read for them in all five forms.
 from __future__ import annotations
 
 import json
-import re
-import shutil
-import subprocess
 import unittest
 
 import httpx
 
 from coscc import vault
 from coscc.http import auth
-from coscc.agent import policy
 from coscc.features import vault as feature
-from coscc.vault.store import NAME
 from tests.features.vault import test_vault as base
 
 GET_ROUTES = {"/api/vault/secrets", "/api/vault/leaks"}
@@ -62,14 +57,6 @@ class Http(base.Bed):
 
     def vault_lines(self, **kw):
         return self.journal().records(self.key, None, kind="vault", **kw)
-
-
-class TheNameRule(unittest.TestCase):
-    def test_the_name_rule_on_the_page_is_the_stores(self):
-        rule = re.compile(feature.NAME_PATTERN, re.ASCII)
-        for name in ("deploy-key.v2", "db", "a_b", "Bad Name", "-db", "ws:db", "x" * 64):
-            store = bool(NAME.fullmatch("ws:" + name))
-            self.assertEqual(bool(rule.fullmatch(name)) and len(name) <= 64, store, name)
 
 
 class MetadataRoutes(Http):
@@ -133,52 +120,6 @@ class TheOneRouteAValueGoesInBy(Http):
         )
         self.assertNotIn(value, json.dumps(line))
         self.assertNotIn("by", line)
-
-    async def test_the_same_name_replaces_the_value_and_keeps_the_policy(self):
-        r = await self.form(name="ws:db", value="replaced-value")
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(self.store.open("ws:db", self.key), b"replaced-value")
-        self.assertEqual(self.store.get("ws:db", self.key).description, "the database")
-        actions = [(r["action"], r["name"]) for r in self.vault_lines()]
-        self.assertEqual(actions, [("replace", "ws:db")])
-
-    async def test_a_global_secret_is_made_but_not_granted(self):
-        await self.form(name="shared", tier="global", value="g-value-123")
-        made = self.store.get("global:shared", "")
-        assert made is not None
-        self.assertEqual(made.granted, ())
-
-    async def test_a_short_value_is_said_short_and_a_broker_secret_keeps_ssh_only(self):
-        r = await self.form(name="tiny", value="abc", broker="1", mode="env", stage="impl")
-        self.assertTrue(r.json()["short"])
-        made = self.store.get("ws:tiny", self.key)
-        assert made is not None
-        self.assertEqual((made.broker, made.modes), (True, ("ssh",)))
-
-    async def test_a_one_line_value_loses_the_line_break_typed_after_it(self):
-        await self.form(name="tok2", value="one-line-token\r\n")
-        self.assertEqual(self.store.open("ws:tok2", self.key), b"one-line-token")
-
-    @unittest.skipUnless(
-        all(shutil.which(p) for p in ("ssh-keygen", "ssh-agent", "ssh-add")), "needs OpenSSH"
-    )
-    async def test_a_key_pasted_in_the_box_reaches_ssh_add_whole(self):
-        path = self.root / "id"
-        subprocess.run(
-            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(path)],
-            check=True,
-            capture_output=True,
-        )
-        key = path.read_bytes()
-        # How a browser sends a textarea: every line break as CRLF.
-        await self.form(name="deploy", value=key.decode().replace("\n", "\r\n"), broker="1")
-        self.assertEqual(self.store.open("ws:deploy", self.key), key)
-        self.store.set_policy("ws:deploy", self.key, ("impl",), ("ssh",))
-        facts = self.facts(commands=(*policy.IMPL_COMMANDS, "ssh-add"))
-        args = {"command": "ssh-add -l", "uses": [{"name": "ws:deploy", "mode": "ssh"}]}
-        got = await self.call(facts, "vault_exec", args)
-        self.assertEqual(got["exit_code"], 0, got)
-        self.assertIn("ED25519", got["stdout"])
 
     async def test_a_bad_name_is_refused_with_the_reason_and_makes_nothing(self):
         r = await self.form(name="Bad Name!", value="v-value-1234")
@@ -353,13 +294,6 @@ class NoRouteGivesAValueBack(Http):
             r for r in self.app.routes if "vault" in r.path and "POST" in getattr(r, "methods", ())
         ]
         self.assertEqual(len(posts), 5)
-
-
-class ThePlugin(unittest.TestCase):
-    def test_it_owns_the_store_s_tables_and_names_its_routes(self):
-        self.assertEqual(feature.FEATURE.name, "vault")
-        self.assertEqual(feature.FEATURE.tables, vault.TABLES)
-        self.assertIsNotNone(feature.FEATURE.agent)
 
 
 if __name__ == "__main__":

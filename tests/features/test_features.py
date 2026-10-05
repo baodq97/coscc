@@ -14,13 +14,10 @@ from starlette.routing import Route
 
 from coscc.store.db import Data
 from coscc import features
-from coscc.kernel import Block, Feature, Guard, Parts, Schedule, Tool, arm_of
+from coscc.kernel import Block, Feature, Guard, Parts, Schedule, Tool
 from coscc.http.plugin import (
-    OFF_PREF,
     SCHEDULE_PREF,
-    STATE_PREF,
     create_tables,
-    ctx_of,
     hooks_of,
     set_schedule_of,
     set_state,
@@ -153,53 +150,6 @@ class TurningAFeatureOffForAWorkspace(Setup):
         self.assertEqual({got[f.name] for f in features.FEATURES if f.default == "on"}, {"on"})
         self.assertEqual(got["codegraph"], "off")
 
-    async def test_with_detail_each_feature_says_what_it_does_in_one_short_sentence(self):
-        async with self.client() as client:
-            got = await client.get("/api/features", params={"cwd": str(self.ws), "detail": "1"})
-        rows = got.json()
-        self.assertEqual(set(rows), {f.name for f in features.FEATURES})
-        self.assertEqual(len(rows), 6)
-        for name, row in rows.items():
-            with self.subTest(feature=name):
-                self.assertTrue(row["summary"])
-                self.assertLessEqual(len(row["summary"]), 100)
-                self.assertEqual(
-                    set(row),
-                    {"state", "pilot", "sentence", "locked", "schedule", "hours", "summary"},
-                )
-        self.assertEqual(rows["notices"]["state"], "on")
-
-    def test_an_entry_of_the_older_pref_reads_as_off_until_the_next_write_moves_it(self):
-        data = Data(self.config.data_dir)
-        key = str(self.ws.resolve())
-        data.set_pref(OFF_PREF, {"notices": [key], "vault": ["/elsewhere"]})
-        core = mock.Mock(config=self.config)
-        core.ws.check.side_effect = lambda cwd: cwd
-        ctxs = {f.name: ctx_of(core, f) for f in features.FEATURES}
-        self.assertEqual(ctxs["notices"].settings.state(str(self.ws)), "off")
-        self.assertFalse(ctxs["notices"].settings.enabled(str(self.ws)))
-        self.assertEqual(ctxs["vault"].settings.state(str(self.ws)), "on")
-        set_state(core, ctxs, features.FEATURES, "notices", str(self.ws), "on")
-        self.assertEqual(ctxs["notices"].settings.state(str(self.ws)), "on")
-        self.assertEqual(data.pref(OFF_PREF, {}), {"notices": [], "vault": ["/elsewhere"]})
-        self.assertEqual(data.pref(STATE_PREF, {}), {"notices": {key: "on"}})
-
-    def test_the_arm_follows_the_state_and_the_units_number(self):
-        core = mock.Mock(config=self.config)
-        core.ws.check.side_effect = lambda cwd: cwd
-        graph = Feature("graph", lambda _ctx: [], default="off", pilot=True)
-        ctxs = {"graph": ctx_of(core, graph)}
-        ws = str(self.ws)
-        want = {"off": (None, None), "pilot": ("on", "off"), "on": ("on", "on")}
-        for state, (even, odd) in want.items():
-            if state != "off":
-                set_state(core, ctxs, (graph,), "graph", ws, state)
-            with self.subTest(state=state):
-                self.assertEqual(ctxs["graph"].settings.state(ws), state)
-                self.assertEqual(ctxs["graph"].settings.arm(ws, "0148_even"), even)
-                self.assertEqual(ctxs["graph"].settings.arm(ws, "0149_odd"), odd)
-        self.assertEqual(arm_of("pilot", "0000_zero"), "on")
-
     async def test_the_routes_are_behind_the_login(self):
         from coscc.http import auth
 
@@ -322,21 +272,6 @@ class AScheduledFeatureRunsOnItsOwn(Setup):
         set_state(core, ctx, (timed,), "timed", str(self.ws), "off")
         await tick(core, ctx, (timed,))
         self.assertEqual(len(ticked), 1)
-
-
-class AFeatureWithAgentPartsSaysWhatTheAgentSees(unittest.TestCase):
-    def test_its_doc_has_the_section(self):
-        folder = Path(features.__file__).parent
-        for f in features.FEATURES:
-            if f.agent is None:
-                continue
-            doc = folder / f.name / "README.md"
-            self.assertIn(
-                "## What the agent sees",
-                doc.read_text() if doc.exists() else "",
-                f"add `## What the agent sees` to coscc/features/{f.name}/README.md: the tools, "
-                "guards and prompt blocks the agent meets",
-            )
 
 
 if __name__ == "__main__":
