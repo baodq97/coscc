@@ -418,6 +418,7 @@ async def _compose(
     unfinished_round: dict[str, Any] | None,
     idea_note: str,
     siblings_note: str,
+    mentions_note: str,
     agent: dict[str, Any] | None,
     meta: dict[str, Any] | None,
     state_file: str | None,
@@ -454,6 +455,7 @@ async def _compose(
         unfinished_round=unfinished_round,
         idea_note=idea_note,
         siblings_note=siblings_note,
+        mentions_note=mentions_note,
         runs_commands="Bash" in grant.tools,
         agent=agent,
         unit_meta=meta,
@@ -1535,6 +1537,7 @@ class Runner:
         rounds_known: tuple[int, ...] = (),
         idea_note: str = "",
         siblings_note: str = "",
+        mentions_note: str = "",
         read_also: tuple[str, ...] = (),
         agent: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
@@ -1567,9 +1570,9 @@ class Runner:
         are read before and after the session and a difference fails the step before any artifact
         is written; nothing is restored, the difference goes in `detail`.
 
-        `idea_note`, `siblings_note` and `read_also` are the shared idea, the sibling checkouts
-        `impl` may read, and the paths the read boundary lets through (never writes, never
-        `git -C`). `unfinished_round` is `{n, dropped}` for a `review` prompt only.
+        `idea_note`, `siblings_note`, `mentions_note` and `read_also` are the shared idea, the
+        sibling checkouts `impl` may read, the units this unit names, and the paths the read
+        boundary lets through (never writes, never `git -C`). `unfinished_round` is `{n, dropped}` for a `review` prompt only.
 
         `running` is the step's row in `Core.steps`. With it the client is closed when the step
         ends, and a person's Stop ends it as `stopped`, decided by `running.stop_requested`, never
@@ -1634,6 +1637,7 @@ class Runner:
             unfinished_round=unfinished_round,
             idea_note=idea_note,
             siblings_note=siblings_note,
+            mentions_note=mentions_note,
             agent=agent,
             meta=meta,
             state_file=state_file,
@@ -2042,10 +2046,10 @@ class Runner:
         if turn_kind in ("opening", "closing"):
             return nothing()
         places = self._scratch(workspace, unit)
-        # A spike writes only its `cwd`; the worktree and the unit are read. Only when a sibling was
-        # named, so every other step's gate is unchanged.
+        # A spike writes only its `cwd`; the worktree, the unit and what `read_also` names are
+        # read. Only when a path was named, so every other step's gate is unchanged.
         gate_args = (
-            (None, (watch, str(directory)))
+            (None, (watch, str(directory), *read_also))
             if watch
             else (str(directory), tuple(read_also))
             if read_also

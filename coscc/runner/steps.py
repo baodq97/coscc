@@ -24,14 +24,14 @@ from coscc.git import drift, fetches, gitops
 from coscc.kernel import OWNER, Facts, Hooks, Invalid, facts as facts_of
 from coscc.runlog import events
 from coscc.runner.attempt import describe_attempt
-from coscc.runner.prompt import answers_section
+from coscc.runner.prompt import answers_for, answers_section
 from coscc.runner.queue import MACHINES, STOPPABLE, Attempt, Holds, Refused, describe
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner, check_started_by
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, Data, now as _now
 from coscc.store.journal import NOT_STEPS, BadRecord, Journal
-from coscc.units import backlog, planmap, retake, worktrees
+from coscc.units import backlog, mentions, planmap, retake, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
 from coscc.units.board import Unavailable
@@ -235,6 +235,29 @@ def _answers_before(stage: str, directory: Path, row: dict[str, Any]) -> bytes |
         return answers_section((directory / row["file"]).read_bytes())
     except OSError:
         return None
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _answers_of(directory: Path, meta: dict[str, Any]) -> list[tuple[str, str]]:
+    """`(artifact, ## Answers)` for each artifact of the unit, as a prompt shows it: the files
+    there are, then the artifacts only `cos.db` has answers for. A name from the database is a
+    label only; nothing is read by it."""
+    raws: dict[str, bytes] = {}
+    for path in sorted(directory.glob("*.md")):
+        try:
+            raws[path.name] = path.read_bytes()
+        except OSError:
+            continue
+    for a in meta.get("answers") or []:
+        raws.setdefault(str(a.get("artifact")), b"")
+    found = ((artifact, answers_for(raw, artifact, meta)) for artifact, raw in raws.items())
+    return [(artifact, text) for artifact, text in found if text]
 
 
 # The one stage the run button may offer for a unit, as `coscc.loop next` answered it.
@@ -1144,6 +1167,24 @@ class Steps:
             sibling_paths, siblings_note = await self.ideas.siblings(cwd, unit)
             if siblings_note:
                 link_kw.update(siblings_note=siblings_note, read_also=sibling_paths)
+        # Every stage reads `idea.md` and `intent.md` of the units its unit names, added to the
+        # siblings' paths.
+        directory = self.ws.unit_dir(cwd, unit)
+        mention_paths, mentions_note = mentions.for_step(
+            cwd,
+            unit,
+            _read_text(directory / "idea.md"),
+            _answers_of(directory, link_kw["meta"]),
+            link_kw["meta"],
+            self.ws.name(cwd),
+            self.ws.all()["workspaces"],
+            self.config.data_dir,
+        )
+        if mentions_note:
+            link_kw["mentions_note"] = mentions_note
+            link_kw["read_also"] = tuple(
+                dict.fromkeys((*link_kw.get("read_also", ()), *mention_paths))
+            )
         return link_kw
 
     def _step_kwargs(
