@@ -35,6 +35,9 @@ from coscc.units.history import History
 PR_FILE = "pr.md"
 SHIP_FILE = "ship.md"
 MACHINE = "pr"
+# The run-log record a `pr` or `ship` the PR machine ran leaves in place of an `end`: `outcome`
+# `done` or `failed`, and the machine's `result`, `reasons` and `detail`.
+RECORD_KIND = "prmachine"
 # The stages the board runs through this module rather than a session.
 Stage = Literal["pr", "ship"]
 STAGES: tuple[Stage, ...] = get_args(Stage)
@@ -283,7 +286,7 @@ def ci_held(history: History, workspace: str, number: int, head: str) -> dict[st
 
 def open_prs(history: History, workspace: str) -> list[dict[str, Any]]:
     """`{unit, number, files}` for `autopilot.pick`, from the machine's own rows; `files` a set, as
-    `autopilot.files_of` gives a plan's.
+    `planmap.files_of` gives a plan's.
     """
     out = []
     for name, now in watched(history, workspace):

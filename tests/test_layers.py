@@ -28,6 +28,7 @@ LAYERS = (
     ("api",),
     ("features", "plugin"),
     ("service",),
+    ("leif",),
     ("vault",),
     ("github", "update"),
     ("runner",),

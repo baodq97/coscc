@@ -24,7 +24,7 @@ from tests.github.test_prmachine import Fixture as _PrFixture
 from coscc.config import Config
 from coscc.service import Service
 from tests.service.test_service import create_sync
-from coscc.units import autopilot as ap
+from coscc.leif import decide
 from coscc.units import board as board_reader
 from coscc.units import guards
 from tests.units.test_board import _store
@@ -566,10 +566,12 @@ class Place7(unittest.TestCase):
 
     def _read_as(self, nxt: dict, reason: str) -> None:
         self.assertEqual(set(nxt["reasons"]) - set(guards.REASONS), set())
-        self.assertIsNone(ap.stop_for(self.ROW, nxt, None, False))
-        self.assertEqual(ap.reason_for(nxt, "", None), (reason, nxt["action"]))
+        self.assertIsNone(decide.stop_for(self.ROW, nxt, None, False))
+        self.assertEqual(decide.reason_for(nxt, "", None), (reason, nxt["action"]))
         # The words alone, as the autopilot read them before, would now stop the unit.
-        self.assertEqual(ap.stop_for(self.ROW, {**nxt, "reasons": []}, None, False)["kind"], "f")
+        self.assertEqual(
+            decide.stop_for(self.ROW, {**nxt, "reasons": []}, None, False)["kind"], "f"
+        )
 
     def test_a_closed_unit_is_passed_over_as_closed_whatever_the_words(self):
         nxt = self._next(

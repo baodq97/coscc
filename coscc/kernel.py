@@ -35,8 +35,8 @@ from coscc.store.journal import BELL as BELL
 from coscc.store.journal import Intervention, Journal
 from coscc.units import Invalid as Invalid
 from coscc.units import cos_dir as cos_dir
-from coscc.units.autopilot import files_of as files_of
-from coscc.units.autopilot import is_step as is_step
+from coscc.store.journal import is_step as is_step
+from coscc.units.planmap import files_of as files_of
 from coscc.units.scratch import RAM_CAP
 
 log = logging.getLogger(__name__)

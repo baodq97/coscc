@@ -3,7 +3,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from coscc.units import autopilot, guide
+from coscc.leif import decide, guide
 
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
@@ -36,7 +36,7 @@ class TheLists(unittest.TestCase):
         )
 
     def test_every_stop_kind_but_full_has_one_thing_to_do(self):
-        self.assertEqual(set(guide.TODO), set(autopilot.STOP_KINDS) - {"full"})
+        self.assertEqual(set(guide.TODO), set(decide.STOP_KINDS) - {"full"})
         for kind, (do, screen, tab) in guide.TODO.items():
             self.assertTrue(do.endswith(".") and do.count(".") == 1, kind)
             self.assertIn(screen, ("unit", "settings", "backlog"), kind)

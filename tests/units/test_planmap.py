@@ -207,5 +207,13 @@ class TheSection(unittest.TestCase):
         )
 
 
+class TheFilesOfAPlan(unittest.TestCase):
+    def test_files_of_keeps_paths_only(self):
+        plan = "# Plan\n\n## Files that change\n\n- `coscc/a.py` (new): phần mới\n- `README.md`\n\n## Order\n"
+        self.assertEqual(planmap.files_of(plan), {"coscc/a.py", "README.md"})
+        self.assertIsNone(planmap.files_of("# Plan\n\n## Order\n"))
+        self.assertIsNone(planmap.files_of(None))
+
+
 if __name__ == "__main__":
     unittest.main()

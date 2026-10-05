@@ -145,7 +145,7 @@ stateDiagram-v2
 | after `end`: post review rounds as PR comments; `pr-sync` title/body; worktree cleanup after ship; write `questions` and `ship` rows; nudge autopilot (`coscc/runner/steps.py` `after_end`) | CODE | `pr-comment`, `pr-sync`, `questions`, `ship` |
 | startup recovery: a `start` with a dead pid and no `end` → `end{failed, recovered}` (`runlog/recovery.py:55-76`) | CODE | `end` |
 
-## 3. Autopilot (per workspace) — `coscc/service/autopilot.py`, `coscc/units/autopilot.py`
+## 3. Autopilot (per workspace) — `coscc/leif/autopilot.py`, `coscc/leif/decide.py`
 
 Settings (PERSON, `setting` rows): `autopilot`, `autopilot_may_ship`, `max_parallel`,
 `daily_cap_usd` (one cap for the app). Loop: off ↔ on; a **pass** runs every 300 s and after a
@@ -157,10 +157,10 @@ rows carry `woken_by`: `{unit, transition, id}` of each transition that schedule
 `merged` the reader records is followed by what a `ship` step leaves — the `ship` row, the
 worktree's cleanup — since no `ship` step follows it.
 
-A pass, all CODE (`service/autopilot.py:159-375`):
+A pass, all CODE (`Autopilot.run_pass`):
 
 1. No shortlist → stop `shortlist`.
-2. For each shortlisted unit in order: `coscc.loop next`, then `stop_for` (`units/autopilot.py:115-198`):
+2. For each shortlisted unit in order: `coscc.loop next`, then `stop_for` (`leif/decide.py`):
    `a` open questions · `b` findings waiting / needs a person · `d` integration needs a person ·
    `e` last step not done (except first exhausted, first missing-opening, exhausted ship before
    a recording ship), integration failed/refused, screenshot retake failed, and since `0136` a
@@ -170,7 +170,7 @@ A pass, all CODE (`service/autopilot.py:159-375`):
 3. Integrate override when behind / conflicting / red and review not passed (`:272-282`);
    CI red after its own integration → impl once, then stop `e` (0124).
 4. Answered draft → rerun, at most 2 times (0106).
-5. `pick` (`units/autopilot.py:393-440`): holds back by `running`, `max_parallel`, `ship-busy`,
+5. `pick` (`leif/decide.py`): holds back by `running`, `max_parallel`, `ship-busy`,
    `overlap` (plan `## Files that change` vs running code stages), `overlap-pr` (an `impl` vs
    another unit's open PR, files as the PR reader read them; `0136` R22), `cap` (spent + estimates for unknown costs + running reservations + this grant
    must fit).
@@ -195,7 +195,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 
 | Machine | States | Transitions / decided by | Recorded |
 |---|---|---|---|
-| **Questions & answers** | open → answered | detection CODE (`coscc.loop`); answer PERSON `POST /api/units/answer` appends `### Câu N` / `### F<n>` (`answers.py:299-544`) | `questions`, `answer` |
+| **Questions & answers** | open → answered | detection CODE (`coscc.loop`); answer PERSON `POST /api/units/answer` appends `### Câu N` / `### F<n>` (`Answers.answer` in `coscc/leif/answers.py`) | `questions`, `answer` |
 | **Holds** | active, paused, dropped | PERSON `POST /api/units/hold`; dropped → CODE closes the PR and removes the worktree (`units/hold.py:99-165`) | `### Paused…` block + `hold` row |
 | **PR / CI / integrate** | unknown, conflicting, red-after-integration, behind, current (`github/integrate.py:80-111`) | read by `gh pr list` on each board read, `gh pr checks` ≤ every 60 s per head, and the 300 s pass — no dedicated poller. `behind` → CODE `gh pr update-branch`; conflicting / red / refused / diverged head → **AGENT Gebo** (120 turns, $8, leased push) (`coscc/github/integration.py` `_integrate_body`, `integrate_gebo`); Gebo's `[needs-person]` lines set the outcome (since `0136`, the object it hands back through `submit`) | `integration`, `start`/`end` |
 | **Review loop** | round n: changes-requested → impl → CI → review n+1 … pass → ship | verdict and severities AGENT; rounds counted CODE; clean-rebase re-review skip CODE (0067) | review.md, `pr-comment` |
@@ -229,17 +229,17 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 4. Gebo's `[needs-person]` lines decide the integration outcome. *`0136`: R7's order — the head moved, else `needs_person` of the object Gebo hands back through `submit`, else `failed`.*
 5. Estimate JSON becomes backlog rows. *`0136`: the object handed back through `submit`, guard `run-submitted`; each row carries `authority: agent`.*
 6. The reviewed sha and the merge pin are copied by the model out of prompt prose. *`0136`: `ship` is the PR machine's (`coscc/github/prmachine.py`); guard `ship-ready` reads the head the review run recorded and the head its own `gh pr view` found, and the merge is pinned to that read. A head the `ship` gate reads as a clean rebase of the reviewed one (`0067`) stands in for it: `gate --json` hands the guard `rebased`, and the guard checks that it names those two commits.*
-7. The autopilot matches English substrings of `coscc.loop`'s messages (`CI is red on #`, `needs a person`, `record it in ship.md; do not merge`) (`units/autopilot.py:51-86` at `088101e`). *`0136`: `next` and `gate --json` hand out `reasons` from `guards.REASONS`, and the autopilot branches on them through `said` (`coscc/units/autopilot.py:60-67`). Left, for the next unit: `units/backlog.py`, `service/common.py` and `units/hold.py` still compare `next`'s words with `finished` or `closed`.*
+7. The autopilot matches English substrings of `coscc.loop`'s messages (`CI is red on #`, `needs a person`, `record it in ship.md; do not merge`) (`units/autopilot.py` at `088101e`). *`0136`: `next` and `gate --json` hand out `reasons` from `guards.REASONS`, and the autopilot branches on them through `said` (`coscc/units/autopilot.py:60-67`). Left, for the next unit: `units/backlog.py`, `service/common.py` and `units/hold.py` still compare `next`'s words with `finished` or `closed`.*
 
 **Defects found while mapping (verified in code):**
 
 - `STATUS_RE` has no hyphen (`coscc/runner/reply.py:13`), so after a review step the history
   records `changes` instead of `changes-requested`; the history refuses it and the error is
-  swallowed (`coscc/service/answers.py:190-210`). Review transitions are likely never recorded.
+  swallowed (`Answers.ingest` in `coscc/leif/answers.py`). Review transitions are likely never recorded.
 - Three `## Round` patterns disagree (`loop:517` strict vs `review.py:13`, `priorfindings.py:29` loose).
 - Tool-stage artifacts pass on a `Status:` anywhere in the file; prose stages need a header.
 - After a repair or closing turn, `cost_usd` is the session total but tokens/turns are the first turn's (`runner/__init__.py:228`).
-- `answered_by` is free text, unchecked (`answers.py:326`).
+- `answered_by` is free text, unchecked (`Answers.answer` in `coscc/leif/answers.py`).
 
 **Structural facts the redesign must answer:**
 

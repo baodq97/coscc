@@ -9,26 +9,27 @@ import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Iterable
 
-from coscc.units import autopilot, backlog, guide, states
+from coscc.leif import decide, guide
+from coscc.units import backlog, planmap, states
 from coscc.git import fetches
 from coscc.github import integrate, prmachine
 from coscc.git.gitops import GitError
-from coscc.store.journal import BadRecord
+from coscc.store.journal import BadRecord, Journal, is_step
 from coscc.store.db import Busy
 from coscc.config import LOOPBACK, Config
 from coscc.store.db import Data
-from coscc.service.common import log_setting
 from coscc.runner.queue import Refused
 from coscc.units.board import shown_state
+from coscc.units.read import count, number
 from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK
 from coscc.kernel import Invalid
 from coscc.units.workspaces import Workspaces
 from coscc.github.integration import Integration
 from coscc.runner.queue import Holds
 from coscc.runner.steps import Steps
-from coscc.service.agents import Agents
 
 if TYPE_CHECKING:
     from coscc.units.read import Board
@@ -46,24 +47,39 @@ CAP_PREF = "autopilot_daily_cap_usd"
 
 def _whole_at_least_one(value: Any) -> bool:
     """`max_parallel`: an int, not a bool, 1 or more."""
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+    n = count(value)
+    return n is not None and n >= 1
 
 
 def _positive_number(value: Any) -> bool:
     """`daily_cap_usd`: a finite number above 0, not a bool."""
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        and value > 0
-    )
+    n = number(value)
+    return n is not None and math.isfinite(n) and n > 0
 
 
-def _stop_reason(stage: str, stop: dict[str, str]) -> tuple[str, str]:
-    reason = autopilot.reason_for({}, stage, stop)
-    if reason is None:
-        raise ValueError(f"a stop has a reason, and {stop['kind']} gave none")
-    return reason
+def _shortlist(records: Iterable[dict[str, Any]], key: str) -> tuple[dict[str, Any] | None, int]:
+    """The last well-formed shortlist of workspace `key` in `records`, and its number."""
+    return backlog.shortlist_of(r for r in records if r.get("workspace") == key)
+
+
+def log_setting(journal: Journal | None, key: str, old: Any, new: Any) -> None:
+    """One `setting` record of a changed setting, its old and new value."""
+    if journal is None:
+        return
+    try:
+        journal.append(
+            {
+                "kind": "setting",
+                "workspace": "",
+                "unit": "",
+                "stage": "",
+                "name": key,
+                "old": old,
+                "new": new,
+            }
+        )
+    except (BadRecord, Busy) as e:
+        raise Invalid(f"the setting was saved but not logged: {e}") from e
 
 
 def pref_name(name: str, key: str) -> str:
@@ -80,11 +96,11 @@ def autopilot_values(config: Config, key: str) -> dict[str, Any]:
         return value if ok(value) else default
 
     return {
-        "autopilot": read("autopilot", lambda v: v is True or v is False, False),
-        "autopilot_may_ship": read("autopilot_may_ship", lambda v: v is True or v is False, False),
-        "max_parallel": read("max_parallel", _whole_at_least_one, autopilot.DEFAULT_MAX_PARALLEL),
+        "autopilot": read("autopilot", lambda v: isinstance(v, bool), False),
+        "autopilot_may_ship": read("autopilot_may_ship", lambda v: isinstance(v, bool), False),
+        "max_parallel": read("max_parallel", _whole_at_least_one, decide.DEFAULT_MAX_PARALLEL),
         "daily_cap_usd": float(
-            read("daily_cap_usd", _positive_number, autopilot.DEFAULT_DAILY_CAP_USD)
+            read("daily_cap_usd", _positive_number, decide.DEFAULT_DAILY_CAP_USD)
         ),
     }
 
@@ -103,7 +119,8 @@ class Autopilot:
         config: Config,
         ws: Workspaces,
         holds: Holds,
-        agents: Agents,
+        budget: Callable[[], Mapping[str, Any]],
+        agent_overrides: Callable[[], dict[str, Any]],
         steps: Steps,
         integration: Integration,
         boards: Board,
@@ -111,7 +128,8 @@ class Autopilot:
         self.config = config
         self.ws = ws
         self.holds = holds
-        self.agents = agents
+        self.budget = budget
+        self.agent_overrides = agent_overrides
         self.steps = steps
         self.integration = integration
         self.boards = boards
@@ -131,7 +149,7 @@ class Autopilot:
 
     # The autopilot holds no rule of the loop. Each pass reads the board, the run log, the settings
     # and the workspace's last shortlist, and asks `next` for every unit on it and no other; with no
-    # shortlist it asks nothing. `coscc/units/autopilot.py` decides where to stop and what to queue;
+    # shortlist it asks nothing. `coscc/leif/decide.py` decides where to stop and what to queue;
     # what it queues is an attempt the scheduler starts and the gate is asked about in `_prepare`.
     # A refusal is the attempt's `refused` row, read on the next pass as a stop line, never a
     # second way past the gate. It holds no task: what runs is what the attempts say runs.
@@ -206,7 +224,7 @@ class Autopilot:
     async def _loop(self, key: str) -> None:
         while True:
             await self._guarded(key)
-            await asyncio.sleep(autopilot.POLL_SECONDS)
+            await asyncio.sleep(decide.POLL_SECONDS)
 
     async def _pr_reader_loop(self, key: str) -> None:
         """Every `ci_poll_seconds` of the lane config, one read of the workspace's pull requests. The
@@ -303,7 +321,7 @@ class Autopilot:
 
     def _files(self, cwd: str, unit: str) -> set[str] | None:
         try:
-            return autopilot.files_of(
+            return planmap.files_of(
                 (self.ws.unit_dir(cwd, unit) / "plan.md").read_text(encoding="utf-8")
             )
         except Invalid, OSError:
@@ -312,14 +330,14 @@ class Autopilot:
     def cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:
         """The figures for a pass and for the board: every workspace, every starter."""
         now = datetime.now().astimezone()
-        budget = self.agents.config_overrides()[0]["budget"]
-        spent = autopilot.spent_today(records, now, budget)
+        budget = self.budget()
+        spent = decide.spent_today(records, now, budget)
         active = {
             (row["workspace"], row["unit"]): row["stage"] or row["machine"]
             for row in self.holds.attempts.unfinished()
             if row["unit"]
         }
-        running = autopilot.reserved(
+        running = decide.reserved(
             records, now, [(k, unit, stage) for (k, unit), stage in active.items()], budget
         )
         return {
@@ -329,7 +347,7 @@ class Autopilot:
             "estimated": round(spent["estimated"], 2),
             "estimated_count": spent["estimated_count"],
             "running": round(running, 2),
-            "day": autopilot.today(now),
+            "day": decide.today(now),
         }
 
     def set_stops(
@@ -404,20 +422,20 @@ class Autopilot:
                         "answer",
                         "screens",
                         "autopilot-pick",
-                        autopilot.PR_MACHINE,
+                        prmachine.RECORD_KIND,
                     ),
                 )
             except Busy as e:
                 self.set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
                 return
             # The last well-formed shortlist, read again on every pass.
-            listed, n = backlog.shortlist_of(r for r in records if r.get("workspace") == key)
+            listed, n = _shortlist(records, key)
             if listed is None or not listed["units"]:
                 # Nothing is asked and nothing starts.
                 if not self._on(key) or not autopilot_values(self.config, key)["autopilot"]:
                     return
                 self.set_stops(
-                    key, {"": {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}}
+                    key, {"": {"unit": "", "kind": "shortlist", "reason": decide.NO_SHORTLIST}}
                 )
                 return
             names = list(listed["units"])
@@ -447,14 +465,14 @@ class Autopilot:
             starts: dict[tuple[str, str], dict[str, Any]] = {}
             began: dict[str, dict[str, Any] | None] = {}
             for r in records:
-                if r.get("workspace") == key and r.get("kind") == "start" and autopilot.is_step(r):
+                if r.get("workspace") == key and r.get("kind") == "start" and is_step(r):
                     starts[(str(r.get("unit") or ""), str(r.get("stage") or ""))] = r
                 # A retake of the screenshots that failed is the unit's last word too, and so is a `pr` or
                 # `ship` the PR machine ran.
                 if (
                     r.get("workspace") == key
-                    and r.get("kind") in ("end", "integration", "screens", autopilot.PR_MACHINE)
-                    and autopilot.is_step(r)
+                    and r.get("kind") in ("end", "integration", "screens", prmachine.RECORD_KIND)
+                    and is_step(r)
                 ):
                     last[str(r.get("unit") or "")] = r
                     if r.get("kind") == "integration":
@@ -471,7 +489,7 @@ class Autopilot:
             board = {u["name"]: u for u in data["units"]}
             found: dict[str, dict[str, str]] = {}
             candidates: list[dict[str, Any]] = []
-            budget = self.agents.config_overrides()[0]["budget"]
+            budget = self.budget()
             # Why each unit that is no candidate waits, for the units ranked below it.
             reasons: dict[str, tuple[str, str]] = {}
             # Every unit on the shortlist is asked, and no other.
@@ -483,10 +501,10 @@ class Autopilot:
                 try:
                     nxt = await self.steps.next_step(cwd, name)
                 except Invalid as e:
-                    if autopilot.is_waiting(e):
+                    if decide.is_waiting(e):
                         reasons[name] = (
                             ("ci", "")
-                            if autopilot.is_ci_pending(e)
+                            if decide.is_ci_pending(e)
                             else ("running", here.get(name, ""))
                         )
                         continue
@@ -494,18 +512,18 @@ class Autopilot:
                     if isinstance(e, Refused) and e.reasons:
                         found[name]["code"] = e.reasons[0]
                     reasons[name] = (
-                        ("running", here[name]) if name in here else _stop_reason("", found[name])
+                        ("running", here[name]) if name in here else decide.stop_reason(found[name])
                     )
                     continue
                 # A first `exhausted` step of a stage other than `ship` runs again once; so does a first prose
                 # step whose reply lacked its opening.
                 last_stage = str((last.get(name) or {}).get("stage") or "")
-                ran_out = autopilot.exhausted_of(records, key, name, last_stage)
-                unopened = autopilot.unopened_of(records, key, name, last_stage)
+                ran_out = decide.exhausted_of(records, key, name, last_stage)
+                unopened = decide.unopened_of(records, key, name, last_stage)
                 # No `start` found reads as no recording `ship`.
                 recorded = (began.get(name) or {}).get("ship_mode") == "record"
                 shipping = here.get(name) == "ship"
-                stop = autopilot.stop_for(
+                stop = decide.stop_for(
                     u,
                     nxt,
                     last.get(name),
@@ -521,12 +539,12 @@ class Autopilot:
                 own = (
                     None
                     if name in here
-                    else autopilot.after_own_integration(
+                    else decide.after_own_integration(
                         info,
                         integrations.get(name),
-                        autopilot.since_integration(records, key, name),
+                        decide.since_integration(records, key, name),
                         nxt,
-                        autopilot.exhausted_of(records, key, name, "impl"),
+                        decide.exhausted_of(records, key, name, "impl"),
                     )
                 )
                 # A unit behind `main`, conflicting or red after integration is integrated first, also after a
@@ -558,10 +576,7 @@ class Autopilot:
                 # no stage and no stop.
                 rerun = False
                 if stop is None and not stage and nxt.get("rerun"):
-                    if (
-                        autopilot.reruns_of(records, key, name, nxt["rerun"])
-                        >= autopilot.MAX_RERUNS
-                    ):
+                    if decide.reruns_of(records, key, name, nxt["rerun"]) >= decide.MAX_RERUNS:
                         artifact = next(
                             (
                                 s["file"]
@@ -570,9 +585,9 @@ class Autopilot:
                             ),
                             nxt["rerun"],
                         )
-                        stop = autopilot.rerun_stop(artifact)
-                    elif not autopilot.answered_since_start(records, key, name, nxt["rerun"]):
-                        stop = autopilot.stop_for(
+                        stop = decide.rerun_stop(artifact)
+                    elif not decide.answered_since_start(records, key, name, nxt["rerun"]):
+                        stop = decide.stop_for(
                             u,
                             {**nxt, "rerun": ""},
                             last.get(name),
@@ -588,29 +603,29 @@ class Autopilot:
                 # `next` says to go on with, or a red CI. Each head gets `MAX_TRIES`.
                 app_note = ""
                 extra: dict[str, Any] = {}
-                if stop is None and not stage and autopilot.continues(nxt):
+                if stop is None and not stage and decide.continues(nxt):
                     head, _ = self._ci_read(key, name)
-                    tries = autopilot.tries_on_head(records, key, name, head)
-                    if tries >= autopilot.MAX_TRIES:
-                        stop = autopilot.tries_stop("impl", tries)
+                    tries = decide.tries_on_head(records, key, name, head)
+                    if tries >= decide.MAX_TRIES:
+                        stop = decide.tries_stop("impl", tries)
                     else:
                         stage, app_note, extra = (
                             "impl",
-                            autopilot.CONTINUE_NOTE,
+                            decide.CONTINUE_NOTE,
                             {"continued": True},
                         )
-                elif stop is None and stage == "impl" and autopilot.is_ci_red(nxt):
+                elif stop is None and stage == "impl" and decide.is_ci_red(nxt):
                     head, checks = self._ci_read(key, name)
-                    tries = autopilot.tries_on_head(records, key, name, head)
-                    if tries >= autopilot.MAX_TRIES:
-                        stop = autopilot.tries_stop("impl", tries)
+                    tries = decide.tries_on_head(records, key, name, head)
+                    if tries >= decide.MAX_TRIES:
+                        stop = decide.tries_stop("impl", tries)
                     else:
-                        app_note = autopilot.ci_note(head, checks)
+                        app_note = decide.ci_note(head, checks)
                         extra = {"ci_note": app_note}
                 # What the gate said to the autopilot's last attempt of the unit, when it would queue
                 # that same stage again.
                 if stop is None and stage and name not in here:
-                    stop, why_not = autopilot.after_refusal(
+                    stop, why_not = decide.after_refusal(
                         refusals.get(name), stage, at_pass, fresh=bool(woken_by)
                     )
                     if why_not is not None:
@@ -620,9 +635,7 @@ class Autopilot:
                     note = integrate.origin_note(str(info.get("origin_sha") or ""), unfetched)
                     stop = {**stop, "reason": f"{stop['reason']}; {note}"}
                 reason = (
-                    ("running", here[name])
-                    if name in here
-                    else autopilot.reason_for(nxt, stage, stop)
+                    ("running", here[name]) if name in here else decide.reason_for(nxt, stage, stop)
                 )
                 if reason is not None:
                     reasons[name] = reason
@@ -631,19 +644,17 @@ class Autopilot:
                     continue
                 if not stage:
                     continue
-                files = self._files(cwd, name) if stage in autopilot.CODE_STAGES else None
+                files = self._files(cwd, name) if stage in decide.CODE_STAGES else None
                 # The exhausted `ship` this pick went past. Not once the stage became `integrate`, which
                 # skipped nothing.
-                skipped = stage == "ship" and autopilot.skips_exhausted(
-                    nxt, last.get(name), recorded
-                )
+                skipped = stage == "ship" and decide.skips_exhausted(nxt, last.get(name), recorded)
                 candidates.append(
                     {
                         "unit": name,
                         "stage": stage,
                         "files": files,
                         "rank": rank,
-                        "need": autopilot.reservation(stage, budget),
+                        "need": decide.reservation(stage, budget),
                         "rerun": rerun,
                         "note": app_note,
                         "extra": extra,
@@ -652,14 +663,12 @@ class Autopilot:
                 )
 
             for r in running:
-                if r["stage"] in autopilot.CODE_STAGES:
+                if r["stage"] in decide.CODE_STAGES:
                     r["files"] = self._files(cwd, r["unit"])
             now = datetime.now().astimezone()
             # A `start` with no `end`, from a process before this one, counts against N for 24 hours.
             elsewhere = sum(
-                1
-                for (k, unit) in autopilot.open_starts(records, now)
-                if k == key and unit not in here
+                1 for (k, unit) in decide.open_starts(records, now) if k == key and unit not in here
             )
             cap = self.cap(records, settings["daily_cap_usd"])
             room = cap["limit"] - cap["spent"] - cap["running"]
@@ -668,7 +677,7 @@ class Autopilot:
                 prs = prmachine.open_prs(self.integration.pr_machine().history, key)
             except sqlite3.Error, OSError, Busy:
                 prs = []
-            picked = autopilot.pick(
+            picked = decide.pick(
                 candidates, running, settings["max_parallel"] - elsewhere, room, prs
             )
             reasons.update(picked["held"])
@@ -682,7 +691,7 @@ class Autopilot:
                         f"{c['need']:.2f} is over the cap of {cap['limit']:.2f} USD ({cap['day']})"
                     ),
                 }
-                reasons[c["unit"]] = _stop_reason(c["stage"], found[c["unit"]])
+                reasons[c["unit"]] = decide.stop_reason(found[c["unit"]])
             # A run again that `max_parallel` alone held back says so. Any other candidate held back that
             # way still says nothing.
             left = {c["unit"] for c in picked["chosen"] + picked["capped"]} | set(picked["held"])
@@ -690,12 +699,12 @@ class Autopilot:
                 if c["rerun"] and c["unit"] not in left:
                     found[c["unit"]] = {
                         "unit": c["unit"],
-                        **autopilot.full_stop(c["stage"], settings["max_parallel"]),
+                        **decide.full_stop(c["stage"], settings["max_parallel"]),
                     }
-                    reasons[c["unit"]] = _stop_reason(c["stage"], found[c["unit"]])
+                    reasons[c["unit"]] = decide.stop_reason(found[c["unit"]])
             # Raises before anything is recorded or started when a unit above one chosen has no
             # reason; `_guarded` shows it as a stop line.
-            passed = autopilot.passed_for(names, [c["unit"] for c in picked["chosen"]], reasons)
+            passed = decide.passed_for(names, [c["unit"] for c in picked["chosen"]], reasons)
             # The switch may have been turned off while this pass read the board and `next`. Nothing from
             # here on awaits, so nothing starts once it is off.
             if not self._on(key) or not autopilot_values(self.config, key)["autopilot"]:
@@ -756,7 +765,7 @@ class Autopilot:
         except Busy as e:
             log.warning("the autopilot could not queue %s of %s: %s", stage, unit, e)
         except (Refused, Invalid) as e:
-            if autopilot.is_waiting(e) or self.holds.busy(key, unit):
+            if decide.is_waiting(e) or self.holds.busy(key, unit):
                 log.info("the autopilot did not queue %s of %s: %s", stage, unit, e)
                 return
             log.warning("the autopilot could not queue %s of %s: %s", stage, unit, e)
@@ -789,7 +798,7 @@ class Autopilot:
                 block["cap"] = None
         block["stops"] = sorted(
             (self.stops.get(key) or {}).values(),
-            key=lambda s: (autopilot.unit_number(s["unit"]), s["unit"]),
+            key=lambda s: (decide.unit_number(s["unit"]), s["unit"]),
         )
         return block
 
@@ -813,14 +822,14 @@ class Autopilot:
         """
         if not autopilot_values(self.config, key)["autopilot"]:
             return {"on": False}
-        entries = self.boards.running_here(key, self.agents.agent_overrides()[0])
+        entries = self.boards.running_here(key, self.agent_overrides())
         units = [
             {**u, "state": shown_state(u.get("state") or {}, entries.get(u.get("name")))}
             for u in units
         ]
         stops = sorted(
             (self.stops.get(key) or {}).values(),
-            key=lambda s: (autopilot.unit_number(s["unit"]), s["unit"]),
+            key=lambda s: (decide.unit_number(s["unit"]), s["unit"]),
         )
         return {
             "on": True,
@@ -841,7 +850,7 @@ class Autopilot:
             records = journal.records(kinds=("shortlist",))
         except Busy:
             return False
-        listed, _ = backlog.shortlist_of(r for r in records if r.get("workspace") == key)
+        listed, _ = _shortlist(records, key)
         return listed is None or not listed["units"]
 
     def settings(self, cwd: str) -> dict[str, Any]:

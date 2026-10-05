@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import unittest
 
-from coscc.units import autopilot
+from coscc.leif import decide
+from coscc.store.journal import NOT_STEPS
 from coscc.features import notices
 
 WS = "/home/someone/work/proj"
@@ -63,7 +64,7 @@ QUESTIONS = {
 EVERY = [
     *[
         _stop(u, s, f"at {SHA} under {WS}/x: gh said no")
-        for s in autopilot.STOP_KINDS
+        for s in decide.STOP_KINDS
         if s != "full"
         for u in ("0007_x", "")
     ],
@@ -109,7 +110,7 @@ class EachKindComesFromItsRecord(unittest.TestCase):
             _stop("", ""),
             _stop("0007_x", "full"),
             _end("done"),
-            _end("failed", stage=autopilot.NOT_STEPS[0]),
+            _end("failed", stage=NOT_STEPS[0]),
         ):
             self.assertIsNone(notices.notice_of(1, record), record)
 

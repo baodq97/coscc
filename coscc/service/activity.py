@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Any, TypedDict
 
-from coscc.runlog import spend
+from coscc.leif import spend
 from coscc.store.db import Busy
 from coscc.kernel import Invalid
 

@@ -18,10 +18,20 @@ from typing import Any
 
 from coscc.loop import run
 from coscc.units import guards
-from coscc.units.autopilot import SHIP_UNRECORDED
+
+# The stop `e`, and the board's reason, of a unit `next` reads as merging with no `ship` running.
+SHIP_UNRECORDED = "ship requested a merge and recorded no outcome"
 
 # Turns a hung child into an error rather than bounding the work (like `store.LOCK_TIMEOUT`).
 TIMEOUT = 10.0
+
+
+def open_questions(unit_row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every unanswered question of the counted artifact (the loop's `unitQuestions`): the stop `a`,
+    and the `questions` record a step that ends `done` leaves."""
+    return [
+        q for q in unit_row.get("questions") or [] if q.get("counted") and not q.get("answered")
+    ]
 
 
 class Unavailable(Exception):

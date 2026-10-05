@@ -157,6 +157,15 @@ class Bell:
 
 BELL = Bell()
 
+# Run-log lines under a stage that is none of the loop's (an earlier version wrote its answering
+# session here); none of them is the unit's last step, a start, or a failed step.
+NOT_STEPS = ("precedent",)
+
+
+def is_step(record: dict[str, Any]) -> bool:
+    """False for a line of a session that is no stage of the loop (`NOT_STEPS`)."""
+    return record.get("stage") not in NOT_STEPS
+
 
 class Journal:
     """The run log for one working folder, covering every workspace under it.

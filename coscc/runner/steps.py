@@ -30,8 +30,8 @@ from coscc.runner.reply import RunError
 from coscc.runner.step import Runner, check_started_by
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, Data, now as _now
-from coscc.store.journal import BadRecord, Journal
-from coscc.units import autopilot, backlog, planmap, retake, worktrees
+from coscc.store.journal import NOT_STEPS, BadRecord, Journal
+from coscc.units import backlog, planmap, retake, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
 from coscc.units.board import Unavailable
@@ -347,7 +347,7 @@ class Steps:
             found = next((u for u in data["units"] if u["name"] == unit), None)
             if found is None:
                 return
-            asked = autopilot.open_questions(found)
+            asked = board_reader.open_questions(found)
             if asked:
                 journal.append(
                     {
@@ -1492,7 +1492,7 @@ class Steps:
                         await recorder.close("failed", "the step ended without an outcome")
                 if recorder is not None:
                     self.recorders.pop(recorder.run, None)
-                if ended_done and not going_down and stage not in autopilot.NOT_STEPS:
+                if ended_done and not going_down and stage not in NOT_STEPS:
                     # After the runner's `end`, which it writes before it yields `done`, and
                     # after the attempt ended: the board read it costs holds neither the
                     # reader's `done` nor the unit.

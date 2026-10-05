@@ -15,7 +15,7 @@ import tokenize
 from pathlib import Path
 from typing import Any
 
-from coscc.units.autopilot import files_of
+from coscc.agent import labels
 from coscc.git.drift import files_section
 
 log = logging.getLogger(__name__)
@@ -30,6 +30,16 @@ _JS = (
     re.compile(r"^(?:export\s+)?(?:default\s+)?(class)\s+(\w+)"),
     re.compile(r"^(?:export\s+)?(const)\s+(\w+)\s*="),
 )
+
+
+def files_of(plan_text: str | None) -> set[str] | None:
+    """The paths under `plan.md ## Files that change`, or `None` when there are none to read.
+
+    `None` overlaps with everything. Only tokens that look like a path count:
+    `labels.listed_paths` keeps every word of the section.
+    """
+    found = {p for p in labels.listed_paths(plan_text) if "/" in p or re.search(r"\.\w+$", p)}
+    return found or None
 
 
 def _empty() -> dict[str, Any]:

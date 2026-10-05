@@ -17,7 +17,7 @@ from coscc.kernel import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
-from tests.service.test_answers import REVIEW_ONE
+from tests.leif.test_answers import REVIEW_ONE
 from tests.service.test_service import create_sync
 from tests.github.test_integration import PR, SLUG, StandIn, git
 from tests.units.test_submit import submits as _submits
@@ -279,9 +279,7 @@ class TheGuide(unittest.TestCase):
         self.journal = self.service.ws.journal()
 
     def block(self, units=()) -> dict:
-        with mock.patch(
-            "coscc.service.autopilot.autopilot_values", return_value={"autopilot": True}
-        ):
+        with mock.patch("coscc.leif.autopilot.autopilot_values", return_value={"autopilot": True}):
             return self.service.autopilot.guide_block(self.key, units)
 
     def test_guide_lists_running_steps(self):

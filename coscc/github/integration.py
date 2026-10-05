@@ -35,7 +35,7 @@ from coscc.runner.step import check_started_by, config_sources, tell_config, wit
 from coscc.runner.steps import Steps
 from coscc.store.db import Busy, Data, now as _now
 from coscc.store.journal import BadRecord, Journal
-from coscc.units import autopilot, submit as submit_mod, worktrees
+from coscc.units import submit as submit_mod, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
 from coscc.units.board import CONSEQUENCE, Unavailable
@@ -1179,7 +1179,7 @@ class Integration:
             try:
                 journal.append(
                     {
-                        "kind": autopilot.PR_MACHINE,
+                        "kind": prmachine.RECORD_KIND,
                         "workspace": key,
                         "unit": unit,
                         "stage": stage,
