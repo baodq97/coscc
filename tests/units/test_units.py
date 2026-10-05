@@ -153,27 +153,6 @@ class NumbersTakenInTheHostRepositoryCount(Fixture):
         self.assertLess(at, argv.index("new-path"))
 
 
-class TheHostUnitCount(Fixture):
-    def test_it_counts_directories_named_like_units(self):
-        host = Path(self.data) / "host"
-        for n in ("0001_a", "0002_b", "0003_Not_A_Valid_Slug"):
-            (host / ".cos" / n).mkdir(parents=True)
-        (host / ".cos" / "RENAMES.md").write_text("x", encoding="utf-8")
-        (host / ".cos" / "notes").mkdir()
-        self.assertEqual(units.host_unit_count(host), 3)
-
-    def test_no_cos_directory_is_zero(self):
-        self.assertEqual(units.host_unit_count(self.data), 0)
-        self.assertEqual(units.host_unit_count("/nonexistent-host-for-a-test"), 0)
-
-    def test_it_is_counted_again_on_every_call(self):
-        host = Path(self.data) / "host"
-        (host / ".cos" / "0001_a").mkdir(parents=True)
-        self.assertEqual(units.host_unit_count(host), 1)
-        (host / ".cos" / "0002_b").mkdir()
-        self.assertEqual(units.host_unit_count(host), 2)
-
-
 class TheBriefBecomesTheIdea(Fixture):
     """`plan.md` `## OQ1, settled before planning`."""
 

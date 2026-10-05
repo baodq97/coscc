@@ -25,9 +25,8 @@ from coscc.store.db import Busy, Data
 from coscc.git import gitops
 from coscc.git.gitops import GitError
 from coscc.store.journal import BadRecord, Journal
-from coscc.kernel import Invalid
 from coscc.store.workspaces import BadName, Store, require_name, valid_name
-from coscc.units import BadUnit, scratch
+from coscc.units import BadUnit, Invalid, scratch
 from coscc.units.history import BadTransition
 from coscc.units.meta import MetaError, UnitMeta
 

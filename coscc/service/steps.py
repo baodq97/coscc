@@ -45,26 +45,20 @@ from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service.update import refuse_while_updating, refuse_mechanical_while_updating
 from coscc.service.attempts import MACHINES, STOPPABLE, Attempt, describe
-from coscc.service.common import (
-    open_prs_once,
-    BRANCH_REMOTE,
-    BRANCH_TRUNK,
-    CONSEQUENCE,
-    Refused,
-    _younger_than,
-    describe_base,
-    step_cwd,
-)
+from coscc.service.common import Refused, open_prs_once, step_cwd
+from coscc.units.board import CONSEQUENCE
+from coscc.units.read import HoldView, younger_than
+from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK, describe_base
 from coscc.kernel import OWNER
 from coscc.bus import Bus, Event
 from coscc.config import Config
-from coscc.service.workspaces import Workspaces
+from coscc.units.workspaces import Workspaces
 from coscc.service.common import Holds
 from coscc.agent.sessions import Sessions
 from coscc.update.updater import Updater
 from coscc.service.agents import Agents
 from coscc.service.models import Models
-from coscc.service.ideas import Ideas
+from coscc.units.ideas import Ideas
 from coscc.service.answers import Answers
 from coscc.service.backlog import cut_branch
 from collections.abc import Awaitable, Callable
@@ -207,13 +201,6 @@ class _Stopped(Exception):
     """A Stop an integration read at one of its stop points."""
 
 
-class HoldView(TypedDict):
-    state: str
-    by: str
-    date: str
-    reason: str
-
-
 # The one stage the run button may offer for a unit, as `coscc.loop next` answered it.
 NextStep = TypedDict(
     "NextStep",
@@ -351,7 +338,7 @@ class Steps:
             if (
                 held is None
                 or held.get("head") != head
-                or not _younger_than(held.get("at") or "", oldest)
+                or not younger_than(held.get("at") or "", oldest)
             ):
                 asks.append((slot, str(root), int(number), head))
         return asks

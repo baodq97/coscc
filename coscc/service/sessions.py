@@ -15,7 +15,7 @@ from coscc.kernel import Invalid
 # A chat turn's ceiling: `Sessions.stream`'s default, since chat names none, and no budget.
 CHAT_TURNS = 1
 from coscc.config import Config
-from coscc.service.workspaces import Workspaces
+from coscc.units.workspaces import Workspaces
 from coscc.agent.sessions import Sessions
 from coscc.update.updater import Updater
 from coscc.service.models import Models

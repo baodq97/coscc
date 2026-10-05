@@ -405,7 +405,7 @@ def is_prose_stage(stage: str) -> bool:
 
 
 # The one stage a workspace's `allow` and `block` change, and the pref holding them:
-# `{workspace key: {"allow": [...], "block": [...]}}`, written by `coscc/service/workspaces.py`.
+# `{workspace key: {"allow": [...], "block": [...]}}`, written by `coscc/units/workspaces.py`.
 LISTED_STAGE = "impl"
 GRANTS_PREF = "grants.impl"
 # What `allow` and `block` may name: a command, never a path. Chosen, not measured.

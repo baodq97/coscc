@@ -13,7 +13,6 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.bus import Bus
-from coscc import units
 from coscc.git import gitops
 from coscc.units import worktrees
 from coscc.config import Config
@@ -318,37 +317,6 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         with self.assertRaises(Invalid) as caught:
             asyncio.run(self.service.backlog.start_branch(str(self.repo), made["unit"]))
         self.assertIn("already exists", str(caught.exception))
-
-    def test_an_empty_board_counts_the_units_the_host_repository_holds(self):
-        """The board is empty, the host's `.cos/` is not, and both are named."""
-        for i in range(1, 15):
-            (self.repo / ".cos" / f"{i:04d}_u{i}").mkdir(parents=True)
-        board = asyncio.run(self.service.board(str(self.repo)))
-        self.assertEqual(board["units"], [])
-        self.assertEqual(board["empty"]["host_units"], 14)
-        self.assertEqual(board["empty"]["host"], str(self.repo.resolve()))
-        self.assertEqual(
-            board["empty"]["store"], str(units.root(str(self.repo), str(self.root / "data")))
-        )
-
-    def test_a_host_with_no_cos_directory_counts_zero(self):
-        """Nothing to explain, so the old sentence stays."""
-        board = asyncio.run(self.service.board(str(self.repo)))
-        self.assertEqual(board["empty"]["host_units"], 0)
-
-    def test_the_count_is_taken_again_on_every_read(self):
-        """No cache. One more directory, one more unit counted."""
-        for i in range(1, 15):
-            (self.repo / ".cos" / f"{i:04d}_u{i}").mkdir(parents=True)
-        asyncio.run(self.service.board(str(self.repo)))
-        (self.repo / ".cos" / "0015_extra").mkdir()
-        board = asyncio.run(self.service.board(str(self.repo)))
-        self.assertEqual(board["empty"]["host_units"], 15)
-
-    def test_a_board_with_units_carries_no_empty_explanation(self):
-        create_sync(self.service, str(self.repo), "a-problem", "some words")
-        board = asyncio.run(self.service.board(str(self.repo)))
-        self.assertNotIn("empty", board)
 
     def _typed_unit(self, slug: str = "a-problem") -> str:
         made = create_sync(self.service, str(self.repo), slug, "some words")

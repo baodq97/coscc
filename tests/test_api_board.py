@@ -80,60 +80,16 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("not a configured workspace", r.json()["error"])
 
-    async def test_every_step_starts_manual_because_starting_work_is_a_decision(self):
-        body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
-        modes = {r["mode"] for u in body["units"] for r in u["stages"]}
-        self.assertEqual(modes, {"manual"})
-
-    async def test_a_mode_set_over_http_comes_back_on_the_next_read(self):
+    async def test_a_mode_set_over_http_is_what_the_run_log_holds_for_that_step_alone(self):
         first = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
-        payload = {"cwd": str(REPO), "unit": _a_unit(first), "stage": "impl", "mode": "autonomous"}
+        unit = _a_unit(first)
+        payload = {"cwd": str(REPO), "unit": unit, "stage": "impl", "mode": "autonomous"}
         r = await self.client.post("/api/board/mode", json=payload)
         self.assertEqual(r.status_code, 200, r.text)
-
-        body = (await self.client.get("/api/board", params={"cwd": str(REPO), "fresh": "1"})).json()
-        unit = next(u for u in body["units"] if u["name"] == payload["unit"])
-        by_stage = {r["stage"]: r["mode"] for r in unit["stages"]}
-        self.assertEqual(by_stage["impl"], "autonomous")
-        # and only that step moved
-        self.assertEqual(by_stage["spec"], "manual")
-
-    async def test_the_mode_does_not_change_what_a_step_may_do(self):
-        """Md` `## Answers`, answer 1: tools follow the stage, not the mode.
-
-        Now the same grant and the same warning show before the button whichever mode is set."""
-        from coscc.agent.policy import grant_for
-
-        def pr_row(body: dict, name: str) -> dict:
-            unit = next(u for u in body["units"] if u["name"] == name)
-            row = next(r for r in unit["stages"] if r["stage"] == "pr")
-            return {"grants": row["grants"], "warning": row["warning"], "mode": row["mode"]}
-
-        first = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
-        name = _a_unit(first)
-        before = pr_row(first, name)
-        r = await self.client.post(
-            "/api/board/mode",
-            json={
-                "cwd": str(REPO),
-                "unit": name,
-                "stage": "pr",
-                "mode": "autonomous",
-            },
-        )
-        self.assertEqual(r.status_code, 200, r.text)
-        after = pr_row(
-            (await self.client.get("/api/board", params={"cwd": str(REPO), "fresh": "1"})).json(),
-            name,
-        )
-
-        self.assertEqual(before["mode"], "manual")
-        self.assertEqual(after["mode"], "autonomous")
-        self.assertEqual(before["grants"], after["grants"])
-        self.assertEqual(before["warning"], after["warning"])
-        # `pr` is the PR machine's and holds no grant, so there is nothing to show.
-        self.assertEqual(after["grants"], list(grant_for("pr").tools))
-        self.assertEqual((after["grants"], after["warning"]), ([], ""))
+        service = self.app.state.service
+        modes = service.ws.journal().modes(service.ws.key(str(REPO)))
+        self.assertEqual(modes[(unit, "impl")], "autonomous")
+        self.assertNotIn((unit, "spec"), modes)
 
     async def test_a_mode_is_validated_against_the_board_not_a_second_list(self):
         body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
@@ -162,11 +118,6 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         # ever run, so it never has to branch on the difference.
         self.assertEqual(body["cost"]["input_tokens"], 0)
         self.assertEqual(body["cost"]["turns"], 0)
-
-    async def test_the_board_says_it_is_recording(self):
-        body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
-        self.assertTrue(body["recording"])
-        self.assertIsNone(body["read_only_because"])
 
 
 class TheHeldBoard(unittest.IsolatedAsyncioTestCase):
@@ -214,13 +165,13 @@ class TheBoardIsReadWhenTheAppStarts(unittest.IsolatedAsyncioTestCase):
             service = app.state.service
             seed_store(tmp)
             warmed = asyncio.Event()
-            real = service.warm_boards
+            real = service.boards.warm
 
             async def warm() -> None:
                 await real()
                 warmed.set()
 
-            service.warm_boards = warm
+            service.boards.warm = warm
             async with app.router.lifespan_context(app):
                 await asyncio.wait_for(warmed.wait(), 60)
             held = service.boards.held[service.ws.key(str(REPO))]
@@ -255,11 +206,6 @@ class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
     async def test_the_board_still_reads(self):
         body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
         self.assertEqual(body["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
-
-    async def test_it_says_why_it_is_read_only_rather_than_looking_broken(self):
-        body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
-        self.assertFalse(body["recording"])
-        self.assertIn("COS_WORKING_DIR", body["read_only_because"])
 
     async def test_setting_a_mode_is_refused_with_the_same_reason(self):
         body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()

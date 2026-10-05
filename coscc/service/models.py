@@ -14,7 +14,7 @@ from coscc.agent import labels, models, modeltrial
 
 from coscc.config import Config
 
-from coscc.service.workspaces import Workspaces
+from coscc.units.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
 

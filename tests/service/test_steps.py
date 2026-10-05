@@ -19,7 +19,8 @@ from coscc.git import fetches
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.units import autopilot
-from coscc.service.common import Refused, describe_base, step_cwd
+from coscc.service.common import Refused, step_cwd
+from coscc.units.worktrees import describe_base
 from coscc.kernel import Invalid
 from coscc.service import Service
 from coscc.service.answers import Answers

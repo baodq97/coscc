@@ -12,7 +12,7 @@ from coscc.store.db import Data
 from coscc.store.db import Busy
 from coscc.kernel import Invalid
 from coscc.config import Config
-from coscc.service.workspaces import Workspaces
+from coscc.units.workspaces import Workspaces
 
 
 class StepEvent(TypedDict):

@@ -1,4 +1,11 @@
-"""The board: every unit of a workspace with its stage, what is running on it and its worktree."""
+"""The one board read: every unit of a workspace with its stage, what is running on it and its
+worktree, held per workspace and read again when the app changes something.
+
+`units.board` runs the loop and shapes its answer; this module adds what only the app knows (the
+run log, backlog, worktrees, open pull requests, CI, the release) and keeps the last read. What
+sits above `units` (the step machine's integration and CI reads, the release panel) is handed in
+as plain callables by whoever builds the `Board`.
+"""
 
 from __future__ import annotations
 
@@ -7,47 +14,103 @@ import contextlib
 import logging
 import sqlite3
 import time
-from datetime import date, datetime, timedelta, timezone
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, TypedDict
+from typing import Any, Literal, TypedDict
 
-from coscc.units import backlog, prose_import
 from coscc.agent import agents
-from coscc.units import board as board_reader
-from coscc.git import gitops
-from coscc.units.board import Unavailable
-from coscc.git.gitops import GitError
-from coscc.store.journal import last_runs, timelines_of, totals_of
-from coscc.store.db import Busy, now
 from coscc.agent.policy import grant_for
-from coscc import units
-from coscc.units import scratch, worktrees
-from coscc.units import BadUnit
-from coscc.service.common import (
-    Asked,
-    open_prs_held,
-    CONSEQUENCE,
-    _younger_than,
-    attention_reason,
-    consequence,
-    outcome_label,
-    unit_state,
-)
-from coscc.kernel import Invalid
+from coscc.bus import Bus, Event
 from coscc.config import Config
-from coscc.service.workspaces import Workspaces
-from coscc.service.common import Holds
-from coscc.service.agents import Agents
-from coscc.service.steps import HoldView
-from coscc.service.release import Release
-from coscc.service.steps import Steps
+from coscc.git import gitops
+from coscc.git.gitops import GitError
+from coscc.store.db import Busy, now
+from coscc.store.journal import last_runs, timelines_of, totals_of
+from coscc.units import BadUnit, Invalid, backlog, prose_import, scratch, worktrees
+from coscc.units import board as board_reader
+from coscc.units.board import Unavailable, attention_reason, unit_state
+from coscc.units.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
+
+
+def younger_than(at: str, oldest: datetime) -> bool:
+    """Whether a run-log `at` is after `oldest`. One that will not parse is not shown."""
+    try:
+        when = datetime.fromisoformat(at)
+    except TypeError, ValueError:
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when > oldest
+
+
+class Asked:
+    """What a slow read (`gh`) last answered, by a key whose first part is the workspace,
+    with when; and the one background ask running for each key. This process only.
+
+    `get` answers from memory and starts the next ask in the background, so a board read
+    never waits on the network once a key was answered once; only the first `get` of a key
+    waits, or a `fresh` one. An ask that brings a different answer tells `changed` its key.
+    `fn` never raises: an error is its answer, as a string.
+    """
+
+    def __init__(self, changed: Callable[[tuple[str, ...]], None] | None = None) -> None:
+        self.held: dict[tuple[str, ...], tuple[Any, str]] = {}
+        self.asks: dict[tuple[str, ...], asyncio.Task] = {}
+        self.changed = changed
+
+    def ask(
+        self, key: tuple[str, ...], fn: Callable[[], Awaitable[Any]], tell: bool = True
+    ) -> asyncio.Task:
+        """The ask running for `key`, or a new one. A new one that is waited on (`tell`
+        off) tells `changed` nothing: whoever waits reads its answer."""
+        loop = asyncio.get_running_loop()
+        task = self.asks.get(key)
+        if task is not None and not task.done() and task.get_loop() is loop:
+            return task
+
+        async def run() -> Any:
+            value = await fn()
+            before = self.held.get(key)
+            self.held[key] = (value, now())
+            if tell and before is not None and before[0] != value and self.changed is not None:
+                self.changed(key)
+            return value
+
+        task = loop.create_task(run())
+        self.asks[key] = task
+        task.add_done_callback(
+            lambda t: self.asks.pop(key, None) if self.asks.get(key) is t else None
+        )
+        return task
+
+    async def get(
+        self, key: tuple[str, ...], fn: Callable[[], Awaitable[Any]], fresh: bool = False
+    ) -> Any:
+        held = self.held.get(key)
+        if fresh:
+            # An ask begun before this call may predate what it is asked for.
+            running = self.asks.get(key)
+            if running is not None and running.get_loop() is asyncio.get_running_loop():
+                await asyncio.shield(running)
+        if held is None or fresh:
+            return await asyncio.shield(self.ask(key, fn, tell=False))
+        self.ask(key, fn)
+        return held[0]
 
 
 # An `ended, unknown` row stops being shown this long after it began, unless a later `start`
 # of the same unit retired it first.
 UNKNOWN_END_FOR = timedelta(hours=24)
+
+
+class HoldView(TypedDict):
+    state: str
+    by: str
+    date: str
+    reason: str
 
 
 class CardState(TypedDict):
@@ -171,7 +234,6 @@ class UpNext(TypedDict):
     warnings: list[Any]
     max: int
     propose_warning: str
-    propose_consequence: str
 
 
 def card(u: Mapping[str, Any]) -> Card:
@@ -255,7 +317,6 @@ class StageView(TypedDict):
     file: str
     status: str
     optional: bool
-    mode: str
     last_run: LastRun | None
 
 
@@ -365,7 +426,6 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
                 "file": _text(st.get("file")),
                 "status": _text(st.get("status")),
                 "optional": bool(st.get("optional")),
-                "mode": _text(st.get("mode")),
                 "last_run": last(st.get("last_run")),
             }
             for st in unit.get("stages") or []
@@ -439,38 +499,6 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
     }
 
 
-def waits_for(unit: dict[str, Any]) -> list[str]:
-    """The units `impl` waits on, when the loop said it waits; else none."""
-    if unit.get("why") != "dependency":
-        return []
-    return [d["ref"] for d in unit.get("depends_on") or [] if d.get("merged") is not True]
-
-
-def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, Any]]) -> None:
-    """Give every review round a `comment`: on the pull request, or not and why.
-
-    Read off the run log, never stored beside the round: a `posted` or `already` row for
-    the round means it is there. Anything else -- including a round written at a terminal,
-    which has no row at all -- is *not on the PR*, with the latest failure's reason if any.
-    """
-    posted: dict[tuple[str, Any], str] = {}
-    failed: dict[tuple[str, Any], str] = {}
-    for r in records:
-        k = (str(r.get("unit") or ""), r.get("round"))
-        if r.get("outcome") in ("posted", "already"):
-            posted[k] = str(r.get("comment_url") or "")
-        elif r.get("outcome") == "failed":
-            failed[k] = str(r.get("detail") or "")
-    for u in units_:
-        for rnd in u.get("rounds") or []:
-            k = (u["name"], rnd.get("n"))
-            rnd["comment"] = (
-                {"posted": True, "url": posted[k], "reason": None}
-                if k in posted
-                else {"posted": False, "url": "", "reason": failed.get(k)}
-            )
-
-
 def _brief_rounds(units_: list[dict[str, Any]]) -> None:
     """Every review round without its text or its findings' text: what reads the whole text
     (an import, a comment, an impl's claim) reads it from the store, never from the board."""
@@ -498,31 +526,32 @@ async def _in_thread[T](fn: Callable[..., T], *args: Any) -> T:
         raise
 
 
-def answerable(unit: dict[str, Any]) -> bool:
-    """Whether the board invites an answer on this unit: not once it is finished, closed or
-    dropped."""
-    # `next`'s code, never its words.
-    why = str(unit.get("why") or "")
-    dropped = (unit.get("hold") or {}).get("state") == "dropped"
-    return not (why in ("finished", "rejected") or dropped)
-
-
 class Board:
+    """The board of every workspace, read once each and held.
+
+    `unfinished(key)` lists a workspace's unfinished attempts (what is running); `overrides()`
+    the agent table's changes; `open_prs(cwd)` asks `gh` for the open pull requests (a list, or
+    its error as a string); `attach(cwd, data, journal, key, prs, fresh)` adds what sits above
+    `units`: each unit's `integration` and the `release` block, and returns the function that
+    starts the CI asks that read found missing, which the read calls last.
+    """
+
     def __init__(
         self,
         config: Config,
         ws: Workspaces,
-        holds: Holds,
-        agents: Agents,
-        release: Release,
-        steps: Steps,
+        bus: Bus,
+        unfinished: Callable[[str], list[Any]],
+        overrides: Callable[[], dict[str, Any]],
+        open_prs: Callable[[str], Awaitable[list[dict[str, Any]] | str]],
+        attach: Callable[..., Awaitable[Callable[[], None]]],
     ) -> None:
         self.config = config
         self.ws = ws
-        self.holds = holds
-        self.agents = agents
-        self.release = release
-        self.steps = steps
+        self.unfinished = unfinished
+        self.overrides = overrides
+        self.open_prs = open_prs
+        self.attach = attach
         # By journal key: the last board read, `{cwd, data, read_at}`; the one read running;
         # the keys a change came to while it ran, so it reads once more; and what waits for
         # the next read to end. This process only.
@@ -531,13 +560,55 @@ class Board:
         self._again: dict[str, bool] = {}
         self._ended: dict[str, asyncio.Future] = {}
         # The open pull requests of each workspace, as `gh` last answered; an answer that
-        # changed reads the board again, and so does a held release answer.
-        self.prs = Asked(self._changed)
-        self.release.details.changed = self._changed
+        # changed reads the board again.
+        self.prs = Asked(self.changed)
         # A finished unit's tree being removed, by `(cwd, unit)`: never waited on by a read.
         self._removing: dict[tuple[str, str], asyncio.Task] = {}
         # Set by `stop`: the app is going down, and no read or removal starts any more.
         self._stopping = False
+        # A change the app made reads that workspace's board again, once one was read.
+        for name in (
+            "step.ended",
+            "step.refused",
+            "integration.ended",
+            "integration.refused",
+            "answer.written",
+            "hold.moved",
+            "mode.set",
+        ):
+            bus.subscribe(name, self._on_event)
+
+    def _on_event(self, event: Event) -> None:
+        if event.going_down or event.workspace not in self.held:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self.refresh(self.held[event.workspace]["cwd"], again=True)
+
+    async def get(self, cwd: str, which: Literal["new", "held", "next"] = "new") -> dict[str, Any]:
+        """The board of `cwd`.
+
+        `new` waits for a read begun after this call, which asks `gh` anew. `held` answers with the
+        last read and starts the next, so it waits only while nothing was read yet: what the page
+        and `/api/board` ask. `next` waits for the next read to end and starts none: what a tab
+        that shows the board waits on. Every workspace has one read running at most.
+        """
+        self.ws.check(cwd)
+        key = self.ws.key(cwd)
+        if which == "next":
+            await self.next_read(cwd)
+            return self.held[key]["data"]
+        kept = self.held.get(key) if which == "held" else None
+        task = self.refresh(cwd, again=which == "new", fresh=which == "new")
+        return kept["data"] if kept is not None else await asyncio.shield(task)
+
+    async def warm(self) -> None:
+        """Every listed workspace's board read once, so the first page opened finds it held. A
+        first read waits on its workspace's open pull requests, so the board it holds has them."""
+        cwds = [w["path"] for w in self.ws.all()["workspaces"] if not w.get("missing")]
+        await asyncio.gather(*(self.refresh(c) for c in cwds), return_exceptions=True)
 
     # -- the held board ---------------------------------------------------------
 
@@ -562,6 +633,18 @@ class Board:
         self.reads[key] = task
         task.add_done_callback(lambda t: self._read_ended(key, t))
         return task
+
+    def _prs_held(self, cwd: str, fresh: bool = False):
+        """`open_prs` for `cwd`, answered from what `prs` holds: `gh` is waited on only when
+        nothing is held yet, or when `fresh`. One ask per board read, however often it is awaited."""
+        got: list[Any] = []
+
+        async def prs():
+            if not got:
+                got.append(await self.prs.get((cwd, "prs"), lambda: self.open_prs(cwd), fresh))
+            return got[0]
+
+        return prs
 
     async def next_read(self, cwd: str) -> None:
         """Until the next read of `cwd` ends well, which leaves its board in `held`. Starts no
@@ -592,7 +675,7 @@ class Board:
             # Whoever waited was told; a read nobody waited for is only logged.
             log.warning("the board of %s could not be read: %s", key, task.exception())
 
-    def _changed(self, asked: tuple[str, ...]) -> None:
+    def changed(self, asked: tuple[str, ...]) -> None:
         """Something a read shows changed under `asked[0]`: read its board again, once one
         was read."""
         found = self.held.get(self.ws.key(asked[0]))
@@ -641,12 +724,12 @@ class Board:
         except (Busy, sqlite3.Error, OSError) as e:
             log.warning("the review rounds of %s could not be imported: %s", key, e)
 
-    async def read(self, cwd: str, fresh: bool = False) -> dict[str, Any]:  # noqa: PLR0915 - still to split
-        """Every unit in this workspace, each with its eight stages, modes and cost.
+    async def read(self, cwd: str, fresh: bool = False) -> dict[str, Any]:
+        """Every unit in this workspace, each with its eight stages and cost.
 
-        The status of a stage comes from the artifact and the mode comes from the journal,
-        and they are joined here rather than stored together. Storing them together is how
-        a board starts disagreeing with the files it claims to describe.
+        The status of a stage comes from the artifact and the last run from the journal, and
+        they are joined here rather than stored together. Storing them together is how a board
+        starts disagreeing with the files it claims to describe.
 
         Waits on no network once the workspace's open pull requests were asked once: `gh` is
         answered from what is held and asked again in the background. A `fresh` read waits on
@@ -662,11 +745,10 @@ class Board:
             nonlocal last
             took[part], last = time.monotonic() - last, time.monotonic()
 
-        def _snapshot() -> tuple[dict[str, Any], list[str]]:
-            peers, problems = self.ws.peer_table()
-            return self.ws.snapshot(cwd, peers=peers), problems
+        def _snapshot() -> dict[str, Any]:
+            return self.ws.snapshot(cwd, peers=self.ws.peer_table()[0])
 
-        state, peer_problems = await _in_thread(_snapshot)
+        state = await _in_thread(_snapshot)
         lap("snapshot")
         try:
             data = await board_reader.read(self.ws.units_root(cwd), state=state)
@@ -678,22 +760,6 @@ class Board:
         _brief_rounds(data["units"])
         lap("import")
         data["read_at"] = read_at
-        # Only when there is something to say.
-        if peer_problems:
-            data["peer_problems"] = peer_problems
-        # Each stage column's agent, by the one lookup, for the page to show only.
-        # A stage the table has no row for is left out, and its column has no glyph.
-        overrides = self.agents.agent_overrides()[0]
-        data["stage_agents"] = {}
-        for stage in data["stages"]:
-            row = agents.agent_for(stage, overrides)
-            if row is not None:
-                data["stage_agents"][stage] = {
-                    "glyph": row["glyph"],
-                    "label": agents.label({**row, "key": stage}),
-                    "meaning": row["meaning"],
-                    "role": row["role"],
-                }
         name = self.ws.name(cwd)
         for unit in data["units"]:
             if unit.get("repo") and name and unit["repo"] != name:
@@ -701,27 +767,21 @@ class Board:
                     *unit["problems"],
                     f"Repo: {unit['repo']} is not this workspace, {name}.",
                 ]
-            unit["waits_for"] = waits_for(unit)
 
         journal = self.ws.journal()
         key = self.ws.key(cwd)
-        modes: dict[tuple[str, str], str] = {}
         timelines: dict[str, list[dict[str, Any]]] = {}
-        comments: list[dict[str, Any]] = []
         ranking: list[dict[str, Any]] = []
         if journal is not None:
             try:
-                # One read for every unit's cost, comment attempts and the backlog's
-                # records. Asking `totals` per unit re-scanned the
-                # working folder N times for the rows this already has.
-                modes, rows = await _in_thread(lambda: (journal.modes(key), journal.records(key)))
+                # One read for every unit's cost and the backlog's records. Asking `totals` per
+                # unit re-scanned the working folder N times for the rows this already has.
+                rows = await _in_thread(journal.records, key)
             except Busy as e:
                 raise Invalid(str(e)) from e
             timelines = timelines_of(rows)
-            comments = [r for r in rows if r.get("kind") == "pr-comment"]
             ranking = [r for r in rows if r.get("kind") in backlog.KINDS]
         lap("run log")
-        _attach_comment_state(data["units"], comments)
         # Display only: nothing below reads it, and `next`/`blocked` are untouched.
         folded = backlog.fold(
             data["units"],
@@ -730,11 +790,7 @@ class Board:
             backlog.undetermined(timelines, data["units"]),
         )
         per_unit = folded.pop("per_unit")
-        data["backlog"] = {
-            **folded,
-            "propose_warning": grant_for("estimate").warning,
-            "propose_consequence": CONSEQUENCE["estimate"],
-        }
+        data["backlog"] = {**folded, "propose_warning": grant_for("estimate").warning}
         for unit in data["units"]:
             unit["backlog"] = per_unit.get(unit["name"]) or {
                 "rank": None,
@@ -747,40 +803,19 @@ class Board:
         for unit in data["units"]:
             unit_last_runs = last_runs(timelines.get(unit["name"], []))
             for row in unit["stages"]:
-                # `manual` is the default because starting work is a decision someone has
-                # to make, not one an unset value should make for them.
-                row["mode"] = modes.get((unit["name"], row["stage"]), "manual")
-                # The mode is a label; the grant follows the stage alone.
-                grant = grant_for(row["stage"])
-                # Carried to the page: what a step will be allowed to do has to be readable
-                # before it is started.
-                row["grants"] = list(grant.tools)
-                row["warning"] = grant.warning
-                row["consequence"] = consequence(row["stage"])
                 # From the same `timelines` read above, no second scan of the run log.
                 # `status` stays read from the artifact alone; this is a separate field.
                 row["last_run"] = unit_last_runs.get(row["stage"])
             unit["cost"] = totals_of(timelines.get(unit["name"], [])) if journal is not None else {}
-            # A label and nothing else: a deadline passing writes no row and
-            # starts no step.
-            unit["outcome_label"] = outcome_label(
-                unit.get("outcome"), date.today(), finished=unit.get("why") == "finished"
-            )
-            # Decided here so the page only shows them.
-            unit["answerable"] = answerable(unit)
             unit["attention_reason"] = attention_reason(unit)
 
         lap("fold")
         await self._attach_worktrees(cwd, data["units"])
         lap("worktree")
         # One held `gh pr list` for the whole read, asked only by whichever block needs it.
-        prs = open_prs_held(self.prs, cwd, fresh)
-        asks = await self.steps.attach_integration(cwd, data["units"], journal, key, prs, fresh)
-        lap("integration")
-        data["release"] = await self.release.attach_release(
-            cwd, data["units"], journal, key, prs, fresh
-        )
-        lap("release")
+        prs = self._prs_held(cwd, fresh)
+        ask_ci = await self.attach(cwd, data, journal, key, prs, fresh)
+        lap("integration and release")
         for unit in data["units"]:
             # From the timelines read above: no second scan of the run log.
             ended = [r for r in timelines.get(unit["name"], []) if r.get("ended") is not None]
@@ -788,24 +823,9 @@ class Board:
                 unit, ended[-1] if ended else None, unit.pop("ci_held", None)
             )
 
-        data["recording"] = journal is not None
-        data["read_only_because"] = (
-            None
-            if journal is not None
-            else "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR"
-        )
-        if not data["units"]:
-            # A host repository can have a `.cos/` full of units the store never heard of, so
-            # the page can say which directory it read and how many units sit in the other.
-            # Counted on every call, never cached.
-            data["empty"] = {
-                "store": str(self.ws.units_root(cwd)),
-                "host": units.key(cwd),
-                "host_units": units.host_unit_count(cwd),
-            }
         # Started last and never awaited: their answers count from the next read, which
         # each answer starts.
-        self.steps.ask_ci(asks, ended=lambda tree: self._changed((tree,)))
+        ask_ci()
         log.info(
             "board %s read in %.2fs: %s",
             key,
@@ -817,7 +837,7 @@ class Board:
     def running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         """`running`'s `running`, from memory alone: what `guide_block` reads too."""
         running: dict[str, list[dict[str, Any]]] = {}
-        for entry in self.holds.attempts.unfinished(key):
+        for entry in self.unfinished(key):
             if entry["machine"] not in ("step", "integration", "estimate"):
                 continue
             kind = (
@@ -863,7 +883,7 @@ class Board:
         self.ws.check(cwd)
         key = self.ws.key(cwd)
         # Through the one lookup, so an override shows here too. Read once per call.
-        overrides = self.agents.agent_overrides()[0]
+        overrides = self.overrides()
         running = self.running_here(key, overrides)
         out: dict[str, Any] = {"running": running, "unknown_end": {}}
         journal = self.ws.journal()
@@ -888,7 +908,7 @@ class Board:
                 for r in found["open"]
                 if r.get("started")
                 and r["started"] == found["last_start"]
-                and _younger_than(r["started"], oldest)
+                and younger_than(r["started"], oldest)
             ]
             if rows:
                 out["unknown_end"][unit] = rows
@@ -949,7 +969,7 @@ class Board:
                 log.exception("the tree of %s could not be removed", unit["name"])
                 return
             if done.get("removed"):
-                self._changed((cwd,))
+                self.changed((cwd,))
 
         task = asyncio.get_running_loop().create_task(remove())
         self._removing[slot] = task

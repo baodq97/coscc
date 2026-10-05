@@ -18,6 +18,7 @@ from typing import Any
 
 from coscc.loop import run
 from coscc.units import guards
+from coscc.units.autopilot import SHIP_UNRECORDED
 
 # Turns a hung child into an error rather than bounding the work (like `store.LOCK_TIMEOUT`).
 TIMEOUT = 10.0
@@ -596,3 +597,152 @@ def _why_empty(path: Path) -> str:
     if not (path / ".cos").exists():
         return "this workspace has no .cos/ — nothing here runs the loop yet"
     return "the .cos/ directory is there but holds no work units"
+
+
+# -- the state a card shows ------------------------------------------------------------
+
+
+# The one sentence beside each action whose effect leaves this machine. The full warnings stay in
+# `policy.py` and `.claude/rules/coscc-app.md`.
+CONSEQUENCE = {
+    "integrate": "Rebases this pull request with this machine's gh login; a conflict opens a paid session.",
+    "release": "Commits, pushes, merges and tags on main with this machine's gh login.",
+}
+
+
+def attention_reason(unit: dict[str, Any]) -> str:
+    """What a unit waits on, `""` when it waits on nothing named here. The board's state is
+    `unit_state`'s."""
+    # `next`'s code, never its words. `dependency` is the one `why` whose words began `waiting`.
+    why = str(unit.get("why") or "")
+    rows = unit.get("stages") or []
+    if unit.get("phase") == "pre-intent" or why in ("finished", "rejected"):
+        return ""
+    if not (
+        unit.get("problems") or any(r.get("status") in ("draft", "changes-requested") for r in rows)
+    ):
+        return ""
+    waiting = any(not p.get("answered") for p in unit.get("person_findings") or [])
+    if unit.get("problems") or waiting or why == "dependency":
+        return "Needs a person"
+    draft = next((r for r in rows if r.get("status") == "draft"), None)
+    if draft is not None:
+        # A `ship.md` a refused merge left is worked by `next`, not accepted; accepting it
+        # reads the unit as finished with its pull request open.
+        if unit.get("why") == "ship-refused":
+            return ""
+        # A merge asked for and not recorded.
+        if unit.get("why") == "ship-merging":
+            return SHIP_UNRECORDED
+        # A fact, not an order: no button accepts a draft; its stage's next run does.
+        return f"{draft.get('stage')}.md is a draft"
+    return "Changes requested"
+
+
+# The nine states and their labels, in the order their rules are tried. No label reads as
+# approval: `Done` comes from `next.why = finished` alone. `running` and `starting` are only
+# laid over (`shown_state`), never decided by `unit_state`.
+STATE_LABEL = {
+    "done": "Done",
+    "dropped": "Dropped",
+    "paused": "Paused",
+    "running": "Running",
+    "starting": "Starting",
+    "needs-you": "Needs you",
+    "error": "Error",
+    "awaiting": "Awaiting CI/merge",
+    "ready": "Ready",
+}
+# One colour per state, none shared, in place of the lane colours.
+STATE_COLOR = {
+    "done": "grass",
+    "dropped": "bronze",
+    "paused": "plum",
+    "running": "iris",
+    "starting": "blue",
+    "needs-you": "amber",
+    "error": "red",
+    "awaiting": "cyan",
+    "ready": "gray",
+}
+# The states `Running` is never laid over, and the reason is never shown beside.
+COLLAPSED_STATES = ("done", "paused", "dropped")
+# The states the board folds into a closed group at its foot rather than a stage lane: a
+# paused unit stays in its lane, since it waits on a person.
+FOLDED_STATES = ("done", "dropped")
+
+
+def _state(state: str, label: str = "") -> dict[str, str]:
+    return {"state": state, "label": label or STATE_LABEL[state], "color": STATE_COLOR[state]}
+
+
+def unit_state(
+    unit: dict[str, Any], last_end: dict[str, Any] | None, ci: dict[str, Any] | None
+) -> dict[str, str]:
+    """The one state `Service.board` decides for a unit: rules 1-3 and 5-8.
+
+    `unit` is the board's dict with `integration` attached; `last_end` the unit's latest ended
+    run-log row; `ci` the held answer of `integrate.required_checks` for the pull request's
+    head, or None. `Running` is the page's to lay over this (`shown_state`).
+    """
+    why = str(unit.get("why") or "")
+    hold = (unit.get("hold") or {}).get("state")
+    if why == "finished":
+        return _state("done")
+    if hold == "dropped" or why == "rejected":
+        if why == "rejected":
+            stage = next(
+                (r.get("stage") for r in unit.get("stages") or [] if r.get("status") == "rejected"),
+                "",
+            )
+            return _state("dropped", f"Dropped — {stage} rejected")
+        return _state("dropped")
+    if hold == "paused":
+        return _state("paused")
+    if int(unit.get("open") or 0) > 0 or why in ("needs-person", "awaits-person"):
+        return _state("needs-you")
+    # The buckets `integrate.classify` reads as red. A held answer that is `gh`'s error has no
+    # `checks`, and reads as not read.
+    red = [
+        str(c.get("name") or "")
+        for c in (ci or {}).get("checks") or []
+        if c.get("bucket") in ("fail", "cancel")
+    ]
+    failed = (
+        last_end is not None
+        and last_end.get("outcome") in ("failed", "exhausted")
+        and last_end.get("stage") == unit.get("at")
+    )
+    # `ship-merging` with no `ship` running is a merge nothing will record; `shown_state` lays
+    # `Running` over it while one runs.
+    if (
+        unit.get("problems")
+        or why in ("unreadable", "ship-merging")
+        or failed
+        or red
+        or (unit.get("integration") or {}).get("state") == "red-after-integration"
+    ):
+        return _state("error")
+    # `impl` waits on another unit's merge: a wait, not a stage to run.
+    if why == "dependency":
+        return _state("awaiting", "Awaiting a dependency")
+    # A `review` or `ship` made stale by a rerun waits on CI as a missing one does; a stale
+    # `pr.md` in the window is a stage to run, not a wait.
+    due = why == "missing" or (why == "stale" and unit.get("at") in ("review", "ship"))
+    if unit.get("between_pr_and_ship") and due:
+        return _state("awaiting")
+    return _state("ready")
+
+
+def shown_state(
+    decided: dict[str, Any], running_rows: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    """`Running` while `Board.running` lists a `running` or `ending` attempt of the unit, and
+    `Starting` while it lists only `queued` or `preparing` ones, below rules 1-3 and above the
+    rest. `running_rows` is that answer's `running` entry for the unit; a row's `state` is its
+    attempt's."""
+    if not running_rows or decided.get("state") in COLLAPSED_STATES:
+        return decided
+    if all(r.get("state") in ("queued", "preparing") for r in running_rows):
+        return _state("starting")
+    return _state("running")

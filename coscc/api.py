@@ -43,14 +43,14 @@ from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 from coscc.bus import Event
 from coscc.service.agents import AgentPage
-from coscc.service.board import Cards, Detail, UpNext, cards, detail
+from coscc.units.read import Cards, Detail, UpNext, cards, detail
 from coscc.service.steps import NextStep
 from coscc.service.activity import Insights
 from coscc.service.release import ReleaseView
 from coscc.service.sessions import ChatHistory, ChatSessions
 from coscc.service.watch import EventsPage
 from coscc.units.backlog import SHORTLIST_MAX
-from coscc.service.workspaces import WorkspaceList
+from coscc.units.workspaces import WorkspaceList
 
 log = logging.getLogger(__name__)
 
@@ -254,7 +254,7 @@ async def get_insights(request: Request) -> Insights:
     at what cost and how many review rounds, its money by day and by stage, and what was spent
     again. Read only; the run log and the board held."""
     service, cwd = _service(request), _cwd(request)
-    board = await service.board(cwd, "held")
+    board = await service.boards.get(cwd, "held")
     return service.activity.insights(cwd, board.get("units") or [])
 
 
@@ -365,7 +365,7 @@ async def get_decided(request: Request) -> list[Decided]:
     the agents decided for the owner. An answer counts when its authority is not `person`, or
     when its `by` opens with an agent's name: Leif's answers through `/api/units/answer` are
     recorded as `person` with `by` naming Leif. Read from the board held."""
-    board = await _service(request).board(_cwd(request), "held")
+    board = await _service(request).boards.get(_cwd(request), "held")
     out: list[Decided] = [
         {
             "unit": str(u.get("name") or ""),
@@ -446,7 +446,7 @@ async def more_rounds(request: Request) -> Any:
 async def get_backlog(request: Request) -> Any:
     """The shortlist the autopilot works through, the other estimated units in the order their
     estimates and relations give, and the units with no estimate. Read from the board held."""
-    board = await _service(request).board(_cwd(request), "held")
+    board = await _service(request).boards.get(_cwd(request), "held")
     return {**(board.get("backlog") or {}), "max": SHORTLIST_MAX}
 
 
@@ -573,7 +573,7 @@ async def get_unit(name: str, request: Request) -> Detail:
     """One unit as its page shows it: its card, stages, questions and answers with who gave them,
     review rounds, and every run from the run log. Read from the board held, like `/api/units`."""
     service, cwd = _service(request), _cwd(request)
-    board = await service.board(cwd, "held")
+    board = await service.boards.get(cwd, "held")
     unit = next((u for u in board.get("units") or [] if u.get("name") == name), None)
     if unit is None:
         raise Invalid(f"no unit {name} in {cwd}")
@@ -714,7 +714,7 @@ async def integrate_unit(request: Request) -> Any:
 async def get_release(request: Request) -> Any:
     """What a release of one workspace would gather and the one button it offers now; `null`
     for a workspace that is not a git checkout. Read from the board held."""
-    return (await _service(request).board(_cwd(request), "held")).get("release")
+    return (await _service(request).boards.get(_cwd(request), "held")).get("release")
 
 
 @router.post("/api/release/prepare")
@@ -902,7 +902,7 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
         tasks: list[asyncio.Task] = []
         if starting:
             plugin.create_tables(ctx, tables)
-            work = (service.resume.resume_after_update(), service.warm_boards(), schedules())
+            work = (service.resume.resume_after_update(), service.boards.warm(), schedules())
             tasks = [asyncio.create_task(w) for w in work]
         yield
         for task in tasks:

@@ -17,7 +17,7 @@ from coscc.store.journal import BadRecord
 from coscc.kernel import OWNER
 from coscc.kernel import Invalid
 from coscc.config import Config
-from coscc.service.workspaces import Workspaces
+from coscc.units.workspaces import Workspaces
 
 # The `runs` kind of one saved or reset field: the trace of who moved what.
 SETTING_KIND = "agent-setting"

@@ -34,6 +34,11 @@ TIMEOUT = 10.0
 _DIGEST = 12
 
 
+class Invalid(Exception):
+    """A request the app refuses, carrying a reason a caller can show verbatim. The routes answer
+    it with a 400 (503 while an update runs, 409 when it cannot apply)."""
+
+
 class BadUnit(ValueError):
     """A unit name, slug or workspace this module will not act on."""
 
@@ -178,22 +183,6 @@ def create(
     if text:
         (directory / "idea.md").write_text(_idea(unit, text), encoding="utf-8")
     return {"unit": unit, "path": str(directory), "brief": bool(text)}
-
-
-def host_unit_count(workspace: str | os.PathLike[str]) -> int:
-    """How many directories in the host repository's own `.cos/` are named like units.
-
-    Names only, no file opened, never cached. It lets the empty board say why it is empty.
-    """
-    directory = Path(key(workspace)) / COS_DIR
-    try:
-        return sum(1 for e in directory.iterdir() if e.is_dir() and _HOST_UNIT_RE.match(e.name))
-    except OSError:
-        return 0
-
-
-# Looser than `UNIT_RE` on purpose: a directory whose slug the grammar refuses still counts.
-_HOST_UNIT_RE = re.compile(r"\d{4}_")
 
 
 def _idea(unit: str, brief: str) -> str:

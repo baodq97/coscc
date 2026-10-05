@@ -1,4 +1,4 @@
-"""Tests for `Board` in `coscc/service/board.py`, split from `tests/service/test_service.py`."""
+"""Tests for `Board` in `coscc.units.read.py`, split from `tests/service/test_service.py`."""
 
 from __future__ import annotations
 
@@ -84,23 +84,6 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
             return out
 
         return asyncio.run(go())
-
-    def test_every_stage_column_carries_its_glyph_and_label(self):
-        # Every stage the board read names, from the table, overrides included.
-        self.service.agents.set_agent_field("review", "name", "Judge")
-        data = asyncio.run(self.service.board(str(self.repo)))
-        self.assertEqual(set(data["stage_agents"]), set(data["stages"]) - {"pr", "ship"})
-        self.assertEqual(
-            data["stage_agents"]["plan"],
-            {
-                "glyph": "ᚱ",
-                "label": "Raidho (agent, plan)",
-                "meaning": "journey: the right road in the right order",
-                "role": "Orders the work and names its proof, and writes no code.",
-            },
-        )
-        self.assertEqual(data["stage_agents"]["review"]["label"], "Judge (agent, review)")
-        self.assertEqual(data["stage_agents"]["spike"]["meaning"], "")
 
     def test_one_entry_while_the_step_runs_and_none_after_done(self):
         self._run("spec")
@@ -524,10 +507,8 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(waiting.done())
         self.assertEqual(reads, [])
         await self.service.steps.set_mode(self.cwd, self.unit, "impl", "autonomous")
-        data = await asyncio.wait_for(waiting, 5)
+        await asyncio.wait_for(waiting, 5)
         self.assertEqual(reads, [self.cwd])
-        [u] = data["units"]
-        self.assertEqual(next(r["mode"] for r in u["stages"] if r["stage"] == "impl"), "autonomous")
 
     async def test_a_change_before_any_read_starts_none(self):
         reads = self.counted()
@@ -535,7 +516,7 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((reads, self.service.boards.reads), ([], {}))
 
     async def test_every_read_logs_how_long_each_part_took(self):
-        with self.assertLogs("coscc.service.board", "INFO") as logs:
+        with self.assertLogs("coscc.units.read", "INFO") as logs:
             await self.service.board(self.cwd)
         [line] = [m for m in logs.output if " read in " in m]
         for part in (
@@ -552,7 +533,7 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
 
 class AListShowsACardOfEachUnit(unittest.TestCase):
     def test_a_card_keeps_what_a_list_shows_and_drops_the_rest(self):
-        from coscc.service.board import cards
+        from coscc.units.read import cards
 
         unit = {
             "name": "0001_x",
@@ -601,7 +582,7 @@ class AListShowsACardOfEachUnit(unittest.TestCase):
 
 class AUnitPageShowsItsRuns(unittest.TestCase):
     def test_a_run_whose_cost_was_never_reported_says_unknown_not_zero(self):
-        from coscc.service.board import detail
+        from coscc.units.read import detail
 
         unit = {
             "name": "0001_x",

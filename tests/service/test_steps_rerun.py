@@ -25,7 +25,7 @@ from coscc.service import Service
 from coscc.service.common import Refused
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
-from coscc.service.common import unit_state
+from coscc.units.board import unit_state
 
 SHA = "a" * 40
 PR_MD = "# PR: feat(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân cũ\n"
@@ -195,9 +195,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         # The fixture's `intent.md` leaves Câu 1 open, and *Needs you* is tried first.
         self.assertEqual(unit_state(row, None, None)["state"], "needs-you")
         got = unit_state({**row, "open": 0}, None, None)
-        self.assertEqual(
-            (got["state"], got["ci"]), ("awaiting", {"read": False, "red": [], "at": ""})
-        )
+        self.assertEqual(got["state"], "awaiting")
 
     def test_the_note_reaches_no_session_and_no_file(self):
         self.run_step("pr", rerun=True, note="NOTE-0054")

@@ -59,7 +59,9 @@ class Routes(unittest.IsolatedAsyncioTestCase):
                 }
             ]
         }
-        with mock.patch.object(self.app.state.service, "board", mock.AsyncMock(return_value=board)):
+        with mock.patch.object(
+            self.app.state.service.boards, "get", mock.AsyncMock(return_value=board)
+        ):
             r = await self.client.get("/api/decided", params={"cwd": self.cwd})
         self.assertEqual(
             [(d["text"], d["date"]) for d in r.json()],

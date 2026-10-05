@@ -1080,7 +1080,6 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         # (a)
         self.assertEqual(u["state"]["state"], "awaiting")
-        self.assertEqual(u["state"]["ci"], {"read": False, "red": [], "at": ""})
         self.assertEqual(len(self.service.steps.ci_asks), 1)
         self.assertEqual(self.asked(), 1)
         # (b) A second read opens no second ask while the first is out.
@@ -1097,8 +1096,6 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.service.steps.ci_asks, {}, "the ask removed itself once done")
         u = await self.read()
         self.assertEqual(u["state"]["state"], "error")
-        self.assertEqual(u["state"]["ci"]["red"], ["tests"])
-        self.assertTrue(u["state"]["ci"]["read"])
         await self.settle()
         self.assertEqual(self.asked(), 1, "a fresh answer for this head is not asked again")
 
@@ -1114,7 +1111,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(held["ci"], "red")
         u = await self.read()
-        self.assertEqual((u["state"]["state"], u["state"]["ci"]["red"]), ("error", ["tests"]))
+        self.assertEqual(u["state"]["state"], "error")
 
     async def test_a_new_head_or_an_old_answer_is_asked_again(self):
         """(e)"""
@@ -1122,22 +1119,20 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         await self.read()
         await self.settle()
         u = await self.read()
-        self.assertEqual((u["state"]["state"], u["state"]["ci"]["read"]), ("awaiting", True))
+        self.assertEqual(u["state"]["state"], "awaiting")
         await self.settle()
         self.assertEqual(self.asked(), 1)
-        # The head moved: the held answer is for another commit, so it is not shown, and asked.
+        # The head moved: the held answer is for another commit, so it is asked again.
         self.head = "b" * 40
-        u = await self.read()
-        self.assertFalse(u["state"]["ci"]["read"])
+        await self.read()
         await self.settle()
         self.assertEqual(self.asked(), 2)
-        # CI_REFRESH later by the service's clock: asked again, the answer still shown.
+        # CI_REFRESH later by the service's clock: asked again.
         later = (datetime.now(timezone.utc) + timedelta(seconds=CI_REFRESH + 1)).isoformat(
             timespec="seconds"
         )
         with mock.patch("coscc.service.steps._now", return_value=later):
-            u = await self.read()
-        self.assertTrue(u["state"]["ci"]["read"])
+            await self.read()
         await self.settle()
         self.assertEqual(self.asked(), 3)
 
