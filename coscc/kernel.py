@@ -309,25 +309,13 @@ class Session:
 
 
 @dataclass(frozen=True)
-class Page:
-    """A sidebar entry whose screen frames the feature's own `GET path?cwd=<workspace>`."""
-
-    label: str
-    # A lucide icon name, as the sidebar's own entries use.
-    icon: str
-    path: str
-
-
-@dataclass(frozen=True)
 class Feature:
     name: str
     routes: Callable[[Ctx], Sequence[BaseRoute]]
-    scripts: tuple[str, ...] = ()
     # `CREATE TABLE IF NOT EXISTS ...` statements, run once at build through `Data.write()`.
     tables: tuple[str, ...] = ()
     # What the feature hands the agent's steps, called once at build like `routes`.
     agent: Callable[[Ctx], Parts] | None = None
-    page: Page | None = None
     # The state of a workspace nobody chose one for: `on` or `off`.
     default: State = "on"
     # Whether `pilot` may be chosen: half the units get the feature (`arm_of`).

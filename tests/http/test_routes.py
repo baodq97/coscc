@@ -557,35 +557,6 @@ class TalkingOverHttp(unittest.IsolatedAsyncioTestCase):
         )
 
 
-class FeaturesInTheStudio(unittest.IsolatedAsyncioTestCase):
-    """The studio frames each feature's page and loads the kit with every feature's scripts."""
-
-    async def asyncSetUp(self):
-        self.app = build(_tmp_config(self))
-        self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
-        )
-
-    async def asyncTearDown(self):
-        await self.client.aclose()
-
-    async def test_the_vault_has_a_page(self):
-        pages = (await self.client.get("/api/features/pages")).json()
-        self.assertIn(
-            {"name": "vault", "label": "Vault", "icon": "key-round", "path": "/vault"}, pages
-        )
-
-    async def test_the_scripts_are_the_kit_then_each_feature_s(self):
-        from coscc.http.plugin import KIT_JS
-
-        r = await self.client.get("/api/features/scripts")
-        self.assertEqual(r.headers["content-type"].split(";")[0], "text/javascript")
-        self.assertTrue(r.text.startswith(KIT_JS))
-        for js in self.app.state.scripts:
-            self.assertIn(js, r.text)
-        self.assertIn("slot-unit", r.text)
-
-
 if __name__ == "__main__":
     unittest.main()
 

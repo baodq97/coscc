@@ -109,14 +109,14 @@ def the_studio_opens_every_screen_at_its_address_and_after_a_reload(context, bas
     return ok
 
 
-def feature_scripts_load_into_the_page(context, base) -> bool:
-    """`ui/index.html` loads `/api/features/scripts`; nothing is injected here."""
-    page = open_studio(context, base, "/")
+def a_feature_page_is_drawn_by_the_studio(context, base) -> bool:
+    """`coscc/features/vault/ui/index.tsx` is built into the studio: its sidebar entry opens it."""
+    page = open_studio(context, base, "/feature/vault")
     try:
-        page.wait_for_function("window.coscc && window.__coscc_notices === true", timeout=10_000)
-        return say(True, "the feature scripts define window.coscc and the notices listener")
+        page.wait_for_selector("text=Add secret", timeout=TIMEOUT_MS)
+        return say(True, "/feature/vault draws the vault page with its Add secret button")
     except Exception as e:  # noqa: BLE001 - reported as the failure it is
-        return say(False, "the feature scripts define window.coscc", type(e).__name__)
+        return say(False, "/feature/vault draws the vault page", type(e).__name__)
     finally:
         page.close()
 
@@ -185,7 +185,7 @@ def main() -> int:
                         app.base,
                     )
                 )
-                results.append(run(feature_scripts_load_into_the_page, context, app.base))
+                results.append(run(a_feature_page_is_drawn_by_the_studio, context, app.base))
                 results.append(run(an_unknown_api_path_is_a_404_not_the_page, api))
             finally:
                 context.close()

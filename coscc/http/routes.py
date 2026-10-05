@@ -29,7 +29,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, AsyncIterator, NotRequired, TypedDict
 
 from fastapi import APIRouter, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from coscc import kernel
 from coscc.bus import Event
@@ -734,32 +734,6 @@ async def get_features(request: Request) -> Any:
     if request.query_params.get("detail") == "1":
         return {f.name: {k: v for k, v in asdict(f).items() if k != "name"} for f in rows}
     return {f.name: f.state for f in rows}
-
-
-class FeaturePage(TypedDict):
-    """A feature's own page, which the studio frames at `/feature/<name>`."""
-
-    name: str
-    label: str
-    icon: str
-    path: str
-
-
-@router.get("/api/features/pages")
-async def get_feature_pages(request: Request) -> list[FeaturePage]:
-    return [
-        {"name": name, "label": p.label, "icon": p.icon, "path": p.path}
-        for name, p in request.app.state.pages.items()
-    ]
-
-
-@router.get("/api/features/scripts")
-async def get_feature_scripts(request: Request) -> Response:
-    """The page kit (`plugin.KIT_JS`) and every feature's scripts, which the studio loads once.
-    A script draws into a slot (`slot-topbar`, `slot-unit`, `slot-backlog`) whose element
-    carries `data-cwd` and, on a unit, `data-unit`."""
-    body = "\n".join((plugin.KIT_JS, *request.app.state.scripts))
-    return Response(body, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
 
 @router.get("/api/features/shown")

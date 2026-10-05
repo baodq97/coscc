@@ -1,7 +1,7 @@
 # Scan: the run log read for work that would stop people stepping in
 
 Read this before changing `coscc/features/scan/__init__.py`: the tables, the routes, the scan, the
-schedule's tick and the Backlog script are all in it.
+schedule's tick are all in it. Its Proposals panel on Up next is `ui/index.tsx`.
 
 ## What one scan does
 

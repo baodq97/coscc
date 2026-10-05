@@ -559,7 +559,9 @@ def real_ui():
     return {"path": UI_STANDARD, "globs": parse_standard((REPO / UI_STANDARD).read_text())}
 
 
-@pytest.mark.parametrize("path", ["ui/src/screens/UnitPage.tsx", "coscc/features/vault/page.py"])
+@pytest.mark.parametrize(
+    "path", ["ui/src/screens/UnitPage.tsx", "coscc/features/vault/ui/index.tsx"]
+)
 def test_a_changed_screen_of_the_real_standard_blocks_ship_for_want_of_screens(path):
     g = check_gate(passed_with(), "ship", ui_probe([path], {}, real_ui()))
     assert g["ok"] is False

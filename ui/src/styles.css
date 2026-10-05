@@ -336,6 +336,16 @@ table.t th.r { text-align: right; }
 /* palette */
 .scrim { position: fixed; inset: 0; background: rgba(10, 12, 20, .28); z-index: 50; display: flex; justify-content: center; align-items: flex-start; padding-top: 14vh; animation: fade .12s ease; }
 [data-theme="dark"] .scrim { background: rgba(0, 0, 0, .5); }
+.dlg { width: min(520px, calc(100vw - 32px)); max-height: 76vh; overflow: auto; background: var(--panel); border-radius: 12px; box-shadow: var(--shadow-3); animation: pop .16s cubic-bezier(.2, .8, .2, 1); }
+.dlg-h { padding: 14px 18px; font-weight: 600; border-bottom: 1px solid var(--line); }
+.dlg-b { display: grid; gap: 14px; padding: 16px 18px; }
+.dlg-b label.f { display: grid; gap: 4px; }
+.dlg-b .lab, .dlg-b legend { font-size: 12px; font-weight: 500; color: var(--text-2); }
+.dlg-b fieldset { border: 1px solid var(--line); border-radius: var(--r2); padding: 10px 12px; margin: 0; display: grid; gap: 8px; min-width: 0; }
+.dlg-b .checks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.dlg-b .checks label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.dlg-f { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
+.secret { -webkit-text-security: disc; font-family: var(--mono, ui-monospace, monospace); }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 .pal { width: 640px; background: var(--panel); border-radius: 12px; box-shadow: var(--shadow-3); overflow: hidden; animation: pop .16s cubic-bezier(.2, .8, .2, 1); }
 @keyframes pop { from { transform: scale(.98) translateY(-4px); opacity: 0; } to { transform: none; opacity: 1; } }

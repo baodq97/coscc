@@ -15,11 +15,13 @@ export class ApiError extends Error {
 }
 
 async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  // A form (`URLSearchParams`) goes as it is; the browser names its type.
+  const form = body instanceof URLSearchParams;
   const res = await fetch(path, {
     method,
     credentials: "same-origin",
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: body === undefined || form ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : form ? body : JSON.stringify(body),
   });
   if (res.status === 401) {
     location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
@@ -27,7 +29,7 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
   }
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new ApiError(res.status, (data && data.error) || res.statusText);
+  if (!res.ok) throw new ApiError(res.status, (data && (data.error || data.detail)) || res.statusText);
   return data as T;
 }
 
@@ -64,6 +66,7 @@ export const api = {
     const qs = new URLSearchParams(url.rest).toString();
     return call<Get[P]>("GET", qs ? `${url.path}?${qs}` : url.path);
   },
+  /** `body` is JSON, or a `URLSearchParams` sent as a form (the vault's one door for a value). */
   post: <T>(path: string, body: unknown) => call<T>("POST", path, body),
   /**
    * Post and read the answer's NDJSON lines to the end, for a route whose stream does the work
@@ -101,6 +104,56 @@ export const api = {
     await res.body?.cancel();
   },
 };
+
+/**
+ * Reads an NDJSON route that does not end, for as long as the component lives, and comes back
+ * when it drops: after 1 s, doubling to 30 s. A stream silent for 40 s is cut and read again.
+ * `after` gives the cursor each time it connects, or null for none.
+ */
+export function useFollow(path: string, on: (line: Record<string, unknown>) => void, after: () => number | null) {
+  const latest = useRef({ on, after });
+  latest.current = { on, after };
+  useEffect(() => {
+    const stop = new AbortController();
+    (async () => {
+      let wait = 1000;
+      while (!stop.signal.aborted) {
+        const cut = new AbortController();
+        const quit = () => cut.abort();
+        stop.signal.addEventListener("abort", quit, { once: true });
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const arm = () => {
+          clearTimeout(timer);
+          timer = setTimeout(quit, 40_000);
+        };
+        try {
+          arm();
+          const cursor = latest.current.after();
+          const url = cursor == null ? path : `${path}${path.includes("?") ? "&" : "?"}after=${cursor}`;
+          const res = await fetch(url, { credentials: "same-origin", cache: "no-store", signal: cut.signal });
+          if (res.status === 401) {
+            location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
+            return;
+          }
+          if (!res.ok || !res.body) throw new ApiError(res.status, res.statusText);
+          wait = 1000;
+          await readLines(res.body, (line) => {
+            arm();
+            latest.current.on(line);
+          });
+        } catch {
+          // dropped or cut: come back below
+        }
+        clearTimeout(timer);
+        stop.signal.removeEventListener("abort", quit);
+        if (stop.signal.aborted) return;
+        await new Promise((r) => setTimeout(r, wait));
+        wait = Math.min(wait * 2, 30_000);
+      }
+    })();
+    return () => stop.abort();
+  }, [path]);
+}
 
 export type Resource<T> =
   | { state: "loading"; data?: undefined; error?: undefined }

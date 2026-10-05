@@ -244,13 +244,6 @@ export type EventsPage = {
   "purged_at": string | null;
 };
 
-export type FeaturePage = {
-  "name": string;
-  "label": string;
-  "icon": string;
-  "path": string;
-};
-
 export type GrantView = {
   "tools": string[];
   "commands": string[];
@@ -327,6 +320,17 @@ export type Proposal = {
   "at": string;
   "decided": string;
   "reason": string;
+};
+
+export type Proposals = {
+  "on": boolean;
+  "proposals": Proposal[];
+  "runs": Run[];
+  "scanning": boolean;
+  "schedule": number;
+  "note": string;
+  "consequence": string;
+  "warning": string;
 };
 
 export type PullRequest = {
@@ -418,8 +422,17 @@ export type Running = {
   "started": string;
 };
 
+export type Saved = {
+  "saved": string;
+  "short": boolean;
+};
+
 export type Secrets = {
   "workspace": string;
+  "age": boolean;
+  "name_pattern": string;
+  "stages": string[];
+  "modes": string[];
   "secrets": Meta[];
   "globals": Meta[];
 };
@@ -619,10 +632,10 @@ export type Get = {
   "/api/chat/sessions": ChatSessions;
   "/api/codegraph/report": Report;
   "/api/decided": Decided[];
-  "/api/features/pages": FeaturePage[];
   "/api/features/shown": Shown[];
   "/api/insights": Insights;
   "/api/release": ReleaseView | null;
+  "/api/scan/proposals": Proposals;
   "/api/settings/autopilot": AutopilotSettings;
   "/api/units": Cards;
   "/api/units/next": NextStep;

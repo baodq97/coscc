@@ -412,10 +412,8 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
     api.state.sessions = sessions
     api.state.core = core
     api.state.tables = tables
-    # The names for Settings and the pages for `/feature`: only this module imports `features`.
+    # The names for Settings: only this module imports `features`.
     api.state.features = tuple(f.name for f in features.FEATURES)
-    api.state.pages = {f.name: f.page for f in features.FEATURES if f.page}
-    api.state.scripts = tuple(js for f in features.FEATURES for js in f.scripts)
     # Each feature's `Ctx` and the plugins themselves, for the Settings panel's states.
     api.state.ctxs = ctxs
     api.state.plugins = features.FEATURES

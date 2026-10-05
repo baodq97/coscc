@@ -4,6 +4,7 @@ import { match } from "./router";
 import { unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { fill, readLines } from "./api";
+import { FEATURE_UIS } from "./feature";
 import { slugOf } from "../screens/NewWork";
 import { inUnit, merged, toolSummary } from "../screens/RunLog";
 import { moved } from "../screens/UpNext";
@@ -158,5 +159,15 @@ describe("insights", () => {
 describe("release", () => {
   it("sums what a release gathers by kind, most first", () => {
     expect(kinds([{ type: "fix" }, { type: "feat" }, { type: "feat" }, { type: "" }])).toBe("2 feat, 1 fix, 1 other");
+  });
+});
+
+describe("features", () => {
+  it("finds the UI of each feature that has one, by its folder", () => {
+    expect(Object.keys(FEATURE_UIS).sort()).toEqual(["notices", "scan", "vault"]);
+    expect(FEATURE_UIS.vault.page?.label).toBe("Vault");
+    expect(FEATURE_UIS.vault.unit).toBeTypeOf("function");
+    expect(FEATURE_UIS.scan.backlog).toBeTypeOf("function");
+    expect(FEATURE_UIS.notices.topbar).toBeTypeOf("function");
   });
 });

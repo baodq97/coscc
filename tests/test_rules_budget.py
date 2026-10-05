@@ -95,7 +95,7 @@ class TheScopes(unittest.TestCase):
 
 
 class TheUiStandardCoversEveryScreen(unittest.TestCase):
-    """A studio file, or a feature's script or page, that the UI standard's globs do not match is
+    """A studio file, or a feature's `ui/` file, that the UI standard's globs do not match is
     code it is not loaded for, and a unit that changes only that file is not a UI unit to
     `coscc/units/board.py`."""
 
@@ -107,8 +107,7 @@ class TheUiStandardCoversEveryScreen(unittest.TestCase):
                 "ui/src/**/*.tsx",
                 "ui/src/**/*.ts",
                 "ui/src/*.css",
-                "coscc/features/*/*.js",
-                "coscc/features/*/page.py",
+                "coscc/features/*/ui/**/*.tsx",
             )
             for p in sorted(REPO.glob(pattern))
         ]

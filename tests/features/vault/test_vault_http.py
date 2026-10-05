@@ -1,4 +1,4 @@
-"""`coscc/features/vault/`, the person's side: the page and the routes, driven over ASGI.
+"""`coscc/features/vault/`, the person's side: the routes, driven over ASGI.
 
 The bait values of `test_vault.py`'s `Bed` are in the store throughout; every response and header
 of every route is read for them in all five forms.
@@ -10,25 +10,18 @@ import json
 import re
 import shutil
 import subprocess
-import tempfile
 import unittest
-from urllib.parse import parse_qs, urlsplit
 
 import httpx
-from fastapi.testclient import TestClient
 
-from coscc import kernel
 from coscc import vault
 from coscc.http import auth
 from coscc.agent import policy
-from coscc.http.app import build
-from coscc.config import Config
 from coscc.features import vault as feature
-from coscc.features.vault import page
 from coscc.vault.store import NAME
 from tests.features.vault import test_vault as base
 
-GET_ROUTES = {"/vault", "/api/vault/secrets", "/api/vault/leaks"}
+GET_ROUTES = {"/api/vault/secrets", "/api/vault/leaks"}
 POST_ROUTES = {
     "/api/vault/secrets",
     "/api/vault/policy",
@@ -71,96 +64,22 @@ class Http(base.Bed):
         return self.journal().records(self.key, None, kind="vault", **kw)
 
 
-class ThePage(Http):
-    async def test_it_is_a_plain_form_with_no_reflex_hook_and_lists_metadata(self):
-        r = await self.get("/vault")
-        self.assertEqual((r.status_code, r.headers["content-type"][:9]), (200, "text/html"))
-        html = r.text
-        self.assertIn('<form method="post" action="/api/vault/secrets"', html)
-        self.assertIn('<textarea name="value"', html)
-        self.assertNotIn('type="password"', html)
-        self.assertNotIn("handleSubmit", html)
-        self.assertNotIn("onsubmit", html.lower())
-        for name in ("ws:db", "global:tok", "global:other", "the database", "a shared token"):
-            self.assertIn(name, html)
-        self.assertIn('data-act="grant"', html)
-        self.assertIn('data-act="revoke"', html)
-        self.assertNotIn('name="by"', html)
-
-    async def test_it_asks_for_no_name_of_the_person(self):
-        html = (await self.get("/vault")).text.lower()
-        for word in ("your name", "who are you", "author"):
-            self.assertNotIn(word, html)
-
-    async def test_without_a_workspace_it_says_so_and_a_wrong_one_is_400(self):
-        r = self.note(await self.client.get("/vault"))
-        self.assertEqual(r.status_code, 200)
-        self.assertNotIn("<form", r.text)
-        self.assertEqual((await self.get("/vault", cwd="/etc")).status_code, 400)
-
-    async def test_a_workspace_without_secrets_says_so_once(self):
-        for s in self.store.all():
-            self.store.delete(s.name, s.workspace)
-        html = (await self.get("/vault")).text
-        self.assertIn("No secrets here yet.", html)
-
-    async def test_what_the_redirect_says_is_shown_escaped(self):
-        html = (await self.get("/vault", error="<script>x</script>", saved="ws:db", short="1")).text
-        self.assertNotIn("<script>x</script>", html)
-        self.assertIn("&lt;script&gt;", html)
-        self.assertIn("Saved ws:db.", html)
-        self.assertIn("That value is short", html)
-
-    async def test_secrets_are_a_table_and_every_change_opens_in_a_dialog(self):
-        html = (await self.get("/vault")).text
-        self.assertIn("<th>Name</th><th>Kept for</th><th>Used by</th><th>Passed as</th>", html)
-        row = html[html.index('<span class="name">ws:db') :]
-        row = row[: row.index("</tr>")]
-        self.assertIn('data-open="access-', row)
-        self.assertIn('data-open="value-', row)
-        self.assertIn('data-act="delete"', row)
-        self.assertIn('data-open="add"', html[: html.index("<table")])
-        access = html[html.index('<dialog id="access-') :]
-        self.assertIn('data-act="policy"', access[: access.index("</dialog>")])
-        form = html[html.index('<dialog id="add"') :]
-        form = form[: form.index("</dialog>")]
-        legends = [part.split("</legend>")[0] for part in form.split("<legend>")[1:]]
-        self.assertEqual(legends, ["Secret", "Access", "Value"])
-        self.assertEqual(form.count('type="submit"'), 1)
-        self.assertIn(">Add secret</button>", form)
-
+class TheNameRule(unittest.TestCase):
     def test_the_name_rule_on_the_page_is_the_stores(self):
-        rule = re.compile(page.NAME_PATTERN, re.ASCII)
+        rule = re.compile(feature.NAME_PATTERN, re.ASCII)
         for name in ("deploy-key.v2", "db", "a_b", "Bad Name", "-db", "ws:db", "x" * 64):
             store = bool(NAME.fullmatch("ws:" + name))
             self.assertEqual(bool(rule.fullmatch(name)) and len(name) <= 64, store, name)
-
-    async def test_without_age_it_says_so_and_no_value_can_be_saved(self):
-        self.store.age = str(self.ws / "no-such-age")
-        html = (await self.get("/vault")).text
-        self.assertIn(page.NO_AGE, html)
-        self.assertIn("disabled>Add secret</button>", html)
-        self.assertIn("disabled>Replace value</button>", html)
-        self.assertIn("Install age to save a value.", html)
-        self.store.age = shutil.which("true") or "/bin/true"
-        self.assertNotIn(page.NO_AGE, (await self.get("/vault")).text)
-
-    async def test_with_the_vault_off_it_opens_with_delete_and_revoke_only(self):
-        await self.turn_off()
-        r = await self.get("/vault")
-        self.assertEqual(r.status_code, 200)
-        self.assertIn("Vault is off for this workspace", r.text)
-        self.assertNotIn('action="/api/vault/secrets"', r.text)
-        self.assertNotIn('data-act="policy"', r.text)
-        self.assertNotIn('data-act="grant"', r.text)
-        self.assertIn('data-act="delete"', r.text)
-        self.assertIn('data-act="revoke"', r.text)
 
 
 class MetadataRoutes(Http):
     async def test_secrets_lists_metadata_and_no_value_or_size(self):
         got = (await self.get("/api/vault/secrets")).json()
         self.assertEqual(got["workspace"], self.key)
+        self.assertEqual(
+            (got["stages"], got["modes"]), (list(vault.VAULT_STAGES), list(vault.MODES))
+        )
+        self.assertIs(got["age"], True)
         self.assertEqual({s["name"] for s in got["secrets"]}, {"ws:db", "global:tok"})
         self.assertEqual(
             {s["name"]: s["granted"] for s in got["globals"]},
@@ -196,15 +115,12 @@ class MetadataRoutes(Http):
 
 
 class TheOneRouteAValueGoesInBy(Http):
-    async def test_a_form_post_makes_a_secret_and_answers_303_with_no_value_anywhere(self):
+    async def test_a_form_post_makes_a_secret_and_answers_its_name_with_no_value_anywhere(self):
         value = "brand-new/Value+1=&z"
         r = await self.form(
             name="fresh", tier="ws", description="fresh one", value=value, stage="impl", mode="env"
         )
-        self.assertEqual((r.status_code, r.content), (303, b""))
-        where = urlsplit(r.headers["location"])
-        self.assertEqual(where.path, "/vault")
-        self.assertEqual(parse_qs(where.query), {"cwd": [str(self.ws)], "saved": ["ws:fresh"]})
+        self.assertEqual((r.status_code, r.json()), (200, {"saved": "ws:fresh", "short": False}))
         made = self.store.get("ws:fresh", self.key)
         assert made is not None
         self.assertEqual(
@@ -220,7 +136,7 @@ class TheOneRouteAValueGoesInBy(Http):
 
     async def test_the_same_name_replaces_the_value_and_keeps_the_policy(self):
         r = await self.form(name="ws:db", value="replaced-value")
-        self.assertEqual(r.status_code, 303)
+        self.assertEqual(r.status_code, 200)
         self.assertEqual(self.store.open("ws:db", self.key), b"replaced-value")
         self.assertEqual(self.store.get("ws:db", self.key).description, "the database")
         actions = [(r["action"], r["name"]) for r in self.vault_lines()]
@@ -234,7 +150,7 @@ class TheOneRouteAValueGoesInBy(Http):
 
     async def test_a_short_value_is_said_short_and_a_broker_secret_keeps_ssh_only(self):
         r = await self.form(name="tiny", value="abc", broker="1", mode="env", stage="impl")
-        self.assertEqual(parse_qs(urlsplit(r.headers["location"]).query)["short"], ["1"])
+        self.assertTrue(r.json()["short"])
         made = self.store.get("ws:tiny", self.key)
         assert made is not None
         self.assertEqual((made.broker, made.modes), (True, ("ssh",)))
@@ -264,10 +180,10 @@ class TheOneRouteAValueGoesInBy(Http):
         self.assertEqual(got["exit_code"], 0, got)
         self.assertIn("ED25519", got["stdout"])
 
-    async def test_a_bad_name_goes_back_to_the_page_with_the_reason_and_makes_nothing(self):
+    async def test_a_bad_name_is_refused_with_the_reason_and_makes_nothing(self):
         r = await self.form(name="Bad Name!", value="v-value-1234")
-        self.assertEqual(r.status_code, 303)
-        self.assertIn("error", parse_qs(urlsplit(r.headers["location"]).query))
+        self.assertEqual(r.status_code, 400)
+        self.assertTrue(r.json()["error"])
         self.assertIsNone(self.store.get("ws:Bad Name!", self.key))
         self.assertEqual(self.vault_lines(), [])
 
@@ -390,8 +306,6 @@ class NoRouteGivesAValueBack(Http):
     async def test_every_route_answers_with_no_bait_in_body_or_headers_in_any_of_five_forms(self):
         fresh = "fresh/Value+3&=z"
         calls = [
-            await self.get("/vault"),
-            await self.get("/vault", saved="ws:db", short="1", error="a reason"),
             await self.get("/api/vault/secrets"),
             await self.get("/api/vault/leaks", unit="0001_thing"),
             await self.form(name="fresh", value=fresh, description="d"),
@@ -406,7 +320,7 @@ class NoRouteGivesAValueBack(Http):
             await self.send("/api/vault/delete", name="ws:fresh"),
             await self.send("/api/vault/delete", name="ws:none"),
         ]
-        self.assertGreaterEqual(len(calls), 13)
+        self.assertGreaterEqual(len(calls), 11)
         values = {**self.values(), "fresh": fresh.encode()}
         hits = vault.scan(values, self.seen)
         self.assertEqual(hits, [])
@@ -439,23 +353,6 @@ class NoRouteGivesAValueBack(Http):
             r for r in self.app.routes if "vault" in r.path and "POST" in getattr(r, "methods", ())
         ]
         self.assertEqual(len(posts), 5)
-
-
-class TheSlots(unittest.TestCase):
-    def test_the_script_draws_a_line_on_a_unit_and_names_only(self):
-        script = feature.FEATURE.scripts[0]
-        self.assertNotIn("slot-topbar", script)
-        self.assertIn('window.coscc.slot("slot-unit"', script)
-        self.assertIn("/api/vault/leaks", script)
-        self.assertNotIn("innerHTML", script)
-
-    def test_the_sidebar_entry_frames_the_page(self):
-        self.assertEqual(feature.FEATURE.page, kernel.Page("Vault", "key-round", "/vault"))
-
-    def test_the_studio_loads_it_once(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            shell = TestClient(build(Config(data_dir=tmp))).get("/api/features/scripts").text
-        self.assertEqual(shell.count("__coscc_vault = true"), 1)
 
 
 class ThePlugin(unittest.TestCase):
