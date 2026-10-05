@@ -1,6 +1,6 @@
 [project]
 name = "coscc"
-version = "0.14.0"
+version = "0.15.0"
 description = "Web app that lists, creates and resumes Claude Code sessions across projects"
 # `install.sh` installs `uv` first, and `uv` provisions this interpreter, so no machine needs
 # 3.14 already.
