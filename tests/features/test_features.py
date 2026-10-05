@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import ast
 import os
-import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -291,22 +291,40 @@ class AScheduledFeatureRunsOnItsOwn(Setup):
         self.assertEqual(len(ticked), 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
+def _names(source: str) -> set[str]:
+    """Every name and attribute the code uses or imports; docstrings and comments are not code."""
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Name):
+            found.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            found.add(node.attr)
+        elif isinstance(node, ast.alias):
+            found.update((node.name.rsplit(".", 1)[-1], node.asname or ""))
+    return found
 
 
 class OnlyReleaseWritesGit(unittest.TestCase):
-    """The kernel's git writers commit, push and tag. A feature's agent tools run in the app,
-    past the command policy, so one that writes git must give an agent none, and widening who
-    writes git is a change to this test, seen in review."""
+    """The kernel's git writers commit, push, tag, branch and merge. A feature's agent tools run
+    in the app, past the command policy, so one that writes git must give an agent none, and
+    widening who writes git is a change to this test, seen in review."""
 
-    WRITERS = (
-        "OwnTree",
-        "commit_files",
-        "push_branch",
-        "push_tag",
-        "detach_here",
-        "own_tree_remove",
+    # Every name the kernel re-exports that writes git or GitHub: the own-tree writers, the
+    # unguarded `create_branch`, `delete_merged_branch` and `worktree_add`, and `gh`, which can
+    # merge and tag.
+    WRITERS = frozenset(
+        {
+            "OwnTree",
+            "commit_files",
+            "push_branch",
+            "push_tag",
+            "detach_here",
+            "own_tree_remove",
+            "create_branch",
+            "delete_merged_branch",
+            "worktree_add",
+            "gh",
+        }
     )
 
     def test_release_alone_uses_the_writers_and_hands_an_agent_nothing(self):
@@ -316,9 +334,8 @@ class OnlyReleaseWritesGit(unittest.TestCase):
             for folder in root.iterdir()
             if folder.is_dir()
             and any(
-                re.search(rf"\b{name}\b", path.read_text(encoding="utf-8"))
+                _names(path.read_text(encoding="utf-8")) & self.WRITERS
                 for path in folder.glob("*.py")
-                for name in self.WRITERS
             )
         )
         self.assertEqual(writing, ["release"])
@@ -326,3 +343,11 @@ class OnlyReleaseWritesGit(unittest.TestCase):
             if feature.name in writing:
                 self.assertIsNone(feature.agent, feature.name)
                 self.assertEqual(feature.sessions, (), feature.name)
+
+    def test_a_writer_named_only_in_words_is_not_a_use(self):
+        self.assertEqual(_names('"""`gh` merges."""\n# create_branch\n') & self.WRITERS, set())
+        self.assertEqual(_names("from coscc.kernel import gh\n") & self.WRITERS, {"gh"})
+
+
+if __name__ == "__main__":
+    unittest.main()
