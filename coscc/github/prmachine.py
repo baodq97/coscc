@@ -960,12 +960,14 @@ class Machine:
             except PrError as e:
                 out.error = out.error or str(e)
                 continue
-            ci, rerun = await self._ci_after_rerun(u, number, head, checks, root)
-            if rerun is None and head == now.get("head") and ci == now.get("ci"):
-                continue
             files = None
             if head != now.get("head") or files_held(self.history, workspace, number, head) is None:
                 files = await (self._files or _files)(root, head)
+            # Nothing awaited from here to the transition: a board read in between would find
+            # neither the rerun being asked nor the one recorded, and ask it again.
+            ci, rerun = await self._ci_after_rerun(u, number, head, checks, root)
+            if rerun is None and head == now.get("head") and ci == now.get("ci"):
+                continue
             inputs = {
                 "number": number,
                 "head": head,

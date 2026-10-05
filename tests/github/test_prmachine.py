@@ -523,6 +523,21 @@ class ARedHeadIsRerunOnce(Fixture):
         self.assertEqual(gh.count("run", "rerun"), 2)
         self.assertEqual(prmachine.rerun_at(self.history, WS, NAME, other)["ok"], True)
 
+    def test_a_board_read_while_the_reader_reads_the_files_does_not_rerun_again(self):
+        gh = FakeGh(buckets=("fail",), link=LINK)
+        m = self.reader(gh)
+        checks = [{"name": "test", "bucket": "fail", "link": LINK, "completedAt": DONE}]
+
+        async def read_files(tree, head):
+            # The board's answer at the same red head, recorded while the reader reads the files.
+            await m.record_ci(self.unit(), PR_NUMBER, head, checks)
+            return ["a.py"]
+
+        m._files = read_files
+        self.read(m)
+        self.assertEqual(gh.count("run", "rerun"), 1)
+        self.assertEqual({c["ci"] for c in self.cis()}, {"pending"})
+
 
 if __name__ == "__main__":
     unittest.main()
