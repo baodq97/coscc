@@ -78,6 +78,12 @@ class Build(TypedDict, total=False):
     log: str
 
 
+class UpdateError(TypedDict):
+    message: str
+    log: str
+    log_tail: NotRequired[str]
+
+
 class UpdateStatus(TypedDict):
     version: str
     build_id: str
@@ -94,7 +100,7 @@ class UpdateStatus(TypedDict):
     local: NotRequired[Build | None]
     last: NotRequired[dict[str, Any] | None]
     checked_at: NotRequired[str | None]
-    error: NotRequired[str | None]
+    error: NotRequired[UpdateError | None]
     warning: NotRequired[str]
     log: NotRequired[str]
     # The panel's sentences, and the buttons it may show: `build-local`, `apply-<channel>`, `cancel`.
