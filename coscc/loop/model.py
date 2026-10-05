@@ -834,7 +834,7 @@ def entry_unit(e):
             unit["artifacts"][file] = {"status": status_in(e, file)}
     if dig(e, "shipped") is True:
         unit["shipped"] = True
-    if ended_of(unit) or not unit["artifacts"].get("intent.md"):
+    if ended_of(unit):
         unit["hold"] = None
     else:
         unit["hold"] = fold_holds(nullish(dig(e, "holds"), []))["hold"]
