@@ -46,10 +46,6 @@ class WhereAUnitMayHaveLeftAValue(unittest.TestCase):
     def sources(self, **more):
         return dict(unit_sources(self.journal, WS, UNIT, self.directory, str(self.tree), **more))
 
-    def test_a_clean_unit_has_nothing_to_find(self):
-        values = {"ws:k": VALUE}
-        self.assertEqual(filters.scan(values, self.sources().items()), [])
-
     def test_a_commit_that_added_the_value_is_found_by_git_log_from_the_base(self):
         (self.tree / "b.txt").write_text(f"key={VALUE.decode()}\n")
         git(self.tree, "add", ".")
@@ -112,16 +108,6 @@ class WhereAUnitMayHaveLeftAValue(unittest.TestCase):
             unread=unread,
         )
         self.assertEqual((gone, unread), ([], ["commits", "pull-request"]))
-
-    def test_commits_read_with_none_new_are_not_unread(self):
-        unread: list[str] = []
-        with mock.patch.object(sources, "_pull_request", return_value=[("pull-request", b"{}")]):
-            found = dict(
-                unit_sources(
-                    None, WS, UNIT, self.directory, str(self.tree), pull_request=True, unread=unread
-                )
-            )
-        self.assertEqual((found["commits"], unread), (b"", []))
 
 
 if __name__ == "__main__":

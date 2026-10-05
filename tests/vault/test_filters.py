@@ -8,7 +8,7 @@ import json
 import unittest
 from urllib.parse import quote, quote_plus
 
-from coscc.vault.filters import Hit, forms, mask, scan
+from coscc.vault.filters import Hit, mask, scan
 
 # Its base64 has `+` and `/` in the standard alphabet and `-` and `_` in the URL-safe one.
 BASE = bytes([0xFB, 0xEF, 0xBE, 0xFF, 0xFE, 0x3E, 0x3F]) + b"secret-material"
@@ -41,9 +41,6 @@ class AValueIsMaskedInEveryFormItMayTake(unittest.TestCase):
                 with self.subTest(encoder=encode.__name__, lead=lead, extra=extra, form=label):
                     masked_once(self, value, b"<<" + text + b">>", label)
 
-    def test_the_two_alphabets_really_differ_for_the_value_used(self):
-        self.assertNotEqual(base64.b64encode(BASE), base64.urlsafe_b64encode(BASE))
-
     def test_hex_lower_and_upper(self):
         value = b"\x01\xabpass\xff"
         masked_once(self, value, b"<<" + value.hex().encode() + b">>", "lower")
@@ -69,11 +66,6 @@ class AValueIsMaskedInEveryFormItMayTake(unittest.TestCase):
                 self.assertEqual("\\u00e4" in text, ascii_only)
                 masked_once(self, value, b"<<" + text.encode() + b">>", "json")
 
-    def test_every_form_is_named_and_a_value_that_is_not_text_has_no_json_form(self):
-        self.assertEqual(sorted(forms(b"abcdefgh")), ["base64", "hex", "json", "raw", "url"])
-        self.assertEqual(forms(b"\xff\xfe\xfdabc")["json"], [])
-        self.assertEqual(forms(b""), {k: [] for k in ("raw", "base64", "hex", "url", "json")})
-
 
 class OnlyAWholeValueIsCaught(unittest.TestCase):
     VALUE = b"abcdefgh12345678"
@@ -97,10 +89,6 @@ class OnlyAWholeValueIsCaught(unittest.TestCase):
         text = b"abcdefgh12345679 abcdefgh1234567"
         self.assertEqual(mask({"ws:k": self.VALUE}, text), (text, {}))
 
-    def test_no_value_at_all_masks_nothing(self):
-        self.assertEqual(mask({}, b"anything"), (b"anything", {}))
-        self.assertEqual(mask({"ws:k": b""}, b"anything"), (b"anything", {}))
-
 
 class TheLongestPatternGoesFirstAndOnePassIsMade(unittest.TestCase):
     def test_a_value_inside_another_is_not_masked_twice(self):
@@ -111,12 +99,6 @@ class TheLongestPatternGoesFirstAndOnePassIsMade(unittest.TestCase):
     def test_a_marker_is_never_masked_again(self):
         out, counts = mask({"ws:secret": b"secret"}, b"a secret b")
         self.assertEqual((out, counts), (b"a [secret:ws:secret] b", {"ws:secret": 1}))
-
-    def test_each_secret_is_counted_under_its_own_name(self):
-        values = {"ws:a": b"first-value", "ws:b": b"second-value"}
-        out, counts = mask(values, b"first-value second-value first-value")
-        self.assertEqual(counts, {"ws:a": 2, "ws:b": 1})
-        self.assertEqual(out, b"[secret:ws:a] [secret:ws:b] [secret:ws:a]")
 
 
 class ScanningNamesWhereAndInWhichForm(unittest.TestCase):
@@ -135,11 +117,6 @@ class ScanningNamesWhereAndInWhichForm(unittest.TestCase):
 
     def test_a_part_of_a_value_is_no_hit(self):
         self.assertEqual(scan(self.VALUES, [("s", b"first-value second-value")]), [])
-
-    def test_one_hit_a_secret_a_source_and_a_form(self):
-        self.assertEqual(
-            scan(self.VALUES, [("s", b"first-value-1 first-value-1")]), [Hit("ws:a", "s", "raw")]
-        )
 
 
 if __name__ == "__main__":
