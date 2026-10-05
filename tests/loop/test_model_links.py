@@ -32,6 +32,7 @@ from coscc.loop.repo_rules import branch_checks
 from coscc.loop.rules import gate_answer, next_answer
 from tests.loop.conftest import python
 from tests.loop.test_model import (
+    NOT_ANCESTOR,
     check_gate,
     next_step,
     CHAIN,
@@ -1039,3 +1040,60 @@ def test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl
         "full",
         ["e"],
     ]
+
+
+def test_the_ship_gate_is_closed_on_a_title_outside_the_grammar_before_gh_is_asked():
+    calls: list[str] = []
+    g = check_gate(passed_titled("fix(0001): x"), "ship", counted(green_probe(), calls))
+    assert g["ok"] is False
+    assert g["need"] == [f"{title_problem('fix(0001): x', 'feat', '0001')} — {AGAIN}"]
+    assert calls == []
+
+
+def test_next_offers_ship_when_a_differing_title_is_the_only_thing_closing_its_gate():
+    differs = green_probe(None, {}, titled_view(title="feat(0001): y"))
+    n = next_step(passed(), differs)
+    assert n["stage"] == "ship"
+    assert n["blocked"] is True
+    assert re.search(
+        r'^ship — #7 carries the title "feat\(0001\): y", not pr\.md\'s "feat\(0001\): x"',
+        n["action"],
+    )
+    # A draft ship.md a refused merge left, against the last round: the same.
+    refused = branched(
+        {
+            **CHAIN,
+            "review.md": review_art("accepted", round_(1, "pass")),
+            "ship.md": {
+                **art("draft"),
+                "ship": {"round": 1, "refused": "Pull request is not mergeable"},
+            },
+        }
+    )
+    assert next_step(refused, differs) == {
+        "blocked": True,
+        "stage": "ship",
+        "action": (
+            'ship — #7 carries the title "feat(0001): y", not pr.md\'s "feat(0001): x" — start '
+            "ship from the board, which puts pr.md onto it first"
+        ),
+    }
+    # Any other reason alongside it and ship is not offered: the title is compared last.
+    behind = green_probe(
+        None,
+        {f"merge-base --is-ancestor refs/remotes/origin/main {SHA}": NOT_ANCESTOR},
+        titled_view(title="feat(0001): y"),
+    )
+    late = next_step(passed(), behind)
+    assert late["stage"] == ""
+    assert "carries the title" not in late["action"]
+
+
+def passed_titled(title):
+    return branched(
+        {
+            **CHAIN,
+            "pr.md": {**PR, "title": title},
+            "review.md": review_art("accepted", round_(1, "pass")),
+        }
+    )

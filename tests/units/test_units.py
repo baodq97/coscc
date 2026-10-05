@@ -76,6 +76,13 @@ class StartingAUnit(Fixture):
         other = units.create("/tmp/two", "a-problem", "", self.data)
         self.assertEqual(other["unit"], "0001_a-problem")
 
+    def test_a_slug_longer_than_a_branch_allows_is_refused_with_both_lengths(self):
+        # The limit is `check-branch`'s, said by the script and carried here as is.
+        with self.assertRaises(CannotCreate) as caught:
+            units.create(WS, "a" * 61, "", self.data)
+        self.assertIn("61", str(caught.exception))
+        self.assertIn("60", str(caught.exception))
+
 
 class NumbersTakenInTheHostRepositoryCount(Fixture):
     def _host(self, *names: str) -> Path:
@@ -117,6 +124,15 @@ class NumbersTakenInTheHostRepositoryCount(Fixture):
         self.assertEqual(argv[at + 1], str(host.resolve()))
         # Before the command, so an older loop refuses instead of ignoring it (plan Risk 3).
         self.assertLess(at, argv.index("new-path"))
+
+    def test_a_host_with_fourteen_units_makes_the_next_one_fifteen(self):
+        host = self._host(*[f"{i:04d}_u{i}" for i in range(1, 15)])
+        made = units.create(host, "fresh", "", self.data, reserve_from=[host])
+        self.assertEqual(made["unit"], "0015_fresh")
+
+    def test_without_reserve_the_old_numbering_is_unchanged(self):
+        host = self._host("0014_n")
+        self.assertEqual(units.create(host, "fresh", "", self.data)["unit"], "0001_fresh")
 
 
 class TheBriefBecomesTheIdea(Fixture):

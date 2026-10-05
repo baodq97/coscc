@@ -24,6 +24,7 @@ from coscc.loop.model import (
 from coscc.loop.probe import UI_STANDARD, glob_match, make_probe, parse_standard, ui_files
 from tests.loop.conftest import REPO, env, python
 from tests.loop.test_model import (
+    cli,
     check_gate,
     next_action,
     next_step,
@@ -720,3 +721,10 @@ def test_the_dropped_round_of_the_old_review_adds_no_round_to_the_count(tmp_path
     assert nxt["dropped"] == ["F2", "F3", "F4", "F5"]
     assert not re.search(r"F\d", nxt["action"])
     assert "dropped" not in json.loads(one.run(3, "next", one.name).out)
+
+
+def test_pr_text_writes_nothing_and_leaves_status_as_it_was(tmp_path):
+    root = pr_tree(tmp_path, {"0001_a": PR_MD, "0002_b": None})
+    before = [cli("--root", str(root), "status", "--json").out, listing(root)]
+    assert cli("--root", str(root), "pr-text", "0001_a").code == 0
+    assert [cli("--root", str(root), "status", "--json").out, listing(root)] == before

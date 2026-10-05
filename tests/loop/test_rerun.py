@@ -222,3 +222,22 @@ def test_a_granted_rerun_names_only_the_files_that_exist(store):
         "Stale: intent.md",
         "Stale: pr.md",
     ]
+
+
+def test_a_bad_unit_name_is_refused(store):
+    r = rerun(store, "nope")
+    assert r.code == 2
+    assert "Invalid unit name" in r.err
+
+
+def test_a_unit_that_does_not_exist_is_refused(store):
+    r = rerun(store, "0002_y")
+    assert r.code == 2
+    assert "No such work unit" in r.err
+
+
+def test_an_unknown_stage_is_refused(store):
+    make(store, {"intent.md": "accepted"})
+    r = rerun(store, UNIT, "nope")
+    assert r.code == 2
+    assert "unknown stage" in r.err

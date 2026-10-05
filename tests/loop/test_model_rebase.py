@@ -25,6 +25,11 @@ from coscc.loop.repo_rules import screens_problems
 from coscc.loop.rules import more_rounds, open_lines
 from tests.loop.conftest import git
 from tests.loop.test_model import (
+    ROUND1,
+    ROUND2,
+    moved_to,
+    round3,
+    tree_after_round_two,
     check_gate,
     next_action,
     next_step,
@@ -1059,3 +1064,170 @@ def review_of_rounds(status, rounds):
 
 def cr(n):
     return round_(n, "changes-requested", ["- F1 [open] x"])
+
+
+def test_a_merge_base_that_names_no_commit_is_an_error_never_a_clean_rebase():
+    u = passed_once()
+    for base, said in [
+        (
+            lambda c: ok(""),
+            r"its patch could not be compared with the reviewed one: git merge-base printed no commit",
+        ),
+        (lambda c: ok("not a sha\n"), r"git merge-base printed no commit"),
+        (
+            lambda c: {"code": 1, "out": "", "err": "fatal: no merge base"},
+            r"could not be compared .*fatal: no merge base",
+        ),
+    ]:
+        g = check_gate(u, "ship", rebased_probe(base=base))
+        assert g["ok"] is False
+        assert re.search(
+            r"rewritten after the pass \(a rebase does this\): review its new head in another round",
+            g["need"][0],
+        )
+        assert re.search(said, g["need"][0])
+        assert next_step(u, rebased_probe(base=base))["stage"] == "review"
+    # Two empty patches are equal, so an empty one from a failing diff must not be read as one.
+    failing = rebased_probe()
+    inner = failing.git
+
+    def git2(*a):
+        if a[0] == "diff" and a[1] == "--no-color":
+            return {"code": 128, "out": "", "err": "fatal: bad object"}
+        return inner(*a)
+
+    failing.git = git2
+    assert re.search(
+        r"could not be compared .*fatal: bad object", check_gate(u, "ship", failing)["need"][0]
+    )
+
+
+def test_red_pending_or_none_on_a_clean_rebase_on_a_real_repository_never_offers_review(tmp_path):
+    r = rebase_repo(tmp_path)
+    r.on_main(far_from_the_hunk)
+    head = r.rebase()
+    u = passed_at(r.R)
+    for checks, stage in [
+        ([{"name": "tests", "bucket": "fail"}], "impl"),
+        ([{"name": "tests", "bucket": "pending"}], ""),
+        ([], ""),
+    ]:
+        assert check_gate(u, "ship", r.probe(head, checks))["ok"] is False
+        assert next_step(u, r.probe(head, checks))["stage"] == stage
+
+
+def test_a_merged_pull_request_opens_ship_to_record_it_while_its_branch_is_still_here():
+    u = passed_once()
+    assert check_gate(u, "ship", merged_probe()) == {
+        "ok": True,
+        "need": [],
+        "merged": {"number": 7, "commit": MERGE, "at": MERGED_AT, "head": SHA},
+    }
+    # Nothing that speaks of a merge still to come closes it: red CI, a head behind origin/main,
+    # code after the pass, a UI unit's screenshots. The head it merged is carried for ship.md.
+    calls = []
+    late = merged_probe(
+        view=merged_view(headRefOid=HEAD2),
+        checks=[{"name": "tests", "bucket": "fail"}],
+        git_={
+            f"merge-base --is-ancestor {TRUNK} {HEAD2}": NO,
+            f"diff --name-only {SHA}..{HEAD2}": ok("src/a.py"),
+            f"diff --name-only origin/main...{HEAD2}": ok("coscc/screens.py"),
+        },
+        calls=calls,
+    )
+    g = check_gate(u, "ship", with_attrs(late, ui=lambda: UI))
+    assert g["ok"] is True
+    assert g["merged"]["head"] == HEAD2
+    assert "head" not in g
+    asked_for = ("gh pr checks", "rev-parse", "diff")
+    assert [c for c in calls if c.startswith(asked_for)] == []
+
+
+def test_a_merge_commit_that_cannot_be_read_is_not_here_or_not_on_trunk_closes_ship():
+    u = passed_once()
+    cannot = "cannot read the merge commit of #7: gh gave mergeCommit"
+    for probe, said in [
+        (
+            merged_probe(view=merged_view(mergeCommit=None)),
+            rf"^{cannot} none and mergedAt 2026-09-20T13:33:07Z — fetch, then ask again$",
+        ),
+        (
+            merged_probe(view=merged_view(mergeCommit={"oid": "abc"})),
+            rf"^{cannot} abc and",
+        ),
+        (
+            merged_probe(view=merged_view(mergedAt="")),
+            rf"^{cannot} {MERGE} and mergedAt none — fetch, then ask again$",
+        ),
+        (
+            merged_probe(git_={**GONE, f"cat-file -e {MERGE}^{{commit}}": NO}),
+            rf"^the merge commit {MERGE} of #7 is not in this repository — fetch, then ask again$",
+        ),
+        (
+            merged_probe(git_={f"merge-base --is-ancestor {MERGE} {TRUNK}": NO}),
+            rf"^the merge commit {MERGE} of #7 is not on origin/main here — fetch, then ask again$",
+        ),
+    ]:
+        g = check_gate(u, "ship", probe)
+        assert [g["ok"], len(g["need"])] == [False, 1]
+        assert re.search(said, g["need"][0])
+        assert "MERGED, not open" not in g["need"][0]
+        n = next_step(u, probe)
+        assert [n["stage"], n["blocked"]] == ["", True]
+        assert re.search(said, n["action"])
+
+
+def test_a_pull_request_closed_without_merging_closes_ship_with_the_old_sentence():
+    u = passed_once()
+    for git_ in [{}, GONE]:
+        view = {"state": "CLOSED", "headRefOid": SHA, "mergeCommit": None, "mergedAt": None}
+        probe = merged_probe(view=view, git_=git_)
+        said = "#7 is CLOSED, not open — there is nothing to merge"
+        assert check_gate(u, "ship", probe) == {"ok": False, "need": [said]}
+        assert next_step(u, probe) == {"blocked": True, "action": said, "stage": ""}
+
+
+def test_every_branch_of_next_that_reads_ci_stops_on_the_same_line_and_the_gates_close_on_it(
+    tmp_path,
+):
+    def probe():
+        return head_probe(green_probe(RED_97))
+
+    def rebased():
+        return head_probe(rebased_probe(checks=RED_97))
+
+    stale = {
+        **review_art("accepted", round_(1, "pass")),
+        "stale": {"stage": "impl", "date": "2026-09-26"},
+    }
+    passed_review = {**CHAIN, "review.md": review_art("accepted", round_(1, "pass"))}
+    answered = (
+        f"{REVIEW_HEAD}{ROUND1}\n{ROUND2}\n{round3()}\n## Answers\n{f_block('F2')}{f_block('F3')}"
+    )
+    claimed = f"{REVIEW_HEAD}{ROUND1}\n{ROUND2}"
+    cases = [
+        ("pr done, no review", branched(CHAIN), probe()),
+        ("a stale review", branched({**CHAIN, "review.md": stale}), probe()),
+        ("person-answered", tree_after_round_two(tmp_path, answered), probe()),
+        ("every open finding claimed", tree_after_round_two(tmp_path, claimed), probe()),
+        (
+            "review-incomplete",
+            review_of_rounds("draft", [cr(1), incomplete_round(2)]),
+            probe(),
+        ),
+        ("changes-requested with a fix", asked(), head_probe(moved_to(["src/a.py"], RED_97))),
+        ("ship after a clean rebase", branched(passed_review), rebased()),
+        (
+            "ship-refused after a clean rebase",
+            branched({**passed_review, "ship.md": ship_art(ship_draft(1))}),
+            rebased(),
+        ),
+    ]
+    for label, u, p in cases:
+        assert next_step(u, p) == {"blocked": True, "action": STOP_97, "stage": ""}, label
+    assert check_gate(branched(CHAIN), "review", probe()) == {"ok": False, "need": [STOP_97]}
+    assert check_gate(branched(passed_review), "ship", rebased()) == {
+        "ok": False,
+        "need": [STOP_97],
+    }

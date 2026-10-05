@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,6 +24,7 @@ from coscc.agent import harness
 from coscc.loop import run as loop_run
 from coscc.units.board import (
     COLLAPSED_STATES,
+    STATE_COLOR,
     STATE_LABEL,
     Unavailable,
     attention_reason,
@@ -31,6 +33,27 @@ from coscc.units.board import (
 )
 
 REPO = Path(__file__).resolve().parents[2]
+
+_ROUND = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
+AWAITING_PERSON = {
+    "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+    "spec.md": "Status: accepted.\n",
+    "plan.md": "Status: accepted.\n",
+    "impl.md": "# Impl\nStatus: accepted.\n\n## Needs a person\n\n- F2: no budget for --paid\n- F3: no gh\n",
+    "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
+    "review.md": "# R\nStatus: changes-requested.\n"
+    + _ROUND.format(n=1, v="changes-requested", f="- F2 [open] b\n- F3 [open] c")
+    + _ROUND.format(n=2, v="needs-person", f="- F2 [needs-person] b\n- F3 [needs-person] c")
+    + "\n## Answers\n\n### F2\nAnswered by: P. Date: 2026-09-24. Via: product.\n\nran it\n",
+}
+
+UNFINISHED_ROUND = {
+    **{k: v for k, v in AWAITING_PERSON.items() if k != "review.md"},
+    "impl.md": "# Impl\nStatus: accepted.\n",
+    "review.md": "# R\nStatus: changes-requested.\n"
+    + _ROUND.format(n=1, v="changes-requested", f="- F1 [open] a\n- F2 [open] b\n- F3 [open] c")
+    + _ROUND.format(n=2, v="changes-requested", f="- F2 [open] b"),
+}
 
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 
@@ -81,6 +104,10 @@ class ThePhaseIsCarriedFromTheScript(unittest.TestCase):
             [u] = data["units"]
             self.assertEqual(u["phase"], "pre-intent")
             self.assertEqual(u["problems"], [])
+
+    def test_every_unit_in_this_repository_has_started(self):
+        data = run(board.read(REPO))
+        self.assertEqual({u["phase"] for u in data["units"]}, {"started"})
 
 
 class AnEmptyWorkspaceIsAnAnswerNotAFailure(unittest.TestCase):
@@ -209,6 +236,15 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
             with self.assertRaises(Unavailable):
                 run(board.gate(REPO, "0001_no-session-management", "spec"))
 
+    def test_an_open_gate_comes_back_open_and_says_so(self):
+        # A unit closed under the old loop: every stage behind it is settled, so any
+        # stage's gate is open. Chosen by shape, not by number.
+        data = run(board.read(REPO))
+        unit = next(u for u in data["units"] if _by_stage(u)["plan"] == "done")
+        allowed, said = run(board.gate(REPO, unit["name"], "impl"))
+        self.assertTrue(allowed, said)
+        self.assertIn("open", said.lower())
+
 
 class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
     """The run button's stage is the loop's `next` answer, copied through."""
@@ -232,6 +268,68 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(Unavailable):
                 run(board.next_step(tmp, "0009_not-here"))
+
+    def test_the_stage_is_the_one_the_script_printed(self):
+        chains = [
+            {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"},
+            {"intent.md": "# I\nAuthor: t. Type: fix. Status: draft.\n"},
+            {
+                "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+                "spec.md": "Status: skipped.\n",
+                "plan.md": "Status: accepted.\n",
+            },
+            {
+                "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+                "spec.md": "Status: accepted.\n",
+                "plan.md": "Status: accepted.\n",
+                "impl.md": "Status: accepted.\n",
+                "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
+                "review.md": "# R\nStatus: changes-requested.\n\n## Round 1\n\n"
+                "Reviewed: aaaaaaa. Verdict: changes-requested.\n\n### Findings\n\n- F1 [open] x\n",
+            },
+        ]
+        for files in chains:
+            with self.subTest(files=sorted(files)), tempfile.TemporaryDirectory() as tmp:
+                name = self._unit(tmp, files)
+                script = self._script_says(tmp, name)
+                got = run(board.next_step(tmp, name))
+                self.assertEqual(got["stage"], script["stage"])
+                self.assertEqual(got["action"], script["action"])
+                # `read` carries the file-only stage for the card, from the same script.
+                [u] = run(board.read(tmp))["units"]
+                self.assertEqual(
+                    u["next_stage"], script["stage"] if files.get("review.md") is None else ""
+                )
+
+    def test_the_repo_reaches_next_as_repo_with_the_gate_timeout(self):
+        seen = {}
+
+        async def fake_run(argv, timeout, stdin=None):
+            seen["argv"], seen["timeout"] = argv, timeout
+            return 0, '{"unit": "u", "stage": "impl", "action": "a", "blocked": true}', ""
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
+            got = run(board.next_step(tmp, "0001_x", repo=tmp))
+        argv = seen["argv"]
+        self.assertEqual(argv[argv.index("next") + 1], "0001_x")
+        self.assertEqual(argv[argv.index("--repo") + 1], str(Path(tmp).resolve()))
+        self.assertEqual(seen["timeout"], board.GATE_TIMEOUT)
+        self.assertEqual(got["stage"], "impl")
+
+    def test_read_asks_the_script_for_status_only_so_the_board_never_waits_on_gh(self):
+        calls = []
+        original = board._run
+
+        async def spy(argv, timeout, stdin=None):
+            calls.append(argv)
+            return await original(argv, timeout, stdin)
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", spy):
+            self._unit(tmp, {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"})
+            run(board.read(tmp))
+        self.assertEqual(
+            [a[a.index("--root") + 2 :] for a in calls], [["--state", "-", "status", "--json"]]
+        )
 
 
 def _store(d: Path, units: dict[str, dict[str, str]], ideas: dict[str, str] | None = None) -> Path:
@@ -519,6 +617,14 @@ class TheStateOfAUnit(unittest.TestCase):
         alone = shown_state(decided, [])
         self.assertEqual(alone["state"], "error")
 
+    def test_starting_is_laid_over_and_has_a_colour_of_its_own(self):
+        self.assertEqual(STATE_LABEL["starting"], "Starting")
+        others = [c for state, c in STATE_COLOR.items() if state != "starting"]
+        self.assertNotIn(STATE_COLOR["starting"], others)
+        # `unit_state` never decides it, whatever the unit.
+        for kw in ({}, {"open": 1}, {"problems": ["x"]}, {"why": "finished"}):
+            self.assertNotIn(self._is(self._unit(**kw)), ("starting", "running"))
+
 
 class WhatABoardSaysOfAUnitsWait(unittest.TestCase):
     def test_each_kind_of_wait_has_its_reason_and_a_calm_unit_none(self):
@@ -550,3 +656,170 @@ class WhatABoardSaysOfAUnitsWait(unittest.TestCase):
             ),
             "",
         )
+
+
+class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
+    """`waiting` and `personFindings` are the loop's, copied and nothing more."""
+
+    _unit = TheNextStageIsAskedNotWorkedOut._unit
+    _script_says = TheNextStageIsAskedNotWorkedOut._script_says
+
+    def test_next_step_copies_waiting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            name = self._unit(tmp, AWAITING_PERSON)
+            script = self._script_says(tmp, name)
+            got = run(board.next_step(tmp, name))
+        self.assertEqual(script["waiting"], ["F3"])
+        self.assertEqual(got["waiting"], ["F3"])
+        self.assertEqual(got["stage"], "")
+
+    def test_no_waiting_in_the_script_reads_as_none(self):
+        async def fake_run(argv, timeout, stdin=None):
+            return 0, '{"unit": "u", "stage": "impl", "action": "a", "blocked": true}', ""
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
+            got = run(board.next_step(tmp, "0001_x"))
+        self.assertEqual(got["waiting"], [])
+
+    def test_read_copies_person_findings_and_waiting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._unit(tmp, AWAITING_PERSON)
+            [u] = run(board.read(tmp))["units"]
+        self.assertEqual(
+            u["person_findings"],
+            [
+                {"id": "F2", "reason": "no budget for --paid", "answered": True},
+                {"id": "F3", "reason": "no gh", "answered": False},
+            ],
+        )
+        self.assertEqual(u["waiting"], ["F3"])
+
+    def test_a_unit_without_them_reads_as_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._unit(tmp, {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"})
+            [u] = run(board.read(tmp))["units"]
+        self.assertEqual((u["person_findings"], u["waiting"]), ([], []))
+
+
+class TheIdsARoundLeftOutAreCarriedFromTheScript(unittest.TestCase):
+    """`next` hands the ids over as `dropped`, a list, and the board copies it; its sentence names
+    none of them."""
+
+    _unit = TheNextStageIsAskedNotWorkedOut._unit
+    _script_says = TheNextStageIsAskedNotWorkedOut._script_says
+
+    def test_next_step_copies_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            name = self._unit(tmp, UNFINISHED_ROUND)
+            script = self._script_says(tmp, name)
+            got = run(board.next_step(tmp, name))
+        self.assertEqual(script["dropped"], ["F1", "F3"])
+        self.assertEqual(got["dropped"], ["F1", "F3"])
+        self.assertNotRegex(got["action"], r"F\d")
+
+    def test_no_dropped_in_the_script_reads_as_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            name = self._unit(tmp, AWAITING_PERSON)
+            got = run(board.next_step(tmp, name))
+        self.assertEqual(got["dropped"], [])
+
+
+class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
+    """`board.screens` runs the app's the loop's `screens` against a real git repository and store, and
+    hands back what it printed."""
+
+    def _repo(self, tmp: str) -> tuple[Path, Path, str]:
+        store, repo = Path(tmp) / "store", Path(tmp) / "repo"
+        (store / ".cos" / "0001_x").mkdir(parents=True)
+        (store / ".cos" / "0001_x" / "intent.md").write_text("# I\nType: fix. Status: accepted.\n")
+        (repo / ".claude" / "rules").mkdir(parents=True)
+        (repo / "coscc").mkdir()
+
+        def git(*args: str) -> str:
+            return subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=T",
+                    "-c",
+                    "user.email=t@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    *args,
+                ],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        (repo / ".claude" / "rules" / "ui-standard.md").write_text(
+            '---\npaths:\n  - "coscc/screens/__init__.py"\n---\n'
+        )
+        (repo / ".gitignore").write_text(".screens/\n")
+        git("add", ".")
+        git("commit", "-q", "-m", "first")
+        git("switch", "-q", "-c", "fix/x")
+        (repo / "coscc" / "screens").mkdir()
+        (repo / "coscc" / "screens" / "__init__.py").write_text("# a screen\n")
+        git("add", ".")
+        git("commit", "-q", "-m", "a screen")
+        taken = git("rev-parse", "HEAD")
+        git("commit", "-q", "--amend", "-m", "a screen, rewritten")
+        (repo / ".screens").mkdir()
+        return store, repo, taken
+
+    def test_a_rewritten_head_is_a_retake_with_the_manifest_carried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store, repo, taken = self._repo(tmp)
+            hits = [{"address": "/board", "size": "390x844", "kind": "path", "snippet": "/tmp/x"}]
+            (repo / ".screens" / "manifest.json").write_text(
+                json.dumps({"head": taken, "dirty": False, "addresses": ["/board"], "hits": hits})
+            )
+            got = run(board.screens(store, "0001_x", repo))
+        self.assertEqual(
+            got,
+            {
+                "unit": "0001_x",
+                "ui": ["coscc/screens/__init__.py"],
+                "manifest": {"head": taken, "dirty": False, "addresses": ["/board"], "hits": hits},
+                "rewritten": True,
+                "retake": True,
+                "why": "",
+            },
+        )
+
+    def test_no_manifest_is_no_retake_and_says_why(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store, repo, _ = self._repo(tmp)
+            got = run(board.screens(store, "0001_x", repo))
+        self.assertFalse(got["retake"])
+        self.assertIsNone(got["manifest"])
+        self.assertIn("manifest.json", got["why"])
+
+    def test_the_repo_is_passed_as_repo_with_the_gate_timeout(self):
+        seen = {}
+
+        async def fake_run(argv, timeout, stdin=None):
+            seen["argv"], seen["timeout"] = argv, timeout
+            return 0, '{"retake": false}', ""
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
+            run(board.screens(tmp, "0001_x", tmp))
+        argv = seen["argv"]
+        self.assertEqual(argv[argv.index("screens") + 1], "0001_x")
+        self.assertEqual(argv[argv.index("--repo") + 1], str(Path(tmp).resolve()))
+        self.assertEqual(seen["timeout"], board.GATE_TIMEOUT)
+
+    def test_misuse_and_a_loop_that_cannot_start_are_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(Unavailable):
+                run(board.screens(tmp, "0009_not-here", tmp))
+
+        async def cannot_start(argv, timeout, stdin=None):
+            raise FileNotFoundError("python")
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", cannot_start):
+            with self.assertRaises(Unavailable):
+                run(board.screens(tmp, "0001_x", tmp))

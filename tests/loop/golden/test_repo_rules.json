@@ -524,6 +524,11 @@
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: build — back to impl: fix on the branch and push — cannot read the branch of #7 (no such pr), so whether its name is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
   ""
  ],
+ "tests/loop/test_repo_rules.py::test_review_gate_when_gh_cannot_start#1": [
+  1,
+  "",
+  "blocked: review cannot proceed for 0040_widget\n  - cannot read the required checks of #7: spawnSync gh ENOENT\n"
+ ],
  "tests/loop/test_repo_rules.py::test_review_gate_without_a_repo_or_a_pr#1": [
   1,
   "",
@@ -673,6 +678,26 @@
   1,
   "",
   "blocked: ship cannot proceed for 0040_widget\n  - review round 1 names no reviewed commit — Reviewed: <sha>\n"
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff#1": [
+  1,
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review round 2 passed, but it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\"],\"reasons\":[\"gate-closed\"]}\n",
+  ""
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff#2": [
+  0,
+  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
+  ""
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff#3": [
+  0,
+  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"needs a person — review rounds 1 and 2 both passed on d7d879b and ship is still closed: review round 2 passed, but it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\",\"blocked\":true,\"reasons\":[\"missing\",\"needs-person\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  ""
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff#4": [
+  1,
+  "",
+  "blocked: ship cannot proceed for 0040_widget\n  - review round 2 passed, but it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#1": [
   1,
@@ -1899,6 +1924,26 @@
   "",
   "blocked: ship cannot proceed for 0040_widget\n  - git could not diff 8a1460c9f5453964e23365c35cfb247ca8b30b71..8a1460c9f5453964e23365c35cfb247ca8b30b71: fatal: boom\n"
  ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_diff_what_the_screens_followed#1": [
+  1,
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - git could not diff d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd..f1d129426dd6698f0b0e3eaf90b6bf172581542f: fatal: boom\"],\"reasons\":[\"gate-closed\"]}\n",
+  ""
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_diff_what_the_screens_followed#2": [
+  0,
+  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\",\"review round 1 passed on f1d1294 and the ship gate is still closed: git could not diff d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd..f1d129426dd6698f0b0e3eaf90b6bf172581542f: fatal: boom — this round is the one retry: fix what that names in this round; a second passing round on the same head that leaves ship closed stops the unit for a person\"]}\n",
+  ""
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_diff_what_the_screens_followed#3": [
+  0,
+  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"git could not diff d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd..f1d129426dd6698f0b0e3eaf90b6bf172581542f: fatal: boom; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  ""
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_diff_what_the_screens_followed#4": [
+  1,
+  "",
+  "blocked: ship cannot proceed for 0040_widget\n  - git could not diff d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd..f1d129426dd6698f0b0e3eaf90b6bf172581542f: fatal: boom\n"
+ ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch[rule0]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git merge-base printed no commit\"],\"reasons\":[\"gate-closed\"]}\n",
@@ -1938,6 +1983,26 @@
   1,
   "",
   "blocked: ship cannot proceed for 0040_widget\n  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 54f022f87940d7646683f30113b00efe890510a4..8a1460c9f5453964e23365c35cfb247ca8b30b71: fatal: no diff for you\n"
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch_of_the_head_alone#1": [
+  1,
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 5130425afe57bc6b9e3215530dbdc46daf1f8594..cdf904d3f07869ac0561c0a8aef761c97b3dc9fd: fatal: only this one\"],\"reasons\":[\"gate-closed\"]}\n",
+  ""
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch_of_the_head_alone#2": [
+  0,
+  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
+  ""
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch_of_the_head_alone#3": [
+  0,
+  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 5130425afe57bc6b9e3215530dbdc46daf1f8594..cdf904d3f07869ac0561c0a8aef761c97b3dc9fd: fatal: only this one; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  ""
+ ],
+ "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch_of_the_head_alone#4": [
+  1,
+  "",
+  "blocked: ship cannot proceed for 0040_widget\n  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 5130425afe57bc6b9e3215530dbdc46daf1f8594..cdf904d3f07869ac0561c0a8aef761c97b3dc9fd: fatal: only this one\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[5]#1": [
   1,

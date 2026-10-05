@@ -825,3 +825,49 @@ def test_status_offers_no_acceptance_of_a_ship_md_naming_its_round_only(tmp_path
     # With no repository, `next` says it needs one, as the gate does.
     assert next_step(u)["stage"] == ""
     assert "--repo" in next_step(u)["action"]
+
+
+def test_nothing_is_offered_on_a_finished_held_or_closed_unit(tmp_path):
+    done = RerunTree(tmp_path, {**RERUN_FILES, "plan.md": "# Plan: x\nStatus: done.\n"})
+    assert json.loads(done.cli("rerun", done.name).out) == {
+        "unit": done.name,
+        "offers": [],
+        "why": "the unit is finished: plan.md is done",
+    }
+    refused = done.cli("rerun", done.name, "pr")
+    assert refused.code == 1
+    assert re.search(r"pr cannot be run again for .*: the unit is finished", refused.err)
+
+    held = RerunTree(tmp_path)
+    held.append("intent.md", hold_block("Paused", "chờ"))
+    assert held.offers() == []
+
+    closed = RerunTree(tmp_path, {**RERUN_FILES, "impl.md": "# Impl: x\nStatus: rejected.\n"})
+    assert re.search(
+        r"impl\.md is rejected", json.loads(closed.cli("rerun", closed.name).out)["why"]
+    )
+
+
+def test_rerun_refuses_a_stage_it_does_not_offer_an_unknown_one_and_repo(tmp_path):
+    t = RerunTree(tmp_path)
+    review = t.cli("rerun", t.name, "review")
+    assert review.code == 1
+    assert re.search(
+        r"review cannot be run again from the board — only intent, spec, spike, plan, pr",
+        review.err,
+    )
+    assert t.cli("rerun", t.name, "spike").code == 1
+    assert t.cli("rerun", t.name, "nonsense").code == 2
+    assert t.cli("rerun", "0009_nope").code == 2
+    assert t.cli("rerun", "../x").code == 2
+    assert t.cli("rerun").code == 2
+    repo = t.cli("rerun", t.name, "--repo", str(t.root))
+    assert repo.code == 2
+    assert "--repo applies only to `gate` and `next`" in repo.err
+
+
+def test_a_draft_ship_md_with_no_round_stops_as_it_always_did():
+    u = accepted_pass({"ship.md": ship_art(SHIP_OLD)})
+    stop = {"blocked": True, "action": "finish and accept ship.md", "stage": ""}
+    assert next_step(u, behind_by(4)) == stop
+    assert next_action(u) == stop

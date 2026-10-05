@@ -1025,3 +1025,46 @@ def test_branch_checks_knows_the_loop_command_and_not_the_old_script(run, found)
     script's no longer is."""
     text = workflow(step=f"      - run: {run}")
     assert branch_checks([{"path": ".github/workflows/ci.yml", "text": text}]) == found
+
+
+def test_review_gate_when_gh_cannot_start(tmp_path):
+    s = Scene(tmp_path)
+    s.unit()
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    (bare / "node").symlink_to(shutil.which("node") or "node")
+    r = s.run("gate", UNIT, "review", PATH=str(bare))
+    assert "spawnSync gh ENOENT" in r.out + r.err
+
+
+def test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff(tmp_path):
+    s = ui_scene(tmp_path)
+    s.reviewed = s.commit({"src/ui/page.py": "p\n"}, "ui")
+    git(s.repo, "update-ref", f"refs/remotes/origin/{BRANCH}", s.reviewed)
+    fixed = finding(1, f"fixed {s.reviewed[:7]}", "high")
+    git(s.repo, "tag", "t0", "main")
+    s.unit(
+        review_text(
+            "accepted", rnd(1, "pass", s.reviewed, fixed), rnd(2, "pass", s.reviewed, fixed)
+        )
+    )
+    s.three(open_pr(s.reviewed))
+
+
+def test_ship_gate_when_git_cannot_take_the_patch_of_the_head_alone(sc):
+    sc.unit(sc.passed())
+    head = sc.rebase(sc.advance_main())
+    sc.shim({"match": ["--binary", head], "code": 128, "err": "fatal: only this one\n"})
+    ship, _, _ = sc.three(open_pr(head))
+    assert "could not be compared" in text_of(ship)
+
+
+def test_ship_gate_when_git_cannot_diff_what_the_screens_followed(tmp_path):
+    s = ui_scene(tmp_path)
+    first = s.commit({"src/ui/page.py": "p\n"}, "ui")
+    s.reviewed = s.commit({"README.md": "y\n"}, "other")
+    git(s.repo, "update-ref", f"refs/remotes/origin/{BRANCH}", s.reviewed)
+    s.unit(s.passed(screens=shots(first)))
+    s.shim({"match": [*DIFF_NAMES, f"{first}..{s.reviewed}"], "code": 128, "err": "fatal: boom\n"})
+    ship, _, _ = s.three(open_pr(s.reviewed))
+    assert "git could not diff" in text_of(ship)

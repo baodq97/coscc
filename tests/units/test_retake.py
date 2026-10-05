@@ -334,6 +334,15 @@ class TheRecordAndTheSection(unittest.TestCase):
             ("failed", "", "capture_screens.py exited 2"),
         )
 
+    def test_the_section_names_both_heads_who_took_them_and_every_hit(self):
+        text = retake.describe_for_review(self.OLD, self.NEW)
+        self.assertTrue(text.startswith("# The screenshots, taken again\n"))
+        self.assertIn("a" * 40, text)
+        self.assertIn("b" * 40, text)
+        self.assertIn("the app — not `impl`, and not a person", text)
+        self.assertIn("- `/board` — 390x844 — path — /tmp/one", text)
+        self.assertIn("Now, at `bbbbbbb`:\n\n- none", text)
+
 
 if __name__ == "__main__":
     unittest.main()

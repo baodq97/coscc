@@ -89,6 +89,17 @@ class WhereATreeLives(Repo):
         with self.assertRaises(BadUnit):
             worktrees.path(self.repo, "0001_a", pkg / "d")
 
+    def test_the_path_is_a_function_of_workspace_and_unit(self):
+        a = worktrees.path(self.repo, "0001_a", self.data)
+        self.assertEqual(a, worktrees.path(self.repo, "0001_a", self.data))
+        self.assertNotEqual(a, worktrees.path(self.repo, "0002_b", self.data))
+        self.assertIn(units.slot(self.repo), a.parts)
+
+    def test_a_bad_unit_name_is_refused(self):
+        for bad in ("../x", "0001", "", "0001_A"):
+            with self.assertRaises(BadUnit, msg=bad):
+                worktrees.path(self.repo, bad, self.data)
+
 
 class TheMainTree(Repo):
     """One tree per workspace at the fetched `origin/main`, beside its units' trees."""
@@ -434,6 +445,17 @@ class RefreshingTheBase(Repo):
         self.assertEqual(got["sha"], before[:7])
         self.assertEqual(git(self.tree, "rev-parse", "HEAD"), before)
 
+    def test_a_fetch_reused_just_under_thirty_seconds_is_still_fresh(self):
+        """Reused at 29.97s, the record must not say 30.0 and call the same fetch stale that the
+        coordinator just called young enough."""
+        now = self._own_clock()
+        asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        now[0] += 29.97
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self.assertEqual(got["fetch"], {"outcome": "reused", "attempts": 0, "age": 29.9})
+        self.assertTrue(got["fresh"])
+        self.assertEqual(got["reason"], "")
+
 
 class SwitchingOntoAnExistingBranch(Repo):
     """Opening a branch already cut at a terminal fetches first, and reports how far behind it is.
@@ -466,6 +488,22 @@ class SwitchingOntoAnExistingBranch(Repo):
         self.assertIn("update-branch", made["base"]["reason"])
         tree = worktrees.path(self.repo, "0001_a", self.data)
         self.assertEqual(git(tree, "branch", "--show-current"), "fix/a")
+
+    def test_the_base_says_how_its_fetch_went(self):
+        made = asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
+        fetched = made["base"]["fetch"]
+        self.assertEqual((fetched["outcome"], fetched["attempts"]), ("fetched", 1))
+        self.assertLess(fetched["age"], fetches.REUSE_SECONDS)
+
+    def test_a_fetch_older_than_thirty_seconds_is_not_fresh_and_says_so(self):
+        # Only reachable through a slow fetch; the age is handed in here.
+        tree = worktrees.path(self.repo, "0001_a", self.data)
+        head = git(tree, "rev-parse", "HEAD")
+        old = {"outcome": "joined", "attempts": 1, "age": 30.0}
+        got = asyncio.run(worktrees._base_against_origin(tree, "fix/a", head, old))
+        self.assertEqual((got["behind"], got["fresh"]), (0, False))
+        self.assertIn("30.0s ago", got["reason"])
+        self.assertIs(got["fetch"], old)
 
 
 class Preparing(unittest.TestCase):

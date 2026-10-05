@@ -1,4 +1,9 @@
 {
+ "tests/loop/test_rerun.py::test_a_bad_unit_name_is_refused#1": [
+  2,
+  "",
+  "Invalid unit name \"nope\": expected NNNN_slug.\n"
+ ],
  "tests/loop/test_rerun.py::test_a_closed_gate_is_refused_with_what_it_needs#1": [
   1,
   "",
@@ -68,6 +73,16 @@
   0,
   "{\"unit\":\"0001_x\",\"offers\":[{\"stage\":\"intent\",\"later\":[\"spec\",\"plan\",\"impl\",\"pr\",\"review\",\"ship\"]}],\"why\":\"\"}\n",
   ""
+ ],
+ "tests/loop/test_rerun.py::test_a_unit_that_does_not_exist_is_refused#1": [
+  2,
+  "",
+  "No such work unit: 0002_y\n"
+ ],
+ "tests/loop/test_rerun.py::test_an_unknown_stage_is_refused#1": [
+  2,
+  "",
+  "unknown stage \"nope\" — use one of idea, intent, spec, spike, plan, impl, pr, review, ship\n"
  ],
  "tests/loop/test_rerun.py::test_several_accepted_stages_are_offered_with_what_runs_again#1": [
   0,

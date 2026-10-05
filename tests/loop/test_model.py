@@ -2048,3 +2048,40 @@ def test_a_severity_lowered_between_rounds_closes_ship():
         "F1 is low in review round 2, but review round 1 rated it high — lowering a severity is "
         "not a fix: fix it on the branch, or keep it open"
     ) in g["need"]
+
+
+def test_next_step_never_offers_a_closed_gate_in_the_person_states(tmp_path):
+    reviews = [
+        R12,
+        f"{R12}\n{round3()}",
+        f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}{f_block('F3')}",
+    ]
+    probes = [
+        green_probe(),
+        green_probe([{"name": "t", "bucket": "fail"}]),
+        green_probe([{"name": "t", "bucket": "pending"}]),
+    ]
+    for probe in probes:
+        for review in reviews:
+            u = tree_after_round_two(tmp_path, review)
+            stage = next_step(u, probe)["stage"]
+            if stage:
+                assert check_gate(u, stage, probe)["ok"] is True, stage
+
+
+def test_new_path_takes_the_highest_and_writes_nothing(tmp_path):
+    root = cos_tree(tmp_path, "0003_c")
+    host = cos_tree(tmp_path, "0014_n")
+    out = cli("--root", str(root), "new-path", "x", "--reserve-from", str(host))
+    assert out.out.strip() == ".cos/0015_x"
+    assert [p.name for p in (root / ".cos").iterdir()] == ["0003_c"]
+    assert [p.name for p in (host / ".cos").iterdir()] == ["0014_n"]
+
+
+def cos_tree(tmp_path: Path, *names: str) -> Path:
+    """A directory with a `.cos/` holding the named units."""
+    d = tmp_path / f"tree{len(list(tmp_path.iterdir()))}"
+    (d / ".cos").mkdir(parents=True)
+    for n in names:
+        (d / ".cos" / n).mkdir()
+    return d
