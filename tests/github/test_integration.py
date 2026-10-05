@@ -994,6 +994,53 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.asked(), 3)
 
+    async def test_red_checks_held_under_pending_are_not_red_after_integration(self):
+        # The head the last integration pushed, current against `origin/main`.
+        git(self.workspace, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.head = git(self.workspace, "rev-parse", "HEAD")
+        key = self.core.ws.key(self.cwd)
+        self.core.ws.journal().append(
+            {
+                "kind": "integration",
+                "workspace": key,
+                "unit": self.unit,
+                "stage": "integrate",
+                "outcome": "pushed",
+                "mode": "mechanical",
+                "started_by": "autopilot",
+                "head_after": self.head,
+            }
+        )
+        link = "https://github.com/o/r/actions/runs/42/job/9"
+        self.checks = [
+            {"name": "tests", "bucket": "fail", "link": link, "completedAt": "2026-10-05T10:00:00Z"}
+        ]
+        reruns: list[list[str]] = []
+
+        async def gh_run(argv, cwd, stdin=None):
+            reruns.append(argv)
+            return 0, "", ""
+
+        with mock.patch("coscc.git.gh.run", gh_run):
+            await self.read()
+            await self.settle()
+            u = await self.read()
+            self.assertEqual(u["integration"]["state"], "current")
+            # A press asks `gh` itself: the same answer, through the PR machine, is not red either.
+            prs = await integrate.open_prs(self.cwd)
+            info = await self.core.integration._integration_of(
+                Path(self.cwd), key, u, prs, {"head_after": self.head}
+            )
+            self.assertEqual(info["state"], "current")
+            self.assertEqual(reruns, [["run", "rerun", "42", "--failed"]])
+            # Red again after the rerun: now it is red after integration.
+            self.checks = [{**self.checks[0], "completedAt": "2026-10-05T10:05:00Z"}]
+            info = await self.core.integration._integration_of(
+                Path(self.cwd), key, u, prs, {"head_after": self.head}
+            )
+            self.assertEqual(info["state"], "red-after-integration")
+            self.assertEqual(len(reruns), 1)
+
     async def test_a_cancelled_ask_is_removed_so_the_unit_is_asked_again(self):
         await self.read()
         await self.settle()

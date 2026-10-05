@@ -19,6 +19,9 @@ BRANCH = "feat/a-problem"
 HEAD = "a" * 40
 MERGE = "m" * 40
 PR_NUMBER = 7
+LINK = "https://github.com/o/r/actions/runs/42/job/9"
+DONE = "2026-10-05T10:00:00Z"
+LATER = "2026-10-05T10:05:00Z"
 
 
 class Crash(BaseException):
@@ -38,6 +41,8 @@ class FakeGh:
         buckets=("pass",),
         merge_code=0,
         crash_after_merge=False,
+        link=None,
+        rerun_code=0,
     ):
         self.calls: list[list[str]] = []
         self.open_prs = list(open_prs)
@@ -46,6 +51,10 @@ class FakeGh:
         self.buckets = buckets
         self.merge_code = merge_code
         self.crash_after_merge = crash_after_merge
+        # A check's `link`, and when it finished; `None` reads as `gh` before the rerun's fields.
+        self.link = link
+        self.completed = DONE
+        self.rerun_code = rerun_code
 
     def count(self, *words):
         return sum(1 for c in self.calls if c[: len(words)] == list(words))
@@ -75,7 +84,12 @@ class FakeGh:
                 "",
             )
         if verb == ["pr", "checks"]:
-            return 0, json.dumps([{"name": "test", "bucket": b} for b in self.buckets]), ""
+            extra = {} if self.link is None else {"link": self.link, "completedAt": self.completed}
+            return 0, json.dumps([{"name": "test", "bucket": b, **extra} for b in self.buckets]), ""
+        if verb == ["run", "rerun"]:
+            if self.rerun_code:
+                return self.rerun_code, "", "HTTP 403: Resource not accessible by integration"
+            return 0, "", ""
         if verb == ["pr", "merge"]:
             if self.merge_code == 0:
                 self.state = "MERGED"
@@ -349,7 +363,7 @@ class TheReaderRecordsWhatChanged(Fixture):
         held = prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD)
         self.assertEqual((held["head"], held["ci"]), (HEAD, "pending"))
         self.assertTrue(
-            m.record_ci(self.unit(), PR_NUMBER, HEAD, [{"name": "t", "bucket": "fail"}])
+            run(m.record_ci(self.unit(), PR_NUMBER, HEAD, [{"name": "t", "bucket": "fail"}]))
         )
         held = prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD)
         self.assertEqual((held["ci"], held["checks"]), ("red", [{"name": "t", "bucket": "fail"}]))
@@ -360,7 +374,7 @@ class TheReaderRecordsWhatChanged(Fixture):
         self.assertEqual(rows, ["pending", "red"])
         # The same answer again is no transition; only when it was read moves.
         self.assertTrue(
-            m.record_ci(self.unit(), PR_NUMBER, HEAD, [{"name": "t", "bucket": "fail"}])
+            run(m.record_ci(self.unit(), PR_NUMBER, HEAD, [{"name": "t", "bucket": "fail"}]))
         )
         self.assertEqual(len([r for r in self.rows("pr.md") if r["guard"] == "ci-at-head"]), 2)
 
@@ -413,6 +427,101 @@ class TheReaderRecordsWhatChanged(Fixture):
         got = self.read(m)
         self.assertEqual((got.moved, got.error), ([], "HTTP 502"))
         self.assertEqual(len(self.history.transitions(WS, NAME)), before)
+
+
+class ARedHeadIsRerunOnce(Fixture):
+    """A head whose required checks are red is rerun once by the app before CI is red."""
+
+    reader = TheReaderRecordsWhatChanged.reader
+    read = TheReaderRecordsWhatChanged.read
+
+    def cis(self):
+        return [json.loads(r["inputs"]) for r in self.rows("pr.md") if r["guard"] == "ci-at-head"]
+
+    def test_red_rerun_once_then_green_is_never_red(self):
+        gh = FakeGh(buckets=("fail",), link=LINK)
+        m = self.reader(gh)
+        self.assertEqual(self.read(m).moved, [(NAME, "ci")])
+        self.assertEqual(gh.calls[-1], ["run", "rerun", "42", "--failed"])
+        gh.buckets = ("pending",)
+        self.read(m)
+        gh.buckets = ("pass",)
+        self.read(m)
+        self.assertEqual([c["ci"] for c in self.cis()], ["pending", "green"])
+        self.assertEqual(prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD)["ci"], "green")
+        self.assertEqual(gh.count("run", "rerun"), 1)
+
+    def test_red_rerun_once_then_red_records_red_once(self):
+        gh = FakeGh(buckets=("fail",), link=LINK)
+        m = self.reader(gh)
+        self.read(m)
+        gh.completed = LATER
+        self.assertEqual(self.read(m).moved, [(NAME, "ci")])
+        self.read(m)
+        self.assertEqual([c["ci"] for c in self.cis()], ["pending", "red"])
+        self.assertEqual(prmachine.state(self.history, WS, NAME)["ci"], "red")
+        self.assertEqual(prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD)["ci"], "red")
+        self.assertEqual(gh.count("run", "rerun"), 1)
+        rerun = self.cis()[0]["rerun"]
+        self.assertEqual(
+            (rerun["runs"], rerun["red"], rerun["ok"]),
+            (["42"], [{"name": "test", "completedAt": DONE}], True),
+        )
+
+    def test_a_red_check_with_no_run_id_is_red_with_no_rerun(self):
+        gh = FakeGh(buckets=("fail",), link="https://ci.example.com/build/3")
+        m = self.reader(gh)
+        self.read(m)
+        [ci] = self.cis()
+        self.assertEqual((ci["ci"], ci["rerun"]["ok"]), ("red", False))
+        self.assertIn("no GitHub Actions run", ci["rerun"]["said"])
+        self.assertEqual(gh.count("run", "rerun"), 0)
+
+    def test_a_refused_rerun_is_red_with_what_gh_said(self):
+        gh = FakeGh(buckets=("fail",), link=LINK, rerun_code=1)
+        m = self.reader(gh)
+        self.read(m)
+        [ci] = self.cis()
+        self.assertEqual((ci["ci"], ci["rerun"]["ok"]), ("red", False))
+        self.assertIn("HTTP 403", ci["rerun"]["said"])
+        self.assertEqual(gh.count("run", "rerun"), 1)
+
+    def test_a_stale_red_read_after_the_rerun_stays_pending(self):
+        gh = FakeGh(buckets=("fail",), link=LINK)
+        m = self.reader(gh)
+        self.read(m)
+        # The same finished red, read again by the reader and by the board: not red yet.
+        self.assertEqual(self.read(m).moved, [])
+        checks = [{"name": "test", "bucket": "fail", "link": LINK, "completedAt": DONE}]
+        self.assertTrue(run(m.record_ci(self.unit(), PR_NUMBER, HEAD, checks)))
+        self.assertEqual([c["ci"] for c in self.cis()], ["pending"])
+        self.assertEqual(prmachine.ci_held(self.history, WS, PR_NUMBER, HEAD)["ci"], "pending")
+        self.assertEqual(gh.count("run", "rerun"), 1)
+
+    def test_a_new_machine_on_the_same_db_does_not_rerun_the_head_again(self):
+        gh = FakeGh(buckets=("fail",), link=LINK)
+        self.read(self.reader(gh))
+        again = FakeGh(open_prs=gh.open_prs, buckets=("fail",), link=LINK)
+        m = self.machine(again)
+        self.read(m)
+        again.completed = LATER
+        self.read(m)
+        self.assertEqual([c["ci"] for c in self.cis()], ["pending", "red"])
+        self.assertEqual((gh.count("run", "rerun"), again.count("run", "rerun")), (1, 0))
+
+    def test_a_new_head_gets_its_own_rerun(self):
+        gh = FakeGh(buckets=("fail",), link=LINK)
+        m = self.reader(gh)
+        self.read(m)
+        gh.completed = LATER
+        self.read(m)
+        other = "b" * 40
+        gh.open_prs[0]["headRefOid"] = other
+        self.read(m)
+        now = prmachine.state(self.history, WS, NAME)
+        self.assertEqual((now["head"], now["ci"]), (other, "pending"))
+        self.assertEqual(gh.count("run", "rerun"), 2)
+        self.assertEqual(prmachine.rerun_at(self.history, WS, NAME, other)["ok"], True)
 
 
 if __name__ == "__main__":

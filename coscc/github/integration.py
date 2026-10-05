@@ -160,7 +160,7 @@ class Integration:
                 else None
             )
             if row is None or number is None:
-                info = await self._integration_of(root, u, prs, last.get(u["name"]), ask=fresh)
+                info = await self._integration_of(root, key, u, prs, last.get(u["name"]), ask=fresh)
                 if info is not None:
                     u["integration"] = info
                 continue
@@ -168,7 +168,9 @@ class Integration:
             held = self._held_ci(key, u["name"], int(number), head)
             if held is not None and held.get("head") != head:
                 held = None
-            info = await self._integration_of(root, u, prs, last.get(u["name"]), held, ask=fresh)
+            info = await self._integration_of(
+                root, key, u, prs, last.get(u["name"]), held, ask=fresh
+            )
             if info is not None:
                 u["integration"] = info
             if held is not None:
@@ -232,7 +234,9 @@ class Integration:
             return
         u = prmachine.Unit(slot[0], slot[1], Path(tree), tree, "", "", None)
         try:
-            self.pr_machine().record_ci(u, number, head, [c for c in checks if isinstance(c, dict)])
+            await self.pr_machine().record_ci(
+                u, number, head, [c for c in checks if isinstance(c, dict)]
+            )
         except Exception as e:
             # A background ask never raises.
             log.exception("the CI answer of %s could not be recorded", u)
@@ -257,6 +261,7 @@ class Integration:
     async def _integration_of(
         self,
         root: Path,
+        key: str,
         u: dict[str, Any],
         prs: list[dict[str, Any]] | str,
         last_record: dict[str, Any] | None,
@@ -264,8 +269,9 @@ class Integration:
         ask: bool = True,
     ) -> dict[str, Any] | None:
         """One unit's state. None when its pull request is not among the open ones. The
-        required checks are asked of `gh`, or with `ask` off are `held_ci`'s: none held is
-        none counted red yet."""
+        required checks are asked of `gh` and recorded through `prmachine.record_ci`, or with
+        `ask` off are `held_ci`'s: none held is none counted red yet, and neither is a red
+        check while the `ci` recorded at the head is not `red`."""
         number = (u.get("pr") or {}).get("number")
         if isinstance(prs, str):
             pr_row: dict[str, Any] | str = prs
@@ -276,10 +282,10 @@ class Integration:
             pr_row = match
         origin_sha = ""
         missing: int | str = 0
+        head = str(pr_row.get("headRefOid") or "") if isinstance(pr_row, dict) else ""
         if isinstance(pr_row, dict):
             try:
                 origin_sha = await gitops.rev_parse(root, "refs/remotes/origin/main")
-                head = str(pr_row.get("headRefOid") or "")
                 if not await gitops.has_commit(root, head):
                     missing = (
                         f"the pull request's head {head[:7]} is not here: fetch, then ask again"
@@ -297,6 +303,17 @@ class Integration:
                 checks = await integrate.required_checks(str(root), int(number))
             except integrate.IntegrateError as e:
                 checks = str(e)
+            else:
+                pu = prmachine.Unit(key, u["name"], root, str(root), "", "", None)
+                try:
+                    await self.pr_machine().record_ci(pu, int(number), head, checks)
+                except Exception:
+                    log.exception("the CI answer of %s could not be recorded", u["name"])
+        # Red only once the PR machine recorded `red` at this head: it reruns a red head first.
+        if isinstance(checks, list) and number is not None:
+            held = self._held_ci(key, u["name"], int(number), head)
+            if (held or {}).get("ci") != "red":
+                checks = []
         verdict = integrate.classify(pr_row, missing, origin_sha, last_record, checks)
         state = verdict["state"]
         review_status = next(
@@ -457,7 +474,7 @@ class Integration:
                 prs: list[dict[str, Any]] | str = await integrate.open_prs(str(root))
             except integrate.IntegrateError as e:
                 prs = str(e)
-            info = await self._integration_of(root, found, prs, last)
+            info = await self._integration_of(root, key, found, prs, last)
             if info is not None and seen["fetch"]["outcome"] == "failed":
                 note = integrate.origin_note(info["origin_sha"], seen["fetch"])
                 info["reason"] = f"{info['reason']}; {note}" if info.get("reason") else note

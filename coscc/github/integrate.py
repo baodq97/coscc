@@ -687,9 +687,10 @@ def open_prs_once(cwd: str):
 
 
 async def required_checks(tree: str, n: int) -> list[dict]:
-    """The same call the `review` gate makes (the loop, `pr checks --required`)."""
+    """The same call the `review` gate makes (the loop, `pr checks --required`), with what the PR
+    machine's rerun reads (`link`, `completedAt`)."""
     code, out, err = await _gh(
-        ["pr", "checks", str(int(n)), "--required", "--json", "name,bucket"], tree
+        ["pr", "checks", str(int(n)), "--required", "--json", "name,bucket,link,completedAt"], tree
     )
     # `gh pr checks` exits 8 while checks are pending and 1 when one failed; both still
     # print the JSON, which is what is read.
