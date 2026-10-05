@@ -558,6 +558,10 @@ def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
         r = api.post("/api/features", json={"cwd": str(proj), "name": "scan", **body})
         if r.status_code != 200:
             raise RuntimeError(f"could not set up the scan feature: {r.text}")
+    # Release is off until a workspace turns it on; proj shows its panel.
+    r = api.post("/api/features", json={"cwd": str(proj), "name": "release", "state": "on"})
+    if r.status_code != 200:
+        raise RuntimeError(f"could not turn release on: {r.text}")
     key = str(proj.resolve())
     now = datetime.now(timezone.utc)
     kinds = ("impl-draft", "ci-red", "integrate", "rerun", "review-round", "refused")
