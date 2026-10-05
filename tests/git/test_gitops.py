@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -19,7 +20,12 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.git import gitops
-from coscc.git.gitops import GitError, check_url, child_env
+from coscc.git.gitops import GitError, OwnTree, check_url, child_env
+
+# What the own tree of these tests may write.
+BRANCHES = re.compile(r"^chore/own-\d+-\d+-\d+$")
+TAGS = re.compile(r"^v\d+\.\d+\.\d+$")
+FILES = ("pyproject.toml", "package.json", "package-lock.json", "uv.lock")
 
 
 class UrlsRefusedBeforeGitExists(unittest.TestCase):
@@ -986,8 +992,8 @@ class TreeStateSeesAWriteAndACommit(unittest.TestCase):
             asyncio.run(gitops.tree_state(Path(self._tmp.name)))
 
 
-class Releasing(unittest.TestCase):
-    """The release branch and tag, in the release tree only, against a bare remote."""
+class AFeaturesOwnTree(unittest.TestCase):
+    """A branch and tag a feature names, in its own tree only, against a bare remote."""
 
     def git(self, where: Path, *args: str) -> str:
         return subprocess.run(
@@ -1022,61 +1028,64 @@ class Releasing(unittest.TestCase):
         )
         self.git(self.repo, "config", "user.name", "T")
         self.git(self.repo, "config", "user.email", "t@example.invalid")
-        for name in gitops.RELEASE_FILES:
+        for name in FILES:
             (self.repo / name).write_text('version = "0.1.0"\n', encoding="utf-8")
         self.git(self.repo, "add", "-A")
         self.git(self.repo, "commit", "-q", "-m", "one")
         self.git(self.repo, "push", "-q", "origin", "main")
         self.main = self.git(self.repo, "rev-parse", "main")
-        self.tree = base / "data" / "release"
+        self.tree = base / "data" / "own"
+        self.own = OwnTree(self.tree, BRANCHES, TAGS, FILES)
         self.tree.parent.mkdir(parents=True)
         asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
 
     def test_a_branch_commit_and_tag_reach_the_remote(self):
         run = asyncio.run
-        run(gitops.create_branch(self.tree, "chore/release-0-2-0", self.main))
+        run(gitops.create_branch(self.tree, "chore/own-0-2-0", self.main))
         (self.tree / "uv.lock").write_text('version = "0.2.0"\n', encoding="utf-8")
-        self.assertIn('+version = "0.2.0"', run(gitops.diff_u0(self.tree, self.tree)))
-        head = run(gitops.commit_files(self.tree, self.tree, "chore(release): 0.2.0"))
-        run(gitops.push_branch(self.tree, self.tree, "chore/release-0-2-0"))
-        self.assertEqual(self.git(self.remote, "rev-parse", "refs/heads/chore/release-0-2-0"), head)
-        run(gitops.detach_here(self.tree, self.tree))
+        self.assertIn('+version = "0.2.0"', run(gitops.diff_u0(self.tree, self.own)))
+        head = run(gitops.commit_files(self.tree, self.own, "chore: 0.2.0"))
+        run(gitops.push_branch(self.tree, self.own, "chore/own-0-2-0"))
+        self.assertEqual(self.git(self.remote, "rev-parse", "refs/heads/chore/own-0-2-0"), head)
+        run(gitops.detach_here(self.tree, self.own))
         self.assertEqual(run(gitops.current_branch(self.tree)), "")
         self.assertFalse(run(gitops.remote_has_tag(self.tree, "v0.2.0")))
-        run(gitops.push_tag(self.tree, self.tree, "v0.2.0", head))
+        run(gitops.push_tag(self.tree, self.own, "v0.2.0", head))
         self.assertTrue(run(gitops.remote_has_tag(self.tree, "v0.2.0")))
         self.assertEqual(self.git(self.remote, "rev-parse", "refs/tags/v0.2.0"), head)
         self.assertEqual(self.git(self.repo, "tag", "--list", "v0.2.0"), "")
         with self.assertRaises(GitError):
-            run(gitops.push_tag(self.tree, self.tree, "v0.2.0", self.main))
+            run(gitops.push_tag(self.tree, self.own, "v0.2.0", self.main))
         run(gitops.fetch_with_tags(self.repo))
-        self.assertEqual(run(gitops.release_tags(self.repo, head)), ["v0.2.0"])
-        self.assertEqual(run(gitops.show_file(self.repo, head, "uv.lock")), 'version = "0.2.0"')
+        self.assertEqual(run(gitops.tags_merged(self.repo, head)), ["v0.2.0"])
+        self.assertEqual(
+            run(gitops.show_file(self.repo, head, "uv.lock", self.own)), 'version = "0.2.0"'
+        )
 
-    def test_names_that_are_not_a_release_are_refused(self):
+    def test_names_it_does_not_allow_are_refused(self):
         run = asyncio.run
-        for name in ("main", "feat/x", "--force", "chore/release-0-2"):
+        for name in ("main", "feat/x", "--force", "chore/own-0-2"):
             with self.subTest(branch=name), self.assertRaises(GitError):
-                run(gitops.push_branch(self.tree, self.tree, name))
+                run(gitops.push_branch(self.tree, self.own, name))
         for tag in ("v1.2.3-rc.1", "1.2.3", "-d"):
             with self.subTest(tag=tag), self.assertRaises(GitError):
-                run(gitops.push_tag(self.tree, self.tree, tag, self.main))
+                run(gitops.push_tag(self.tree, self.own, tag, self.main))
         with self.assertRaises(GitError):
-            run(gitops.show_file(self.repo, self.main, "README.md"))
+            run(gitops.show_file(self.repo, self.main, "README.md", self.own))
 
-    def test_only_the_release_tree_is_written_or_removed(self):
+    def test_only_the_own_tree_is_written_or_removed(self):
         run = asyncio.run
         with self.assertRaises(GitError):
-            run(gitops.commit_files(self.repo, self.tree, "x"))
+            run(gitops.commit_files(self.repo, self.own, "x"))
         with self.assertRaises(GitError):
-            run(gitops.push_tag(self.repo, self.tree, "v0.2.0", self.main))
+            run(gitops.push_tag(self.repo, self.own, "v0.2.0", self.main))
         with self.assertRaises(GitError):
-            run(gitops.release_tree_remove(self.repo, self.repo, self.tree))
-        # Detached at `main`, not on a release branch: no commit.
+            run(gitops.own_tree_remove(self.repo, self.repo, self.own))
+        # Detached at `main`, not on a branch it names: no commit.
         with self.assertRaises(GitError):
-            run(gitops.commit_files(self.tree, self.tree, "x"))
+            run(gitops.commit_files(self.tree, self.own, "x"))
         (self.tree / "uv.lock").write_text("changed\n", encoding="utf-8")
-        run(gitops.release_tree_remove(self.repo, self.tree, self.tree))
+        run(gitops.own_tree_remove(self.repo, self.tree, self.own))
         self.assertFalse(self.tree.exists())
 
     def test_the_same_wrong_path_twice_is_still_refused(self):
@@ -1087,23 +1096,24 @@ class Releasing(unittest.TestCase):
         (self.repo / "uv.lock").write_text("person's change\n", encoding="utf-8")
         (other / "uv.lock").write_text("unit's change\n", encoding="utf-8")
         for where in (self.repo, other):
+            same = OwnTree(where, BRANCHES, TAGS, FILES)
             with self.subTest(tree=where.name):
                 for call in (
-                    gitops.diff_u0(where, where),
-                    gitops.commit_files(where, where, "x"),
-                    gitops.push_branch(where, where, "chore/release-0-2-0"),
-                    gitops.push_tag(where, where, "v0.2.0", self.main),
-                    gitops.detach_here(where, where),
-                    gitops.release_tree_remove(self.repo, where, where),
+                    gitops.diff_u0(where, same),
+                    gitops.commit_files(where, same, "x"),
+                    gitops.push_branch(where, same, "chore/own-0-2-0"),
+                    gitops.push_tag(where, same, "v0.2.0", self.main),
+                    gitops.detach_here(where, same),
+                    gitops.own_tree_remove(self.repo, where, same),
                 ):
                     with self.assertRaises(GitError):
                         run(call)
         self.assertEqual(self.git(self.repo, "status", "--porcelain"), "M uv.lock")
         self.assertEqual(self.git(other, "status", "--porcelain"), "M uv.lock")
-        # A directory named `release` that is a checkout of its own, not a linked tree.
-        clone = self.tree.parent.parent / "elsewhere" / "release"
+        # A directory with an own tree's name that is a checkout of its own, not a linked tree.
+        clone = self.tree.parent.parent / "elsewhere" / "own"
         subprocess.run(
             ["git", "clone", "-q", str(self.remote), str(clone)], check=True, capture_output=True
         )
         with self.assertRaises(GitError):
-            run(gitops.diff_u0(clone, clone))
+            run(gitops.diff_u0(clone, OwnTree(clone, BRANCHES, TAGS, FILES)))

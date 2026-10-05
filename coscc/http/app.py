@@ -43,7 +43,7 @@ from coscc.runner.steps import Steps
 from coscc.runner.watch import Watch
 from coscc.store.db import Data
 from coscc.units.ideas import Ideas
-from coscc.units.read import Board
+from coscc.units.read import Asked, Board
 from coscc.units.workspaces import Workspaces
 from coscc.update import updater as updater_mod
 from coscc.update.updater import (
@@ -141,6 +141,8 @@ class Core:
             self._attach,
         )
         self.release.details.changed = self.boards.changed
+        # Each feature's slow reads (`Ctx.asks`), by its name: `ctx_of` makes them.
+        self.asks: dict[str, Asked] = {}
         self.autopilot = Autopilot(
             self.config,
             self.ws,
@@ -271,6 +273,11 @@ class Core:
             *((f"CI ask of {u} in {ws}", t) for (ws, u), t in self.integration.ci_asks.items()),
             *((f"gh ask for {' '.join(k)}", t) for k, t in self.boards.prs.asks.items()),
             *((f"release ask for {' '.join(k)}", t) for k, t in self.release.details.asks.items()),
+            *(
+                (f"{name} ask for {' '.join(k)}", t)
+                for name, asked in self.asks.items()
+                for k, t in asked.asks.items()
+            ),
         ]
 
     async def shutdown(self) -> None:

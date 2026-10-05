@@ -34,7 +34,7 @@ from typing import (
 from coscc.agent.harness import child_env
 from coscc.config import Config
 from coscc.git import gh, gitops
-from coscc.git.gitops import GitError
+from coscc.git.gitops import GitError, OwnTree
 from coscc.github import integrate
 from coscc.github.integrate import open_prs_once
 from coscc.kernel import Invalid
@@ -674,6 +674,10 @@ class ReleaseView(TypedDict):
     main_version: NotRequired[str]
 
 
+def _own(path: Path) -> OwnTree:
+    return OwnTree(path, _BRANCH, _TAG, VERSION_FILES)
+
+
 def _empty_block(state: str, reason: str) -> dict[str, Any]:
     return {
         "state": state,
@@ -731,7 +735,7 @@ class Release:
         """
         try:
             origin = await gitops.rev_parse(root, "refs/remotes/origin/main")
-            tags = await gitops.release_tags(root, origin)
+            tags = await gitops.tags_merged(root, origin)
         except GitError as e:
             return _empty_block("unknown", str(e))
         last_tag = ""
@@ -750,7 +754,7 @@ class Release:
             tag_sha = await gitops.rev_parse(root, f"refs/tags/{last_tag}")
             commits = await gitops.commits_between(root, tag_sha, origin)
             main_version = str(
-                tomllib.loads(await gitops.show_file(root, origin, "pyproject.toml"))
+                tomllib.loads(await gitops.show_file(root, origin, "pyproject.toml", _own(root)))
                 .get("project", {})
                 .get("version")
                 or ""
@@ -874,7 +878,7 @@ class Release:
         each writing `gitops` function checks the tree it was handed against.
         """
         try:
-            return worktrees.release_path(cwd, self.config.data_dir)
+            return worktrees.own_tree(cwd, "release", self.config.data_dir)
         except BadUnit as e:
             raise GitError(str(e)) from e
 
@@ -889,7 +893,7 @@ class Release:
     async def _release_tree_gone(self, cwd: str, root: Path, tree: Path) -> None:
         listed = {str(Path(t["path"]).resolve()) for t in await gitops.worktree_list(root)}
         if str(tree.resolve()) in listed:
-            await gitops.release_tree_remove(root, tree, self.release_tree_path(cwd))
+            await gitops.own_tree_remove(root, tree, _own(self.release_tree_path(cwd)))
 
     async def _release_press(  # noqa: PLR0915 - still to split
         self,
@@ -1039,21 +1043,21 @@ class Release:
             if code != 0 or (said.split() or [""])[0] != version:
                 raise ReleaseError(f"check-version printed {said!r}, not {version}")
             extra = extra_diff(
-                await gitops.diff_u0(tree, self.release_tree_path(cwd)), facts["old"], version
+                await gitops.diff_u0(tree, _own(self.release_tree_path(cwd))), facts["old"], version
             )
             if extra:
                 raise ReleaseError("the change is more than the version lines: " + "; ".join(extra))
             head = await gitops.commit_files(
-                tree, self.release_tree_path(cwd), f"chore(release): {version}"
+                tree, _own(self.release_tree_path(cwd)), f"chore(release): {version}"
             )
-            await gitops.push_branch(tree, self.release_tree_path(cwd), branch)
+            await gitops.push_branch(tree, _own(self.release_tree_path(cwd)), branch)
             number = await create_pr(
                 str(tree),
                 branch,
                 f"chore(release): {version}",
                 pr_body(version, facts["units"], facts["unmatched"]),
             )
-            await gitops.detach_here(tree, self.release_tree_path(cwd))
+            await gitops.detach_here(tree, _own(self.release_tree_path(cwd)))
             rec = write("opened", pr=number, head=head)
             yield ("done", {"release": rec})
         except (GitError, ReleaseError) as e:
@@ -1107,7 +1111,7 @@ class Release:
             code, said = await cos(tree, "check-version")
             if code != 0 or (said.split() or [""])[0] != version:
                 raise ReleaseError(f"check-version at {sha[:7]} printed {said!r}, not {version}")
-            await gitops.push_tag(tree, self.release_tree_path(cwd), tag, sha)
+            await gitops.push_tag(tree, _own(self.release_tree_path(cwd)), tag, sha)
             rec = write("tagged", **merged)
             try:
                 await self._release_tree_gone(cwd, root, tree)

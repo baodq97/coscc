@@ -59,7 +59,7 @@ class Setup(unittest.IsolatedAsyncioTestCase):
         self.state = "pilot"
         data = Data(self.root / "data")
         self.ctx = ctx_for(
-            units=Units(lambda cwd: KEY, None, None),
+            units=Units(lambda cwd: KEY, None, None, None, None, None),
             store=data,
             settings=Settings(
                 lambda w: self.state,

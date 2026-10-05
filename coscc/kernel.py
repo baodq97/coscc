@@ -23,20 +23,45 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 from starlette.routing import BaseRoute
 
+from coscc.agent.harness import child_env as child_env
 from coscc.agent.policy import Grant as Grant
 from coscc.agent.policy import check_command as check_command
 from coscc.agent.policy import grant_for as grant_for
 from coscc.bus import Bus
 from coscc.bus import Event as Event
+from coscc.git import gh as gh
+from coscc.git.gitops import GitError as GitError
+from coscc.git.gitops import OwnTree as OwnTree
+from coscc.git.gitops import commit_files as commit_files
+from coscc.git.gitops import commits_between as commits_between
+from coscc.git.gitops import create_branch as create_branch
+from coscc.git.gitops import delete_merged_branch as delete_merged_branch
+from coscc.git.gitops import detach_here as detach_here
+from coscc.git.gitops import diff_u0 as diff_u0
+from coscc.git.gitops import fetch_with_tags as fetch_with_tags
+from coscc.git.gitops import is_ancestor as is_ancestor
+from coscc.git.gitops import own_tree_remove as own_tree_remove
+from coscc.git.gitops import push_branch as push_branch
+from coscc.git.gitops import push_tag as push_tag
+from coscc.git.gitops import remote_has_tag as remote_has_tag
+from coscc.git.gitops import rev_parse as rev_parse
+from coscc.git.gitops import show_file as show_file
+from coscc.git.gitops import tags_merged as tags_merged
+from coscc.git.gitops import worktree_add as worktree_add
+from coscc.git.gitops import worktree_list as worktree_list
+from coscc.loop.run import ask as ask
 from coscc.store.db import Busy as Busy
 from coscc.store.db import Data
 from coscc.store.db import now as now
 from coscc.store.journal import BELL as BELL
-from coscc.store.journal import Intervention, Journal
+from coscc.store.journal import BadRecord as BadRecord
+from coscc.store.journal import Intervention
+from coscc.store.journal import Journal as Journal
 from coscc.units import Invalid as Invalid
 from coscc.units import cos_dir as cos_dir
 from coscc.store.journal import is_step as is_step
 from coscc.units.planmap import files_of as files_of
+from coscc.units.read import Asked as Asked
 from coscc.units.scratch import RAM_CAP
 
 log = logging.getLogger(__name__)
@@ -227,6 +252,15 @@ class Units:
     # `origin/main`, as `(path, sha)`. Raises `GitError` when git refuses, `Invalid` when the
     # workspace is not known.
     main_tree: Callable[[str], Awaitable[tuple[str, str]]]
+    # `(workspace path, fresh)`: the board's units. Not `fresh`: the board held, as the page reads
+    # it; `fresh`: the loop asked again now. `Invalid` when the loop cannot be read.
+    units: Callable[[str, bool], Awaitable[list[dict[str, Any]]]]
+    # `(workspace path, fresh)`: the open pull requests as the board holds `gh pr list`'s answer,
+    # asked only when none is held or `fresh`; `gh`'s error as a string.
+    open_prs: Callable[[str, bool], Awaitable[list[dict[str, Any]] | str]]
+    # `(workspace path, name)`: the feature's own worktree `name`, beside the units' trees, worked
+    # out again on every call; the `OwnTree.path` the writers check. `GitError` when unsafe.
+    own_tree: Callable[[str, str], Path]
 
 
 @dataclass(frozen=True)
@@ -275,6 +309,14 @@ class Ctx:
     store: Data
     bus: Bus
     settings: Settings
+    # Raises `Invalid` while an update is under way.
+    refuse_updating: Callable[[], None]
+    # The feature's slow reads (`gh`) held and asked again in the background; the core cancels and
+    # waits for each one when it goes down, and an answer that changed reads the board again.
+    asks: Asked
+    # `(tree, pull request)`: its required checks as `gh pr checks --required` says, or `gh`'s
+    # error as a string.
+    required_checks: Callable[[str, int], Awaitable[list[dict[str, Any]] | str]]
 
 
 @dataclass(frozen=True)

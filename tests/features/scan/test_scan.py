@@ -77,7 +77,7 @@ class _Feature(unittest.IsolatedAsyncioTestCase):
             self.hours["scan"] = hours
 
         self.ctx = ctx_for(
-            units=Units(lambda cwd: cwd, create_unit, None),
+            units=Units(lambda cwd: cwd, create_unit, None, None, None, None),
             runs=Runs(lambda: self.journal, interventions),
             agents=Agents(session),
             store=self.data,
@@ -244,7 +244,7 @@ class APersonDecides(_Feature):
             raise Invalid("taken")
 
         ctx = ctx_for(
-            units=Units(self.ctx.units.key, refuse, None),
+            units=Units(self.ctx.units.key, refuse, None, None, None, None),
             runs=self.ctx.runs,
             store=self.data,
             settings=self.ctx.settings,
