@@ -13,7 +13,7 @@ from unittest import mock
 
 from coscc import config, units
 from coscc.units import turnstats
-from coscc.data import Data
+from coscc.store.db import Data
 
 
 class Fixture(unittest.TestCase):

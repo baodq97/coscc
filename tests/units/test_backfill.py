@@ -22,7 +22,7 @@ from pathlib import Path
 
 from coscc.units import backfill, states
 from coscc.units.backfill import NotAGitCheckout
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.units.history import UNKNOWN, History, settled_edits
 
 WS = "fixture"

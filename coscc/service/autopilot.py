@@ -15,10 +15,10 @@ from coscc.units import autopilot, backlog, guide, states
 from coscc.git import fetches
 from coscc.github import integrate, prmachine
 from coscc.git.gitops import GitError
-from coscc.runlog.journal import BadRecord
-from coscc.data import Busy
+from coscc.store.journal import BadRecord
+from coscc.store.db import Busy
 from coscc.config import LOOPBACK, Config
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Refused, log_setting, shown_state
 from coscc.kernel import Invalid
 from coscc.service.workspaces import Workspaces

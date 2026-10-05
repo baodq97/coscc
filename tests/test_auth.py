@@ -24,7 +24,7 @@ from starlette.routing import Route
 from coscc import auth, studio
 from coscc.api import build
 from coscc.config import Config
-from coscc.data import Data
+from coscc.store.db import Data
 
 PASSWORD = "correct horse battery staple"
 

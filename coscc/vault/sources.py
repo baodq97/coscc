@@ -9,9 +9,9 @@ import subprocess
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from coscc.data import Unusable
+from coscc.store.db import Unusable
 from coscc.git.gitops import child_env
-from coscc.runlog.journal import Journal
+from coscc.store.journal import Journal
 
 # Chosen, not measured: a bound on one `git` or `gh` call and on one artifact.
 CALL_TIMEOUT = 60

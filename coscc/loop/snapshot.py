@@ -87,8 +87,8 @@ def from_db(cos_dir: str):
     """
     from coscc import units
     from coscc.config import from_env
-    from coscc.data import Data
-    from coscc.service.store import Store, valid_name
+    from coscc.store.db import Data
+    from coscc.store.workspaces import Store, valid_name
     from coscc.units.meta import UnitMeta
 
     config = from_env()

@@ -34,7 +34,7 @@ from coscc import update
 from coscc import auth
 from coscc.git import fetches
 from coscc.loop import run
-from coscc.data import Data
+from coscc.store.db import Data
 
 # `log` is an update's or a build's log file, everywhere below.
 logger = logging.getLogger(__name__)

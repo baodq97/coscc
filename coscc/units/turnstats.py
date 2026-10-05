@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from coscc import config, units
-from coscc.data import DB_FILENAME, DEFAULT_DIR
+from coscc.store.db import DB_FILENAME, DEFAULT_DIR
 
 # `reimpl_share` and `duration_mean_ms` come from a measurement; the others were chosen.
 OUTCOME: tuple[tuple[str, float], ...] = (

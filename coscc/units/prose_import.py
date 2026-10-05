@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any, get_args
 
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.units.meta import UnitMeta
 from coscc.units.submit import Verdict
 

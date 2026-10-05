@@ -8,8 +8,8 @@ from collections.abc import AsyncGenerator
 from typing import Any, NotRequired, TypedDict
 
 from coscc.runlog import events
-from coscc.data import Data
-from coscc.data import Busy
+from coscc.store.db import Data
+from coscc.store.db import Busy
 from coscc.kernel import Invalid
 from coscc.config import Config
 from coscc.service.workspaces import Workspaces

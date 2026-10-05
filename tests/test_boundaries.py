@@ -18,7 +18,7 @@ from collections import Counter
 from coscc import features
 from tests.test_layers import ROOT, _files
 
-DATA = "coscc.data"
+DATA = "coscc.store.db"
 
 PRIVATE_IMPORTS: set[tuple[str, str, str]] = {
     ("coscc/runner/attempt.py", "coscc.runner.reply", "_unfence"),
@@ -46,22 +46,22 @@ PRIVATE_IMPORTS: set[tuple[str, str, str]] = {
 }
 
 OWNERS: dict[str, str] = {
-    "auth": "coscc.data",
-    "auth_sessions": "coscc.data",
+    "auth": "coscc.store.db",
+    "auth_sessions": "coscc.store.db",
     "idea_meta": "coscc.units.meta",
     "impl_claims": "coscc.units.meta",
-    "migrations": "coscc.data",
+    "migrations": "coscc.store.db",
     "outputs": "coscc.units.history",
-    "prefs": "coscc.data",
+    "prefs": "coscc.store.db",
     "pull_requests": "coscc.github.prmachine",
     "attempts": "coscc.service.attempts",
     "attempt_moves": "coscc.service.attempts",
     "review_findings": "coscc.units.meta",
     "review_rounds": "coscc.units.meta",
-    "runs": "coscc.runlog.journal",
+    "runs": "coscc.store.journal",
     "stage_results": "coscc.units.meta",
-    "step_events": "coscc.data",
-    "step_runs": "coscc.data",
+    "step_events": "coscc.store.db",
+    "step_runs": "coscc.store.db",
     "transitions": "coscc.units.meta",
     "unit_answers": "coscc.units.meta",
     "unit_holds": "coscc.units.meta",
@@ -70,7 +70,7 @@ OWNERS: dict[str, str] = {
     "unit_questions": "coscc.units.meta",
     "unit_seen": "coscc.units.meta",
     "unit_unknowns": "coscc.units.meta",
-    "workspaces": "coscc.service.store",
+    "workspaces": "coscc.store.workspaces",
 }
 
 FOREIGN_SQL: set[tuple[str, str]] = {
@@ -104,13 +104,13 @@ DICT_ANY: set[str] = {
     "coscc.agent.sessions:list_for_directory",
     "coscc.agent.transcript:ceilings_left",
     "coscc.agent.transcript:cut",
-    "coscc.data:Data.prefs",
-    "coscc.data:Data.step_event",
-    "coscc.data:Data.step_events_add",
-    "coscc.data:Data.step_events_page",
-    "coscc.data:Data.step_run",
-    "coscc.data:Data.step_runs_open",
-    "coscc.data:Data.step_tool_uses",
+    "coscc.store.db:Data.prefs",
+    "coscc.store.db:Data.step_event",
+    "coscc.store.db:Data.step_events_add",
+    "coscc.store.db:Data.step_events_page",
+    "coscc.store.db:Data.step_run",
+    "coscc.store.db:Data.step_runs_open",
+    "coscc.store.db:Data.step_tool_uses",
     "coscc.features.notices:Notices.follow_notices",
     "coscc.features.notices:notice_of",
     "coscc.git.drift:compute",
@@ -141,27 +141,27 @@ DICT_ANY: set[str] = {
     "coscc.runlog.events:Recorder.subscribe",
     "coscc.runlog.events:collapse",
     "coscc.runlog.events:full_text",
-    "coscc.runlog.journal:Journal.append",
-    "coscc.runlog.journal:Journal.append_checked",
-    "coscc.runlog.journal:Journal.append_with",
-    "coscc.runlog.journal:Journal.attempted",
-    "coscc.runlog.journal:Journal.failed_attempts",
-    "coscc.runlog.journal:Journal.finished",
-    "coscc.runlog.journal:Journal.notice_rows",
-    "coscc.runlog.journal:Journal.open_starts",
-    "coscc.runlog.journal:Journal.records",
-    "coscc.runlog.journal:Journal.resumed",
-    "coscc.runlog.journal:Journal.set_mode",
-    "coscc.runlog.journal:Journal.started",
-    "coscc.runlog.journal:Journal.suspended",
-    "coscc.runlog.journal:Journal.timeline",
-    "coscc.runlog.journal:Journal.timelines",
-    "coscc.runlog.journal:Journal.unresumed",
-    "coscc.runlog.journal:add_cost",
-    "coscc.runlog.journal:last_runs",
-    "coscc.runlog.journal:timelines_of",
-    "coscc.runlog.journal:totals_of",
-    "coscc.runlog.journal:zero_cost",
+    "coscc.store.journal:Journal.append",
+    "coscc.store.journal:Journal.append_checked",
+    "coscc.store.journal:Journal.append_with",
+    "coscc.store.journal:Journal.attempted",
+    "coscc.store.journal:Journal.failed_attempts",
+    "coscc.store.journal:Journal.finished",
+    "coscc.store.journal:Journal.notice_rows",
+    "coscc.store.journal:Journal.open_starts",
+    "coscc.store.journal:Journal.records",
+    "coscc.store.journal:Journal.resumed",
+    "coscc.store.journal:Journal.set_mode",
+    "coscc.store.journal:Journal.started",
+    "coscc.store.journal:Journal.suspended",
+    "coscc.store.journal:Journal.timeline",
+    "coscc.store.journal:Journal.timelines",
+    "coscc.store.journal:Journal.unresumed",
+    "coscc.store.journal:add_cost",
+    "coscc.store.journal:last_runs",
+    "coscc.store.journal:timelines_of",
+    "coscc.store.journal:totals_of",
+    "coscc.store.journal:zero_cost",
     "coscc.runlog.spend:_anomalies.row",
     "coscc.runlog.spend:model",
     "coscc.runner.attempt:describe_attempt",
@@ -461,9 +461,9 @@ def feature_owners(trees: dict[str, ast.AST]) -> dict[str, str]:
 
 
 def table_names(trees: dict[str, ast.AST]) -> set[str]:
-    """Tables created in `coscc/data.py` and in the modules under `coscc/features/`."""
+    """Tables created in `coscc/store/db.py` and in the modules under `coscc/features/`."""
     found = set(feature_owners(trees))
-    for s in _sql_strings(trees["coscc/data.py"]):
+    for s in _sql_strings(trees["coscc/store/db.py"]):
         found.update(CREATE.findall(s))
     return found
 
@@ -599,7 +599,7 @@ class EveryTableHasOneOwner(unittest.TestCase):
 
     def test_a_feature_table_is_owned_by_its_module_and_foreign_sql_names_the_owner(self):
         trees = {
-            "coscc/data.py": ast.parse("pass\n"),
+            "coscc/store/db.py": ast.parse("pass\n"),
             "coscc/features/x.py": ast.parse(
                 'FEATURE = Feature(tables=("CREATE TABLE IF NOT EXISTS t (a INTEGER)",))\n'
             ),

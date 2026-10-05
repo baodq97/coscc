@@ -14,7 +14,7 @@ import re
 from typing import Any, Iterable, Literal, get_args
 
 from coscc.units.submit import AGAIN as SUBMIT_AGAIN
-from coscc.runlog import journal
+from coscc.store import journal
 from coscc.units.hold import _line_problem
 
 VALUES = range(1, 6)

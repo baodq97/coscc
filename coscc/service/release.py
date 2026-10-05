@@ -13,8 +13,8 @@ from coscc.github import integrate, release
 from coscc.git import gitops
 from coscc.units import worktrees
 from coscc.git.gitops import GitError
-from coscc.runlog.journal import BadRecord, Journal
-from coscc.data import Busy
+from coscc.store.journal import BadRecord, Journal
+from coscc.store.db import Busy
 from coscc.units import BadUnit
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable

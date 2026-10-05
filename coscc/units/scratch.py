@@ -24,7 +24,7 @@ from collections.abc import Collection, Mapping
 from pathlib import Path
 
 from coscc import units
-from coscc.data import Data
+from coscc.store.db import Data
 
 log = logging.getLogger(__name__)
 

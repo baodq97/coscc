@@ -12,7 +12,7 @@ from unittest import mock
 
 from coscc import features, kernel
 from coscc.bus import Bus, Event
-from coscc.data import Data, now
+from coscc.store.db import Data, now
 from coscc.features import codegraph
 from coscc.features.codegraph import Ready, Status
 from coscc.plugin import create_tables

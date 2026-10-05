@@ -13,7 +13,7 @@ from typing import Any
 
 from coscc.runlog import spend
 from coscc.config import Config
-from coscc.data import DB_FILENAME
+from coscc.store.db import DB_FILENAME
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 

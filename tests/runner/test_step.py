@@ -21,7 +21,7 @@ from unittest import mock
 
 from coscc.agent import modeltrial, policy
 from coscc.kernel import Facts, Hooks, Parts, Tool
-from coscc.runlog.journal import Journal
+from coscc.store.journal import Journal
 from coscc.agent.policy import decide, grant_for
 from coscc.runner.prompt import compose_prompt
 from coscc.runner.reply import RunError
@@ -1390,7 +1390,7 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
     def run_spec(self, d, prefs=None, break_store=False, **kw):
         from coscc.agent import steps
         from coscc.config import Config
-        from coscc.data import Data
+        from coscc.store.db import Data
         from coscc.runlog import events
 
         config = Config(data_dir=str(Path(d) / "data"), config_home=str(Path(d) / "cfg"))
@@ -1530,7 +1530,7 @@ class AStepTakenUpAgainWritesItsConfig(unittest.TestCase):
 
     def run_plan(self, d, owner):
         from coscc.agent import steps
-        from coscc.data import Data
+        from coscc.store.db import Data
         from coscc.runlog import events
 
         directory = make_unit(
@@ -1617,7 +1617,7 @@ class AWorkspacesListsReachTheImplGrant(unittest.TestCase):
 
     def run_stage(self, d, stage, stored):
         from coscc.config import Config
-        from coscc.data import Data
+        from coscc.store.db import Data
         from coscc.kernel import Block
 
         seen = {}
@@ -2067,7 +2067,7 @@ class RecordingChangesNothing(unittest.TestCase):
     def _once(self, make_recorder):
         """`make_recorder(data)` gives the step's recorder; `None` runs it with no row at all."""
         from coscc.agent import steps
-        from coscc.data import Data
+        from coscc.store.db import Data
 
         with tempfile.TemporaryDirectory() as d:
             directory = make_unit(Path(d), intent_md="Status: accepted.\nI")

@@ -36,7 +36,7 @@ LAYERS = (
     ("git", "runlog"),
     ("agent",),
     ("auth", "bus", "studio"),
-    ("data",),
+    ("store",),
     ("config",),
 )
 # The helper that runs `python -m coscc.loop` in a child process. It imports only `agent` and
@@ -268,7 +268,7 @@ class PackagesSitInLayers(unittest.TestCase):
     def test_the_loop_child_loads_neither_the_database_nor_the_helper_that_started_it(self):
         # `coscc.loop` reaches `coscc.units.guards`, which runs `coscc/units/__init__.py`: had
         # that imported `coscc.loop.run`, the package would come back to itself half-loaded.
-        heavy = ("coscc.data", "coscc.loop.run", "asyncio")
+        heavy = ("coscc.store.db", "coscc.loop.run", "asyncio")
         child = (
             "import importlib, pkgutil, sys, coscc.loop\n"
             "for m in pkgutil.iter_modules(coscc.loop.__path__):\n"

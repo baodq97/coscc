@@ -2,8 +2,8 @@
 paths:
   - "coscc/config.py"
   - "coscc/units/__init__.py"
-  - "coscc/data.py"
-  - "coscc/runlog/journal.py"
+  - "coscc/store/db.py"
+  - "coscc/store/journal.py"
 ---
 
 # Things that break here

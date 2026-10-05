@@ -5,7 +5,7 @@ column for a path, so a hand-edited store has nowhere to put `/etc`. The real pa
 from the working folder on every read; `is_under` is a second layer.
 
 Holds workspaces and labels only; conversation content belongs to the SDK's session store.
-Rows live in the app's SQLite database (`coscc/data.py`), one per `(root, name)`.
+Rows live in the app's SQLite database (`coscc/store/db.py`), one per `(root, name)`.
 
 Every mutation runs inside `Data.write` (`BEGIN IMMEDIATE`) so the whole read-modify-write is
 one transaction: concurrent read-then-write sequences otherwise interleave and lose entries
@@ -20,10 +20,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from coscc.data import BUSY_TIMEOUT, Busy, Data, now
+from coscc.store.db import BUSY_TIMEOUT, Busy, Data, now
 
 # The name callers pass to `transaction(timeout=...)` and tests patch; enforced by SQLite's
-# `busy_timeout` (`coscc/data.py`).
+# `busy_timeout` (`coscc/store/db.py`).
 LOCK_TIMEOUT = BUSY_TIMEOUT
 
 # One path segment. No separators, no `.`/`..`, bounded length.

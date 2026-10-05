@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence, get_args
 
 from coscc.units import states
-from coscc.data import BUSY_TIMEOUT, Data, now as _now
+from coscc.store.db import BUSY_TIMEOUT, Data, now as _now
 from coscc.units.states import Machine
 
 # What a field says when nobody can say: never blank, never NULL, one word so a query can ask for it.

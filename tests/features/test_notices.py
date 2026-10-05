@@ -18,7 +18,7 @@ from unittest import mock
 from coscc import auth, plugin
 from coscc.features import notices
 from coscc.config import Config
-from coscc.runlog.journal import BELL, Journal
+from coscc.store.journal import BELL, Journal
 from coscc.service import Service
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions

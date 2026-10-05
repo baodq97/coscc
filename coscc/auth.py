@@ -32,7 +32,7 @@ import argon2
 from argon2.exceptions import InvalidHashError, VerificationError
 
 from coscc.config import LOOPBACK
-from coscc.data import Data
+from coscc.store.db import Data
 
 log = logging.getLogger(__name__)
 

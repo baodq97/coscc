@@ -261,8 +261,8 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
             self.service.boards.running("/nonexistent/elsewhere")
 
     def test_a_busy_run_log_is_a_note_not_a_refusal(self):
-        from coscc.runlog.journal import Journal
-        from coscc.data import Busy
+        from coscc.store.journal import Journal
+        from coscc.store.db import Busy
 
         self.service.attempts.open("step", self.key, "0009_x", "impl", state="running")
         with mock.patch.object(Journal, "open_starts", side_effect=Busy("locked")):

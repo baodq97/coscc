@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from coscc.runlog.journal import Intervention, Journal
+from coscc.store.journal import Intervention, Journal
 from coscc.service.attempts import Attempts
 from coscc.units.meta import UnitMeta
 

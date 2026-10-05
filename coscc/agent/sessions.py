@@ -41,7 +41,7 @@ from coscc.agent import harness, instructions, transcript
 from coscc.agent.helpers import Helpers
 from coscc.bus import Bus, Event
 from coscc.config import Config
-from coscc.data import Data
+from coscc.store.db import Data
 
 log = logging.getLogger(__name__)
 

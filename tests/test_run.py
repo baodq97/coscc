@@ -93,7 +93,7 @@ class ResetPassword(unittest.TestCase):
         import tempfile
         from unittest import mock
 
-        from coscc.data import Data
+        from coscc.store.db import Data
 
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
@@ -126,7 +126,7 @@ class TheStateCommand(unittest.TestCase):
         from unittest import mock
 
         from coscc import units
-        from coscc.data import Data
+        from coscc.store.db import Data
         from coscc.loop import run as loop
 
         fixture = Path(__file__).resolve().parent / "units" / "testdata" / "meta_store"
@@ -179,7 +179,7 @@ class TheSkipCommand(unittest.TestCase):
         from pathlib import Path
 
         from coscc import units
-        from coscc.data import Data
+        from coscc.store.db import Data
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -299,8 +299,8 @@ class TheVaultMeasureCommand(unittest.TestCase):
         from pathlib import Path
 
         from coscc import units
-        from coscc.data import Data
-        from coscc.runlog.journal import Journal
+        from coscc.store.db import Data
+        from coscc.store.journal import Journal
         from coscc.vault import Store, record
         from tests.vault import fakes
 

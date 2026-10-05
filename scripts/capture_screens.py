@@ -396,7 +396,7 @@ def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     as `Service._journal_key` keys it. `at` is when it is written, so the page reads "just now"."""
     import uuid
 
-    from coscc.runlog.journal import Journal
+    from coscc.store.journal import Journal
 
     journal, key = Journal(work, data_dir), str(proj.resolve())
     journal.started(key, "0004_finished", "plan", "manual")
@@ -453,8 +453,8 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     """A run whose cost is unknown on two units and one whose
     cost is known, written where the app reads its run log, under the key it reads by; and
     `codegraph` at `pilot` (`seed_pilot`)."""
-    from coscc.data import Data
-    from coscc.runlog.journal import Journal
+    from coscc.store.db import Data
+    from coscc.store.journal import Journal
 
     seed_pilot(data_dir, proj)
     journal, key = Journal(work, Data(data_dir)), str(proj.resolve())
@@ -550,10 +550,10 @@ def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
     from datetime import datetime, timedelta, timezone
 
     from coscc.bus import Bus
-    from coscc.data import Data
+    from coscc.store.db import Data
     from coscc.features import scan
     from coscc.kernel import Ctx
-    from coscc.runlog.journal import Intervention
+    from coscc.store.journal import Intervention
 
     for body in ({"state": "on"}, {"schedule": 0}):
         r = api.post("/api/features", json={"cwd": str(proj), "name": "scan", **body})
@@ -595,7 +595,7 @@ def seed_pilot(data_dir: Path, proj: Path) -> None:
     """`codegraph` at `pilot` for `proj`, the pref written straight: `POST /api/features` would
     install its engine (about 290 MB, over the network). The row shows `pilot` only when `npm`
     is on `PATH`; without it the feature is locked and the row shows `off`."""
-    from coscc.data import Data
+    from coscc.store.db import Data
     from coscc.plugin import STATE_PREF
 
     Data(data_dir).set_pref(STATE_PREF, {"codegraph": {str(proj.resolve()): "pilot"}})
@@ -605,7 +605,7 @@ def make_autopilot_fixture(api: httpx.Client, work: Path, data_dir: Path, proj: 
     """`AUTOPILOT_FIXTURE`, a shortlist of those two units alone, and two tries of
     `0008_draft-impl` on one head: each an `autopilot-pick` that went on with the draft and the
     step it began, ended. Then the scan's proposals, the rest of what the Backlog shows."""
-    from coscc.runlog.journal import Journal
+    from coscc.store.journal import Journal
 
     make_fixture(api, proj, AUTOPILOT_FIXTURE)
     make_scan_fixture(api, data_dir, proj)

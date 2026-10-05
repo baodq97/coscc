@@ -12,7 +12,7 @@ import httpx
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc import features
 from coscc.kernel import Block, Ctx, Feature, Guard, Parts, Schedule, Tool, arm_of
 from coscc.plugin import (

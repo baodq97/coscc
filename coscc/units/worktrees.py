@@ -22,7 +22,7 @@ import coscc
 from coscc import config, units
 from coscc.agent import harness
 from coscc.git import fetches, gh, gitops
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 

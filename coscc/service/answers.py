@@ -22,8 +22,8 @@ from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
 from coscc.units.meta import MetaError, UnitMeta
-from coscc.runlog.journal import BadRecord, Journal
-from coscc.data import Busy
+from coscc.store.journal import BadRecord, Journal
+from coscc.store.db import Busy
 from coscc.units import submit
 from coscc.units import transitions
 from coscc.service.attempts import Attempt, describe

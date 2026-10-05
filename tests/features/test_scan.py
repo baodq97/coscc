@@ -8,12 +8,12 @@ import unittest
 from pathlib import Path
 
 from coscc.bus import Bus
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.agent import policy
 from coscc.features import scan
 from coscc.plugin import create_tables
 from coscc.kernel import Ctx, Invalid, Submitted
-from coscc.runlog.journal import Intervention, Journal
+from coscc.store.journal import Intervention, Journal
 from coscc.units import backlog, submit
 
 WS = "/ws"

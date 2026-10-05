@@ -17,8 +17,8 @@ from coscc.units import board as board_reader
 from coscc.git import gitops
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
-from coscc.runlog.journal import last_runs, timelines_of, totals_of
-from coscc.data import Busy, now
+from coscc.store.journal import last_runs, timelines_of, totals_of
+from coscc.store.db import Busy, now
 from coscc.agent.policy import grant_for
 from coscc import units
 from coscc.units import scratch, worktrees

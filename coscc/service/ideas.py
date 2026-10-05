@@ -10,11 +10,11 @@ from typing import Any
 
 from coscc.git import gitops
 from coscc.git.gitops import GitError
-from coscc.data import Busy
+from coscc.store.db import Busy
 from coscc.service.common import unit_state
 from coscc.kernel import Invalid
 from coscc.units.meta import MetaError
-from coscc.service.store import valid_name
+from coscc.store.workspaces import valid_name
 from coscc.units import CannotCreate, ideas
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable

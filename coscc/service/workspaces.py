@@ -21,12 +21,12 @@ from coscc import units
 from coscc.agent.policy import COMMAND_NAME, GRANTS_PREF, lists_of
 from coscc.agent.sessions import Sessions
 from coscc.config import Config
-from coscc.data import Busy, Data
+from coscc.store.db import Busy, Data
 from coscc.git import gitops
 from coscc.git.gitops import GitError
-from coscc.runlog.journal import BadRecord, Journal
+from coscc.store.journal import BadRecord, Journal
 from coscc.kernel import Invalid
-from coscc.service.store import BadName, Store, require_name, valid_name
+from coscc.store.workspaces import BadName, Store, require_name, valid_name
 from coscc.units import BadUnit, scratch
 from coscc.units.history import BadTransition
 from coscc.units.meta import MetaError, UnitMeta

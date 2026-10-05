@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc.data import Data
+from coscc.store.db import Data
 from coscc.vault.store import Store
 
 SHEBANG = f"#!{sys.executable}\n"

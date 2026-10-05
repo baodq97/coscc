@@ -116,7 +116,7 @@ def _dir(env: dict[str, str], name: str) -> str | None:
 
 
 def protected_databases(env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
-    """The databases `PROTECTED_DB_VAR` names, each resolved; `coscc/data.py` refuses them.
+    """The databases `PROTECTED_DB_VAR` names, each resolved; `coscc/store/db.py` refuses them.
 
     Read on every call, so a test can set the variable around one `Data`.
     """

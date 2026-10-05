@@ -17,7 +17,7 @@ from coscc.units import COS_DIR, CannotCreate, _cos, root
 IDEAS_DIR = "ideas"
 
 _ID = r"\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*"
-# A workspace name as `coscc/service/store.py` `valid_name` has it; it holds no `/`.
+# A workspace name as `coscc/store/workspaces.py` `valid_name` has it; it holds no `/`.
 _WS = r"[A-Za-z0-9._-]{1,64}"
 IDEA_ID_RE = re.compile(_ID)
 # `<ws>/ideas/NNNN_<slug>.md`: the one form a request may name an idea by.

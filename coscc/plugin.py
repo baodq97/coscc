@@ -21,8 +21,8 @@ from coscc.agent import policy
 from coscc.agent.policy import is_prose_stage
 from coscc.bus import Name
 from coscc.agent.sessions import Suspended
-from coscc.data import Data
-from coscc.runlog.journal import Intervention
+from coscc.store.db import Data
+from coscc.store.journal import Intervention
 from coscc.kernel import (
     STATES,
     Arm,

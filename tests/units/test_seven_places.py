@@ -434,7 +434,7 @@ class _Asked(unittest.TestCase):
         use_sessions(self.service, Session())
 
     def _end(self, stage: str, unit: str) -> dict:
-        from coscc.runlog.journal import Journal
+        from coscc.store.journal import Journal
 
         journal = Journal(Path(self.config.working_dir), Path(self.config.data_dir))
         key = self.service.ws.key(str(self.repo))
@@ -457,7 +457,7 @@ class Place5(_Asked):
         return asyncio.run(go())[-1][1]["estimate"]
 
     def _rows(self) -> list[dict]:
-        from coscc.runlog.journal import Journal
+        from coscc.store.journal import Journal
 
         journal = Journal(Path(self.config.working_dir), Path(self.config.data_dir))
         return journal.records(self.service.ws.key(str(self.repo)), kind="estimate-value")

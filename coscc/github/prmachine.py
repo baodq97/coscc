@@ -26,9 +26,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, get_args
 
-from coscc.data import now as _now
+from coscc.store.db import now as _now
 from coscc.git import gh, gitops
-from coscc.runlog.journal import Journal
+from coscc.store.journal import Journal
 from coscc.units import transitions
 from coscc.units.history import History
 

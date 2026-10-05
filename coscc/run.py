@@ -78,7 +78,7 @@ def served():
     from coscc import api
     from coscc.auth import Guard
     from coscc.config import from_env
-    from coscc.data import Data
+    from coscc.store.db import Data
 
     config = from_env()
     return Guard(api.build(config, starting=True), Data(config.data_dir))
@@ -112,7 +112,7 @@ def purge_events(config) -> None:
 
 def sweep_scratch(config) -> None:
     """Remove the scratch of units no workspace has. A failure is logged; the app starts anyway."""
-    from coscc.service.store import Store
+    from coscc.store.workspaces import Store
     from coscc.service.workspaces import live_units
     from coscc.units import scratch
 
@@ -148,7 +148,7 @@ def _answer_and_stop(args: list[str]) -> None:
         return
     if args == ["reset-password"]:
         from coscc.config import from_env
-        from coscc.data import Data
+        from coscc.store.db import Data
 
         data = Data(from_env().data_dir)
         data.auth_clear()
@@ -180,7 +180,7 @@ def _state(target: str) -> int:
 
     from coscc import units
     from coscc.config import from_env
-    from coscc.data import Data
+    from coscc.store.db import Data
     from coscc.units.meta import MetaError, UnitMeta
 
     config = from_env()
@@ -213,7 +213,7 @@ def _workspace(config, data, target: str) -> tuple[dict[str, str], str | None]:
     from pathlib import Path
 
     from coscc import units
-    from coscc.service.store import valid_name
+    from coscc.store.workspaces import valid_name
 
     with data.connect() as conn:
         rows = [
@@ -252,8 +252,8 @@ def _skip(args: list[str]) -> int:
 
     from coscc import units
     from coscc.config import from_env
-    from coscc.data import Data
-    from coscc.runlog.journal import Journal
+    from coscc.store.db import Data
+    from coscc.store.journal import Journal
     from coscc.units import transitions
     from coscc.units.history import BadTransition
     from coscc.units.meta import MetaError, UnitMeta
@@ -397,8 +397,8 @@ def _vault_measure(args: list[str]) -> int:
 
     from coscc import vault
     from coscc.config import from_env
-    from coscc.data import Data
-    from coscc.runlog.journal import Journal
+    from coscc.store.db import Data
+    from coscc.store.journal import Journal
 
     bounds: dict[str, str] = {"--since": "", "--until": ""}
     rest: list[str] = []
