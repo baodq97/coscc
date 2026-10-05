@@ -54,6 +54,19 @@ class TheVersionAnswer(unittest.TestCase):
             run.main(["reset-password", "--now"])
         self.assertEqual(caught.exception.code, 2)
 
+    def test_it_matches_the_version_the_repository_declares(self):
+        # `coscc.loop check-version` keeps pyproject in step with four other places, so
+        # agreeing with pyproject is agreeing with all of them.
+        import re
+        from pathlib import Path
+
+        declared = re.search(
+            r'^version = "([^"]+)"',
+            Path("pyproject.toml").read_text(),
+            re.MULTILINE,
+        ).group(1)
+        self.assertEqual(run.installed_version(), declared)
+
 
 class ResetPassword(unittest.TestCase):
     """The way back from a forgotten password, at a shell on this machine."""

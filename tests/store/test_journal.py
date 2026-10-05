@@ -213,6 +213,12 @@ class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
             [row] = j.open_starts("w")["0009_x"]["open"]
             self.assertEqual(row["session_id"], "a")
 
+    def test_workspaces_do_not_mix(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "manual")
+            self.assertEqual(j.open_starts("v"), {})
+
 
 class AFailedStepLeavesARecord(unittest.TestCase):
     """`attempted`, `failed_attempts`, `last_runs`, and `reported`."""
@@ -422,6 +428,14 @@ class TotalsAreAddedNotStored(unittest.TestCase):
 
             total = totals_of(j.timeline("w", "0009_x"))
             self.assertEqual((total["input_tokens"], total["output_tokens"]), (1050, 3))
+
+    def test_two_runs_of_one_stage_add_rather_than_replace(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            for _ in range(2):
+                j.started("w", "0009_x", "impl", "autonomous")
+                j.finished("w", "0009_x", "impl", "done", input_tokens=40)
+            self.assertEqual(totals_of(j.timeline("w", "0009_x"))["input_tokens"], 80)
 
 
 class AnEndClosesTheRunItNames(unittest.TestCase):
@@ -658,6 +672,14 @@ class TheBellWakesAReaderAndTheReadsNarrow(unittest.TestCase):
         )
         self.assertEqual(len(self.j.notice_rows(0, self.SOURCE, limit=1)), 1)
 
+    def test_notice_rows_narrow_to_one_workspace(self):
+        self.j.append({"kind": "ship", "workspace": "w", "unit": "u", "result": "shipped"})
+        self.j.append({"kind": "ship", "workspace": "other", "unit": "u", "result": "shipped"})
+        self.assertEqual(
+            [r["workspace"] for _, r in self.j.notice_rows(0, self.SOURCE, "w")], ["w"]
+        )
+        self.assertEqual(len(self.j.notice_rows(0, self.SOURCE)), 2)
+
 
 async def _arm(bell):
     return bell.arm()
@@ -679,6 +701,15 @@ class ASuspendedSessionIsTakenUpOnce(unittest.TestCase):
             b = j.suspended("w", "0002_b", "impl")
             j.resumed("w", "0001_a", "impl", a["suspend_id"], by="app", result="resumed")
             self.assertEqual([r["suspend_id"] for r in j.unresumed()], [b["suspend_id"]])
+
+    def test_suspend_and_resume_rows_do_not_close_a_start_row(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0001_a", "impl", "manual")
+            s = j.suspended("w", "0001_a", "impl")
+            j.resumed("w", "0001_a", "impl", s["suspend_id"])
+            self.assertIn("0001_a", j.open_starts("w"))
+            self.assertIsNone(j.timeline("w", "0001_a")[0]["ended"])
 
 
 if __name__ == "__main__":

@@ -40,6 +40,10 @@ class Knob2ActuallySubtracts(unittest.TestCase):
         c = Config(tools=("Read", "Bash"), allow_write_and_exec=True)
         self.assertEqual(c.effective_tools(), ["Read", "Bash"])
 
+    def test_the_knob_alone_grants_nothing(self):
+        # Knob 2 permits; knob 1 supplies. On its own it must not add a tool.
+        self.assertEqual(Config(allow_write_and_exec=True).effective_tools(), [])
+
 
 class Knob3IsReachableOnlyFromTheEnvironment(unittest.TestCase):
     def test_bypass_turns_on_from_the_environment(self):

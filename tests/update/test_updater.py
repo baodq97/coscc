@@ -256,6 +256,15 @@ class ItWaits(_Base):
         await self.settle()
         self.assertEqual(self.applied, [])
 
+    async def test_a_job_whose_end_was_not_told_still_clears_on_the_next_status(self):
+        self.core.jobs = [INTEGRATION]
+        u = self.make()
+        await u.apply("release", "an")
+        self.core.jobs = []
+        u.status()
+        await self.settle()
+        self.assertEqual(self.applied, [("release", "an")])
+
 
 class OneApply(_Base):
     """One Apply, which takes no mode and no token."""
@@ -642,6 +651,19 @@ class WhatARestartReports(_Base):
         self.make()
         self.assertEqual(update.verified_wheel(self.root / "current")["version"], "0.13.0")
         self.assertFalse((self.root / "release").exists())
+
+    def test_nothing_happens_where_updates_are_not_available(self):
+        self.write_last("failed")
+        self.me["shape"] = "unavailable"
+        self.me["reason"] = "x"
+        u = self.make()
+        self.assertEqual(self.core.rows, [])
+        self.assertEqual(
+            set(u.status()),
+            {"version", "commit", "commit_label", "install", "shape", "reason", "build_id"},
+        )
+        with self.assertRaises(updater.NotHere):
+            u.cancel("an")
 
 
 class TheChecker(_Base):

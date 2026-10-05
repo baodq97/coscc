@@ -161,6 +161,51 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 [tuple(r) for r in row], [("0001_x", '["a.py"]', "pending", "", None, "")]
             )
 
+    def test_a_version_10_database_loses_the_decisions_table_and_keeps_the_rest(self):
+        """11 drops `decisions`, which nothing read or wrote."""
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.set_pref("density", "compact")
+            with data.connect() as conn:
+                conn.execute("CREATE TABLE decisions (id INTEGER PRIMARY KEY, text TEXT)")
+                conn.execute("PRAGMA user_version=10")
+
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                gone = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE name = 'decisions'"
+                ).fetchone()
+            self.assertIsNone(gone)
+            self.assertEqual(data.pref("density"), "compact")
+
+    def test_a_version_11_database_loses_the_outputs_table_and_keeps_the_rest(self):
+        """12 drops `outputs`, which nothing read."""
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.set_pref("density", "compact")
+            with data.connect() as conn:
+                conn.execute("CREATE TABLE outputs (id INTEGER PRIMARY KEY, path TEXT)")
+                conn.execute("PRAGMA user_version=11")
+
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                gone = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE name = 'outputs'"
+                ).fetchone()
+            self.assertIsNone(gone)
+            self.assertEqual(data.pref("density"), "compact")
+
+    def test_a_newer_database_is_still_refused(self):
+        """Was `version_5`, then `version_6`: it follows `SCHEMA_VERSION`, so a newer number is
+        never this build's own."""
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.version()
+            with sqlite3.connect(data.db_path) as conn:
+                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
+            with self.assertRaises(Incompatible):
+                data.version()
+
 
 class AStepsEvents(unittest.TestCase):
     """The two tables, as the recorder writes them and the service reads."""

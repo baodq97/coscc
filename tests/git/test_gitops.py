@@ -506,6 +506,12 @@ class CancellingAGitCommand(FetchingTheTrunkFromARemote):
             asyncio.run(gitops.worktree_discard(self.repo, self.repo))
         self.assertTrue((self.repo / ".git").exists())
 
+    def test_a_whole_tree_is_not_half_made(self):
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
+        listed = asyncio.run(gitops.worktree_list(self.repo))[1]
+        self.assertEqual(listed["locked"], "")
+        self.assertFalse(asyncio.run(gitops.worktree_half_made(self.repo, listed)))
+
 
 class MeasuringAncestryAndDistance(unittest.TestCase):
     """`is_ancestor`, `count_missing`.
@@ -577,6 +583,11 @@ class MeasuringAncestryAndDistance(unittest.TestCase):
     def test_count_missing_counts_what_have_lacks(self):
         asyncio.run(gitops.fetch(self.repo))
         self.assertEqual(asyncio.run(gitops.count_missing(self.repo, self.one, self.two)), 1)
+
+    def test_a_ref_shaped_argument_never_reaches_git_for_count_missing(self):
+        for bad in ("main", "HEAD", self.one[:7], ""):
+            with self.assertRaises(GitError, msg=bad):
+                asyncio.run(gitops.count_missing(self.repo, bad, self.one))
 
 
 class AdvancingADetachedWorktree(unittest.TestCase):
@@ -970,6 +981,10 @@ class TreeStateSeesAWriteAndACommit(unittest.TestCase):
         self.assertNotEqual(before[0], after[0])
         self.assertEqual(before[1], after[1])
 
+    def test_not_a_repository_is_refused(self):
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.tree_state(Path(self._tmp.name)))
+
 
 class Releasing(unittest.TestCase):
     """The release branch and tag, in the release tree only, against a bare remote."""
@@ -1063,3 +1078,32 @@ class Releasing(unittest.TestCase):
         (self.tree / "uv.lock").write_text("changed\n", encoding="utf-8")
         run(gitops.release_tree_remove(self.repo, self.tree, self.tree))
         self.assertFalse(self.tree.exists())
+
+    def test_the_same_wrong_path_twice_is_still_refused(self):
+        # Every caller used to pass one variable as both arguments.
+        run = asyncio.run
+        other = self.tree.parent / "0001_a-unit"
+        run(gitops.worktree_add(self.repo, other, self.main))
+        (self.repo / "uv.lock").write_text("person's change\n", encoding="utf-8")
+        (other / "uv.lock").write_text("unit's change\n", encoding="utf-8")
+        for where in (self.repo, other):
+            with self.subTest(tree=where.name):
+                for call in (
+                    gitops.diff_u0(where, where),
+                    gitops.commit_files(where, where, "x"),
+                    gitops.push_branch(where, where, "chore/release-0-2-0"),
+                    gitops.push_tag(where, where, "v0.2.0", self.main),
+                    gitops.detach_here(where, where),
+                    gitops.release_tree_remove(self.repo, where, where),
+                ):
+                    with self.assertRaises(GitError):
+                        run(call)
+        self.assertEqual(self.git(self.repo, "status", "--porcelain"), "M uv.lock")
+        self.assertEqual(self.git(other, "status", "--porcelain"), "M uv.lock")
+        # A directory named `release` that is a checkout of its own, not a linked tree.
+        clone = self.tree.parent.parent / "elsewhere" / "release"
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(clone)], check=True, capture_output=True
+        )
+        with self.assertRaises(GitError):
+            run(gitops.diff_u0(clone, clone))

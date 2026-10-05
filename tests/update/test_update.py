@@ -149,6 +149,18 @@ class TheServiceShape(unittest.TestCase):
         )
         self.assertIn("uv", self.shape(config=no_uv)[1])
 
+    def test_all_six_hold(self):
+        shape, reason, details = self.shape()
+        self.assertEqual((shape, reason), ("service", ""))
+        self.assertEqual(details["uv"], str(self.bin / "uv"))
+        self.assertEqual(details["tool_dir"], str(self.prefix.parent))
+        self.assertEqual(details["bin_dir"], str(self.bin))
+
+    def test_the_first_false_one_wins(self):
+        self.unit.unlink()
+        no_id = from_env({"XDG_CONFIG_HOME": str(self.cfg_home), "PATH": str(self.bin)})
+        self.assertIn("INVOCATION_ID", self.shape(config=no_id)[1])
+
 
 class WhichReleaseCounts(unittest.TestCase):
     def test_a_good_release_is_a_candidate_even_with_install_sh_beside_it(self):
@@ -395,6 +407,10 @@ class TheSlot(unittest.TestCase):
         self.assertTrue(server.should_exit)
         self.assertEqual(slot.take(), "h")
         self.assertIsNone(slot.take())
+
+    def test_no_server_refuses_the_hand_off(self):
+        slot = update._Slot()
+        self.assertFalse(slot.hand_off(object()))  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

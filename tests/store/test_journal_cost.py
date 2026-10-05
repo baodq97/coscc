@@ -108,6 +108,14 @@ class TheJournalKeepsMoneyAsMoney(unittest.TestCase):
             self.assertAlmostEqual(total["cost_usd"], 0.012, places=6)
             self.assertEqual(total["input_tokens"], 3)
 
+    def test_the_unit_total_still_equals_the_sum_of_its_stages(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            for stage, usd in (("spec", 0.01), ("impl", 0.25)):
+                j.started("w", "0009_x", stage, "autonomous")
+                j.finished("w", "0009_x", stage, "done", cost_usd=usd)
+            self.assertAlmostEqual(totals_of(j.timeline("w", "0009_x"))["cost_usd"], 0.26, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

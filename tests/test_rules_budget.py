@@ -11,6 +11,9 @@ import re
 import unittest
 from pathlib import Path
 
+from coscc.agent.instructions import scoped_patterns
+from coscc.loop import probe
+
 
 REPO = Path(__file__).resolve().parents[1]
 CLAUDE = REPO / ".claude" / "CLAUDE.md"
@@ -81,3 +84,60 @@ LOG_WORDS = re.compile(r"no longer|used to|moved here", re.IGNORECASE)
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheHarnessIsGenericAndTimeless(unittest.TestCase):
+    """A skill runs in any repository the app serves; a rule or doc that names a line, a date or
+    what changed reads as a log and goes stale."""
+
+    def test_no_skill_names_this_repository_or_another_skill(self):
+        skills = sorted(SKILLS.glob("*/SKILL.md"))
+        self.assertTrue(skills)
+        for path in skills:
+            text = path.read_text(encoding="utf-8")
+            own = f"write-{path.parent.name.removeprefix('write-')}"
+            for m in SKILL_LEAKS.finditer(text):
+                if m.group(0) == own:
+                    continue
+                with self.subTest(skill=path.parent.name, found=m.group(0)):
+                    self.fail(
+                        f"{path.parent.name} names `{m.group(0)}`: say it in generic words "
+                        "(ask the loop for the gate, a security-sensitive file) or drop it"
+                    )
+
+    def test_no_rule_or_doc_reads_as_a_log(self):
+        for path in [*sorted(RULES.glob("*.md")), *sorted(DOCS.glob("*.md"))]:
+            text = path.read_text(encoding="utf-8")
+            for pattern, fix in (
+                (CITATION, "name the symbol, not a line: a line moves"),
+                (DATE, "drop the date: the rule states an invariant"),
+                (LOG_WORDS, "state what holds, not what changed"),
+            ):
+                for m in pattern.finditer(text):
+                    with self.subTest(file=path.name, found=m.group(0)):
+                        self.fail(f"{path.name} has `{m.group(0)}`: {fix}")
+
+
+class TheUiStandardCoversEveryScreen(unittest.TestCase):
+    """A studio file, or a feature's `ui/` file, that the UI standard's globs do not match is
+    code it is not loaded for, and a unit that changes only that file is not a UI unit to
+    `coscc/units/board.py`."""
+
+    def test_every_screen_file_is_named(self):
+        globs = scoped_patterns(UI.read_text(encoding="utf-8")) or []
+        screens = [
+            p.relative_to(REPO).as_posix()
+            for pattern in (
+                "ui/src/**/*.tsx",
+                "ui/src/**/*.ts",
+                "ui/src/*.css",
+                "coscc/features/*/ui/**/*.tsx",
+            )
+            for p in sorted(REPO.glob(pattern))
+        ]
+        self.assertIn("ui/src/screens/UnitPage.tsx", screens)
+        self.assertEqual(
+            [m for m in screens if not any(probe.glob_match(g, m) for g in globs)],
+            [],
+            "add a glob for the new file to `paths:` in `.claude/rules/ui-standard.md`",
+        )
