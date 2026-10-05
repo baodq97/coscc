@@ -7,12 +7,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc.bus import Bus
 from coscc.store.db import Data
 from coscc.agent import policy
 from coscc.features import scan
 from coscc.http.plugin import create_tables
-from coscc.kernel import Ctx, Invalid, Submitted
+from coscc.kernel import Agents, Invalid, Runs, Settings, Submitted, Units
+from tests.features.ctx import ctx_for
 from coscc.store.journal import Intervention, Journal
 from coscc.units import backlog, submit
 
@@ -73,22 +73,23 @@ class _Feature(unittest.IsolatedAsyncioTestCase):
             self.units.append((slug, brief))
             return f"0007_{slug}"
 
-        def set_schedule(feature: str, cwd: str, hours: int) -> None:
-            self.hours[feature] = hours
+        def set_schedule(cwd: str, hours: int) -> None:
+            self.hours["scan"] = hours
 
-        self.ctx = Ctx(
-            lambda: self.journal,
-            lambda cwd: cwd,
-            lambda _f, _w: self.on,
-            Bus(),
-            self.data,
-            interventions=interventions,
-            session=session,
-            create_unit=create_unit,
-            schedule=lambda f, _w: self.hours.get(f, 0),
-            set_schedule=set_schedule,
+        self.ctx = ctx_for(
+            units=Units(lambda cwd: cwd, create_unit, None),
+            runs=Runs(lambda: self.journal, interventions),
+            agents=Agents(session),
+            store=self.data,
+            settings=Settings(
+                None,
+                lambda _w: self.on,
+                None,
+                lambda _w: self.hours.get("scan", 0),
+                set_schedule,
+            ),
         )
-        create_tables(self.ctx, scan.TABLES)
+        create_tables(self.data, scan.TABLES)
         self.store = scan.Tables(self.ctx)
 
 
@@ -196,10 +197,12 @@ class TheObjectIsChecked(_Feature):
             await gate.wait()
             return Submitted({"proposals": []}, {}, "s1")
 
-        ctx = Ctx(
-            *[getattr(self.ctx, f) for f in ("journal", "workspace_key", "enabled", "bus", "data")],
-            interventions=self.ctx.interventions,
-            session=slow,
+        ctx = ctx_for(
+            units=self.ctx.units,
+            runs=self.ctx.runs,
+            agents=Agents(slow),
+            store=self.data,
+            settings=self.ctx.settings,
         )
         first = asyncio.create_task(scan.scan(ctx, WS, "owner"))
         while WS not in scan._scanning:
@@ -250,9 +253,11 @@ class APersonDecides(_Feature):
         async def refuse(cwd: str, slug: str, brief: str) -> str:
             raise Invalid("taken")
 
-        ctx = Ctx(
-            *[getattr(self.ctx, f) for f in ("journal", "workspace_key", "enabled", "bus", "data")],
-            create_unit=refuse,
+        ctx = ctx_for(
+            units=Units(self.ctx.units.key, refuse, None),
+            runs=self.ctx.runs,
+            store=self.data,
+            settings=self.ctx.settings,
         )
         with self.assertRaises(Invalid):
             await scan.accept(ctx, WS, self.p["id"], "fine")

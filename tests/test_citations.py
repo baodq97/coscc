@@ -100,7 +100,7 @@ def scan(root: Path) -> list[Problem]:
     worktrees = root / ".claude" / "worktrees"
     problems = []
     for path in sorted(
-        [*(root / ".claude").rglob("*.md"), *(root / "coscc" / "features").glob("*.md")]
+        [*(root / ".claude").rglob("*.md"), *(root / "coscc" / "features").glob("*/README.md")]
     ):
         if scripts in path.parents or worktrees in path.parents:
             continue

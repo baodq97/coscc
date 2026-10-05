@@ -1,10 +1,10 @@
 """Scan: one paid session reads what people had to step in for and proposes work.
 
-A scan reads a workspace's interventions past its cursor (`Ctx.interventions`), puts at most
+A scan reads a workspace's interventions past its cursor (`Ctx.runs.interventions`), puts at most
 `LIMIT` of them and the proposals already made into one prompt, and opens one `scan` session
-(`Ctx.session`). Each proposal it hands back that keeps the rules (`problems_of`) waits in
+(`Ctx.agents.session`). Each proposal it hands back that keeps the rules (`problems_of`) waits in
 `scan_proposals` as `pending` until a person accepts it, which makes a unit through
-`Ctx.create_unit`, or dismisses it with a reason the next scan reads. Nothing here touches the
+`Ctx.units.create_unit`, or dismisses it with a reason the next scan reads. Nothing here touches the
 shortlist, and the autopilot never reads these tables.
 
 Off by default. Once on it runs every 24 h unless Settings says otherwise; *Scan now* on the
@@ -302,7 +302,7 @@ class Tables:
     def cursor(self, key: str) -> tuple[str, list[str]]:
         """The time of the last intervention taken, and the ids taken at that second: a cut
         may split a second, and its rest is read by the next scan."""
-        with self.ctx.data.connect() as conn:
+        with self.ctx.store.connect() as conn:
             row = conn.execute(
                 "SELECT after, seen FROM scan_cursor WHERE workspace = ?", (key,)
             ).fetchone()
@@ -310,14 +310,14 @@ class Tables:
 
     def proposals(self, key: str) -> list[Proposal]:
         """Newest first."""
-        with self.ctx.data.connect() as conn:
+        with self.ctx.store.connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM scan_proposals WHERE workspace = ? ORDER BY id DESC", (key,)
             ).fetchall()
         return [_proposal(r) for r in rows]
 
     def proposal(self, key: str, pid: int) -> Proposal:
-        with self.ctx.data.connect() as conn:
+        with self.ctx.store.connect() as conn:
             row = conn.execute(
                 "SELECT * FROM scan_proposals WHERE workspace = ? AND id = ?", (key, pid)
             ).fetchone()
@@ -327,7 +327,7 @@ class Tables:
 
     def runs(self, key: str, limit: int = 20) -> list[Run]:
         """Newest first."""
-        with self.ctx.data.connect() as conn:
+        with self.ctx.store.connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM scan_runs WHERE workspace = ? ORDER BY id DESC LIMIT ?", (key, limit)
             ).fetchall()
@@ -352,7 +352,7 @@ class Tables:
         in one transaction."""
         at = now()
         by_id = {i.id: Source(id=i.id, kind=i.kind, unit=i.unit, at=i.at) for i in taken}
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             cur = conn.execute(
                 "INSERT INTO scan_runs (workspace, at, by, outcome, cost_usd, session, taken, cut, "
                 "rejected, stopped, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -404,7 +404,7 @@ class Tables:
 
     def claim(self, key: str, pid: int, to: ProposalState, reason: str = "") -> Proposal:
         """Move a `pending` proposal to `to`, by `owner`; one already decided is refused."""
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             done = conn.execute(
                 "UPDATE scan_proposals SET state = ?, by = ?, decided = ?, reason = ? "
                 "WHERE workspace = ? AND id = ? AND state = 'pending'",
@@ -415,7 +415,7 @@ class Tables:
         return self.proposal(key, pid)
 
     def set_unit(self, key: str, pid: int, unit: str) -> None:
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             conn.execute(
                 "UPDATE scan_proposals SET unit = ? WHERE workspace = ? AND id = ?",
                 (unit, key, pid),
@@ -423,7 +423,7 @@ class Tables:
 
     def unclaim(self, key: str, pid: int) -> None:
         """Back to `pending`, after a unit could not be made."""
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             conn.execute(
                 "UPDATE scan_proposals SET state = 'pending', by = '', decided = '', reason = '' "
                 "WHERE workspace = ? AND id = ?",
@@ -432,7 +432,7 @@ class Tables:
 
 
 def _check_on(ctx: Ctx, cwd: str) -> None:
-    if not ctx.enabled(NAME, cwd):
+    if not ctx.settings.enabled(cwd):
         raise Invalid("scan is off in this workspace; turn it on in Settings")
 
 
@@ -440,7 +440,7 @@ async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
     """One scan of the workspace `cwd`, in five steps: read, skip, prompt, session, keep. `by` is `owner` for
     *Scan now*, `schedule` for a tick. `Invalid` while the feature is off here or a scan of the
     workspace already runs."""
-    key = ctx.workspace_key(cwd)
+    key = ctx.units.key(cwd)
     _check_on(ctx, cwd)
     if key in _scanning:
         raise Invalid("a scan of this workspace is already running; wait for it to end")
@@ -449,7 +449,7 @@ async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
     try:
         after, seen = await asyncio.to_thread(store.cursor, key)
         found = await asyncio.to_thread(
-            ctx.interventions, cwd, _second_before(after), LIMIT + 1 + len(seen)
+            ctx.runs.interventions, cwd, _second_before(after), LIMIT + 1 + len(seen)
         )
         found = [i for i in found if i.at >= after and i.id not in seen]
         if not found:
@@ -458,11 +458,11 @@ async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
             )
         made = await asyncio.to_thread(store.proposals, key)
         prompt, taken, cut = prompt_of(found, made)
-        got = await ctx.session(cwd, NAME, prompt)
+        got = await ctx.agents.session(cwd, NAME, prompt)
         cost = float(got.cost.get("cost_usd") or 0.0)
-        stopped = cost > CAP_USD and ctx.schedule(NAME, cwd) != 0
+        stopped = cost > CAP_USD and ctx.settings.schedule(cwd) != 0
         if stopped:
-            ctx.set_schedule(NAME, cwd, 0)
+            ctx.settings.set_schedule(cwd, 0)
         if got.object is None:
             return await asyncio.to_thread(
                 store.record,
@@ -515,7 +515,7 @@ def brief_of(p: Proposal) -> str:
 async def accept(ctx: Ctx, cwd: str, pid: int, slug: str) -> Proposal:
     """A unit through the app's own way of making one, its brief the proposal's. The slug
     may differ from the proposal's. The shortlist is not touched."""
-    key = ctx.workspace_key(cwd)
+    key = ctx.units.key(cwd)
     _check_on(ctx, cwd)
     slug = slug.strip()
     if not SLUG.match(slug) or len(slug) > SLUG_MAX:
@@ -523,7 +523,7 @@ async def accept(ctx: Ctx, cwd: str, pid: int, slug: str) -> Proposal:
     store = Tables(ctx)
     p = await asyncio.to_thread(store.claim, key, pid, "accepted")
     try:
-        unit = await ctx.create_unit(cwd, slug, brief_of(p))
+        unit = await ctx.units.create_unit(cwd, slug, brief_of(p))
     except BaseException:
         await asyncio.to_thread(store.unclaim, key, pid)
         raise
@@ -533,7 +533,7 @@ async def accept(ctx: Ctx, cwd: str, pid: int, slug: str) -> Proposal:
 
 async def dismiss(ctx: Ctx, cwd: str, pid: int, reason: str) -> Proposal:
     """Dismissed with a reason of 1 to `REASON_MAX` characters, which the next scan reads."""
-    key = ctx.workspace_key(cwd)
+    key = ctx.units.key(cwd)
     _check_on(ctx, cwd)
     reason = " ".join(reason.split())
     if not 0 < len(reason) <= REASON_MAX:
@@ -551,7 +551,7 @@ def _hours_since(at: str) -> float:
 
 async def tick(ctx: Ctx, cwd: str, hours: int) -> None:
     """A scheduled scan, once `hours` passed since the last scan of the workspace or never."""
-    runs = await asyncio.to_thread(Tables(ctx).runs, ctx.workspace_key(cwd), 1)
+    runs = await asyncio.to_thread(Tables(ctx).runs, ctx.units.key(cwd), 1)
     if runs and _hours_since(runs[0]["at"]) < hours:
         return
     try:
@@ -562,9 +562,9 @@ async def tick(ctx: Ctx, cwd: str, hours: int) -> None:
 
 def status(ctx: Ctx, cwd: str) -> tuple[str, bool]:
     """The last scan, for the Settings row."""
-    if ctx.state(NAME, cwd) == "off":
+    if ctx.settings.state(cwd) == "off":
         return "Off in this workspace.", True
-    runs = Tables(ctx).runs(ctx.workspace_key(cwd), 1)
+    runs = Tables(ctx).runs(ctx.units.key(cwd), 1)
     if not runs:
         return "On: no scan yet.", True
     last = runs[0]
@@ -581,12 +581,12 @@ def status(ctx: Ctx, cwd: str) -> tuple[str, bool]:
 def on_set(ctx: Ctx, cwd: str, state: State) -> None:
     """Turned on, it scans every 24 h until Settings says otherwise."""
     if state == "on":
-        ctx.set_schedule(NAME, cwd, DEFAULT_HOURS)
+        ctx.settings.set_schedule(cwd, DEFAULT_HOURS)
 
 
 def note_of(ctx: Ctx, cwd: str, runs: Sequence[Run]) -> str:
     """The one sentence while a scan's cost keeps the schedule off."""
-    if ctx.schedule(NAME, cwd) != 0:
+    if ctx.settings.schedule(cwd) != 0:
         return ""
     for r in runs:
         if r["by"] == "schedule" and not r["stopped"]:
@@ -611,8 +611,8 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
         """`?cwd=`: `{on}` alone while the feature is off; else every proposal, newest first,
         the last scans, why the schedule is off, and the sentence beside *Scan now*."""
         cwd = request.query_params.get("cwd", "")
-        key = ctx.workspace_key(cwd)
-        if not ctx.enabled(NAME, cwd):
+        key = ctx.units.key(cwd)
+        if not ctx.settings.enabled(cwd):
             return {"on": False}
         made = await asyncio.to_thread(store.proposals, key)
         runs = await asyncio.to_thread(store.runs, key)
@@ -621,7 +621,7 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
             "proposals": made,
             "runs": runs,
             "scanning": key in _scanning,
-            "schedule": ctx.schedule(NAME, cwd),
+            "schedule": ctx.settings.schedule(cwd),
             "note": note_of(ctx, cwd, runs),
             "consequence": CONSEQUENCE,
             "warning": SESSION.grant.warning,

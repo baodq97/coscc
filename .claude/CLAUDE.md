@@ -28,7 +28,7 @@ on their words.
 - Branches and tags are `<type>/<slug>`, `vX.Y.Z`, `vX.Y.Z-rc.N`; never compose one by hand:
   `unit-branch`, `check-branch`, `check-tag`.
 - One branch and one PR per change, rebased onto `main` (never merge `main` in).
-- New work is a feature (`coscc/features/<name>.py` + a `FEATURES` line) importing only
+- New work is a feature (`coscc/features/<name>/` + a `FEATURES` line) importing only
   `coscc/kernel.py`; a need none serves is a kernel change, planned first
   (`.claude/docs/code-and-tests.md`).
 - Code little and simple; split a file only when needed.

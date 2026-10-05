@@ -6,7 +6,7 @@ hides a cycle, it does not remove one. Inside a package no module reaches anothe
 it back; an `if TYPE_CHECKING:` import is not read. `tests/` is not checked; a test may reach
 anything.
 
-A feature (`coscc/features/<name>.py`, or a package `<name>/`, ending in one `FEATURE`) is a plug-in, so three more rules:
+A feature (a folder `coscc/features/<name>/` whose `__init__.py` ends in one `FEATURE`) is a plug-in, so three more rules:
 it imports only its own `coscc.features.<name>` and `coscc.kernel`, plus the `KERNEL_GAPS` the kernel does not give yet;
 only `coscc/http/app.py` imports `coscc.features`, as
 `from coscc import features`; and it is at most 3 files of at most 800 lines. Each check takes
@@ -232,8 +232,8 @@ def feature_size_problems(lines: dict[str, int]) -> list[str]:
         if len(found) > FEATURE_FILES:
             out.append(
                 f"feature {name} is {len(found)} files, above {FEATURE_FILES}: a feature is "
-                f"{name}.py, {name}.md and at most one more, and its package `{name}/` counts "
-                "file by file. Fold the extra file in."
+                f"`{name}/__init__.py`, `{name}/README.md` and at most one more file. "
+                "Fold the extra file in."
             )
     return out
 

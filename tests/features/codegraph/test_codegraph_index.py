@@ -12,7 +12,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from unittest import mock
 
-from coscc.bus import Bus
 from coscc.store.db import Data
 from coscc.features.codegraph import (
     DB_FILE,
@@ -21,7 +20,8 @@ from coscc.features.codegraph import (
     Indexes,
     Ready,
 )
-from coscc.kernel import Ctx
+from coscc.kernel import Units
+from tests.features.ctx import ctx_for
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -106,7 +106,7 @@ class Bed(unittest.IsolatedAsyncioTestCase):
         self.indexes = self.make()
 
     def make(self, wait_s: float = 5.0) -> Indexes:
-        ctx = Ctx(lambda: None, str, lambda _f, _w: True, Bus(), self.data, main_tree=self.main)
+        ctx = ctx_for(units=Units(str, None, self.main), store=self.data)
         return Indexes(ctx, self.base, self._install, self._installed, self.engine, wait_s=wait_s)
 
     def _installed(self, home: Path) -> Path | str:
@@ -357,7 +357,7 @@ class WithNoLoopRunning(unittest.TestCase):
                     "INSERT INTO codegraph_index (workspace, path, state, at) "
                     "VALUES ('proj', 'proj', 'ready', 'now')"
                 )
-            ctx = Ctx(lambda: None, str, lambda _f, _w: True, Bus(), data)
+            ctx = ctx_for(units=Units(str, None, None), store=data)
             indexes = Indexes(ctx, Path(tmp), None, None, None)
             indexes.schedule("proj")
             self.assertEqual(indexes.status("proj").state, "ready")

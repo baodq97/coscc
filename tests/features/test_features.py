@@ -14,7 +14,7 @@ from starlette.routing import Route
 
 from coscc.store.db import Data
 from coscc import features
-from coscc.kernel import Block, Ctx, Feature, Guard, Parts, Schedule, Tool, arm_of
+from coscc.kernel import Block, Feature, Guard, Parts, Schedule, Tool, arm_of
 from coscc.http.plugin import (
     OFF_PREF,
     SCHEDULE_PREF,
@@ -28,6 +28,7 @@ from coscc.http.plugin import (
     tick,
 )
 from coscc.http.app import build
+from tests.features.ctx import ctx_for
 from coscc.config import PROTECTED_DB_VAR, Config
 
 
@@ -74,7 +75,7 @@ def table_exists(config: Config, name: str) -> bool:
 
 def start(api) -> None:
     """What `coscc.py`'s startup task does."""
-    create_tables(ctx_of(api.state.core), api.state.tables)
+    create_tables(Data(api.state.config.data_dir), api.state.tables)
 
 
 class ATableIsCreatedAtStartup(Setup):
@@ -176,12 +177,12 @@ class TurningAFeatureOffForAWorkspace(Setup):
         data.set_pref(OFF_PREF, {"notices": [key], "vault": ["/elsewhere"]})
         core = mock.Mock(config=self.config)
         core.ws.check.side_effect = lambda cwd: cwd
-        ctx = ctx_of(core, features.FEATURES)
-        self.assertEqual(ctx.state("notices", str(self.ws)), "off")
-        self.assertFalse(ctx.enabled("notices", str(self.ws)))
-        self.assertEqual(ctx.state("vault", str(self.ws)), "on")
-        set_state(core, ctx, features.FEATURES, "notices", str(self.ws), "on")
-        self.assertEqual(ctx.state("notices", str(self.ws)), "on")
+        ctxs = {f.name: ctx_of(core, f) for f in features.FEATURES}
+        self.assertEqual(ctxs["notices"].settings.state(str(self.ws)), "off")
+        self.assertFalse(ctxs["notices"].settings.enabled(str(self.ws)))
+        self.assertEqual(ctxs["vault"].settings.state(str(self.ws)), "on")
+        set_state(core, ctxs, features.FEATURES, "notices", str(self.ws), "on")
+        self.assertEqual(ctxs["notices"].settings.state(str(self.ws)), "on")
         self.assertEqual(data.pref(OFF_PREF, {}), {"notices": [], "vault": ["/elsewhere"]})
         self.assertEqual(data.pref(STATE_PREF, {}), {"notices": {key: "on"}})
 
@@ -189,16 +190,16 @@ class TurningAFeatureOffForAWorkspace(Setup):
         core = mock.Mock(config=self.config)
         core.ws.check.side_effect = lambda cwd: cwd
         graph = Feature("graph", lambda _ctx: [], default="off", pilot=True)
-        ctx = ctx_of(core, (graph,))
+        ctxs = {"graph": ctx_of(core, graph)}
         ws = str(self.ws)
         want = {"off": (None, None), "pilot": ("on", "off"), "on": ("on", "on")}
         for state, (even, odd) in want.items():
             if state != "off":
-                set_state(core, ctx, (graph,), "graph", ws, state)
+                set_state(core, ctxs, (graph,), "graph", ws, state)
             with self.subTest(state=state):
-                self.assertEqual(ctx.state("graph", ws), state)
-                self.assertEqual(ctx.arm("graph", ws, "0148_even"), even)
-                self.assertEqual(ctx.arm("graph", ws, "0149_odd"), odd)
+                self.assertEqual(ctxs["graph"].settings.state(ws), state)
+                self.assertEqual(ctxs["graph"].settings.arm(ws, "0148_even"), even)
+                self.assertEqual(ctxs["graph"].settings.arm(ws, "0149_odd"), odd)
         self.assertEqual(arm_of("pilot", "0000_zero"), "on")
 
     async def test_the_routes_are_behind_the_login(self):
@@ -263,7 +264,7 @@ class AFeatureHandsTheAgentItsParts(Setup):
         self.assertNotIn("__fake", shell)
 
     def test_a_clash_or_a_tool_on_a_prose_stage_is_refused_naming_the_feature(self):
-        ctx = Ctx(lambda: None, str, lambda _f, _w: True, None, None)
+        ctx = {n: ctx_for() for n in ("a", "b", "fake")}
         with self.assertRaisesRegex(ValueError, "b: the MCP server 'fake' is also a's"):
             hooks_of([fake_feature("a"), fake_feature("b", guard="g2", block="b2")], ctx)
         with self.assertRaisesRegex(ValueError, "b: the guard 'g' is also a's"):
@@ -288,7 +289,7 @@ class AScheduledFeatureRunsOnItsOwn(Setup):
         with mock.patch("coscc.features.FEATURES", (*features.FEATURES, timed)):
             async with self.client() as client:
                 api = client._transport.app
-                listed = {f.name: f for f in shown(api.state.ctx, api.state.plugins, str(self.ws))}
+                listed = {f.name: f for f in shown(api.state.ctxs, api.state.plugins, str(self.ws))}
                 self.assertEqual(
                     (listed["timed"].schedule, listed["timed"].hours), (24, (0, 12, 24))
                 )
@@ -298,7 +299,7 @@ class AScheduledFeatureRunsOnItsOwn(Setup):
                 self.assertEqual(
                     (r.status_code, r.json()), (200, {"name": "timed", "schedule": 12})
                 )
-                self.assertEqual(api.state.ctx.schedule("timed", str(self.ws)), 12)
+                self.assertEqual(api.state.ctxs["timed"].settings.schedule(str(self.ws)), 12)
                 stored = Data(self.config.data_dir).pref(SCHEDULE_PREF, {})
                 self.assertEqual(stored, {"timed": {str(self.ws.resolve()): 12}})
                 for bad in (
@@ -309,14 +310,14 @@ class AScheduledFeatureRunsOnItsOwn(Setup):
                 ):
                     r = await client.post("/api/features", json=bad)
                     self.assertEqual(r.status_code, 400, bad)
-                self.assertEqual(api.state.ctx.schedule("timed", str(self.ws)), 12)
+                self.assertEqual(api.state.ctxs["timed"].settings.schedule(str(self.ws)), 12)
 
     async def test_a_tick_asks_only_where_it_is_on_and_scheduled(self):
         ticked: list = []
         timed = self.scheduled(ticked)
         with mock.patch("coscc.features.FEATURES", (timed,)):
             api = build(self.config)
-        ctx, core = api.state.ctx, api.state.core
+        ctx, core = api.state.ctxs, api.state.core
         await tick(core, ctx, (timed,))
         self.assertEqual(ticked, [(str(self.ws), 24)])
         set_schedule_of(core, (timed,), "timed", str(self.ws), 0)
@@ -334,11 +335,11 @@ class AFeatureWithAgentPartsSaysWhatTheAgentSees(unittest.TestCase):
         for f in features.FEATURES:
             if f.agent is None:
                 continue
-            doc = folder / f"{f.name}.md"
+            doc = folder / f.name / "README.md"
             self.assertIn(
                 "## What the agent sees",
                 doc.read_text() if doc.exists() else "",
-                f"add `## What the agent sees` to coscc/features/{f.name}.md: the tools, "
+                f"add `## What the agent sees` to coscc/features/{f.name}/README.md: the tools, "
                 "guards and prompt blocks the agent meets",
             )
 

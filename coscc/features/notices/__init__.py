@@ -116,7 +116,7 @@ def notice_of(id: int, record: dict[str, Any]) -> dict[str, Any] | None:
     """The notice line for the run-log row `id`, or `None` when the row makes no notice.
 
     The keys stay in this order: `type` then `id` open every line, and the terminal command
-    in `coscc/features/notices.md` reads `id` off that prefix.
+    in `coscc/features/notices/README.md` reads `id` off that prefix.
     """
     found = _kind_and_text(record)
     if found is None:
@@ -147,11 +147,11 @@ class Notices:
 
     def notice_scope(self, workspace: str) -> str | None:
         """The journal key to narrow to, `None` for every workspace; an unknown workspace or a stream with no run log is refused."""
-        if self.ctx.journal() is None:
+        if self.ctx.runs.journal() is None:
             raise Invalid("there is no working folder, so there is no run log to follow")
         if not workspace:
             return None
-        return self.ctx.workspace_key(workspace)
+        return self.ctx.units.key(workspace)
 
     async def follow_notices(
         self,
@@ -167,7 +167,7 @@ class Notices:
         A record of a workspace with notices off is passed over. A record this process appends rings `BELL` and is read at once; one another process
         appends is read at the next wake. The ticket is armed before each read, so a ring
         during the read is not missed."""
-        journal = self.ctx.journal()
+        journal = self.ctx.runs.journal()
         if journal is None:
             raise Invalid("there is no working folder, so there is no run log to follow")
         loop = asyncio.get_running_loop()
@@ -201,7 +201,7 @@ class Notices:
                         last = rid
                         where = str(record.get("workspace") or "")
                         if where not in on:
-                            on[where] = self.ctx.enabled("notices", where)
+                            on[where] = self.ctx.settings.enabled(where)
                         found = notice_of(rid, record) if on[where] else None
                         if found is not None:
                             yield found
@@ -322,7 +322,7 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
         `workspace` narrows to one. Reads only. It ends after `LIFETIME_SECONDS`, so a
         listener comes back through the login door.
 
-        Holds a connection per listener (`coscc/features/notices.md`). A refusal is a 400
+        Holds a connection per listener (`coscc/features/notices/README.md`). A refusal is a 400
         before the stream starts; the first line is not waited for, since with `after` it may
         be a `beat` 15 s away."""
         raw = request.query_params.get("after") or None

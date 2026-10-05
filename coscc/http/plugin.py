@@ -25,14 +25,18 @@ from coscc.store.db import Data
 from coscc.store.journal import Intervention
 from coscc.kernel import (
     STATES,
+    Agents,
     Arm,
     Ctx,
     Feature,
     Hooks,
     Invalid,
     Parts,
+    Runs,
+    Settings,
     State,
     Submitted,
+    Units,
     arm_of,
 )
 from coscc.runner import queue
@@ -158,11 +162,11 @@ def tables_of(features: Sequence[Feature]) -> tuple[str, ...]:
     return tuple(statement for f in features for statement in f.tables)
 
 
-def create_tables(ctx: Ctx, tables: Sequence[str]) -> None:
+def create_tables(data: Data, tables: Sequence[str]) -> None:
     """Run the statements once the app starts; with none, the database is not opened."""
     if not tables:
         return
-    with ctx.data.write() as conn:
+    with data.write() as conn:
         for statement in tables:
             conn.execute(statement)
 
@@ -181,7 +185,7 @@ def add_sessions(core: Core, features: Sequence[Feature]) -> None:
                 )
 
 
-def hooks_of(features: Sequence[Feature], ctx: Ctx) -> Hooks:
+def hooks_of(features: Sequence[Feature], ctxs: dict[str, Ctx]) -> Hooks:
     """Every feature's agent parts, tagged with its name; a clash or a tool on a prose stage is
     a `ValueError` naming the feature."""
     parts: list[tuple[str, Parts]] = []
@@ -190,7 +194,7 @@ def hooks_of(features: Sequence[Feature], ctx: Ctx) -> Hooks:
     for f in features:
         if f.agent is None:
             continue
-        made = f.agent(ctx)
+        made = f.agent(ctxs[f.name])
         for tool in made.tools:
             if tool.server in servers:
                 raise ValueError(
@@ -213,7 +217,9 @@ def hooks_of(features: Sequence[Feature], ctx: Ctx) -> Hooks:
                     )
                 names[kind][part.name] = f.name
         parts.append((f.name, made))
-    return Hooks(parts=tuple(parts), enabled=ctx.enabled)
+    return Hooks(
+        parts=tuple(parts), enabled=lambda feature, cwd: ctxs[feature].settings.enabled(cwd)
+    )
 
 
 def _pref(data: Data, name: str) -> dict[str, Any]:
@@ -232,23 +238,22 @@ def state_of(data: Data, feature: str, key: str, default: State) -> State:
     return "off" if isinstance(off, list) and key in off else default
 
 
-def ctx_of(core: Core, features: Sequence[Feature] = ()) -> Ctx:
-    """The `Ctx` every feature gets; `features` gives their `default` states."""
+def ctx_of(core: Core, feature: Feature) -> Ctx:
+    """The `Ctx` of one feature: its own settings, and the core's parts."""
     data = Data(core.config.data_dir)
-    defaults: dict[str, State] = {f.name: f.default for f in features}
 
     def workspace_key(cwd: str) -> str:
         core.ws.check(cwd)
         return Workspaces.key(cwd)
 
-    def state(feature: str, workspace: str) -> State:
-        return state_of(data, feature, Workspaces.key(workspace), defaults.get(feature, "on"))
+    def state(workspace: str) -> State:
+        return state_of(data, feature.name, Workspaces.key(workspace), feature.default)
 
-    def enabled(feature: str, workspace: str) -> bool:
-        return state(feature, workspace) != "off"
+    def enabled(workspace: str) -> bool:
+        return state(workspace) != "off"
 
-    def arm(feature: str, workspace: str, unit: str) -> Arm | None:
-        return arm_of(state(feature, workspace), unit)
+    def arm(workspace: str, unit: str) -> Arm | None:
+        return arm_of(state(workspace), unit)
 
     async def main_tree(workspace: str) -> tuple[str, str]:
         tree, sha = await worktrees.main_tree(core.ws.check(workspace), data.root)
@@ -300,29 +305,19 @@ def ctx_of(core: Core, features: Sequence[Feature] = ()) -> Ctx:
     async def create_unit(workspace: str, slug: str, brief: str) -> str:
         return str((await core.answers.create_unit(workspace, slug, brief))["unit"])
 
-    def schedule(feature: str, workspace: str) -> int:
-        plugin = next((f for f in features if f.name == feature), None)
-        if plugin is None or plugin.schedule is None:
-            return 0
-        return schedule_of(data, plugin, Workspaces.key(workspace))
+    def schedule(workspace: str) -> int:
+        return schedule_of(data, feature, Workspaces.key(workspace))
 
-    def set_schedule(feature: str, workspace: str, hours: int) -> None:
-        set_schedule_of(core, features, feature, workspace, hours)
+    def set_schedule(workspace: str, hours: int) -> None:
+        set_schedule_of(core, (feature,), feature.name, workspace, hours)
 
     return Ctx(
-        core.ws.journal,
-        workspace_key,
-        enabled,
-        core.bus,
+        Units(workspace_key, create_unit, main_tree),
+        Runs(core.ws.journal, found),
+        Agents(session),
         data,
-        state,
-        arm,
-        main_tree,
-        found,
-        session,
-        create_unit,
-        schedule,
-        set_schedule,
+        core.bus,
+        Settings(state, enabled, arm, schedule, set_schedule),
     )
 
 
@@ -359,15 +354,16 @@ def set_schedule_of(
     return hours
 
 
-async def tick(core: Core, ctx: Ctx, features: Sequence[Feature]) -> None:
+async def tick(core: Core, ctxs: dict[str, Ctx], features: Sequence[Feature]) -> None:
     """One round of every scheduled feature, in each listed workspace where it is not `off` and
     its schedule is not `0`. A tick that fails is logged and the next still runs."""
     for f in features:
         if f.schedule is None:
             continue
         for cwd in core.ws.all()["paths"]:
-            hours = ctx.schedule(f.name, cwd)
-            if not hours or not ctx.enabled(f.name, cwd):
+            ctx = ctxs[f.name]
+            hours = ctx.settings.schedule(cwd)
+            if not hours or not ctx.settings.enabled(cwd):
                 continue
             try:
                 await f.schedule.tick(ctx, cwd, hours)
@@ -375,16 +371,17 @@ async def tick(core: Core, ctx: Ctx, features: Sequence[Feature]) -> None:
                 log.exception("the scheduled run of %s in %s failed", f.name, cwd)
 
 
-def shown(ctx: Ctx, features: Sequence[Feature], cwd: str) -> list[Shown]:
+def shown(ctxs: dict[str, Ctx], features: Sequence[Feature], cwd: str) -> list[Shown]:
     """Each feature for the workspace `cwd`; one whose `status` forbids choosing shows `off`."""
     out = []
     for f in features:
-        state = ctx.state(f.name, cwd)
+        ctx = ctxs[f.name]
+        state = ctx.settings.state(cwd)
         sentence, may = f.status(ctx, cwd) if f.status else ("", True)
         if not sentence:
             sentence = "Off in this workspace." if state == "off" else "On in this workspace."
         hours = f.schedule.hours if f.schedule else ()
-        schedule = ctx.schedule(f.name, cwd) if f.schedule else None
+        schedule = ctx.settings.schedule(cwd) if f.schedule else None
         out.append(
             Shown(
                 f.name,
@@ -401,7 +398,12 @@ def shown(ctx: Ctx, features: Sequence[Feature], cwd: str) -> list[Shown]:
 
 
 def set_state(
-    core: Core, ctx: Ctx, features: Sequence[Feature], feature: str, cwd: str, state: str
+    core: Core,
+    ctxs: dict[str, Ctx],
+    features: Sequence[Feature],
+    feature: str,
+    cwd: str,
+    state: str,
 ) -> State:
     """Set `feature`'s state for the workspace `cwd`, then tell the feature. `Invalid`: a feature,
     workspace or state not known, `pilot` for a feature without it, or `pilot`/`on` while its
@@ -409,7 +411,8 @@ def set_state(
     plugin = next((f for f in features if f.name == feature), None)
     if plugin is None:
         raise Invalid(f"not a feature: {feature}")
-    key = ctx.workspace_key(cwd)
+    ctx = ctxs[feature]
+    key = ctx.units.key(cwd)
     chosen = next((s for s in STATES if s == state), None)
     if chosen is None:
         raise Invalid(f"state must be one of {', '.join(STATES)}")

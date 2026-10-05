@@ -38,7 +38,7 @@ uv run python scripts/capture_screens.py / /up-next   # into .screens/
 - The vault (`coscc/features/vault/`) is not a security boundary: an agent with python or node
   can read a call's tmpfs file or `/proc/<pid>/environ`, use its `SSH_AUTH_SOCK`, or print a value
   the filter misses. The leak scan detects, it does not prevent; one login, every action is
-  `owner`. Rest in `coscc/features/vault.md`.
+  `owner`. Rest in `coscc/features/vault/README.md`.
 
 ## Docs
 

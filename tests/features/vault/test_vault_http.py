@@ -26,7 +26,7 @@ from coscc.config import Config
 from coscc.features import vault as feature
 from coscc.features.vault import page
 from coscc.vault.store import NAME
-from tests.features import test_vault as base
+from tests.features.vault import test_vault as base
 
 GET_ROUTES = {"/vault", "/api/vault/secrets", "/api/vault/leaks"}
 POST_ROUTES = {

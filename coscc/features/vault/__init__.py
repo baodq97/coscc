@@ -3,7 +3,7 @@
 Agent side: one in-process MCP server per run (`vault_list`, `vault_exec`, `vault_generate`, none
 taking a value), a guard holding `pr`, `ship` and integration while a value is in the unit's work,
 and a prompt block. Person side: the page (`page.py`), and one POST a value goes in by. The store,
-filter, scan and runner are `coscc/vault/`'s; what this is not is in `coscc/features/vault.md`.
+filter, scan and runner are `coscc/vault/`'s; what this is not is in `coscc/features/vault/README.md`.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ StoreOf = Callable[[Ctx], vault.Store]
 
 
 def make_store(ctx: Ctx) -> vault.Store:
-    return vault.Store(ctx.data)
+    return vault.Store(ctx.store)
 
 
 def _lazy(ctx: Ctx, store_of: StoreOf | None) -> Callable[[], vault.Store]:
@@ -143,7 +143,7 @@ class Handlers:
             unit=f.unit,
             run=f.run,
             cwd=f.scratch or f.tree,
-            journal=self.ctx.journal(),
+            journal=self.ctx.runs.journal(),
             timeout=timeout,
             capture=capture,
             actor=f"agent:{f.stage}",
@@ -183,7 +183,7 @@ class Handlers:
         except vault.BadSecret as e:
             return _no(str(e))
         vault.record(
-            self.ctx.journal(), "create", made.name, f.workspace_key, actor, via="generate"
+            self.ctx.runs.journal(), "create", made.name, f.workspace_key, actor, via="generate"
         )
         return _text({"result": "made", "name": made.name})
 
@@ -247,7 +247,7 @@ def _leaks(ctx: Ctx, get: Callable[[], vault.Store], facts: Facts) -> str | None
     store = get()
     if not any(s.has_value for s in store.visible(facts.workspace_key)):
         return None
-    journal = ctx.journal()
+    journal = ctx.runs.journal()
     if journal is None:
         return "the run log cannot be read, so the work cannot be scanned"
     values = store.values_for(facts.workspace_key)
@@ -388,13 +388,13 @@ class Door:
         self.ctx, self.get = ctx, get
 
     def key_of(self, cwd: str, *, must_be_on: bool = True) -> str:
-        key = self.ctx.workspace_key(cwd)
-        if must_be_on and not self.ctx.enabled(NAME, cwd):
+        key = self.ctx.units.key(cwd)
+        if must_be_on and not self.ctx.settings.enabled(cwd):
             raise Invalid("the vault is off for this workspace")
         return key
 
     def keep(self, action: str, s: vault.Secret, key: str, **fields: Any) -> None:
-        journal = self.ctx.journal()
+        journal = self.ctx.runs.journal()
         if journal is None:
             raise Invalid("there is no working folder, so there is no run log to record it in")
         vault.record(journal, action, s.name, key, HUMAN, tier=s.tier, **fields)
@@ -416,7 +416,7 @@ class Door:
     def leaks(self, key: str, unit: str) -> list[str]:
         """The names the last scan of `unit` found: the hits of its newest scan, none after a
         clear one."""
-        journal = self.ctx.journal()
+        journal = self.ctx.runs.journal()
         if journal is None or not unit:
             return []
         try:
@@ -507,7 +507,7 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
         key = door.key_of(cwd, must_be_on=False)
         mine, others = await asyncio.to_thread(door.rows, key)
         age = door.get().can_encrypt()
-        shown = page.page(cwd, key, ctx.enabled(NAME, cwd), mine, others, query, age)
+        shown = page.page(cwd, key, ctx.settings.enabled(cwd), mine, others, query, age)
         return HTMLResponse(shown, headers={"Cache-Control": "no-store"})
 
     @router.get("/api/vault/secrets")

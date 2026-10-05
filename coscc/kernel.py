@@ -214,71 +214,67 @@ def arm_of(state: State, unit: str) -> Arm | None:
     return "on" if number.isdigit() and int(number) % 2 == 0 else "off"
 
 
-def _on(_feature: str, _workspace: str) -> State:
-    return "on"
-
-
-def _arm(_feature: str, _workspace: str, unit: str) -> Arm | None:
-    return arm_of("on", unit)
-
-
-async def _no_main_tree(workspace: str) -> tuple[str, str]:
-    raise Invalid(f"no main tree for {workspace} here")
-
-
-def _no_interventions(_workspace: str, _after: str, _limit: int) -> list[Intervention]:
-    return []
-
-
-async def _no_session(_workspace: str, kind: str, _prompt: str) -> Submitted:
-    raise Invalid(f"no {kind} session here")
-
-
-async def _no_unit(_workspace: str, slug: str, _brief: str) -> str:
-    raise Invalid(f"no unit {slug} can be made here")
-
-
-def _no_schedule(_feature: str, _workspace: str) -> int:
-    return 0
-
-
-def _set_no_schedule(feature: str, _workspace: str, _hours: int) -> None:
-    raise Invalid(f"{feature} has no schedule here")
-
-
 @dataclass(frozen=True)
-class Ctx:
-    journal: Callable[[], Journal | None]
+class Units:
+    """What a feature reads and makes of a workspace's units."""
+
     # Checks the workspace, raising `Invalid`, and returns how the run log names it.
-    workspace_key: Callable[[str], str]
-    # `(feature, workspace path)`: `state` is not `off`.
-    enabled: Callable[[str, str], bool]
-    bus: Bus
-    data: Data
-    # `(feature, workspace path)`: what a person chose there, else the feature's `default`; a
-    # workspace the app does not know counts as the default.
-    state: Callable[[str, str], State] = _on
-    # `(feature, workspace path, unit)`: `arm_of` the state now.
-    arm: Callable[[str, str, str], Arm | None] = _arm
+    key: Callable[[str], str]
+    # `(workspace path, slug, brief)`: a new unit, made as `POST /api/units` makes one, and its
+    # name. It touches no shortlist.
+    create_unit: Callable[[str, str, str], Awaitable[str]]
     # `(workspace path)`: the workspace's own detached tree, made or moved to the fetched
     # `origin/main`, as `(path, sha)`. Raises `GitError` when git refuses, `Invalid` when the
     # workspace is not known.
-    main_tree: Callable[[str], Awaitable[tuple[str, str]]] = _no_main_tree
+    main_tree: Callable[[str], Awaitable[tuple[str, str]]]
+
+
+@dataclass(frozen=True)
+class Runs:
+    """The run log."""
+
+    journal: Callable[[], Journal | None]
     # `(workspace path, after, limit)`: every time a person stepped in there past the time
     # `after` (`""`: from the first), oldest first (`coscc/runner/interventions.py`). Blocking.
-    interventions: Callable[[str, str, int], list[Intervention]] = _no_interventions
+    interventions: Callable[[str, str, int], list[Intervention]]
+
+
+@dataclass(frozen=True)
+class Agents:
     # `(workspace path, kind, prompt)`: one paid session under the grant `kind` that hands its
     # object back through `submit`, recorded in the run log as the estimate is. `Invalid` while
     # another such session of the workspace runs or an update is under way. One an update
     # paused hands back no cost: the run log's `end` holds it.
-    session: Callable[[str, str, str], Awaitable[Submitted]] = _no_session
-    # `(workspace path, slug, brief)`: a new unit, made as `POST /api/units` makes one, and its
-    # name. It touches no shortlist.
-    create_unit: Callable[[str, str, str], Awaitable[str]] = _no_unit
-    # `(feature, workspace path)`: the hours of its `schedule` there, `0` for off.
-    schedule: Callable[[str, str], int] = _no_schedule
-    # `(feature, workspace path, hours)`: set them, one of its `schedule.hours`.
-    set_schedule: Callable[[str, str, int], None] = _set_no_schedule
+    session: Callable[[str, str, str], Awaitable[Submitted]]
+
+
+@dataclass(frozen=True)
+class Settings:
+    """What a person chose for this feature, per workspace path."""
+
+    # What a person chose there, else the feature's `default`; a workspace the app does not know
+    # counts as the default.
+    state: Callable[[str], State]
+    # `state` is not `off`.
+    enabled: Callable[[str], bool]
+    # `(workspace path, unit)`: `arm_of` the state now.
+    arm: Callable[[str, str], Arm | None]
+    # The hours of its `schedule` there, `0` for off.
+    schedule: Callable[[str], int]
+    # `(workspace path, hours)`: set them, one of its `schedule.hours`.
+    set_schedule: Callable[[str, int], None]
+
+
+@dataclass(frozen=True)
+class Ctx:
+    """What one feature sees of the core; the core builds one per feature."""
+
+    units: Units
+    runs: Runs
+    agents: Agents
+    store: Data
+    bus: Bus
+    settings: Settings
 
 
 @dataclass(frozen=True)
@@ -297,7 +293,7 @@ class Schedule:
 
 @dataclass(frozen=True)
 class Session:
-    """A paid session a feature runs through `Ctx.session`: no stage, and it hands one object
+    """A paid session a feature runs through `Ctx.agents.session`: no stage, and it hands one object
     back through `submit`. `kind` names its grant, its attempts and their bus events
     (`<kind>.queued`, `.running`, `.ended`, `.refused`)."""
 

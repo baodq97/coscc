@@ -3,7 +3,7 @@
 The engine is `@colbymchenry/codegraph`, installed once under the app's data directory and run
 only through its bundled Node (`graph.py`). Here: the index's life on the workspace's `_main`
 tree, one record per run with its arm, the map block, the impl tools, the Settings sentence and
-two routes (status, A/B report). What a person should know is in `coscc/features/codegraph.md`.
+two routes (status, A/B report). What a person should know is in `coscc/features/codegraph/README.md`.
 """
 
 from __future__ import annotations
@@ -202,7 +202,7 @@ class Indexes:
             self._install_done.set()
 
     def _row(self, key: str) -> IndexRow | None:
-        with self.ctx.data.connect() as conn:
+        with self.ctx.store.connect() as conn:
             found = conn.execute(
                 "SELECT path, root, state, sha, at, reason FROM codegraph_index WHERE workspace = ?",
                 (key,),
@@ -220,7 +220,7 @@ class Indexes:
         reason: str = "",
     ) -> None:
         """A change of state; the tree and the SHA it names are kept unless given."""
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             conn.execute(
                 "INSERT INTO codegraph_index (workspace, path, state, sha, at, reason, root) "
                 "VALUES (?, ?, ?, COALESCE(?, ''), ?, ?, COALESCE(?, '')) "
@@ -252,7 +252,7 @@ class Indexes:
             binary = await self._engine()
             if not isinstance(binary, Path):
                 return
-            root, sha = await self.ctx.main_tree(path)
+            root, sha = await self.ctx.units.main_tree(path)
             row = self._row(key)
             exists = (Path(root) / DB_FILE).exists()
             if row and row.sha == sha and exists:
@@ -294,7 +294,7 @@ class Indexes:
         with `main`; past that, or when the refresh failed, what is already built is used."""
         started = time.monotonic()
         try:
-            key = self.ctx.workspace_key(workspace)
+            key = self.ctx.units.key(workspace)
         except Invalid as error:
             return str(error)
         engine = await self._engine()
@@ -502,12 +502,12 @@ _running: set[asyncio.Task[Any]] = set()
 
 @functools.cache
 def _indexes(ctx: Ctx) -> Indexes:
-    return Indexes(ctx, ctx.data.root / NAME, install, installed, call)
+    return Indexes(ctx, ctx.store.root / NAME, install, installed, call)
 
 
 def _where(ctx: Ctx, key: str) -> tuple[str, str] | None:
     """`(root, sha)` of the index there is, ready, or `None`."""
-    with ctx.data.connect() as conn:
+    with ctx.store.connect() as conn:
         found = conn.execute(
             "SELECT root, sha FROM codegraph_index WHERE workspace = ? AND state = 'ready'",
             (key,),
@@ -525,7 +525,7 @@ def _rows(conn: sqlite3.Connection, key: str) -> list[Row]:
 
 
 def _record(ctx: Ctx, row: Row) -> None:
-    with ctx.data.write() as conn:
+    with ctx.store.write() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO codegraph_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -537,7 +537,7 @@ def _record(ctx: Ctx, row: Row) -> None:
 
 def _map(ctx: Ctx, facts: Facts, binary: Path, ready: Ready) -> str:
     """The map for this run: blocking, run in a thread."""
-    home = ctx.data.root / NAME
+    home = ctx.store.root / NAME
 
     def ask(op: str, args: Mapping[str, object]) -> object:
         return call(home, binary, op, ready.root, args, QUERY_S)
@@ -552,7 +552,7 @@ def _map(ctx: Ctx, facts: Facts, binary: Path, ready: Ready) -> str:
 
 async def _render(ctx: Ctx, facts: Facts) -> str:
     """The map for the `on` arm, nothing for the `off` one; either way one record of the run."""
-    arm = ctx.arm(NAME, facts.workspace, facts.unit)
+    arm = ctx.settings.arm(facts.workspace, facts.unit)
     idx = _indexes(ctx)
     if facts.stage not in MAP_STAGES or arm is None or idx.lock():
         return ""
@@ -584,7 +584,7 @@ async def _render(ctx: Ctx, facts: Facts) -> str:
 def _ready_for(ctx: Ctx, facts: Facts) -> bool:
     """The tools go to an `on`-arm impl run while the index is ready and the engine not found
     broken. The engine is checked at the first call, so a resumed run gets them too."""
-    if ctx.arm(NAME, facts.workspace, facts.unit) != "on" or _indexes(ctx).lock():
+    if ctx.settings.arm(facts.workspace, facts.unit) != "on" or _indexes(ctx).lock():
         return False
     return _where(ctx, facts.workspace_key) is not None
 
@@ -600,7 +600,7 @@ def _text(text: str, error: bool = False) -> Reply:
 
 def build_tools(ctx: Ctx, facts: Facts) -> list[SdkMcpTool[Any]]:
     """The run's three tools; each reads the index there is now and never waits for a sync."""
-    home = ctx.data.root / NAME
+    home = ctx.store.root / NAME
 
     async def answer(make: Callable[[Callable[..., object], str, set[str]], str]) -> Reply:
         where, binary = _where(ctx, facts.workspace_key), await _indexes(ctx)._engine()
@@ -671,11 +671,11 @@ def agent(ctx: Ctx) -> Parts:
         return create_sdk_mcp_server(NAME, "1.0.0", build_tools(ctx, facts))
 
     def ended(event: Event) -> None:
-        with ctx.data.connect() as conn:
+        with ctx.store.connect() as conn:
             found = conn.execute(
                 "SELECT path FROM codegraph_index WHERE workspace = ?", (event.workspace,)
             ).fetchone()
-        if found and ctx.enabled(NAME, found[0]):
+        if found and ctx.settings.enabled(found[0]):
             _indexes(ctx).schedule(event.workspace)
 
     ctx.bus.subscribe("integration.ended", ended)
@@ -691,10 +691,10 @@ def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
     why = idx.lock()
     if why:
         return why, False
-    state = ctx.state(NAME, workspace)
+    state = ctx.settings.state(workspace)
     if state == "off":
         return "Off in this workspace.", True
-    key = ctx.workspace_key(workspace)
+    key = ctx.units.key(workspace)
     s = idx.status(key)
     index = {
         "installing": "Installing the code index engine, about 290 MB, once.",
@@ -706,7 +706,7 @@ def status(ctx: Ctx, workspace: str) -> tuple[str, bool]:
         return index or "Waiting: the index of main is built at the next impl or review.", True
     # The split, the units the report counts in each arm so far and the scoring day.
     # Quick: whether a step's events remain is all `report` needs to count units, so none is read.
-    with ctx.data.connect() as conn:
+    with ctx.store.connect() as conn:
         rows, ended = _rows(conn, key), impl_ends(conn, key)
     steps = [Step(run, unit, 0.0, None if gone else 0, None) for run, unit, gone in ended]
     arms = report(rows, steps, {}, (None, None))["arms"]
@@ -738,7 +738,7 @@ def _rounds(
     """The changes-requested rounds of each unit shipped in the window whose review is there."""
     out: dict[str, int] = {}
     for unit in shipped_units(conn, key, *window):
-        review = cos_dir(key, ctx.data.root) / unit / "review.md"
+        review = cos_dir(key, ctx.store.root) / unit / "review.md"
         if review.is_file():
             out[unit] = changes_requested(review.read_text(encoding="utf-8"))
     return out
@@ -746,7 +746,7 @@ def _rounds(
 
 def measured(ctx: Ctx, key: str, window: tuple[str | None, str | None]) -> Report:
     """The report over the run log: blocking, run in a thread."""
-    with ctx.data.connect() as conn:
+    with ctx.store.connect() as conn:
         rows = _rows(conn, key)
         pairs = turn_pairs(conn, key, None, None)
         runs = [str(p["end"].get("run") or "") for p in pairs]
@@ -769,7 +769,7 @@ def routes(ctx: Ctx) -> list[BaseRoute]:
     async def get_report(request: Request) -> Report:
         """The A/B report over the runs recorded in `[since, until)`; either may be left out."""
         q = request.query_params
-        key = ctx.workspace_key(q.get("cwd", ""))
+        key = ctx.units.key(q.get("cwd", ""))
         window = (q.get("since") or None, q.get("until") or None)
         return await asyncio.to_thread(measured, ctx, key, window)
 
