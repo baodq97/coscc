@@ -130,8 +130,6 @@ DICT_ANY: set[str] = {
     "coscc.github.prmachine:watched",
     "coscc.github.prscope:compare",
     "coscc.github.prscope:read",
-    "coscc.github.release:classify",
-    "coscc.github.release:record",
     "coscc.kernel:body",
     "coscc.kernel:line",
     "coscc.runlog.events:Recorder.subscribe",
@@ -205,8 +203,10 @@ DICT_ANY: set[str] = {
     "coscc.units.ideas:Ideas.idea_link",
     "coscc.leif.agents:Models.findings_added",
     "coscc.leif.agents:Models.stage_config",
-    "coscc.github.release:Release._release_press.write",
-    "coscc.github.release:Release.attach_release",
+    "coscc.features.release.rules:classify",
+    "coscc.features.release.rules:record",
+    "coscc.features.release:Release._release_press.write",
+    "coscc.features.release:Release.view",
     "coscc.runner.resume:Resume.resume_after_update",
     "coscc.github.integration:Integration.resume",
     "coscc.github.integration:Integration.resume.write",
@@ -599,6 +599,9 @@ CORE_MAY_NAME: dict[tuple[str, str], str] = {
     "feature only tells the agent about them",
     ("coscc/agent/policy.py", "vault"): "the vault's store is a protected path even with the "
     "vault off",
+    ("coscc/update/updater.py", "release"): "the update channel of that name, not the feature",
+    ("coscc/update/__init__.py", "release"): "the update channel of that name, not the feature",
+    ("coscc/loop/branch.py", "release"): "the kind of tag `check-tag` prints, not the feature",
 }
 
 

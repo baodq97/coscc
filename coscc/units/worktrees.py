@@ -69,19 +69,18 @@ def path(
     return where
 
 
-RELEASE_TREE = gitops.RELEASE_TREE
-
-
-def release_path(
-    workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None
+def own_tree(
+    workspace: str | os.PathLike[str], name: str, data_dir: str | os.PathLike[str] | None = None
 ) -> Path:
-    """The workspace's one release worktree, beside its units' trees. `release` is not a
-    `NNNN_slug`, so no unit's tree can be named the same.
+    """A feature's own worktree of the workspace, beside its units' trees. `name` is
+    `gitops.OWN_TREE_RE`, which no unit's `NNNN_slug` nor `_main` can be.
     """
-    where = (Data(data_dir).root / WORKTREES_DIR / units.slot(workspace) / RELEASE_TREE).resolve()
+    if not gitops.OWN_TREE_RE.fullmatch(name or ""):
+        raise BadUnit(f"not a name for a feature's own worktree: {name!r}")
+    where = (Data(data_dir).root / WORKTREES_DIR / units.slot(workspace) / name).resolve()
     for forbidden in (Path(units.key(workspace)), _package_dir()):
         if where == forbidden or forbidden in where.parents:
-            raise BadUnit(f"the release worktree would land inside {forbidden}: {where}")
+            raise BadUnit(f"the worktree {name} would land inside {forbidden}: {where}")
     return where
 
 

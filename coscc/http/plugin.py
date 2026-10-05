@@ -15,12 +15,15 @@ import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from coscc.agent import policy
 from coscc.agent.policy import is_prose_stage
 from coscc.bus import Name
 from coscc.agent.sessions import Suspended
+from coscc.git.gitops import GitError
+from coscc.github import integrate
 from coscc.store.db import Data
 from coscc.store.journal import Intervention
 from coscc.kernel import (
@@ -43,7 +46,10 @@ from coscc.runner import queue
 from coscc.runner.interventions import interventions
 from coscc.update.updater import refuse_while_updating
 from coscc.units.workspaces import Workspaces
-from coscc.units import submit, worktrees
+from coscc.units import BadUnit, submit, worktrees
+from coscc.units import board as board_reader
+from coscc.units.board import Unavailable
+from coscc.units.read import Asked
 
 if TYPE_CHECKING:
     from coscc.http.app import Core
@@ -233,13 +239,65 @@ def ctx_of(core: Core, feature: Feature) -> Ctx:
         set_schedule_of(core, (feature,), feature.name, workspace, hours)
 
     return Ctx(
-        Units(workspace_key, create_unit, main_tree),
+        Units(
+            workspace_key,
+            create_unit,
+            main_tree,
+            lambda workspace, fresh: _units(core, workspace, fresh),
+            lambda workspace, fresh: _open_prs(core, workspace, fresh),
+            lambda workspace, name: _own_tree(core, workspace, name),
+        ),
         Runs(core.ws.journal, found),
         Agents(session),
         data,
         core.bus,
         Settings(state, enabled, arm, schedule, set_schedule),
+        lambda: refuse_while_updating(core.updater),
+        core.asks.setdefault(feature.name, Asked(core.boards.changed)),
+        _required_checks,
     )
+
+
+async def _units(core: Core, workspace: str, fresh: bool) -> list[dict[str, Any]]:
+    """`Units.units`: the board held, read only when none is, or the loop asked again when
+    `fresh`."""
+    if not fresh:
+        held = core.boards.held.get(core.ws.key(core.ws.check(workspace)))
+        board = held["data"] if held else await core.boards.get(workspace, "held")
+        return board["units"]
+    core.ws.check(workspace)
+    try:
+        read = await board_reader.read(
+            core.ws.units_root(workspace), state=core.ws.snapshot(workspace)
+        )
+    except Unavailable as e:
+        raise Invalid(str(e)) from e
+    return read["units"]
+
+
+async def _open_prs(core: Core, workspace: str, fresh: bool) -> list[dict[str, Any]] | str:
+    """`Units.open_prs`: the board's held `gh pr list`, under the key its reads use; asked only
+    when none is held or `fresh`."""
+    held = core.boards.prs.held.get((workspace, "prs"))
+    if held is not None and not fresh:
+        return held[0]
+    return await core.boards.prs.get(
+        (workspace, "prs"), lambda: core.boards.open_prs(workspace), fresh
+    )
+
+
+def _own_tree(core: Core, workspace: str, name: str) -> Path:
+    try:
+        return worktrees.own_tree(core.ws.check(workspace), name, core.config.data_dir)
+    except BadUnit as e:
+        raise GitError(str(e)) from e
+
+
+async def _required_checks(tree: str, number: int) -> list[dict[str, Any]] | str:
+    try:
+        return await integrate.required_checks(tree, number)
+    except integrate.IntegrateError as e:
+        return str(e)
 
 
 def schedule_of(data: Data, plugin: Feature, key: str) -> int:

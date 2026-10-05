@@ -39,7 +39,6 @@ from coscc.leif.agents import AgentPage
 from coscc.leif.answers import opens_with
 from coscc.leif.chat import ChatHistory, ChatSessions
 from coscc.leif.insights import Insights
-from coscc.github.release import ReleaseView
 from coscc.runner.steps import NextStep
 from coscc.runner.watch import EventsPage
 from coscc.units.backlog import SHORTLIST_MAX
@@ -64,7 +63,7 @@ class AutopilotSettings(TypedDict):
 
 
 class Build(TypedDict, total=False):
-    """A release or local build the updater knows of: what it is and whether it may be applied."""
+    """A published or local build the updater knows of: what it is and whether it may be applied."""
 
     state: str
     version: str
@@ -685,42 +684,6 @@ async def integrate_unit(request: Request) -> Any:
         str(body.get("cwd", "")), str(body.get("unit", ""))
     )
     return await kernel.ndjson(stream, "the integration")
-
-
-@router.get("/api/release", response_model=ReleaseView | None)
-async def get_release(request: Request) -> Any:
-    """What a release of one workspace would gather and the one button it offers now; `null`
-    for a workspace that is not a git checkout. Read from the board held."""
-    return (await _core(request).boards.get(_cwd(request), "held")).get("release")
-
-
-@router.post("/api/release/prepare")
-async def release_prepare(request: Request) -> Any:
-    """`{cwd, version}`: a `chore/release-X-Y-Z` pull request, streamed like `/api/units/integrate`.
-
-    Whoever holds the password or a session can make this machine's `gh` login commit,
-    push a branch and open a pull request. A refusal is a 400 before anything changes;
-    every press leaves one `release` record."""
-    body = await kernel.body(request)
-    stream = _core(request).release.release_prepare(
-        str(body.get("cwd", "")), str(body.get("version", ""))
-    )
-    return await kernel.ndjson(stream, "the release")
-
-
-@router.post("/api/release/publish")
-async def release_publish(request: Request) -> Any:
-    """`{cwd, version}`: merge the release pull request and push `vX.Y.Z` onto its merge
-    commit, which publishes the release.
-
-    Whoever holds the password or a session can make this machine's `gh` login merge into
-    `main` and push a tag no ruleset protects. A refusal is a 400 before anything changes;
-    every press leaves one `release` record."""
-    body = await kernel.body(request)
-    stream = _core(request).release.release_publish(
-        str(body.get("cwd", "")), str(body.get("version", ""))
-    )
-    return await kernel.ndjson(stream, "the release")
 
 
 @router.get("/api/features")

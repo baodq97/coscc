@@ -45,9 +45,11 @@ Copy `notices`. A need no extension point serves is a kernel change, planned fir
   text); `sessions=(Session(kind,
   grant, schema, purpose),)`, a paid session it runs through `ctx.agents.session(cwd, kind, prompt)`.
   The core never writes a feature's name (`CoreNamesNoFeature` in `tests/test_boundaries.py`).
-- `Ctx` is six handles, built for this feature alone: `units` (`key`, `create_unit`, `main_tree`),
-  `runs` (`journal`, `interventions`), `agents` (`session`), `store` (the database; only your own
-  tables), `bus`, `settings` (`state`, `enabled`, `arm`, `schedule`, `set_schedule`). A test builds
+- `Ctx` is built for this feature alone: `units` (`key`, `create_unit`, `main_tree`, `units`,
+  `open_prs`, `own_tree`), `runs` (`journal`, `interventions`), `agents` (`session`), `store` (the
+  database; only your own tables), `bus`, `settings` (`state`, `enabled`, `arm`, `schedule`,
+  `set_schedule`), `refuse_updating`, `asks` (slow reads held and asked again), `required_checks`.
+  Writing git is the release feature's alone (`OnlyReleaseWritesGit`). A test builds
   the `Ctx` it needs with `tests/features/ctx.py` `ctx_for`; a handle it names not raises when touched.
 - Building blocks: `kernel.body/line/ndjson`.
 - UI: an optional `coscc/features/<name>/ui/index.tsx` exporting `ui: FeatureUI`

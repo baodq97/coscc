@@ -1,10 +1,11 @@
 // All work across projects as one list, grouped by where each unit stands. A project's own page
-// adds what belongs to the project: its release, pulling its code, and adding or removing one.
+// adds what belongs to the project: pulling its code, what its features add, and adding or
+// removing one.
 
 import { useState } from "react";
-import type { ReleaseView } from "../api.gen";
-import { api, useResource } from "../lib/api";
+import { api } from "../lib/api";
 import { allUnits, useBoards } from "../lib/boards";
+import { FeatureSlots } from "../lib/feature";
 import { unitCode, unitTitle } from "../lib/format";
 import { GROUP_ORDER, unitState, type Workspace } from "../lib/model";
 import { Link, navigate } from "../lib/router";
@@ -60,9 +61,8 @@ export function Work({ workspace }: { workspace?: string }) {
   );
 }
 
-/** What a person does to the project itself: pull its code, release it, stop listing it. */
+/** What a person does to the project itself: pull its code, stop listing it, and what its features add. */
 function ProjectBar({ workspace }: { workspace: Workspace }) {
-  const release = useResource("/api/release", { cwd: workspace.path }, { on: ["integration.ended", "step.ended"] });
   const [asking, setAsking] = useState("");
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<string[]>([]);
@@ -75,7 +75,6 @@ function ProjectBar({ workspace }: { workspace: Workspace }) {
     try {
       await run();
       setAsking("");
-      release.reload();
     } catch (e) {
       setError(e as Error);
     } finally {
@@ -109,69 +108,9 @@ function ProjectBar({ workspace }: { workspace: Workspace }) {
           </Button>
         )}
       </div>
-      {release.data && <Release release={release.data} cwd={workspace.path} busy={busy} asking={asking} act={act} onLine={(l) => setSaid((s) => [...s, l])} />}
+      <FeatureSlots at="project" workspace={workspace} />
       {said.length > 0 && <pre className="mono faint" style={{ fontSize: 12, marginTop: 8, whiteSpace: "pre-wrap" }}>{said.join("")}</pre>}
       {error && <div style={{ color: "var(--red)", fontSize: 12.5, marginTop: 8 }}>{error.message}</div>}
-    </div>
-  );
-}
-
-/** A one-line summary of what a release would gather, by kind: `12 feat, 3 fix`. */
-export function kinds(units: { type: string }[]): string {
-  const n: Record<string, number> = {};
-  units.forEach((u) => (n[u.type || "other"] = (n[u.type || "other"] ?? 0) + 1));
-  return Object.entries(n)
-    .sort((a, b) => b[1] - a[1])
-    .map(([k, c]) => `${c} ${k}`)
-    .join(", ");
-}
-
-function Release({ release: r, cwd, busy, asking, act, onLine }: { release: ReleaseView; cwd: string; busy: boolean; asking: string; act: (what: string, run: () => Promise<unknown>) => void; onLine: (line: string) => void }) {
-  if (r.state === "nothing" || r.state === "unknown") return null;
-  const press = () => act(r.button, () => api.stream(`/api/release/${r.button}`, { cwd, version: r.version }, (l) => l.type === "chunk" && onLine(String(l.text))));
-  return (
-    <div className="card card-b" style={{ marginTop: 12 }}>
-      <div className="row" style={{ gap: 8, alignItems: "baseline" }}>
-        <b>Release {r.version || r.proposed}</b>
-        <span className="faint">
-          {r.state === "ready"
-            ? `${r.count} units since ${r.last_tag}: ${kinds(r.units)}`
-            : r.state === "pr-open"
-              ? `pull request #${r.pr} open`
-              : r.state === "merged-untagged"
-                ? "merged, not tagged yet"
-                : r.state}
-        </span>
-        <span className="grow" />
-        {r.release_url && (
-          <a href={r.release_url} target="_blank" rel="noreferrer" className="faint">
-            On GitHub
-          </a>
-        )}
-      </div>
-      {r.checks.length > 0 && (
-        <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-          {r.checks.map((c) => (
-            <Chip key={c.name} square tone={c.bucket === "pass" ? "green" : c.bucket === "fail" ? "red" : "amber"}>
-              {c.name}: {c.bucket}
-            </Chip>
-          ))}
-        </div>
-      )}
-      {r.button && (
-        <div className="row" style={{ gap: 8, marginTop: 10 }}>
-          <Button size="sm" kind="primary" disabled={busy || !r.enabled} onClick={press}>
-            {asking === r.button
-              ? r.button === "prepare"
-                ? `Open the pull request for ${r.version}?`
-                : `Merge and tag ${r.version}? This publishes it`
-              : r.button === "prepare"
-                ? `Prepare ${r.version}`
-                : `Publish ${r.version}`}
-          </Button>
-          <span className="faint" style={{ fontSize: 12 }}>{r.enabled ? r.consequence : r.disabled_reason}</span>
-        </div>
-      )}
     </div>
   );
 }

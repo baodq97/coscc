@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import signal
+from dataclasses import dataclass
 from pathlib import Path
 
 # Measured cloning over https: about 4 MB/s, and a pull with nothing to fetch costs about a
@@ -177,10 +178,10 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 # #   no branch, is clean, and its HEAD is an ancestor of that commit, so an unpushed commit
 # #   is never left behind. `merge-base --is-ancestor` and `rev-list --count` are the reads.
 # # - `rev-parse --git-common-dir`, so fetches into a shared git dir can be coordinated.
-# # - In the release worktree only (`worktrees.release_path`), through the functions under
-# #   `# --- releasing ---`: fetch `main` with tags, commit the four version files on a
-# #   `chore/release-X-Y-Z` branch, push it without force, push a `vX.Y.Z` tag, detach the
-# #   tree, and remove it with `--force`.
+# # - In a feature's own worktree only (`worktrees.own_tree`), through the functions under
+# #   `# --- a feature's own tree ---`: fetch `main` with tags, commit the files the feature
+# #   names on a branch it names, push it without force, push a tag it names, detach the tree,
+# #   and remove it with `--force`.
 # #
 # # The app may **not** push, merge, commit, move `main`, or delete any other branch; those
 # # belong to a step (`coscc/agent/policy.py`) or nobody.
@@ -763,51 +764,52 @@ async def reset_branch_to(
     return await _run(["git", "-C", str(tree), "reset", "--keep", new_sha], timeout)
 
 
-# # --- releasing ---------------------------------------------------------------
+# # --- a feature's own tree ----------------------------------------------------
 # #
-# # The only functions that commit, push and tag. They take a release branch that passed
-# # `_RELEASE_BRANCH_RE`, a tag that passed `_RELEASE_TAG_RE`, a full SHA, or a file in
-# # `RELEASE_FILES`; the caller asked `coscc.loop check-branch`/`check-tag` first. Every writer
-# # takes the tree twice: the tree it works in and `expected`, the path `worktrees.release_path`
-# # names, recomputed by the caller from the workspace. Both must agree and the tree must be a
-# # linked worktree named `RELEASE_TREE`, so a wrong path in both is still refused.
+# # The only functions that commit, push and tag. Every writer takes the tree twice: the tree it
+# # works in and `own`, whose `path` is the one `worktrees.own_tree` names, recomputed by the
+# # caller from the workspace. Both must agree and the tree must be a linked worktree whose name
+# # is an own tree's, so a wrong path in both is still refused. A branch, tag or file is written
+# # only when `own` allows it; the caller asked `coscc.loop check-branch`/`check-tag` first.
 
-_RELEASE_BRANCH_RE = re.compile(r"^chore/release-\d+-\d+-\d+$")
-_RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
-RELEASE_FILES = ("pyproject.toml", "package.json", "package-lock.json", "uv.lock")
-# # The release tree's own name. Not a `NNNN_slug`, so no unit's tree carries it.
-RELEASE_TREE = "release"
+# # An own tree's name. Not a `NNNN_slug` nor `_main`, so no unit's tree or the main one carries it.
+OWN_TREE_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
-def _release_branch(name: str) -> str:
-    if not _RELEASE_BRANCH_RE.fullmatch(name or ""):
-        raise GitError(f"not a release branch this app will write: {name!r}")
+@dataclass(frozen=True)
+class OwnTree:
+    """A feature's own tree: where it is, and the branches, tags and files it may write."""
+
+    path: Path
+    branches: re.Pattern[str]
+    tags: re.Pattern[str]
+    files: tuple[str, ...]
+
+
+def _own_ref(name: str, allowed: re.Pattern[str], what: str) -> str:
+    if name == TRUNK or not allowed.fullmatch(name or "") or (name or "-").startswith("-"):
+        raise GitError(f"not a {what} this tree may write: {name!r}")
     return name
 
 
-def _release_tag(tag: str) -> str:
-    if not _RELEASE_TAG_RE.fullmatch(tag or ""):
-        raise GitError(f"not a release tag this app will write: {tag!r}")
-    return tag
-
-
-def _is_release_path(path: Path, expected: Path) -> bool:
+def _is_own_path(path: Path, own: OwnTree) -> bool:
     where = Path(path).resolve()
-    return where == Path(expected).resolve() and where.name == RELEASE_TREE
+    return where == Path(own.path).resolve() and bool(OWN_TREE_RE.fullmatch(where.name))
 
 
-def _release_tree(tree: Path, expected: Path) -> None:
-    """Refuses unless `tree` is `expected` and a linked worktree named `release` (a workspace's
-    own checkout holds a `.git` directory, a linked tree a `.git` file).
+def _own_tree(tree: Path, own: OwnTree) -> None:
+    """Refuses unless `tree` is `own.path` and a linked worktree with an own tree's name (a
+    workspace's own checkout holds a `.git` directory, a linked tree a `.git` file).
     """
     _require_repo(tree)
-    if not _is_release_path(tree, expected) or not (Path(tree) / ".git").is_file():
-        raise GitError(f"{tree} is not the release worktree, so nothing was written")
+    if not _is_own_path(tree, own) or not (Path(tree) / ".git").is_file():
+        raise GitError(f"{tree} is not the feature's own worktree, so nothing was written")
 
 
 async def fetch_with_tags(path: Path, timeout: float = FETCH_TIMEOUT) -> str:
     """`fetch --tags origin +refs/heads/main:refs/remotes/origin/main`. Plain `fetch` keeps
-    `--no-tags`; only a release brings the tags.
+    `--no-tags`; only this brings the tags.
     """
     _require_repo(path)
     return await _run(
@@ -825,38 +827,41 @@ async def fetch_with_tags(path: Path, timeout: float = FETCH_TIMEOUT) -> str:
     )
 
 
-async def release_tags(path: Path, sha: str, timeout: float = BRANCH_TIMEOUT) -> list[str]:
-    """Every local tag `v*` that `sha` contains."""
+async def tags_merged(path: Path, sha: str, timeout: float = BRANCH_TIMEOUT) -> list[str]:
+    """Every local tag that `sha` contains."""
     _require_repo(path)
     _require_shas(sha)
-    out = await _run(["git", "-C", str(path), "tag", "--list", "v*", "--merged", sha], timeout)
+    out = await _run(["git", "-C", str(path), "tag", "--list", "--merged", sha], timeout)
     return [t for t in out.splitlines() if t.strip()]
 
 
 async def remote_has_tag(path: Path, tag: str, timeout: float = FETCH_TIMEOUT) -> bool:
     """Whether `origin` holds `refs/tags/<tag>`, asked of the remote, not the local refs."""
     _require_repo(path)
-    _release_tag(tag)
+    if not _TAG_RE.fullmatch(tag or ""):
+        raise GitError(f"not a tag name: {tag!r}")
     out = await _run(
         ["git", "-C", str(path), "ls-remote", "--tags", "origin", f"refs/tags/{tag}"], timeout
     )
     return bool(out.strip())
 
 
-async def show_file(path: Path, sha: str, name: str, timeout: float = BRANCH_TIMEOUT) -> str:
-    """`git show <sha>:<name>` for one of the four version files."""
+async def show_file(
+    path: Path, sha: str, name: str, own: OwnTree, timeout: float = BRANCH_TIMEOUT
+) -> str:
+    """`git show <sha>:<name>` for one of `own.files`."""
     _require_repo(path)
     _require_shas(sha)
-    if name not in RELEASE_FILES:
-        raise GitError(f"not a version file: {name!r}")
+    if name not in own.files:
+        raise GitError(f"not a file this tree may write: {name!r}")
     return await _run(["git", "-C", str(path), "show", f"{sha}:{name}"], timeout, strip=False)
 
 
-async def diff_u0(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -> str:
+async def diff_u0(tree: Path, own: OwnTree, timeout: float = BRANCH_TIMEOUT) -> str:
     """`git diff -U0 HEAD`: every change in the tree, staged or not, new files included after
-    `add -N` (which writes the index, so only in the release tree).
+    `add -N` (which writes the index, so only in an own tree).
     """
-    _release_tree(tree, expected)
+    _own_tree(tree, own)
     await _run(["git", "-C", str(tree), "add", "--intent-to-add", "--all"], timeout)
     return await _run(
         ["git", "-C", str(tree), "diff", "-U0", "--no-color", "HEAD"], timeout, strip=False
@@ -864,24 +869,20 @@ async def diff_u0(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -
 
 
 async def commit_files(
-    tree: Path, expected: Path, message: str, timeout: float = BRANCH_TIMEOUT
+    tree: Path, own: OwnTree, message: str, timeout: float = BRANCH_TIMEOUT
 ) -> str:
-    """Commit the four version files on the release branch the tree stands on; the new SHA."""
-    _release_tree(tree, expected)
-    _release_branch(await current_branch(tree, timeout))
-    await _run(["git", "-C", str(tree), "add", "--", *RELEASE_FILES], timeout)
-    await _run(
-        ["git", "-C", str(tree), "commit", "-q", "-m", message, "--", *RELEASE_FILES], timeout
-    )
+    """Commit `own.files` on the branch of `own.branches` the tree stands on; the new SHA."""
+    _own_tree(tree, own)
+    _own_ref(await current_branch(tree, timeout), own.branches, "branch")
+    await _run(["git", "-C", str(tree), "add", "--", *own.files], timeout)
+    await _run(["git", "-C", str(tree), "commit", "-q", "-m", message, "--", *own.files], timeout)
     return await _run(["git", "-C", str(tree), "rev-parse", "HEAD"], timeout)
 
 
-async def push_branch(
-    tree: Path, expected: Path, branch: str, timeout: float = FETCH_TIMEOUT
-) -> str:
+async def push_branch(tree: Path, own: OwnTree, branch: str, timeout: float = FETCH_TIMEOUT) -> str:
     """`push origin refs/heads/<b>:refs/heads/<b>`. No `--force`, no `-u`."""
-    _release_tree(tree, expected)
-    _release_branch(branch)
+    _own_tree(tree, own)
+    _own_ref(branch, own.branches, "branch")
     return await _run(
         [
             "git",
@@ -917,37 +918,37 @@ async def push_unit_branch(tree: Path, branch: str, timeout: float = FETCH_TIMEO
 
 
 async def push_tag(
-    tree: Path, expected: Path, tag: str, sha: str, timeout: float = FETCH_TIMEOUT
+    tree: Path, own: OwnTree, tag: str, sha: str, timeout: float = FETCH_TIMEOUT
 ) -> str:
-    """`push origin <sha>:refs/tags/<tag>`: a lightweight tag made on the remote; the push builds
-    the release. No local tag first, so a refused push leaves none behind. No force.
+    """`push origin <sha>:refs/tags/<tag>`: a lightweight tag made on the remote. No local tag
+    first, so a refused push leaves none behind. No force.
     """
-    _release_tree(tree, expected)
-    _release_tag(tag)
+    _own_tree(tree, own)
+    _own_ref(tag, own.tags, "tag")
     _require_shas(sha)
     return await _run(
         ["git", "-C", str(tree), "push", "--", "origin", f"{sha}:refs/tags/{tag}"], timeout
     )
 
 
-async def detach_here(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -> str:
+async def detach_here(tree: Path, own: OwnTree, timeout: float = BRANCH_TIMEOUT) -> str:
     """`switch --detach` where the tree stands, so `gh pr merge --delete-branch` never has to
     delete a checked-out branch.
     """
-    _release_tree(tree, expected)
+    _own_tree(tree, own)
     return await _run(["git", "-C", str(tree), "switch", "--detach"], timeout)
 
 
-async def release_tree_remove(
-    root: Path, path: Path, expected: Path, timeout: float = WORKTREE_TIMEOUT
+async def own_tree_remove(
+    root: Path, path: Path, own: OwnTree, timeout: float = WORKTREE_TIMEOUT
 ) -> str:
-    """`worktree remove --force`, the one forced removal: only of the release tree, whose changes
-    are the app's own. Not `.git`-checked: a tree whose directory is gone is still listed and
+    """`worktree remove --force`, the one forced removal: only of an own tree, whose changes are
+    the feature's own. Not `.git`-checked: a tree whose directory is gone is still listed and
     removed.
     """
     _require_repo(root)
-    if not _is_release_path(path, expected) or Path(path).resolve() == Path(root).resolve():
-        raise GitError(f"{path} is not the release worktree, so it was not removed")
+    if not _is_own_path(path, own) or Path(path).resolve() == Path(root).resolve():
+        raise GitError(f"{path} is not the feature's own worktree, so it was not removed")
     return await _run(
         ["git", "-C", str(root), "worktree", "remove", "--force", "--", str(path)], timeout
     )

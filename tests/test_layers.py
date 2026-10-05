@@ -9,8 +9,8 @@ anything.
 A feature (a folder `coscc/features/<name>/` whose `__init__.py` ends in one `FEATURE`) is a plug-in, so three more rules:
 it imports only its own `coscc.features.<name>` and `coscc.kernel`, plus the `KERNEL_GAPS` the kernel does not give yet;
 only `coscc/http/app.py` imports `coscc.features`, as
-`from coscc import features`; and it is at most 3 files of at most 800 lines. Each check takes
-text or a listing, so a test can feed it a planted case.
+`from coscc import features`; and it is at most 3 files of at most 800 lines, its `ui/` (the
+studio's TSX) aside. Each check takes text or a listing, so a test can feed it a planted case.
 """
 
 from __future__ import annotations
@@ -243,10 +243,14 @@ def _sources() -> dict[str, str]:
 
 
 def _feature_lines() -> dict[str, int]:
+    """Its `ui/` is the studio's layer, built apart, so it is not one of a feature's files."""
     return {
         p.relative_to(ROOT / "features").as_posix(): len(p.read_text().splitlines())
         for p in sorted((ROOT / "features").rglob("*"))
-        if p.is_file() and p != ROOT / "features" / "__init__.py" and "__pycache__" not in p.parts
+        if p.is_file()
+        and p != ROOT / "features" / "__init__.py"
+        and "__pycache__" not in p.parts
+        and p.relative_to(ROOT / "features").parts[1:2] != ("ui",)
     }
 
 

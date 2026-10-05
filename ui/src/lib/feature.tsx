@@ -14,6 +14,8 @@ export type FeatureUI = {
   unit?: ComponentType<{ workspace: Workspace; unit: string }>;
   /** In the workspace's Up next. */
   backlog?: ComponentType<{ workspace: Workspace }>;
+  /** On the project's own Work page, under its Pull and Stop listing buttons. */
+  project?: ComponentType<{ workspace: Workspace }>;
   /** A sidebar entry in Team, and the screen at `/feature/<name>`, one workspace at a time. */
   page?: { label: string; lede: string; icon: IconName; Component: ComponentType<{ workspace: Workspace }> };
 };
@@ -26,7 +28,7 @@ export const FEATURE_UIS: Record<string, FeatureUI> = Object.fromEntries(
 );
 
 /** The slots of `at` that features with a UI have for this workspace (or none, for the top bar). */
-export function FeatureSlots(props: { at: "topbar" } | { at: "backlog"; workspace: Workspace } | { at: "unit"; workspace: Workspace; unit: string }) {
+export function FeatureSlots(props: { at: "topbar" } | { at: "backlog"; workspace: Workspace } | { at: "project"; workspace: Workspace } | { at: "unit"; workspace: Workspace; unit: string }) {
   const cwd = props.at === "topbar" ? null : props.workspace.path;
   const shown = useResource(cwd === null ? null : "/api/features/shown", cwd === null ? {} : { cwd });
   const on = (name: string) => props.at === "topbar" || (shown.data ?? []).some((f) => f.name === name && f.state !== "off");
@@ -36,6 +38,7 @@ export function FeatureSlots(props: { at: "topbar" } | { at: "backlog"; workspac
         if (!on(name)) return null;
         if (props.at === "topbar") return ui.topbar ? <ui.topbar key={name} /> : null;
         if (props.at === "backlog") return ui.backlog ? <ui.backlog key={name} workspace={props.workspace} /> : null;
+        if (props.at === "project") return ui.project ? <ui.project key={name} workspace={props.workspace} /> : null;
         return ui.unit ? <ui.unit key={name} workspace={props.workspace} unit={props.unit} /> : null;
       })}
     </>

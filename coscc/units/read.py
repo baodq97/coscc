@@ -2,9 +2,9 @@
 worktree, held per workspace and read again when the app changes something.
 
 `units.board` runs the loop and shapes its answer; this module adds what only the app knows (the
-run log, backlog, worktrees, open pull requests, CI, the release) and keeps the last read. What
-sits above `units` (the step machine's integration and CI reads, the release panel) is handed in
-as plain callables by whoever builds the `Board`.
+run log, backlog, worktrees, open pull requests, CI) and keeps the last read. What sits above
+`units` (the step machine's integration and CI reads) is handed in as plain callables by whoever
+builds the `Board`.
 """
 
 from __future__ import annotations
@@ -529,8 +529,8 @@ class Board:
     `unfinished(key)` lists a workspace's unfinished attempts (what is running); `overrides()`
     the agent table's changes; `open_prs(cwd)` asks `gh` for the open pull requests (a list, or
     its error as a string); `attach(cwd, data, journal, key, prs, fresh)` adds what sits above
-    `units`: each unit's `integration` and the `release` block, and returns the function that
-    starts the CI asks that read found missing, which the read calls last.
+    `units`: each unit's `integration`, and returns the function that starts the CI asks that
+    read found missing, which the read calls last.
     """
 
     def __init__(
@@ -783,7 +783,7 @@ class Board:
         # One held `gh pr list` for the whole read, asked only by whichever block needs it.
         prs = self._prs_held(cwd, fresh)
         ask_ci = await self.attach(cwd, data, journal, key, prs, fresh)
-        lap("integration and release")
+        lap("integration")
         for unit in data["units"]:
             # From the timelines read above: no second scan of the run log.
             ended = [r for r in timelines.get(unit["name"], []) if r.get("ended") is not None]

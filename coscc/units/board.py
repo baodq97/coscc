@@ -605,7 +605,6 @@ def _why_empty(path: Path) -> str:
 # `policy.py` and `.claude/rules/coscc-app.md`.
 CONSEQUENCE = {
     "integrate": "Rebases this pull request with this machine's gh login; a conflict opens a paid session.",
-    "release": "Commits, pushes, merges and tags on main with this machine's gh login.",
 }
 
 
