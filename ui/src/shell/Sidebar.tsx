@@ -4,7 +4,7 @@
 import { Fragment } from "react";
 import { Icon, LeifMark } from "../lib/icons";
 import { money } from "../lib/format";
-import { useResource } from "../lib/api";
+import { FEATURE_UIS } from "../lib/feature";
 import { useBoards } from "../lib/boards";
 import { Link, usePath } from "../lib/router";
 import { SCREENS } from "../routes";
@@ -21,7 +21,6 @@ export function Sidebar() {
   const cap = boards.map((b) => b.board?.autopilot?.cap).find(Boolean);
   const on = boards.filter((b) => b.board?.autopilot?.on).map((b) => b.workspace.name);
 
-  const pages = useResource("/api/features/pages");
   const item = (to: string, label: string, icon: React.ReactNode, extra?: React.ReactNode) => (
     <Link to={to} className={path === to ? "on" : ""}>
       {icon}
@@ -73,7 +72,7 @@ export function Sidebar() {
               boards.map(({ workspace: w }, i) => (
                 <Fragment key={w.path}>{item(`/work/${w.name}`, w.name, <span className="pdot" style={{ background: COLORS[i % COLORS.length] }} />)}</Fragment>
               ))}
-            {group === "Team" && (pages.data ?? []).map((p) => <Fragment key={p.name}>{item(`/feature/${p.name}`, p.label, <Icon name="lock" />)}</Fragment>)}
+            {group === "Team" && Object.entries(FEATURE_UIS).map(([name, ui]) => ui.page && <Fragment key={name}>{item(`/feature/${name}`, ui.page.label, <Icon name={ui.page.icon} />)}</Fragment>)}
           </Fragment>
         ))}
       </nav>

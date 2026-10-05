@@ -593,11 +593,15 @@ def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
 def seed_pilot(data_dir: Path, proj: Path) -> None:
     """`codegraph` at `pilot` for `proj`, the pref written straight: `POST /api/features` would
     install its engine (about 290 MB, over the network). The row shows `pilot` only when `npm`
-    is on `PATH`; without it the feature is locked and the row shows `off`."""
+    is on `PATH`; without it the feature is locked and the row shows `off`. The other features'
+    states stay."""
     from coscc.store.db import Data
     from coscc.http.plugin import STATE_PREF
 
-    Data(data_dir).set_pref(STATE_PREF, {"codegraph": {str(proj.resolve()): "pilot"}})
+    data = Data(data_dir)
+    states = data.pref(STATE_PREF, {})
+    mine = {**states.get("codegraph", {}), str(proj.resolve()): "pilot"}
+    data.set_pref(STATE_PREF, {**states, "codegraph": mine})
 
 
 def make_autopilot_fixture(api: httpx.Client, work: Path, data_dir: Path, proj: Path) -> None:

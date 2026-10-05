@@ -6,6 +6,7 @@ import type { Answer, Detail, StageView, UnitRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import type { PlacedUnit } from "../lib/boards";
 import { allUnits, useBoards } from "../lib/boards";
+import { FeatureSlots } from "../lib/feature";
 import { STAGE_LABEL, ago, modelName, money, unitCode, unitTitle } from "../lib/format";
 import { AgentAvatar, Icon, LeifMark } from "../lib/icons";
 import { unitState } from "../lib/model";
@@ -88,8 +89,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
             </div>
           </div>
         )}
-        {/* A feature's word on this unit (the vault: a secret in its work), drawn by its script. */}
-        <div id="slot-unit" key={placed.workspace.path + placed.name} data-cwd={placed.workspace.path} data-unit={placed.name} />
+        <FeatureSlots at="unit" workspace={placed.workspace} unit={placed.name} />
         <div className="tabs" style={{ marginTop: 22 }}>
           <a className="on">Activity</a>
         </div>

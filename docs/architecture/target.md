@@ -235,6 +235,6 @@ units on the board.
 
 ## 10. Not decided here
 
-- Whether a feature's UI may add a whole page, or only slots and a settings form. The default is both, and the vault already has a page.
+- Whether a feature's UI may add a whole page, or only slots and a settings form. The default is both, and the vault has a page.
 - Multi-user access. It is one login, and every action is `owner` (`.claude/docs/not-built.md`).
 - Moving the SQLite schema to another engine. There is no reason to.

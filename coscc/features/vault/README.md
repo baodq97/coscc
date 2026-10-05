@@ -1,14 +1,14 @@
 # Vault: secrets an agent can use and never read
 
-Read this before changing `coscc/features/vault/`: the tools, the guard, the prompt block, the
-routes and the page are all in it. The store, the filter, the scan and the runner are the
+Read this before changing `coscc/features/vault/`: the tools, the guard, the prompt block and the
+routes are all in it. The studio's *Vault* page and the unit line are `ui/index.tsx`. The store, the filter, the scan and the runner are the
 package `coscc/vault/`'s; the file has the tables' statements through `vault.TABLES`.
 
 ## What it does
 
-- A person keeps a secret on `/vault`, in one workspace (`ws:<name>`) or for any workspace it is
-  granted to (`global:<name>`). The value goes in through a native HTML form (a `<textarea>`) and one POST, `/api/vault/secrets`, which answers `303` back to the
-  page. A password box would not do: a browser strips its line breaks, and a key is many lines.
+- A person keeps a secret on the studio's *Vault* page, in one workspace (`ws:<name>`) or for any workspace it is
+  granted to (`global:<name>`). The value goes in through a `<textarea>` and one form POST, `/api/vault/secrets`, which answers
+  the name and never the value. A password box would not do: a browser strips its line breaks, and a key is many lines.
   The route turns the textarea's CRLF back into LF and drops trailing line breaks; a value of
   several lines keeps one. It is written encrypted with `age` and no route gives it back.
 - An agent in `impl` or `spike` runs one command with a secret passed in, through `vault_exec`.
@@ -27,14 +27,9 @@ package `coscc/vault/`'s; the file has the tables' statements through `vault.TAB
 All behind the login; none is in `auth.EXEMPT`. Every one refuses a workspace with the vault off
 (the pref `features.off`), except delete and revoke.
 
-- `GET /vault?cwd=`: the page, framed by the studio's *Vault* sidebar entry (`Feature.page`).
-  With the vault off it still opens, with delete and revoke only. Without `age` it says so and
-  saves no value. Its colours are the studio's tokens copied from the built Radix CSS, and it
-  reads the studio's colour mode from `localStorage.theme`: a theme change in `coscc/ui.py` is
-  made in `page.py`'s `_CSS` too.
 - `GET /api/vault/secrets?cwd=`: metadata of the secrets the workspace sees, and of the global
-  ones it does not. Never a value, a length or a hash.
-- `POST /api/vault/secrets` (form): the only route that takes a value. It makes the secret or
+  ones it does not, and whether `age` is installed. Never a value, a length or a hash.
+- `POST /api/vault/secrets` (form): the only route that takes a value; `{saved, short}` back. It makes the secret or
   replaces its value. Only `ws:` or `global:` secrets a person makes; a `broker` one takes `ssh`
   and nothing else.
 - `POST /api/vault/policy`, `/grant`, `/revoke`, `/delete` (JSON): `{cwd, name, tier}`, and for a

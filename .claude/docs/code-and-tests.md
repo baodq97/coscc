@@ -37,17 +37,23 @@ New work is a folder `coscc/features/<name>/`: `__init__.py` ending in one `FEAT
 `KERNEL_GAPS` in `tests/test_layers.py` lists what the kernel does not give yet and only shrinks.
 Copy `notices`. A need no extension point serves is a kernel change, planned first.
 
-- Extension points: `routes`, `scripts`, `tables`, `agent` giving `Parts` of `Tool`, `Guard`
+- Extension points: `routes`, `tables`, `agent` giving `Parts` of `Tool`, `Guard`
   (`check(Facts)` returns words to deny, or `None`; asked before every step and integration) and `Block` (`render(Facts)` adds prompt
-  text); slots `slot-topbar` and `slot-unit`; `page=Page(label, icon, path)`, a sidebar entry
-  whose screen frames the feature's own `GET path?cwd=<workspace>`; `sessions=(Session(kind,
+  text); `sessions=(Session(kind,
   grant, schema, purpose),)`, a paid session it runs through `ctx.agents.session(cwd, kind, prompt)`.
   The core never writes a feature's name (`CoreNamesNoFeature` in `tests/test_boundaries.py`).
 - `Ctx` is six handles, built for this feature alone: `units` (`key`, `create_unit`, `main_tree`),
   `runs` (`journal`, `interventions`), `agents` (`session`), `store` (the database; only your own
   tables), `bus`, `settings` (`state`, `enabled`, `arm`, `schedule`, `set_schedule`). A test builds
   the `Ctx` it needs with `tests/features/ctx.py` `ctx_for`; a handle it names not raises when touched.
-- Building blocks: `kernel.body/line/ndjson`, `window.coscc.api/stream/every/ago/slot`.
+- Building blocks: `kernel.body/line/ndjson`.
+- UI: an optional `coscc/features/<name>/ui/index.tsx` exporting `ui: FeatureUI`
+  (`ui/src/lib/feature.tsx`): `topbar`, `unit` and `backlog` components the studio draws in its
+  slots while the feature is not off for the workspace, and `page`, a sidebar entry and the
+  screen at `/feature/<name>`. The studio finds it with `import.meta.glob` at build time. Import
+  its parts as `@studio/...` (`lib/api` `api`, `useResource`, `useFollow`; `components/ui`;
+  `lib/format`), never copy them; type the routes the screen reads in Python (a `TypedDict`) and
+  run `uv run python -m coscc.http > ui/src/api.gen.ts`. `npm --prefix ui run check` types it.
 
 ```python
 """Bookmarks: a note per unit."""

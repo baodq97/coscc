@@ -18,7 +18,6 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Literal, TypedDict, cast, get_args
 
 from fastapi import APIRouter, Request
@@ -198,6 +197,17 @@ class Run(TypedDict):
     rejected: list[str]
     stopped: bool
     detail: str
+
+
+class Proposals(TypedDict):
+    on: bool
+    proposals: list[Proposal]
+    runs: list[Run]
+    scanning: bool
+    schedule: int
+    note: str
+    consequence: str
+    warning: str
 
 
 # The workspaces a scan of this process runs in now: a second press is refused at once.
@@ -607,13 +617,22 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
         return await scan(ctx, request.query_params.get("cwd", ""), OWNER)
 
     @router.get("/api/scan/proposals")
-    async def proposals(request: Request) -> dict[str, object]:
-        """`?cwd=`: `{on}` alone while the feature is off; else every proposal, newest first,
-        the last scans, why the schedule is off, and the sentence beside *Scan now*."""
+    async def proposals(request: Request) -> Proposals:
+        """`?cwd=`: `on` false and nothing else while the feature is off; else every proposal,
+        newest first, the last scans, why the schedule is off, and the sentence beside *Scan now*."""
         cwd = request.query_params.get("cwd", "")
         key = ctx.units.key(cwd)
         if not ctx.settings.enabled(cwd):
-            return {"on": False}
+            return {
+                "on": False,
+                "proposals": [],
+                "runs": [],
+                "scanning": False,
+                "schedule": 0,
+                "note": "",
+                "consequence": "",
+                "warning": "",
+            }
         made = await asyncio.to_thread(store.proposals, key)
         runs = await asyncio.to_thread(store.runs, key)
         return {
@@ -644,16 +663,9 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
     return router.routes
 
 
-# The *Proposals* panel at the foot of the Backlog: a table of `<details>` rows, a filter by state,
-# *Scan now* with its cost beside it, and each row's sources, *Accept* and *Dismiss* once opened.
-# Hidden while the feature is off. `#proposal-<id>` opens that row. The colours are the Radix
-# variables `screens/studio.py` uses; a feature may not import `screens`.
-_JS = (Path(__file__).parent / "scan.js").read_text(encoding="utf-8")
-
 FEATURE = Feature(
     NAME,
     routes,
-    scripts=(_JS,),
     tables=TABLES,
     default="off",
     status=status,

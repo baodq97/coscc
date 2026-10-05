@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 import type { EstimateBrief } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
+import { FeatureSlots } from "../lib/feature";
 import { unitCode, unitTitle } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { Link } from "../lib/router";
@@ -129,8 +130,7 @@ function Project({ workspace }: { workspace: Workspace }) {
         {!v.order.length && <div className="card-b faint">Nothing estimated waits outside the shortlist.</div>}
       </div>
 
-      {/* A feature's part of the backlog (scan: its proposals), drawn by its script. */}
-      <div id="slot-backlog" key={cwd} data-cwd={cwd} data-workspace={workspace.name} style={{ marginTop: 20 }} />
+      <FeatureSlots at="backlog" workspace={workspace} />
       {v.unestimated.length > 0 && (
         <>
           <div className="sec-h">

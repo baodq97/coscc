@@ -224,93 +224,6 @@ class Notices:
                 BELL.disarm(ticket)
 
 
-# The colours are Radix names, which the studio aliases to its tokens: INK gray 12, MUTED gray 11,
-# SURFACE gray 2, LINE gray 5. One stream of `/api/notices/follow` per tab, over the page kit
-# (`plugin.KIT_JS`), outside React, so no route change touches the stack appended to
-# `document.body`. The
-# cursor moves only once the notice's node is in the DOM, and never down; a `head` line sets it.
-_NOTICE_JS = """
-(function () {
-  if (window.__coscc_notices) return;
-  window.__coscc_notices = true;
-  window.__coscc_notice_opens = 0;
-  var KEY = "coscc_notice_after", SHOWN = 5, stack = null, more = null;
-  var ago = window.coscc.ago;
-  function cursor() { var v = localStorage.getItem(KEY); return v === null ? null : +v; }
-  function advance(id) {
-    var cur = cursor();
-    if (cur === null || id > cur) localStorage.setItem(KEY, String(id));
-  }
-  function box() {
-    if (!stack) {
-      stack = document.createElement("div");
-      stack.id = "notice-stack";
-      stack.setAttribute("role", "region");
-      stack.setAttribute("aria-label", "Notices");
-      stack.setAttribute("aria-live", "polite");
-      stack.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:9998;display:flex;" +
-        "flex-direction:column;gap:8px;width:min(360px,calc(100vw - 32px));" +
-        "font:14px/1.4 var(--default-font-family,system-ui,sans-serif)";
-      more = document.createElement("div");
-      more.id = "notice-more";
-      more.style.cssText = "color:var(--gray-11);font-size:12px;text-align:right;padding:0 4px";
-      stack.appendChild(more);
-    }
-    if (!stack.isConnected) document.body.appendChild(stack);
-    return stack;
-  }
-  function layout() {
-    var all = stack.querySelectorAll(".notice"), hidden = Math.max(0, all.length - SHOWN);
-    for (var i = 0; i < all.length; i++) all[i].style.display = i < SHOWN ? "flex" : "none";
-    more.textContent = hidden ? hidden + (hidden === 1 ? " more notice" : " more notices") : "";
-    more.style.display = hidden ? "block" : "none";
-  }
-  function refresh() {
-    if (!stack) return;
-    var all = stack.querySelectorAll(".notice-time");
-    for (var i = 0; i < all.length; i++) all[i].textContent = ago(all[i].getAttribute("data-at"));
-  }
-  function show(n) {
-    var s = box();
-    if (s.querySelector('[data-notice-id="' + n.id + '"]')) return;
-    var el = document.createElement("div");
-    el.className = "notice";
-    el.setAttribute("data-notice-id", String(n.id));
-    el.style.cssText = "display:flex;gap:10px;align-items:flex-start;background:var(--gray-2);" +
-      "color:var(--gray-12);border:1px solid var(--gray-5);border-radius:10px;padding:10px 12px;" +
-      "box-shadow:0 4px 16px rgba(0,0,0,.12)";
-    var body = document.createElement("div");
-    body.style.cssText = "flex:1;min-width:0;overflow-wrap:anywhere";
-    var text = document.createElement("div");
-    text.textContent = n.text;
-    var time = document.createElement("div");
-    time.className = "notice-time";
-    time.setAttribute("data-at", n.at || "");
-    time.style.cssText = "color:var(--gray-11);font-size:12px;margin-top:2px";
-    time.textContent = ago(n.at);
-    body.appendChild(text);
-    body.appendChild(time);
-    var x = document.createElement("button");
-    x.type = "button";
-    x.textContent = "\\u00d7";
-    x.setAttribute("aria-label", "Dismiss");
-    x.style.cssText = "background:none;border:0;color:var(--gray-11);font-size:18px;line-height:1;" +
-      "padding:0 2px;cursor:pointer";
-    x.onclick = function () { el.remove(); layout(); };
-    el.appendChild(body);
-    el.appendChild(x);
-    s.insertBefore(el, s.firstChild);
-    layout();
-  }
-  window.coscc.every(60000, refresh);
-  window.coscc.stream("/api/notices/follow", function (m) {
-    if (m.type === "head") localStorage.setItem(KEY, String(m.id));
-    else if (m.type === "notice") { show(m); advance(m.id); }
-  }, {after: function () { window.__coscc_notice_opens += 1; return cursor(); }});
-})();
-"""
-
-
 def routes(ctx: Ctx) -> Sequence[BaseRoute]:
     notices = Notices(ctx)
     router = APIRouter()
@@ -347,6 +260,5 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
 FEATURE = Feature(
     "notices",
     routes=routes,
-    scripts=(_NOTICE_JS,),
     summary="Pops up a notice when a step fails, a unit has questions, the autopilot stops or a PR ships.",
 )

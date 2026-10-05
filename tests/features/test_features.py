@@ -50,21 +50,17 @@ class Setup(unittest.IsolatedAsyncioTestCase):
 
 
 class TakingTheLineOutRemovesTheFeature(Setup):
-    async def test_with_no_features_there_is_no_route_no_script_and_the_rest_answers(self):
+    async def test_with_no_features_there_is_no_route_and_the_rest_answers(self):
         with mock.patch("coscc.features.FEATURES", ()):
             async with self.client() as client:
                 self.assertEqual((await client.get("/api/notices/follow")).status_code, 404)
                 self.assertEqual((await client.get("/api/health")).status_code, 200)
                 board = await client.get("/api/units", params={"cwd": str(self.ws)})
                 self.assertEqual(board.status_code, 200)
-                shell = (await client.get("/api/features/scripts")).text
-        self.assertNotIn("__coscc_notices", shell)
 
-    async def test_with_the_list_as_shipped_both_are_there(self):
+    async def test_with_the_list_as_shipped_the_route_is_there(self):
         async with self.client() as client:
             self.assertEqual((await client.get("/api/notices/follow")).status_code, 200)
-            shell = (await client.get("/api/features/scripts")).text
-        self.assertIn("__coscc_notices", shell)
 
 
 def table_exists(config: Config, name: str) -> bool:
@@ -223,7 +219,6 @@ def fake_feature(
     return Feature(
         name,
         lambda _ctx: [Route(f"/api/{name}/ping", ping)] if route else [],
-        scripts=(f"window.__{name} = 1;",),
         tables=(f"CREATE TABLE IF NOT EXISTS {name}_things (id INTEGER PRIMARY KEY)",),
         agent=lambda _ctx: Parts(
             tools=(Tool(server, ("ping",), stages, _server),),
@@ -259,9 +254,7 @@ class AFeatureHandsTheAgentItsParts(Setup):
             async with self.client() as client:
                 self.assertEqual((await client.get("/api/fake/ping")).status_code, 404)
                 hooks = client._transport.app.state.core.steps.hooks
-                shell = (await client.get("/api/features/scripts")).text
         self.assertEqual(hooks.for_step("impl", str(self.ws)), Parts())
-        self.assertNotIn("__fake", shell)
 
     def test_a_clash_or_a_tool_on_a_prose_stage_is_refused_naming_the_feature(self):
         ctx = {n: ctx_for() for n in ("a", "b", "fake")}

@@ -1,11 +1,11 @@
 # Notices: `GET /api/notices/follow`, and listening from a terminal
 
-Read this before changing `coscc/features/notices/__init__.py`: the route, `_NOTICE_JS` and `FEATURE` are
-all in it.
+Read this before changing `coscc/features/notices/__init__.py`: the route and `FEATURE` are all in it. The studio's
+toasts are `ui/index.tsx`, in the top bar slot.
 
 ## What it sends
 
-One NDJSON stream for every listener — the page's script, a terminal, an agent's session.
+One NDJSON stream for every listener — the studio's toasts, a terminal, an agent's session.
 It ends after `notices.LIFETIME_SECONDS` (30 s, `auth.STREAM_SECONDS`),
 and the listener connects again with `after`: `auth.Guard` asks for a live session once per
 request, so that is how a listener whose session ended is refused.

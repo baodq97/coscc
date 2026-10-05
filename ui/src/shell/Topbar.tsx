@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { FeatureSlots } from "../lib/feature";
 import { LeifAvatar } from "../lib/icons";
 import { Kbd } from "../components/ui";
 import { useShell } from "./Shell";
@@ -22,7 +23,7 @@ export function Topbar({ crumbs }: { crumbs: string[] }) {
         )}
       </div>
       <div className="top-r">
-        <div id="slot-topbar" />
+        <FeatureSlots at="topbar" />
         <button className={`btn ghost sm ${shell.leifOpen ? "on" : ""}`} onClick={shell.toggleLeif} title="Leif panel (L)">
           <LeifAvatar />
           <span>Leif</span>

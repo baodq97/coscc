@@ -2,7 +2,7 @@
 
 Agent side: one in-process MCP server per run (`vault_list`, `vault_exec`, `vault_generate`, none
 taking a value), a guard holding `pr`, `ship` and integration while a value is in the unit's work,
-and a prompt block. Person side: the page (`page.py`), and one POST a value goes in by. The store,
+and a prompt block. Person side: the studio's page (`ui/`), and one POST a value goes in by. The store,
 filter, scan and runner are `coscc/vault/`'s; what this is not is in `coscc/features/vault/README.md`.
 """
 
@@ -15,11 +15,10 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, TypedDict
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs
 
 from claude_agent_sdk import McpServerConfig, SdkMcpTool, create_sdk_mcp_server, tool
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import BaseRoute
 
 from coscc import vault
@@ -32,14 +31,12 @@ from coscc.kernel import (
     Grant,
     Guard,
     Invalid,
-    Page,
     Parts,
     Tool,
     body,
     check_command,
     grant_for,
 )
-from coscc.features.vault import page as page
 
 NAME = "vault"
 HUMAN = "human:owner"
@@ -52,6 +49,8 @@ TIMEOUT_DEFAULT = 120
 TIMEOUT_MAX = 600
 # A value shorter than this is masked but noisy: the page says so once. Chosen, not measured.
 SHORT_BYTES = 8
+# The store's `NAME` without its tier, for the page's name box. `ASCII` in the test that holds it to the store.
+NAME_PATTERN = r"[a-z0-9][a-z0-9._\-]*"
 # The most a form may carry (a value is at most 64 KiB, the rest is names). Chosen, not measured.
 MAX_FORM = 128 * 1024
 
@@ -332,6 +331,12 @@ class Meta(TypedDict):
 
 class Secrets(TypedDict):
     workspace: str
+    # Whether `age` is installed, so a value can be saved.
+    age: bool
+    name_pattern: str
+    # The stages that may use a secret and the ways to pass one, for the page's checkboxes.
+    stages: list[str]
+    modes: list[str]
     secrets: list[Meta]
     globals: list[Meta]
 
@@ -343,6 +348,12 @@ class Leaks(TypedDict):
 
 class Deleted(TypedDict):
     deleted: str
+
+
+class Saved(TypedDict):
+    saved: str
+    # Whether the value is under `SHORT_BYTES`, so masking it may hide other text.
+    short: bool
 
 
 def _meta(s: vault.Secret, key: str) -> Meta:
@@ -373,11 +384,6 @@ def _pasted(text: str) -> bytes:
     value is not part of it. A value of several lines, a key, ends with one."""
     text = text.replace("\r\n", "\n").rstrip("\n")
     return (text + "\n" if "\n" in text else text).encode()
-
-
-def _back(cwd: str, **fields: str) -> Response:
-    query = "".join(f"&{k}={quote(v)}" for k, v in fields.items() if v)
-    return RedirectResponse(f"/vault?cwd={quote(cwd)}{query}", 303)
 
 
 class Door:
@@ -498,18 +504,6 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
     door = Door(ctx, _lazy(ctx, store_of))
     router = APIRouter()
 
-    @router.get("/vault")
-    async def shown_page(request: Request) -> Response:
-        query = dict(request.query_params)
-        cwd = query.get("cwd", "")
-        if not cwd:
-            return HTMLResponse(page.shell('<p class="muted">Open the vault from a workspace.</p>'))
-        key = door.key_of(cwd, must_be_on=False)
-        mine, others = await asyncio.to_thread(door.rows, key)
-        age = door.get().can_encrypt()
-        shown = page.page(cwd, key, ctx.settings.enabled(cwd), mine, others, query, age)
-        return HTMLResponse(shown, headers={"Cache-Control": "no-store"})
-
     @router.get("/api/vault/secrets")
     async def secrets(request: Request) -> Secrets:
         """Metadata only: never a value, a length or a hash."""
@@ -517,6 +511,10 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
         mine, others = await asyncio.to_thread(door.rows, key)
         return {
             "workspace": key,
+            "age": door.get().can_encrypt(),
+            "name_pattern": NAME_PATTERN,
+            "stages": list(vault.VAULT_STAGES),
+            "modes": list(vault.MODES),
             "secrets": [_meta(s, key) for s in mine],
             "globals": [_meta(s, key) for s in others],
         }
@@ -529,9 +527,9 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
         return {"unit": unit, "names": await asyncio.to_thread(door.leaks, key, unit)}
 
     @router.post("/api/vault/secrets")
-    async def put(request: Request) -> Response:
-        """The one door a value goes in by: a form post, answered with a redirect that carries
-        the name and never the value. It makes the secret or replaces its value."""
+    async def put(request: Request) -> Saved:
+        """The one door a value goes in by: a form post, answered with the name and never the
+        value. It makes the secret or replaces its value."""
         raw = await request.body()
         if len(raw) > MAX_FORM:
             raise Invalid("that is too big for a secret")
@@ -544,8 +542,8 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
         try:
             name = await asyncio.to_thread(door.save, key, form, value)
         except vault.BadSecret as e:
-            return _back(cwd, error=str(e))
-        return _back(cwd, saved=name, short="1" if len(value) < SHORT_BYTES else "")
+            raise Invalid(str(e)) from e
+        return {"saved": name, "short": len(value) < SHORT_BYTES}
 
     async def act[T](
         request: Request, do: Callable[[str, Mapping[str, object]], T], on: bool = True
@@ -574,34 +572,10 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
     return router.routes
 
 
-# On an open unit, a line naming what the guard found in its work. The address's `ws` is a folder name; `/api/workspaces` says where it is.
-_JS = """
-(function () {
-  if (window.__coscc_vault) return;
-  window.__coscc_vault = true;
-  window.coscc.slot("slot-unit", function (el) {
-    var cwd = el.dataset.cwd, unit = el.dataset.unit;
-    if (!cwd || !unit) return;
-    var url = "/api/vault/leaks?cwd=" + encodeURIComponent(cwd) + "&unit=" + encodeURIComponent(unit);
-    window.coscc.api(url).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
-      el.textContent = "";
-      if (!j || !j.names || !j.names.length) return;
-      var p = document.createElement("p");
-      p.setAttribute("role", "status");
-      p.style.cssText = "color:var(--red-11);margin:8px 0 0";
-      p.textContent = "It cannot go out: " + j.names.join(", ") + " appears in its work.";
-      el.appendChild(p);
-    }).catch(function () {});
-  });
-})();
-"""
-
 FEATURE = Feature(
     "vault",
     routes=routes,
-    scripts=(_JS,),
     tables=vault.TABLES,
     agent=agent,
-    page=Page("Vault", "key-round", "/vault"),
     summary="Keeps secrets an agent can use in a command but never read.",
 )
