@@ -54,7 +54,7 @@ class TakingTheLineOutRemovesTheFeature(Setup):
             async with self.client() as client:
                 self.assertEqual((await client.get("/api/notices/follow")).status_code, 404)
                 self.assertEqual((await client.get("/api/health")).status_code, 200)
-                board = await client.get("/api/board", params={"cwd": str(self.ws)})
+                board = await client.get("/api/units", params={"cwd": str(self.ws)})
                 self.assertEqual(board.status_code, 200)
                 shell = (await client.get("/api/features/scripts")).text
         self.assertNotIn("__coscc_notices", shell)

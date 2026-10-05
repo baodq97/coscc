@@ -718,10 +718,10 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.rows(), self.intent.read_bytes()), ([], before))
 
     async def test_the_board_then_counts_one_fewer_open(self):
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
+        board = await self.app.state.service.board(self.cwd, "new")
         self.assertEqual(board["units"][0]["open"], 3)
         await self.post()
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
+        board = await self.app.state.service.board(self.cwd, "new")
         self.assertEqual(board["units"][0]["open"], 2)
 
     async def test_a_second_answer_is_a_second_row(self):
@@ -730,18 +730,6 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.post(question=1, answer="Có.")
         self.assertEqual(self.intent.read_bytes(), before)
         self.assertEqual([r[1] for r in self.rows()], ["2", "1"])
-
-    async def test_the_answer_is_recorded_as_a_person_in_the_history(self):
-        from coscc.units.history import History
-
-        await self.post()
-        rows = History(str(Path(self.cwd).parent), self.data_dir).outputs(
-            str(Path(self.cwd).resolve()), self.unit
-        )
-        mine = [r for r in rows if r["source"] == "answer"]
-        self.assertEqual(len(mine), 1)
-        self.assertEqual(mine[0]["actor"], "human:Phong")
-        self.assertEqual(mine[0]["path"], "intent.md")
 
     async def refused(self, **over):
         before = self.intent.read_bytes()
@@ -882,7 +870,7 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
         after = self.intent.read_bytes()
         self.assertTrue(after.startswith(before))
         self.assertIn("### Outcome", after[len(before) :].decode("utf-8"))
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
+        board = await self.app.state.service.board(self.cwd, "new")
         self.assertEqual(board["units"][0]["outcome"]["result"], "missed")
 
     async def test_a_refusal_is_a_400_and_writes_nothing(self):
@@ -1030,7 +1018,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 400)
         self.assertIn("has not used all its review rounds", got.json()["error"])
         self.assertEqual((self.first / "review.md").read_bytes(), before)
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
+        board = await self.app.state.service.board(self.cwd, "new")
         [row] = [u for u in board["units"] if u["name"] == self.first.name]
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (False, 1))
         # A fourth round asking for changes, written above `## Answers` as the runner writes
@@ -1040,7 +1028,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         (self.first / "review.md").write_text(
             f"{head}{round4}\n## Answers\n{answers}", encoding="utf-8"
         )
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
+        board = await self.app.state.service.board(self.cwd, "new")
         [row] = [u for u in board["units"] if u["name"] == self.first.name]
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (True, 1))
         self.assertEqual((await self.allow()).status_code, 200)
@@ -1104,7 +1092,7 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
 
     async def test_the_board_then_waits_on_the_other_one_only(self):
         await self.finding()
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
+        board = await self.app.state.service.board(self.cwd, "new")
         [u] = board["units"]
         self.assertEqual(u["waiting"], ["F3"])
         self.assertEqual([p["answered"] for p in u["person_findings"]], [True, False])
@@ -1264,7 +1252,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(made.status_code, 200, made.text)
         name = made.json()["unit"]
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
+        board = await self.app.state.service.board(self.cwd, "new")
         self.assertEqual([u["name"] for u in board["units"]], [name])
 
     async def test_the_brief_is_stored_as_the_idea_the_intent_step_will_read(self):
@@ -1309,9 +1297,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(cut.json()["sha"]), 7)
         # The workspace stays on `main`; the branch is on the unit's worktree, and the board says
         # so.
-        seen = await self.app.state.service.backlog.branch_here(self.cwd)
-        self.assertEqual(seen["branch"], "main")
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
+        board = await self.app.state.service.board(self.cwd, "new")
         tree = next(u["worktree"] for u in board["units"] if u["name"] == made["unit"])
         self.assertEqual(tree["branch"], "feat/a-problem")
         self.assertEqual(tree["path"], cut.json()["worktree"])
@@ -1319,7 +1305,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_something_that_is_not_json_is_refused_before_anything_is_made(self):
         got = await self.client.post("/api/units", content=b"not json")
         self.assertEqual(got.status_code, 400)
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
+        board = await self.app.state.service.board(self.cwd, "new")
         self.assertEqual(board["count"], 0)
 
 
@@ -1352,17 +1338,11 @@ class TheNextStageOverHttp(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(got.status_code, 400)
 
 
-class WhatIsRunningOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`GET /api/board/running`: two keys, and nothing a stop button would need."""
+class WhatIsRunning(unittest.IsolatedAsyncioTestCase):
+    """`Board.running`: two keys, and nothing a stop button would need."""
 
     asyncSetUp = AnsweringAQuestionOverHttp.asyncSetUp
     asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
-
-    async def test_missing_or_foreign_cwd_is_a_400(self):
-        for params in ({}, {"cwd": ""}, {"cwd": "/etc"}):
-            with self.subTest(params=params):
-                got = await self.client.get("/api/board/running", params=params)
-                self.assertEqual(got.status_code, 400)
 
     async def test_both_keys_and_no_session_id_prompt_or_path(self):
         service = self.app.state.service
@@ -1376,9 +1356,7 @@ class WhatIsRunningOverHttp(unittest.IsolatedAsyncioTestCase):
             session_id="sess-secret",
             prompt_chars=10,
         )
-        got = await self.client.get("/api/board/running", params={"cwd": self.cwd})
-        self.assertEqual(got.status_code, 200, got.text)
-        body = got.json()
+        body = json.loads(json.dumps(service.boards.running(self.cwd)))
         self.assertEqual(set(body), {"running", "unknown_end"})
         self.assertEqual(body["running"][self.unit][0]["agent"], {"glyph": "ᚢ", "name": "Uruz"})
         self.assertEqual(list(body["unknown_end"]), ["0099_other"])
@@ -1405,7 +1383,7 @@ class WhatIsRunningOverHttp(unittest.IsolatedAsyncioTestCase):
             "cwd",
         ):
             self.assertNotIn(banned, keys)
-        self.assertNotIn("sess-secret", got.text)
+        self.assertNotIn("sess-secret", json.dumps(body))
 
 
 class IntegratingOverHttp(PostingAReviewRoundOverHttp):
@@ -1611,7 +1589,7 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
             ).status_code,
             400,
         )
-        board = (await self.client.get("/api/board", params={"cwd": self.cwd, "fresh": 1})).json()
+        board = await self.app.state.service.board(self.cwd, "new")
         self.assertEqual([e["unit"] for e in board["backlog"]["shortlist"]], [self.a])
         self.assertTrue(board["backlog"]["propose_warning"])
         up = (await self.client.get("/api/backlog", params={"cwd": self.cwd})).json()
@@ -1849,9 +1827,7 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         return await self.client.post(route, json=body)
 
     async def board(self, ws: str) -> dict:
-        r = await self.client.get("/api/board", params={"cwd": self.cwd[ws], "fresh": 1})
-        self.assertEqual(r.status_code, 200, r.text)
-        return r.json()
+        return await self.app.state.service.board(self.cwd[ws], "new")
 
     async def test_post_api_ideas_makes_and_an_empty_brief_is_400(self):
         r = await self.post(

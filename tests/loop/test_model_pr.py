@@ -1,7 +1,6 @@
 """The loop's reading of `pr.md` and `review.md`, and the ship gate over them, held to fixed values.
 
-Ported from the `test(` calls of the loop's former JavaScript suite (`tests/loop/ported.txt` maps
-each one here), and a sequel of `tests/loop/test_model.py`, whose helpers it reuses: the title and
+A sequel of `tests/loop/test_model.py`, whose helpers it reuses: the title and
 body of a pull request, the scope it states, the screens a unit changes, a review that ran out of
 turns and a round that drops a finding an earlier one raised.
 """
@@ -26,9 +25,11 @@ from coscc.loop.model import (
 )
 from coscc.loop.probe import UI_STANDARD, glob_match, make_probe, parse_standard, ui_files
 from coscc.loop.repo_rules import screens_problems
-from coscc.loop.rules import check_gate, next_action, next_step
 from tests.loop.conftest import REPO, env, python
 from tests.loop.test_model import (
+    check_gate,
+    next_action,
+    next_step,
     CHAIN,
     FIX,
     SHA,

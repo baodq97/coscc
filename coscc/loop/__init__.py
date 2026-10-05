@@ -15,9 +15,10 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from coscc.units.guards import REASONS
+from coscc.units import UNIT_RE, states
+from coscc.units.guards import DECIDERS, REASONS
 
-__all__ = ["REASONS"]
+__all__ = ["DECIDERS", "REASONS", "UNIT_RE"]
 
 
 @cache
@@ -38,30 +39,36 @@ def checkout() -> Path:
     return Path(top) if r.returncode == 0 and top else Path.cwd()
 
 
-UNIT_RE = re.compile(r"^(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)$", re.ASCII)
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", re.ASCII)
 
-# The loop's `STAGES`, in order and with the same keys, so `status --json` prints them alike.
+# `status --json` prints these. Names, files, statuses and `optional` are `states.json`'s; what is
+# here is only what the loop adds to a stage: the hint it prints, the lanes it runs on, `when`.
+_ADDED: dict[str, dict[str, Any]] = {
+    "idea": {"hint": "write-idea"},
+    "intent": {"hint": "write-intent — the unit has no intent.md"},
+    "spec": {"lanes": ["full"], "hint": "write-spec — it assesses whether to skip first"},
+    "spike": {
+        "lanes": ["full"],
+        "when": "unmeasured",
+        "hint": "write-spike — spec.md has [unmeasured] items",
+    },
+    "plan": {"lanes": ["full"], "hint": "write-plan"},
+    "impl": {"hint": "write-impl — implementation starts"},
+    "pr": {"hint": "pr"},
+    "review": {"hint": "write-review"},
+    "ship": {"hint": "ship"},
+}
 STAGES: list[dict[str, Any]] = [
-    {"name": "idea", "file": "idea.md", "optional": True, "hint": "write-idea",
-     "statuses": ["draft", "accepted", "rejected"]},
-    {"name": "intent", "file": "intent.md", "hint": "write-intent — the unit has no intent.md",
-     "statuses": ["draft", "accepted", "rejected"]},
-    {"name": "spec", "file": "spec.md", "lanes": ["full"],
-     "hint": "write-spec — it assesses whether to skip first",
-     "statuses": ["draft", "accepted", "rejected", "skipped"]},
-    {"name": "spike", "file": "spike.md", "lanes": ["full"], "when": "unmeasured",
-     "hint": "write-spike — spec.md has [unmeasured] items",
-     "statuses": ["draft", "accepted", "rejected"]},
-    {"name": "plan", "file": "plan.md", "lanes": ["full"], "hint": "write-plan",
-     "statuses": ["draft", "accepted", "rejected", "done"]},
-    {"name": "impl", "file": "impl.md", "hint": "write-impl — implementation starts",
-     "statuses": ["draft", "accepted", "rejected", "done"]},
-    {"name": "pr", "file": "pr.md", "hint": "pr", "statuses": ["draft", "accepted", "rejected"]},
-    {"name": "review", "file": "review.md", "hint": "write-review",
-     "statuses": ["draft", "changes-requested", "accepted", "rejected"]},
-    {"name": "ship", "file": "ship.md", "hint": "ship", "statuses": ["draft", "accepted", "rejected"]},
-]  # fmt: skip
+    {
+        "name": s.name,
+        "file": s.artifact,
+        **({"optional": True} if s.optional else {}),
+        **{k: v for k, v in _ADDED[s.name].items() if k != "hint"},
+        "hint": _ADDED[s.name]["hint"],
+        "statuses": list(s.statuses),
+    }
+    for s in states.default().stages
+]
 
 STAGE_ALIAS = {"implement": "impl"}
 STAGE_NAMES = [s["name"] for s in STAGES]
@@ -82,7 +89,6 @@ RERUN_STAGES = ["intent", "spec", "spike", "plan", "impl"]
 SPIKE_ROUNDS = 2
 REVIEW_ROUNDS = 3
 BRANCH_TYPES = ["feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci", "revert"]
-DECIDERS = ["person"]
 SLUG_MAX = 60
 IDEAS = "ideas"
 LOCAL_ONLY = {"check-branch", "check-tag", "check-version"}

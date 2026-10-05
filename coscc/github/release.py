@@ -42,7 +42,7 @@ LOCK_TIMEOUT = 300.0
 # Seconds. The loop child reads a few files and prints one line. Chosen, not measured.
 COS_TIMEOUT = 30.0
 
-# The page shows `CONSEQUENCE["release"]` beside the button; this whole string is in `/api/board`.
+# The page shows `CONSEQUENCE["release"]` beside the button; this whole string is on the board.
 WARNING = (
     "Whoever holds the password or a live session can open a pull request, merge it into main "
     "and push a tag — publishing a release — under this machine's gh login. The default bind "

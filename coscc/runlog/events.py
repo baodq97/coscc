@@ -21,7 +21,6 @@ import json
 import logging
 import time
 from collections.abc import Mapping
-from datetime import datetime, timezone
 from typing import Any
 
 from claude_agent_sdk import (
@@ -63,10 +62,6 @@ SUB_LIMIT = 5_000
 # `PAGE_DEFAULT` is an example, not a threshold.
 PAGE_DEFAULT = 200
 PAGE_MAX = 500
-
-# What a collapsed field shows: this many lines, and no more than this many characters. Chosen.
-COLLAPSE_LINES = 20
-COLLAPSE_CHARS = 2_000
 
 # Keep 30 days and no more than 200 MB in total. MB is 10**6 bytes of stored event JSON, not
 # the size of the file, which never shrinks without a `VACUUM`.
@@ -402,107 +397,6 @@ class Recorder:
             await asyncio.wait_for(self._flush(CLOSE_WAIT), CLOSE_WAIT * 2)
         except BaseException:  # noqa: BLE001, S110 - best effort, on the way out
             pass
-
-
-def _clip(text: str) -> tuple[str, bool]:
-    lines = text.split("\n")
-    short = "\n".join(lines[:COLLAPSE_LINES])
-    if len(short) > COLLAPSE_CHARS:
-        short = short[:COLLAPSE_CHARS]
-    return short, short != text
-
-
-def _body(event: dict[str, Any]) -> str:
-    kind = event.get("kind")
-    if kind == "text":
-        value = event.get("text")
-    elif kind == "thinking":
-        value = event.get("thinking")
-    elif kind in ("tool_use", "denied"):
-        value = event.get("input")
-    elif kind == "tool_result":
-        value = event.get("content")
-    elif kind == "system":
-        value = event.get("data")
-    elif kind == "end":
-        value = event.get("detail")
-    elif kind == "config":
-        value = {name: v for name, v in event.items() if name not in COMMON}
-    else:
-        value = ""
-    if value is None:
-        return ""
-    return value if isinstance(value, str) else _json(value)
-
-
-def _label(event: dict[str, Any]) -> str:
-    kind = event.get("kind")
-    if kind == "text":
-        return "text" + (" (user)" if event.get("role") == "user" else "")
-    if kind == "turn":
-        return f"turn {event.get('n')}"
-    if kind == "tool_use":
-        return f"{event.get('name')}"
-    if kind == "tool_result":
-        return f"result of {str(event.get('tool_use_id') or '')[-8:]}" + (
-            " (error)" if event.get("is_error") else ""
-        )
-    if kind == "denied":
-        return f"{event.get('tool')} refused: {event.get('reason')}"
-    if kind == "result":
-        cost = event.get("cost_usd")
-        tokens = sum(int(event.get(name) or 0) for name in TOKEN_FIELDS)
-        return (
-            f"{event.get('num_turns')} turns · "
-            + (f"${float(cost):.4f}" if cost is not None else "cost unknown")
-            + f" · {tokens} tokens · {event.get('terminal_reason') or ''}"
-        ).rstrip(" ·")
-    if kind == "system":
-        return " ".join(str(p) for p in (event.get("class"), event.get("subtype")) if p)
-    if kind == "end":
-        return f"ended: {event.get('outcome')}"
-    return str(kind or "")
-
-
-def when(at_ms: Any) -> str:
-    """`at` as the page prints it: UTC, to the millisecond."""
-    try:
-        moment = datetime.fromtimestamp(int(at_ms) / 1000, tz=timezone.utc)
-    except TypeError, ValueError, OverflowError, OSError:
-        return ""
-    return moment.strftime("%H:%M:%S.") + f"{moment.microsecond // 1000:03d}"
-
-
-def collapse(event: dict[str, Any]) -> dict[str, Any]:
-    """An event as the page holds it: a label, a body at most `COLLAPSE_LINES` lines or
-    `COLLAPSE_CHARS` characters, and whether that is all of it. The page never holds more.
-    """
-    body, collapsed = _clip(_body(event))
-    persisted = ""
-    if event.get("persisted_path"):
-        size = event.get("persisted_size")
-        persisted = (
-            f"full output ({size if size is not None else '?'} characters) is at "
-            f"{event['persisted_path']} on the machine running the app; the board does not read it"
-        )
-    return {
-        "seq": int(event.get("seq") or 0),
-        "at": int(event.get("at") or 0),
-        "when": when(event.get("at")),
-        "kind": str(event.get("kind") or ""),
-        "label": _label(event),
-        "body": body,
-        "collapsed": collapsed,
-        "truncated": bool(event.get("truncated")),
-        # Not `length`: on the page that name is a list's own method.
-        "original_length": int(event.get("length") or 0),
-        "persisted": persisted,
-    }
-
-
-def full_text(event: dict[str, Any]) -> str:
-    """*Expand*: the body as stored, whole (the field cut is all that was ever kept)."""
-    return _body(event)
 
 
 async def purge(

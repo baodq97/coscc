@@ -20,11 +20,6 @@ from coscc.units import worktrees
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 
-DROP_WARNING = (
-    "Dropping closes this unit's open pull request with this machine's gh login and "
-    "removes its worktree; the remote branch is kept."
-)
-
 
 def _line_problem(what: str, value: str) -> str:
     """One line, not empty, not read as a heading."""

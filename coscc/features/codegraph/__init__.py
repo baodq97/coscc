@@ -765,13 +765,6 @@ def measured(ctx: Ctx, key: str, window: tuple[str | None, str | None]) -> Repor
 def routes(ctx: Ctx) -> list[BaseRoute]:
     router = APIRouter()
 
-    @router.get("/api/codegraph/status")
-    async def get_status(request: Request) -> dict[str, str]:
-        """The index of one workspace: `{state, sha, at, reason}`, `state` "" before the first."""
-        key = ctx.workspace_key(request.query_params.get("cwd", ""))
-        s = await asyncio.to_thread(_indexes(ctx).status, key)
-        return {"state": s.state, "sha": s.sha, "at": s.at, "reason": s.reason}
-
     @router.get("/api/codegraph/report")
     async def get_report(request: Request) -> Report:
         """The A/B report over the runs recorded in `[since, until)`; either may be left out."""

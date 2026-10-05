@@ -108,9 +108,6 @@ def parse(argv: list[str], err) -> Args | int:
     i = 0
     while i < len(after_root):
         flag = after_root[i]
-        if flag == "--peer":
-            err("--peer is gone since 0135: --state carries every workspace a link may name")
-            return 2
         if flag not in ("--reserve-from", "--repo", "--state"):
             words.append(flag)
             i += 1

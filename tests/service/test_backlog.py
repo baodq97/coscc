@@ -19,169 +19,8 @@ from coscc.config import Config
 from coscc.kernel import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
-from tests.service.test_service import REPO, _service, create_sync
+from tests.service.test_service import create_sync
 from tests.units.test_submit import submits as _submits
-
-
-class TheUnitHistoryReadPath(unittest.TestCase):
-    """The log read through the one place logic lives.
-
-    Written against a temporary working folder and data root rather than this repository's
-    real `~/.cos` — `coscc/store/journal.py:108-109` names that hazard and the two new tables
-    inherit it unchanged."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
-        self.work = self.root / "work"
-        self.work.mkdir()
-        self.service = _service(working_dir=str(self.work), data_dir=str(self.root / "data"))
-
-    def _log(self):
-        from coscc.units.history import History
-
-        return History(self.work, self.root / "data")
-
-    def test_a_unit_with_no_history_answers_with_empty_rather_than_refusing(self):
-        found = self.service.backlog.unit_history(REPO, "0001_a-problem")
-        self.assertTrue(found["recording"])
-        self.assertEqual(found["transitions"], [])
-        self.assertEqual(found["settled_edits"], 0)
-
-    def test_the_state_it_returns_is_a_projection_of_the_rows_it_returns(self):
-        log = self._log()
-        log.record(REPO, "0001_a-problem", "intent.md", "draft")
-        log.record(REPO, "0001_a-problem", "intent.md", "accepted")
-        found = self.service.backlog.unit_history(REPO, "0001_a-problem")
-        # Not two sources: the last transition's destination *is* the state.
-        self.assertEqual(found["state"]["intent.md"], found["transitions"][-1]["to_state"])
-        self.assertEqual(found["state"]["intent.md"], "accepted")
-
-    def test_the_timeline_carries_each_transition_with_its_guards_label(self):
-        log = self._log()
-        log.record(REPO, "0001_a-problem", "intent.md", "draft")
-        log.record(
-            REPO,
-            "0001_a-problem",
-            "ship.md",
-            "accepted",
-            guard="merge-read",
-            authority="code",
-            run="r-1",
-            inputs={"merge_commit": "f" * 40, "number": 7},
-        )
-        old, merged = self.service.backlog.timeline(REPO, "0001_a-problem")["transitions"]
-        self.assertEqual((old["guard"], old["guard_label"], old["head"]), ("unknown", "", ""))
-        self.assertEqual(
-            (
-                merged["guard_label"],
-                merged["authority"],
-                merged["run"],
-                merged["head"],
-                merged["inputs"]["number"],
-            ),
-            (
-                "A merge is recorded only from a read that names its merge commit.",
-                "code",
-                "r-1",
-                "f" * 40,
-                7,
-            ),
-        )
-
-    def test_it_counts_the_edits_after_settling_that_exists_to_count(self):
-        log = self._log()
-        log.record(REPO, "0001_a-problem", "intent.md", "draft")
-        log.record(REPO, "0001_a-problem", "intent.md", "accepted")
-        log.record(REPO, "0001_a-problem", "intent.md", "accepted", source="commit:abc")
-        self.assertEqual(
-            self.service.backlog.unit_history(REPO, "0001_a-problem")["settled_edits"], 1
-        )
-
-    def test_a_unit_retired_from_the_working_tree_still_has_a_history(self):
-        log = self._log()
-        log.record(REPO, "0099_retired", "intent.md", "accepted")
-        self.assertEqual(self.service.backlog.units_with_history(REPO)["units"], ["0099_retired"])
-
-    def test_cost_and_unit_cost_read_the_run_log(self):
-        j = self.service.ws.journal()
-        key = self.service.ws.key(REPO)
-        j.finished(key, "0001_a-problem", "spec", "done", cost_usd=2.0)
-        j.finished(key, "0001_a-problem", "spec", "failed")
-        j.finished(key, "0002_other", "plan", "done", cost_usd=20.0)
-        found = self.service.activity.cost(REPO, {"0001_a-problem": ["changes-requested"]})
-        self.assertTrue(found["recording"])
-        self.assertEqual(
-            [(r["key"], r["usd"], r["over"]) for r in found["by_unit"]],
-            [("0002_other", 20.0, True), ("0001_a-problem", 2.0, False)],
-        )
-        self.assertEqual(found["waste"][-1]["count"], 1)
-        mine = self.service.activity.unit_cost(REPO, "0001_a-problem")
-        self.assertEqual(
-            [(r["key"], r["steps"], r["unknown"]) for r in mine["by_stage"]], [("spec", 2, 1)]
-        )
-        self.assertEqual([a["kind"] for a in mine["anomalies"]], ["failed"])
-
-    def test_cost_with_no_working_folder_says_it_is_not_recording(self):
-        service = _service()
-        self.assertFalse(service.activity.cost(REPO)["recording"])
-        self.assertEqual(
-            service.activity.unit_cost(REPO, "0001_a-problem"),
-            {"by_stage": [], "anomalies": [], "recording": False},
-        )
-
-    def test_the_gate_applies_to_both_reads(self):
-        for call in (
-            lambda: self.service.backlog.unit_history("/etc", "0001_a-problem"),
-            lambda: self.service.backlog.units_with_history("/etc"),
-        ):
-            with self.assertRaises(Invalid):
-                call()
-
-    def test_with_no_working_folder_it_says_it_is_not_recording(self):
-        service = _service()
-        found = service.backlog.unit_history(REPO, "0001_a-problem")
-        self.assertFalse(found["recording"])
-        self.assertEqual(found["transitions"], [])
-        self.assertFalse(service.backlog.units_with_history(REPO)["recording"])
-
-    def test_a_unit_holding_rows_from_two_state_sets_says_so(self):
-        """Said out loud rather than refused, because refusing a read would hide the only evidence
-        that the two sets were ever mixed."""
-        import json
-
-        from coscc.units import states
-        from coscc.units.history import History
-
-        other = self.root / "other.json"
-        other.write_text(
-            json.dumps(
-                {
-                    "name": "two-step",
-                    "absent": "nowhere",
-                    "settled": ["closed"],
-                    "stages": [
-                        {"name": "ticket", "artifact": "ticket.txt", "statuses": ["open", "closed"]}
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
-        self._log().record(REPO, "0001_a-problem", "intent.md", "draft")
-        History(self.work, self.root / "data", machine=states.load(other)).record(
-            REPO, "0001_a-problem", "ticket.txt", "open"
-        )
-
-        found = self.service.backlog.unit_history(REPO, "0001_a-problem")
-        self.assertEqual(found["written_under"], ["coscc-default", "two-step"])
-        self.assertIn("two-step", found["mixed_state_sets"])
-
-    def test_one_state_set_reports_no_mixture(self):
-        self._log().record(REPO, "0001_a-problem", "intent.md", "draft")
-        found = self.service.backlog.unit_history(REPO, "0001_a-problem")
-        self.assertEqual(found["written_under"], ["coscc-default"])
-        self.assertIsNone(found["mixed_state_sets"])
 
 
 class StartingAUnitAndItsBranch(unittest.TestCase):
@@ -272,9 +111,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         got = asyncio.run(self.service.backlog.start_branch(str(self.repo), made["unit"]))
         self.assertEqual(got["branch"], "fix/a-problem")
         # Cut in the unit's worktree; the workspace stays on `main`.
-        self.assertEqual(
-            asyncio.run(self.service.backlog.branch_here(str(self.repo)))["branch"], "main"
-        )
+        self.assertEqual(asyncio.run(gitops.current_branch(self.repo)), "main")
         tree = Path(got["worktree"])
         self.assertEqual(asyncio.run(gitops.current_branch(tree)), "fix/a-problem")
         self.assertTrue(got["prepare"]["ok"])
@@ -383,9 +220,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self.assertIn("no branch was cut", said)
         self.assertEqual(self._git("rev-parse", "HEAD").strip(), before)
         self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
-        self.assertEqual(
-            asyncio.run(self.service.backlog.branch_here(str(self.repo)))["branch"], "main"
-        )
+        self.assertEqual(asyncio.run(gitops.current_branch(self.repo)), "main")
 
     def test_a_repository_with_no_origin_is_refused_the_same_way(self):
         unit = self._typed_unit()

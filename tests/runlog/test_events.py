@@ -5,9 +5,7 @@ here as a kind that fell into `system` (`plan.md` Risk 7)."""
 
 from __future__ import annotations
 
-import re
 
-import json
 import tempfile
 import unittest
 from unittest import mock
@@ -312,101 +310,6 @@ class TheDisk(unittest.IsolatedAsyncioTestCase):
         rec.turns = mock.Mock()  # a stand-in's count: never written into an `end`
         with mock.patch.object(self.data, "step_turns", side_effect=Busy("held")):
             self.assertEqual(await rec.stored_turns(), (None, "memory"))
-
-
-class Collapsing(unittest.TestCase):
-    def test_long_bodies_are_collapsed_and_short_ones_are_not(self):
-        long = "\n".join(f"line {i}" for i in range(50))
-        view = events.collapse({"seq": 1, "at": 0, "kind": "text", "text": long})
-        self.assertTrue(view["collapsed"])
-        self.assertEqual(view["body"].count("\n"), events.COLLAPSE_LINES - 1)
-        wide = events.collapse({"seq": 1, "at": 0, "kind": "thinking", "thinking": "w" * 5000})
-        self.assertEqual(len(wide["body"]), events.COLLAPSE_CHARS)
-        short = events.collapse({"seq": 1, "at": 0, "kind": "text", "text": "hi"})
-        self.assertFalse(short["collapsed"])
-
-    def test_the_labels_carry_what_names(self):
-        self.assertEqual(events.collapse({"kind": "turn", "n": 4})["label"], "turn 4")
-        denied = events.collapse(
-            {"kind": "denied", "tool": "Bash", "reason": "not granted", "input": {}}
-        )
-        self.assertIn("not granted", denied["label"])
-        paid = events.collapse(
-            {
-                "kind": "result",
-                "num_turns": 3,
-                "cost_usd": 0.5,
-                "input_tokens": 7,
-                "terminal_reason": "completed",
-            }
-        )
-        self.assertIn("3 turns", paid["label"])
-        self.assertIn("$0.5000", paid["label"])
-        self.assertIn("7 tokens", paid["label"])
-
-    def test_a_config_event_shows_its_fields_as_its_body(self):
-        view = events.collapse(
-            {
-                "run": "r1",
-                "seq": 1,
-                "at": 0,
-                "kind": "config",
-                "model": "m",
-                "max_turns": 30,
-                "max_turns_source": "override",
-            }
-        )
-        self.assertEqual(view["label"], "config")
-        self.assertEqual(
-            json.loads(view["body"]),
-            {"model": "m", "max_turns": 30, "max_turns_source": "override"},
-        )
-
-    def test_a_persisted_output_is_named_and_not_read(self):
-        view = events.collapse(
-            {
-                "kind": "tool_result",
-                "content": "preview",
-                "persisted_path": "/p/x",
-                "persisted_size": 12,
-            }
-        )
-        self.assertEqual(
-            view["persisted"],
-            "full output (12 characters) is at /p/x on the machine running the app; "
-            "the board does not read it",
-        )
-
-    def test_every_label_is_english(self):
-        """The labels the pane shows are the app's own text (S6)."""
-        VIETNAMESE = re.compile(
-            r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]", re.I
-        )
-
-        kinds = [
-            {"kind": "text", "text": "x"},
-            {"kind": "text", "role": "user", "text": "x"},
-            {"kind": "turn", "n": 2},
-            {"kind": "tool_use", "name": "Read"},
-            {
-                "kind": "tool_result",
-                "tool_use_id": "toolu_12345678",
-                "is_error": True,
-                "content": "x",
-                "persisted_path": "/p/x",
-                "persisted_size": 3,
-            },
-            {"kind": "denied", "tool": "Bash", "reason": "not granted"},
-            {"kind": "result", "num_turns": 1, "input_tokens": 2},
-            {"kind": "system", "class": "SystemMessage", "subtype": "init"},
-            {"kind": "end", "outcome": "done"},
-        ]
-        for event in kinds:
-            view = events.collapse(event)
-            self.assertIsNone(VIETNAMESE.search(view["label"]), view["label"])
-            self.assertIsNone(VIETNAMESE.search(view["persisted"]), view["persisted"])
-        self.assertIn("cost unknown", events.collapse(kinds[6])["label"])
-        self.assertTrue(events.collapse(kinds[4])["persisted"])
 
 
 class Purging(unittest.IsolatedAsyncioTestCase):

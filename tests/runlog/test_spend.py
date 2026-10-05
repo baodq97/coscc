@@ -381,8 +381,8 @@ class MatchesTheRunsTable(unittest.TestCase):
 
     def test_every_unit_stage_and_day_matches_the_reference_queries(self):
         self._write()
-        served = self.service.activity.cost(REPO)
-        self.assertTrue(served["recording"])
+        rows = self.service.ws.journal().records(self.service.ws.key(REPO))
+        served = spend.model(rows)
         conn = sqlite3.connect(self.db)
         self.addCleanup(conn.close)
         [(root, ws)] = conn.execute("SELECT DISTINCT root, workspace FROM runs").fetchall()
@@ -406,7 +406,7 @@ class MatchesTheRunsTable(unittest.TestCase):
         for row in served["by_day"]:
             self._same(row["usd"], self._sql(conn, BY_DAY, day=row["key"], **scope), row["key"])
         for unit in units:
-            found = self.service.activity.unit_cost(REPO, unit)["by_stage"]
+            found = served["unit_stages"].get(unit, [])
             self.assertEqual(
                 {r["key"] for r in found},
                 {

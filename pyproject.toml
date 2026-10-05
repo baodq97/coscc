@@ -9,8 +9,6 @@ dependencies = [
     "claude-agent-sdk>=0.2.161",
     "fastapi>=0.141.1",
     "argon2-cffi>=25.1.0",
-    # `coscc vault-measure` calls the app's own routes in-process.
-    "httpx>=0.28.1",
     "uvicorn>=0.53.0",
 ]
 
@@ -25,6 +23,7 @@ module-name = "coscc"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "playwright>=1.63.0",
     "pytest>=9.1.1",
     "pytest-xdist>=3.8.0",
@@ -65,12 +64,6 @@ max-nested-blocks = 4
 [tool.ty.src]
 # Tests are checked by running them.
 exclude = ["tests/**"]
-
-[[tool.ty.overrides]]
-# Reflex components, state and the page app: ty does not follow `Var` fields, so `str + Var`,
-# `~Var`, event namespaces and a `Var` passed or assigned where its value is typed report errors.
-include = ["coscc/screens/**", "coscc/state/**", "coscc/coscc.py"]
-rules = { unresolved-attribute = "ignore", unsupported-operator = "ignore", deprecated = "ignore", no-matching-overload = "ignore", invalid-return-type = "ignore", invalid-argument-type = "ignore", invalid-assignment = "ignore", not-subscriptable = "ignore" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

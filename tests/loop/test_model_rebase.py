@@ -1,7 +1,6 @@
 """The ship gate and `next` across a rebase, a merge made elsewhere, a round more and a red check.
 
-Ported from the `test(` calls of the loop's former JavaScript suite (`tests/loop/ported.txt` maps
-each one here). A probe is a namespace answering `git` and `gh` as the real ones would; the cases
+A probe is a namespace answering `git` and `gh` as the real ones would; the cases
 on a real repository run `git` itself and fake only `gh`.
 """
 
@@ -23,9 +22,12 @@ from coscc.loop.model import (
 )
 from coscc.loop.probe import UI_STANDARD, Probe
 from coscc.loop.repo_rules import normalize_patch, screens_problems
-from coscc.loop.rules import check_gate, more_rounds, next_action, next_step, open_lines
+from coscc.loop.rules import more_rounds, open_lines
 from tests.loop.conftest import git
 from tests.loop.test_model import (
+    check_gate,
+    next_action,
+    next_step,
     CHAIN,
     HEAD2,
     NOT_ANCESTOR,

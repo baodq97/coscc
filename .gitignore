@@ -1,7 +1,5 @@
 coscc/_harness/
 coscc/_build.json
-assets/external/
-.states
 *.db
 *.py[cod]
 .DS_Store
@@ -20,6 +18,6 @@ __pycache__/
 # Source material this repository reads but does not own and must never republish.
 .raws/
 dist/
-# What `scripts/capture_screens.py` writes: screenshots and their manifest (`0083`).
+# What `scripts/capture_screens.py` writes: screenshots and their manifest.
 .screens/
 coscc/_studio/

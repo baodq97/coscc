@@ -42,6 +42,7 @@ from coscc.agent.helpers import Helpers
 from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.store.db import Data
+from coscc.store.journal import TOKEN_FIELDS
 
 log = logging.getLogger(__name__)
 
@@ -465,14 +466,6 @@ def _kill_left(taken: list[tuple[int, str]], proc: Path = Path("/proc")) -> int:
     return killed
 
 
-# What one turn cost, in the shape `journal.COST_FIELDS` adds up.
-COST_FIELDS = (
-    "input_tokens",
-    "output_tokens",
-    "cache_read_tokens",
-    "cache_creation_tokens",
-)
-
 # How `ResultMessage.model_usage` spells them. Its keys come through verbatim from the CLI
 # and are camelCase; ours are not, and translating in one place keeps that from spreading.
 _USAGE_KEYS = {
@@ -491,7 +484,7 @@ def cumulative(message: Any) -> dict[str, float]:
     iteration within a turn. A turn's own cost is the difference between two cumulative
     figures; `stream` does that subtraction.
     """
-    total = {name: 0.0 for name in COST_FIELDS}
+    total = {name: 0.0 for name in TOKEN_FIELDS}
     total["cost_usd"] = float(getattr(message, "total_cost_usd", None) or 0.0)
     for entry in (getattr(message, "model_usage", None) or {}).values():
         if not isinstance(entry, dict):
@@ -1091,7 +1084,7 @@ class Sessions:
             if step is None:
                 self._live[resolved] = live
             self._created_here.add(resolved)
-            cost: dict[str, int | float] = {name: int(turn.get(name, 0.0)) for name in COST_FIELDS}
+            cost: dict[str, int | float] = {name: int(turn.get(name, 0.0)) for name in TOKEN_FIELDS}
             cost["turns"] = turns
             cost["duration_ms"] = duration_ms
             # Kept as a float and rounded, not truncated: a turn can cost under a cent.

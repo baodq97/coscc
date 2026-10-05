@@ -12,7 +12,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterable, Literal, Sequence, get_args
+from typing import Any, Literal, Sequence, get_args
 
 from coscc.units import states
 from coscc.store.db import BUSY_TIMEOUT, Data, now as _now
@@ -20,13 +20,6 @@ from coscc.units.states import Machine
 
 # What a field says when nobody can say: never blank, never NULL, one word so a query can ask for it.
 UNKNOWN = "unknown"
-
-# A deliverable is the unit's own artifact; a code change is a file in somebody's repository.
-# One table so "how many altogether" is one query.
-Kind = Literal["deliverable", "code"]
-KINDS: tuple[Kind, ...] = get_args(Kind)
-DELIVERABLE: Kind = "deliverable"
-CODE: Kind = "code"
 
 LOCK_TIMEOUT = BUSY_TIMEOUT
 
@@ -54,20 +47,6 @@ _TRANSITION_COLUMNS = (
     "authority",
     "run",
     "inputs",
-)
-
-_OUTPUT_COLUMNS = (
-    "at",
-    "root",
-    "workspace",
-    "unit",
-    "stage",
-    "kind",
-    "path",
-    "actor",
-    "session",
-    "source",
-    "once_key",
 )
 
 
@@ -268,159 +247,3 @@ class History:
         sql += " ORDER BY id"
         with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
             return [dict(row) for row in conn.execute(sql, args).fetchall()]
-
-    def state(self, workspace: str, unit: str, timeout: float | None = None) -> dict[str, str]:
-        """Where each artifact of this unit stands now. **A fold, never a stored value.**
-
-        Every artifact the state set knows appears; one with no transition reads as the
-        absent state. Reported in stage order.
-        """
-        current = {artifact: self.machine.absent for artifact in self.machine.artifacts}
-        for row in self.transitions(workspace, unit, timeout=timeout):
-            current[row["artifact"]] = row["to_state"]
-        return current
-
-    def machines_in(
-        self, workspace: str, unit: str | None = None, timeout: float | None = None
-    ) -> list[str]:
-        """Which state sets the stored rows were written under, first-seen first.
-
-        Rows read under a set they were not written under compare states that never meant the
-        same thing, and every query still returns rows; a caller that finds more than its own
-        name here must say so.
-        """
-        sql = (
-            "SELECT machine, MIN(id) AS first_seen FROM transitions "
-            "WHERE root = ? AND workspace = ?"
-        )
-        args: list[Any] = [self._root, workspace]
-        if unit is not None:
-            sql += " AND unit = ?"
-            args.append(unit)
-        sql += " GROUP BY machine ORDER BY first_seen"
-        with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
-            return [row["machine"] for row in conn.execute(sql, args).fetchall()]
-
-    def units(self, workspace: str, timeout: float | None = None) -> list[str]:
-        """Every unit this working folder has any transition for, first-seen first."""
-        seen: list[str] = []
-        for row in self.transitions(workspace, timeout=timeout):
-            if row["unit"] not in seen:
-                seen.append(row["unit"])
-        return seen
-
-    def sessions_of(
-        self, workspace: str, unit: str, timeout: float | None = None
-    ) -> dict[str, Any]:
-        """The sequence of sessions behind one unit, plus what is not known.
-
-        One session appears once however many transitions it made, in order of first
-        appearance. `unknown` is counted separately, not listed as a session, so imported
-        history never reads as one session's work.
-        """
-        order: list[str] = []
-        found: dict[str, dict[str, Any]] = {}
-        unknown = 0
-        for row in self.transitions(workspace, unit, timeout=timeout):
-            session = row["session"]
-            if session == UNKNOWN:
-                unknown += 1
-                continue
-            if session not in found:
-                order.append(session)
-                found[session] = {
-                    "session": session,
-                    "first": row["at"],
-                    "last": row["at"],
-                    "actor": row["actor"],
-                    "stages": [],
-                    "transitions": 0,
-                }
-            entry = found[session]
-            entry["last"] = row["at"]
-            entry["transitions"] += 1
-            if row["stage"] not in entry["stages"]:
-                entry["stages"].append(row["stage"])
-        return {
-            "sessions": [found[s] for s in order],
-            "unknown_transitions": unknown,
-        }
-
-    def add_output(
-        self,
-        workspace: str,
-        unit: str,
-        stage: str,
-        kind: Kind,
-        path: str,
-        *,
-        actor: str = UNKNOWN,
-        session: str = UNKNOWN,
-        source: str = UNKNOWN,
-        at: str | None = None,
-        once_key: str = "",
-        timeout: float | None = None,
-    ) -> dict[str, Any]:
-        """Record one file this unit produced, and which of the two kinds it is."""
-        if kind not in KINDS:
-            raise BadTransition(f"kind must be one of {', '.join(KINDS)}, got {kind!r}")
-        if not str(path or "").strip():
-            raise BadTransition("an output needs a path")
-        row = {
-            "at": str(at or "").strip() or _now(),
-            "root": self._root,
-            "workspace": str(workspace or ""),
-            "unit": str(unit or "").strip(),
-            "stage": str(stage or "").strip() or UNKNOWN,
-            "kind": kind,
-            "path": str(path).strip(),
-            "actor": _text(actor),
-            "session": _text(session),
-            "source": _text(source),
-            "once_key": str(once_key or ""),
-        }
-        if not row["unit"]:
-            raise BadTransition("an output needs a unit")
-        placeholders = ", ".join("?" for _ in _OUTPUT_COLUMNS)
-        with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
-            conn.execute(
-                f"INSERT OR IGNORE INTO outputs ({', '.join(_OUTPUT_COLUMNS)}) "
-                f"VALUES ({placeholders})",
-                tuple(row[name] for name in _OUTPUT_COLUMNS),
-            )
-        return row
-
-    def outputs(
-        self, workspace: str, unit: str | None = None, timeout: float | None = None
-    ) -> list[dict[str, Any]]:
-        sql = (
-            f"SELECT id, {', '.join(_OUTPUT_COLUMNS)} FROM outputs WHERE root = ? AND workspace = ?"
-        )
-        args: list[Any] = [self._root, workspace]
-        if unit is not None:
-            sql += " AND unit = ?"
-            args.append(unit)
-        sql += " ORDER BY id"
-        with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
-            return [dict(row) for row in conn.execute(sql, args).fetchall()]
-
-    def output_counts(
-        self, workspace: str, unit: str | None = None, timeout: float | None = None
-    ) -> dict[str, int]:
-        """How many files, by kind and altogether."""
-        counts: dict[str, int] = {kind: 0 for kind in KINDS}
-        rows = self.outputs(workspace, unit, timeout=timeout)
-        for row in rows:
-            counts[row["kind"]] = counts.get(row["kind"], 0) + 1
-        counts["total"] = len(rows)
-        return counts
-
-
-def settled_edits(transitions: Iterable[dict[str, Any]], machine: Machine) -> list[dict[str, Any]]:
-    """The transitions where an artifact was touched while already settled.
-
-    A filter over the log, not a column. It does not require that the state changed: most are
-    `accepted -> accepted`, a settled artifact rewritten in place. `machine` is required, with
-    no default: rows written under another set would match nothing and return an empty list.
-    """
-    return [row for row in transitions if machine.is_settled(row["from_state"])]

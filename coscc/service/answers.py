@@ -523,8 +523,6 @@ class Answers:
             [(artifact, question, answer)],
             name,
             "product",
-            f"human:{name}",
-            "answer",
         )
         written = done["written"][0]
         # The answer itself starts nothing; a pass may, if the switch is on.
@@ -544,8 +542,6 @@ class Answers:
         items: list[tuple[str, Any, str]],
         answered_by: str,
         via: str,
-        actor: str,
-        source: str,
     ) -> dict[str, Any]:
         """The one place that records an answer: `items` is `[(artifact, question, text)]`, all
         checked and written under one hold of `_answer_lock` and one board read. A refusal
@@ -579,24 +575,6 @@ class Answers:
                 written.append({"artifact": artifact, "question": finding or number})
                 texts.append(text)
             self._record_answers(cwd, unit, found, written, texts, name, today, via, authority)
-
-        # The store is not a git repository, so provenance is a row in `outputs`. Never
-        # raises: the answer is recorded, and failing now would say it was not.
-        history = self.backlog.history()
-        if history is not None:
-            for w in written:
-                try:
-                    history.add_output(
-                        self.ws.key(cwd),
-                        unit,
-                        w["artifact"].removesuffix(".md"),
-                        "deliverable",
-                        w["artifact"],
-                        actor=actor,
-                        source=source,
-                    )
-                except OSError, BadTransition, Busy:
-                    pass
 
         return {"written": written, "date": today}
 
@@ -751,7 +729,7 @@ class Answers:
                 )
         return number, finding, text.strip()
 
-    async def record_outcome(  # noqa: C901, PLR0915 - still to split
+    async def record_outcome(  # noqa: PLR0915 - still to split
         self,
         cwd: str,
         unit: str,
@@ -847,23 +825,6 @@ class Answers:
                     f.write(block)
             except OSError as e:
                 raise Invalid(f"could not write intent.md: {e}") from e
-
-        # As above: provenance is a row in `outputs`; a failure to write it never fails a
-        # block already on disk.
-        history = self.backlog.history()
-        if history is not None:
-            try:
-                history.add_output(
-                    self.ws.key(cwd),
-                    unit,
-                    "intent",
-                    "deliverable",
-                    "intent.md",
-                    actor=f"human:{name}",
-                    source="outcome",
-                )
-            except OSError, BadTransition, Busy:
-                pass
 
         return {
             "unit": unit,

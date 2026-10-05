@@ -461,7 +461,6 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         [u] = (await self.service.board(self.cwd))["units"]
         [rnd] = u["rounds"]
         self.assertNotIn("text", rnd)
-        self.assertEqual([sorted(f) for f in rnd["found"]], [["fixed_by", "id", "label"]] * 2)
         self.assertEqual((rnd["verdict"], rnd["open_ids"]), ("changes-requested", ["F1", "F2"]))
 
     async def test_a_gh_that_hangs_holds_neither_the_held_board_nor_a_read(self):
@@ -522,7 +521,6 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         for part in (
             "snapshot",
             "loop",
-            "import",
             "run log",
             "worktree",
             "integration",

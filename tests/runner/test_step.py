@@ -786,7 +786,7 @@ class ReviewRoundsAccumulate(unittest.TestCase):
 
 class RerunningKeepsTheAnswers(unittest.TestCase):
     """Re-running a prose stage used to overwrite its artifact whole, so a `## Answers` block the
-    answer route had appended was gone with no trace but an `outputs` row
+    answer route had appended was gone with no trace
     (`.claude/rules/coscc-app.md`, the hazard this unit rewrites)."""
 
     ANSWERED = (

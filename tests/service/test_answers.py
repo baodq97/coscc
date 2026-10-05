@@ -18,7 +18,7 @@ from coscc.kernel import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
-from tests.service.test_service import create_sync
+from tests.service.test_service import create_sync, timeline, unit_history
 from tests.units.test_submit import a_head, finding, submits as _submits
 from tests.service.test_service import use_sessions
 
@@ -154,7 +154,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertNotIn("ingest_error", done)
         rows = [
             r
-            for r in self.service.backlog.unit_history(str(self.repo), self.unit)["transitions"]
+            for r in unit_history(self.service, str(self.repo), self.unit)["transitions"]
             if r["artifact"] == "review.md"
         ]
         self.assertEqual(
@@ -265,7 +265,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
     def test_a_comment_row_does_not_disturb_the_cost_timeline(self):
         self._post(FakeGh(), 1)
-        tl = self.service.backlog.timeline(str(self.repo), self.unit)
+        tl = timeline(self.service, str(self.repo), self.unit)
         self.assertEqual(tl.get("runs") or [], [])
 
 
@@ -494,17 +494,6 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertEqual(text.count("## Answers"), 1)
         self.assertEqual(text.count("### Outcome"), 2)
         self.assertEqual(self.board_unit()["outcome"]["invalid"], 0)
-
-    def test_the_block_is_recorded_as_a_person_in_the_history(self):
-        from coscc.units.history import History
-
-        self.record()
-        rows = History(str(Path(self.cwd).parent), self.data_dir).outputs(
-            str(Path(self.cwd).resolve()), self.unit
-        )
-        mine = [r for r in rows if r["source"] == "outcome"]
-        self.assertEqual(len(mine), 1)
-        self.assertEqual((mine[0]["actor"], mine[0]["path"]), ("human:Phong", "intent.md"))
 
     def test_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
         journal = self.service.ws.journal()

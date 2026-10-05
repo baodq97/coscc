@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""The plumbing the browser proofs share, so a fix to it is one edit rather than two.
+"""The plumbing the browser runs share: the port check, the build guard, the browser launcher and
+the app-under-test runner, kept in one place so a fix to it is one edit.
 
-`verify_0003.py` and `verify_0006.py` measure different claims — that is deliberate and
-recorded in `.cos/0006_demo-data-and-no-durable-store/impl.md`. What they had in common was
-never the claims: it was the port check, the build guard, the browser launcher and the
-app-under-test runner, which were copied verbatim from the first into the second. Two copies
-of a boot loop drift the moment one of them needs a fix, and one already has.
-
-Nothing here decides anything about a proof. It starts an app, stops it, and refuses the
+Nothing here decides anything about a run. It starts an app, stops it, and refuses the
 environment early enough that "chromium is not installed" is never reported as "the page is
-broken" — which is the exit-code split both proofs are built around.
+broken", which is the exit-code split `e2e.py` and `capture_screens.py` are built around.
 """
 
 from __future__ import annotations
@@ -33,9 +28,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 BOOT_TIMEOUT_S = 60.0
 
-# 0 the claims held, 1 they did not, 2 the environment could not answer. `EXIT_BROKEN` is
-# the same number `verify_0003.py` calls `EXIT_PAGE`; the two proofs name it for what is
-# broken in each.
+# 0 the claims held, 1 they did not, 2 the environment could not answer.
 EXIT_PASS, EXIT_BROKEN, EXIT_ENV = 0, 1, 2
 
 GIT_ID = (
@@ -49,9 +42,7 @@ GIT_ID = (
 
 
 # Every line a proof prints, as it prints it. Python buffers stdout whenever it is not a
-# terminal, so `verify_0014.py > log` -- a run that spends up to eight sessions and can
-# take half an hour -- wrote an empty file from start to finish and emitted everything at
-# once at the end. Measured 2026-09-22, watching a run that had no way to be watched.
+# terminal, so a long run redirected to a file wrote nothing until the end.
 #
 # Done here, once, rather than as `flush=True` on each call: the proofs print from `say`
 # and from bare `print` both, and a second mechanism is how half of them keep the old
@@ -208,10 +199,10 @@ def make_repo(
     outside: Path,
     name: str = "proj",
     remote: str = "remote.git",
-    readme: str = "verify_0071\n",
+    readme: str = "demo\n",
 ) -> Path:
     """A workspace: a clone of a bare-directory remote, one commit on `main`. The defaults
-    are the fixture `capture_screens.py` has taken its screenshots on since `0083`."""
+    are the fixture `capture_screens.py` takes its screenshots on."""
     origin = outside / remote
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     proj = root / name

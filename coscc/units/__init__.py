@@ -25,7 +25,7 @@ COS_DIR = ".cos"
 UNITS_DIR = "units"
 
 # `NNNN_slug`: the only shape `new-path` produces and the only one accepted back.
-UNIT_RE = re.compile(r"\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*")
+UNIT_RE = re.compile(r"(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)", re.ASCII)
 
 # Turns a hung `coscc.loop` child into an error; it does not bound the work.
 TIMEOUT = 10.0
