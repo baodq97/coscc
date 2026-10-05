@@ -52,7 +52,7 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
             data_dir=str(root / "data"),
         )
         self.core = Core(self.config, Sessions(self.config))
-        self.feed = notices.Notices(plugin.ctx_of(self.core))
+        self.feed = notices.Notices(plugin.ctx_of(self.core, notices.FEATURE))
         self.key = self.core.ws.key(str(self.ws))
         self.journal = Journal(self.config.working_dir, self.config.data_dir)
         self.streams = []
@@ -206,8 +206,8 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({n["workspace"] for n in everything}, {self.key, other})
 
     async def test_a_workspace_with_notices_off_is_passed_over_and_another_still_arrives(self):
-        ctx = plugin.ctx_of(self.core)
-        plugin.set_state(self.core, ctx, [notices.FEATURE], "notices", str(self.other), "off")
+        ctxs = {"notices": plugin.ctx_of(self.core, notices.FEATURE)}
+        plugin.set_state(self.core, ctxs, [notices.FEATURE], "notices", str(self.other), "off")
         other = self.core.ws.key(str(self.other))
         self.append(stop(other))
         mine = self.append(stop(self.key))

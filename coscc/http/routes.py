@@ -730,7 +730,7 @@ async def get_features(request: Request) -> Any:
     `{state, pilot, sentence, locked, summary}`. A workspace the app does not have is a 400."""
     core = _core(request)
     cwd = core.ws.check(_cwd(request))
-    rows = plugin.shown(request.app.state.ctx, request.app.state.plugins, cwd)
+    rows = plugin.shown(request.app.state.ctxs, request.app.state.plugins, cwd)
     if request.query_params.get("detail") == "1":
         return {f.name: {k: v for k, v in asdict(f).items() if k != "name"} for f in rows}
     return {f.name: f.state for f in rows}
@@ -768,7 +768,7 @@ async def get_features_shown(request: Request) -> list[plugin.Shown]:
     chosen, the sentence, whether it is locked, its schedule and the hours offered."""
     core = _core(request)
     cwd = core.ws.check(_cwd(request))
-    return plugin.shown(request.app.state.ctx, request.app.state.plugins, cwd)
+    return plugin.shown(request.app.state.ctxs, request.app.state.plugins, cwd)
 
 
 @router.post("/api/features")
@@ -799,7 +799,7 @@ async def set_feature(request: Request) -> Any:
         raise Invalid(f"state must be one of {', '.join(kernel.STATES)}")
     chosen = plugin.set_state(
         _core(request),
-        request.app.state.ctx,
+        request.app.state.ctxs,
         request.app.state.plugins,
         str(body.get("name") or ""),
         str(body.get("cwd") or ""),

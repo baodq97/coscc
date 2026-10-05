@@ -1,7 +1,7 @@
 """The vault's page: plain HTML a person keeps the secrets on, framed by the studio.
 
 Only metadata goes out here; a value comes in only through the form `vault.py`'s
-`POST /api/vault/secrets` reads. `coscc/features/vault.md` says what the page is not.
+`POST /api/vault/secrets` reads. `coscc/features/vault/README.md` says what the page is not.
 """
 
 from __future__ import annotations

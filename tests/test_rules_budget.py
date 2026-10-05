@@ -107,7 +107,7 @@ class TheUiStandardCoversEveryScreen(unittest.TestCase):
                 "ui/src/**/*.tsx",
                 "ui/src/**/*.ts",
                 "ui/src/*.css",
-                "coscc/features/*.js",
+                "coscc/features/*/*.js",
                 "coscc/features/*/page.py",
             )
             for p in sorted(REPO.glob(pattern))

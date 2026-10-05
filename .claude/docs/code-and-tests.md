@@ -31,8 +31,9 @@ the code, not the list.
 
 ## Adding a feature
 
-New work is `coscc/features/<name>.py` ending in one `FEATURE`, a line in `FEATURES`, and its
-test. It imports only `coscc/kernel.py`, the one module that hands on names it does not define;
+New work is a folder `coscc/features/<name>/`: `__init__.py` ending in one `FEATURE`,
+`README.md` (what it does, its routes, tables and events), a line in `FEATURES`, and its tests in
+`tests/features/<name>/`. It imports only `coscc/kernel.py`, the one module that hands on names it does not define;
 `KERNEL_GAPS` in `tests/test_layers.py` lists what the kernel does not give yet and only shrinks.
 Copy `notices`. A need no extension point serves is a kernel change, planned first.
 
@@ -40,9 +41,13 @@ Copy `notices`. A need no extension point serves is a kernel change, planned fir
   (`check(Facts)` returns words to deny, or `None`; asked before every step and integration) and `Block` (`render(Facts)` adds prompt
   text); slots `slot-topbar` and `slot-unit`; `page=Page(label, icon, path)`, a sidebar entry
   whose screen frames the feature's own `GET path?cwd=<workspace>`; `sessions=(Session(kind,
-  grant, schema, purpose),)`, a paid session it runs through `ctx.session(cwd, kind, prompt)`.
+  grant, schema, purpose),)`, a paid session it runs through `ctx.agents.session(cwd, kind, prompt)`.
   The core never writes a feature's name (`CoreNamesNoFeature` in `tests/test_boundaries.py`).
-- Building blocks: `kernel.body/line/ndjson`, `Ctx`, `window.coscc.api/stream/every/ago/slot`.
+- `Ctx` is six handles, built for this feature alone: `units` (`key`, `create_unit`, `main_tree`),
+  `runs` (`journal`, `interventions`), `agents` (`session`), `store` (the database; only your own
+  tables), `bus`, `settings` (`state`, `enabled`, `arm`, `schedule`, `set_schedule`). A test builds
+  the `Ctx` it needs with `tests/features/ctx.py` `ctx_for`; a handle it names not raises when touched.
+- Building blocks: `kernel.body/line/ndjson`, `window.coscc.api/stream/every/ago/slot`.
 
 ```python
 """Bookmarks: a note per unit."""
@@ -59,7 +64,7 @@ def routes(ctx: Ctx):
     @router.post("/api/bookmarks")
     async def save(request: Request) -> dict[str, str]:
         sent = await body(request)
-        with ctx.data.write() as conn:
+        with ctx.store.write() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO bookmarks VALUES (?, ?)", (sent["unit"], sent["note"])
             )

@@ -1,6 +1,6 @@
 # Parallel: a plan's parallel steps, handed to impl
 
-Read this before changing `coscc/features/parallel.py`: the reader, the block and `FEATURE` are
+Read this before changing `coscc/features/parallel/__init__.py`: the reader, the block and `FEATURE` are
 all in it.
 
 ## The section it reads

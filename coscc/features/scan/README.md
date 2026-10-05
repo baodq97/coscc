@@ -1,18 +1,18 @@
 # Scan: the run log read for work that would stop people stepping in
 
-Read this before changing `coscc/features/scan.py`: the tables, the routes, the scan, the
+Read this before changing `coscc/features/scan/__init__.py`: the tables, the routes, the scan, the
 schedule's tick and the Backlog script are all in it.
 
 ## What one scan does
 
-1. Reads the workspace's interventions past its cursor (`Ctx.interventions`, from
+1. Reads the workspace's interventions past its cursor (`Ctx.runs.interventions`, from
    `coscc/runner/interventions.py`): `refused`, `ci-red`, `rerun`, `review-round`,
    `impl-draft`, `integrate`. A tool a session was denied is none.
 2. With none, records `skipped` and stops: no session, $0.
 3. Builds one prompt of at most 12,000 characters: the instructions, the proposals already made
    (pending, accepted, dismissed with why; newest first, 2,000 characters at most, the count cut
    recorded) and at most 25 interventions, oldest first.
-4. Opens one `scan` session (`Ctx.session`): the grant `scan` in `coscc/agent/policy.py`, the
+4. Opens one `scan` session (`Ctx.agents.session`): the grant `scan` in `coscc/agent/policy.py`, the
    model of the Agents page row `estimate`, `submit` only, 2 turns, $0.68. It is a run in the run
    log like the estimate's, so `/cost` counts it.
 5. Keeps each proposal that keeps the rules (`problems_of`), at most 8, as `pending`; records why
@@ -58,7 +58,7 @@ hours passed since the last scan of the workspace, a skipped one included.
 - The budget is checked only after a turn is paid for, so a scan can pass $0.68 by one turn;
   $1 at worst was measured once, by a spike, not proven.
 - The autopilot never reads these tables, and accepting a proposal never touches the shortlist.
-- A scan in progress is held per process (`_scanning`), and by the attempt `Ctx.session` opens
+- A scan in progress is held per process (`_scanning`), and by the attempt `Ctx.agents.session` opens
   for the workspace's unit `""`, which an estimate also takes: one waits for the other.
 - A dismissed proposal past the 2,000-character lists is not in the prompt and may be proposed
   again; `scan_runs.cut` counts how many were left out.

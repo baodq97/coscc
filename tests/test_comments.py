@@ -103,7 +103,7 @@ def md_ids(path: Path, where: str | None = None) -> list[str]:
 
 
 def _markdown() -> list[Path]:
-    files = [*(REPO / ".claude").rglob("*.md"), *(REPO / "coscc" / "features").glob("*.md")]
+    files = [*(REPO / ".claude").rglob("*.md"), *(REPO / "coscc" / "features").glob("*/README.md")]
     return sorted(p for p in files if not set(SKIPPED) & set(p.relative_to(REPO).parts))
 
 

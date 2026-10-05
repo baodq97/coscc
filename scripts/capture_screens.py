@@ -549,10 +549,9 @@ def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
     Written through the feature's own tables, which the app made when it started."""
     from datetime import datetime, timedelta, timezone
 
-    from coscc.bus import Bus
     from coscc.store.db import Data
     from coscc.features import scan
-    from coscc.kernel import Ctx
+    from tests.features.ctx import ctx_for
     from coscc.store.journal import Intervention
 
     for body in ({"state": "on"}, {"schedule": 0}):
@@ -574,7 +573,7 @@ def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
         )
         for n in range(12)
     ]
-    tables = scan.Tables(Ctx(lambda: None, str, lambda _f, _w: True, Bus(), Data(data_dir)))
+    tables = scan.Tables(ctx_for(store=Data(data_dir)))
     proposals = [
         {
             "type": t,

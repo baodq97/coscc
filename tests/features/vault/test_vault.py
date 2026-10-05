@@ -15,7 +15,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import kernel
 from coscc import vault
 from coscc.http import plugin
 from coscc.agent import policy
@@ -23,7 +22,8 @@ from coscc.http.app import build
 from coscc.config import Config
 from coscc.store.db import Data
 from coscc.features import vault as feature
-from coscc.kernel import Facts
+from coscc.kernel import Facts, Runs
+from tests.features.ctx import ctx_for
 
 AGE = """#!{python}
 import base64, sys
@@ -92,7 +92,7 @@ class Bed(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patch.stop)
         self.app = build(self.config)
         self.core = self.app.state.core
-        self.ctx = plugin.ctx_of(self.core)
+        self.ctx = plugin.ctx_of(self.core, feature.FEATURE)
         self.key = plugin.Workspaces.key(str(self.ws))
         self.make("ws:db", DB, self.key, "the database", ("impl",))
         self.make("global:tok", TOKEN, "", "a shared token", ("spike",))
@@ -113,7 +113,7 @@ class Bed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(vault.scan(self.values(), found), [])
 
     def journal(self):
-        journal = self.ctx.journal()
+        journal = self.ctx.runs.journal()
         assert journal is not None
         return journal
 
@@ -447,8 +447,11 @@ class TheGuardHoldsWhatCarriesAValueOut(Bed):
         self.assertIsNone(feature._leaks(self.ctx, lambda: self.store, self.facts("ship")))
 
     def test_a_run_log_that_cannot_be_read_holds_the_step(self):
-        ctx = kernel.Ctx(
-            lambda: None, self.ctx.workspace_key, self.ctx.enabled, self.ctx.bus, self.ctx.data
+        ctx = ctx_for(
+            runs=Runs(lambda: None, None),
+            units=self.ctx.units,
+            settings=self.ctx.settings,
+            store=self.ctx.store,
         )
         self.assertIn("cannot", feature._leaks(ctx, lambda: self.store, self.facts("pr")) or "")
 

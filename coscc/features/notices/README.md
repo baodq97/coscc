@@ -1,6 +1,6 @@
 # Notices: `GET /api/notices/follow`, and listening from a terminal
 
-Read this before changing `coscc/features/notices.py`: the route, `_NOTICE_JS` and `FEATURE` are
+Read this before changing `coscc/features/notices/__init__.py`: the route, `_NOTICE_JS` and `FEATURE` are
 all in it.
 
 ## What it sends

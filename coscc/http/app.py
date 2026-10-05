@@ -41,6 +41,7 @@ from coscc.runner.queue import Attempts, Holds, Updating
 from coscc.runner.resume import Resume
 from coscc.runner.steps import Steps
 from coscc.runner.watch import Watch
+from coscc.store.db import Data
 from coscc.units.ideas import Ideas
 from coscc.units.read import Board
 from coscc.units.workspaces import Workspaces
@@ -367,13 +368,13 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
         # The first round waits one period, so a start spends nothing at once.
         while True:
             await asyncio.sleep(plugin.TICK_SECONDS)
-            await plugin.tick(core, ctx, features.FEATURES)
+            await plugin.tick(core, ctxs, features.FEATURES)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         tasks: list[asyncio.Task] = []
         if starting:
-            plugin.create_tables(ctx, tables)
+            plugin.create_tables(Data(config.data_dir), tables)
             work = (core.resume.resume_after_update(), core.boards.warm(), schedules())
             tasks = [asyncio.create_task(w) for w in work]
         yield
@@ -386,16 +387,16 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
 
     # The routes themselves, not `include_router`, which keeps them behind one entry of `routes`.
     # Read now, so a test can patch `features.FEATURES`.
-    ctx = plugin.ctx_of(core, features.FEATURES)
+    ctxs = {f.name: plugin.ctx_of(core, f) for f in features.FEATURES}
     plugin.add_sessions(core, features.FEATURES)
-    core.steps.hooks = plugin.hooks_of(features.FEATURES, ctx)
+    core.steps.hooks = plugin.hooks_of(features.FEATURES, ctxs)
     # Checked now, created when the app starts: `typescript()` and the tests build an app
     # that never opens the database.
     tables = plugin.tables_of(features.FEATURES)
     # The studio last: it answers every path no route took.
     served = [
         *routes.router.routes,
-        *(r for f in features.FEATURES for r in f.routes(ctx)),
+        *(r for f in features.FEATURES for r in f.routes(ctxs[f.name])),
         *studio.router.routes,
     ]
     # No `/docs` or `/openapi.json`: the studio answers those paths; `typescript()` reads the schema.
@@ -415,8 +416,8 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
     api.state.features = tuple(f.name for f in features.FEATURES)
     api.state.pages = {f.name: f.page for f in features.FEATURES if f.page}
     api.state.scripts = tuple(js for f in features.FEATURES for js in f.scripts)
-    # The one `Ctx` and the plugins themselves, for the Settings panel's states.
-    api.state.ctx = ctx
+    # Each feature's `Ctx` and the plugins themselves, for the Settings panel's states.
+    api.state.ctxs = ctxs
     api.state.plugins = features.FEATURES
     api.add_exception_handler(Invalid, _refused)
     return api

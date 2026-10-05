@@ -3,7 +3,7 @@ paths:
   - "ui/src/**"
   - "ui/index.html"
   - "coscc/http/auth.py"
-  - "coscc/features/*.js"
+  - "coscc/features/*/*.js"
   - "coscc/features/*/page.py"
 ---
 
@@ -12,8 +12,7 @@ paths:
 What a screen may show. The `paths:` globs above are the files that count as screens (the
 studio in `ui/`, the login page, a feature's script and page): the loop reads them to tell a UI
 unit from any other.
-A feature's page lives in `coscc/features/<name>/page.py` (a single-file feature that needs a page
-splits it out there).
+A feature's page lives in `coscc/features/<name>/page.py`.
 
 ## What a good screen looks like
 

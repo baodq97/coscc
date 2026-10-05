@@ -11,12 +11,13 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import features, kernel
-from coscc.bus import Bus, Event
+from coscc.bus import Event
 from coscc.store.db import Data, now
 from coscc.features import codegraph
 from coscc.features.codegraph import Ready, Status
 from coscc.http.plugin import create_tables
-from coscc.kernel import Ctx, arm_of
+from coscc.kernel import Settings, Units, arm_of
+from tests.features.ctx import ctx_for
 
 SHA = "a" * 40
 KEY = "/w/proj"
@@ -58,16 +59,19 @@ class Setup(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         self.state = "pilot"
-        self.ctx = Ctx(
-            lambda: None,
-            lambda cwd: KEY,
-            lambda f, w: self.state != "off",
-            Bus(),
-            Data(self.root / "data"),
-            lambda f, w: self.state,
-            lambda f, w, unit: arm_of(self.state, unit),
+        data = Data(self.root / "data")
+        self.ctx = ctx_for(
+            units=Units(lambda cwd: KEY, None, None),
+            store=data,
+            settings=Settings(
+                lambda w: self.state,
+                lambda w: self.state != "off",
+                lambda w, unit: arm_of(self.state, unit),
+                None,
+                None,
+            ),
         )
-        create_tables(self.ctx, codegraph.FEATURE.tables)
+        create_tables(data, codegraph.FEATURE.tables)
         self.idx = FakeIndexes(self.root / "data" / "codegraph")
         patch = mock.patch.object(codegraph, "_indexes", return_value=self.idx)
         patch.start()
@@ -88,7 +92,7 @@ class Setup(unittest.IsolatedAsyncioTestCase):
         )
 
     def rows(self) -> list[tuple]:
-        with self.ctx.data.connect() as conn:
+        with self.ctx.store.connect() as conn:
             return [
                 tuple(r)
                 for r in conn.execute(
@@ -98,7 +102,7 @@ class Setup(unittest.IsolatedAsyncioTestCase):
             ]
 
     def ready_row(self) -> None:
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             conn.execute(
                 "INSERT INTO codegraph_index (workspace, path, state, sha, at, root) "
                 "VALUES (?, '/w/proj', 'ready', ?, ?, '/data/_main')",
@@ -218,7 +222,7 @@ class SettingsSaysOneSentence(Setup):
 class AtPilotTheSentenceTellsTheSplit(Setup):
     def seed(self, runs: dict[str, str]) -> None:
         """One impl run per `(unit, arm)` in the run log and in `codegraph_runs`, in the report's form."""
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             for i, (unit, arm) in enumerate(runs.items()):
                 run = f"r{i}"
                 for kind, record in (("start", {}), ("end", {"run": run, "cost_usd": 1.0})):
@@ -235,7 +239,7 @@ class AtPilotTheSentenceTellsTheSplit(Setup):
     def test_it_names_the_split_the_units_of_each_arm_and_the_scoring_day(self):
         # 0002 and 0004 on, 0003 off, and 0006 in both arms: counted in neither.
         self.seed({"0002_a": "on", "0003_b": "off", "0004_c": "on", "0005_e": "off"})
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             conn.execute(
                 "INSERT INTO codegraph_runs VALUES ('r9', ?, '0004_c', 'review', 'off', ?, 0, 0, '', "
                 "'2026-10-02T11:00:00')",
@@ -263,7 +267,7 @@ class AtPilotTheSentenceTellsTheSplit(Setup):
 
     def test_a_run_that_failed_is_not_counted_as_the_report_does_not(self):
         self.seed({"0002_a": "on", "0003_b": "off", "0004_c": "on"})
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             conn.execute("UPDATE codegraph_runs SET error = 'no index' WHERE unit = '0004_c'")
         self.idx.shown = Status("", "", "", "")
         arms = codegraph.measured(self.ctx, KEY, (None, None))["arms"]
@@ -272,7 +276,7 @@ class AtPilotTheSentenceTellsTheSplit(Setup):
 
     def test_a_unit_with_only_a_review_run_is_not_counted(self):
         self.seed({"0002_a": "on", "0003_b": "off"})
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             conn.execute(
                 "INSERT INTO codegraph_runs VALUES ('r9', ?, '0006_f', 'review', 'on', ?, 0, 0, '', "
                 "'2026-10-02T11:00:00')",
@@ -285,7 +289,7 @@ class AtPilotTheSentenceTellsTheSplit(Setup):
 
     def test_a_step_whose_events_were_purged_is_not_counted_as_the_report_does_not(self):
         self.seed({"0002_a": "on", "0003_b": "off", "0004_c": "on"})
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             conn.execute(
                 "INSERT INTO step_runs (run, root, workspace, unit, stage, started_at, purged_at) "
                 "VALUES ('r2', '/r', ?, '0004_c', 'impl', 0, '2026-10-03T00:00:00')",
@@ -343,7 +347,7 @@ class AnIntegrationSyncsAnIndexInUse(Setup):
 
 class TheReportReadsTheRunLog(Setup):
     def test_one_counted_step_per_arm_and_a_fail_for_too_few_units(self):
-        with self.ctx.data.write() as conn:
+        with self.ctx.store.write() as conn:
             for unit, run, arm, cost in (("0002_a", "r1", "on", 1.0), ("0003_b", "r2", "off", 2.0)):
                 for kind, record in (("start", {}), ("end", {"run": run, "cost_usd": cost})):
                     conn.execute(
