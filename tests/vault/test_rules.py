@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import unittest
+from typing import get_args
 
-from coscc.vault.rules import policy
+from coscc.vault.rules import REFUSALS, Refusal, policy, sentence
 from coscc.vault.store import Secret
 
 
@@ -57,6 +58,19 @@ class EveryRefusalHasItsOwnCode(unittest.TestCase):
     def test_a_workspace_that_is_not_granted_hears_that_before_the_stage(self):
         cloud = secret(name="global:cloud", workspace="", granted=())
         self.assertEqual(policy(cloud, "/a", "spike", "env"), "not-granted")
+
+    def test_the_five_codes_are_the_closed_set_and_each_has_a_sentence_naming_what_it_is_about(
+        self,
+    ):
+        self.assertEqual(sorted(REFUSALS), sorted(get_args(Refusal)))
+        self.assertEqual(len(REFUSALS), 5)
+        for code in REFUSALS:
+            with self.subTest(code=code):
+                text = sentence(code, "ws:db", "/a", "spike", "file")
+                self.assertIn("ws:db", text)
+                self.assertTrue(text.endswith("."))
+        self.assertIn("/a", sentence("not-granted", "global:x", "/a", "impl", "env"))
+        self.assertIn("spike", sentence("stage-not-allowed", "ws:db", "/a", "spike", "env"))
 
 
 if __name__ == "__main__":

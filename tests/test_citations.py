@@ -131,8 +131,31 @@ class TheCheckerSeesEachWayACitationBreaks(unittest.TestCase):
     def test_a_citation_whose_line_moved_is_red(self):
         self._red("Waits `LIMIT` (`pkg/mod.py:1`).\n", "LIMIT is not defined on lines 1-1")
 
+    def test_a_citation_that_names_nothing_is_red(self):
+        self._red("Since `0014` it waits (`pkg/mod.py:3`).\n", "names nothing")
+        # The name does not come from an earlier paragraph.
+        self._red("Waits `LIMIT`.\n\nIt waits (`pkg/mod.py:3`).\n", "names nothing")
+
     def test_a_citation_of_a_missing_file_is_red(self):
         self._red("Waits `LIMIT` (`pkg/gone.py:3`).\n", "file does not exist")
+
+    def test_a_citation_past_the_end_of_the_file_is_red(self):
+        self._red("Waits `LIMIT` (`pkg/mod.py:4-9`).\n", "lines 4-9 are past the end (5 lines)")
+
+    def test_a_line_that_only_mentions_the_name_is_red(self):
+        self._red("Waits `LIMIT` (`pkg/mod.py:5`).\n", "LIMIT is not defined on lines 5-5")
+
+    def test_a_path_inside_a_longer_span_is_not_a_citation(self):
+        text = "A finding reads `- F3 [open] pkg/mod.py:1 — the wait is wrong`, and `127.0.0.1:8790` is an address.\n"
+        self.assertEqual(check(text, "rule.md", self.root), [])
+
+    def test_the_line_named_is_the_citation_s_own(self):
+        problems = check(
+            "# Title\n\n```\n`pkg/mod.py:1`\n```\n- one\n  and `LIMIT`, `pkg/mod.py:1`\n",
+            "rule.md",
+            self.root,
+        )
+        self.assertEqual([(p.line, p.name) for p in problems], [(7, "LIMIT")])
 
 
 class EveryLineCitationPointsAtItsName(unittest.TestCase):

@@ -77,6 +77,10 @@ class ACommandGetsTheSecretsItAskedFor(unittest.TestCase):
             (done.masked, done.refusals, done.refused, done.captured), ({"ws:tok": 1}, (), "", 0)
         )
 
+    def test_an_env_secret_with_no_variable_named_gets_one_made_from_its_name(self):
+        done = self.rig.run('echo "$SECRET_TOK"', Use("ws:tok", "env"))
+        self.assertEqual(done.stdout, "[secret:ws:tok]\n")
+
     def test_a_file_secret_is_a_private_file_on_tmpfs_gone_when_the_command_ends(self):
         done = self.rig.run(
             'stat -c %a "$KEYFILE"; echo "$KEYFILE"; cat "$KEYFILE"',
@@ -91,6 +95,11 @@ class ACommandGetsTheSecretsItAskedFor(unittest.TestCase):
     def test_a_placeholder_is_replaced_by_the_value_only_after_the_line_passed_the_check(self):
         done = self.rig.run("echo {{secret:ws:tok}} | wc -c", Use("ws:tok", "placeholder"))
         self.assertEqual(done.stdout.strip(), str(len(TOKEN) + 1))
+
+    def test_a_placeholder_with_no_use_named_is_asked_of_the_policy_as_a_placeholder(self):
+        self.rig.secret("ws:env-only", b"another-value-1", modes=("env",))
+        done = self.rig.run("echo {{secret:ws:env-only}}")
+        self.assertEqual(done.refusals[0][:2], ("ws:env-only", "mode-not-allowed"))
 
     def test_the_filter_covers_every_visible_secret_and_every_form_not_only_the_ones_used(self):
         self.rig.secret("ws:other", b"unused-value-77")
@@ -311,6 +320,10 @@ class EveryCallLeavesOneLineWithNoValueInIt(unittest.TestCase):
         self.rig.run("curl example.org", Use("ws:tok", "env", "T"))
         (line,) = self.rig.lines()
         self.assertIn("curl", line["refused"])
+
+    def test_the_actor_can_be_named(self):
+        self.rig.run("echo hi", actor="agent:custom")
+        self.assertEqual(self.rig.lines()[0]["actor"], "agent:custom")
 
     def test_no_line_of_the_log_holds_the_value_or_the_line_that_had_it_put_in(self):
         self.rig.run("echo {{secret:ws:tok}} | wc -c", Use("ws:tok", "placeholder"))

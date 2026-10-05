@@ -162,6 +162,11 @@ class WithAFakeRun(unittest.TestCase):
         self.assertEqual(self.slept.delays, [1.0])
         self.assertEqual(run.calls, 2)
 
+    def test_cannot_lock_ref_is_retried_too(self):
+        run = FakeRun("error: cannot lock ref 'refs/remotes/origin/main'")
+        got = asyncio.run(self.coordinator(run).fetch(self.repo))
+        self.assertEqual(got["attempts"], 2)
+
     def test_a_second_race_is_not_retried_and_the_reason_says_it_was(self):
         run = FakeRun(RACE, RACE + " (again)")
         with self.assertRaises(FetchFailed) as caught:
@@ -182,6 +187,15 @@ class WithAFakeRun(unittest.TestCase):
             self.assertEqual(caught.exception.attempts, 1)
             self.assertEqual(str(caught.exception), error)
         self.assertEqual(self.slept.delays, [])
+
+    def test_a_failure_is_never_reused(self):
+        run = FakeRun("fatal: no")
+        f = self.coordinator(run)
+        with self.assertRaises(FetchFailed):
+            asyncio.run(f.fetch(self.repo))
+        got = asyncio.run(f.fetch(self.repo))
+        self.assertEqual(got["outcome"], "fetched")
+        self.assertEqual(run.calls, 2)
 
     def test_a_cancelled_leader_fails_the_calls_that_joined_it_instead_of_hanging(self):
         run = FakeRun(held=True)
@@ -264,6 +278,9 @@ class WithRealGit(unittest.TestCase):
         self.assertEqual((got["outcome"], got["attempts"]), ("fetched", 1))
         self.assertLess(got["age"], fetches.REUSE_SECONDS)
         self.assertEqual(git(self.repo, "rev-parse", "refs/remotes/origin/main"), tip)
+
+    def test_the_default_run_is_the_plain_git_fetch(self):
+        self.assertIs(Fetches().run, gitops.fetch)
 
 
 if __name__ == "__main__":

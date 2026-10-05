@@ -277,6 +277,11 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
             with self.assertRaises(GitError, msg=(remote, branch)):
                 asyncio.run(gitops.fetch(self.repo, remote, branch))
 
+    def test_rev_parse_of_an_unknown_ref_names_it(self):
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(gitops.rev_parse(self.repo, "refs/remotes/nowhere/main"))
+        self.assertIn("refs/remotes/nowhere/main", str(caught.exception))
+
     def test_a_branch_cut_from_the_fetched_sha_tracks_nothing(self):
         # Plan Risk 2: with a ref name as start point git would set an upstream of `main`.
         new = self._commit(self.seed, "two")
@@ -289,6 +294,16 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
             text=True,
         )
         self.assertEqual(got.stdout.strip(), "")
+
+    def test_a_clone_and_its_worktree_share_one_common_dir_and_another_clone_does_not(self):
+        # The key fetches are coordinated on.
+        tree = Path(self._tmp.name) / "tree"
+        self._git(self.repo, "worktree", "add", "-q", "--detach", str(tree))
+        here = asyncio.run(gitops.common_dir(self.repo))
+        self.assertTrue(here.is_absolute())
+        self.assertEqual(here, (self.repo / ".git").resolve())
+        self.assertEqual(asyncio.run(gitops.common_dir(tree)), here)
+        self.assertNotEqual(asyncio.run(gitops.common_dir(self.seed)), here)
 
 
 class Worktrees(FetchingTheTrunkFromARemote):
@@ -307,6 +322,12 @@ class Worktrees(FetchingTheTrunkFromARemote):
         self.assertEqual(trees[1]["head"], self.main)
         self.assertEqual(trees[1]["branch"], "")
         self.assertEqual(trees[0]["branch"], "main")
+
+    def test_a_tree_on_an_existing_branch_carries_its_name(self):
+        self._git(self.repo, "branch", "fix/a-problem", self.main)
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, "fix/a-problem"))
+        trees = asyncio.run(gitops.worktree_list(self.repo))
+        self.assertEqual(trees[1]["branch"], "fix/a-problem")
 
     def test_a_start_that_is_neither_a_sha_nor_a_unit_branch_never_reaches_git(self):
         for bad in ("main", "-b", "--force", "HEAD", self.main[:7], ""):
@@ -719,6 +740,11 @@ class ReadingAFailedAttemptsTree(unittest.TestCase):
         self.assertEqual(got_head, head)
         self.assertEqual(branch, "fix/a-problem")
 
+    def test_head_and_branch_reports_detached_on_a_detached_tree(self):
+        self._git("switch", "-q", "--detach", "HEAD")
+        _, branch = asyncio.run(gitops.head_and_branch(self.repo))
+        self.assertEqual(branch, "detached")
+
     def test_merge_base_falls_back_to_local_main_without_an_origin(self):
         self._git("switch", "-q", "-c", "fix/a-problem")
         (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
@@ -727,6 +753,33 @@ class ReadingAFailedAttemptsTree(unittest.TestCase):
         sha, ref = asyncio.run(gitops.merge_base(self.repo))
         self.assertEqual(sha, self.base)
         self.assertEqual(ref, "refs/heads/main")
+
+    def test_merge_base_prefers_origin_main_when_it_exists(self):
+        remote = Path(self._tmp.name) / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+        self._git("remote", "add", "origin", str(remote))
+        self._git("push", "-q", "origin", "main")
+        self._git("switch", "-q", "-c", "fix/a-problem")
+        (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "second")
+        sha, ref = asyncio.run(gitops.merge_base(self.repo))
+        self.assertEqual(sha, self.base)
+        self.assertEqual(ref, "refs/remotes/origin/main")
+
+    def test_log_range_matches_git_log_order_and_split(self):
+        self._git("switch", "-q", "-c", "fix/a-problem")
+        (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "second commit")
+        (self.repo / "c.txt").write_text("three\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "third commit")
+        head = self._git("rev-parse", "HEAD").strip()
+        want = self._git("log", "--format=%H %s", f"{self.base}..{head}")
+        commits = asyncio.run(gitops.log_range(self.repo, self.base, head))
+        got = "\n".join(f"{c['sha']} {c['subject']}" for c in commits)
+        self.assertEqual(got, want.strip())
 
     def test_log_range_refuses_anything_that_is_not_a_full_sha(self):
         for bad in ("main", "HEAD", self.base[:7], ""):
@@ -761,6 +814,9 @@ class ReadingAFailedAttemptsTree(unittest.TestCase):
         lines = asyncio.run(gitops.status_porcelain(self.repo))
         self.assertEqual("\n".join(lines) + ("\n" if lines else ""), want)
         self.assertTrue(lines[0].startswith(" M"), lines[0])
+
+    def test_status_porcelain_is_empty_on_a_clean_tree(self):
+        self.assertEqual(asyncio.run(gitops.status_porcelain(self.repo)), [])
 
     def test_a_directory_that_is_not_a_repository_is_refused_by_all_four(self):
         not_repo = Path(self._tmp.name) / "not-a-repo"

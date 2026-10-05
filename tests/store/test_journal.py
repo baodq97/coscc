@@ -231,6 +231,21 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             [row2] = j.timeline("w", "0009_x", timeout=None)[1:]
             self.assertTrue(row2["reported"])
 
+    def test_fail_fail_fail_done_reads_as_no_open_attempt(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            for _ in range(3):
+                j.started("w", "0009_x", "impl", "autonomous")
+                j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "done", artifact="impl.md")
+            self.assertIsNone(j.failed_attempts("w", "0009_x", "impl"))
+
+    def test_no_run_at_all_reads_as_no_open_attempt(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            self.assertIsNone(j.failed_attempts("w", "0009_x", "impl"))
+
     def test_done_then_two_fails_gives_one_latest_and_one_earlier(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
@@ -370,8 +385,21 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             j.finished("w", "0009_x", "plan", "exhausted", run="r1", review_md="none")
             self.assertNotIn("opened", j.failed_attempts("w", "0009_x", "plan"))
 
+    def test_timeline_with_no_attempt_row_still_has_no_kind_attempt(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "exhausted", turns=5, cost_usd=0.1)
+            self.assertEqual([r["kind"] for r in j.records("w", "0009_x")], ["start", "end"])
+
 
 class LastRunsIsAPureFold(unittest.TestCase):
+    def test_a_stage_with_no_end_is_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            self.assertEqual(last_runs(j.timeline("w", "0009_x")), {})
+
     def test_the_most_recent_ended_row_wins(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
@@ -429,6 +457,24 @@ class AnEndClosesTheRunItNames(unittest.TestCase):
             j.finished("w", "0009_x", "impl", "failed", run="elsewhere")
             [row] = j.timeline("w", "0009_x")
             self.assertEqual(row["outcome"], "failed")
+
+    def test_turns_without_a_cost_are_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous", run="A")
+            j.finished("w", "0009_x", "impl", "failed", run="A", turns=5, cost_unknown=True)
+            [row] = j.timeline("w", "0009_x")
+            self.assertEqual((row["turns_reported"], row["reported"]), (True, False))
+            got = last_runs([row])["impl"]
+            self.assertEqual((got["turns"], got["cost_usd"]), (5, None))
+
+    def test_a_cost_without_turns_is_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "failed", cost_usd=0.25)
+            got = last_runs(j.timeline("w", "0009_x"))["impl"]
+            self.assertEqual((got["turns"], got["cost_usd"]), (None, 0.25))
 
     def test_a_sum_counts_the_runs_whose_cost_is_unknown(self):
         with tempfile.TemporaryDirectory() as d:

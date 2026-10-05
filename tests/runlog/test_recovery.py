@@ -94,6 +94,17 @@ class AStepTheAppWentDownUnder(unittest.TestCase):
         self.assertEqual(self.ends(), [])
         self.assertIsNone(self.data.step_run("r-1")["ended_at"])
 
+    def test_someone_elses_process_is_alive(self):
+        with mock.patch.object(recovery.os, "kill", side_effect=PermissionError()):
+            self.assertTrue(recovery._alive(1))
+        with mock.patch.object(recovery.os, "kill", side_effect=ProcessLookupError()):
+            self.assertFalse(recovery._alive(1))
+
+    def test_a_start_with_no_pid_is_left_alone(self):
+        self.abandoned(pid=None)
+        self.assertEqual(recovery.recover(self.data), 0)
+        self.assertEqual(self.ends(), [])
+
     def test_a_run_with_no_start_is_left_alone(self):
         self.abandoned(start=False)
         self.assertEqual(recovery.recover(self.data), 0)
