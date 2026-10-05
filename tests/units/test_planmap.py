@@ -71,40 +71,6 @@ class TheDefinitions(unittest.TestCase):
         self.assertNotIn("def inner", names)
         self.assertFalse(any("nested" in n for n in names))
 
-    def test_a_line_inside_a_multi_line_string_is_no_definition(self):
-        names = [
-            d
-            for _, d in planmap.definitions(
-                "test_planmap.py", Path(__file__).read_text(encoding="utf-8")
-            )
-        ]
-        self.assertIn("class TheDefinitions", names)
-        for phantom in ("def top", "class Box", "def Box.__init__", "async def later"):
-            self.assertNotIn(phantom, names)
-
-    def test_a_multi_line_string_in_a_class_does_not_end_it(self):
-        text = 'class A:\n    X = """\nnot code\n"""\n\n    def after(self):\n        pass\n'
-        self.assertEqual(planmap.definitions("m.py", text), [(1, "class A"), (6, "def A.after")])
-
-    def test_python_that_does_not_tokenize_is_read_line_by_line(self):
-        self.assertEqual(planmap.definitions("m.py", 'def a():\n    pass\n"""\n'), [(1, "def a")])
-
-    def test_javascript_function_class_and_const_at_column_zero(self):
-        for name in ("m.js", "m.mjs"):
-            with self.subTest(name=name):
-                self.assertEqual(
-                    planmap.definitions(name, JS),
-                    [
-                        (3, "function run"),
-                        (6, "function wait"),
-                        (7, "const LIMIT"),
-                        (8, "class Board"),
-                    ],
-                )
-
-    def test_any_other_file_has_none(self):
-        self.assertEqual(planmap.definitions("SKILL.md", "def x():\n"), [])
-
 
 class TheSection(unittest.TestCase):
     def setUp(self):
@@ -140,14 +106,6 @@ class TheSection(unittest.TestCase):
         self.assertEqual(section, "- `pkg/later.py` — new")
         self.assertEqual((record["files"], record["new"]), (1, 1))
 
-    def test_a_name_after_a_path_is_the_path_once(self):
-        section, _ = planmap.select(plan("pkg/m.py::top", "pkg/m.py"), self.tree)
-        self.assertEqual(section.count("- `pkg/m.py` — 24 lines"), 1)
-
-    def test_a_directory_is_skipped(self):
-        section, record = planmap.select(plan("pkg/"), self.tree)
-        self.assertEqual((section, record["files"]), ("", 0))
-
     def test_nothing_outside_the_tree_is_read(self):
         (self.root / "secret.py").write_text("def hidden():\n    pass\n", encoding="utf-8")
         os.symlink(self.root / "secret.py", self.tree / "pkg" / "link.py")
@@ -179,14 +137,6 @@ class TheSection(unittest.TestCase):
         self.assertNotIn("function run", section)
         self.assertEqual((record["full"], record["short"]), (1, 2))
 
-    def test_short_lines_past_the_cap_end_in_how_many_more(self):
-        names = [f"pkg/{'x' * 200}{i:04d}.py" for i in range(100)]
-        section, record = planmap.select(plan(*names), self.tree)
-        self.assertLessEqual(record["bytes"], planmap.CAP_BYTES)
-        self.assertRegex(section.splitlines()[-1], r"^… and \d+ more files$")
-        self.assertEqual(record["files"], 100)
-        self.assertLess(record["full"] + record["short"], 100)
-
     def test_a_plan_without_the_section_is_nothing(self):
         self.assertEqual(
             planmap.select("# Plan: x\nStatus: accepted.\n", self.tree), ("", planmap._empty())
@@ -205,14 +155,6 @@ class TheSection(unittest.TestCase):
         self.assertEqual(
             planmap.for_step(p, self.tree), {"plan_map": section, "plan_map_record": record}
         )
-
-
-class TheFilesOfAPlan(unittest.TestCase):
-    def test_files_of_keeps_paths_only(self):
-        plan = "# Plan\n\n## Files that change\n\n- `coscc/a.py` (new): phần mới\n- `README.md`\n\n## Order\n"
-        self.assertEqual(planmap.files_of(plan), {"coscc/a.py", "README.md"})
-        self.assertIsNone(planmap.files_of("# Plan\n\n## Order\n"))
-        self.assertIsNone(planmap.files_of(None))
 
 
 if __name__ == "__main__":

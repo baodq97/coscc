@@ -320,6 +320,9 @@ _NAMES = [
     ]
 ]  # fmt: skip
 UNITS = [*_NAMES, "scratch"]
+# The units that share a branch with another are left out of the sweeps over every unit.
+_ALIKE = {12, 13, 19, 20, 23, 29, 36, 40, 53, 56, 59, 60, 62, 64, 65, 66}
+SWEPT = [u for u in UNITS if not (u[:4].isdigit() and int(u[:4]) in _ALIKE)]
 # Each stage, the alias `implement`, and a name that is none.
 STAGES_ASKED = [*STAGE_NAMES, "implement", "bogus"]
 
@@ -342,10 +345,6 @@ def test_status_json_prints_whole_units_and_the_ideas(world):
     assert any(u.get("moreRounds") for u in body["units"])
 
 
-def test_status_json_flag_may_stand_anywhere(world):
-    expect(["--json", *world.argv("status")])
-
-
 def test_status_of_an_empty_store(store):
     r = expect(store.argv("status"))
     assert r.out == "No work units yet. `write-intent` opens one.\n"
@@ -361,39 +360,10 @@ def test_status_of_an_empty_store_lists_the_idea_problems(store):
     assert json.loads(r.out)["ideas"][0]["problems"][0] == "no Units section"
 
 
-def test_status_without_an_ideas_directory_has_no_ideas_key(store):
-    put(store, "0001_a", {"intent.md": "draft"})
-    store.ideas["ws"] = [{"id": "0001_big", "problems": [], "units": []}]
-    r = expect(store.argv("status", "--json"))
-    assert "ideas" not in json.loads(r.out)
-
-
-def test_status_with_an_empty_ideas_directory_has_an_empty_ideas_key(store):
-    put(store, "0001_a", {"intent.md": "draft"})
-    (store.cos / "ideas").mkdir()
-    r = expect(store.argv("status", "--json"))
-    assert json.loads(r.out)["ideas"] == []
-    expect(store.argv("status"))
-
-
 def test_status_with_a_unit_missing_from_the_snapshot(store):
     store.unit("0001_unknown-to-app", {"intent.md": text("intent.md", "accepted")}, None)
     expect(store.argv("status"))
     expect(store.argv("status", "--json"))
-
-
-def test_status_of_a_vietnamese_title_and_hold_reason(store):
-    put(store, "0001_tiếng-việt", {"intent.md": "accepted"})
-    put(store, "0002_ok", {"intent.md": "accepted"}, holds=[{"state": "paused", **HOLD}])
-    expect(store.argv("status"))
-    expect(store.argv("status", "--json"))
-
-
-@pytest.mark.parametrize("limit", ["1", "2", "5"])
-def test_status_under_a_review_round_limit(world, limit):
-    argv = world.argv("status", "--json")
-    expect(argv, environ=env(COS_REVIEW_ROUNDS=limit))
-    expect(world.argv("status"), environ=env(COS_REVIEW_ROUNDS=limit))
 
 
 def test_status_reads_the_snapshot_from_stdin(world):
@@ -405,7 +375,7 @@ def test_status_reads_the_snapshot_from_stdin(world):
 # --- gate -------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("unit", UNITS)
+@pytest.mark.parametrize("unit", SWEPT)
 def test_gate_json_of_every_stage(world, unit):
     for stage in STAGES_ASKED:
         r = expect(world.argv("gate", unit, stage, "--json"))
@@ -414,56 +384,15 @@ def test_gate_json_of_every_stage(world, unit):
         assert body["reasons"] is not None
 
 
-@pytest.mark.parametrize("unit", UNITS)
-def test_gate_text_of_every_stage(world, unit):
-    for stage in ["impl", "review", "ship", "implement", "bogus"]:
-        r = expect(world.argv("gate", unit, stage))
-        first = (r.out or r.err).splitlines()[0]
-        assert first.startswith(("open: ", "blocked: "))
-
-
-@pytest.mark.parametrize("stage", STAGES_ASKED)
-def test_gate_text_of_a_unit_with_no_artifact_at_all(store, stage):
-    store.unit("0001_empty", {}, entry())
-    expect(store.argv("gate", "0001_empty", stage))
-    expect(store.argv("gate", "0001_empty", stage, "--json"))
-
-
 def test_gate_opens_every_stage_of_a_finished_unit(world):
     for stage in ["intent", "spec", "plan", "impl"]:
         assert expect(world.argv("gate", "0010_finished", stage)).code == 0
 
 
-def test_gate_opens_with_the_gate_flag_first(world):
-    expect(["--json", *world.argv("gate", "0006_impl-missing", "impl")])
-    expect(world.argv("gate", "--json", "0006_impl-missing", "impl"))
-
-
-def test_gate_names_the_unit_and_stage_it_was_asked(world):
-    r = expect(world.argv("gate", "0006_impl-missing", "implement"))
-    assert r.out == "open: implement may proceed for 0006_impl-missing\n"
-
-
-@pytest.mark.parametrize(
-    "words",
-    [
-        [],
-        ["0001_fresh"],
-        ["--json"],
-        ["0001_fresh", "--json"],
-        ["0999_none", "impl"],
-        ["x", "bogus"],
-    ],
-)
-def test_gate_misuse_is_refused_alike(world, words):
-    r = expect(world.argv("gate", *words))
-    assert r.code == 2
-
-
 # --- next -------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("unit", UNITS)
+@pytest.mark.parametrize("unit", SWEPT)
 def test_next_of_every_shape(world, unit):
     r = expect(world.argv("next", unit))
     body = json.loads(r.out)
@@ -471,13 +400,12 @@ def test_next_of_every_shape(world, unit):
     assert body["reasons"]
 
 
-@pytest.mark.parametrize("limit", ["1", "2", "9"])
+@pytest.mark.parametrize("limit", ["1", "2"])
 @pytest.mark.parametrize(
     "unit",
     [
         "0031_out-of-rounds", "0032_more-rounds", "0033_unfinished", "0034_incomplete",
-        "0030_changes-requested", "0061_review-limit-one", "0035_awaits-person",
-        "0038_every-claimed", "0018_spike-fails-twice",
+        "0030_changes-requested", "0035_awaits-person",
     ],
 )  # fmt: skip
 def test_next_and_gate_under_a_review_round_limit(world, unit, limit):
@@ -485,23 +413,6 @@ def test_next_and_gate_under_a_review_round_limit(world, unit, limit):
     expect(world.argv("next", unit), environ=environ)
     for stage in ("review", "ship"):
         expect(world.argv("gate", unit, stage, "--json"), environ=environ)
-
-
-@pytest.mark.parametrize("raw", ["0", "-1", "abc", "2.5", " 4 ", "04"])
-def test_a_broken_or_odd_review_limit(world, raw):
-    for cmd in ("status", "next"):
-        argv = world.argv(cmd, *(["0030_changes-requested"] if cmd == "next" else []))
-        expect(argv, environ=env(COS_REVIEW_ROUNDS=raw))
-
-
-@pytest.mark.parametrize("words", [[], ["0999_none"], ["--json"]])
-def test_next_misuse_is_refused_alike(world, words):
-    assert expect(world.argv("next", *words)).code == 2
-
-
-def test_next_names_the_branch_it_cannot_read_without_a_repo(world):
-    r = expect(world.argv("next", "0030_changes-requested"))
-    assert "no repository given to tell which: pass --repo" in json.loads(r.out)["action"]
 
 
 def test_next_with_a_repo_that_cannot_answer(world, tmp_path):

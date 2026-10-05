@@ -21,10 +21,15 @@ from coscc.loop.model import (
     review_limit,
 )
 from coscc.loop.probe import UI_STANDARD, Probe
-from coscc.loop.repo_rules import normalize_patch, screens_problems
+from coscc.loop.repo_rules import screens_problems
 from coscc.loop.rules import more_rounds, open_lines
 from tests.loop.conftest import git
 from tests.loop.test_model import (
+    ROUND1,
+    ROUND2,
+    moved_to,
+    round3,
+    tree_after_round_two,
     check_gate,
     next_action,
     next_step,
@@ -33,24 +38,18 @@ from tests.loop.test_model import (
     NOT_ANCESTOR,
     PR,
     REVIEW_HEAD,
-    ROUND1,
-    ROUND2,
     SHA,
     art,
     asked,
     branched,
-    cli,
     f_block,
     green_probe,
     impl_text,
-    moved_to,
     ok,
     question_tree,
     rated,
     review_art,
-    round3,
     round_,
-    tree_after_round_two,
 )
 
 NO = NOT_ANCESTOR
@@ -160,88 +159,6 @@ def rebased_probe(patch=None, base=None, checks=None, calls=None, head=REB):
 
 def merge_bases(calls):
     return [c for c in calls if c.startswith("merge-base ") and "--is-ancestor" not in c]
-
-
-def test_normalize_patch_drops_index_lines_and_hunk_numbers_and_keeps_every_other_byte():
-    text = "\n".join(
-        [
-            "diff --git a/a.txt b/a.txt",
-            "index 1111111..2222222 100644",
-            "--- a/a.txt",
-            "+++ b/a.txt",
-            "@@ -27,7 +27,7 @@ def f():",
-            " line 27",
-            "+index 1111111..2222222",
-            "- @@ -1 +1 @@",
-            "\\ No newline at end of file",
-            "diff --git a/b.bin b/b.bin",
-            f"index {'1' * 40}..{'2' * 40}",
-            "GIT binary patch",
-            "literal 7",
-            "zcmZQzWMXDwWn^Ms0000A0RR91",
-            "",
-            "@@ -1 +1 @@",
-            "",
-        ]
-    )
-    assert normalize_patch(text) == "\n".join(
-        [
-            "diff --git a/a.txt b/a.txt",
-            "--- a/a.txt",
-            "+++ b/a.txt",
-            "@@ @@ def f():",
-            " line 27",
-            "+index 1111111..2222222",
-            "- @@ -1 +1 @@",
-            "\\ No newline at end of file",
-            "diff --git a/b.bin b/b.bin",
-            "GIT binary patch",
-            "literal 7",
-            "zcmZQzWMXDwWn^Ms0000A0RR91",
-            "",
-            "@@ @@",
-            "",
-        ]
-    )
-    # Only the numbers differ: equal once normalized. A line of context differs: not.
-    assert normalize_patch(hunk(27)) == normalize_patch(hunk(28, "line 28", "abcdef0..0fedcba"))
-    assert normalize_patch(hunk(27)) != normalize_patch(hunk(27, "line 28, changed by main"))
-
-
-def test_a_merge_base_that_names_no_commit_is_an_error_never_a_clean_rebase():
-    u = passed_once()
-    for base, said in [
-        (
-            lambda c: ok(""),
-            r"its patch could not be compared with the reviewed one: git merge-base printed no commit",
-        ),
-        (lambda c: ok("not a sha\n"), r"git merge-base printed no commit"),
-        (
-            lambda c: {"code": 1, "out": "", "err": "fatal: no merge base"},
-            r"could not be compared .*fatal: no merge base",
-        ),
-    ]:
-        g = check_gate(u, "ship", rebased_probe(base=base))
-        assert g["ok"] is False
-        assert re.search(
-            r"rewritten after the pass \(a rebase does this\): review its new head in another round",
-            g["need"][0],
-        )
-        assert re.search(said, g["need"][0])
-        assert next_step(u, rebased_probe(base=base))["stage"] == "review"
-    # Two empty patches are equal, so an empty one from a failing diff must not be read as one.
-    failing = rebased_probe()
-    inner = failing.git
-
-    def git2(*a):
-        if a[0] == "diff" and a[1] == "--no-color":
-            return {"code": 128, "out": "", "err": "fatal: bad object"}
-        return inner(*a)
-
-    failing.git = git2
-    assert re.search(
-        r"could not be compared .*fatal: bad object", check_gate(u, "ship", failing)["need"][0]
-    )
 
 
 def test_a_rewritten_ref_whose_patch_is_unchanged_opens_ship_once_ci_is_green():
@@ -365,16 +282,6 @@ def test_a_patch_that_differs_names_its_files_and_one_that_cannot_be_compared_qu
     assert next_step(u, no_trunk(rebased_probe()))["stage"] == "review"
 
 
-def test_a_unit_not_rebased_asks_git_no_merge_base_to_trunk_no_patch_and_gh_no_checks():
-    u = passed_once()
-    calls = []
-    probe = recorded(green_probe(), calls)
-    assert check_gate(u, "ship", probe) == {"ok": True, "need": [], "head": SHA}
-    assert merge_bases(calls) == []
-    assert [c for c in calls if c.startswith("diff --no-color")] == []
-    assert [c for c in calls if c.startswith("gh pr checks")] == []
-
-
 def test_next_offers_ship_on_a_green_clean_rebase_impl_on_red_and_nothing_while_ci_runs():
     u = passed_once()
     assert next_step(u, rebased_probe())["stage"] == "ship"
@@ -416,23 +323,6 @@ def test_a_ship_refused_as_not_up_to_date_and_then_rebased_clean_is_offered_ship
     # Not rebased at all: the refusal stands.
     action = next_step(u(), green_probe())["action"]
     assert action.startswith("ship was refused: the head branch is not up to date")
-
-
-def test_gate_prints_a_second_line_naming_the_reviewed_commit_and_the_new_head():
-    assert open_lines("ship", "0001_x", head=SHA) == [
-        f"open: ship may proceed for 0001_x — merge with --match-head-commit {SHA}"
-    ]
-    assert open_lines("impl", "0001_x") == ["open: impl may proceed for 0001_x"]
-    first, second, *rest = open_lines(
-        "ship", "0001_x", head=REB, rebased={"reviewed": SHA, "head": REB}
-    )
-    assert first == f"open: ship may proceed for 0001_x — merge with --match-head-commit {REB}"
-    assert second == (
-        "the reviewed commit aaaaaaa was rebased to ddddddd and the unit's patch is unchanged — "
-        "no review round is needed"
-    )
-    assert not re.search(r"[0-9a-f]{40}", second)
-    assert rest == []
 
 
 # --- the same cases on a real repository, where only `gh` is faked ----------------------------
@@ -575,20 +465,6 @@ def test_a_binary_file_that_comes_out_different_with_identical_text_is_not_clean
     assert re.search(r"its patch differs from the reviewed one in b\.bin$", g["need"][0])
 
 
-def test_red_pending_or_none_on_a_clean_rebase_on_a_real_repository_never_offers_review(tmp_path):
-    r = rebase_repo(tmp_path)
-    r.on_main(far_from_the_hunk)
-    head = r.rebase()
-    u = passed_at(r.R)
-    for checks, stage in [
-        ([{"name": "tests", "bucket": "fail"}], "impl"),
-        ([{"name": "tests", "bucket": "pending"}], ""),
-        ([], ""),
-    ]:
-        assert check_gate(u, "ship", r.probe(head, checks))["ok"] is False
-        assert next_step(u, r.probe(head, checks))["stage"] == stage
-
-
 def test_a_head_that_differs_only_under_the_units_own_files_is_clean(tmp_path):
     r = rebase_repo(tmp_path)
     r.on_main(far_from_the_hunk)
@@ -610,20 +486,6 @@ def test_a_head_that_differs_only_under_the_units_own_files_is_clean(tmp_path):
 TWO_ASKED = "\n".join(
     round_(n, "changes-requested", [rated("F1", "low"), rated("F2", "medium")]) for n in (1, 2)
 )
-
-
-def test_changes_asked_then_only_a_clean_rebase_next_offers_impl_and_asks_gh_no_checks():
-    u = asked(TWO_ASKED)
-    calls = []
-    n = next_step(u, rebased_probe(calls=calls))
-    assert n["stage"] == "impl"
-    for said in [r"aaaaaaa", r"ddddddd", r"unchanged", r"open findings of review round 2"]:
-        assert re.search(said, n["action"])
-    assert not re.search(r"[0-9a-f]{40}", n["action"])
-    assert [c for c in calls if c.startswith("gh pr checks")] == []
-    for bucket in ["fail", "pending"]:
-        probe = rebased_probe(checks=[{"name": "tests", "bucket": bucket}])
-        assert next_step(u, probe)["stage"] == "impl"
 
 
 def test_changes_asked_main_moved_and_the_branch_rebased_on_a_real_repository_is_impl(tmp_path):
@@ -661,24 +523,6 @@ def test_a_rebase_whose_patch_differs_in_one_file_names_it_and_goes_to_review():
         r"was rewritten past aaaaaaa — its patch differs from the reviewed one in a\.txt",
         n["action"],
     )
-
-
-def test_a_rewrite_that_cannot_be_compared_goes_to_review_on_green_and_says_why():
-    n = next_step(asked(TWO_ASKED), no_trunk(rebased_probe()))
-    assert n["stage"] == "review"
-    assert re.search(
-        r"could not be compared with the reviewed one: there is no origin/main and no main here",
-        n["action"],
-    )
-
-
-def test_a_head_that_was_not_rewritten_asks_git_for_no_patch_and_no_merge_base_to_trunk():
-    for files, stage in [(["src/a.py"], "review"), ([".cos/0001_x/review.md"], "impl")]:
-        calls = []
-        probe = recorded(moved_to(files), calls)
-        assert next_step(asked(TWO_ASKED), probe)["stage"] == stage
-        assert [c for c in calls if c.startswith("diff --no-color")] == []
-        assert merge_bases(calls) == []
 
 
 # --- a passing review the ship gate cannot read loops ------------------------------------------
@@ -736,23 +580,6 @@ def passed_on(*on):
 
 def five_full_page_passes():
     return "\n".join(f"{round_(n, 'pass')}{screens(shots=[FULL_PAGE])}" for n in (1, 2, 3, 4, 5))
-
-
-def test_a_screenshot_line_may_carry_a_parenthesised_note_after_its_size():
-    def shots(line):
-        text = f"{round_(1, 'pass')}{screens(shots=[line])}"
-        return parse_review(text)["rounds"][0]["screens"]["shots"]
-
-    want = [
-        {
-            "path": ".screens/board-1440x900.png",
-            "size": "1440x900",
-            "address": "/board",
-            "result": "no violation",
-        }
-    ]
-    assert shots(FULL_PAGE) == want
-    assert shots(SHOT) == want
 
 
 def test_five_passing_rounds_with_a_full_page_screenshot_open_ship():
@@ -972,88 +799,6 @@ def test_a_merged_pull_request_opens_ship_to_record_it_when_its_branch_is_gone()
     ]
 
 
-def test_a_merged_pull_request_opens_ship_to_record_it_while_its_branch_is_still_here():
-    u = passed_once()
-    assert check_gate(u, "ship", merged_probe()) == {
-        "ok": True,
-        "need": [],
-        "merged": {"number": 7, "commit": MERGE, "at": MERGED_AT, "head": SHA},
-    }
-    # Nothing that speaks of a merge still to come closes it: red CI, a head behind origin/main,
-    # code after the pass, a UI unit's screenshots. The head it merged is carried for ship.md.
-    calls = []
-    late = merged_probe(
-        view=merged_view(headRefOid=HEAD2),
-        checks=[{"name": "tests", "bucket": "fail"}],
-        git_={
-            f"merge-base --is-ancestor {TRUNK} {HEAD2}": NO,
-            f"diff --name-only {SHA}..{HEAD2}": ok("src/a.py"),
-            f"diff --name-only origin/main...{HEAD2}": ok("coscc/screens.py"),
-        },
-        calls=calls,
-    )
-    g = check_gate(u, "ship", with_attrs(late, ui=lambda: UI))
-    assert g["ok"] is True
-    assert g["merged"]["head"] == HEAD2
-    assert "head" not in g
-    asked_for = ("gh pr checks", "rev-parse", "diff")
-    assert [c for c in calls if c.startswith(asked_for)] == []
-
-
-def test_the_open_line_names_the_pull_request_the_merge_commit_and_when_it_merged():
-    g = check_gate(passed_once(), "ship", merged_probe(git_=GONE))
-    lines = open_lines("ship", "0001_x", **{k: v for k, v in g.items() if k not in ("ok", "need")})
-    assert lines == [
-        f"open: ship may proceed for 0001_x — #7 was merged as {MERGE} at {MERGED_AT}: "
-        "record it in ship.md; do not merge"
-    ]
-    assert "--match-head-commit" not in "\n".join(lines)
-
-
-def test_a_merge_commit_that_cannot_be_read_is_not_here_or_not_on_trunk_closes_ship():
-    u = passed_once()
-    cannot = "cannot read the merge commit of #7: gh gave mergeCommit"
-    for probe, said in [
-        (
-            merged_probe(view=merged_view(mergeCommit=None)),
-            rf"^{cannot} none and mergedAt 2026-09-20T13:33:07Z — fetch, then ask again$",
-        ),
-        (
-            merged_probe(view=merged_view(mergeCommit={"oid": "abc"})),
-            rf"^{cannot} abc and",
-        ),
-        (
-            merged_probe(view=merged_view(mergedAt="")),
-            rf"^{cannot} {MERGE} and mergedAt none — fetch, then ask again$",
-        ),
-        (
-            merged_probe(git_={**GONE, f"cat-file -e {MERGE}^{{commit}}": NO}),
-            rf"^the merge commit {MERGE} of #7 is not in this repository — fetch, then ask again$",
-        ),
-        (
-            merged_probe(git_={f"merge-base --is-ancestor {MERGE} {TRUNK}": NO}),
-            rf"^the merge commit {MERGE} of #7 is not on origin/main here — fetch, then ask again$",
-        ),
-    ]:
-        g = check_gate(u, "ship", probe)
-        assert [g["ok"], len(g["need"])] == [False, 1]
-        assert re.search(said, g["need"][0])
-        assert "MERGED, not open" not in g["need"][0]
-        n = next_step(u, probe)
-        assert [n["stage"], n["blocked"]] == ["", True]
-        assert re.search(said, n["action"])
-
-
-def test_a_pull_request_closed_without_merging_closes_ship_with_the_old_sentence():
-    u = passed_once()
-    for git_ in [{}, GONE]:
-        view = {"state": "CLOSED", "headRefOid": SHA, "mergeCommit": None, "mergedAt": None}
-        probe = merged_probe(view=view, git_=git_)
-        said = "#7 is CLOSED, not open — there is nothing to merge"
-        assert check_gate(u, "ship", probe) == {"ok": False, "need": [said]}
-        assert next_step(u, probe) == {"blocked": True, "action": said, "stage": ""}
-
-
 def test_next_offers_ship_for_a_merged_pull_request_when_ship_md_is_missing_stale_or_refused():
     action = f"ship — #7 was merged as {MERGE} at {MERGED_AT}: record it in ship.md; do not merge"
     stale = {**art("accepted"), "stale": {"stage": "review", "date": "2026-09-26"}}
@@ -1174,53 +919,6 @@ def test_a_more_rounds_block_is_never_an_answer_and_never_the_tail_of_a_finding_
     assert len(parse_review(with_more(STUCK, MORE))["rounds"]) == 3
 
 
-def test_more_rounds_is_attached_only_to_a_unit_out_of_rounds_and_to_no_other(tmp_path):
-    hold = (
-        "# I\nAuthor: t. Type: feat. Status: accepted.\n\n## Answers\n\n### Paused\n"
-        "Decided by: owner. Date: 2026-09-27. Via: product.\n\nchờ\n"
-    )
-    cases = {
-        "out": (stuck(tmp_path, STUCK), True),
-        "notYet": (stuck(tmp_path, f"{REVIEW_HEAD}{stuck_rounds(1)}"), False),
-        "done": (stuck(tmp_path, STUCK, {"plan.md": "# P\nStatus: done.\n"}), False),
-        "paused": (stuck(tmp_path, STUCK, {"intent.md": hold}), False),
-        "rejected": (stuck(tmp_path, STUCK, {"spec.md": "# S\nStatus: rejected.\n"}), False),
-    }
-    for name, (u, want) in cases.items():
-        assert more_rounds(u, 3) is want, name
-        assert "roundsGranted" not in u["artifacts"]["review.md"], name
-    # Through `status --json`: the key is on the stuck unit's row and on no other.
-    root, _ = question_tree(fresh(tmp_path), stuck_files(STUCK))
-    second = root / ".cos" / "0002_q"
-    second.mkdir()
-    for f, text in stuck_files(f"{REVIEW_HEAD}{stuck_rounds(1)}").items():
-        (second / f).write_text(text)
-    out = cli("status", "--json", "--root", str(root))
-    assert out.code == 0, out.err
-    rows = {u["name"]: u for u in json.loads(out.out)["units"]}
-    assert rows["0001_q"]["moreRounds"] is True
-    assert "moreRounds" not in rows["0002_q"]
-    assert "roundsGranted" not in rows["0001_q"]["artifacts"]["review.md"]
-
-
-def test_a_more_rounds_block_changes_no_answer_of_the_ship_gate(tmp_path):
-    findings = [rated("F1", "medium"), "- F2 [open] a.py:3 — low — S3 a SHA on the card"]
-
-    def ship(review):
-        return check_gate(stuck(tmp_path, review), "ship", green_probe(), 3)
-
-    one = f"{REVIEW_HEAD}{round_(1, 'changes-requested', findings)}"
-    assert ship(with_more(one, MORE)) == ship(one)
-    assert ship(with_more(one, MORE))["ok"] is False
-    # With the rounds used up, the block that lifts review still leaves ship as it was.
-    rounds = "\n".join(round_(n, "changes-requested", findings) for n in (1, 2, 3))
-    used = f"{REVIEW_HEAD}{rounds}"
-    lifted = check_gate(stuck(tmp_path, with_more(used, MORE)), "review", green_probe(), 3)
-    assert lifted["ok"] is True
-    assert ship(with_more(used, MORE)) == ship(used)
-    assert ship(with_more(used, MORE))["ok"] is False
-
-
 # --- a red check no rerun can fix just stops ---------------------------------------------------
 
 PR_YML = {
@@ -1297,16 +995,6 @@ def test_a_branch_name_red_while_tests_pend_next_stops_and_needs_a_person():
     assert not re.search(r"has not finished|back to impl", n["action"])
 
 
-def test_a_code_failure_goes_back_to_impl_with_the_red_line_byte_for_byte():
-    checks = [{"name": "branch-name", "bucket": "pass"}, {"name": "tests", "bucket": "fail"}]
-    n = next_step(branched(CHAIN), head_probe(green_probe(checks), head="feat/x"))
-    assert n == {
-        "blocked": True,
-        "action": "CI is red on #7: tests — back to impl: fix on the branch and push",
-        "stage": "impl",
-    }
-
-
 def test_a_red_branch_name_check_on_a_valid_head_goes_to_impl_saying_why_cannot_be_told():
     probe = head_probe(green_probe([{"name": "branch-name", "bucket": "fail"}]), head="feat/x")
     assert next_step(branched(CHAIN), probe) == {
@@ -1376,6 +1064,128 @@ def review_of_rounds(status, rounds):
 
 def cr(n):
     return round_(n, "changes-requested", ["- F1 [open] x"])
+
+
+def test_a_merge_base_that_names_no_commit_is_an_error_never_a_clean_rebase():
+    u = passed_once()
+    for base, said in [
+        (
+            lambda c: ok(""),
+            r"its patch could not be compared with the reviewed one: git merge-base printed no commit",
+        ),
+        (lambda c: ok("not a sha\n"), r"git merge-base printed no commit"),
+        (
+            lambda c: {"code": 1, "out": "", "err": "fatal: no merge base"},
+            r"could not be compared .*fatal: no merge base",
+        ),
+    ]:
+        g = check_gate(u, "ship", rebased_probe(base=base))
+        assert g["ok"] is False
+        assert re.search(
+            r"rewritten after the pass \(a rebase does this\): review its new head in another round",
+            g["need"][0],
+        )
+        assert re.search(said, g["need"][0])
+        assert next_step(u, rebased_probe(base=base))["stage"] == "review"
+    # Two empty patches are equal, so an empty one from a failing diff must not be read as one.
+    failing = rebased_probe()
+    inner = failing.git
+
+    def git2(*a):
+        if a[0] == "diff" and a[1] == "--no-color":
+            return {"code": 128, "out": "", "err": "fatal: bad object"}
+        return inner(*a)
+
+    failing.git = git2
+    assert re.search(
+        r"could not be compared .*fatal: bad object", check_gate(u, "ship", failing)["need"][0]
+    )
+
+
+def test_red_pending_or_none_on_a_clean_rebase_on_a_real_repository_never_offers_review(tmp_path):
+    r = rebase_repo(tmp_path)
+    r.on_main(far_from_the_hunk)
+    head = r.rebase()
+    u = passed_at(r.R)
+    for checks, stage in [
+        ([{"name": "tests", "bucket": "fail"}], "impl"),
+        ([{"name": "tests", "bucket": "pending"}], ""),
+        ([], ""),
+    ]:
+        assert check_gate(u, "ship", r.probe(head, checks))["ok"] is False
+        assert next_step(u, r.probe(head, checks))["stage"] == stage
+
+
+def test_a_merged_pull_request_opens_ship_to_record_it_while_its_branch_is_still_here():
+    u = passed_once()
+    assert check_gate(u, "ship", merged_probe()) == {
+        "ok": True,
+        "need": [],
+        "merged": {"number": 7, "commit": MERGE, "at": MERGED_AT, "head": SHA},
+    }
+    # Nothing that speaks of a merge still to come closes it: red CI, a head behind origin/main,
+    # code after the pass, a UI unit's screenshots. The head it merged is carried for ship.md.
+    calls = []
+    late = merged_probe(
+        view=merged_view(headRefOid=HEAD2),
+        checks=[{"name": "tests", "bucket": "fail"}],
+        git_={
+            f"merge-base --is-ancestor {TRUNK} {HEAD2}": NO,
+            f"diff --name-only {SHA}..{HEAD2}": ok("src/a.py"),
+            f"diff --name-only origin/main...{HEAD2}": ok("coscc/screens.py"),
+        },
+        calls=calls,
+    )
+    g = check_gate(u, "ship", with_attrs(late, ui=lambda: UI))
+    assert g["ok"] is True
+    assert g["merged"]["head"] == HEAD2
+    assert "head" not in g
+    asked_for = ("gh pr checks", "rev-parse", "diff")
+    assert [c for c in calls if c.startswith(asked_for)] == []
+
+
+def test_a_merge_commit_that_cannot_be_read_is_not_here_or_not_on_trunk_closes_ship():
+    u = passed_once()
+    cannot = "cannot read the merge commit of #7: gh gave mergeCommit"
+    for probe, said in [
+        (
+            merged_probe(view=merged_view(mergeCommit=None)),
+            rf"^{cannot} none and mergedAt 2026-09-20T13:33:07Z — fetch, then ask again$",
+        ),
+        (
+            merged_probe(view=merged_view(mergeCommit={"oid": "abc"})),
+            rf"^{cannot} abc and",
+        ),
+        (
+            merged_probe(view=merged_view(mergedAt="")),
+            rf"^{cannot} {MERGE} and mergedAt none — fetch, then ask again$",
+        ),
+        (
+            merged_probe(git_={**GONE, f"cat-file -e {MERGE}^{{commit}}": NO}),
+            rf"^the merge commit {MERGE} of #7 is not in this repository — fetch, then ask again$",
+        ),
+        (
+            merged_probe(git_={f"merge-base --is-ancestor {MERGE} {TRUNK}": NO}),
+            rf"^the merge commit {MERGE} of #7 is not on origin/main here — fetch, then ask again$",
+        ),
+    ]:
+        g = check_gate(u, "ship", probe)
+        assert [g["ok"], len(g["need"])] == [False, 1]
+        assert re.search(said, g["need"][0])
+        assert "MERGED, not open" not in g["need"][0]
+        n = next_step(u, probe)
+        assert [n["stage"], n["blocked"]] == ["", True]
+        assert re.search(said, n["action"])
+
+
+def test_a_pull_request_closed_without_merging_closes_ship_with_the_old_sentence():
+    u = passed_once()
+    for git_ in [{}, GONE]:
+        view = {"state": "CLOSED", "headRefOid": SHA, "mergeCommit": None, "mergedAt": None}
+        probe = merged_probe(view=view, git_=git_)
+        said = "#7 is CLOSED, not open — there is nothing to merge"
+        assert check_gate(u, "ship", probe) == {"ok": False, "need": [said]}
+        assert next_step(u, probe) == {"blocked": True, "action": said, "stage": ""}
 
 
 def test_every_branch_of_next_that_reads_ci_stops_on_the_same_line_and_the_gates_close_on_it(

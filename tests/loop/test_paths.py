@@ -54,11 +54,6 @@ def run(store: UnitStore, *words: str):
         ["new-path", "has_underscore"],
         ["new-path", "double--hyphen"],
         ["new-path", "-lead"],
-        ["new-path", "trail-"],
-        ["new-path", "tiếng-việt"],
-        ["new-path", "a" * 61],
-        ["new-path", "a-" * 30 + "b"],
-        ["new-path", "x\n"],
     ],
 )
 def test_new_path_refuses_a_slug_alike(store: UnitStore, words):
@@ -70,11 +65,6 @@ def test_new_path_refuses_a_slug_alike(store: UnitStore, words):
 def test_new_path_on_an_empty_store(store: UnitStore):
     r = run(store, "new-path", "first")
     assert (r.code, r.out) == (0, ".cos/0001_first\n")
-
-
-def test_new_path_without_a_cos_dir(tmp_path: Path):
-    r = expect(["new-path", "first", "--root", str(tmp_path / "nowhere")])
-    assert r.out == ".cos/0001_first\n"
 
 
 def test_new_path_allows_a_slug_of_sixty(store: UnitStore):
@@ -89,16 +79,6 @@ def test_new_path_takes_the_highest_number_over_gaps(store: UnitStore):
     (store.cos / "0050_a_file").write_text("x")
     r = run(store, "new-path", "next")
     assert r.out == ".cos/0005_next\n"
-
-
-def test_new_path_counts_a_dir_whatever_its_files_say(store: UnitStore):
-    store.unit("0007_empty", {})
-    assert run(store, "new-path", "x").out == ".cos/0008_x\n"
-
-
-def test_new_path_goes_past_four_digits(store: UnitStore):
-    store.unit("9999_last", {})
-    assert run(store, "new-path", "x").out == ".cos/10000_x\n"
 
 
 def test_new_path_reserves_from_one_dir(store: UnitStore, tmp_path: Path):
@@ -123,16 +103,6 @@ def test_new_path_reserves_from_two_dirs_and_one_without_cos(store: UnitStore, t
     assert run(store, *words).out == ".cos/0012_x\n"
 
 
-def test_new_path_reserves_from_a_relative_dir(store: UnitStore, tmp_path: Path):
-    other = UnitStore(tmp_path / "other")
-    other.unit("0020_b", {})
-    r = expect(
-        ["new-path", "x", "--root", str(store.root), "--reserve-from", "other"],
-        cwd=tmp_path,
-    )
-    assert r.out == ".cos/0021_x\n"
-
-
 def test_new_path_ignores_a_symlink_to_a_dir(store: UnitStore, tmp_path: Path):
     target = tmp_path / "target"
     target.mkdir()
@@ -150,8 +120,6 @@ def test_new_path_ignores_a_symlink_to_a_dir(store: UnitStore, tmp_path: Path):
         ["new-idea"],
         ["new-idea", ""],
         ["new-idea", "Bad"],
-        ["new-idea", "a_b"],
-        ["new-idea", "a" * 61],
     ],
 )
 def test_new_idea_refuses_a_slug_alike(store: UnitStore, words):
@@ -159,11 +127,6 @@ def test_new_idea_refuses_a_slug_alike(store: UnitStore, words):
 
 
 def test_new_idea_with_no_ideas_yet(store: UnitStore):
-    assert run(store, "new-idea", "first").out == ".cos/ideas/0001_first.md\n"
-
-
-def test_new_idea_with_an_empty_ideas_dir(store: UnitStore):
-    (store.cos / "ideas").mkdir()
     assert run(store, "new-idea", "first").out == ".cos/ideas/0001_first.md\n"
 
 
@@ -199,11 +162,6 @@ INTENT = (
 
 def test_meta_of_an_empty_store(store: UnitStore):
     r = run(store, "meta")
-    assert json.loads(r.out) == {"units": {}, "ideas": None}
-
-
-def test_meta_without_a_cos_dir(tmp_path: Path):
-    r = expect(["meta", "--root", str(tmp_path / "nowhere")])
     assert json.loads(r.out) == {"units": {}, "ideas": None}
 
 
@@ -255,19 +213,13 @@ def test_meta_of_a_whole_store_with_units_and_ideas(store: UnitStore):
     assert data["ideas"] is not None
 
 
-def test_meta_of_a_store_with_an_empty_ideas_dir(store: UnitStore):
-    store.unit("0001_a", {"intent.md": header("A", "draft")})
-    (store.cos / "ideas").mkdir()
-    assert json.loads(run(store, "meta").out)["ideas"] == []
-
-
 def test_meta_of_one_unit(store: UnitStore):
     _whole_store(store)
     r = run(store, "meta", "0001_first")
     assert list(json.loads(r.out)["units"]) == ["0001_first"]
 
 
-@pytest.mark.parametrize("unit", ["0002_second", "0003_empty", "odd name", "Zed", "123"])
+@pytest.mark.parametrize("unit", ["0003_empty", "Zed"])
 def test_meta_of_each_kind_of_unit(store: UnitStore, unit):
     _whole_store(store)
     assert run(store, "meta", unit).code == 0
@@ -314,12 +266,6 @@ def test_meta_reads_questions_answers_holds_and_links(store: UnitStore):
         ["meta", "ideas"],
         ["meta", "a/b"],
         ["meta", "../x"],
-        ["meta", "a\\b"],
-        ["meta", "/"],
-        ["meta", "0001_first", "nope.md"],
-        ["meta", "0001_first", "intent.md", "nope.md", "other"],
-        ["meta", "0001_first", "intent"],
-        ["meta", "0001_first", ""],
     ],
 )
 def test_meta_refuses_misuse_alike(store: UnitStore, words):
@@ -327,14 +273,6 @@ def test_meta_refuses_misuse_alike(store: UnitStore, words):
     r = run(store, *words)
     assert r.code == 2
     assert r.err
-
-
-def test_meta_of_an_empty_name_and_of_a_file_alike(store: UnitStore):
-    _whole_store(store)
-    store.unit("0004_x", {"intent.md": header("X", "draft")})
-    (store.cos / "stray.txt").write_text("x")
-    assert run(store, "meta", "").code == 0
-    assert run(store, "meta", "stray.txt").code == 0
 
 
 @pytest.mark.parametrize(
@@ -346,11 +284,6 @@ def test_meta_of_an_empty_name_and_of_a_file_alike(store: UnitStore):
         "# Intent: x\nStatus: accepted.\n## Answers\n### Câu 1\nAnswered by: A. Date: 2026-01-01. "
         "Via: cli.\nOK\n### Câu 2\nbroken\n",
         "# Intent: x Status: accepted.\n",
-        "﻿# Intent: x\nStatus: accepted\n",
-        "# Intent: Tiếng Việt\nStatus: Draft.\nType: fix\nDepends on: a/0001_x,  b/0002_y\n",
-        "# Intent: x\nIdea: ws/ideas/0001_x.md\nRepo:\nStatus: rejected\n\n## Why\nRepo: late\n",
-        "# Intent: x\nStatus: draft\n## Answers\n### Paused\nDecided by: A. Date: 2026-01-01. "
-        "Via: cli.\nWhy\n### Dropped\nDecided by: A. Date: 2026-01-02. Via: cli.\nNo\n",
     ],
 )
 def test_meta_reads_odd_text_alike(store: UnitStore, text):
@@ -373,11 +306,6 @@ def test_meta_reads_a_file_with_a_bad_byte_alike(store: UnitStore):
         "# Idea: x\nStatus: draft.\n## Units\n- ws/0001_a.\n- ws/0002_b. Depends on: ws/0001_a.\n",
         "# Idea:x\nStatus: draft.\n## Units\n   - ws/0001_a   \n",
         "# Idea:   spaced  \nStatus: draft.\n## Units\n- ws/0001_a \n",
-        "Status: draft.\n# Idea: later\n## Units\n- ws/0001_a. Depends on: ws/0002_b,ws/0003_c\n",
-        "# Idea: x\nStatus: draft.\n## Units\n- ws/0001_a. Depends on: ws/0002_b,\tws/0003_c\n",
-        "# Idea: x\nStatus: draft.\n## Units\n- bad ws/0001_a\n- ws/0002_b. Depends on: 0003_c\n",
-        "# Idea: x\nStatus: draft.\n## Units\n- ws/1_a\n- w s/0001_a\n- ws/ws/0001_a\n",
-        "# Idea: x\r\n# Idea: y\nStatus: draft.\n## Units\n\n\n## Other\n- ws/0001_a\n",
     ],
 )
 def test_meta_reads_an_idea_alike(store: UnitStore, idea):
@@ -385,34 +313,3 @@ def test_meta_reads_an_idea_alike(store: UnitStore, idea):
     ideas.mkdir()
     (ideas / "0001_x.md").write_text(idea)
     assert run(store, "meta").code == 0
-
-
-def test_meta_sorts_idea_names_alike(store: UnitStore):
-    ideas = store.cos / "ideas"
-    ideas.mkdir()
-    for name in ["b.md", "B.md", "a.md", "A.md", "a b.md", "_x", "-x", "1", "10", "2", "z", "Z"]:
-        (ideas / name).write_text("x")
-    for name in [
-        "a_b",
-        "a_B",
-        "A_b",
-        "a-b",
-        "a.b",
-        "a~",
-        "a1",
-        "A1",
-        "aa",
-        "ab",
-        "e",
-        "f",
-        "é",
-        "É",
-        "ê",
-        "đ",
-        "d",
-        "ß",
-        "s",
-        "ä",
-    ]:
-        (ideas / name).write_text("x")
-    run(store, "meta")

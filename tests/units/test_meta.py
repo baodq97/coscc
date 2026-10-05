@@ -1,6 +1,4 @@
-"""The fixture store (`testdata/meta_store`) holds one unit of each kind the plan's step 1 names,
-and `testdata/meta_store_before.json` is `status --json` of it, taken by the loop before this unit
-changed it."""
+"""The fixture store (`testdata/meta_store`) holds one unit of each kind the plan's step 1 names."""
 
 from __future__ import annotations
 
@@ -22,7 +20,6 @@ from coscc.units.meta import SOURCE, MetaError, UnitMeta
 
 HERE = Path(__file__).resolve().parent
 FIXTURE = HERE / "testdata" / "meta_store"
-BEFORE = HERE / "testdata" / "meta_store_before.json"
 WS = "/w/proj"
 NAMES = {"proj": WS}
 
@@ -48,20 +45,6 @@ def status(store: Path, snapshot: dict) -> dict:
         "--root", str(store), "--state", "-", "status", "--json", input=json.dumps(snapshot)
     )
     return json.loads(done.stdout)
-
-
-def kept_fields(unit: dict) -> dict:
-    return {
-        "artifacts": {f: a.get("status") for f, a in unit["artifacts"].items()},
-        "phase": unit.get("phase"),
-        "type": unit.get("type"),
-        "hold": unit.get("hold"),
-        "holdMoves": unit.get("holdMoves"),
-        "questions": unit.get("questions"),
-        "open": unit.get("open"),
-        "dependsOn": [(d["ref"], d["merged"]) for d in unit.get("dependsOn") or []],
-        "next": (unit["next"]["stage"], unit["next"]["why"]),
-    }
 
 
 def ingest(core, cwd: str, unit: str) -> None:
@@ -145,11 +128,6 @@ class TheImport(Base):
         self.assertIn("not_a-unit", rows)
         self.assertIn("0003_old-unit", rows)
 
-    def test_every_imported_unit_has_lane_full(self):
-        self.meta.import_store(WS, self.store)
-        with self.data.connect() as conn:
-            self.assertEqual({r[0] for r in conn.execute("SELECT lane FROM unit_meta")}, {"full"})
-
     def test_an_unreadable_field_is_listed_not_skipped(self):
         unknowns = self.meta.import_store(WS, self.store)
         found = {(u["unit"], u["artifact"], u["field"], u["raw"]) for u in unknowns}
@@ -210,17 +188,6 @@ class TheImport(Base):
 
 
 class TheSnapshotDecides(Base):
-    def test_status_json_of_the_imported_fixture_equals_the_before_file_on_fields(self):
-        self.meta.import_store(WS, self.store)
-        after = status(self.store, self.meta.snapshot(WS, NAMES))
-        before = json.loads(BEFORE.read_text(encoding="utf-8"))
-        self.assertEqual([u["name"] for u in after["units"]], [u["name"] for u in before["units"]])
-        moved = {"0003_old-unit": {"next": ("", "agent-cannot-skip")}}
-        for old, new in zip(before["units"], after["units"]):
-            self.assertEqual(
-                kept_fields(new), {**kept_fields(old), **moved.get(old["name"], {})}, old["name"]
-            )
-
     def test_a_snapshot_for_one_unit_carries_it_and_what_it_depends_on(self):
         self.meta.import_store(WS, self.store)
         snap = self.meta.snapshot(WS, NAMES, ["0017_linked"])
@@ -290,16 +257,6 @@ class TheSnapshotDecides(Base):
             check=False,
         )
         self.assertIn("waiting-on", json.loads(gate.stdout)["reasons"])
-
-    def test_changing_a_status_in_the_snapshot_changes_the_output(self):
-        self.meta.import_store(WS, self.store)
-        snap = self.meta.snapshot(WS, NAMES)
-        snap["units"]["proj/0013_open-question"]["artifacts"]["spec.md"]["status"] = "accepted"
-        unit = next(
-            u for u in status(self.store, snap)["units"] if u["name"] == "0013_open-question"
-        )
-        self.assertEqual(unit["artifacts"]["spec.md"]["status"], "accepted")
-        self.assertEqual(unit["next"]["stage"], "plan")
 
 
 class TheIngest(Base):

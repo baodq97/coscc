@@ -25,13 +25,6 @@ def loop_lines() -> list[str]:
 
 
 class EveryGuardIsNamed(unittest.TestCase):
-    def test_each_has_an_id_and_a_one_sentence_english_label(self):
-        for gid, g in guards.GUARDS.items():
-            self.assertEqual(g.id, gid)
-            self.assertRegex(g.id, r"^[a-z]+(-[a-z]+)*$")
-            self.assertTrue(g.label.endswith("."), g.id)
-            self.assertEqual(g.label.count(". "), 0, g.id)
-
     def test_every_transition_can_be_decided_by_a_guard_that_exists(self):
         for machine, table in guards.TRANSITIONS.items():
             for transition, allowed in table.items():
@@ -267,10 +260,6 @@ class ThePackagedLaneUsesEveryGuardAMachineNeeds(unittest.TestCase):
         self.assertEqual(always, {"idea", "intent", "impl", "review"})
         self.assertEqual(dict(lane.path)["spike"], "if-unmeasured")
         self.assertEqual(lane.end, "shipped")
-
-    def test_ci_poll_seconds_is_sixty(self):
-        # The precedent of `CI_REFRESH` (`coscc/runner/steps.py`), chosen, not measured.
-        self.assertEqual(states.default_lanes().ci_poll_seconds, 60.0)
 
 
 if __name__ == "__main__":

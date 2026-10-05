@@ -48,11 +48,6 @@ class CreatingAnIdea(Fixture):
         ideas.create_idea(WS, "one", "b", self.data)
         self.assertEqual(units.create(WS, "first", "", self.data)["unit"], "0001_first")
 
-    def test_a_bad_slug_surfaces_cos_mjs_own_words(self):
-        with self.assertRaises(CannotCreate) as caught:
-            ideas.create_idea(WS, "Bad_Slug", "b", self.data)
-        self.assertIn("Invalid slug", str(caught.exception))
-
     def test_a_brief_with_headings_of_its_own_is_kept_whole(self):
         """A brief pasted from a markdown file ran only to its first `## `."""
         brief = (

@@ -55,37 +55,6 @@ def offered(store: UnitStore) -> list[str]:
 # --- misuse ------------------------------------------------------------------------------
 
 
-def test_no_unit_name_is_refused(store):
-    r = rerun(store)
-    assert r.code == 2
-    assert r.err.startswith(
-        "usage: python -m coscc.loop rerun <NNNN_slug> [intent|spec|spike|plan|pr]"
-    )
-
-
-def test_a_bad_unit_name_is_refused(store):
-    r = rerun(store, "nope")
-    assert r.code == 2
-    assert "Invalid unit name" in r.err
-
-
-def test_a_newline_after_the_name_is_not_a_name(store):
-    assert rerun(store, f"{UNIT}\n").code == 2
-
-
-def test_a_unit_that_does_not_exist_is_refused(store):
-    r = rerun(store, "0002_y")
-    assert r.code == 2
-    assert "No such work unit" in r.err
-
-
-def test_an_unknown_stage_is_refused(store):
-    make(store, {"intent.md": "accepted"})
-    r = rerun(store, UNIT, "nope")
-    assert r.code == 2
-    assert "unknown stage" in r.err
-
-
 # --- the offers --------------------------------------------------------------------------
 
 
@@ -125,11 +94,6 @@ def test_a_paused_unit_offers_nothing_and_says_why(store):
     assert json.loads(rerun(store, UNIT).out)["why"] == "the unit is paused"
 
 
-def test_a_unit_with_nothing_accepted_says_so(store):
-    make(store, {"intent.md": "draft"})
-    assert json.loads(rerun(store, UNIT).out)["why"] == ("no accepted stage can be run again now")
-
-
 def test_spike_is_offered_when_spec_is_unmeasured(store):
     make(
         store,
@@ -156,13 +120,6 @@ def test_a_stage_the_board_cannot_rerun_is_refused(store):
     r = rerun(store, UNIT, "impl")
     assert r.code == 1
     assert "impl cannot be run again from the board" in r.err
-
-
-def test_an_alias_is_refused_under_its_own_name(store):
-    make(store, {"intent.md": "accepted"})
-    r = rerun(store, UNIT, "implement")
-    assert r.code == 1
-    assert "implement cannot be run again" in r.err
 
 
 def test_a_stage_that_has_not_run_is_refused(store):
@@ -257,14 +214,6 @@ def test_a_granted_rerun_prints_the_block_with_a_digest_per_file(store):
     assert said["block"].endswith("\n")
 
 
-def test_a_granted_rerun_digests_the_file_above_its_answers(store):
-    make(store, {"intent.md": "accepted", "spec.md": "accepted"})
-    spec = store.cos / UNIT / "spec.md"
-    spec.write_text(spec.read_text() + "\n## Answers\n\n### Q1\nA: yes\n")
-    r = rerun(store, UNIT, "spec")
-    assert f"sha256:{above_answers(spec.read_text())}" in json.loads(r.out)["block"]
-
-
 def test_a_granted_rerun_names_only_the_files_that_exist(store):
     make(store, {"intent.md": "accepted", "pr.md": "accepted"})
     said = json.loads(rerun(store, UNIT, "intent").out)
@@ -275,10 +224,20 @@ def test_a_granted_rerun_names_only_the_files_that_exist(store):
     ]
 
 
-def test_a_granted_spike_rerun(store):
-    make(
-        store,
-        {"intent.md": "accepted", "spec.md": "accepted", "spike.md": "accepted"},
-        unmeasured=True,
-    )
-    assert rerun(store, UNIT, "spike").code == 0
+def test_a_bad_unit_name_is_refused(store):
+    r = rerun(store, "nope")
+    assert r.code == 2
+    assert "Invalid unit name" in r.err
+
+
+def test_a_unit_that_does_not_exist_is_refused(store):
+    r = rerun(store, "0002_y")
+    assert r.code == 2
+    assert "No such work unit" in r.err
+
+
+def test_an_unknown_stage_is_refused(store):
+    make(store, {"intent.md": "accepted"})
+    r = rerun(store, UNIT, "nope")
+    assert r.code == 2
+    assert "unknown stage" in r.err

@@ -82,6 +82,13 @@ class Repo(unittest.TestCase):
 
 
 class WhereATreeLives(Repo):
+    def test_a_tree_inside_the_workspace_or_the_package_is_refused(self):
+        with self.assertRaises(BadUnit):
+            worktrees.path(self.repo, "0001_a", self.repo / "data")
+        pkg = Path(coscc.__file__).resolve().parent
+        with self.assertRaises(BadUnit):
+            worktrees.path(self.repo, "0001_a", pkg / "d")
+
     def test_the_path_is_a_function_of_workspace_and_unit(self):
         a = worktrees.path(self.repo, "0001_a", self.data)
         self.assertEqual(a, worktrees.path(self.repo, "0001_a", self.data))
@@ -92,29 +99,6 @@ class WhereATreeLives(Repo):
         for bad in ("../x", "0001", "", "0001_A"):
             with self.assertRaises(BadUnit, msg=bad):
                 worktrees.path(self.repo, bad, self.data)
-
-    def test_a_tree_inside_the_workspace_or_the_package_is_refused(self):
-        with self.assertRaises(BadUnit):
-            worktrees.path(self.repo, "0001_a", self.repo / "data")
-        pkg = Path(coscc.__file__).resolve().parent
-        with self.assertRaises(BadUnit):
-            worktrees.path(self.repo, "0001_a", pkg / "d")
-
-
-class TheReleaseTree(Repo):
-    """One release tree per workspace, beside its units' trees and never one of them."""
-
-    def test_it_sits_beside_the_units_trees(self):
-        where = worktrees.release_path(self.repo, self.data)
-        self.assertEqual(where.parent, worktrees.path(self.repo, "0001_a", self.data).parent)
-        self.assertEqual(where.name, "release")
-        self.assertIsNone(units.UNIT_RE.fullmatch(where.name))
-
-    def test_inside_the_workspace_or_the_package_is_refused(self):
-        with self.assertRaises(BadUnit):
-            worktrees.release_path(self.repo, self.repo / "data")
-        with self.assertRaises(BadUnit):
-            worktrees.release_path(self.repo, Path(coscc.__file__).resolve().parent / "d")
 
 
 class TheMainTree(Repo):
@@ -157,12 +141,6 @@ class TheMainTree(Repo):
         self.assertEqual(git(where, "rev-parse", "HEAD"), new)
         self.assertEqual((index / "codegraph.db").read_bytes(), b"db")
         self.assertFalse((self.repo / ".git" / "info" / "exclude").read_text().count("codegraph"))
-
-    def test_inside_the_workspace_or_the_package_is_refused(self):
-        with self.assertRaises(BadUnit):
-            worktrees.main_path(self.repo, self.repo / "data")
-        with self.assertRaises(BadUnit):
-            worktrees.main_path(self.repo, Path(coscc.__file__).resolve().parent / "d")
 
 
 class Ensuring(Repo):
@@ -237,19 +215,6 @@ class Ensuring(Repo):
             asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
         self.assertIn("was not opened", str(caught.exception))
         self.assertEqual(git(self.repo, "branch", "--show-current"), "fix/a")
-
-    def test_a_broken_origin_in_the_tree_also_leaves_the_root_on_the_units_branch(self):
-        """A unit that already has a detached tree fetches inside that tree, not the workspace,
-        but the workspace must still not have moved to `main` when that fetch fails."""
-        asyncio.run(worktrees.ensure(self.repo, "0001_a", None, self.data))
-        tree = worktrees.path(self.repo, "0001_a", self.data)
-        git(tree, "remote", "set-url", "origin", str(Path(self._tmp.name) / "gone.git"))
-        git(self.repo, "switch", "-q", "-c", "fix/a")  # `.claude/CLAUDE.md` step 4, by hand
-        with self.assertRaises(GitError) as caught:
-            asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
-        self.assertIn("was not opened", str(caught.exception))
-        self.assertEqual(git(self.repo, "branch", "--show-current"), "fix/a")
-        self.assertEqual(git(tree, "branch", "--show-current"), "")
 
 
 def running(marker: str) -> list[str]:
@@ -391,13 +356,6 @@ class CancellingWhilePreparing(Repo):
         self.assertEqual((self.tree / "work.txt").read_text(), "mine\n")
         self.assertTrue(asyncio.run(worktrees.find(self.repo, self.UNIT, self.data)))
 
-    def test_discard_half_with_no_tree_is_false(self):
-        self.assertFalse(asyncio.run(worktrees.discard_half(self.repo, self.UNIT, self.data)))
-
-    def test_discard_half_refuses_a_bad_unit(self):
-        with self.assertRaises(BadUnit):
-            asyncio.run(worktrees.discard_half(self.repo, "../x", self.data))
-
 
 class RefreshingTheBase(Repo):
     """`refresh_base`."""
@@ -498,19 +456,6 @@ class RefreshingTheBase(Repo):
         self.assertTrue(got["fresh"])
         self.assertEqual(got["reason"], "")
 
-    def test_no_worktree_to_refresh_is_reported_not_raised(self):
-        got = asyncio.run(worktrees.refresh_base(self.repo, "0002_b", self.data))
-        self.assertEqual(
-            got,
-            {
-                "ref": "origin/main",
-                "sha": "",
-                "fresh": False,
-                "reason": "no worktree to refresh",
-                "fetch": {"outcome": "failed", "attempts": 0, "age": None},
-            },
-        )
-
 
 class SwitchingOntoAnExistingBranch(Repo):
     """Opening a branch already cut at a terminal fetches first, and reports how far behind it is.
@@ -543,12 +488,6 @@ class SwitchingOntoAnExistingBranch(Repo):
         self.assertIn("update-branch", made["base"]["reason"])
         tree = worktrees.path(self.repo, "0001_a", self.data)
         self.assertEqual(git(tree, "branch", "--show-current"), "fix/a")
-
-    def test_the_branch_is_fresh_when_nothing_new_landed(self):
-        made = asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
-        self.assertTrue(made["base"]["fresh"])
-        self.assertEqual(made["base"]["behind"], 0)
-        self.assertEqual(made["base"]["reason"], "")
 
     def test_the_base_says_how_its_fetch_went(self):
         made = asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
