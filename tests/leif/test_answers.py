@@ -1,5 +1,5 @@
 """Tests for `Answers` in `coscc/leif/answers.py`, split from
-`tests/service/test_service.py`."""
+`tests/http/test_app.py`."""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ from unittest import mock
 
 from coscc.bus import Bus
 from coscc.config import Config
-from coscc.service.common import STAGE_FILES
+from coscc.units import states
 from coscc.kernel import Invalid
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
-from tests.service.test_service import create_sync, timeline, unit_history
+from tests.http.test_app import create_sync, timeline, unit_history
 from tests.units.test_submit import a_head, finding, submits as _submits
-from tests.service.test_service import use_sessions
+from tests.http.test_app import use_sessions
 
 
 REVIEW_ONE = (
@@ -90,7 +90,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.repo = self.root / "work" / "proj"
         self.repo.mkdir(parents=True)
-        self.service = Service(
+        self.core = Core(
             Config(
                 workspaces=(str(self.repo),),
                 working_dir=str(self.root / "work"),
@@ -98,7 +98,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
             ),
             self.Reviews(),
         )
-        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.dir = Path(self.made["path"])
         (self.dir / "pr.md").write_text(
             f"# PR: a problem\nAuthor: t. Status: accepted.\nPR: {PR_URL}\n", encoding="utf-8"
@@ -109,9 +109,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
     def _post(self, gh, n):
 
         with mock.patch("coscc.git.gh.run", gh):
-            return asyncio.run(
-                self.service.answers.post_review_comment(str(self.repo), self.unit, n)
-            )
+            return asyncio.run(self.core.answers.post_review_comment(str(self.repo), self.unit, n))
 
     def _run_review(self, gh):
         from coscc.units import board as board_reader
@@ -121,7 +119,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
         async def go():
             out = []
-            async for item in self.service.steps.run_step(str(self.repo), self.unit, "review"):
+            async for item in self.core.steps.run_step(str(self.repo), self.unit, "review"):
                 out.append(item)
             return out
 
@@ -134,7 +132,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
     def _pr_rows(self):
         from coscc.store.journal import Journal
 
-        j = Journal(self.service.config.working_dir, self.service.config.data_dir)
+        j = Journal(self.core.config.working_dir, self.core.config.data_dir)
         return j.records(str(self.repo.resolve()), kind="pr-comment")
 
     def test_a_round_the_step_writes_is_posted_once_with_its_own_text(self):
@@ -154,7 +152,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertNotIn("ingest_error", done)
         rows = [
             r
-            for r in unit_history(self.service, str(self.repo), self.unit)["transitions"]
+            for r in unit_history(self.core, str(self.repo), self.unit)["transitions"]
             if r["artifact"] == "review.md"
         ]
         self.assertEqual(
@@ -167,7 +165,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         from coscc.store.journal import Journal
 
         self._run_review(FakeGh())
-        j = Journal(self.service.config.working_dir, self.service.config.data_dir)
+        j = Journal(self.core.config.working_dir, self.core.config.data_dir)
         end = j.records(str(self.repo.resolve()), kind="end")[-1]
         self.assertEqual((end["outcome"], end["findings"], end["findings_open"]), ("done", 2, 1))
 
@@ -176,7 +174,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         from coscc.store.journal import Journal
 
         self._run_review(FakeGh())
-        j = Journal(self.service.config.working_dir, self.service.config.data_dir)
+        j = Journal(self.core.config.working_dir, self.core.config.data_dir)
         end = j.records(str(self.repo.resolve()), kind="end")[-1]
         self.assertEqual(end["verdicts"], ["changes-requested"])
 
@@ -204,11 +202,11 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         (self.dir / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
-        use_sessions(self.service, Spec())
+        use_sessions(self.core, Spec())
         gh = FakeGh()
 
         async def go():
-            async for _ in self.service.steps.run_step(str(self.repo), self.unit, "spec"):
+            async for _ in self.core.steps.run_step(str(self.repo), self.unit, "spec"):
                 pass
 
         with mock.patch("coscc.git.gh.run", gh):
@@ -228,8 +226,8 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
         async def both():
             return await asyncio.gather(
-                self.service.answers.post_review_comment(str(self.repo), self.unit, 1),
-                self.service.answers.post_review_comment(str(self.repo), self.unit, 1),
+                self.core.answers.post_review_comment(str(self.repo), self.unit, 1),
+                self.core.answers.post_review_comment(str(self.repo), self.unit, 1),
             )
 
         with mock.patch("coscc.git.gh.run", gh):
@@ -265,7 +263,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
     def test_a_comment_row_does_not_disturb_the_cost_timeline(self):
         self._post(FakeGh(), 1)
-        tl = timeline(self.service, str(self.repo), self.unit)
+        tl = timeline(self.core, str(self.repo), self.unit)
         self.assertEqual(tl.get("runs") or [], [])
 
 
@@ -294,8 +292,8 @@ class HowAnAnswerNamesItsQuestion(unittest.TestCase):
         config = Config(
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
-        self.service = Service(config, Sessions(config))
-        made = create_sync(self.service, self.cwd, "a-problem", "x")
+        self.core = Core(config, Sessions(config))
+        made = create_sync(self.core, self.cwd, "a-problem", "x")
         self.unit = made["unit"]
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n"
@@ -305,11 +303,11 @@ class HowAnAnswerNamesItsQuestion(unittest.TestCase):
 
     def answer(self, artifact, question, text="Có."):
         return asyncio.run(
-            self.service.answers.answer(self.cwd, self.unit, artifact, question, text, "Phong")
+            self.core.answers.answer(self.cwd, self.unit, artifact, question, text, "Phong")
         )
 
     def answers(self):
-        [u] = asyncio.run(self.service.board(self.cwd))["units"]
+        [u] = asyncio.run(self.core.board(self.cwd))["units"]
         return [(a["artifact"], a["n"]) for a in u["answers"]]
 
     def refused(self, artifact, question) -> str:
@@ -379,8 +377,8 @@ class RecordingAnOutcome(unittest.TestCase):
         config = Config(
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(self.data_dir)
         )
-        self.service = Service(config, Sessions(config))
-        made = create_sync(self.service, self.cwd, "a-problem", "x")
+        self.core = Core(config, Sessions(config))
+        made = create_sync(self.core, self.cwd, "a-problem", "x")
         self.unit = made["unit"]
         self.dir = Path(made["path"])
         for stage in ("spec", "impl", "pr", "review", "ship"):
@@ -401,10 +399,10 @@ class RecordingAnOutcome(unittest.TestCase):
             "recorded_by": "Phong",
             **over,
         }
-        return asyncio.run(self.service.answers.record_outcome(self.cwd, self.unit, **kw))
+        return asyncio.run(self.core.answers.record_outcome(self.cwd, self.unit, **kw))
 
     def board_unit(self):
-        [u] = asyncio.run(self.service.board(self.cwd))["units"]
+        [u] = asyncio.run(self.core.board(self.cwd))["units"]
         return u
 
     def refused(self, **over) -> str:
@@ -435,7 +433,9 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertEqual(
             (got["result"], got["measured_by"], got["recorded_by"]), ("đạt", "agent", "Phong")
         )
-        self.assertLessEqual({p.name for p in self.dir.iterdir()}, {f"{s}.md" for s in STAGE_FILES})
+        self.assertLessEqual(
+            {p.name for p in self.dir.iterdir()}, {f"{s}.md" for s in states.default().stage_names}
+        )
 
     def test_the_board_then_reads_it_and_the_last_block_is_in_force(self):
         self.record()
@@ -470,7 +470,7 @@ class RecordingAnOutcome(unittest.TestCase):
 
     async def _missing(self) -> str:
         try:
-            await self.service.answers.record_outcome(
+            await self.core.answers.record_outcome(
                 self.cwd, "0099_nothing", "đạt", "agent", "x", "", "", "P"
             )
         except Invalid as e:
@@ -496,13 +496,13 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertEqual(self.board_unit()["outcome"]["invalid"], 0)
 
     def test_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
-        journal = self.service.ws.journal()
-        key = self.service.ws.key(self.cwd)
+        journal = self.core.ws.journal()
+        key = self.core.ws.key(self.cwd)
         before = len(journal.records(key))
         self.assertIsNone(self.board_unit()["outcome"]["result"])
         self.board_unit()
         self.assertEqual(len(journal.records(key)), before)
-        self.assertEqual(self.service.chat.sessions_for(self.cwd)["sessions"], [])
+        self.assertEqual(self.core.chat.sessions_for(self.cwd)["sessions"], [])
 
 
 class DroppingAUnitRemovesItsScratch(unittest.TestCase):
@@ -520,8 +520,8 @@ class DroppingAUnitRemovesItsScratch(unittest.TestCase):
         config = Config(
             workspaces=(str(self.repo),), working_dir=str(root / "work"), data_dir=self.data
         )
-        self.service = Service(config, Sessions(config))
-        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        self.core = Core(config, Sessions(config))
+        made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = made["unit"]
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
@@ -536,7 +536,7 @@ class DroppingAUnitRemovesItsScratch(unittest.TestCase):
             mock.patch("coscc.units.hold.remove_tree", mock.AsyncMock(return_value=done)),
         ):
             asyncio.run(
-                self.service.answers.hold(str(self.repo), self.unit, "dropped", "no use", "Leif")
+                self.core.answers.hold(str(self.repo), self.unit, "dropped", "no use", "Leif")
             )
         self.assertFalse(ram.exists())
         self.assertFalse(disk.exists())

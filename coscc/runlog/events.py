@@ -423,7 +423,7 @@ async def purge(
 
 def purge_on_start(config: Any) -> tuple[int, int]:
     """What `coscc/run.py` calls before the server is built: a `Data` and a `Journal` built from
-    `config` the way `Service` builds them, nothing else of the app.
+    `config` the way `Core` builds them, nothing else of the app.
     """
     data = Data(config.data_dir)
     journal = Journal(config.working_dir, data) if config.working_dir else None

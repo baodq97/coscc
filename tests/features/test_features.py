@@ -1,4 +1,4 @@
-"""`coscc/features/__init__.py`, `coscc/kernel.py` and `coscc/plugin.py`: the list is the only place a feature is named."""
+"""`coscc/features/__init__.py`, `coscc/kernel.py` and `coscc/http/plugin.py`: the list is the only place a feature is named."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from starlette.routing import Route
 from coscc.store.db import Data
 from coscc import features
 from coscc.kernel import Block, Ctx, Feature, Guard, Parts, Schedule, Tool, arm_of
-from coscc.plugin import (
+from coscc.http.plugin import (
     OFF_PREF,
     SCHEDULE_PREF,
     STATE_PREF,
@@ -27,7 +27,7 @@ from coscc.plugin import (
     shown,
     tick,
 )
-from coscc.api import build
+from coscc.http.app import build
 from coscc.config import PROTECTED_DB_VAR, Config
 
 
@@ -74,7 +74,7 @@ def table_exists(config: Config, name: str) -> bool:
 
 def start(api) -> None:
     """What `coscc.py`'s startup task does."""
-    create_tables(ctx_of(api.state.service), api.state.tables)
+    create_tables(ctx_of(api.state.core), api.state.tables)
 
 
 class ATableIsCreatedAtStartup(Setup):
@@ -174,27 +174,27 @@ class TurningAFeatureOffForAWorkspace(Setup):
         data = Data(self.config.data_dir)
         key = str(self.ws.resolve())
         data.set_pref(OFF_PREF, {"notices": [key], "vault": ["/elsewhere"]})
-        service = mock.Mock(config=self.config)
-        service.ws.check.side_effect = lambda cwd: cwd
-        ctx = ctx_of(service, features.FEATURES)
+        core = mock.Mock(config=self.config)
+        core.ws.check.side_effect = lambda cwd: cwd
+        ctx = ctx_of(core, features.FEATURES)
         self.assertEqual(ctx.state("notices", str(self.ws)), "off")
         self.assertFalse(ctx.enabled("notices", str(self.ws)))
         self.assertEqual(ctx.state("vault", str(self.ws)), "on")
-        set_state(service, ctx, features.FEATURES, "notices", str(self.ws), "on")
+        set_state(core, ctx, features.FEATURES, "notices", str(self.ws), "on")
         self.assertEqual(ctx.state("notices", str(self.ws)), "on")
         self.assertEqual(data.pref(OFF_PREF, {}), {"notices": [], "vault": ["/elsewhere"]})
         self.assertEqual(data.pref(STATE_PREF, {}), {"notices": {key: "on"}})
 
     def test_the_arm_follows_the_state_and_the_units_number(self):
-        service = mock.Mock(config=self.config)
-        service.ws.check.side_effect = lambda cwd: cwd
+        core = mock.Mock(config=self.config)
+        core.ws.check.side_effect = lambda cwd: cwd
         graph = Feature("graph", lambda _ctx: [], default="off", pilot=True)
-        ctx = ctx_of(service, (graph,))
+        ctx = ctx_of(core, (graph,))
         ws = str(self.ws)
         want = {"off": (None, None), "pilot": ("on", "off"), "on": ("on", "on")}
         for state, (even, odd) in want.items():
             if state != "off":
-                set_state(service, ctx, (graph,), "graph", ws, state)
+                set_state(core, ctx, (graph,), "graph", ws, state)
             with self.subTest(state=state):
                 self.assertEqual(ctx.state("graph", ws), state)
                 self.assertEqual(ctx.arm("graph", ws, "0148_even"), even)
@@ -202,7 +202,7 @@ class TurningAFeatureOffForAWorkspace(Setup):
         self.assertEqual(arm_of("pilot", "0000_zero"), "on")
 
     async def test_the_routes_are_behind_the_login(self):
-        from coscc import auth
+        from coscc.http import auth
 
         paths = {r.path for r in build(self.config).routes}
         self.assertIn("/api/features", paths)
@@ -239,7 +239,7 @@ class AFeatureHandsTheAgentItsParts(Setup):
             async with self.client() as client:
                 self.assertEqual((await client.get("/api/fake/ping")).text, "pong")
                 api = client._transport.app
-                hooks = api.state.service.steps.hooks
+                hooks = api.state.core.steps.hooks
                 held = hooks.for_step("impl", str(self.ws))
                 self.assertEqual([t.server for t in held.tools], ["fake"])
                 self.assertEqual([g.name for g in held.guards], ["g"])
@@ -257,7 +257,7 @@ class AFeatureHandsTheAgentItsParts(Setup):
         with mock.patch("coscc.features.FEATURES", ()):
             async with self.client() as client:
                 self.assertEqual((await client.get("/api/fake/ping")).status_code, 404)
-                hooks = client._transport.app.state.service.steps.hooks
+                hooks = client._transport.app.state.core.steps.hooks
                 shell = (await client.get("/api/features/scripts")).text
         self.assertEqual(hooks.for_step("impl", str(self.ws)), Parts())
         self.assertNotIn("__fake", shell)
@@ -316,15 +316,15 @@ class AScheduledFeatureRunsOnItsOwn(Setup):
         timed = self.scheduled(ticked)
         with mock.patch("coscc.features.FEATURES", (timed,)):
             api = build(self.config)
-        ctx, service = api.state.ctx, api.state.service
-        await tick(service, ctx, (timed,))
+        ctx, core = api.state.ctx, api.state.core
+        await tick(core, ctx, (timed,))
         self.assertEqual(ticked, [(str(self.ws), 24)])
-        set_schedule_of(service, (timed,), "timed", str(self.ws), 0)
-        await tick(service, ctx, (timed,))
+        set_schedule_of(core, (timed,), "timed", str(self.ws), 0)
+        await tick(core, ctx, (timed,))
         self.assertEqual(len(ticked), 1)
-        set_schedule_of(service, (timed,), "timed", str(self.ws), 12)
-        set_state(service, ctx, (timed,), "timed", str(self.ws), "off")
-        await tick(service, ctx, (timed,))
+        set_schedule_of(core, (timed,), "timed", str(self.ws), 12)
+        set_state(core, ctx, (timed,), "timed", str(self.ws), "off")
+        await tick(core, ctx, (timed,))
         self.assertEqual(len(ticked), 1)
 
 

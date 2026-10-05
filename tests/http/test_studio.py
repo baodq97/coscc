@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from coscc import studio
+from coscc.http import studio
 
 
 @pytest.fixture

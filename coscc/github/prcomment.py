@@ -9,7 +9,7 @@ branch does not matter; `gh.PR_URL_RE` keeps a `-` prefix from reaching `gh` as 
 
 One comment per round: the body's last line is a marker, and a comment already carrying this
 round's marker means the round is posted (covers a post whose answer was lost). Two processes
-posting at once are not covered; `coscc/service/__init__.py` holds a lock within one process.
+posting at once are not covered; `coscc/leif/answers.py` holds a lock within one process.
 
 `post` never raises: a failure comes back as `Result("failed", reason=...)`.
 """

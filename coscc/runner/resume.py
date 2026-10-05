@@ -1,5 +1,5 @@
-"""Taking up again every session an update paused. The pausing is `Sessions.suspend_all`'s and the rows are the
-updater's; this reads them at the next start, whatever version that is, and hands each to
+"""Pausing every session for an update, and taking them up again. The pausing is `Sessions.suspend_all`'s and
+the rows are the updater's; `Resume.resume_after_update` reads them at the next start, whatever version that is, and hands each to
 the owner of its kind, which ends it as if nothing had come between.
 
 Nothing here runs git on a session's worktree: not to read it, not to clean it.
@@ -11,7 +11,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from coscc.agent import transcript
 from coscc.agent.sessions import Sessions
@@ -28,8 +28,22 @@ from coscc.units.workspaces import Workspaces
 STEP_KINDS = ("step", "opening", "closing")
 KINDS = STEP_KINDS + ("integrate", "estimate", "chat")
 
+# How often `settle_after_suspend` looks again.
+SETTLE_POLL = 0.1
+
 # Tasks begun here. asyncio keeps only a weak reference to a task.
 _TASKS: set[asyncio.Task] = set()
+
+
+class Job(TypedDict):
+    """What an Apply waits for: `kind` `integration`, `id`, where, the `stage`, and since when."""
+
+    kind: str
+    id: str
+    workspace: str
+    unit: str
+    stage: str
+    started: str
 
 
 def resume_message(dropped: list[dict[str, Any]] | None) -> str:
@@ -153,6 +167,104 @@ class Resume:
         self.refuse_updating = refuse_updating
         self.chat_turns = chat_turns
         self.finish = finish
+
+    # -- pausing for an update ------------------------------------------------
+
+    def update_waited(self) -> list[Job]:
+        """What an Apply waits for: a mechanical integration and a screenshot retake.
+        Gebo sessions, steps, estimates and chat are paused by `suspend_sessions`; what of
+        them had no session open gets `settle_after_suspend`'s bounded wait."""
+        jobs: list[Job] = []
+        for row in self.holds.attempts.unfinished():
+            if (
+                row["machine"] == "integration"
+                and row["state"] != "queued"
+                and row["road"] != "gebo"
+            ):
+                jobs.append(
+                    {
+                        "kind": "integration",
+                        "id": f"integration:{row['workspace']}:{row['unit']}",
+                        "workspace": row["workspace"],
+                        "unit": row["unit"],
+                        "stage": "integrate",
+                        "started": row["since"],
+                    }
+                )
+        for entry in self.steps.retakes.values():
+            # No Stop reaches it, and `retake.take` puts `.screens/` back only if it gets to.
+            jobs.append(
+                {
+                    "kind": "integration",
+                    "id": f"screens:{entry['workspace']}:{entry['unit']}",
+                    "workspace": entry["workspace"],
+                    "unit": entry["unit"],
+                    "stage": "screens",
+                    "started": entry["started"],
+                }
+            )
+        return jobs
+
+    async def suspend_sessions(self, by: str) -> list[dict[str, Any]]:
+        """Every session paused, and one `suspend` row written for each, before this process
+        hands off. With no working folder there is nowhere to write one, and the sessions end
+        as a restart ends them."""
+        records = await self.sessions.suspend_all()
+        journal = self.ws.journal()
+        written: list[dict[str, Any]] = []
+        for record in records:
+            owner = record.get("owner") or {}
+            if journal is None:
+                break
+            if not owner.get("kind"):
+                continue  # a caller that named no owner: nothing could take it up again
+            try:
+                written.append(
+                    journal.suspended(
+                        str(owner.get("workspace") or ""),
+                        str(owner.get("unit") or ""),
+                        str(owner.get("stage") or ""),
+                        by=by,
+                        **record,
+                    )
+                )
+            except BadRecord, Busy:
+                continue
+        return written
+
+    async def settle_after_suspend(self, within: float) -> list[dict[str, Any]]:
+        """`suspend_sessions` pauses only what had a session open: a step writing its round to
+        the PR or syncing `pr.md` after its `end`, or a Gebo reading the PR's head after its
+        session, had none. Each gets `within` seconds to finish (no new session may open
+        meanwhile) and what still runs is returned, for the updater to name in a `cut` row
+        before `shutdown` cancels it. A step in its attempt's `ending`, writing its `questions`
+        or `ship` record, counts as `after-end` until its task ends.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + within
+        while (self._launched() or self.holds.finishing) and loop.time() < deadline:
+            await asyncio.sleep(SETTLE_POLL)
+        left = [
+            {
+                "kind": (row["road"] or "rebase")
+                if row["machine"] == "integration"
+                else row["machine"],
+                "workspace": row["workspace"],
+                "unit": row["unit"],
+                "stage": row["stage"],
+                "started": row["since"],
+            }
+            for row in self._launched()
+            if row["id"] not in self.holds.finishing
+        ]
+        left += [{**entry, "kind": "after-end"} for entry, _task in self.holds.finishing.values()]
+        return left
+
+    def _launched(self) -> list[Attempt]:
+        """The attempts past `queued` and not ended, of every workspace."""
+        return [r for r in self.holds.attempts.unfinished() if r["state"] != "queued"]
+
+    # -- taking up again --------------------------------------------------------
 
     def _feature_refuses(self, owner: dict[str, Any]) -> str:
         """What the guards of the features say to a step taken up again, from its owner; `""` when

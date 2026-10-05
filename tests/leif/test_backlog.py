@@ -1,5 +1,5 @@
-"""Tests for `Backlog` in `coscc/service/backlog.py`, split from
-`tests/service/test_service.py`."""
+"""Tests for `Backlog` in `coscc/leif/backlog.py`, split from
+`tests/http/test_app.py`."""
 
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ from coscc.git import gitops
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.kernel import Invalid
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
-from tests.service.test_service import create_sync
+from tests.http.test_app import create_sync
 from tests.units.test_submit import submits as _submits
 
 
@@ -39,7 +39,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self._git("commit", "-q", "-m", "first")
         self._git("remote", "add", "origin", str(self.remote))
         self._git("push", "-q", "origin", "main")
-        self.service = Service(
+        self.core = Core(
             Config(
                 workspaces=(str(self.repo),),
                 working_dir=str(self.root / "work"),
@@ -68,12 +68,12 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         ).stdout
 
     def test_a_new_unit_appears_on_the_board_it_was_created_for(self):
-        made = create_sync(self.service, str(self.repo), "a-first-problem", "some words")
-        board = asyncio.run(self.service.board(str(self.repo)))
+        made = create_sync(self.core, str(self.repo), "a-first-problem", "some words")
+        board = asyncio.run(self.core.board(str(self.repo)))
         self.assertEqual([u["name"] for u in board["units"]], [made["unit"]])
 
     def test_nothing_of_it_lands_in_the_repository(self):
-        create_sync(self.service, str(self.repo), "a-problem", "some words")
+        create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.assertEqual(self._git("status", "--porcelain"), "")
         self.assertFalse((self.repo / ".cos").exists())
 
@@ -81,34 +81,34 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         for i in range(1, 15):
             (self.repo / ".cos" / f"{i:04d}_u{i}").mkdir(parents=True)
         before = sorted(p.name for p in (self.repo / ".cos").iterdir())
-        made = create_sync(self.service, str(self.repo), "fresh", "some words")
+        made = create_sync(self.core, str(self.repo), "fresh", "some words")
         self.assertEqual(made["unit"], "0015_fresh")
         self.assertEqual(sorted(p.name for p in (self.repo / ".cos").iterdir()), before)
 
     def test_a_bad_slug_comes_back_as_a_refusal_not_an_exception(self):
         with self.assertRaises(Invalid) as caught:
-            create_sync(self.service, str(self.repo), "Bad_Slug")
+            create_sync(self.core, str(self.repo), "Bad_Slug")
         self.assertIn("Bad_Slug", str(caught.exception))
 
     def test_the_gate_applies_to_creating_and_to_branching(self):
         with self.assertRaises(Invalid):
-            create_sync(self.service, "/etc", "a-problem")
+            create_sync(self.core, "/etc", "a-problem")
         with self.assertRaises(Invalid):
-            asyncio.run(self.service.backlog.start_branch("/etc", "0001_a-problem"))
+            asyncio.run(self.core.backlog.start_branch("/etc", "0001_a-problem"))
 
     def test_the_branch_is_refused_until_the_intent_says_what_type_this_is(self):
-        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         with self.assertRaises(Invalid) as caught:
-            asyncio.run(self.service.backlog.start_branch(str(self.repo), made["unit"]))
+            asyncio.run(self.core.backlog.start_branch(str(self.repo), made["unit"]))
         self.assertIn("intent.md", str(caught.exception))
 
     def test_the_branch_name_is_the_one_the_intents_type_implies(self):
-        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         directory = Path(made["path"])
         (directory / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
-        got = asyncio.run(self.service.backlog.start_branch(str(self.repo), made["unit"]))
+        got = asyncio.run(self.core.backlog.start_branch(str(self.repo), made["unit"]))
         self.assertEqual(got["branch"], "fix/a-problem")
         # Cut in the unit's worktree; the workspace stays on `main`.
         self.assertEqual(asyncio.run(gitops.current_branch(self.repo)), "main")
@@ -118,8 +118,8 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
 
     def test_two_units_each_get_their_own_tree_and_the_workspace_never_moves(self):
         a, b = self._typed_unit("a-problem"), self._typed_unit("b-problem")
-        got_a = asyncio.run(self.service.backlog.start_branch(str(self.repo), a))
-        got_b = asyncio.run(self.service.backlog.start_branch(str(self.repo), b))
+        got_a = asyncio.run(self.core.backlog.start_branch(str(self.repo), a))
+        got_b = asyncio.run(self.core.backlog.start_branch(str(self.repo), b))
         self.assertNotEqual(got_a["worktree"], got_b["worktree"])
         self.assertEqual(
             asyncio.run(gitops.current_branch(Path(got_a["worktree"]))), "fix/a-problem"
@@ -128,7 +128,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
             asyncio.run(gitops.current_branch(Path(got_b["worktree"]))), "fix/b-problem"
         )
         self.assertEqual(self._git("branch", "--show-current").strip(), "main")
-        board = asyncio.run(self.service.board(str(self.repo)))
+        board = asyncio.run(self.core.board(str(self.repo)))
         trees = {u["name"]: u["worktree"] for u in board["units"]}
         self.assertEqual(trees[a]["path"], got_a["worktree"])
         self.assertEqual(trees[b]["branch"], "fix/b-problem")
@@ -137,26 +137,26 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
 
         async def both():
             return await asyncio.gather(
-                self.service.answers.create_unit(str(self.repo), "one-problem", "w"),
-                self.service.answers.create_unit(str(self.repo), "two-problem", "w"),
+                self.core.answers.create_unit(str(self.repo), "one-problem", "w"),
+                self.core.answers.create_unit(str(self.repo), "two-problem", "w"),
             )
 
         made = asyncio.run(both())
         self.assertEqual(len({m["unit"][:4] for m in made}), 2)
 
     def test_cutting_the_same_branch_twice_is_refused_rather_than_rejoined(self):
-        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
-        asyncio.run(self.service.backlog.start_branch(str(self.repo), made["unit"]))
+        asyncio.run(self.core.backlog.start_branch(str(self.repo), made["unit"]))
         self._git("switch", "-q", "main")
         with self.assertRaises(Invalid) as caught:
-            asyncio.run(self.service.backlog.start_branch(str(self.repo), made["unit"]))
+            asyncio.run(self.core.backlog.start_branch(str(self.repo), made["unit"]))
         self.assertIn("already exists", str(caught.exception))
 
     def _typed_unit(self, slug: str = "a-problem") -> str:
-        made = create_sync(self.service, str(self.repo), slug, "some words")
+        made = create_sync(self.core, str(self.repo), slug, "some words")
         (Path(made["path"]) / "intent.md").write_text(
             f"# Intent: {slug}\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
@@ -197,14 +197,14 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         local = self._git("rev-parse", "main").strip()
         self.assertNotEqual(local, ahead)
         unit = self._typed_unit()
-        got = asyncio.run(self.service.backlog.start_branch(str(self.repo), unit))
+        got = asyncio.run(self.core.backlog.start_branch(str(self.repo), unit))
         self.assertEqual(self._git("rev-parse", got["branch"]).strip(), ahead)
         # The local trunk was not moved to get there.
         self.assertEqual(self._git("rev-parse", "main").strip(), local)
 
     def test_the_result_names_the_ref_and_the_commit_it_was_cut_from(self):
         self._advance_remote()
-        got = asyncio.run(self.service.backlog.start_branch(str(self.repo), self._typed_unit()))
+        got = asyncio.run(self.core.backlog.start_branch(str(self.repo), self._typed_unit()))
         self.assertEqual(got["base"], "origin/main")
         self.assertEqual(got["sha"], self._git("rev-parse", "--short=7", "origin/main").strip())
 
@@ -214,7 +214,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self._git("remote", "set-url", "origin", str(self.root / "gone.git"))
         before = self._git("rev-parse", "HEAD").strip()
         with self.assertRaises(Invalid) as caught:
-            asyncio.run(self.service.backlog.start_branch(str(self.repo), unit))
+            asyncio.run(self.core.backlog.start_branch(str(self.repo), unit))
         said = str(caught.exception)
         self.assertIn("origin", said)
         self.assertIn("no branch was cut", said)
@@ -226,7 +226,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         unit = self._typed_unit()
         self._git("remote", "remove", "origin")
         with self.assertRaises(Invalid) as caught:
-            asyncio.run(self.service.backlog.start_branch(str(self.repo), unit))
+            asyncio.run(self.core.backlog.start_branch(str(self.repo), unit))
         self.assertIn("no branch was cut", str(caught.exception))
         self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
 
@@ -234,7 +234,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         """Plan Risk 5, first half: the fetch is not stopped by a dirty tree."""
         ahead = self._advance_remote("g.txt")
         (self.repo / "README.md").write_text("edited here\n", encoding="utf-8")
-        got = asyncio.run(self.service.backlog.start_branch(str(self.repo), self._typed_unit()))
+        got = asyncio.run(self.core.backlog.start_branch(str(self.repo), self._typed_unit()))
         self.assertEqual(self._git("rev-parse", got["branch"]).strip(), ahead)
         self.assertIn("README.md", self._git("status", "--porcelain"))
 
@@ -248,7 +248,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         tree = worktrees.path(str(self.repo), unit, str(self.root / "data"))
         (tree / "README.md").write_text("edited here\n", encoding="utf-8")
         with self.assertRaises(Invalid):
-            asyncio.run(self.service.backlog.start_branch(str(self.repo), unit))
+            asyncio.run(self.core.backlog.start_branch(str(self.repo), unit))
         self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
         self.assertEqual((tree / "README.md").read_text(encoding="utf-8"), "edited here\n")
 
@@ -304,7 +304,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.repo = self.root / "work" / "proj"
         self.repo.mkdir(parents=True)
         self.sessions = self.Replies(self.GOOD)
-        self.service = Service(
+        self.core = Core(
             Config(
                 workspaces=(str(self.repo),),
                 working_dir=str(self.root / "work"),
@@ -313,27 +313,27 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
             self.sessions,
         )
         self.cwd = str(self.repo)
-        self.a = create_sync(self.service, self.cwd, "idea-only", "words")["unit"]
-        made = create_sync(self.service, self.cwd, "has-intent", "words")
+        self.a = create_sync(self.core, self.cwd, "idea-only", "words")["unit"]
+        made = create_sync(self.core, self.cwd, "has-intent", "words")
         self.b = made["unit"]
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: b\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n",
             encoding="utf-8",
         )
-        done = Path(create_sync(self.service, self.cwd, "finished", "words")["path"])
+        done = Path(create_sync(self.core, self.cwd, "finished", "words")["path"])
         for name in ("intent", "spec", "plan"):
             status = "done" if name == "plan" else "accepted"
             (done / f"{name}.md").write_text(
                 f"# {name}\nAuthor: t. Status: {status}.\n", encoding="utf-8"
             )
-        self.journal = self.service.ws.journal()
-        self.key = self.service.ws.key(self.cwd)
+        self.journal = self.core.ws.journal()
+        self.key = self.core.ws.key(self.cwd)
 
     def board(self):
-        return asyncio.run(self.service.board(self.cwd))
+        return asyncio.run(self.core.board(self.cwd))
 
     def store_hash(self):
-        units_root = self.service.ws.units_root(self.cwd)
+        units_root = self.core.ws.units_root(self.cwd)
         return {
             str(p): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(units_root.rglob("*"))
@@ -357,13 +357,13 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
             return data
 
         before = self.board()
-        asyncio.run(self.service.backlog.record_estimate(self.cwd, self.a, 4, "S", "vì", "Leif"))
+        asyncio.run(self.core.backlog.record_estimate(self.cwd, self.a, 4, "S", "vì", "Leif"))
         asyncio.run(
-            self.service.backlog.record_relation(
+            self.core.backlog.record_relation(
                 self.cwd, self.a, self.b, "phụ thuộc", "add", "r", "Leif"
             )
         )
-        asyncio.run(self.service.backlog.record_shortlist(self.cwd, [self.a], "r", "Leif"))
+        asyncio.run(self.core.backlog.record_shortlist(self.cwd, [self.a], "r", "Leif"))
         after = self.board()
         self.assertEqual(strip(before), strip(after))
         self.assertEqual(
@@ -378,15 +378,15 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
     def test_three_writes_touch_no_file_and_refusals_insert_nothing(self):
         before = self.store_hash()
         refusals = [
-            lambda: self.service.backlog.record_estimate(self.cwd, self.a, 9, "S", "x", "Leif"),
-            lambda: self.service.backlog.record_estimate(self.cwd, self.a, 3, "S", "x", "agent:me"),
-            lambda: self.service.backlog.record_estimate(
+            lambda: self.core.backlog.record_estimate(self.cwd, self.a, 9, "S", "x", "Leif"),
+            lambda: self.core.backlog.record_estimate(self.cwd, self.a, 3, "S", "x", "agent:me"),
+            lambda: self.core.backlog.record_estimate(
                 self.cwd, "0003_finished", 3, "S", "x", "Leif"
             ),
-            lambda: self.service.backlog.record_relation(
+            lambda: self.core.backlog.record_relation(
                 self.cwd, self.a, self.a, "trùng", "add", "r", "Leif"
             ),
-            lambda: self.service.backlog.record_shortlist(
+            lambda: self.core.backlog.record_shortlist(
                 self.cwd, [self.a], "r", "Leif"
             ),  # no estimate yet
         ]
@@ -396,19 +396,17 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.assertEqual(
             self.journal.records(self.key, kinds=("estimate-value", "relation", "shortlist")), []
         )
-        asyncio.run(self.service.backlog.record_estimate(self.cwd, self.a, "4", "S", "vì", "Leif"))
+        asyncio.run(self.core.backlog.record_estimate(self.cwd, self.a, "4", "S", "vì", "Leif"))
         asyncio.run(
-            self.service.backlog.record_relation(
-                self.cwd, self.a, self.b, "trùng", "add", "r", "Leif"
-            )
+            self.core.backlog.record_relation(self.cwd, self.a, self.b, "trùng", "add", "r", "Leif")
         )
-        asyncio.run(self.service.backlog.record_shortlist(self.cwd, [self.a], "r", "Leif"))
+        asyncio.run(self.core.backlog.record_shortlist(self.cwd, [self.a], "r", "Leif"))
         self.assertEqual(self.store_hash(), before)
         self.assertEqual(self.board()["backlog"]["shortlist"][0]["estimate"]["value"], 4)
 
     def _start_of_spec(self):
         async def go():
-            async for _ in self.service.steps.run_step(self.cwd, self.b, "spec"):
+            async for _ in self.core.steps.run_step(self.cwd, self.b, "spec"):
                 pass
 
         try:
@@ -420,8 +418,8 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
     def test_the_start_record_says_where_the_unit_stood(self):
         first = self._start_of_spec()
         self.assertEqual(first["shortlist"], {"rank": None, "of": None, "record": None})
-        asyncio.run(self.service.backlog.record_estimate(self.cwd, self.b, 3, "M", "vì", "Leif"))
-        asyncio.run(self.service.backlog.record_shortlist(self.cwd, [self.b], "r", "Leif"))
+        asyncio.run(self.core.backlog.record_estimate(self.cwd, self.b, 3, "M", "vì", "Leif"))
+        asyncio.run(self.core.backlog.record_shortlist(self.cwd, [self.b], "r", "Leif"))
         second = self._start_of_spec()
         self.assertEqual((second["shortlist"]["rank"], second["shortlist"]["of"]), (1, 1))
         self.assertEqual(second["shortlist"]["record"]["n"], 1)
@@ -445,7 +443,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
     def _propose(self):
         async def go():
             out = []
-            async for item in self.service.backlog.propose_estimates(self.cwd):
+            async for item in self.core.backlog.propose_estimates(self.cwd):
                 out.append(item)
             return out
 
@@ -481,15 +479,15 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         async def go():
             gate = asyncio.Event()
             self.sessions.gate = gate
-            first = self.service.backlog.propose_estimates(self.cwd)
+            first = self.core.backlog.propose_estimates(self.cwd)
             task = asyncio.create_task(first.__anext__())
             for _ in range(200):
                 await asyncio.sleep(0.01)
                 if self.sessions.calls:
                     break
-            jobs = self.service._update_waited()
+            jobs = self.core.resume.update_waited()
             with self.assertRaises(Invalid):
-                await self.service.backlog.propose_estimates(self.cwd).__anext__()
+                await self.core.backlog.propose_estimates(self.cwd).__anext__()
             gate.set()
             await task
             async for _ in first:
@@ -500,4 +498,4 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.assertEqual(self.sessions.calls, 1)
         # An update pauses a running estimate instead of waiting for it.
         self.assertEqual(jobs, [])
-        self.assertEqual(self.service.attempts.unfinished(), [])
+        self.assertEqual(self.core.attempts.unfinished(), [])

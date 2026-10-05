@@ -1,24 +1,23 @@
-"""The app: the JSON surface and the studio, as one FastAPI app.
+"""The JSON surface: every route of the app, on one `APIRouter`.
 
 Being a plain ASGI app, tests drive it in-process with `httpx.ASGITransport` and no Node.
 Nothing here reads the environment, returns configuration or runs anything the caller names,
-and nothing decides: every route translates a request into a `Service` call and the result
+and nothing decides: every route translates a request into a `Core` call and the result
 back into JSON.
 
-The studio (`ui/`, served by `coscc/studio.py` at every path no route takes) reads and acts
+The studio (`ui/`, served by `coscc/http/studio.py` at every path no route takes) reads and acts
 only through here, and hears changes on `/api/stream`. The owner's own tools, the updater's
 trial of a new build and `scripts/install.sh` use these routes too; a route nobody calls is
 not kept.
 
-The guard in `coscc/auth.py` serves `/login`, `/setup` and `/logout`; nothing here may use
+The guard in `coscc/http/auth.py` serves `/login`, `/setup` and `/logout`; nothing here may use
 them. Every route sits behind that guard: without a live session only `GET /api/health` gets
 through. One password, one user: whoever holds it or a session cookie can call every route
 below. A name a body carries (`answered_by`, `by`, `stopped_by`, `recorded_by`) is written as
 sent, or as `kernel.OWNER` when absent; neither is an identity. Tests that build this app alone
 drive it without the guard.
 
-A refusal is `Invalid` raised by `Service` and answered in one place: 400, or 503 while an
-update is under way (`Updating`), or 409 when this install cannot be updated (`NotUpdatable`).
+A refusal is `Invalid`, answered in one place (`coscc/http/app.py`).
 """
 
 from __future__ import annotations
@@ -26,31 +25,30 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from contextlib import asynccontextmanager
 from dataclasses import asdict
-from typing import Any, AsyncIterator, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, AsyncIterator, NotRequired, TypedDict
 
-from fastapi import APIRouter, FastAPI, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import Response, StreamingResponse
 
-from coscc import auth, kernel
-from coscc import features, plugin, studio
-from coscc.config import Config, from_env
-from coscc.service import Service
-from coscc.leif.answers import opens_with
-from coscc.service.common import NotUpdatable, Updating
-from coscc.kernel import Invalid
-from coscc.agent.sessions import Sessions
+from coscc import kernel
 from coscc.bus import Event
-from coscc.service.agents import AgentPage
-from coscc.units.read import Cards, Detail, UpNext, cards, detail
-from coscc.runner.steps import NextStep
-from coscc.service.activity import Insights
-from coscc.service.release import ReleaseView
+from coscc.http import plugin
+from coscc.kernel import Invalid
+from coscc.leif.agents import AgentPage
+from coscc.leif.answers import opens_with
 from coscc.leif.chat import ChatHistory, ChatSessions
-from coscc.service.watch import EventsPage
+from coscc.leif.insights import Insights
+from coscc.github.release import ReleaseView
+from coscc.runner.steps import NextStep
+from coscc.runner.watch import EventsPage
 from coscc.units.backlog import SHORTLIST_MAX
+from coscc.units.read import Cards, Detail, UpNext, cards, detail
 from coscc.units.workspaces import WorkspaceList
+from coscc.update.updater import refusals, update_words
+
+if TYPE_CHECKING:
+    from coscc.http.app import Core
 
 log = logging.getLogger(__name__)
 
@@ -128,16 +126,11 @@ STREAM_PING_SECONDS = 10.0
 # How long one stream lasts before it ends and the page connects again. Bounded because the
 # server, stopping for an update, waits for every open response to end: an endless stream held
 # an Apply for 7 minutes (10-04). It also bounds a session signed out while connected.
-STREAM_LIFETIME_SECONDS = auth.STREAM_SECONDS
+STREAM_LIFETIME_SECONDS = kernel.STREAM_SECONDS
 
 
-async def _refused(_: Request, e: Exception) -> JSONResponse:
-    status = 503 if isinstance(e, Updating) else 409 if isinstance(e, NotUpdatable) else 400
-    return JSONResponse({"error": str(e)}, status_code=status)
-
-
-def _service(request: Request) -> Service:
-    return request.app.state.service
+def _core(request: Request) -> Core:
+    return request.app.state.core
 
 
 def _cwd(request: Request) -> str:
@@ -164,7 +157,7 @@ async def stream(request: Request) -> StreamingResponse:
     def heard(e: Event) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, e)
 
-    stop = _service(request).bus.watch(heard)
+    stop = _core(request).bus.watch(heard)
 
     async def events() -> AsyncIterator[str]:
         ends = loop.time() + STREAM_LIFETIME_SECONDS
@@ -191,7 +184,7 @@ async def stream(request: Request) -> StreamingResponse:
 
 @router.get("/api/workspaces")
 async def get_workspaces(request: Request) -> WorkspaceList:
-    return _service(request).ws.all()
+    return _core(request).ws.all()
 
 
 @router.post("/api/workspaces")
@@ -201,7 +194,7 @@ async def add_workspace(request: Request) -> Any:
     The working folder comes from the environment only; a body naming one is ignored.
     """
     body = await kernel.body(request)
-    return await _service(request).ws.add(
+    return await _core(request).ws.add(
         str(body.get("name", "")),
         label=str(body.get("label", "") or ""),
         repo_url=(body.get("repo_url") or None),
@@ -210,28 +203,28 @@ async def add_workspace(request: Request) -> Any:
 
 @router.post("/api/workspaces/{name}/pull")
 async def pull_workspace(name: str, request: Request) -> Any:
-    return await _service(request).ws.pull(name)
+    return await _core(request).ws.pull(name)
 
 
 @router.post("/api/workspaces/{name}/label")
 async def label_workspace(name: str, request: Request) -> Any:
     """`{label}`: the line a workspace is described by."""
     body = await kernel.body(request)
-    return _service(request).ws.set_label(name, str(body.get("label") or ""))
+    return _core(request).ws.set_label(name, str(body.get("label") or ""))
 
 
 @router.post("/api/workspaces/{name}/remove")
 async def remove_workspace(name: str, request: Request) -> Any:
     """Stop listing a workspace. Its directory, units and run log stay; adding it again brings
     them back. The scratch of units no listed workspace holds is swept."""
-    return _service(request).ws.remove(name)
+    return _core(request).ws.remove(name)
 
 
 @router.get("/api/agents")
 async def get_agents(request: Request) -> AgentPage:
     """The eight agents: who each is, what it runs on and may do, how its runs went, its chip;
     then `estimate` and `chat`, and what was wrong."""
-    return _service(request).agents.agent_page()
+    return _core(request).agents.agent_page()
 
 
 @router.post("/api/agents/field")
@@ -243,7 +236,7 @@ async def set_agent_field(request: Request) -> Any:
     agent's model or raise its ceilings. The trace is an `agent-setting` record in the run log.
     """
     body = await kernel.body(request)
-    return _service(request).agents.set_agent_field(
+    return _core(request).agents.set_agent_field(
         body.get("key"), body.get("field"), body.get("value")
     )
 
@@ -253,22 +246,22 @@ async def get_insights(request: Request) -> Insights:
     """How one workspace did over the last 30 days against the owner's targets: what it shipped
     at what cost and how many review rounds, its money by day and by stage, and what was spent
     again. Read only; the run log and the board held."""
-    service, cwd = _service(request), _cwd(request)
-    board = await service.boards.get(cwd, "held")
-    return service.activity.insights(cwd, board.get("units") or [])
+    core, cwd = _core(request), _cwd(request)
+    board = await core.boards.get(cwd, "held")
+    return core.activity.insights(cwd, board.get("units") or [])
 
 
 @router.get("/api/chat/sessions", response_model=ChatSessions)
 async def get_chat_sessions(request: Request) -> Any:
     """The Claude sessions started in one workspace's folder, newest first: the app's chats and
     any begun in a terminal there, each saying whether the app may write to it."""
-    return _service(request).chat.sessions_for(_cwd(request), limit=40)
+    return _core(request).chat.sessions_for(_cwd(request), limit=40)
 
 
 @router.get("/api/chat/history", response_model=ChatHistory)
 async def get_chat_history(request: Request) -> Any:
     """Every message of one session, as its transcript holds it."""
-    return _service(request).chat.history(_cwd(request), request.query_params.get("session_id", ""))
+    return _core(request).chat.history(_cwd(request), request.query_params.get("session_id", ""))
 
 
 @router.post("/api/chat")
@@ -280,11 +273,11 @@ async def chat(request: Request) -> Any:
     run log. Refused while the app updates."""
     body = await kernel.body(request)
     cwd, text = str(body.get("cwd") or ""), str(body.get("text") or "")
-    service = _service(request)
-    service.chat.check_send(cwd, text)
+    core = _core(request)
+    core.chat.check_send(cwd, text)
 
     async def turn() -> AsyncIterator[tuple[str, Any]]:
-        async for kind, payload in service.chat.stream(cwd, text, body.get("session_id") or None):
+        async for kind, payload in core.chat.stream(cwd, text, body.get("session_id") or None):
             yield (kind, {"name": payload}) if kind == "tool" else (kind, payload)
 
     return await kernel.ndjson(turn(), "the chat turn")
@@ -293,7 +286,7 @@ async def chat(request: Request) -> Any:
 @router.get("/api/settings/autopilot", response_model=AutopilotSettings)
 async def get_autopilot(request: Request) -> Any:
     """One workspace's autopilot switches, `max_parallel`, and the app's daily cap."""
-    return _service(request).autopilot.settings(_cwd(request))
+    return _core(request).autopilot.settings(_cwd(request))
 
 
 @router.post("/api/settings/autopilot")
@@ -305,7 +298,7 @@ async def set_autopilot(request: Request) -> Any:
     the app listens beyond loopback. The trace is a `setting` record.
     """
     body = await kernel.body(request)
-    return _service(request).autopilot.set_setting(
+    return _core(request).autopilot.set_setting(
         str(body.get("cwd", "")), body.get("name"), body.get("value")
     )
 
@@ -315,7 +308,7 @@ async def create_unit(request: Request) -> Any:
     """Start a work unit. `brief` is the originator's own words and becomes the unit's
     `idea.md`, which the intent step reads."""
     body = await kernel.body(request)
-    return await _service(request).answers.create_unit(
+    return await _core(request).answers.create_unit(
         str(body.get("cwd") or ""),
         str(body.get("slug") or ""),
         str(body.get("brief") or ""),
@@ -329,7 +322,7 @@ async def create_unit(request: Request) -> Any:
 async def create_idea(request: Request) -> Any:
     """Start an idea several units share, in the store of `cwd`. Writes only into the app's own store."""
     body = await kernel.body(request)
-    return _service(request).ideas.create_idea(
+    return _core(request).ideas.create_idea(
         str(body.get("cwd") or ""),
         str(body.get("slug") or ""),
         str(body.get("brief") or ""),
@@ -349,7 +342,7 @@ async def answer_question(request: Request) -> Any:
     it to offer `review` again, and the `ship` gate counts an `[answered]` finding as closed.
     """
     body = await kernel.body(request)
-    return await _service(request).answers.answer(
+    return await _core(request).answers.answer(
         str(body.get("cwd") or ""),
         str(body.get("unit") or ""),
         str(body.get("artifact") or ""),
@@ -365,7 +358,7 @@ async def get_decided(request: Request) -> list[Decided]:
     the agents decided for the owner. An answer counts when its authority is not `person`, or
     when its `by` opens with an agent's name: Leif's answers through `/api/units/answer` are
     recorded as `person` with `by` naming Leif. Read from the board held."""
-    board = await _service(request).boards.get(_cwd(request), "held")
+    board = await _core(request).boards.get(_cwd(request), "held")
     out: list[Decided] = [
         {
             "unit": str(u.get("name") or ""),
@@ -394,7 +387,7 @@ async def record_outcome(request: Request) -> Any:
     shows it as the ground for keeping or dropping a unit.
     """
     body = await kernel.body(request)
-    return await _service(request).answers.record_outcome(
+    return await _core(request).answers.record_outcome(
         *(
             str(body.get(k) or "")
             for k in (
@@ -422,7 +415,7 @@ async def hold_unit(request: Request) -> Any:
     worktree. It starts nothing, a resume included.
     """
     body = await kernel.body(request)
-    return await _service(request).answers.hold(
+    return await _core(request).answers.hold(
         *(str(body.get(k) or "") for k in ("cwd", "unit", "to", "reason", "by"))
     )
 
@@ -437,7 +430,7 @@ async def more_rounds(request: Request) -> Any:
     with the autopilot on its next sweep will.
     """
     body = await kernel.body(request)
-    return await _service(request).answers.more_rounds(
+    return await _core(request).answers.more_rounds(
         *(str(body.get(k) or "") for k in ("cwd", "unit", "by"))
     )
 
@@ -446,7 +439,7 @@ async def more_rounds(request: Request) -> Any:
 async def get_backlog(request: Request) -> Any:
     """The shortlist the autopilot works through, the other estimated units in the order their
     estimates and relations give, and the units with no estimate. Read from the board held."""
-    board = await _service(request).boards.get(_cwd(request), "held")
+    board = await _core(request).boards.get(_cwd(request), "held")
     return {**(board.get("backlog") or {}), "max": SHORTLIST_MAX}
 
 
@@ -457,7 +450,7 @@ async def backlog_estimate(request: Request) -> Any:
     A new `estimate-value` row in the run log; no file is written and no gate reads it.
     """
     body = await kernel.body(request)
-    return await _service(request).backlog.record_estimate(
+    return await _core(request).backlog.record_estimate(
         str(body.get("cwd") or ""),
         str(body.get("unit") or ""),
         body.get("value"),
@@ -471,7 +464,7 @@ async def backlog_estimate(request: Request) -> Any:
 async def backlog_relation(request: Request) -> Any:
     """Add or remove one relation: `{cwd, unit, other, type, op, reason, by}`. A `relation` row in the run log, nothing else."""
     body = await kernel.body(request)
-    return await _service(request).backlog.record_relation(
+    return await _core(request).backlog.record_relation(
         *(str(body.get(k) or "") for k in ("cwd", "unit", "other", "type", "op", "reason", "by"))
     )
 
@@ -484,7 +477,7 @@ async def backlog_shortlist(request: Request) -> Any:
     Nothing runs because of it, and no gate or `next` reads it.
     """
     body = await kernel.body(request)
-    return await _service(request).backlog.record_shortlist(
+    return await _core(request).backlog.record_shortlist(
         str(body.get("cwd") or ""),
         body.get("units"),
         str(body.get("reason") or ""),
@@ -499,7 +492,7 @@ async def backlog_propose(request: Request) -> Any:
     """
     body = await kernel.body(request)
     return await kernel.ndjson(
-        _service(request).backlog.propose_estimates(str(body.get("cwd") or "")), "the proposal"
+        _core(request).backlog.propose_estimates(str(body.get("cwd") or "")), "the proposal"
     )
 
 
@@ -513,7 +506,7 @@ async def post_review_comment(request: Request) -> Any:
     is a 200 with `state: failed` and gh's reason, because the request was valid.
     """
     body = await kernel.body(request)
-    return await _service(request).answers.post_review_comment(
+    return await _core(request).answers.post_review_comment(
         str(body.get("cwd") or ""), str(body.get("unit") or ""), body.get("round")
     )
 
@@ -526,7 +519,7 @@ async def start_branch(request: Request) -> Any:
     that may be, because this runs with the app's own authority, not a session's policy.
     """
     body = await kernel.body(request)
-    return await _service(request).backlog.start_branch(
+    return await _core(request).backlog.start_branch(
         str(body.get("cwd") or ""), str(body.get("unit") or "")
     )
 
@@ -535,7 +528,7 @@ async def start_branch(request: Request) -> Any:
 async def get_units(request: Request) -> Cards:
     """Every unit of one workspace as a list shows it, from the held board: a few
     kilobytes; what is running and the autopilot beside it."""
-    return cards(await _service(request).board(_cwd(request), "held"))
+    return cards(await _core(request).board(_cwd(request), "held"))
 
 
 @router.get("/api/units/next")
@@ -543,24 +536,20 @@ async def get_next(request: Request) -> NextStep:
     """The one stage the run button may offer for a unit, as `coscc.loop next` answered it:
     `{stage, action, blocked}`. Asks `gh`, so it can wait up to 60s. It starts nothing;
     `/api/board/run` still asks the gate."""
-    return await _service(request).steps.next_step(
-        _cwd(request), request.query_params.get("unit", "")
-    )
+    return await _core(request).steps.next_step(_cwd(request), request.query_params.get("unit", ""))
 
 
 @router.get("/api/units/{name}")
 async def get_unit(name: str, request: Request) -> Detail:
     """One unit as its page shows it: its card, stages, questions and answers with who gave them,
     review rounds, and every run from the run log. Read from the board held, like `/api/units`."""
-    service, cwd = _service(request), _cwd(request)
-    board = await service.boards.get(cwd, "held")
+    core, cwd = _core(request), _cwd(request)
+    board = await core.boards.get(cwd, "held")
     unit = next((u for u in board.get("units") or [] if u.get("name") == name), None)
     if unit is None:
         raise Invalid(f"no unit {name} in {cwd}")
-    journal = service.ws.journal()
-    timeline = (
-        await asyncio.to_thread(journal.timeline, service.ws.key(cwd), name) if journal else []
-    )
+    journal = core.ws.journal()
+    timeline = await asyncio.to_thread(journal.timeline, core.ws.key(cwd), name) if journal else []
     return detail(unit, timeline)
 
 
@@ -578,7 +567,7 @@ async def get_run_events(name: str, run: str, request: Request) -> Any:
     """The last `limit` events one run of a unit recorded, oldest first; `before` pages back,
     `seq` reads one event whole. Everything the step saw: commands, paths, thoughts, output."""
     limit = _number(request, "limit")
-    return _service(request).watch.events_page(
+    return _core(request).watch.events_page(
         _cwd(request),
         name,
         run,
@@ -595,7 +584,7 @@ async def follow_run(name: str, run: str, request: Request) -> StreamingResponse
     cut` (`{from}`) when this reader fell behind. Ends like `/api/stream` after
     `STREAM_LIFETIME_SECONDS` with `event: end`, and the page follows again from what it has."""
     loop = asyncio.get_running_loop()
-    follow = _service(request).watch.follow_events(
+    follow = _core(request).watch.follow_events(
         _cwd(request), name, run, after=_number(request, "after") or 0, gather=0.3
     )
 
@@ -633,7 +622,7 @@ async def follow_run(name: str, run: str, request: Request) -> StreamingResponse
 async def set_board_mode(request: Request) -> Any:
     """The only thing the board writes, and it writes it to the journal."""
     body = await kernel.body(request)
-    return await _service(request).steps.set_mode(
+    return await _core(request).steps.set_mode(
         *(str(body.get(k, "")) for k in ("cwd", "unit", "stage", "mode"))
     )
 
@@ -649,7 +638,7 @@ async def run_step(request: Request) -> Any:
     # `rerun` only when the body says `true` itself.
     rerun = body.get("rerun") is True
     extra = {"rerun": True, "note": str(body.get("note") or "")} if rerun else {}
-    stream = _service(request).steps.run_step(
+    stream = _core(request).steps.run_step(
         str(body.get("cwd", "")), str(body.get("unit", "")), str(body.get("stage", "")), **extra
     )
     return await kernel.ndjson(stream, "the step")
@@ -664,7 +653,7 @@ async def stop_step(request: Request) -> Any:
     is a claim, not an identity. It opens no gate and starts nothing.
     """
     body = await kernel.body(request)
-    return await _service(request).steps.stop_step(
+    return await _core(request).steps.stop_step(
         *(str(body.get(k, "")) for k in ("cwd", "unit", "by"))
     )
 
@@ -675,7 +664,7 @@ async def running_steps(request: Request) -> Any:
     in `cos.db` (`state`: `queued`, `preparing`, `running` or `ending`; `stopping` once a Stop
     is recorded), `kind: "integration"` beside a step's `kind: "step"`, so whatever restarts
     the app on an empty list sees them."""
-    return _service(request).steps.running_steps(_cwd(request))
+    return _core(request).steps.running_steps(_cwd(request))
 
 
 @router.post("/api/units/integrate")
@@ -686,7 +675,7 @@ async def integrate_unit(request: Request) -> Any:
     unit's pull request, or open a paid Gebo session. A refusal is a 400 before anything changes.
     """
     body = await kernel.body(request)
-    stream = _service(request).integration.integrate(
+    stream = _core(request).integration.integrate(
         str(body.get("cwd", "")), str(body.get("unit", ""))
     )
     return await kernel.ndjson(stream, "the integration")
@@ -696,7 +685,7 @@ async def integrate_unit(request: Request) -> Any:
 async def get_release(request: Request) -> Any:
     """What a release of one workspace would gather and the one button it offers now; `null`
     for a workspace that is not a git checkout. Read from the board held."""
-    return (await _service(request).boards.get(_cwd(request), "held")).get("release")
+    return (await _core(request).boards.get(_cwd(request), "held")).get("release")
 
 
 @router.post("/api/release/prepare")
@@ -707,7 +696,7 @@ async def release_prepare(request: Request) -> Any:
     push a branch and open a pull request. A refusal is a 400 before anything changes;
     every press leaves one `release` record."""
     body = await kernel.body(request)
-    stream = _service(request).release.release_prepare(
+    stream = _core(request).release.release_prepare(
         str(body.get("cwd", "")), str(body.get("version", ""))
     )
     return await kernel.ndjson(stream, "the release")
@@ -722,7 +711,7 @@ async def release_publish(request: Request) -> Any:
     `main` and push a tag no ruleset protects. A refusal is a 400 before anything changes;
     every press leaves one `release` record."""
     body = await kernel.body(request)
-    stream = _service(request).release.release_publish(
+    stream = _core(request).release.release_publish(
         str(body.get("cwd", "")), str(body.get("version", ""))
     )
     return await kernel.ndjson(stream, "the release")
@@ -733,9 +722,9 @@ async def get_features(request: Request) -> Any:
     """Each feature's state in one workspace: `{name: "off" | "pilot" | "on"}`, `off` while its
     status forbids the others. With `detail=1` each value is the row Settings shows instead:
     `{state, pilot, sentence, locked, summary}`. A workspace the app does not have is a 400."""
-    service = _service(request)
-    cwd = service.ws.check(_cwd(request))
-    rows = plugin.shown(request.app.state.ctx, features.FEATURES, cwd)
+    core = _core(request)
+    cwd = core.ws.check(_cwd(request))
+    rows = plugin.shown(request.app.state.ctx, request.app.state.plugins, cwd)
     if request.query_params.get("detail") == "1":
         return {f.name: {k: v for k, v in asdict(f).items() if k != "name"} for f in rows}
     return {f.name: f.state for f in rows}
@@ -771,9 +760,9 @@ async def get_feature_scripts(request: Request) -> Response:
 async def get_features_shown(request: Request) -> list[plugin.Shown]:
     """Each feature as Settings shows it for one workspace: its state, whether `pilot` may be
     chosen, the sentence, whether it is locked, its schedule and the hours offered."""
-    service = _service(request)
-    cwd = service.ws.check(_cwd(request))
-    return plugin.shown(request.app.state.ctx, features.FEATURES, cwd)
+    core = _core(request)
+    cwd = core.ws.check(_cwd(request))
+    return plugin.shown(request.app.state.ctx, request.app.state.plugins, cwd)
 
 
 @router.post("/api/features")
@@ -790,8 +779,8 @@ async def set_feature(request: Request) -> Any:
     body = await kernel.body(request)
     if "schedule" in body and "state" not in body and "on" not in body:
         hours = plugin.set_schedule_of(
-            _service(request),
-            features.FEATURES,
+            _core(request),
+            request.app.state.plugins,
             str(body.get("name") or ""),
             str(body.get("cwd") or ""),
             body.get("schedule"),
@@ -803,9 +792,9 @@ async def set_feature(request: Request) -> Any:
     if not isinstance(state, str):
         raise Invalid(f"state must be one of {', '.join(kernel.STATES)}")
     chosen = plugin.set_state(
-        _service(request),
+        _core(request),
         request.app.state.ctx,
-        features.FEATURES,
+        request.app.state.plugins,
         str(body.get("name") or ""),
         str(body.get("cwd") or ""),
         state,
@@ -816,8 +805,8 @@ async def set_feature(request: Request) -> Any:
 @router.get("/api/grants/impl")
 async def get_command_lists(request: Request) -> Any:
     """`{allow, block}`: the commands `impl` gains and loses in one workspace."""
-    service = _service(request)
-    return service.ws.command_lists(service.ws.check(_cwd(request)))
+    core = _core(request)
+    return core.ws.command_lists(core.ws.check(_cwd(request)))
 
 
 @router.post("/api/grants/impl")
@@ -826,7 +815,7 @@ async def set_command_lists(request: Request) -> Any:
     holds the password or a session can widen what `impl` runs in that workspace: `curl` or
     `ssh` there reach the network through `Bash`, outside every filter."""
     body = await kernel.body(request)
-    return _service(request).ws.set_command_lists(
+    return _core(request).ws.set_command_lists(
         str(body.get("cwd") or ""), body.get("allow"), body.get("block")
     )
 
@@ -841,154 +830,33 @@ async def set_command_lists(request: Request) -> Any:
 
 async def _update_body(request: Request) -> dict[str, str]:
     body = await kernel.body(request)
-    return {k: str(body.get(k, "") or "") for k in ("channel", "by")}
+    got = {k: str(body.get(k, "") or "") for k in ("channel", "by")}
+    return {**got, "by": got["by"].strip()}
 
 
 @router.get("/api/update", response_model=UpdateStatus)
 async def get_update(request: Request) -> Any:
     """What runs, and what the panel shows; `build_id` is read here."""
-    return _service(request).update_status()
+    status = _core(request).updater.status()
+    return {**status, **update_words(status)}
 
 
 @router.post("/api/update/apply")
 async def apply_update(request: Request) -> Any:
     body = await _update_body(request)
-    return await _service(request).update_apply(body["channel"], body["by"])
+    with refusals():
+        return await _core(request).updater.apply(body["channel"], body["by"] or kernel.OWNER)
 
 
 @router.post("/api/update/cancel")
 async def cancel_update(request: Request) -> Any:
-    return _service(request).update_cancel((await _update_body(request))["by"])
+    body = await _update_body(request)
+    with refusals():
+        return _core(request).updater.cancel(body["by"] or kernel.OWNER)
 
 
 @router.post("/api/update/build-local")
 async def build_local(request: Request) -> Any:
-    return _service(request).update_build_local((await _update_body(request))["by"])
-
-
-def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
-    """The app. `starting` is the served one (`run.served`): its start makes the features'
-    tables, takes up what an update paused, reads every board once and runs the schedules."""
-    config = config or from_env()
-    sessions = Sessions(config)
-    service = Service(config, sessions)
-
-    async def schedules() -> None:
-        # The first round waits one period, so a start spends nothing at once.
-        while True:
-            await asyncio.sleep(plugin.TICK_SECONDS)
-            await plugin.tick(service, ctx, features.FEATURES)
-
-    @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        tasks: list[asyncio.Task] = []
-        if starting:
-            plugin.create_tables(ctx, tables)
-            work = (service.resume.resume_after_update(), service.boards.warm(), schedules())
-            tasks = [asyncio.create_task(w) for w in work]
-        yield
-        for task in tasks:
-            task.cancel()
-        # Steps first: each is a task that would otherwise write its `end` after its client
-        # was closed. `shutdown` writes none, on purpose.
-        await service.shutdown()
-        await sessions.close_all()
-
-    # The routes themselves, not `include_router`, which keeps them behind one entry of `routes`.
-    # Read now, so a test can patch `features.FEATURES`.
-    ctx = plugin.ctx_of(service, features.FEATURES)
-    plugin.add_sessions(service, features.FEATURES)
-    service.steps.hooks = plugin.hooks_of(features.FEATURES, ctx)
-    # Checked now, created when the app starts: `typescript()` and the tests build an app
-    # that never opens the database.
-    tables = plugin.tables_of(features.FEATURES)
-    # The studio last: it answers every path no route took.
-    routes = [
-        *router.routes,
-        *(r for f in features.FEATURES for r in f.routes(ctx)),
-        *studio.router.routes,
-    ]
-    # No `/docs` or `/openapi.json`: the studio answers those paths; `typescript()` reads the schema.
-    api = FastAPI(
-        title="coscc",
-        lifespan=lifespan,
-        routes=routes,
-        docs_url=None,
-        redoc_url=None,
-        openapi_url=None,
-    )
-    api.state.config = config
-    api.state.sessions = sessions
-    api.state.service = service
-    api.state.tables = tables
-    # The names for Settings and the pages for `/feature`: only this module imports `features`.
-    api.state.features = tuple(f.name for f in features.FEATURES)
-    api.state.pages = {f.name: f.page for f in features.FEATURES if f.page}
-    api.state.scripts = tuple(js for f in features.FEATURES for js in f.scripts)
-    # The one `Ctx` and the plugins themselves, for the Settings panel's states.
-    api.state.ctx = ctx
-    api.state.plugins = features.FEATURES
-    api.add_exception_handler(Invalid, _refused)
-    return api
-
-
-def _ts(schema: dict[str, Any]) -> str:
-    """One OpenAPI schema as a TypeScript type."""
-    if "$ref" in schema:
-        return schema["$ref"].rsplit("/", 1)[1]
-    if "anyOf" in schema:
-        return " | ".join(_ts(s) for s in schema["anyOf"])
-    if "enum" in schema:
-        return " | ".join(json.dumps(v) for v in schema["enum"])
-    if "const" in schema:
-        return json.dumps(schema["const"])
-    kind = schema.get("type")
-    if kind == "array":
-        item = _ts(schema.get("items") or {})
-        return f"({item})[]" if "|" in item else f"{item}[]"
-    if kind == "object":
-        if "properties" not in schema:
-            extra = schema.get("additionalProperties")
-            return f"Record<string, {_ts(extra) if isinstance(extra, dict) else 'unknown'}>"
-        need = set(schema.get("required") or ())
-        fields = (
-            f"  {json.dumps(k)}{'' if k in need else '?'}: {_ts(v)};"
-            for k, v in schema["properties"].items()
-        )
-        return "{\n" + "\n".join(fields) + "\n}"
-    return {
-        "string": "string",
-        "integer": "number",
-        "number": "number",
-        "boolean": "boolean",
-        "null": "null",
-    }.get(str(kind), "unknown")
-
-
-def typescript() -> str:
-    """The routes' shapes as TypeScript, which `ui/src/api.gen.ts` holds: each schema a type,
-    and `Get` the answer of each `GET` route that names one. `tests/test_api_types.py` fails
-    when the file is stale; `uv run python -m coscc.api > ui/src/api.gen.ts` writes it."""
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as data:
-        schema = build(Config(workspaces=(), data_dir=data)).openapi()
-    out = [
-        "// Made by `uv run python -m coscc.api > ui/src/api.gen.ts` from the app's routes. Do not edit.",
-        "",
-    ]
-    for name, s in sorted(schema.get("components", {}).get("schemas", {}).items()):
-        if name not in ("HTTPValidationError", "ValidationError"):
-            out += [f"export type {name} = {_ts(s)};", ""]
-    gets = []
-    for path, ops in sorted(schema["paths"].items()):
-        ok = ops.get("get", {}).get("responses", {}).get("200", {})
-        answer = ok.get("content", {}).get("application/json", {}).get("schema", {})
-        if "$ref" in answer or answer.get("type") == "array" or "anyOf" in answer:
-            gets.append(f"  {json.dumps(path)}: {_ts(answer)};")
-    out += ["export type Get = {", *gets, "};", ""]
-    return "\n".join(out)
-
-
-if __name__ == "__main__":
-    print(typescript(), end="")
+    body = await _update_body(request)
+    with refusals():
+        return _core(request).updater.build_local(body["by"] or kernel.OWNER)

@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The studio is served by the app at `/` (see `coscc/studio.py`) and built into the
+// The studio is served by the app at `/` (see `coscc/http/studio.py`) and built into the
 // package, so a wheel carries it like the rest of `coscc/`.
 export default defineConfig({
   base: "/",

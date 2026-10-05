@@ -28,7 +28,7 @@ def skill_for(stage: str) -> str:
     """The rules for a stage, from this app's copy. Missing stops the step.
 
     A step run without its rules spends quota and records the same `included` as a full one,
-    so absence is fatal. It refuses with `RunError`, not `MissingRules`: `service` maps this
+    so absence is fatal. It refuses with `RunError`, not `MissingRules`: the routes map this
     module's refusals with one `except RunError` into a 400 that names the problem; another
     exception type would surface as a 500.
     """

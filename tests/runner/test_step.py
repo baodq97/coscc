@@ -664,7 +664,7 @@ class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
             self.assertIn("Reading the board reader and the page handlers.", chunks)
 
     def test_the_tool_signal_is_not_forwarded_as_a_row_of_its_own(self):
-        """`coscc/api.py` reads every kind that is not `chunk` as the terminal `done`."""
+        """`coscc/http/routes.py` reads every kind that is not `chunk` as the terminal `done`."""
         with tempfile.TemporaryDirectory() as d:
             items, _ = self.go(d)
             self.assertEqual([k for k, _ in items if k not in ("chunk", "done")], [])

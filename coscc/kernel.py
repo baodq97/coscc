@@ -5,7 +5,7 @@ A feature ends in one `FEATURE`, a `Feature`. The core hands it a `Ctx` and asks
 routes, tables, schedule and agent parts. For each run, the kernel builds one `Facts` and asks
 each part what it makes of it. A feature never writes a granted tool name: `granted` derives
 `mcp__<server>__<name>`, and `Grant` refuses any other spelling. How the core hosts features is
-in `coscc/plugin.py`.
+in `coscc/http/plugin.py`.
 """
 
 from __future__ import annotations
@@ -44,6 +44,10 @@ log = logging.getLogger(__name__)
 # What one unit's ram scratch directory may hold before a write there is refused.
 SCRATCH_RAM_CAP = RAM_CAP
 
+
+# How long an open response may stream: the login guard asks for a live session once per request, so
+# a stream ends within this and its reader asks again. Chosen, not measured.
+STREAM_SECONDS = 30.0
 
 # The word every record gets when the request names nobody. It is not an identity: the one
 # password names nobody, so it says only that someone holding it or a live session acted.

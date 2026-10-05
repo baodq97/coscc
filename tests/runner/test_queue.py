@@ -133,12 +133,12 @@ class NothingQueuedBeginsWhileTheAppUpdatesOrGoesDown(unittest.IsolatedAsyncioTe
     queued attempt stays queued, neither refused `updating` nor cut by the hand-off."""
 
     async def asyncSetUp(self):
-        from coscc.api import build
+        from coscc.http.app import build
         from coscc.config import Config
 
         self._tmp = tempfile.TemporaryDirectory()
-        self.service = build(Config(workspaces=(), data_dir=self._tmp.name)).state.service
-        self.attempts = self.service.attempts
+        self.core = build(Config(workspaces=(), data_dir=self._tmp.name)).state.core
+        self.attempts = self.core.attempts
         self.launched: list[int] = []
         self.attempts.launchers["integration"] = lambda row: self.launched.append(row["id"])
         self.x = self.attempts.open("integration", "/w", "0001_x", "integrate")["id"]
@@ -155,23 +155,23 @@ class NothingQueuedBeginsWhileTheAppUpdatesOrGoesDown(unittest.IsolatedAsyncioTe
         for n, (state, window) in enumerate((("pending", False), ("applying", True))):
             with self.subTest(state=state):
                 self.assertEqual((self.launched[-1], self.state(y)), (x, "queued"))
-                self.service.updater.state, self.service.updater.window = state, window
+                self.core.updater.state, self.core.updater.window = state, window
                 # The integration Apply waited for ends: its slot is not taken.
                 self.attempts.move(x, "ended", "done")
                 self.assertEqual((self.launched[-1], self.state(y)), (x, "queued"))
-                # A cancel or a failure leaves the updater idle and tells the service.
-                self.service.updater.state, self.service.updater.window = "idle", False
-                self.service.update_over()
+                # A cancel or a failure leaves the updater idle and tells the core.
+                self.core.updater.state, self.core.updater.window = "idle", False
+                self.core.update_over()
                 self.assertEqual((self.launched[-1], self.state(y)), (y, "running"))
                 # The next state, with `y` holding the slot and another queued behind it.
                 x, y = y, self.attempts.open("integration", "/w", f"001{n}_z", "integrate")["id"]
 
     async def test_shutdown_leaves_the_queue_for_the_next_start(self):
-        await self.service.shutdown()
+        await self.core.shutdown()
         self.attempts.move(self.x, "ended", "done")
         self.assertEqual((self.launched, self.state(self.y)), ([self.x], "queued"))
         # A start, or a hand-off that failed, opens the queue again and moves it on.
-        await self.service.resume.resume_after_update()
+        await self.core.resume.resume_after_update()
         self.assertEqual((self.launched, self.state(self.y)), ([self.x, self.y], "running"))
 
 
@@ -179,12 +179,12 @@ class AStepIsStoppedAtEveryState(unittest.IsolatedAsyncioTestCase):
     """Through `Steps.stop_running`, on attempts the scheduler does not launch."""
 
     async def asyncSetUp(self):
-        from coscc.api import build
+        from coscc.http.app import build
         from coscc.config import Config
 
         self._tmp = tempfile.TemporaryDirectory()
-        self.service = build(Config(workspaces=(), data_dir=self._tmp.name)).state.service
-        self.attempts = self.service.attempts
+        self.core = build(Config(workspaces=(), data_dir=self._tmp.name)).state.core
+        self.attempts = self.core.attempts
 
     async def asyncTearDown(self):
         self._tmp.cleanup()
@@ -194,17 +194,17 @@ class AStepIsStoppedAtEveryState(unittest.IsolatedAsyncioTestCase):
         self.attempts.capacity = lambda _ws, _slot: 0
         queued = self.attempts.open("step", "/w", "0001_a", "spec")["id"]
         self.assertEqual(self.attempts.get(queued)["state"], "queued")
-        await self.service.steps.stop_running("/w", "0001_a", "Lan")
+        await self.core.steps.stop_running("/w", "0001_a", "Lan")
         self.assertEqual(
             (self.attempts.get(queued)["state"], self.attempts.get(queued)["outcome"]),
             ("ended", "stopped"),
         )
         ending = self.attempts.open("step", "/w", "0002_b", "spec", state="running")["id"]
         self.attempts.move(ending, "ending")
-        said = await self.service.steps.stop_running("/w", "0002_b", "Lan")
+        said = await self.core.steps.stop_running("/w", "0002_b", "Lan")
         self.assertEqual(said["stopped_by"], "Lan")
         self.assertEqual(self.attempts.get(ending)["state"], "ending")
-        self.service.steps.end_attempt(ending, "done")
+        self.core.steps.end_attempt(ending, "done")
         self.assertEqual(self.attempts.get(ending)["outcome"], "stop_late")
 
 
@@ -212,13 +212,13 @@ class ARestartEndsWhatItCannotGoOnWith(unittest.IsolatedAsyncioTestCase):
     """what each unfinished state comes to at the next start."""
 
     async def test_each_state_comes_to_its_end(self):
-        from coscc.api import build
+        from coscc.http.app import build
         from coscc.config import Config
         from coscc.units import worktrees
 
         with tempfile.TemporaryDirectory() as tmp:
-            service = build(Config(workspaces=(), data_dir=tmp)).state.service
-            a = service.attempts
+            core = build(Config(workspaces=(), data_dir=tmp)).state.core
+            a = core.attempts
             # What a process that went down left: rows only, no task of this one.
             queued = a.open("hold", "/w", "0001_q")["id"]  # a queued with no slot to wake
             preparing = a.open("step", "/w", "0002_p", "spec", state="running")["id"]
@@ -234,7 +234,7 @@ class ARestartEndsWhatItCannotGoOnWith(unittest.IsolatedAsyncioTestCase):
                     "UPDATE attempt_moves SET moved_to = 'preparing' WHERE attempt = ?",
                     (preparing,),
                 )
-            service.steps.tasks.clear()
+            core.steps.tasks.clear()
             discarded = []
 
             async def discard(ws, unit, data_dir=None):
@@ -242,7 +242,7 @@ class ARestartEndsWhatItCannotGoOnWith(unittest.IsolatedAsyncioTestCase):
                 return True
 
             with mock.patch.object(worktrees, "discard_half", discard):
-                await service.resume.resume_after_update()
+                await core.resume.resume_after_update()
             got = {
                 i: (a.get(i)["state"], a.get(i)["outcome"])
                 for i in (queued, preparing, running, integrating, ending, stopping)

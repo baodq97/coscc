@@ -19,7 +19,6 @@ import hashlib
 import hmac
 import json
 import logging
-import re
 import secrets
 import sys
 import time
@@ -31,12 +30,11 @@ from urllib.parse import parse_qs, urlsplit
 import argon2
 from argon2.exceptions import InvalidHashError, VerificationError
 
-from coscc.config import LOOPBACK
+from coscc.config import COOKIE, LOOPBACK
 from coscc.store.db import Data
 
 log = logging.getLogger(__name__)
 
-COOKIE = "coscc_session"
 
 HEALTH = "/api/health"
 LOGIN = "/login"
@@ -72,10 +70,6 @@ HASH_CONCURRENCY = 2
 # A request that waits longer than this for a slot gets 429, is not hashed and is not counted as a failure.
 HASH_WAIT = 5.0
 
-# How long an open response may stream: the guard asks for a live session once per request, so
-# a stream ends within this and its reader asks again. Chosen, not measured.
-STREAM_SECONDS = 30.0
-
 # 5 failures inside a sliding 60 s lock the address for 60 s; the first failure after a lock
 # ends doubles it, up to an hour.
 FAIL_LIMIT = 5
@@ -84,9 +78,6 @@ LOCK_FIRST = 60.0
 LOCK_MAX = 3600.0
 # Past this many addresses, rows with no lock and no failure in the window go.
 LIMITER_KEYS = 10000
-
-# The line the setup token is written on. `coscc/update/updater.py` reads a trial's output for it.
-SETUP_LINE = re.compile(r"^coscc setup token: (\S+)$")
 
 _JSON = [(b"content-type", b"application/json")]
 _HTML = [(b"content-type", b"text/html; charset=utf-8"), (b"cache-control", b"no-store")]

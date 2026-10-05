@@ -1,4 +1,4 @@
-"""`Activity.insights` in `coscc/service/activity.py`."""
+"""`Activity.insights` in `coscc/leif/insights.py`."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from unittest import mock
 
-from tests.service.test_service import _service
+from tests.http.test_app import _core
 
 
 class InsightsMeasureTheShippedUnitsAgainstTheTargets(unittest.TestCase):
@@ -52,7 +52,7 @@ class InsightsMeasureTheShippedUnitsAgainstTheTargets(unittest.TestCase):
             {"name": "0003_b", "why": "outdated-main", "rounds": rounds("approved")},
             {"name": "0004_open", "why": "impl", "rounds": []},
         ]
-        service = _service()
+        service = _core()
         with mock.patch.object(service.activity, "_records_or_none", return_value=rows):
             got = service.activity.insights("w", units, days=30, now=now)
         self.assertEqual(
@@ -73,7 +73,7 @@ class InsightsMeasureTheShippedUnitsAgainstTheTargets(unittest.TestCase):
         )
 
     def test_a_workspace_with_no_run_log_says_so(self):
-        service = _service()
+        service = _core()
         with mock.patch.object(service.activity, "_records_or_none", return_value=None):
             got = service.activity.insights("w", [])
         self.assertEqual((got["recording"], got["shipped"]), (False, []))

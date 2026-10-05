@@ -20,11 +20,11 @@ import httpx
 
 from coscc.units import board as board_reader
 from coscc.units import worktrees
-from coscc.api import build
+from coscc.http.app import build
 from coscc.config import Config
 from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
-from tests.service.test_service import use_sessions
+from tests.http.test_app import use_sessions
 
 N = 10
 
@@ -85,16 +85,16 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
                 data_dir=str(root / "data"),
             )
         )
-        self.service = self.app.state.service
+        self.core = self.app.state.core
         self.fake = _Sessions()
-        use_sessions(self.service, self.fake)
+        use_sessions(self.core, self.fake)
         self.ws = str(workspace)
-        made = await self.service.answers.create_unit(self.ws, "raced", "words for the proof")
+        made = await self.core.answers.create_unit(self.ws, "raced", "words for the proof")
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: x\nAuthor: proof. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
         self.unit = made["unit"]
-        self.key = self.service.ws.key(self.ws)
+        self.key = self.core.ws.key(self.ws)
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://proof"
         )
@@ -132,8 +132,8 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
 
     def nothing_held(self) -> None:
         """No attempt holds a unit, and nothing live is kept for one."""
-        self.assertEqual(self.service.attempts.unfinished(), [])
-        self.assertEqual(self.service.steps.tasks, {})
+        self.assertEqual(self.core.attempts.unfinished(), [])
+        self.assertEqual(self.core.steps.tasks, {})
 
     async def one_running(self) -> asyncio.Task:
         """One `spec` step, left waiting in its session once it is `running`."""
@@ -148,7 +148,7 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
     def records(self, kind: str) -> list[dict]:
         return [
             r
-            for r in self.service.ws.journal().records()
+            for r in self.core.ws.journal().records()
             if r["kind"] == kind and r["unit"] == self.unit
         ]
 
@@ -208,7 +208,7 @@ class TenAtOnce(_OneUnit):
             return None
 
         with (
-            mock.patch.object(self.service.steps, "worktree", fake_worktree),
+            mock.patch.object(self.core.steps, "worktree", fake_worktree),
             mock.patch.object(worktrees, "refresh_base", fake_refresh_base),
         ):
             tasks, _ = await self.race()
@@ -274,7 +274,7 @@ class TheUnitIsAlwaysGivenBack(_OneUnit):
             await never.wait()
 
         with mock.patch.object(board_reader, "gate", waiting_gate):
-            stream = self.service.steps.run_step(self.ws, self.unit, "spec")
+            stream = self.core.steps.run_step(self.ws, self.unit, "spec")
             task = asyncio.create_task(stream.__anext__())
             await asyncio.wait_for(asked.wait(), 10)
 
@@ -300,7 +300,7 @@ class TheUnitIsAlwaysGivenBack(_OneUnit):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-            [held] = self.service.attempts.unfinished()
+            [held] = self.core.attempts.unfinished()
             self.assertEqual(held["state"], "preparing")
             self.assertEqual((await self.listed())[0]["state"], "preparing")
             stop = await self.client.post(
@@ -309,11 +309,11 @@ class TheUnitIsAlwaysGivenBack(_OneUnit):
             self.assertEqual(stop.status_code, 200, stop.text)
 
             async def ended():
-                return self.service.attempts.unfinished() == []
+                return self.core.attempts.unfinished() == []
 
             await self.until(ended, "the stop to end the attempt")
         # a Stop at `preparing` ends `stopped`.
-        end = self.service.attempts.get(held["id"])
+        end = self.core.attempts.get(held["id"])
         self.assertEqual((end["state"], end["outcome"]), ("ended", "stopped"))
         self.nothing_held()
         self.assertEqual(await self.listed(), [])
@@ -324,7 +324,7 @@ class TheUnitIsAlwaysGivenBack(_OneUnit):
 
         with mock.patch.object(board_reader, "gate", broken_gate):
             with self.assertRaises(RuntimeError):
-                async for _ in self.service.steps.run_step(self.ws, self.unit, "spec"):
+                async for _ in self.core.steps.run_step(self.ws, self.unit, "spec"):
                     pass
         self.nothing_held()
 
@@ -336,7 +336,7 @@ class TheUnitIsAlwaysGivenBack(_OneUnit):
 
         with mock.patch("coscc.runner.steps.describe_base", broken):
             with self.assertRaises(RuntimeError):
-                async for _ in self.service.steps.run_step(self.ws, self.unit, "spec"):
+                async for _ in self.core.steps.run_step(self.ws, self.unit, "spec"):
                     pass
         self.nothing_held()
         self.assertEqual(await self.listed(), [])
@@ -357,13 +357,13 @@ class TheUnitIsAlwaysGivenBack(_OneUnit):
             if getattr(coro, "__name__", "") == "drive":
                 stops.append(
                     real_create_task(
-                        self.service.steps.stop_running(self.key, self.unit, "Proof person")
+                        self.core.steps.stop_running(self.key, self.unit, "Proof person")
                     )
                 )
             return real_create_task(coro, **kw)
 
         async def drain():
-            async for _ in self.service.steps.run_step(self.ws, self.unit, "spec"):
+            async for _ in self.core.steps.run_step(self.ws, self.unit, "spec"):
                 pass
 
         with mock.patch("asyncio.create_task", stop_first):
@@ -404,16 +404,12 @@ class WhatElseHoldsTheUnit(_OneUnit):
             ("integration", "integrate", "it is being integrated since "),
         ):
             with self.subTest(kind=machine):
-                held = self.service.attempts.open(
-                    machine, self.key, self.unit, stage, state="running"
-                )
+                held = self.core.attempts.open(machine, self.key, self.unit, stage, state="running")
                 refused = await self.post_run("spec")
                 self.assertEqual(refused.status_code, 400)
                 self.assertIn(said + held["since"], refused.json()["error"])
-                self.assertEqual(
-                    self.service.attempts.holding(self.key, self.unit)["id"], held["id"]
-                )
-                self.service.attempts.move(held["id"], "ended", "done")
+                self.assertEqual(self.core.attempts.holding(self.key, self.unit)["id"], held["id"])
+                self.core.attempts.move(held["id"], "ended", "done")
         self.assertEqual(self.calls["gate"], 0)
 
 

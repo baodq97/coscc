@@ -15,7 +15,7 @@ import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from coscc.agent import policy
 from coscc.agent.policy import is_prose_stage
@@ -36,11 +36,13 @@ from coscc.kernel import (
     arm_of,
 )
 from coscc.runner import queue
-from coscc.service import Service
 from coscc.runner.interventions import interventions
-from coscc.service.update import refuse_while_updating
+from coscc.update.updater import refuse_while_updating
 from coscc.units.workspaces import Workspaces
 from coscc.units import submit, worktrees
+
+if TYPE_CHECKING:
+    from coscc.http.app import Core
 
 OFF_PREF = "features.off"
 STATE_PREF = "features.state"
@@ -165,7 +167,7 @@ def create_tables(ctx: Ctx, tables: Sequence[str]) -> None:
             conn.execute(statement)
 
 
-def add_sessions(service: Service, features: Sequence[Feature]) -> None:
+def add_sessions(core: Core, features: Sequence[Feature]) -> None:
     """Every feature's `sessions` into the core's tables: its grant (`policy`), its `submit`
     schema, its attempt machine; and the updater hears each one end, as it hears the core's."""
     for f in features:
@@ -174,8 +176,8 @@ def add_sessions(service: Service, features: Sequence[Feature]) -> None:
             submit.add_session(s.kind, s.schema, s.purpose)
             queue.add_session(s.kind)
             for end in ("ended", "refused"):
-                service.bus.subscribe(
-                    cast(Name, f"{s.kind}.{end}"), lambda _: service.updater.job_ended()
+                core.bus.subscribe(
+                    cast(Name, f"{s.kind}.{end}"), lambda _: core.updater.job_ended()
                 )
 
 
@@ -230,13 +232,13 @@ def state_of(data: Data, feature: str, key: str, default: State) -> State:
     return "off" if isinstance(off, list) and key in off else default
 
 
-def ctx_of(service: Service, features: Sequence[Feature] = ()) -> Ctx:
+def ctx_of(core: Core, features: Sequence[Feature] = ()) -> Ctx:
     """The `Ctx` every feature gets; `features` gives their `default` states."""
-    data = Data(service.config.data_dir)
+    data = Data(core.config.data_dir)
     defaults: dict[str, State] = {f.name: f.default for f in features}
 
     def workspace_key(cwd: str) -> str:
-        service.ws.check(cwd)
+        core.ws.check(cwd)
         return Workspaces.key(cwd)
 
     def state(feature: str, workspace: str) -> State:
@@ -249,14 +251,14 @@ def ctx_of(service: Service, features: Sequence[Feature] = ()) -> Ctx:
         return arm_of(state(feature, workspace), unit)
 
     async def main_tree(workspace: str) -> tuple[str, str]:
-        tree, sha = await worktrees.main_tree(service.ws.check(workspace), data.root)
+        tree, sha = await worktrees.main_tree(core.ws.check(workspace), data.root)
         return str(tree), sha
 
     def found(workspace: str, after: str, limit: int) -> list[Intervention]:
         return interventions(
-            service.ws.journal(),
-            service.ws.unit_meta(),
-            service.holds.attempts,
+            core.ws.journal(),
+            core.ws.unit_meta(),
+            core.holds.attempts,
             workspace_key(workspace),
             after,
             limit,
@@ -265,16 +267,16 @@ def ctx_of(service: Service, features: Sequence[Feature] = ()) -> Ctx:
     async def session(workspace: str, kind: str, prompt: str) -> Submitted:
         """The estimate's session (`Backlog.submitting`), held by an attempt of `kind`."""
         key = workspace_key(workspace)
-        refuse_while_updating(service.updater)
-        journal = service.ws.journal()
+        refuse_while_updating(core.updater)
+        journal = core.ws.journal()
         if journal is None:
             raise Invalid("no working folder is set, so a session cannot be recorded")
-        attempt = service.holds.attempts.open(kind, key, "", kind)["id"]
-        service.holds.attempts.move(attempt, "running")
+        attempt = core.holds.attempts.open(kind, key, "", kind)["id"]
+        core.holds.attempts.move(attempt, "running")
         outcome = "failed"
         got = Submitted(None, {}, "", "the session ended before it handed anything back")
         try:
-            stream = service.backlog.submitting(workspace, key, journal, kind, prompt)
+            stream = core.backlog.submitting(workspace, key, journal, kind, prompt)
             try:
                 async for item, payload in stream:
                     if item == "done":
@@ -292,11 +294,11 @@ def ctx_of(service: Service, features: Sequence[Feature] = ()) -> Ctx:
             outcome = "interrupted"
             raise
         finally:
-            service.holds.attempts.move(attempt, "ended", outcome)
+            core.holds.attempts.move(attempt, "ended", outcome)
         return got
 
     async def create_unit(workspace: str, slug: str, brief: str) -> str:
-        return str((await service.answers.create_unit(workspace, slug, brief))["unit"])
+        return str((await core.answers.create_unit(workspace, slug, brief))["unit"])
 
     def schedule(feature: str, workspace: str) -> int:
         plugin = next((f for f in features if f.name == feature), None)
@@ -305,13 +307,13 @@ def ctx_of(service: Service, features: Sequence[Feature] = ()) -> Ctx:
         return schedule_of(data, plugin, Workspaces.key(workspace))
 
     def set_schedule(feature: str, workspace: str, hours: int) -> None:
-        set_schedule_of(service, features, feature, workspace, hours)
+        set_schedule_of(core, features, feature, workspace, hours)
 
     return Ctx(
-        service.ws.journal,
+        core.ws.journal,
         workspace_key,
         enabled,
-        service.bus,
+        core.bus,
         data,
         state,
         arm,
@@ -336,7 +338,7 @@ def schedule_of(data: Data, plugin: Feature, key: str) -> int:
 
 
 def set_schedule_of(
-    service: Service, features: Sequence[Feature], feature: str, cwd: str, hours: object
+    core: Core, features: Sequence[Feature], feature: str, cwd: str, hours: object
 ) -> int:
     """Set `feature`'s schedule for the workspace `cwd`. `Invalid`: a feature or workspace not
     known, one without a schedule, or hours it does not offer."""
@@ -345,11 +347,11 @@ def set_schedule_of(
         raise Invalid(f"not a feature: {feature}")
     if plugin.schedule is None:
         raise Invalid(f"{feature} has no schedule")
-    service.ws.check(cwd)
+    core.ws.check(cwd)
     if not isinstance(hours, int) or isinstance(hours, bool) or hours not in plugin.schedule.hours:
         offered = ", ".join(str(h) for h in plugin.schedule.hours)
         raise Invalid(f"schedule must be one of {offered} hours")
-    data = Data(service.config.data_dir)
+    data = Data(core.config.data_dir)
     chosen = _pref(data, SCHEDULE_PREF)
     mine = chosen.get(feature)
     chosen[feature] = {**(mine if isinstance(mine, dict) else {}), Workspaces.key(cwd): hours}
@@ -357,13 +359,13 @@ def set_schedule_of(
     return hours
 
 
-async def tick(service: Service, ctx: Ctx, features: Sequence[Feature]) -> None:
+async def tick(core: Core, ctx: Ctx, features: Sequence[Feature]) -> None:
     """One round of every scheduled feature, in each listed workspace where it is not `off` and
     its schedule is not `0`. A tick that fails is logged and the next still runs."""
     for f in features:
         if f.schedule is None:
             continue
-        for cwd in service.ws.all()["paths"]:
+        for cwd in core.ws.all()["paths"]:
             hours = ctx.schedule(f.name, cwd)
             if not hours or not ctx.enabled(f.name, cwd):
                 continue
@@ -399,7 +401,7 @@ def shown(ctx: Ctx, features: Sequence[Feature], cwd: str) -> list[Shown]:
 
 
 def set_state(
-    service: Service, ctx: Ctx, features: Sequence[Feature], feature: str, cwd: str, state: str
+    core: Core, ctx: Ctx, features: Sequence[Feature], feature: str, cwd: str, state: str
 ) -> State:
     """Set `feature`'s state for the workspace `cwd`, then tell the feature. `Invalid`: a feature,
     workspace or state not known, `pilot` for a feature without it, or `pilot`/`on` while its
@@ -417,7 +419,7 @@ def set_state(
         sentence, may = plugin.status(ctx, cwd)
         if not may:
             raise Invalid(sentence or f"{feature} cannot be turned on here")
-    data = Data(service.config.data_dir)
+    data = Data(core.config.data_dir)
     states = _pref(data, STATE_PREF)
     mine = states.get(feature)
     states[feature] = {**(mine if isinstance(mine, dict) else {}), key: chosen}

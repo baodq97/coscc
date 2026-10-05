@@ -1,6 +1,6 @@
-"""Tests for the one place logic lives.
+"""Tests for `Core`, the app's assembly (`coscc/http/app.py`), and the helpers other tests share.
 
-Testing the service directly — with no web framework in the test — is what makes that drift visible
+Testing the parts directly — with no web framework in the test — is what makes that drift visible
 as a missing test rather than as a bug only one entry point has."""
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 from coscc import units
 from coscc.agent import harness
 from coscc.config import Config
-from coscc.service import Service, common
+from coscc.http.app import Core
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 from coscc.store.journal import totals_of
@@ -22,34 +22,34 @@ from coscc.units.history import History
 REPO = str(Path(__file__).resolve().parents[2])
 
 
-def create_sync(service: Service, *args):
-    return asyncio.run(service.answers.create_unit(*args))
+def create_sync(core: Core, *args):
+    return asyncio.run(core.answers.create_unit(*args))
 
 
-def _service(**kw) -> Service:
+def _core(**kw) -> Core:
     config = Config(workspaces=(REPO,), **kw)
-    return Service(config, Sessions(config))
+    return Core(config, Sessions(config))
 
 
-def use_sessions(service, fake) -> None:
-    """`fake` in place of `service.sessions`, in every part that holds it."""
-    old = service.sessions
-    for part in [service, *vars(service).values()]:
+def use_sessions(core, fake) -> None:
+    """`fake` in place of `core.sessions`, in every part that holds it."""
+    old = core.sessions
+    for part in [core, *vars(core).values()]:
         if getattr(part, "sessions", None) is old:
             part.sessions = fake
 
 
-def use_config(service, config) -> None:
-    """`config` in place of `service.config`, in every part that holds it."""
-    old = service.config
-    for part in [service, *vars(service).values()]:
+def use_config(core, config) -> None:
+    """`config` in place of `core.config`, in every part that holds it."""
+    old = core.config
+    for part in [core, *vars(core).values()]:
         if getattr(part, "config", None) is old:
             part.config = config
 
 
 class TheGate(unittest.TestCase):
     def test_a_directory_outside_the_list_is_refused_everywhere(self):
-        s = _service()
+        s = _core()
         for call in (
             lambda: s.chat.sessions_for("/etc"),
             lambda: s.chat.history("/etc", "abc"),
@@ -60,26 +60,26 @@ class TheGate(unittest.TestCase):
 
     def test_the_reason_names_the_directory_so_a_caller_can_show_it(self):
         with self.assertRaises(Invalid) as e:
-            _service().chat.sessions_for("/nope")
+            _core().chat.sessions_for("/nope")
         self.assertIn("/nope", str(e.exception))
 
     def test_a_configured_workspace_passes_the_gate(self):
-        self.assertEqual(_service().chat.sessions_for(REPO)["cwd"], REPO)
+        self.assertEqual(_core().chat.sessions_for(REPO)["cwd"], REPO)
 
 
 class WhatCountsAsInvalid(unittest.TestCase):
     def test_history_needs_a_session_id(self):
         with self.assertRaises(Invalid):
-            _service().chat.history(REPO, "")
+            _core().chat.history(REPO, "")
 
     def test_empty_prompt_is_refused_before_anything_is_spent(self):
         # Quota matters here: this refusal must land before a session is created.
         for text in ("", "   ", "\n"):
             with self.assertRaises(Invalid):
-                _service().chat.check_send(REPO, text)
+                _core().chat.check_send(REPO, text)
 
     def test_check_send_accepts_real_text(self):
-        self.assertIsNone(_service().chat.check_send(REPO, "hello"))
+        self.assertIsNone(_core().chat.check_send(REPO, "hello"))
 
 
 class TheGateWithAStore(unittest.TestCase):
@@ -93,7 +93,7 @@ class TheGateWithAStore(unittest.TestCase):
 
     def _svc(self):
         config = Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root))
-        return Service(config, Sessions(config))
+        return Core(config, Sessions(config))
 
     def test_a_stored_workspace_passes_the_gate(self):
         (self.root / "repo").mkdir()
@@ -145,14 +145,14 @@ class TheGateWithAStore(unittest.TestCase):
 
     def test_no_working_folder_means_no_store_and_behaviour(self):
         config = Config(workspaces=(REPO,))
-        s = Service(config, Sessions(config))
+        s = Core(config, Sessions(config))
         self.assertIsNone(s.ws.store)
         self.assertEqual(s.ws.all()["paths"], [REPO])
 
     def test_the_count_is_reported_and_tracks_both_sources(self):
         (self.root / "a").mkdir()
         config = Config(workspaces=(REPO,), working_dir=str(self.root), data_dir=str(self.root))
-        s = Service(config, Sessions(config))
+        s = Core(config, Sessions(config))
         self.assertEqual(s.ws.all()["count"], 1)
         s.ws.store.add("a")
         self.assertEqual(s.ws.all()["count"], 2)
@@ -168,7 +168,7 @@ class TheGateWithAStore(unittest.TestCase):
 
 class OneMembershipQuestion(unittest.TestCase):
     """The session layer keeps its own guard — it is the last thing before a CLI process is
-    spawned — but it must answer the same question the service gate answers. Before this,
+    spawned — but it must answer the same question the core gate answers. Before this,
     a store-backed workspace passed the gate and was refused one layer down, and only a
     real clone-and-send found it."""
 
@@ -177,40 +177,43 @@ class OneMembershipQuestion(unittest.TestCase):
             root = Path(d)
             (root / "repo").mkdir()
             config = Config(workspaces=(), working_dir=str(root), data_dir=str(root))
-            s = Service(config, Sessions(config))
+            s = Core(config, Sessions(config))
             s.ws.store.add("repo")
             self.assertTrue(s.sessions.membership(str(root / "repo")))
 
     def test_the_session_layer_still_refuses_what_the_gate_refuses(self):
         with tempfile.TemporaryDirectory() as d:
             config = Config(workspaces=(), working_dir=d, data_dir=d)
-            s = Service(config, Sessions(config))
+            s = Core(config, Sessions(config))
             self.assertFalse(s.sessions.membership("/etc"))
 
 
 class NoWebFrameworkLeaksIn(unittest.TestCase):
-    def test_service_module_imports_no_web_framework(self):
-        """If the service ever imports aiohttp, FastAPI or Reflex, logic has started moving
+    def test_the_parts_below_http_import_no_web_framework(self):
+        """If a part below `http` ever imports aiohttp or FastAPI, logic has started moving
         back towards one entry point and the two will drift."""
-        here = Path(common.__file__).parent
-        paths = sorted(here.glob("*.py"))
-        self.assertGreater(len(paths), 1)
+        root = Path(__file__).resolve().parents[2] / "coscc"
+        above = {"http", "features", "kernel.py", "vault", "_studio", "_harness"}
+        paths = sorted(
+            p
+            for p in root.rglob("*.py")
+            if not above & set(p.relative_to(root).parts) and "__pycache__" not in p.parts
+        )
+        self.assertGreater(len(paths), 50)
         for path in paths:
             source = path.read_text()
             for banned in (
                 "import aiohttp",
                 "import fastapi",
-                "import reflex",
                 "from fastapi",
                 "from aiohttp",
-                "from reflex",
             ):
                 with self.subTest(module=path.name, banned=banned):
                     self.assertNotIn(banned, source)
 
 
 class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
-    """The boundary `coscc/api.py:157-164` depends on, and the one review caught open.
+    """The boundary `coscc/http/routes.py` depends on, and the one review caught open.
 
     `run_step` maps this layer's refusals with one `except RunError`. 0012 introduced a
     second exception type on that path -- `harness.MissingRules`, raised when a stage's
@@ -245,8 +248,8 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
                 working_dir=str(root / "work"),
                 data_dir=str(root / "data"),
             )
-            service = Service(config, Sessions(config))
-            asyncio.run(service.ws.add("proj"))
+            core = Core(config, Sessions(config))
+            asyncio.run(core.ws.add("proj"))
 
             originals = (harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS)
             harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
@@ -254,9 +257,7 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             try:
 
                 async def go():
-                    async for _ in service.steps.run_step(
-                        str(workspace), "0009_a-test-unit", "plan"
-                    ):
+                    async for _ in core.steps.run_step(str(workspace), "0009_a-test-unit", "plan"):
                         pass
 
                 with self.assertRaises(Invalid) as caught:
@@ -273,15 +274,15 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def unit_history(service: Service, cwd: str, unit: str) -> dict:
+def unit_history(core: Core, cwd: str, unit: str) -> dict:
     """The transitions of a unit and where each artifact stands, read from the log."""
-    history = History(service.config.working_dir, service.config.data_dir)
-    rows = history.transitions(service.ws.key(cwd), unit)
+    history = History(core.config.working_dir, core.config.data_dir)
+    rows = history.transitions(core.ws.key(cwd), unit)
     state = {r["artifact"]: r["to_state"] for r in rows}
     edits = sum(1 for r in rows if history.machine.is_settled(r["from_state"]))
     return {"transitions": rows, "state": state, "settled_edits": edits}
 
 
-def timeline(service: Service, cwd: str, unit: str) -> dict:
-    runs = service.ws.journal().timeline(service.ws.key(cwd), unit)
+def timeline(core: Core, cwd: str, unit: str) -> dict:
+    runs = core.ws.journal().timeline(core.ws.key(cwd), unit)
     return {"runs": runs, "cost": totals_of(runs)}

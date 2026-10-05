@@ -1,4 +1,4 @@
-// Made by `uv run python -m coscc.api > ui/src/api.gen.ts` from the app's routes. Do not edit.
+// Made by `uv run python -m coscc.http > ui/src/api.gen.ts` from the app's routes. Do not edit.
 
 export type AgentPage = {
   "rows": AgentRow[];

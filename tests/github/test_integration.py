@@ -1,4 +1,4 @@
-"""Gebo's path through `Service`, under a stand-in session.
+"""Gebo's path through `Core`, under a stand-in session.
 
 A bare-directory remote with a real conflict on `f.txt`, a stand-in for `integrate._gh`
 that reads the pull request's head off that remote, and a stand-in `stream` that does what
@@ -23,12 +23,12 @@ from coscc.agent.policy import grant_for
 from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.runner.queue import Refused
 from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
 from coscc.github.integration import CI_REFRESH
-from tests.service.test_service import timeline, unit_history, use_config, use_sessions
+from tests.http.test_app import timeline, unit_history, use_config, use_sessions
 
 SLUG = "proof-of-gebo"
 PR = 7
@@ -123,8 +123,8 @@ class GeboThroughTheService(unittest.TestCase):
         config = Config(
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
-        self.service = Service(config, StandIn(self._no_act))
-        made = asyncio.run(self.service.answers.create_unit(self.cwd, SLUG, "fixture"))
+        self.core = Core(config, StandIn(self._no_act))
+        made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
         self.directory = directory
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
@@ -143,9 +143,9 @@ class GeboThroughTheService(unittest.TestCase):
         commit(seed, "main\n", "main")
         git(self.workspace, "fetch", "-q", "origin")
         git(self.workspace, "branch", BRANCH, f"origin/{BRANCH}")
-        self.tree = Path(asyncio.run(self.service.answers.worktree(self.cwd, self.unit))["path"])
+        self.tree = Path(asyncio.run(self.core.answers.worktree(self.cwd, self.unit))["path"])
         self.head_before = self.remote_head()
-        self.key = self.service.ws.key(self.cwd)
+        self.key = self.core.ws.key(self.cwd)
         patch = mock.patch.object(integrate, "_gh", self._gh)
         patch.start()
         self.addCleanup(patch.stop)
@@ -187,15 +187,15 @@ class GeboThroughTheService(unittest.TestCase):
 
     def nothing_held(self) -> None:
         """No attempt holds the unit, and nothing live is kept for one."""
-        self.assertEqual(self.service.attempts.unfinished(), [])
-        self.assertEqual(self.service.steps.tasks, {})
+        self.assertEqual(self.core.attempts.unfinished(), [])
+        self.assertEqual(self.core.steps.tasks, {})
 
     def integrate_with(self, act) -> dict:
-        use_sessions(self.service, StandIn(act))
+        use_sessions(self.core, StandIn(act))
 
         async def go():
             done = {}
-            async for kind, payload in self.service.integration.integrate(self.cwd, self.unit):
+            async for kind, payload in self.core.integration.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done
@@ -203,7 +203,7 @@ class GeboThroughTheService(unittest.TestCase):
         return asyncio.run(go())
 
     def records(self, kind: str) -> list[dict]:
-        return self.service.ws.journal().records(self.key, kind=kind)
+        return self.core.ws.journal().records(self.key, kind=kind)
 
     def rebase(self, tree: Path) -> None:
         git(tree, "rebase", "origin/main", check=False)
@@ -247,10 +247,10 @@ class GeboThroughTheService(unittest.TestCase):
         # A pull request GitHub calls conflicting opened this one.
         self.assertEqual(starts[0]["integrate_state"], "conflicting")
         self.assertEqual(ends[0]["outcome"], "done")
-        runs = timeline(self.service, self.cwd, self.unit)
+        runs = timeline(self.core, self.cwd, self.unit)
         self.assertEqual([r.get("stage") for r in runs["runs"]], ["integrate"])
         self.assertEqual(runs["cost"]["cost_usd"], 0.25)
-        unit_history(self.service, self.cwd, self.unit)
+        unit_history(self.core, self.cwd, self.unit)
 
     @staticmethod
     async def _needs_person() -> str:
@@ -276,7 +276,7 @@ class GeboThroughTheService(unittest.TestCase):
             return "[needs-person] f.txt: both"
 
         build = {"version": "9.9.9", "commit": "0123456789abcdef0123456789abcdef01234567"}
-        with mock.patch.object(self.service.steps, "identity", return_value=build):
+        with mock.patch.object(self.core.steps, "identity", return_value=build):
             self.integrate_with(act)
         starts = [r for r in self.records("start") if r.get("stage") == "integrate"]
         self.assertEqual(len(starts), 1)
@@ -284,7 +284,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(
             (starts[0]["app_version"], starts[0]["app_commit"]), (build["version"], build["commit"])
         )
-        self.assertIn(f"- {self.directory.resolve() / 'plan.md'}", self.service.sessions.prompts[0])
+        self.assertIn(f"- {self.directory.resolve() / 'plan.md'}", self.core.sessions.prompts[0])
 
     def test_gebos_start_and_integration_carry_its_name_and_its_session_the_settings(self):
         """Gebo's start and integration records carry its name, and its session carries the
@@ -293,14 +293,14 @@ class GeboThroughTheService(unittest.TestCase):
         async def act(tree, gate):
             return "[needs-person] f.txt: both"
 
-        self.service.agents.set_agent_field("integrate", "name", "Weaver")
+        self.core.agents.set_agent_field("integrate", "name", "Weaver")
         rec = self.integrate_with(act)
         [start] = [r for r in self.records("start") if r.get("stage") == "integrate"]
         self.assertEqual(start["agent"], "Weaver")
         self.assertEqual(rec["agent"], "Weaver")
-        self.assertTrue(self.service.sessions.prompts[0].startswith("# Who you are\n"))
-        self.assertIn("`Weaver (agent, integrate)`", self.service.sessions.prompts[0])
-        [kw] = self.service.sessions.kws
+        self.assertTrue(self.core.sessions.prompts[0].startswith("# Who you are\n"))
+        self.assertIn("`Weaver (agent, integrate)`", self.core.sessions.prompts[0])
+        [kw] = self.core.sessions.kws
         self.assertEqual(
             json.loads(kw["settings"])["attribution"]["commit"],
             "Co-authored-by: Weaver (agent, integrate) <weaver@agents.coscc.invalid>",
@@ -312,7 +312,7 @@ class GeboThroughTheService(unittest.TestCase):
         from coscc.store.db import Data
 
         [start] = [r for r in self.records("start") if r.get("stage") == "integrate"]
-        stored, _ = Data(self.service.config.data_dir).step_events_page(start["run"], None, 100)
+        stored, _ = Data(self.core.config.data_dir).step_events_page(start["run"], None, 100)
         return start, stored
 
     def test_gebo_runs_under_the_ceilings_overridden_for_it_and_writes_its_config(self):
@@ -327,9 +327,9 @@ class GeboThroughTheService(unittest.TestCase):
             ("model", "gebo-model"),
             ("effort", "high"),
         ):
-            self.service.agents.set_agent_field("integrate", field, value)
+            self.core.agents.set_agent_field("integrate", field, value)
         self.integrate_with(act)
-        [kw] = self.service.sessions.kws
+        [kw] = self.core.sessions.kws
         self.assertEqual((kw["max_turns"], kw["max_budget_usd"]), (33, 2.5))
         self.assertEqual((kw["model"], kw["effort"]), ("gebo-model", "high"))
         start, stored = self.stored_config()
@@ -350,7 +350,7 @@ class GeboThroughTheService(unittest.TestCase):
                 "max_budget_source": "override",
             },
         )
-        self.assertIsNotNone(Data(self.service.config.data_dir).step_run(start["run"])["ended_at"])
+        self.assertIsNotNone(Data(self.core.config.data_dir).step_run(start["run"])["ended_at"])
         [end] = [r for r in self.records("end") if r.get("stage") == "integrate"]
         self.assertEqual(end["run"], start["run"])
 
@@ -360,7 +360,7 @@ class GeboThroughTheService(unittest.TestCase):
 
         self.integrate_with(act)
         grant = grant_for("integrate")
-        [kw] = self.service.sessions.kws
+        [kw] = self.core.sessions.kws
         self.assertEqual(
             (kw["max_turns"], kw["max_budget_usd"]), (grant.max_turns, grant.max_budget_usd)
         )
@@ -374,9 +374,9 @@ class GeboThroughTheService(unittest.TestCase):
         async def act(tree, gate):
             return "[needs-person] f.txt: both"
 
-        self.service.agents.set_agent_field("impl", "model", "impl-model")
+        self.core.agents.set_agent_field("impl", "model", "impl-model")
         self.integrate_with(act)
-        [kw] = self.service.sessions.kws
+        [kw] = self.core.sessions.kws
         self.assertEqual(kw["model"], "impl-model")
         _, stored = self.stored_config()
         self.assertEqual(
@@ -405,11 +405,11 @@ class GeboThroughTheService(unittest.TestCase):
 
         async def act(tree, gate):
             try:
-                async for _ in self.service.steps.run_step(self.cwd, self.unit, "review"):
+                async for _ in self.core.steps.run_step(self.cwd, self.unit, "review"):
                     pass
             except Invalid as e:
                 said["step"] = str(e)
-            held = self.service.attempts.holding(self.key, self.unit)
+            held = self.core.attempts.holding(self.key, self.unit)
             said["still_held"] = held is not None and held["machine"] == "integration"
             return "[needs-person] stand-in"
 
@@ -422,7 +422,7 @@ class GeboThroughTheService(unittest.TestCase):
         seen = {}
 
         async def act(tree, gate):
-            seen["running"] = self.service.boards.running(self.cwd)["running"]
+            seen["running"] = self.core.boards.running(self.cwd)["running"]
             return "[needs-person] stand-in"
 
         self.integrate_with(act)
@@ -438,10 +438,10 @@ class GeboThroughTheService(unittest.TestCase):
         seen = {}
 
         async def act(tree, gate):
-            seen["listed"] = self.service.steps.running_steps(self.cwd)
-            seen["attempt"] = self.service.attempts.holding(self.key, self.unit)["id"]
-            seen["stop"] = await self.service.steps.stop_step(self.cwd, self.unit, "Lan")
-            seen["after"] = self.service.steps.running_steps(self.cwd)
+            seen["listed"] = self.core.steps.running_steps(self.cwd)
+            seen["attempt"] = self.core.attempts.holding(self.key, self.unit)["id"]
+            seen["stop"] = await self.core.steps.stop_step(self.cwd, self.unit, "Lan")
+            seen["after"] = self.core.steps.running_steps(self.cwd)
             return "[needs-person] stand-in"
 
         rec = self.integrate_with(act)
@@ -455,10 +455,10 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertTrue(after["stopping"])
         # Gebo ran on to its record.
         self.assertEqual(rec["outcome"], "needs-person")
-        end = self.service.attempts.get(seen["attempt"])
+        end = self.core.attempts.get(seen["attempt"])
         self.assertEqual((end["state"], end["outcome"]), ("ended", "stop_late"))
         self.assertEqual(end["stop_asked_by"], "Lan")
-        self.assertEqual(self.service.steps.running_steps(self.cwd), [])
+        self.assertEqual(self.core.steps.running_steps(self.cwd), [])
 
     def test_a_mechanical_rebase_is_rebasing_with_no_agent_and_not_after(self):
         """The mechanical road: `behind` with no conflict.
@@ -473,7 +473,7 @@ class GeboThroughTheService(unittest.TestCase):
                 code, out, err = await conflicting(argv, cwd)
                 return code, out.replace("CONFLICTING", "MERGEABLE"), err
             if argv[:2] == ["pr", "update-branch"]:
-                seen["running"] = self.service.boards.running(self.cwd)["running"]
+                seen["running"] = self.core.boards.running(self.cwd)["running"]
                 return 1, "", "stand-in gh: refused"
             return await conflicting(argv, cwd)
 
@@ -508,12 +508,12 @@ class GeboThroughTheService(unittest.TestCase):
             return 1, "", "stand-in gh: refused"
 
         async def act(tree, gate):
-            seen["running"] = self.service.boards.running(self.cwd)["running"]
+            seen["running"] = self.core.boards.running(self.cwd)["running"]
             return "[needs-person] stand-in"
 
         with mock.patch.object(integrate, "_gh", self.mergeable_gh(refused)):
             rec = self.integrate_with(act)
-        [prompt] = self.service.sessions.prompts
+        [prompt] = self.core.sessions.prompts
         self.assertIn("# The mechanical rebase was refused", prompt)
         self.assertIn("exited 1", prompt)
         self.assertIn("stand-in gh: refused", prompt)
@@ -543,7 +543,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual((rec["mode"], rec["outcome"]), ("mechanical", "failed"))
         self.assertIsNone(rec["update_branch"])
         self.assertIn("did not answer", rec["detail"])
-        self.assertEqual(self.service.sessions.prompts, [])
+        self.assertEqual(self.core.sessions.prompts, [])
         self.assertEqual(self.records("start"), [])
 
     def test_a_refused_update_branch_that_moved_the_head_opens_no_session(self):
@@ -572,7 +572,7 @@ class GeboThroughTheService(unittest.TestCase):
         )
         self.assertIn("no session was opened", rec["detail"])
         self.assertEqual(git(self.tree, "rev-parse", "HEAD"), moved)
-        self.assertEqual(self.service.sessions.prompts, [])
+        self.assertEqual(self.core.sessions.prompts, [])
         self.assertEqual(self.records("start"), [])
         self.assertEqual(len(self.records("integration")), 1)
 
@@ -591,7 +591,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(rec["update_branch"]["code"], 1)
         self.assertIn("could not be read", rec["detail"])
         self.assertIn("not logged in", rec["detail"])
-        self.assertEqual(self.service.sessions.prompts, [])
+        self.assertEqual(self.core.sessions.prompts, [])
         self.assertEqual(self.records("start"), [])
 
     async def _refused(self):
@@ -643,25 +643,25 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual([e["outcome"] for e in ends], ["failed"])
 
     def test_a_refused_integration_leaves_no_entry(self):
-        step = self.service.attempts.open("step", self.key, self.unit, "spec", state="running")
+        step = self.core.attempts.open("step", self.key, self.unit, "spec", state="running")
         with self.assertRaises(Invalid):
             self.integrate_with(self._no_act)
         # Nothing was opened for the press and nothing live is kept for it; the step's own
         # attempt is the one that holds the unit.
-        self.assertIsNone(self.service.attempts.get(step["id"] + 1))
-        self.assertEqual([r["id"] for r in self.service.attempts.unfinished()], [step["id"]])
-        self.assertEqual(self.service.steps.tasks, {})
+        self.assertIsNone(self.core.attempts.get(step["id"] + 1))
+        self.assertEqual([r["id"] for r in self.core.attempts.unfinished()], [step["id"]])
+        self.assertEqual(self.core.steps.tasks, {})
 
     def test_an_integration_is_refused_while_a_step_runs(self):
         """The attempt a step holds refuses Gebo `unit-busy`, and opens no session."""
         from coscc.runner.queue import Refused
 
-        step = self.service.attempts.open("step", self.key, self.unit, "spec", state="running")
+        step = self.core.attempts.open("step", self.key, self.unit, "spec", state="running")
         with self.assertRaises(Refused) as caught:
             self.integrate_with(self._no_act)
         self.assertEqual(caught.exception.reasons, ("unit-busy",))
         self.assertIn("a spec step is running", str(caught.exception))
-        self.assertEqual(self.service.attempts.holding(self.key, self.unit)["id"], step["id"])
+        self.assertEqual(self.core.attempts.holding(self.key, self.unit)["id"], step["id"])
         self.assertEqual(self.records("start"), [])
         # a busy unit is refused at the open, before any board read, and writes no
         # `integration` refused record.
@@ -670,7 +670,7 @@ class GeboThroughTheService(unittest.TestCase):
     def guarded(self, check):
         from coscc.kernel import Guard, Hooks, Parts
 
-        self.service.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
+        self.core.steps.hooks = Hooks(parts=(("f", Parts(guards=(Guard("g", check),))),))
 
     def test_a_guard_that_denies_stops_an_integration_before_spend_and_push(self):
         from coscc.runner.queue import Refused
@@ -686,9 +686,9 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(self.remote_head(), self.head_before)
         # The press ended `refused` with the guard's code, and holds nothing.
         self.nothing_held()
-        ended = self.service.attempts.get(1)
+        ended = self.core.attempts.get(1)
         self.assertEqual((ended["state"], ended["outcome"]), ("refused", "feature-refused"))
-        self.assertFalse(self.service.holds.busy(self.key, self.unit))
+        self.assertFalse(self.core.holds.busy(self.key, self.unit))
 
     def test_a_guard_that_abstains_leaves_an_integration_alone(self):
         self.guarded(lambda facts: None)
@@ -732,8 +732,8 @@ class AStaleOriginMain(unittest.TestCase):
         config = Config(
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
-        self.service = Service(config, StandIn(self._no_act))
-        made = asyncio.run(self.service.answers.create_unit(self.cwd, SLUG, "fixture"))
+        self.core = Core(config, StandIn(self._no_act))
+        made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
@@ -754,13 +754,13 @@ class AStaleOriginMain(unittest.TestCase):
         git(self.workspace, "branch", BRANCH, f"origin/{BRANCH}")
         # The order is the point: the tree first, since `worktrees` fetches through the same
         # coordinator; then a fresh coordinator; then `main` moves with no fetch here.
-        self.tree = Path(asyncio.run(self.service.answers.worktree(self.cwd, self.unit))["path"])
+        self.tree = Path(asyncio.run(self.core.answers.worktree(self.cwd, self.unit))["path"])
         shared = mock.patch.object(fetches, "shared", fetches.Fetches())
         shared.start()
         self.addCleanup(shared.stop)
         commit(seed, "main\n", "main")
         self.head_before = self.remote_head()
-        self.key = self.service.ws.key(self.cwd)
+        self.key = self.core.ws.key(self.cwd)
         self.updates = 0
         patch = mock.patch.object(integrate, "_gh", self._gh)
         patch.start()
@@ -813,7 +813,7 @@ class AStaleOriginMain(unittest.TestCase):
     def press(self) -> dict:
         async def go():
             done = {}
-            async for kind, payload in self.service.integration.integrate(self.cwd, self.unit):
+            async for kind, payload in self.core.integration.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done
@@ -821,10 +821,10 @@ class AStaleOriginMain(unittest.TestCase):
         return asyncio.run(go())
 
     def records(self, kind: str) -> list[dict]:
-        return self.service.ws.journal().records(self.key, kind=kind)
+        return self.core.ws.journal().records(self.key, kind=kind)
 
     def integration(self) -> dict:
-        board = asyncio.run(self.service.board(self.cwd))
+        board = asyncio.run(self.core.board(self.cwd))
         return next(u for u in board["units"] if u["name"] == self.unit).get("integration") or {}
 
     def test_the_board_says_current_with_a_button(self):
@@ -883,7 +883,7 @@ class AStaleOriginMain(unittest.TestCase):
         self.assertEqual(only["code"], "nothing-to-integrate")
         self.assertIsInstance(caught.exception, Refused)
         self.assertEqual(caught.exception.reasons, ("nothing-to-integrate",))
-        ended = self.service.attempts.get(1)
+        ended = self.core.attempts.get(1)
         self.assertEqual((ended["state"], ended["outcome"]), ("refused", "nothing-to-integrate"))
 
     def test_a_refusal_a_person_must_look_at_carries_no_code(self):
@@ -894,7 +894,7 @@ class AStaleOriginMain(unittest.TestCase):
         self.assertNotIsInstance(caught.exception, Refused)
         [only] = self.records("integration")
         self.assertEqual((only["outcome"], only["code"]), ("refused", ""))
-        ended = self.service.attempts.get(1)
+        ended = self.core.attempts.get(1)
         self.assertEqual((ended["state"], ended["outcome"]), ("refused", "invalid"))
 
     def autopilot_pass_at_ship(self) -> tuple[dict, dict, list[tuple[str, str]], dict]:
@@ -903,13 +903,13 @@ class AStaleOriginMain(unittest.TestCase):
         `origin/main`; the integration is one too, recording its call. Returns the board's row
         before and after, the calls, and the stops the pass left."""
         head = self.remote_head()
-        (self.service.ws.unit_dir(self.cwd, self.unit) / "review.md").write_text(
+        (self.core.ws.unit_dir(self.cwd, self.unit) / "review.md").write_text(
             f"# Review: fixture\nAuthor: t. Status: accepted.\n\n## Round 1\n\nReviewed: {head}. Verdict: pass.\n\n"
             "### Findings\n\n### What was not reviewed\n\nnothing\n",
             encoding="utf-8",
         )
-        ingest(self.service, self.cwd, self.unit)
-        use_config(self.service, dataclasses.replace(self.service.config, host="127.0.0.1"))
+        ingest(self.core, self.cwd, self.unit)
+        use_config(self.core, dataclasses.replace(self.core.config, host="127.0.0.1"))
         calls: list[tuple[str, str]] = []
 
         def enqueue_integration(cwd, unit):
@@ -926,13 +926,13 @@ class AStaleOriginMain(unittest.TestCase):
             }
 
         async def go():
-            self.service.autopilot.set_setting(self.cwd, "autopilot_may_ship", True)
-            self.service.autopilot.set_setting(self.cwd, "autopilot", True)
+            self.core.autopilot.set_setting(self.cwd, "autopilot_may_ship", True)
+            self.core.autopilot.set_setting(self.cwd, "autopilot", True)
             # A loop that never passes on its own: this test asks for the one pass.
-            self.service.autopilot.stop(self.key)
-            self.service.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
-            self.service.autopilot.cwds[self.key] = self.cwd
-            self.service.ws.journal().append(
+            self.core.autopilot.stop(self.key)
+            self.core.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
+            self.core.autopilot.cwds[self.key] = self.cwd
+            self.core.ws.journal().append(
                 {
                     "kind": "shortlist",
                     "workspace": self.key,
@@ -942,16 +942,16 @@ class AStaleOriginMain(unittest.TestCase):
                     "by": "proof",
                 }
             )
-            self.service.integration.enqueue_integration = enqueue_integration
-            self.service.steps.next_step = next_step
-            before = (await self.service.board(self.cwd))["units"][0]
+            self.core.integration.enqueue_integration = enqueue_integration
+            self.core.steps.next_step = next_step
+            before = (await self.core.board(self.cwd))["units"][0]
             # What the pass queues is written before it returns.
-            await self.service.autopilot.run_pass(self.key)
+            await self.core.autopilot.run_pass(self.key)
             after = next(
-                u for u in (await self.service.board(self.cwd))["units"] if u["name"] == self.unit
+                u for u in (await self.core.board(self.cwd))["units"] if u["name"] == self.unit
             )
-            stops = dict(self.service.autopilot.stops.get(self.key) or {})
-            self.service.autopilot.stop(self.key)
+            stops = dict(self.core.autopilot.stops.get(self.key) or {})
+            self.core.autopilot.stop(self.key)
             return before, after, stops
 
         before, after, stops = asyncio.run(go())
@@ -1005,8 +1005,8 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         config = Config(
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
-        self.service = Service(config, StandIn(None))
-        made = await self.service.answers.create_unit(self.cwd, SLUG, "fixture")
+        self.core = Core(config, StandIn(None))
+        made = await self.core.answers.create_unit(self.cwd, SLUG, "fixture")
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
@@ -1026,7 +1026,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patch.stop)
 
     async def asyncTearDown(self):
-        await self.service.shutdown()
+        await self.core.shutdown()
 
     async def _gh(self, argv, cwd):
         self.calls.append(argv[:2])
@@ -1052,7 +1052,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         return 1, "", f"stand-in gh: unexpected {argv}"
 
     async def read(self) -> dict:
-        data = await asyncio.wait_for(self.service.board(self.cwd), 5)
+        data = await asyncio.wait_for(self.core.board(self.cwd), 5)
         return next(u for u in data["units"] if u["name"] == self.unit)
 
     async def settle(self) -> None:
@@ -1060,8 +1060,8 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         starts."""
         for _ in range(5):
             await asyncio.sleep(0)
-        while self.service.boards.reads:
-            await asyncio.gather(*self.service.boards.reads.values(), return_exceptions=True)
+        while self.core.boards.reads:
+            await asyncio.gather(*self.core.boards.reads.values(), return_exceptions=True)
             for _ in range(5):
                 await asyncio.sleep(0)
 
@@ -1076,12 +1076,12 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         # (a)
         self.assertEqual(u["state"]["state"], "awaiting")
-        self.assertEqual(len(self.service.integration.ci_asks), 1)
+        self.assertEqual(len(self.core.integration.ci_asks), 1)
         self.assertEqual(self.asked(), 1)
         # (b) A second read opens no second ask while the first is out.
         await self.read()
         await self.settle()
-        self.assertEqual((len(self.service.integration.ci_asks), self.asked()), (1, 1))
+        self.assertEqual((len(self.core.integration.ci_asks), self.asked()), (1, 1))
 
     async def test_a_red_check_is_an_error_from_the_next_read(self):
         """(d)"""
@@ -1089,7 +1089,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         first = await self.read()
         self.assertEqual(first["state"]["state"], "awaiting")
         await self.settle()
-        self.assertEqual(self.service.integration.ci_asks, {}, "the ask removed itself once done")
+        self.assertEqual(self.core.integration.ci_asks, {}, "the ask removed itself once done")
         u = await self.read()
         self.assertEqual(u["state"]["state"], "error")
         await self.settle()
@@ -1101,9 +1101,9 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self.checks = [{"name": "tests", "bucket": "fail"}]
         await self.read()
         await self.settle()
-        self.assertEqual(self.service.integration.ci, {}, "an answer is not held in memory")
+        self.assertEqual(self.core.integration.ci, {}, "an answer is not held in memory")
         held = prmachine.ci_held(
-            self.service.ws.unit_meta().history, self.service.ws.key(self.cwd), PR, self.head
+            self.core.ws.unit_meta().history, self.core.ws.key(self.cwd), PR, self.head
         )
         self.assertEqual(held["ci"], "red")
         u = await self.read()
@@ -1135,10 +1135,10 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
     async def test_a_cancelled_ask_is_removed_so_the_unit_is_asked_again(self):
         await self.read()
         await self.settle()
-        [task] = self.service.integration.ci_asks.values()
+        [task] = self.core.integration.ci_asks.values()
         task.cancel()
         await self.settle()
-        self.assertEqual(self.service.integration.ci_asks, {})
+        self.assertEqual(self.core.integration.ci_asks, {})
         await self.read()
         await self.settle()
         self.assertEqual(self.asked(), 2)

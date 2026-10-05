@@ -15,11 +15,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import auth, plugin
+from coscc.kernel import STREAM_SECONDS
+from coscc.http import plugin
 from coscc.features import notices
 from coscc.config import Config
 from coscc.store.journal import BELL, Journal
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 
@@ -50,9 +51,9 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
             working_dir=str(root / "work"),
             data_dir=str(root / "data"),
         )
-        self.service = Service(self.config, Sessions(self.config))
-        self.feed = notices.Notices(plugin.ctx_of(self.service))
-        self.key = self.service.ws.key(str(self.ws))
+        self.core = Core(self.config, Sessions(self.config))
+        self.feed = notices.Notices(plugin.ctx_of(self.core))
+        self.key = self.core.ws.key(str(self.ws))
         self.journal = Journal(self.config.working_dir, self.config.data_dir)
         self.streams = []
 
@@ -192,11 +193,11 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(again["id"], between)
 
     def test_a_stream_lasts_no_longer_than_the_guard_allows(self):
-        self.assertLessEqual(notices.LIFETIME_SECONDS, auth.STREAM_SECONDS)
+        self.assertLessEqual(notices.LIFETIME_SECONDS, STREAM_SECONDS)
         self.assertLess(notices.BEAT_SECONDS, notices.LIFETIME_SECONDS)
 
     async def test_one_workspace_sees_only_its_own(self):
-        other = self.service.ws.key(str(self.other))
+        other = self.core.ws.key(str(self.other))
         self.append(stop(other))
         mine = self.append(stop(self.key))
         got = await self.notices(self.follow(after=0, workspace=str(self.ws)), 1)
@@ -205,9 +206,9 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({n["workspace"] for n in everything}, {self.key, other})
 
     async def test_a_workspace_with_notices_off_is_passed_over_and_another_still_arrives(self):
-        ctx = plugin.ctx_of(self.service)
-        plugin.set_state(self.service, ctx, [notices.FEATURE], "notices", str(self.other), "off")
-        other = self.service.ws.key(str(self.other))
+        ctx = plugin.ctx_of(self.core)
+        plugin.set_state(self.core, ctx, [notices.FEATURE], "notices", str(self.other), "off")
+        other = self.core.ws.key(str(self.other))
         self.append(stop(other))
         mine = self.append(stop(self.key))
         got = await self.notices(self.follow(after=0), 1)
@@ -229,7 +230,7 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
                 return {"units": [{"name": unit, "why": why, "questions": []}]}
 
             with mock.patch.object(board_reader, "read", read):
-                await self.service.steps.after_end(str(self.ws), unit, "ship", self.key)
+                await self.core.steps.after_end(str(self.ws), unit, "ship", self.key)
         last = self.append(stop(self.key, "0003_c"))
         got = await self.notices(self.follow(after=0), 2)
         self.assertEqual(

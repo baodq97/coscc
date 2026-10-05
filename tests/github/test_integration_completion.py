@@ -23,9 +23,9 @@ from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
 from tests.github.test_integration import BRANCH, PR, SLUG, StandIn, git
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.kernel import Invalid
-from tests.service.test_service import use_sessions, use_config
+from tests.http.test_app import use_sessions, use_config
 
 REFUSED = ("is not the pull request's head", "the last integration was refused")
 
@@ -66,8 +66,8 @@ class ACutIntegration(unittest.TestCase):
         config = Config(
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
-        self.service = Service(config, StandIn(self._no_act))
-        made = asyncio.run(self.service.answers.create_unit(self.cwd, SLUG, "fixture"))
+        self.core = Core(config, StandIn(self._no_act))
+        made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
@@ -89,12 +89,12 @@ class ACutIntegration(unittest.TestCase):
         git(seed, "push", "-q", "origin", "main")
         git(self.workspace, "fetch", "-q", "origin")
         git(self.workspace, "branch", BRANCH, f"origin/{BRANCH}")
-        self.tree = Path(asyncio.run(self.service.answers.worktree(self.cwd, self.unit))["path"])
+        self.tree = Path(asyncio.run(self.core.answers.worktree(self.cwd, self.unit))["path"])
         # A fresh coordinator after the tree's own fetch, so a press fetches for itself.
         shared = mock.patch.object(fetches, "shared", fetches.Fetches())
         shared.start()
         self.addCleanup(shared.stop)
-        self.key = self.service.ws.key(self.cwd)
+        self.key = self.core.ws.key(self.cwd)
         self.updates = 0
         patch = mock.patch.object(integrate, "_gh", self._gh)
         patch.start()
@@ -111,7 +111,7 @@ class ACutIntegration(unittest.TestCase):
 
     def cut(self) -> None:
         """What the restart left: Gebo's `start`, and nothing after it."""
-        self.service.ws.journal().started(
+        self.core.ws.journal().started(
             self.key, self.unit, "integrate", "manual", started_by="autopilot", head=self.P
         )
 
@@ -153,14 +153,14 @@ class ACutIntegration(unittest.TestCase):
         return 1, "", f"stand-in gh: unexpected {argv}"
 
     def records(self, kind: str) -> list[dict]:
-        return self.service.ws.journal().records(self.key, kind=kind)
+        return self.core.ws.journal().records(self.key, kind=kind)
 
     def press(self, act=None) -> dict:
-        use_sessions(self.service, StandIn(act or self._no_act))
+        use_sessions(self.core, StandIn(act or self._no_act))
 
         async def go():
             done = {}
-            async for kind, payload in self.service.integration.integrate(self.cwd, self.unit):
+            async for kind, payload in self.core.integration.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done
@@ -170,8 +170,8 @@ class ACutIntegration(unittest.TestCase):
     def autopilot_pass(self, act) -> dict:
         """One autopilot pass with the real `integrate`, read to its end, and the pass the
         integration's end nudges. Returns the stops left once both are done."""
-        use_sessions(self.service, StandIn(act))
-        use_config(self.service, dataclasses.replace(self.service.config, host="127.0.0.1"))
+        use_sessions(self.core, StandIn(act))
+        use_config(self.core, dataclasses.replace(self.core.config, host="127.0.0.1"))
 
         async def next_step(cwd, unit):
             return {
@@ -183,12 +183,12 @@ class ACutIntegration(unittest.TestCase):
             }
 
         async def go():
-            self.service.autopilot.set_setting(self.cwd, "autopilot", True)
+            self.core.autopilot.set_setting(self.cwd, "autopilot", True)
             # A loop that never passes on its own: this test asks for its passes.
-            self.service.autopilot.stop(self.key)
-            self.service.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
-            self.service.autopilot.cwds[self.key] = self.cwd
-            self.service.ws.journal().append(
+            self.core.autopilot.stop(self.key)
+            self.core.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
+            self.core.autopilot.cwds[self.key] = self.cwd
+            self.core.ws.journal().append(
                 {
                     "kind": "shortlist",
                     "workspace": self.key,
@@ -198,22 +198,22 @@ class ACutIntegration(unittest.TestCase):
                     "by": "proof",
                 }
             )
-            self.service.steps.next_step = next_step
-            await self.service.autopilot.run_pass(self.key)
-            queued = self.service.attempts.unfinished(self.key)
+            self.core.steps.next_step = next_step
+            await self.core.autopilot.run_pass(self.key)
+            queued = self.core.attempts.unfinished(self.key)
             self.assertEqual(
                 [(r["machine"], r["started_by"]) for r in queued],
                 [("integration", "autopilot")],
-                f"the pass did not queue integrate: {self.service.autopilot.stops.get(self.key)}",
+                f"the pass did not queue integrate: {self.core.autopilot.stops.get(self.key)}",
             )
             # No reader: the integration's own task ends its attempt, and the pass it nudges runs.
             for _ in range(1000):
-                if not self.service.attempts.unfinished(self.key):
+                if not self.core.attempts.unfinished(self.key):
                     break
                 await asyncio.sleep(0.01)
-            await asyncio.gather(*list(self.service.autopilot.pending))
-            stops = dict(self.service.autopilot.stops.get(self.key) or {})
-            self.service.autopilot.stop(self.key)
+            await asyncio.gather(*list(self.core.autopilot.pending))
+            stops = dict(self.core.autopilot.stops.get(self.key) or {})
+            self.core.autopilot.stop(self.key)
             return stops
 
         return asyncio.run(go())
@@ -260,7 +260,7 @@ class ACleanRebaseNeverPushed(ACutIntegration):
         self.assertEqual(rec["completion"]["local_head"], L)
         self.assertEqual(rec["completion"]["cut"]["head"], self.P)
         self.assertEqual(self.remote_head(), L)
-        [prompt] = self.service.sessions.prompts
+        [prompt] = self.core.sessions.prompts
         self.assertIn(L, prompt)
         self.assertIn(self.P, prompt)
         self.assertIn("# Commits that were never pushed", prompt)
@@ -281,7 +281,7 @@ class ACleanRebaseNeverPushed(ACutIntegration):
         self.assertEqual((rec["outcome"], rec["head_after"]), ("pushed", L), rec["detail"])
         self.assertEqual(rec["completion"]["relation"], "ahead")
         self.assertIsNone(rec["completion"]["cut"])
-        self.assertNotIn("git range-diff origin/main", self.service.sessions.prompts[0])
+        self.assertNotIn("git range-diff origin/main", self.core.sessions.prompts[0])
 
     def test_behind_opens_no_session(self):
         """The pull request moved past `P` from elsewhere; the tree is still at `P`."""
@@ -297,7 +297,7 @@ class ACleanRebaseNeverPushed(ACutIntegration):
         git(self.workspace, "fetch", "-q", "origin")
         self.assertEqual(git(self.tree, "rev-parse", "HEAD"), self.P)
         rec = self.press()
-        self.assertEqual(self.service.sessions.prompts, [])
+        self.assertEqual(self.core.sessions.prompts, [])
         self.assertEqual((rec["mode"], rec["outcome"]), ("mechanical", "pushed"), rec["detail"])
         self.assertEqual(rec["completion"]["relation"], "behind")
         self.assertEqual(rec["completion"]["local_head"], self.P)
@@ -350,7 +350,7 @@ class ACleanRebaseNeverPushed(ACutIntegration):
             self.press(self.pushing_act(self.P, {}))
         self.assertIn("is not the pull request's head", str(said.exception))
         self.assertIn(integrate.STALE, str(said.exception))
-        self.assertEqual(self.service.sessions.prompts, [])
+        self.assertEqual(self.core.sessions.prompts, [])
         self.assertEqual(self.remote_head(), rebased)
         [rec] = self.records("integration")
         self.assertEqual(rec["outcome"], "refused")
@@ -389,7 +389,7 @@ class AStoppedRebase(ACutIntegration):
         self.assertEqual(rec["outcome"], "refused")
         self.assertNotIn("aborted", rec["detail"])
         self.assertIn("rebase in progress", git(self.tree, "status"))
-        self.assertEqual(self.service.sessions.prompts, [])
+        self.assertEqual(self.core.sessions.prompts, [])
 
 
 if __name__ == "__main__":

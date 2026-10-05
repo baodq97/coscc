@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc.config import SETUP_LINE
 from coscc import update
 from coscc.update import updater
 from coscc.config import Config
@@ -43,7 +44,7 @@ class _Sessions:
 
 
 class _Workspaces:
-    """What `Updater` asks of `Service.ws`: no store, and the run log."""
+    """What `Updater` asks of `Core.ws`: no store, and the run log."""
 
     def __init__(self, rows: list[dict]):
         self.store = None
@@ -54,7 +55,7 @@ class _Workspaces:
 
 
 class StandIn:
-    """What `Updater` asks of `Service`, and nothing else."""
+    """What `Updater` asks of `Core`, and nothing else."""
 
     def __init__(self):
         self.jobs: list[dict] = []
@@ -69,10 +70,10 @@ class StandIn:
         self.shut = 0
         # How often the updater said a cancel or a failure left it idle.
         self.over = 0
-        # `Service.resume`, the part that takes the paused sessions up again.
+        # `Core.resume`, the part that takes the paused sessions up again.
         self.resume = self
 
-    def _update_waited(self):
+    def update_waited(self):
         return list(self.jobs)
 
     async def suspend_sessions(self, by):
@@ -146,7 +147,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.data = Path(self.tmp.name) / "data"
         self.config = Config(data_dir=str(self.data), update_check=False)
-        self.service = StandIn()
+        self.core = StandIn()
         self.me = {
             "version": "0.12.0",
             "commit": SHA,
@@ -168,7 +169,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         self.tmp.cleanup()
 
     def make(self, record_apply=True):
-        u = updater.Updater(self.config, self.service, me=dict(self.me), start=True)
+        u = updater.Updater(self.config, self.core, me=dict(self.me), start=True)
         if record_apply:
 
             async def fake_apply(channel, by):
@@ -207,7 +208,7 @@ class NoNodeIsNoReason(_Base):
         empty = Path(self.tmp.name) / "empty-path"
         empty.mkdir()
         self.config = Config(data_dir=str(self.data), update_check=True, path_env=str(empty))
-        return updater.Updater(self.config, self.service, me=dict(self.me), start=False)
+        return updater.Updater(self.config, self.core, me=dict(self.me), start=False)
 
     async def test_the_checker_starts_on_a_path_with_no_node(self):
         u = self.make_checking()
@@ -232,40 +233,40 @@ class NoNodeIsNoReason(_Base):
 
 class ItWaits(_Base):
     async def test_pending_then_applies_once_the_last_job_ends(self):
-        self.service.jobs = [INTEGRATION]
+        self.core.jobs = [INTEGRATION]
         u = self.make()
         status = await u.apply("release", "an")
         self.assertEqual(status["state"], "pending")
         self.assertEqual([j["id"] for j in status["pending"]["waiting"]], [INTEGRATION["id"]])
         self.assertEqual(status["warning"], updater.WAITING_WARNING)
-        self.assertIn("pending", self.service.events())
+        self.assertIn("pending", self.core.events())
         # A new job is not refused while waiting.
         u.refuse_while_updating()
-        self.service.jobs = []
+        self.core.jobs = []
         u.job_ended()
         await self.settle()
         self.assertEqual(self.applied, [("release", "an")])
 
     async def test_a_job_whose_end_was_not_told_still_clears_on_the_next_status(self):
-        self.service.jobs = [INTEGRATION]
+        self.core.jobs = [INTEGRATION]
         u = self.make()
         await u.apply("release", "an")
-        self.service.jobs = []
+        self.core.jobs = []
         u.status()
         await self.settle()
         self.assertEqual(self.applied, [("release", "an")])
 
     async def test_cancel_is_recorded_and_nothing_applies(self):
-        self.service.jobs = [INTEGRATION]
+        self.core.jobs = [INTEGRATION]
         u = self.make()
         await u.apply("release", "an")
         u.cancel("bo")
         self.assertEqual(u.state, "idle")
-        self.assertEqual(self.service.rows[-1]["event"], "cancelled")
-        self.assertEqual(self.service.rows[-1]["by"], "bo")
+        self.assertEqual(self.core.rows[-1]["event"], "cancelled")
+        self.assertEqual(self.core.rows[-1]["by"], "bo")
         # The queue held from the press of Apply moves on.
-        self.assertEqual(self.service.over, 1)
-        self.service.jobs = []
+        self.assertEqual(self.core.over, 1)
+        self.core.jobs = []
         u.job_ended()
         await self.settle()
         self.assertEqual(self.applied, [])
@@ -285,7 +286,7 @@ class OneApply(_Base):
         self.assertFalse(hasattr(updater.Updater, "cut_list"))
 
     async def test_a_mechanical_integration_is_refused_once_apply_is_pressed(self):
-        self.service.jobs = [INTEGRATION]
+        self.core.jobs = [INTEGRATION]
         u = self.make()
         u.refuse_mechanical_while_updating()
         await u.apply("release", "an")
@@ -347,7 +348,7 @@ class TheSequence(_Base):
         self.assertEqual(u.state, "idle")
         self.assertIn("checksum", u.error["message"])
         self.assertFalse(self.server.should_exit)
-        self.assertEqual(self.service.shut, 0)
+        self.assertEqual(self.core.shut, 0)
 
     async def test_an_empty_current_stops_before_anything(self):
         _wheel(self.root / "release", "0.13.0")
@@ -433,7 +434,7 @@ class TheSequence(_Base):
         self.assertEqual(u.state, "idle")
         self.assertIn("trial install", u.error["message"])
         self.assertIn("tool install", u.error["log_tail"])
-        self.assertEqual(self.service.over, 1)
+        self.assertEqual(self.core.over, 1)
         self.assertFalse(self.server.should_exit)
         self.assertEqual(list((self.root / "tmp").iterdir()), [])
 
@@ -442,7 +443,7 @@ class TheSequence(_Base):
         _wheel(self.root / "current", "0.12.0")
 
         def begin_an_integration():
-            self.service.jobs = [INTEGRATION]
+            self.core.jobs = [INTEGRATION]
             return ""
 
         u = self.make_real(begin_an_integration)
@@ -451,7 +452,7 @@ class TheSequence(_Base):
         self.assertIn("during the trial", u.pending["reason"])
         self.assertFalse(u.window)
         self.assertFalse(self.server.should_exit)
-        self.assertEqual(self.service.suspended, [])
+        self.assertEqual(self.core.suspended, [])
 
     async def test_new_sessions_are_refused_from_the_start_of_the_trial(self):
         _wheel(self.root / "release", "0.13.0")
@@ -478,7 +479,7 @@ class TheSequence(_Base):
         u = self.make_real("the trial failed")
         await self.run_apply(u)
         self.assertEqual((u.state, u.window), ("idle", False))
-        self.assertEqual((self.service.suspended, self.service.order), ([], []))
+        self.assertEqual((self.core.suspended, self.core.order), ([], []))
         u.refuse_while_updating()
 
     async def test_apply_suspends_every_session_after_the_trial_and_before_shutdown(self):
@@ -486,14 +487,14 @@ class TheSequence(_Base):
         _wheel(self.root / "current", "0.12.0")
 
         def trial():
-            self.assertEqual(self.service.order, [])
+            self.assertEqual(self.core.order, [])
             return ""
 
         u = self.make_real(trial)
         await self.run_apply(u)
         self.assertIsNone(u.error)
-        self.assertEqual(self.service.suspended, ["an"])
-        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "close_all"])
+        self.assertEqual(self.core.suspended, ["an"])
+        self.assertEqual(self.core.order, ["suspend", "settle", "shutdown", "close_all"])
 
     async def test_work_with_no_session_is_given_time_and_what_outlives_it_is_named(self):
         # A step posting its round after its `end` had no session to pause; it is waited for,
@@ -507,23 +508,23 @@ class TheSequence(_Base):
             "stage": "review",
             "started": "t",
         }
-        self.service.unsettled = [job]
+        self.core.unsettled = [job]
         u = self.make_real()
         await self.run_apply(u)
-        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "close_all"])
-        self.assertEqual(self.service.within, updater.SETTLE_WITHIN)
-        cut = [r for r in self.service.rows if r["event"] == "cut"]
+        self.assertEqual(self.core.order, ["suspend", "settle", "shutdown", "close_all"])
+        self.assertEqual(self.core.within, updater.SETTLE_WITHIN)
+        cut = [r for r in self.core.rows if r["event"] == "cut"]
         self.assertEqual([(c["cut"], c["stopped_by"]) for c in cut], [(job, "an")])
         self.assertLess(
-            self.service.rows.index(cut[0]),
-            [r["event"] for r in self.service.rows].index("applying"),
+            self.core.rows.index(cut[0]),
+            [r["event"] for r in self.core.rows].index("applying"),
         )
 
     async def test_suspend_rows_are_written_before_hand_off(self):
         # The rows are the next start's only way to the sessions, so they come first.
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
-        order = self.service.order
+        order = self.core.order
         real = update.SERVER.hand_off
 
         def hand_off(handoff):
@@ -545,22 +546,20 @@ class TheSequence(_Base):
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
         seen: list[bool] = []
-        taken = self.service.resume.resume_after_update
+        taken = self.core.resume.resume_after_update
 
         async def take_up():
             seen.append(u.window)
             return await taken()
 
-        self.service.resume.resume_after_update = take_up  # type: ignore[method-assign]
+        self.core.resume.resume_after_update = take_up  # type: ignore[method-assign]
         update.SERVER.hand_off = lambda handoff: False  # type: ignore[method-assign]
         try:
             u = self.make_real()
             await self.run_apply(u)
         finally:
             del update.SERVER.hand_off
-        self.assertEqual(
-            self.service.order, ["suspend", "settle", "shutdown", "close_all", "take_up"]
-        )
+        self.assertEqual(self.core.order, ["suspend", "settle", "shutdown", "close_all", "take_up"])
         self.assertEqual(seen, [False])
         self.assertEqual(u.state, "idle")
         self.assertIn("uvicorn.Server was gone", u.error["message"])
@@ -571,13 +570,13 @@ class TheSequence(_Base):
         _wheel(self.root / "current", "0.12.0")
 
         async def breaks():
-            self.service.order.append("shutdown")
+            self.core.order.append("shutdown")
             raise RuntimeError("shutdown broke")
 
-        self.service.shutdown = breaks  # type: ignore[method-assign]
+        self.core.shutdown = breaks  # type: ignore[method-assign]
         u = self.make_real()
         await self.run_apply(u)
-        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "take_up"])
+        self.assertEqual(self.core.order, ["suspend", "settle", "shutdown", "take_up"])
         self.assertIn("shutdown broke", u.error["message"])
         self.assertFalse(self.server.should_exit)
 
@@ -586,7 +585,7 @@ class TheSequence(_Base):
         _wheel(self.root / "current", "0.12.0")
         u = self.make_real("the trial failed")
         await self.run_apply(u)
-        self.assertNotIn("take_up", self.service.order)
+        self.assertNotIn("take_up", self.core.order)
 
     async def test_a_local_build_is_cancelled_and_not_resumed(self):
         # A build is no session; it is cut, with its `cut` row, and nothing takes it up again.
@@ -597,10 +596,10 @@ class TheSequence(_Base):
         await self.run_apply(u)
         await asyncio.sleep(0)
         self.assertTrue(u._build_task.cancelled())
-        cut = [r for r in self.service.rows if r["event"] == "cut"]
+        cut = [r for r in self.core.rows if r["event"] == "cut"]
         self.assertEqual([c["cut"]["kind"] for c in cut], ["build"])
         self.assertEqual(cut[0]["stopped_by"], "an")
-        self.assertEqual(self.service.suspended, ["an"])
+        self.assertEqual(self.core.suspended, ["an"])
 
     async def test_the_whole_sequence_hands_off_and_stops_the_server(self):
         target = _wheel(self.root / "release", "0.13.0")
@@ -616,7 +615,7 @@ class TheSequence(_Base):
         self.assertIsNone(u.error)
         self.assertTrue(u.window)
         self.assertTrue(self.server.should_exit)
-        self.assertEqual((self.service.shut, self.service.sessions.closed), (1, 1))
+        self.assertEqual((self.core.shut, self.core.sessions.closed), (1, 1))
         backup = sqlite3.connect(self.root / "cos.db.bak")
         self.assertEqual(backup.execute("SELECT x FROM t").fetchall(), [(1,)])
         backup.close()
@@ -626,7 +625,7 @@ class TheSequence(_Base):
         self.assertEqual((h.tool_dir, h.bin_dir), (self.me["tool_dir"], self.me["bin_dir"]))
         log = Path(h.log).read_text(encoding="utf-8")
         self.assertIn("systemctl --user stop coscc", log)
-        self.assertIn("applying", self.service.events())
+        self.assertIn("applying", self.core.events())
 
 
 class WhatARestartReports(_Base):
@@ -650,13 +649,13 @@ class WhatARestartReports(_Base):
     def test_one_result_row_and_the_file_is_renamed(self):
         self.write_last("failed")
         u = self.make()
-        self.assertEqual(self.service.events(), ["result"])
-        self.assertEqual(self.service.rows[0]["result"], "failed")
+        self.assertEqual(self.core.events(), ["result"])
+        self.assertEqual(self.core.rows[0]["result"], "failed")
         self.assertFalse((self.root / "last.json").exists())
         self.assertTrue((self.root / "last-reported.json").exists())
         self.assertIn("line two", u.last["log_tail"])
         self.make()
-        self.assertEqual(self.service.events(), ["result"])
+        self.assertEqual(self.core.events(), ["result"])
 
     def test_applied_moves_the_wheel_into_current(self):
         self.write_last("applied")
@@ -671,7 +670,7 @@ class WhatARestartReports(_Base):
         self.me["shape"] = "unavailable"
         self.me["reason"] = "x"
         u = self.make()
-        self.assertEqual(self.service.rows, [])
+        self.assertEqual(self.core.rows, [])
         self.assertEqual(
             set(u.status()),
             {"version", "commit", "commit_label", "install", "shape", "reason", "build_id"},
@@ -723,7 +722,7 @@ class TheChecker(_Base):
     def checker(self, opener):
         return updater.Updater(
             self.config,
-            self.service,
+            self.core,
             me=dict(self.me),
             opener=opener,
             check_tag=lambda t: "release",
@@ -735,7 +734,7 @@ class TheChecker(_Base):
         u.check_once()
         self.assertEqual(u.release["state"], "ready")
         self.assertEqual(u.release["version"], "0.13.0")
-        self.assertEqual(self.service.events(), ["found", "downloaded"])
+        self.assertEqual(self.core.events(), ["found", "downloaded"])
         self.assertTrue(u.checked_at)
         # The running release's own wheel is kept for going back.
         self.assertEqual(update.verified_wheel(self.root / "current")["version"], "0.12.0")
@@ -744,7 +743,7 @@ class TheChecker(_Base):
         u = self.checker(self.opener_for(wheel=b"swapped"))
         u.check_once()
         self.assertEqual((u.release["state"], u.release["reason"]), ("error", "checksum mismatch"))
-        self.assertEqual(self.service.events(), ["found", "checksum-failed"])
+        self.assertEqual(self.core.events(), ["found", "checksum-failed"])
         self.assertEqual(list((self.root / "release").glob("*.whl")), [])
 
     def test_offline_says_nothing_and_keeps_the_state(self):
@@ -755,13 +754,13 @@ class TheChecker(_Base):
         u.release = {"state": "up-to-date"}
         u.check_once()
         self.assertEqual(
-            (u.release, u.checked_at, self.service.rows), ({"state": "up-to-date"}, "", [])
+            (u.release, u.checked_at, self.core.rows), ({"state": "up-to-date"}, "", [])
         )
 
     def test_a_body_that_is_not_json_is_offline_too(self):
         u = self.checker(self.opener_for(latest=b"<html>rate limited</html>"))
         u.check_once()
-        self.assertEqual((u.checked_at, self.service.rows), ("", []))
+        self.assertEqual((u.checked_at, self.core.rows), ("", []))
 
     def test_nothing_is_fetched_while_an_update_waits_or_applies(self):
         # The wheel an apply read stays where it read it.
@@ -771,7 +770,7 @@ class TheChecker(_Base):
             u.state = state
             u.check_once()
             self.assertEqual(list((self.root / "release").glob("*.whl")), [old])
-            self.assertEqual(self.service.rows, [])
+            self.assertEqual(self.core.rows, [])
         u = self.checker(self.opener_for())
         u._fetch_lock.acquire()
         u.check_once()
@@ -805,7 +804,7 @@ class TheTrialLogsIn(unittest.IsolatedAsyncioTestCase):
 
         import uvicorn
 
-        from coscc import auth
+        from coscc.http import auth
         from coscc.store.db import Data
 
         async def ok(scope, receive, send):
@@ -823,7 +822,7 @@ class TheTrialLogsIn(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.err = io.StringIO()
         guard = auth.Guard(ok, Data(self.tmp.name), err=self.err)
-        self.token = auth.SETUP_LINE.match(self.err.getvalue().splitlines()[0]).group(1)
+        self.token = SETUP_LINE.match(self.err.getvalue().splitlines()[0]).group(1)
         self.port = updater._free_port()
         self.server = uvicorn.Server(
             uvicorn.Config(

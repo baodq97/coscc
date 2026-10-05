@@ -1,4 +1,4 @@
-"""Both release presses through `Service`, against a bare remote and a fake `gh`.
+"""Both release presses through `Core`, against a bare remote and a fake `gh`.
 
 The fake `gh` is a script on a temporary `PATH`. It keeps its pull requests in a JSON file,
 reads heads off the bare remote, squashes a merge for real in a scratch clone and pushes it
@@ -21,7 +21,7 @@ from unittest import mock
 from coscc.config import Config
 from coscc.git import fetches
 from coscc.github import integrate
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.kernel import Invalid
 
 REPO = Path(__file__).resolve().parents[2]
@@ -160,15 +160,15 @@ class Fixture:
             "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
         }
 
-    def service(self) -> Service:
+    def core(self) -> Core:
         config = Config(
             workspaces=(self.cwd,),
             working_dir=str(self.base / "work"),
             data_dir=str(self.base / "data"),
         )
-        return Service(config, mock.MagicMock())
+        return Core(config, mock.MagicMock())
 
-    def units(self, service: Service) -> None:
+    def units(self, service: Core) -> None:
         for slug, kind, pr in (("one-thing", "feat", 11), ("two-thing", "fix", 12)):
             made = asyncio.run(service.answers.create_unit(self.cwd, slug, "fixture"))
             directory = Path(made["path"])
@@ -211,7 +211,7 @@ class Fixture:
         return p.stdout.strip()
 
 
-def press(service: Service, phase: str, cwd: str, version: str) -> dict:
+def press(service: Core, phase: str, cwd: str, version: str) -> dict:
     """One press, as the route makes it: an `Invalid` before the first item, else the record."""
 
     async def go() -> dict:
@@ -241,15 +241,15 @@ class ReleasingThroughTheService(unittest.TestCase):
         shared = mock.patch.object(fetches, "shared", fetches.Fetches())
         shared.start()
         self.addCleanup(shared.stop)
-        self.service = self.fx.service()
-        self.fx.units(self.service)
-        self.key = self.service.ws.key(self.fx.cwd)
+        self.core = self.fx.core()
+        self.fx.units(self.core)
+        self.key = self.core.ws.key(self.fx.cwd)
 
     def records(self) -> list[dict]:
-        return self.service.ws.journal().records(self.key, kind="release")
+        return self.core.ws.journal().records(self.key, kind="release")
 
     def block(self) -> dict:
-        return asyncio.run(self.service.board(self.fx.cwd))["release"]
+        return asyncio.run(self.core.board(self.fx.cwd))["release"]
 
     def test_the_board_shows_what_is_unreleased_and_proposes_a_minor(self):
         got = self.block()
@@ -270,23 +270,23 @@ class ReleasingThroughTheService(unittest.TestCase):
         fx = Fixture(Path(self._tmp.name) / "untagged")
         git(fx.workspace, "tag", "-d", "v0.1.0")
         with mock.patch.dict(os.environ, fx.env):
-            got = asyncio.run(fx.service().board(fx.cwd))["release"]
+            got = asyncio.run(fx.core().board(fx.cwd))["release"]
         self.assertEqual(got["state"], "nothing")
         self.assertEqual(fx.calls(), [])
 
     def test_refusals_leave_one_record_each_and_change_nothing(self):
         for version, said in (("0.2.0-rc.1", "prerelease"), ("0.1.0", "not greater")):
             with self.subTest(version=version), self.assertRaises(Invalid) as caught:
-                press(self.service, "prepare", self.fx.cwd, version)
+                press(self.core, "prepare", self.fx.cwd, version)
             self.assertIn(said, str(caught.exception))
         self.assertEqual([r["outcome"] for r in self.records()], ["refused", "refused"])
         self.assertEqual(self.fx.remote_ref("refs/heads/chore/release-0-1-0"), "")
-        self.assertFalse(self.service.release._releasing)
+        self.assertFalse(self.core.release._releasing)
 
     def test_gh_offline_is_named_as_gh_not_as_check_version(self):
         self.fx.state.write_text(json.dumps({"offline": True}), encoding="utf-8")
         with self.assertRaises(Invalid) as caught:
-            press(self.service, "prepare", self.fx.cwd, "0.2.0")
+            press(self.core, "prepare", self.fx.cwd, "0.2.0")
         said = str(caught.exception)
         self.assertTrue(said.startswith("the release could not be read: "), said)
         self.assertIn("could not resolve api.github.com", said)
@@ -294,7 +294,7 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertEqual([r["outcome"] for r in self.records()], ["refused"])
 
     def test_prepare_then_publish(self):
-        rec = press(self.service, "prepare", self.fx.cwd, "0.2.0")
+        rec = press(self.core, "prepare", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "opened", rec.get("detail"))
         branch = self.fx.remote_ref("refs/heads/chore/release-0-2-0")
         self.assertEqual(branch, rec["head"])
@@ -306,15 +306,15 @@ class ReleasingThroughTheService(unittest.TestCase):
             ["package-lock.json", "package.json", "pyproject.toml", "uv.lock"],
         )
         with self.assertRaises(Invalid) as caught:
-            press(self.service, "prepare", self.fx.cwd, "0.2.0")
+            press(self.core, "prepare", self.fx.cwd, "0.2.0")
         self.assertIn("already open", str(caught.exception))
         self.fx.set_checks("pending")
         self.assertIn("still running", self.block()["disabled_reason"])
         with self.assertRaises(Invalid):
-            press(self.service, "publish", self.fx.cwd, "0.2.0")
+            press(self.core, "publish", self.fx.cwd, "0.2.0")
         self.fx.set_checks("pass")
         self.assertTrue(self.block()["enabled"])
-        rec = press(self.service, "publish", self.fx.cwd, "0.2.0")
+        rec = press(self.core, "publish", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "tagged", rec.get("detail"))
         self.assertEqual(self.fx.remote_ref("refs/tags/v0.2.0"), rec["merge_sha"])
         self.assertEqual(self.fx.remote_ref("refs/heads/main"), rec["merge_sha"])
@@ -328,19 +328,19 @@ class ReleasingThroughTheService(unittest.TestCase):
         hook = self.fx.remote / "hooks" / "pre-receive"
         hook.write_text("#!/bin/sh\necho 'no credentials here' >&2\nexit 1\n", encoding="utf-8")
         hook.chmod(0o755)
-        rec = press(self.service, "prepare", self.fx.cwd, "0.2.0")
+        rec = press(self.core, "prepare", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "failed")
         self.assertIn("no credentials here", rec["detail"])
         self.assertEqual(git(self.fx.workspace, "branch", "--list", "chore/release-0-2-0"), "")
-        self.assertFalse(self.service.release.release_tree_path(self.fx.cwd).exists())
+        self.assertFalse(self.core.release.release_tree_path(self.fx.cwd).exists())
         hook.unlink()
-        rec = press(self.service, "prepare", self.fx.cwd, "0.2.0")
+        rec = press(self.core, "prepare", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "opened", rec.get("detail"))
         self.assertEqual(self.fx.remote_ref("refs/heads/chore/release-0-2-0"), rec["head"])
 
     def test_a_push_after_the_checks_passed_is_not_merged(self):
         # The merge used to read the pull request again and pin whatever head it found.
-        opened = press(self.service, "prepare", self.fx.cwd, "0.2.0")["head"]
+        opened = press(self.core, "prepare", self.fx.cwd, "0.2.0")["head"]
         main = self.fx.remote_ref("refs/heads/main")
         real = integrate.required_checks
 
@@ -350,7 +350,7 @@ class ReleasingThroughTheService(unittest.TestCase):
             return got
 
         with mock.patch.object(integrate, "required_checks", then_somebody_pushes):
-            rec = press(self.service, "publish", self.fx.cwd, "0.2.0")
+            rec = press(self.core, "publish", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "failed", rec)
         merges = [c for c in self.fx.calls() if c.startswith("pr merge")]
         self.assertEqual(len(merges), 1)

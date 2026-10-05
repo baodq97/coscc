@@ -15,7 +15,7 @@ from coscc.bus import Bus, Event
 from coscc.store.db import Data, now
 from coscc.features import codegraph
 from coscc.features.codegraph import Ready, Status
-from coscc.plugin import create_tables
+from coscc.http.plugin import create_tables
 from coscc.kernel import Ctx, arm_of
 
 SHA = "a" * 40

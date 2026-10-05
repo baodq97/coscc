@@ -1,8 +1,8 @@
 # CoS Studio
 
 The page this app serves: a React app in `ui/`, built into `coscc/_studio/` and served at `/`
-by the same process as the API (`coscc/studio.py`). It reads and acts only through `/api/*`
-(`coscc/api.py`, typed by `ui/src/api.gen.ts`) and hears changes on `/api/stream`.
+by the same process as the API (`coscc/http/studio.py`). It reads and acts only through `/api/*`
+(`coscc/http/routes.py`, typed by `ui/src/api.gen.ts`) and hears changes on `/api/stream`.
 
 ```sh
 npm --prefix ui ci && npm --prefix ui run build # build the page

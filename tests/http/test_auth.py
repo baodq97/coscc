@@ -1,7 +1,7 @@
-"""Tests for the login guard, `coscc/auth.py`.
+"""Tests for the login guard, `coscc/http/auth.py`.
 
 Driven over raw ASGI, scope by scope, so a test can see whether the app behind the door was
-ever reached. The app behind it is the real one, `coscc.api.build`, on a temporary data root.
+ever reached. The app behind it is the real one, `coscc.http.app.build`, on a temporary data root.
 
 Nothing here disables the guard. Every test that needs a session gets one the way a person does: it
 reads the setup token off the guard's stderr, posts `/setup`, then `/login`."""
@@ -21,8 +21,9 @@ from urllib.parse import urlencode
 from argon2.exceptions import VerifyMismatchError
 from starlette.routing import Route
 
-from coscc import auth, studio
-from coscc.api import build
+from coscc.config import COOKIE, SETUP_LINE
+from coscc.http import auth, studio
+from coscc.http.app import build
 from coscc.config import Config
 from coscc.store.db import Data
 
@@ -123,7 +124,7 @@ async def http(
         body = urlencode(form).encode()
         extra.append(("content-type", "application/x-www-form-urlencoded"))
     if cookie is not None:
-        extra.append(("cookie", f"{auth.COOKIE}={cookie}"))
+        extra.append(("cookie", f"{COOKIE}={cookie}"))
     scope = {
         "type": "http",
         "asgi": {"version": "3.0"},
@@ -164,7 +165,7 @@ def ws_scope(target, headers=(), cookie=None, client=("10.0.0.9", 50001)):
     path, _, query = target.partition("?")
     extra = list(headers)
     if cookie is not None:
-        extra.append(("cookie", f"{auth.COOKIE}={cookie}"))
+        extra.append(("cookie", f"{COOKIE}={cookie}"))
     return {
         "type": "websocket",
         "asgi": {"version": "3.0"},
@@ -205,9 +206,7 @@ def refused(reply: Reply) -> bool:
 
 
 def tokens(err: io.StringIO) -> list[str]:
-    return [
-        m.group(1) for line in err.getvalue().splitlines() if (m := auth.SETUP_LINE.match(line))
-    ]
+    return [m.group(1) for line in err.getvalue().splitlines() if (m := SETUP_LINE.match(line))]
 
 
 class Door(unittest.IsolatedAsyncioTestCase):

@@ -1,6 +1,6 @@
 """The update state machine behind the Updates section of Settings.
 
-`Service` holds one `Updater`; the page and routes only reach it through `Service` and decide nothing. `idle → pending → applying → (the process exits 75)`.
+`Core` holds one `Updater`; the routes reach it through `Core` and decide nothing. `idle → pending → applying → (the process exits 75)`.
 
 - **Checker**: a daemon thread, started only when this install is the `install.sh` shape and `COS_UPDATE_CHECK` is not `0`. One `releases/latest` call at start and every six hours; offline or rate-limited keeps the old state and says nothing.
 - **LocalBuilder**: `scripts/build_wheel.sh --local` of the configured workspace's `origin/main`, in a throwaway worktree, only when someone presses the button.
@@ -26,14 +26,17 @@ import subprocess
 import threading
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from coscc import update
-from coscc import auth
+from coscc.config import COOKIE, SETUP_LINE
 from coscc.git import fetches
+from coscc.kernel import Invalid
 from coscc.loop import run
+from coscc.runner import queue
 from coscc.store.db import Data
 
 # `log` is an update's or a build's log file, everywhere below.
@@ -85,6 +88,89 @@ class Updating(Refused):
     status = 503
 
 
+class NotUpdatable(Invalid):
+    """This install is not the shape an update can be applied to. A 409."""
+
+
+def as_invalid(e: Refused) -> Invalid:
+    """What a route answers for a refusal of the updater: one exception type, mapped to 400,
+    503 while an update is under way, or 409."""
+    if isinstance(e, Updating):
+        return queue.Updating(str(e))
+    if isinstance(e, NotHere):
+        return NotUpdatable(str(e))
+    return Invalid(str(e))
+
+
+@contextmanager
+def refusals() -> Iterator[None]:
+    """Inside it, a refusal of the updater leaves as the one exception a route maps."""
+    try:
+        yield
+    except Refused as e:
+        raise as_invalid(e) from e
+
+
+def refuse_while_updating(updater: Updater) -> None:
+    with refusals():
+        updater.refuse_while_updating()
+
+
+def refuse_mechanical_while_updating(updater: Updater) -> None:
+    """A mechanical integration or a retake is refused once Apply is pressed."""
+    with refusals():
+        updater.refuse_mechanical_while_updating()
+
+
+# The release channel's state in plain words; `{v}` is the offered version.
+_RELEASE_LINE = {
+    "ready": "Version {v} is ready to apply.",
+    "up-to-date": "This is the latest release.",
+    "off": "Release checks are off.",
+    "unavailable": "Releases could not be checked.",
+    "downloading": "Downloading version {v}.",
+    "error": "The last download failed.",
+    "blocked": "Updates are held after a failed update.",
+}
+_LOCAL_LINE = {
+    "unconfigured": "Local builds are not set up.",
+    "ready": "A local build ({v}) is ready to apply.",
+    "building": "A local build is running.",
+    "error": "The last local build failed.",
+    "blocked": "Local builds are held after a failed update.",
+}
+
+
+def update_words(status: dict[str, Any]) -> dict[str, Any]:
+    """What the Updates section says and which buttons it shows, from `Updater.status`.
+    A button that could not be used is not listed; nothing names an environment variable."""
+    if status.get("shape") != "service":
+        return {
+            "line": "Updates apply only to an install made by install.sh.",
+            "local_line": "",
+            "actions": [],
+        }
+    state = status.get("state") or ""
+    if state == "applying":
+        return {"line": "Updating now.", "local_line": "", "actions": []}
+    release, local = status.get("release") or {}, status.get("local") or {}
+    rs, ls = release.get("state") or "", local.get("state") or ""
+    line = _RELEASE_LINE.get(rs, "").format(v=release.get("version") or "")
+    local_line = _LOCAL_LINE.get(ls, "").format(v=local.get("version") or "")
+    actions: list[str] = []
+    if state == "pending":
+        # The only things an update still waits for, in one sentence.
+        line = WAITING_WARNING
+        actions.append("cancel")
+    else:
+        for channel, ready in (("release", rs == "ready"), ("local", ls == "ready")):
+            if ready:
+                actions.append(f"apply-{channel}")
+    if ls not in ("unconfigured", "building", "blocked", ""):
+        actions.append("build-local")
+    return {"line": line, "local_line": local_line, "actions": actions}
+
+
 def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -128,7 +214,7 @@ class Updater:
         start: bool = True,
     ):
         self.config = config
-        self.service = service
+        self.core = service
         self.root = Data(config.data_dir).root / "updates"
         self.db = Data(config.data_dir).db_path
         self._me = me
@@ -200,7 +286,7 @@ class Updater:
         name = self.config.update_local_from
         if not name:
             self.local = {"state": "unconfigured", "reason": "no workspace is set to build from"}
-        elif self.service.ws.store is None:
+        elif self.core.ws.store is None:
             self.local = {"state": "unconfigured", "reason": "no working folder is set"}
         else:
             found = update.verified_wheel(self.root / "local")
@@ -251,7 +337,7 @@ class Updater:
 
     def _record(self, event: str, by: str, **extra: Any) -> None:
         """One `update` row, workspace `""` like `setting`. No working folder, no row: the log file and `last.json` still say what happened."""
-        journal = self.service.ws.journal()
+        journal = self.core.ws.journal()
         if journal is None:
             return
         try:
@@ -378,10 +464,10 @@ class Updater:
 
     def waited(self) -> list[dict[str, Any]]:
         """The only work an Apply waits for: a mechanical integration and a screenshot retake. Every agent session is paused instead, and a local build cancelled."""
-        return list(self.service._update_waited())
+        return self.core.resume.update_waited()
 
     def job_ended(self) -> None:
-        """Told by `Service` and `Sessions` whenever a step, integration or chat turn ends."""
+        """Told by the app's assembly and `Sessions` whenever a step, integration or chat turn ends."""
         if self.state != "pending":
             return
         try:
@@ -482,7 +568,7 @@ class Updater:
         channel = (self.pending or {}).get("channel")
         self.state, self.pending = "idle", None
         self._record("cancelled", name, channel=channel)
-        self.service.update_over()
+        self.core.update_over()
         return self.status()
 
     def _begin(self, channel: str, by: str) -> None:
@@ -500,7 +586,7 @@ class Updater:
             "log_tail": update.tail(log, LOG_TAIL) if log else "",
         }
         # Nothing queued began from the press of Apply on; it may now.
-        self.service.update_over()
+        self.core.update_over()
 
     async def _apply(self, channel: str, by: str) -> None:
         me = self.me()
@@ -558,13 +644,13 @@ class Updater:
                 )
             # Every session paused, each with its `suspend` row, before the steps' tasks are cancelled below.
             paused = True
-            await self.service.suspend_sessions(by)
+            await self.core.resume.suspend_sessions(by)
             # What had no session open to pause gets a bounded wait, and what outlives it is named before `shutdown` cancels it.
-            for job in await self.service.settle_after_suspend(SETTLE_WITHIN):
+            for job in await self.core.resume.settle_after_suspend(SETTLE_WITHIN):
                 self._record("cut", by, cut=job, stopped_by=by)
             # Step 4: the lifespan does not run on the real stack.
-            await self.service.shutdown()
-            await self.service.sessions.close_all()
+            await self.core.shutdown()
+            await self.core.sessions.close_all()
             # Step 5.
             backup = self.root / "cos.db.bak"
             backup_db(self.db, backup)
@@ -618,7 +704,7 @@ class Updater:
     async def _take_up_again(self) -> None:
         """Every session was paused and the hand-off then failed, so this process goes on serving: it takes them up now, `_fail` having closed the window, rather than leave their rows to whichever start comes next, over units that moved on."""
         try:
-            await self.service.resume.resume_after_update()
+            await self.core.resume.resume_after_update()
         except Exception as e:
             # The panel says what went wrong.
             logger.exception("the paused sessions were not taken up again")
@@ -753,7 +839,7 @@ class Updater:
         try:
             name = self.config.update_local_from or ""
             try:
-                workspace = self.service.ws.store.path_of(name)
+                workspace = self.core.ws.store.path_of(name)
             except Exception as e:
                 raise _BuildFailed(f"workspace {name!r}: {e}") from e
             if not (workspace / ".git").exists():
@@ -886,7 +972,7 @@ async def _copy_output(stream, log: Path, token: list[str]) -> None:
             if not line:
                 return
             text = line.decode(errors="replace").rstrip("\n")
-            found = auth.SETUP_LINE.match(text)
+            found = SETUP_LINE.match(text)
             if found:
                 token.append(found.group(1))
                 text = "coscc setup token: <redacted>"
@@ -963,7 +1049,7 @@ async def _trial_step(port: int, token: Callable[[], str | None], held: dict[str
             return "POST /setup"
         held["cookie"] = value
     for path in ("/api/workspaces", "/"):
-        status, _ = await call("GET", path, headers={"Cookie": f"{auth.COOKIE}={held['cookie']}"})
+        status, _ = await call("GET", path, headers={"Cookie": f"{COOKIE}={held['cookie']}"})
         if status != 200:
             return f"{path} with a cookie"
     return ""

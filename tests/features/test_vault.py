@@ -16,9 +16,10 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import kernel
-from coscc import plugin, vault
+from coscc import vault
+from coscc.http import plugin
 from coscc.agent import policy
-from coscc.api import build
+from coscc.http.app import build
 from coscc.config import Config
 from coscc.store.db import Data
 from coscc.features import vault as feature
@@ -90,8 +91,8 @@ class Bed(unittest.IsolatedAsyncioTestCase):
         patch.start()
         self.addCleanup(patch.stop)
         self.app = build(self.config)
-        self.service = self.app.state.service
-        self.ctx = plugin.ctx_of(self.service)
+        self.core = self.app.state.core
+        self.ctx = plugin.ctx_of(self.core)
         self.key = plugin.Workspaces.key(str(self.ws))
         self.make("ws:db", DB, self.key, "the database", ("impl",))
         self.make("global:tok", TOKEN, "", "a shared token", ("spike",))
@@ -192,7 +193,7 @@ class TheToolsTakeNoValue(Bed):
         self.assertEqual((server["type"], server["name"]), ("sdk", "vault"))
 
     def test_the_app_offers_the_tool_to_impl_and_spike_and_to_no_prose_stage(self):
-        hooks = self.service.steps.hooks
+        hooks = self.core.steps.hooks
         for stage in ("impl", "spike"):
             self.assertEqual(
                 [t.server for t in hooks.for_step(stage, str(self.ws)).tools], ["vault"]
@@ -430,7 +431,7 @@ class TheGuardHoldsWhatCarriesAValueOut(Bed):
     def test_the_kernel_refuses_the_step_and_the_integration_through_it(self):
         self.tree()
         self.leak(DB)
-        said = self.service.steps.feature_refusal(self.facts("integrate"))
+        said = self.core.steps.feature_refusal(self.facts("integrate"))
         self.assertTrue(said.startswith("vault-leak: "), said)
         self.assertIn("ws:db", said)
         self.assert_clean(("said", said))
@@ -478,7 +479,7 @@ class ThePromptBlock(Bed):
         )
 
     def test_the_kernel_renders_the_block_for_a_workspace_with_the_vault_on(self):
-        blocks = self.service.steps.hooks.for_step("impl", str(self.ws)).blocks
+        blocks = self.core.steps.hooks.for_step("impl", str(self.ws)).blocks
         (block,) = [b for b in blocks if b.name == "vault"]
         self.assertIn("ws:db", block.render(self.facts()))
 

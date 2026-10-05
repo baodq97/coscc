@@ -14,7 +14,7 @@ from typing import Any
 from coscc.leif import spend
 from coscc.config import Config
 from coscc.store.db import DB_FILENAME
-from coscc.service import Service
+from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 
 REPO = str(Path(__file__).resolve().parents[2])
@@ -329,7 +329,7 @@ class MatchesTheRunsTable(unittest.TestCase):
         config = Config(
             workspaces=(REPO,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
-        self.service = Service(config, Sessions(config))
+        self.core = Core(config, Sessions(config))
         self.db = root / "data" / DB_FILENAME
 
     def _restore_tz(self):
@@ -340,8 +340,8 @@ class MatchesTheRunsTable(unittest.TestCase):
         time.tzset()
 
     def _write(self):
-        j = self.service.ws.journal()
-        key = self.service.ws.key(REPO)
+        j = self.core.ws.journal()
+        key = self.core.ws.key(REPO)
         steps = [
             ("0001_a", "spec", "done", "2026-09-23T03:00:00+00:00", {"cost_usd": 1.234567}),
             ("0001_a", "plan", "done", "2026-09-24T16:59:59+00:00", {"cost_usd": 0.004561}),
@@ -381,7 +381,7 @@ class MatchesTheRunsTable(unittest.TestCase):
 
     def test_every_unit_stage_and_day_matches_the_reference_queries(self):
         self._write()
-        rows = self.service.ws.journal().records(self.service.ws.key(REPO))
+        rows = self.core.ws.journal().records(self.core.ws.key(REPO))
         served = spend.model(rows)
         conn = sqlite3.connect(self.db)
         self.addCleanup(conn.close)

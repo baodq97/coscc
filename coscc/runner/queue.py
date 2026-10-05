@@ -41,6 +41,13 @@ class Refused(Invalid):
         self.reasons = tuple(reasons)
 
 
+class Updating(Refused):
+    """Refused because the app is in the seconds before it restarts. A 503."""
+
+    def __init__(self, said: str) -> None:
+        super().__init__(said, ("updating",))
+
+
 # Each machine's moves: from a state, the states it may go to. `ended` and `refused` are the
 # ends; `ended` carries an outcome (`done`, `failed`, `stopped`, `stop_late`, `interrupted`, ...),
 # `refused` a reason code.

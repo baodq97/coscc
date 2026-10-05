@@ -20,8 +20,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from starlette.routing import BaseRoute
 
-from coscc.auth import STREAM_SECONDS
-from coscc.kernel import BELL, Busy, Ctx, Feature, Invalid, is_step, line
+from coscc.kernel import BELL, STREAM_SECONDS, Busy, Ctx, Feature, Invalid, is_step, line
 
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
 SOURCE_KINDS = ("autopilot-stop", "questions", "end", "ship")

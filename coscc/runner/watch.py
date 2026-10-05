@@ -1,5 +1,5 @@
 """Watching a running step: the events it recorded, a page at a time or followed live.
-Mixed into `Service`; no fields."""
+Held by `Core`."""
 
 from __future__ import annotations
 
@@ -239,5 +239,5 @@ class Watch:
             recorder.unsubscribe(q)
 
     async def purge_events(self) -> tuple[int, int]:
-        """For a caller that holds a `Service`; `coscc/run.py` calls `events.purge_on_start`."""
+        """For a caller that holds a `Core`; `coscc/run.py` calls `events.purge_on_start`."""
         return await events.purge(Data(self.config.data_dir), self.ws.journal())
