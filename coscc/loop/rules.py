@@ -31,6 +31,7 @@ from coscc.loop import (
 )
 from coscc.loop.model import (
     agent_skip,
+    ended_of,
     every_open_claimed,
     in_lane,
     incomplete_draft,
@@ -85,7 +86,7 @@ def _hint_word(s):
 
 def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whole
     limit = review_limit(unit, limit)
-    if status_of(unit, "plan.md") == "done":
+    if ended_of(unit) == "finished":
         return {"blocked": False, "action": "finished", "stage": "", "why": "finished"}
 
     hold = nullish(unit.get("hold"))
