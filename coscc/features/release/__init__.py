@@ -745,6 +745,7 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
 FEATURE = Feature(
     "release",
     routes,
-    default="on",
+    # A repository's release process is its own: on only where it is turned on.
+    default="off",
     summary="Prepares and publishes a release of the project from the Work page.",
 )

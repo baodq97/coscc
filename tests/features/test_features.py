@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -292,3 +293,36 @@ class AScheduledFeatureRunsOnItsOwn(Setup):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OnlyReleaseWritesGit(unittest.TestCase):
+    """The kernel's git writers commit, push and tag. A feature's agent tools run in the app,
+    past the command policy, so one that writes git must give an agent none, and widening who
+    writes git is a change to this test, seen in review."""
+
+    WRITERS = (
+        "OwnTree",
+        "commit_files",
+        "push_branch",
+        "push_tag",
+        "detach_here",
+        "own_tree_remove",
+    )
+
+    def test_release_alone_uses_the_writers_and_hands_an_agent_nothing(self):
+        root = Path(features.__file__).parent
+        writing = sorted(
+            folder.name
+            for folder in root.iterdir()
+            if folder.is_dir()
+            and any(
+                re.search(rf"\b{name}\b", path.read_text(encoding="utf-8"))
+                for path in folder.glob("*.py")
+                for name in self.WRITERS
+            )
+        )
+        self.assertEqual(writing, ["release"])
+        for feature in features.FEATURES:
+            if feature.name in writing:
+                self.assertIsNone(feature.agent, feature.name)
+                self.assertEqual(feature.sessions, (), feature.name)

@@ -9,6 +9,7 @@ the routes through an app built with the feature."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 import shutil
@@ -374,8 +375,9 @@ class ReleasingThroughTheFeature(unittest.TestCase):
 
 
 def with_release() -> tuple[features.Feature, ...]:
-    """The app's features, release among them whether or not it is registered yet."""
-    return (*(f for f in features.FEATURES if f.name != "release"), release.FEATURE)
+    """The app's features, release among them and on, as in a workspace that turned it on."""
+    on = dataclasses.replace(release.FEATURE, default="on")
+    return (*(f for f in features.FEATURES if f.name != "release"), on)
 
 
 @unittest.skipUnless(shutil.which("uv"), "uv is needed")

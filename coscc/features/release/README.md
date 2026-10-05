@@ -7,6 +7,8 @@ and its two buttons on the Work page are `ui/index.tsx`.
 
 ## What it does
 
+Off until a workspace turns it on (Settings, or `POST /api/features {cwd, name: release, state: on}`): a repository's release process is its own, and this one is coscc's (four version files, `chore/release-X-Y-Z`, `vX.Y.Z`). It is the one feature that writes git, through the kernel's own-tree writers, and it hands an agent no tool (`tests/features/test_features.py`).
+
 Two presses, each a request of a person:
 
 1. **Prepare** (`prepare`, offered in the state `ready`): fetches `main` with tags, reads the facts
