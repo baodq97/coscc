@@ -401,9 +401,10 @@ class AnUnreadableBoardRaisesRatherThanReturningEmpty(unittest.TestCase):
 
     def test_a_loop_that_does_not_answer_is_unavailable_not_an_empty_board(self):
         hang = [sys.executable, "-c", "import time; time.sleep(60)"]
+        # A snapshot handed in, or building one would ask the hanging loop first, for 30 s.
         with mock.patch.object(loop_run, "argv", return_value=hang):
             with self.assertRaises(Unavailable) as caught:
-                run(board.read(REPO, timeout=0.5))
+                run(board.read(REPO, timeout=0.5, state=_board.EMPTY_STATE))
         self.assertIn("timed out", str(caught.exception))
 
     def test_the_child_environment_carries_no_secrets(self):

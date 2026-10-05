@@ -1110,7 +1110,7 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
         h = sessions.StepHandle()
         with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _StartingClient):
             task = asyncio.create_task(self._drain(h))
-            await _StartingClient.spawned.wait()
+            await asyncio.wait_for(_StartingClient.spawned.wait(), 5)
             await h.close()
             _StartingClient.go.set()
             with self.assertRaises(Refused):
@@ -1124,7 +1124,7 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
         h = sessions.StepHandle()
         with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _StartingClient):
             task = asyncio.create_task(self._drain(h))
-            await _StartingClient.spawned.wait()
+            await asyncio.wait_for(_StartingClient.spawned.wait(), 5)
             await h.close()
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):

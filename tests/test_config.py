@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from coscc.config import PROTECTED_DB_VAR, Config, from_env, protect, protected_databases
+from coscc.store import db
 from coscc.store.db import Data
 
 
@@ -145,7 +146,7 @@ class TheDataDirectory(unittest.TestCase):
         to keep the default out of this file.
         """
         self.assertIsNone(from_env({}).data_dir)
-        self.assertEqual(Data(from_env({}).data_dir).root, Path("~/.cos").expanduser().resolve())
+        self.assertEqual(Data(from_env({}).data_dir).root, Path(db.DEFAULT_DIR).resolve())
 
     def test_it_is_read_from_the_environment(self):
         self.assertEqual(from_env({"COS_DATA_DIR": "/tmp/cosdata"}).data_dir, "/tmp/cosdata")
