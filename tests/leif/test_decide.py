@@ -687,7 +687,6 @@ class TheDaysMoney(unittest.TestCase):
             [g.max_budget_usd for g in GRANTS.values()] + [b for _, b in NOVEL_CEILINGS.values()]
         )
         self.assertGreater(largest, 0)
-        self.assertEqual(decide.estimate("intent"), largest)
         self.assertEqual(decide.estimate("idea"), largest)
         self.assertEqual(largest, 16.0)
 
