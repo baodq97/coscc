@@ -1973,10 +1973,37 @@ def test_a_done_plan_or_a_rejection_wins_over_a_hold(tmp_path):
     )
 
 
-def test_a_unit_with_no_intent_has_nowhere_to_hold(tmp_path):
-    u = read(files_in(tmp_path, {"idea.md": "# Idea\nStatus: accepted.\n"}), "0001_x")
+def test_an_idea_with_no_intent_can_be_held(tmp_path):
+    d = files_in(tmp_path, {"idea.md": "# Idea: x\nStatus: accepted.\n"})
+    u = read(d, "0001_x")
     assert u["hold"] is None
-    assert u["holdMoves"] == []
+    assert u["holdMoves"] == ["paused", "dropped"]
+
+    def held(*moves):
+        state, entry = with_entry(d, "0001_x")
+        entry["holds"] = [
+            {"state": s, "reason": r, "by": "Leif", "date": "2026-10-05"} for s, r in moves
+        ]
+        return read_unit(str(d), "0001_x", state)
+
+    dropped = held(("dropped", "gộp vào 0055"))
+    assert dropped["hold"]["state"] == "dropped"
+    assert dropped["hold"]["reason"] == "gộp vào 0055"
+    assert dropped["holdMoves"] == ["paused"]
+    assert not any("intent.md" in p for p in dropped["problems"])
+    assert next_step(dropped)["stage"] == ""
+    for s in STAGE_NAMES:
+        g = gate_answer(dropped, s)
+        assert g["ok"] is False, s
+        assert g["reasons"] == ["dropped"], s
+    bad = held(("dropped", "a"), ("active", "b"))
+    assert bad["problems"] == [
+        "hold block 2 (### Resumed) is not a valid move from dropped — it is ignored"
+    ]
+    back = held(("dropped", "a"), ("paused", "b"), ("active", "c"))
+    assert back["hold"] is None
+    assert next_action(back)["action"].startswith("write-intent")
+    assert next_step(back)["stage"] == "intent"
 
 
 # --- 0061: a finding that does not block -----------------------------------------------------

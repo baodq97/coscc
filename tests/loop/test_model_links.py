@@ -523,6 +523,33 @@ def test_a_backlog_relation_to_a_rejected_or_dropped_unit_holds_nothing(tmp_path
         assert json.loads(out.out)["reasons"] == []
 
 
+def test_a_relation_to_an_idea_dropped_before_its_intent_reads_dropped(tmp_path):
+    def on(header, backlog=()):
+        b = make_store(
+            tmp_path,
+            {"0001_y": to_impl(header), "0002_x": {"idea.md": "# Idea: x\nStatus: accepted.\n"}},
+        )
+        state = state_of_roots(b)
+        state["units"]["/0002_x"]["holds"] = [
+            {"state": "dropped", "reason": "gộp vào 0055", "by": "Leif", "date": "2026-10-05"}
+        ]
+        state["units"]["/0001_y"]["links"]["backlog"] = list(backlog)
+
+        def run(*argv):
+            return python([*argv, "--root", str(b), "--state", "-"], stdin=json.dumps(state))
+
+        return run
+
+    run = on("Repo: b. Depends on: 0002_x.")
+    y = json.loads(run("status", "--json").out)["units"][0]
+    assert [[d["ref"], d["why"]] for d in y["dependsOn"]] == [["0002_x", "dropped"]]
+    run = on("Repo: b.", [{"ref": "0002_x", "source": "backlog"}])
+    out = run("gate", "0001_y", "impl", "--json")
+    assert out.code == 0, out.err
+    assert json.loads(out.out)["reasons"] == []
+    assert "dependsOn" not in json.loads(run("status", "--json").out)["units"][0]
+
+
 def test_status_carries_the_source_of_a_backlog_dependency_and_a_unit_with_none_carries_none(
     tmp_path,
 ):
