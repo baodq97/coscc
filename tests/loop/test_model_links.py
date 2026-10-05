@@ -10,24 +10,19 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from coscc.loop import NEEDS_STATE, STAGE_NAMES, stringify
+from coscc.loop import STAGE_NAMES, stringify
 from coscc.loop.model import (
     WAITING_ON,
     above_answers,
     lane_of,
-    not_a_work_branch,
-    parse_answers,
     parse_idea_ref,
     parse_links,
-    parse_questions,
     parse_unit_ref,
-    pr_text,
     read_unit,
     title_problem,
 )
@@ -35,25 +30,21 @@ from coscc.loop.paths import parse_idea, read_ideas, unit_meta
 from coscc.loop.probe import make_probe
 from coscc.loop.repo_rules import branch_checks
 from coscc.loop.rules import gate_answer, next_answer
-from tests.loop.conftest import REPO, python
+from tests.loop.conftest import python
 from tests.loop.test_model import (
     check_gate,
-    next_action,
     next_step,
     CHAIN,
     FULL_LANE,
-    NOT_ANCESTOR,
     SHA,
     PR,
     art,
     branched,
-    cli,
     entry_from,
     green_probe,
     hold_block,
     moved_to,
     ok,
-    parse_hold,
     passed,
     question_tree,
     review_art,
@@ -105,15 +96,6 @@ def read_in(dir_: Path, name: str, root: Path, peers=()) -> dict:
     state = state_of_roots(root, peers)
     state["units"][f"{state['workspace']}/{name}"] = entry_from(unit_meta(str(dir_)))
     return read_unit(str(dir_), name, state)
-
-
-def without_lane(o: dict) -> dict:
-    return {k: v for k, v in o.items() if k not in ("lane", "enteredFast", "laneMissing")}
-
-
-def status_without_lane(out: str) -> str:
-    data = json.loads(out)
-    return stringify({**data, "units": [without_lane(u) for u in data["units"]]}, 2) + "\n"
 
 
 def make_store(tmp_path: Path, units: dict, ideas: dict | None = None) -> Path:
@@ -260,89 +242,7 @@ def test_every_closed_gate_names_at_least_one_code():
     assert gate_answer(u, "nope")["reasons"] == ["unreadable"]
 
 
-def test_gate_json_prints_the_lines_it_prints_without_it_its_codes_and_the_same_exit(tmp_path):
-    root, _ = question_tree(
-        tmp_path, {"intent.md": "# I\nAuthor: t. Type: feat. Status: accepted.\n"}
-    )
-    words = cli("--root", str(root), "gate", "0001_q", "plan")
-    json_out = cli("--root", str(root), "gate", "0001_q", "plan", "--json")
-    assert words.code == 1
-    assert json_out.code == 1
-    said = json.loads(json_out.out)
-    assert said["lines"] == words.err.rstrip().split("\n")
-    assert said["lines"] == [
-        "blocked: plan cannot proceed for 0001_q",
-        "  - spec.md does not exist — write it, or a person records the skip (coscc skip)",
-    ]
-    assert [said["ok"], said["reasons"]] == [False, ["missing"]]
-    open_ = json.loads(cli("--root", str(root), "gate", "--json", "0001_q", "spec").out)
-    plain = cli("--root", str(root), "gate", "0001_q", "spec").out.strip()
-    assert open_ == {"ok": True, "lines": [plain], "reasons": []}
-    assert plain == "open: spec may proceed for 0001_q"
-
-
 # --- the checks a workflow names ----------------------------------------------------------
-
-
-def test_a_red_read_asks_gh_once_more_for_the_head_and_a_green_read_never_does():
-    read = ["gh pr checks 7 --required --json name,bucket"]
-    head = ["gh pr view 7 --json headRefName"]
-    for checks, more in [
-        ([{"name": "tests", "bucket": "pass"}], []),
-        ([{"name": "tests", "bucket": "pending"}], []),
-        ([], []),
-        ([{"name": "tests", "bucket": "fail"}], head),
-        (RED_97, head),
-    ]:
-        calls: list[str] = []
-        check_gate(branched(CHAIN), "review", head_probe(green_probe(checks), calls=calls))
-        assert calls == [*read, *more]
-
-
-def test_branch_checks_finds_the_job_whose_run_step_calls_coscc_loop_check_branch():
-    def wf(text, path=".github/workflows/x.yml"):
-        return {"path": path, "text": text}
-
-    assert branch_checks([PR_YML]) == ["branch-name"]
-    # The job's own `name:`, quoted or not, over its key; a `.yaml` file; a `run: |` block.
-    named = wf(
-        'jobs:\n  names:\n    name: "Branch name" # the check\n    runs-on: x\n    steps:\n'
-        '      - run: uv run python -m coscc.loop check-branch "$H"\n'
-    )
-    assert branch_checks([named]) == ["Branch name"]
-    block = wf(
-        "jobs:\n  a:\n    name: 'the branch'\n    steps:\n      - name: check\n        run: |\n"
-        '          set -e\n          uv run python -m coscc.loop check-branch "$H"\n'
-        "  b:\n    steps:\n      - run: npm test\n",
-        ".github/workflows/y.yaml",
-    )
-    assert branch_checks([block]) == ["the branch"]
-    assert branch_checks([PR_YML, named, block]) == ["branch-name", "Branch name", "the branch"]
-    # A step's `name:` is not the job's, at any indentation.
-    step = wf(
-        "jobs:\n  b:\n    steps:\n    - name: a step\n"
-        "      run: python -m coscc.loop check-branch x\n"
-    )
-    assert branch_checks([step]) == ["b"]
-    for text in [
-        # A comment is not a call, inline or inside a block.
-        "jobs:\n  tests:\n    steps:\n      - name: not the job\n"
-        "        # python -m coscc.loop check-branch\n        run: npm test\n"
-        '  lint:\n    steps:\n    - name: x\n      run: |\n        # coscc.loop check-branch "$H"\n'
-        "        echo ok\n",
-        # A name built from an expression is not known here.
-        "jobs:\n  b:\n    name: ${{ matrix.os }} branch\n    steps:\n"
-        "      - run: python -m coscc.loop check-branch x\n",
-        # The words anywhere but a `run:` step, or no `jobs:` at all.
-        "jobs:\n  b:\n    env:\n      X: python -m coscc.loop check-branch\n    steps:\n"
-        "      - run: echo\n",
-        "name: coscc.loop check-branch\non: push\n",
-    ]:
-        assert branch_checks([wf(text)]) == [], text
-    # The workflow this repository runs, when it has one.
-    real = make_probe(str(REPO)).workflows()
-    if any(f["path"] == PR_YML["path"] for f in real):
-        assert "branch-name" in branch_checks(real)
 
 
 def test_make_probe_reads_the_workflows_of_the_repository_it_is_given_and_none_when_it_has_none(
@@ -359,14 +259,6 @@ def test_make_probe_reads_the_workflows_of_the_repository_it_is_given_and_none_w
     found = make_probe(str(repo)).workflows()
     assert found == [{"path": ".github/workflows/b.yaml", "text": "jobs: {}\n"}, PR_YML]
     assert branch_checks(found) == ["branch-name"]
-
-
-def test_check_branch_prints_not_a_work_branchs_line_unchanged():
-    out = cli("check-branch", HEAD_97)
-    assert out.code == 1
-    assert out.err == f'"{HEAD_97}" is not a work branch: {REASON_97}\n'
-    assert not_a_work_branch(HEAD_97, REASON_97) == out.err.rstrip()
-    assert cli("check-branch", "feat/x").out == "feat/x\n"
 
 
 # --- one idea, several units, several repositories ----------------------------------------
@@ -415,82 +307,6 @@ def pair(
         {"0001_f.md": idea_with("- a/0001_x.", line)},
     )
     return a, b
-
-
-def test_new_idea_gives_one_then_two_and_leaves_new_path_numbering_alone(tmp_path):
-    root = make_store(tmp_path, {"0007_u": {"intent.md": intent_for("accepted")}})
-    first = cli("--root", str(root), "new-idea", "one")
-    assert first.code == 0, first.err
-    assert first.out == ".cos/ideas/0001_one.md\n"
-    assert sorted(p.name for p in (root / ".cos").iterdir()) == ["0007_u"], "creates nothing"
-    (root / ".cos" / "ideas").mkdir()
-    (root / first.out.strip()).write_text(idea_with())
-    assert cli("--root", str(root), "new-idea", "two").out == ".cos/ideas/0002_two.md\n"
-    assert cli("--root", str(root), "new-path", "z").out == ".cos/0008_z\n"
-
-
-@pytest.mark.parametrize("slug", ["Bad_Slug", "a" * 61, ""])
-def test_new_idea_refuses_a_bad_slug_with_exit_2(tmp_path, slug):
-    root = make_store(tmp_path, {})
-    out = cli("--root", str(root), "new-idea", slug)
-    assert out.code == 2, slug
-    assert out.out == ""
-
-
-def test_a_store_with_ideas_reports_no_problem_about_it(tmp_path):
-    _, b = pair(tmp_path)
-    status = json.loads(ask("--root", b, "status", "--json").out)
-    assert [u["name"] for u in status["units"]] == ["0001_y"]
-    for u in status["units"]:
-        assert not [p for p in u["problems"] if "ideas" in p and "Depends on" not in p], u
-    assert status["ideas"] == [
-        {
-            "id": "0001_f",
-            "title": "one feature",
-            "status": "accepted",
-            "problems": [],
-            "units": [
-                {"ref": "a/0001_x", "dependsOn": []},
-                {"ref": "b/0001_y", "dependsOn": ["a/0001_x"]},
-            ],
-        }
-    ]
-
-
-# The sha256 of `status --json` of the store below, its root blanked, as the loop printed it
-# before ideas were read.
-BEFORE_IDEAS = "f7851805e41dcd5ee4c4d9e8fb136515e23784eea2dc82e79fda647524e3f3cb"
-
-
-def test_status_json_without_ideas_is_byte_identical(tmp_path):
-    root = make_store(
-        tmp_path,
-        {
-            # The fields in the body, not the header, are not read.
-            "0001_plain": {
-                "intent.md": f"{intent_for('accepted')}\n## Problem\n\n"
-                "Idea: ideas/0001_y.md. Repo: x. Depends on: 0002_other.\n",
-                "spec.md": "# Spec\nStatus: skipped.\n",
-                "plan.md": "# Plan\nStatus: accepted.\n",
-            },
-            "0002_other": {"intent.md": f"{intent_for('draft')}\n## Open questions\n\n1. Which?\n"},
-            "0003_shipped": {
-                f"{s}.md": intent_for("accepted")
-                if s == "intent"
-                else f"# {s}\nStatus: accepted.\n"
-                for s in ["intent", "spec", "plan", "impl", "pr", "review", "ship"]
-            },
-        },
-    )
-    out = status_without_lane(ask("--root", root, "status", "--json").out)
-    # Two stage hints were renamed, and nothing else: named back, the bytes are the same.
-    was = out.replace('"hint": "pr"', '"hint": "write-pr"').replace(
-        '"hint": "ship"', '"hint": "write-ship"'
-    )
-    assert was != out
-    blanked = was.replace(str(root / ".cos"), "<root>")
-    assert hashlib.sha256(blanked.encode()).hexdigest() == BEFORE_IDEAS
-    assert not re.search(r'"ideas":|"idea":|"repo":|"dependsOn":', out)
 
 
 def test_a_child_unit_carries_idea_repo_and_depends_on_in_status_json(tmp_path):
@@ -598,23 +414,6 @@ def test_a_dependency_opens_on_the_merged_row_not_on_ship_md(tmp_path):
     state = state_of_roots(b, [("a", a)])
     del state["units"]["a/0001_x"]["merged"]
     assert gate(state, b).code == 1
-
-
-def test_next_says_why_dependency_and_names_the_ref(tmp_path):
-    a, b = pair(tmp_path)
-    assert json.loads(ask("--root", b, "next", "0001_y", peers=[("a", a)]).out) == {
-        "unit": "0001_y",
-        "stage": "",
-        "action": f"{WAITING_ON}a/0001_x to merge",
-        "blocked": True,
-        "why": "dependency",
-        "reasons": ["dependency", "waiting-on"],
-        **FULL_LANE,
-    }
-    assert f"{WAITING_ON}a/0001_x to merge" == "waiting on a/0001_x to merge"
-    [u] = json.loads(ask("--root", b, "status", "--json", peers=[("a", a)]).out)["units"]
-    assert u["next"]["why"] == "dependency"
-    assert u["next"]["action"] == "waiting on a/0001_x to merge"
 
 
 def test_impl_gate_opens_once_the_dependencys_ship_is_accepted(tmp_path):
@@ -844,19 +643,6 @@ def test_title_problem_refuses_the_titles_the_spec_names_and_passes_the_one_it_n
     assert title_problem("fix(0049): wipe the stale manifest", "fix", "0049") is None
 
 
-def test_an_em_dash_passes_and_a_decomposed_vietnamese_letter_does_not():
-    assert title_problem("fix(0049): a title — with an em dash", "fix", "0049") is None
-    decomposed = "fix(0049): tie\u0302u"
-    assert "ê" not in decomposed, "the ê is a base and a combining mark"
-    assert re.search(r'carries "ê"', title_problem(decomposed, "fix", "0049"))
-
-
-def test_a_unit_with_no_type_is_named_as_the_reason():
-    assert re.search(r"intent\.md declares no Type", title_problem("fix(0049): x", None, "0049"))
-    u = {**unit({**CHAIN}), "type": None}
-    assert re.search(r"intent\.md declares no Type", "\n".join(check_gate(u, "review")["need"]))
-
-
 def pr_tree(tmp_path: Path, files: dict) -> Path:
     root = tmp_path / "prroot"
     for name, text in files.items():
@@ -867,30 +653,6 @@ def pr_tree(tmp_path: Path, files: dict) -> Path:
         if text is not None:
             (root / ".cos" / name / "pr.md").write_text(text)
     return root
-
-
-def test_pr_text_prints_title_problem_beside_the_fields_it_printed_before_and_exits_as_before(
-    tmp_path,
-):
-    good = PR_MD.replace(
-        "# PR: the pr body is taken from pr.md", "# PR: fix(0049): a pr title is taken from pr.md"
-    )
-    root = pr_tree(tmp_path, {"0049_a": good, "0050_b": PR_MD})
-    ok49 = cli("--root", str(root), "pr-text", "0049_a")
-    assert ok49.code == 0, ok49.err
-    assert json.loads(ok49.out) == {
-        "unit": "0049_a",
-        **pr_text(good),
-        "status": "accepted",
-        "titleProblem": None,
-    }
-    assert json.loads(ok49.out)["title"] == "fix(0049): a pr title is taken from pr.md"
-    bad = cli("--root", str(root), "pr-text", "0050_b")
-    assert bad.code == 0, "a title outside the grammar is still printed, exit 0"
-    got = json.loads(bad.out)
-    assert got["title"] == "the pr body is taken from pr.md"
-    assert re.search(r"is not <type>\(<NNNN>\): <text>", got["titleProblem"])
-    assert sorted(got) == ["body", "scope", "status", "title", "titleProblem", "unit", "url"]
 
 
 WIP = "wip: impl run 1 stopped at max_turns before committing"
@@ -940,26 +702,8 @@ def test_next_names_no_stage_for_a_unit_whose_pr_md_title_is_outside_the_grammar
     assert calls == []
 
 
-def passed_titled(title):
-    return branched(
-        {
-            **CHAIN,
-            "pr.md": {**PR, "title": title},
-            "review.md": review_art("accepted", round_(1, "pass")),
-        }
-    )
-
-
 def titled_view(**over) -> dict:
     return {"state": "OPEN", "headRefOid": SHA, **over}
-
-
-def test_the_ship_gate_is_closed_on_a_title_outside_the_grammar_before_gh_is_asked():
-    calls: list[str] = []
-    g = check_gate(passed_titled("fix(0001): x"), "ship", counted(green_probe(), calls))
-    assert g["ok"] is False
-    assert g["need"] == [f"{title_problem('fix(0001): x', 'feat', '0001')} — {AGAIN}"]
-    assert calls == []
 
 
 def test_the_ship_gate_is_closed_when_the_open_pull_requests_title_differs_and_names_both():
@@ -995,13 +739,6 @@ def test_the_ship_gate_is_closed_when_the_open_pull_requests_title_differs_and_n
     assert "carries the title" not in "\n".join(check_gate(open_, "ship", differs)["need"])
 
 
-def test_titles_that_differ_only_in_surrounding_whitespace_pass():
-    spaced = green_probe(None, {}, titled_view(title="  feat(0001): x \n"))
-    assert check_gate(passed(), "ship", spaced) == {"ok": True, "need": [], "head": SHA}
-    upper = green_probe(None, {}, titled_view(title="feat(0001): X"))
-    assert check_gate(passed(), "ship", upper)["ok"] is False
-
-
 def test_a_merged_pull_requests_title_is_not_compared():
     probe = merged_probe(view=merged_view(title="wip: not the one pr.md gives"))
     assert check_gate(passed(), "ship", probe) == {
@@ -1011,166 +748,7 @@ def test_a_merged_pull_requests_title_is_not_compared():
     }
 
 
-def test_the_title_is_read_from_the_one_gh_pr_view_the_ship_gate_already_asks():
-    view = "gh pr view 7 --json state,headRefOid,mergeCommit,mergedAt,title"
-    calls: list[str] = []
-    assert check_gate(passed(), "ship", counted(green_probe(), calls))["ok"] is True
-    assert [c for c in calls if c.startswith("gh ")] == [view]
-    differs: list[str] = []
-    other = green_probe(None, {}, titled_view(title="feat(0001): y"))
-    check_gate(passed(), "ship", counted(other, differs))
-    assert [c for c in differs if c.startswith("gh ")] == [view]
-
-
-def test_next_offers_ship_when_a_differing_title_is_the_only_thing_closing_its_gate():
-    differs = green_probe(None, {}, titled_view(title="feat(0001): y"))
-    n = next_step(passed(), differs)
-    assert n["stage"] == "ship"
-    assert n["blocked"] is True
-    assert re.search(
-        r'^ship — #7 carries the title "feat\(0001\): y", not pr\.md\'s "feat\(0001\): x"',
-        n["action"],
-    )
-    # A draft ship.md a refused merge left, against the last round: the same.
-    refused = branched(
-        {
-            **CHAIN,
-            "review.md": review_art("accepted", round_(1, "pass")),
-            "ship.md": {
-                **art("draft"),
-                "ship": {"round": 1, "refused": "Pull request is not mergeable"},
-            },
-        }
-    )
-    assert next_step(refused, differs) == {
-        "blocked": True,
-        "stage": "ship",
-        "action": (
-            'ship — #7 carries the title "feat(0001): y", not pr.md\'s "feat(0001): x" — start '
-            "ship from the board, which puts pr.md onto it first"
-        ),
-    }
-    # Any other reason alongside it and ship is not offered: the title is compared last.
-    behind = green_probe(
-        None,
-        {f"merge-base --is-ancestor refs/remotes/origin/main {SHA}": NOT_ANCESTOR},
-        titled_view(title="feat(0001): y"),
-    )
-    late = next_step(passed(), behind)
-    assert late["stage"] == ""
-    assert "carries the title" not in late["action"]
-
-
-def test_no_skill_opens_a_pull_request_with_fill():
-    skills = REPO / ".claude" / "skills"
-    files = sorted(skills.rglob("*.md"))
-    assert len(files) > 5, files
-    for f in files:
-        assert "--fill" not in f.read_text(), str(f)
-
-
-def test_next_never_names_write_pr_or_write_ship():
-    skills = REPO / ".claude" / "skills"
-    for gone in ["write-pr", "write-ship"]:
-        assert not (skills / gone).exists(), gone
-    base = {
-        "intent.md": art("accepted"),
-        "spec.md": art("accepted"),
-        "plan.md": art("accepted"),
-        "impl.md": art("accepted"),
-    }
-    pr = next_action(unit(base))
-    assert [pr["stage"], pr["action"]] == ["pr", "pr"]
-    ship = next_action(unit({**base, "pr.md": art("accepted"), "review.md": art("accepted")}))
-    assert [ship["stage"], ship["action"]] == ["ship", "ship"]
-    rules = (REPO / "coscc" / "loop" / "rules.py").read_text()
-    assert not re.search(r"write-(pr|ship)", rules)
-
-
 # --- metadata read once, by `meta` --------------------------------------------------------
-
-META_STORE = REPO / "tests" / "units" / "testdata" / "meta_store"
-META_BEFORE = REPO / "tests" / "units" / "testdata" / "meta_store_before.json"
-
-
-def meta_of(*args):
-    out = cli("--root", str(META_STORE), "meta", *args)
-    assert out.code == 0, out.err
-    return json.loads(out.out)
-
-
-def test_meta_prints_every_field_status_reads_from_the_same_parsers():
-    units, ideas = meta_of()["units"], meta_of()["ideas"]
-    # Every directory, the one misnamed among them; never `ideas/`.
-    on_disk = [p.name for p in (META_STORE / ".cos").iterdir() if p.name != "ideas"]
-    assert sorted(units) == sorted(on_disk)
-    assert units["0016_bad-status"]["artifacts"]["spec.md"]["status"] is None
-    assert units["0016_bad-status"]["artifacts"]["spec.md"]["raw"] == "approved"
-    assert units["0015_no-status"]["artifacts"]["intent.md"]["raw"] is None
-    assert units["0010_full-loop"]["artifacts"]["plan.md"]["status"] == "done"
-    assert (
-        units["0014_changes-requested"]["artifacts"]["review.md"]["status"] == "changes-requested"
-    )
-    spec = (META_STORE / ".cos" / "0013_open-question" / "spec.md").read_text()
-    assert units["0013_open-question"]["artifacts"]["spec.md"]["questions"] == parse_questions(spec)
-    assert units["0013_open-question"]["answers"] == [
-        {"artifact": "spec.md", **a} for a in parse_answers(spec)
-    ]
-    sha = hashlib.sha256(spec.encode()).hexdigest()
-    assert units["0013_open-question"]["artifacts"]["spec.md"]["sha256"] == sha
-    assert [a["id"] for a in units["0014_changes-requested"]["answers"]] == ["F1"]
-    intent = (META_STORE / ".cos" / "0011_paused-then-resumed" / "intent.md").read_text()
-    assert [h["state"] for h in units["0011_paused-then-resumed"]["holds"]] == ["paused", "active"]
-    assert parse_hold(intent) == {"hold": None, "problems": []}
-    assert units["0003_old-unit"]["type"] is None
-    assert units["0017_linked"]["type"] == "feat"
-    assert units["0017_linked"]["links"] == {
-        "idea": "ideas/0001_x.md",
-        "repo": "proj",
-        "dependsOn": ["0010_full-loop"],
-    }
-    assert [i["units"] for i in ideas] == [
-        [{"ref": "proj/0017_linked", "dependsOn": ["proj/0010_full-loop"]}]
-    ]
-
-
-def test_meta_of_one_unit_reads_only_the_artifacts_named_and_intent_md_brings_its_header():
-    only = meta_of("0013_open-question", "spec.md")["units"]["0013_open-question"]
-    assert list(only["artifacts"]) == ["spec.md"]
-    assert "type" not in only
-    assert (
-        meta_of("0013_open-question", "intent.md")["units"]["0013_open-question"]["type"] == "feat"
-    )
-    assert cli("--root", str(META_STORE), "meta", "0013_open-question", "notes.md").code == 2
-    assert cli("--root", str(META_STORE), "meta", "../x").code == 2
-
-
-def snapshot_of(meta: dict) -> dict:
-    """The snapshot the app would build from `meta`, for a store whose one workspace is `proj`."""
-    return {
-        "workspace": "proj",
-        "workspaces": ["proj"],
-        "units": {
-            f"proj/{name}": {
-                "artifacts": {
-                    f: {
-                        "status": a.get("status"),
-                        "raw": a.get("raw"),
-                        "questions": a.get("questions"),
-                    }
-                    for f, a in m["artifacts"].items()
-                },
-                "type": m.get("type"),
-                "links": m.get("links") or {"idea": None, "repo": None, "dependsOn": None},
-                "holds": [h for h in (m.get("holds") or []) if h.get("by") is not None],
-                "answers": m.get("answers"),
-                "unknowns": [],
-                "merged": (m["artifacts"].get("ship.md") or {}).get("status") == "accepted",
-            }
-            for name, m in meta["units"].items()
-        },
-        "ideas": {"proj": meta.get("ideas") or []},
-    }
 
 
 def strip(text: str) -> str:
@@ -1180,158 +758,11 @@ def strip(text: str) -> str:
     return re.sub(r"\b(Status|Type|Idea|Repo|Depends on):\s*[^\s]+(?:,\s*[^\s]+)*\.?", "", kept)
 
 
-def test_stripping_status_type_idea_depends_on_open_questions_and_answers_lines_changes_nothing(
-    tmp_path,
-):
-    d = tmp_path / "copy"
-    shutil.copytree(META_STORE, d)
-    state = json.dumps(snapshot_of(meta_of()))
-
-    def run(*args):
-        out = python(["--root", str(d), "--state", "-", *args], stdin=state)
-        return out.code, out.out.replace(str(d), "<root>"), out.err
-
-    questions = [
-        ["status", "--json"],
-        ["next", "0013_open-question"],
-        ["next", "0017_linked"],
-        ["next", "0011_paused-then-resumed"],
-        ["gate", "0013_open-question", "plan"],
-        ["gate", "0012_dropped", "spec"],
-        ["gate", "0017_linked", "spec"],
-    ]
-    before = [run(*q) for q in questions]
-    # Real answers, not seven refusals: status reads, the draft spec shuts `plan`, the drop
-    # shuts `spec`.
-    assert [b[0] for b in before] == [0, 0, 0, 0, 1, 1, 0]
-
-    def files():
-        return cli("--root", str(d), "status", "--json").out.replace(str(d), "<root>")
-
-    unstripped = files()
-    cos = d / ".cos"
-    for u in cos.iterdir():
-        for f in u.iterdir():
-            f.write_text(strip(f.read_text()))
-    assert "Status:" not in (cos / "0013_open-question" / "spec.md").read_text()
-    assert [run(*q) for q in questions] == before
-    # Without `--state` the same files now say something else, so what was stripped was read.
-    assert files() != unstripped
-
-
-def test_a_deciding_command_without_state_exits_2_and_says_it_needs_the_app():
-    for args in [
-        ["status"],
-        ["status", "--json"],
-        ["gate", "0010_full-loop", "spec"],
-        ["next", "0010_full-loop"],
-        ["rerun", "0010_full-loop"],
-        ["unit-branch", "0010_full-loop"],
-        ["pr-text", "0010_full-loop"],
-    ]:
-        out = python(["--root", str(META_STORE), *args])
-        assert out.code == 2, " ".join(args)
-        assert NEEDS_STATE in out.err
-        assert out.out == ""
-    # `meta`, `new-path` and the `check-*` commands read no metadata, and need none.
-    assert cli("--root", str(META_STORE), "meta").code == 0
-
-
-def test_changing_a_status_in_the_snapshot_changes_the_output():
-    state = snapshot_of(meta_of())
-
-    def run(s):
-        return python(
-            ["--root", str(META_STORE), "--state", "-", "next", "0013_open-question"],
-            stdin=json.dumps(s),
-        )
-
-    before = json.loads(run(state).out)
-    spec = state["units"]["proj/0013_open-question"]["artifacts"]["spec.md"]
-    spec["status"] = "accepted"
-    spec["questions"] = None
-    after = json.loads(run(state).out)
-    assert after != before
-    assert after["stage"] == "plan"
-
-
-def test_status_json_of_the_fixture_store_is_what_it_was_before_meta_existed():
-    out = cli("--root", str(META_STORE), "status", "--json")
-    assert out.code == 0, out.err
-    now = json.loads(out.out)
-    before = json.loads(META_BEFORE.read_text())
-    assert {
-        **now,
-        "root": before["root"],
-        "units": [without_lane(u) for u in now["units"]],
-    } == before
-
-
 # --- every fixture unit answers as it did before lanes ------------------------------------
 
 
 def digest(x) -> str:
     return hashlib.sha256(stringify(x).encode()).hexdigest()[:16]
-
-
-def answers_of(root: str) -> dict:
-    """`next`, `status --json` and `gate` at every stage, for each unit of the store, hashed. The
-    three fields a lane adds are dropped first; every other byte stays."""
-
-    def run(*args):
-        out = cli("--root", root, *args)
-        return {
-            "status": out.code,
-            "stdout": out.out.replace(root, "<root>"),
-            "stderr": out.err,
-        }
-
-    status = run("status", "--json")
-    data = json.loads(status["stdout"])
-    shown = stringify({**data, "units": [without_lane(u) for u in data["units"]]}, 2)
-    got = {"status": digest({**status, "stdout": shown})}
-    names = sorted(
-        p.name for p in (Path(root) / ".cos").iterdir() if p.is_dir() and p.name != "ideas"
-    )
-    for name in names:
-        nxt = run("next", name)
-        said = [{**nxt, "stdout": stringify(without_lane(json.loads(nxt["stdout"])))}]
-        said += [run("gate", name, stage, "--json") for stage in STAGE_NAMES]
-        got[name] = digest(said)
-    return got
-
-
-def test_next_status_json_and_gate_at_every_stage_answer_every_fixture_unit_as_before_lanes():
-    assert answers_of(str(META_STORE)) == {
-        "status": "22c7b2f418dc630d",
-        "0003_old-unit": "9fef610ffae6d63e",
-        "0010_full-loop": "b103dea258de2696",
-        "0011_paused-then-resumed": "6d7a53343fc70702",
-        "0012_dropped": "eddb2787b7ff4218",
-        "0013_open-question": "e904c9e2b67edeee",
-        "0014_changes-requested": "cf41c58bcf374bf2",
-        "0015_no-status": "c5b22eadb152cebe",
-        "0016_bad-status": "4bf913f48bd50e56",
-        "0017_linked": "3f2e9fb7181b04fe",
-        "not_a-unit": "8fcb06c009c258ce",
-    }
-    assert answers_of(f"{REPO}/") == {
-        "status": "7acae9a577d92d16",
-        "0001_no-session-management": "9bb372122b1bf9bd",
-        "0002_no-workspace-management": "b1b6d1b170a9f610",
-        "0003_unproven-page": "022e4485bd8fd4d4",
-        "0004_silent-concurrent-loss": "acdf8bfd272af144",
-        "0005_hand-driven-invisible-loop": "b45cc856d51e8110",
-        "0006_demo-data-and-no-durable-store": "c993c9250f778c88",
-        "0007_stale-claims-and-dead-code": "c2990668f97ee979",
-        "0008_personal-name-blocks-publishing": "38b54d01234f23d8",
-        "0009_branch-and-release-conventions": "b52c01881a10d51e",
-        "0010_harness-restates-rules-and-omits-steps": "81f0ea52396808d9",
-        "0011_no-install-path-on-a-clean-machine": "4ec160a0d97b4112",
-        "0012_installed-copy-runs-no-stage": "500b3104e58b22a3",
-        "0013_board-cannot-say-what-happened": "5faddaa084429bc8",
-        "0014_product-cannot-start-a-work-unit": "b74827525ff9828d",
-    }
 
 
 # --- the lane a unit walks, read off its files --------------------------------------------

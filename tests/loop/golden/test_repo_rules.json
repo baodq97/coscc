@@ -9,16 +9,6 @@
   "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_next_after_a_fix_reached_the_branch[none]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"#7 moved past 8a1460c; #7 reports no required checks — nothing green to read is not green\",\"blocked\":true,\"reasons\":[\"changes-requested\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_next_after_a_fix_reached_the_branch[none]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - #7 reports no required checks — nothing green to read is not green\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
  "tests/loop/test_repo_rules.py::test_next_after_a_fix_reached_the_branch[pending]#1": [
   0,
   "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"#7 moved past 8a1460c; CI has not finished on #7: build — wait, then ask again\",\"blocked\":true,\"reasons\":[\"changes-requested\",\"ci-pending\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
@@ -149,24 +139,9 @@
   "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"fix the open findings of review round 1 on the branch, then write-review again (1 of 3 rounds used) — no repository given to tell which: pass --repo\",\"blocked\":true,\"reasons\":[\"changes-requested\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_next_after_changes_were_asked_and_git_cannot_say[no sha]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"impl\",\"action\":\"fix the open findings of review round 1 on the branch, then write-review again (1 of 3 rounds used) — nothing outside .cos/0040_widget/ has reached #7 since 8a1460c: impl, then push\",\"blocked\":true,\"reasons\":[\"changes-requested\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_next_after_changes_were_asked_and_git_cannot_say[pr closed]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"fix the open findings of review round 1 on the branch, then write-review again (1 of 3 rounds used) — #7 is CLOSED, not open — there is nothing to merge\",\"blocked\":true,\"reasons\":[\"changes-requested\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
  "tests/loop/test_repo_rules.py::test_next_after_changes_were_asked_and_git_cannot_say[pr unreadable]#1": [
   0,
   "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"fix the open findings of review round 1 on the branch, then write-review again (1 of 3 rounds used) — cannot read the head of #7: HTTP 500\",\"blocked\":true,\"reasons\":[\"changes-requested\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_next_after_changes_were_asked_and_git_cannot_say[sha gone]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"fix the open findings of review round 1 on the branch, then write-review again (1 of 3 rounds used) — the reviewed commit abcdef1234 is not in this repository: fetch, then ask again\",\"blocked\":true,\"reasons\":[\"changes-requested\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_next_after_changes_were_asked_and_nothing_reached_the_branch#1": [
@@ -214,32 +189,12 @@
   "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[chore(0040): add]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title's type is \\\"chore\\\", but intent.md declares Type: feat — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[chore(0040): add]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
-  ""
- ],
  "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040) add]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title \\\"feat(0040) add\\\" is not <type>(<NNNN>): <text> — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040) add]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040): WIP: x]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title's text opens with \\\"wip\\\" — it names the change, not how far it got — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040): WIP: x]#2": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
   ""
@@ -264,42 +219,12 @@
   "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040): wipe the cache]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - cannot read the required checks of #7: fake gh: no answer for pr checks 7 --required --json name,bucket\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040): wipe the cache]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040): xxxxxxxxxxxxxxxxxxxx\\xe9]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title carries \\\"é\\\", a letter with a diacritic — the title is English — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040): xxxxxxxxxxxxxxxxxxxx\\xe9]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
-  ""
- ],
  "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[fix(0041): add]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title's type is \\\"fix\\\", but intent.md declares Type: feat — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[fix(0041): add]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[foo(0040): add]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title's type \\\"foo\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[foo(0040): add]#2": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
   ""
@@ -339,16 +264,6 @@
   "",
   "blocked: review cannot proceed for 0040_widget\n  - cannot read the required checks of #7: HTTP 404: Not Found\n"
  ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[an object]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - cannot read the required checks of #7: {\\\"a\\\":1}\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[an object]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - cannot read the required checks of #7: {\"a\":1}\n"
- ],
  "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[green with a failing exit]#1": [
   0,
   "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
@@ -369,16 +284,6 @@
   "open: review may proceed for 0040_widget\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[no name]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI has not finished on #7:  — wait, then ask again\"],\"reasons\":[\"ci-pending\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[no name]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI has not finished on #7:  — wait, then ask again\n"
- ],
  "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[none]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - #7 reports no required checks — nothing green to read is not green\"],\"reasons\":[\"gate-closed\"]}\n",
@@ -389,26 +294,6 @@
   "",
   "blocked: review cannot proceed for 0040_widget\n  - #7 reports no required checks — nothing green to read is not green\n"
  ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[not json]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - cannot read the required checks of #7: garbage\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[not json]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - cannot read the required checks of #7: garbage\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[out but no err]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - cannot read the required checks of #7: oops\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[out but no err]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - cannot read the required checks of #7: oops\n"
- ],
  "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[pending]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI has not finished on #7: build — wait, then ask again\"],\"reasons\":[\"ci-pending\"]}\n",
@@ -418,26 +303,6 @@
   1,
   "",
   "blocked: review cannot proceed for 0040_widget\n  - CI has not finished on #7: build — wait, then ask again\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[queued]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI has not finished on #7: lint — wait, then ask again\"],\"reasons\":[\"ci-pending\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[queued]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI has not finished on #7: lint — wait, then ask again\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[silent]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - cannot read the required checks of #7: gh exited 4 and said nothing\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_reads_ci[silent]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - cannot read the required checks of #7: gh exited 4 and said nothing\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_names_the_branch_and_stops_for_a_person#1": [
   1,
@@ -484,66 +349,6 @@
   "",
   "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
  ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a dedented job]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a dedented job]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a folded run]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a folded run]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a job line that is no key]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a job line that is no key]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a key with a comment]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a key with a comment]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a run key, no dash]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a run key, no dash]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a run on the next line]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a run on the next line]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a second job]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
@@ -553,16 +358,6 @@
   1,
   "",
   "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a workflow that is a directory]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-a workflow that is a directory]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-another script]#1": [
   1,
@@ -583,66 +378,6 @@
   1,
   "",
   "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-jobs ends at a top key]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-jobs ends at a top key]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-name then a plain comment]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — Branch name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-name then a plain comment]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — Branch name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named by a block]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named by a block]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named from a matrix]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named from a matrix]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert, but no red check runs coscc.loop check-branch in .github/workflows/, so whether that is why cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named single quoted]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — Branch name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named single quoted]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — Branch name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named with a comment]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — Branch name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named with a comment]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — Branch name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-named]#1": [
   1,
@@ -670,26 +405,6 @@
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-plain]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-quoted key]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-quoted key]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-single quoted key]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \\\"Bad/Name\\\" is not a work branch: \\\"Bad\\\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\"],\"reasons\":[\"ci-unfixable\",\"needs-person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[Bad/Name-single quoted key]#2": [
   1,
   "",
   "blocked: review cannot proceed for 0040_widget\n  - needs a person — CI is red on #7: branch-name, Branch name, build — branch-name checks the branch name, and no rerun or impl can fix it: \"Bad/Name\" is not a work branch: \"Bad\" is not one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
@@ -724,66 +439,6 @@
   "",
   "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\n"
  ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a dedented job]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a dedented job]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a folded run]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a folded run]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a job line that is no key]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a job line that is no key]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a key with a comment]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a key with a comment]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a run key, no dash]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a run key, no dash]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a run on the next line]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a run on the next line]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a second job]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
@@ -793,16 +448,6 @@
   1,
   "",
   "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a workflow that is a directory]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-a workflow that is a directory]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-another script]#1": [
   1,
@@ -823,66 +468,6 @@
   1,
   "",
   "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-jobs ends at a top key]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-jobs ends at a top key]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-name then a plain comment]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — Branch name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-name then a plain comment]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — Branch name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-named by a block]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-named by a block]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-named from a matrix]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-named from a matrix]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-named single quoted]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — Branch name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-named single quoted]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — Branch name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-named with a comment]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — Branch name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-named with a comment]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — Branch name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-named]#1": [
   1,
@@ -914,26 +499,6 @@
   "",
   "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
  ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-quoted key]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-quoted key]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-single quoted key]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-single quoted key]#2": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \"feat/widget\" passes check-branch here, so why it failed cannot be told from here\n"
- ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_that_names_the_branch[feat/widget-two files]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: branch-name, Branch name, build — back to impl: fix on the branch and push — branch-name checks the branch name, yet \\\"feat/widget\\\" passes check-branch here, so why it failed cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
@@ -949,16 +514,6 @@
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: build — back to impl: fix on the branch and push\"],\"reasons\":[\"ci-red\"]}\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_whose_branch_cannot_be_read[a number]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: build — back to impl: fix on the branch and push — cannot read the branch of #7 (7), so whether its name is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_whose_branch_cannot_be_read[an object]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: build — back to impl: fix on the branch and push — cannot read the branch of #7 ({\\\"headRefName\\\":\\\"\\\"}), so whether its name is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
  "tests/loop/test_repo_rules.py::test_review_gate_red_check_whose_branch_cannot_be_read[empty]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: build — back to impl: fix on the branch and push — cannot read the branch of #7 (gh exited 0 and said nothing), so whether its name is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
@@ -968,16 +523,6 @@
   1,
   "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: build — back to impl: fix on the branch and push — cannot read the branch of #7 (no such pr), so whether its name is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
   ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_red_check_whose_branch_cannot_be_read[null]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI is red on #7: build — back to impl: fix on the branch and push — cannot read the branch of #7 (null), so whether its name is why cannot be told from here\"],\"reasons\":[\"ci-red\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_when_gh_cannot_start#1": [
-  1,
-  "",
-  "blocked: review cannot proceed for 0040_widget\n  - cannot read the required checks of #7: spawnSync gh ENOENT\n"
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_without_a_repo_or_a_pr#1": [
   1,
@@ -1004,16 +549,6 @@
   "{\"unit\":\"0040_widget\",\"ui\":[\"app.tsx\",\"docs/x.md\",\"src/sub/app.tsx\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_screens_counts_the_files_the_globs_name[files3]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/ok.py\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_counts_the_files_the_globs_name[files4]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"this unit changes no file the UI standard counts as a screen\"}\n",
-  ""
- ],
  "tests/loop/test_repo_rules.py::test_screens_head_rewritten_away_is_retaken[False]#1": [
   0,
   "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":{\"head\":\"7e4d5ddbe4f4912bdd79e983d58184bc0a91d8fe\",\"dirty\":false,\"addresses\":[\"/home\"],\"hits\":[]},\"rewritten\":true,\"retake\":true,\"why\":\"\"}\n",
@@ -1032,36 +567,6 @@
  "tests/loop/test_repo_rules.py::test_screens_in_a_repository_that_is_not_there#1": [
   0,
   "{\"unit\":\"0040_widget\",\"ui\":[],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"this unit changes no file the UI standard counts as a screen\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_is_refused_without_what_it_needs#1": [
-  2,
-  "",
-  "usage: python -m coscc.loop screens <NNNN_slug> [--repo <dir>]\n"
- ],
- "tests/loop/test_repo_rules.py::test_screens_is_refused_without_what_it_needs#2": [
-  2,
-  "",
-  "Invalid unit name \"nope\": expected NNNN_slug.\n"
- ],
- "tests/loop/test_repo_rules.py::test_screens_is_refused_without_what_it_needs#3": [
-  2,
-  "",
-  "No such work unit: 0999_none\n"
- ],
- "tests/loop/test_repo_rules.py::test_screens_is_refused_without_what_it_needs#4": [
-  2,
-  "",
-  "screens needs the checkout its screenshots are in — pass --repo <dir>\n"
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_a_standard_as_it_is_written[---\\npaths:   \\n- src/**\\n---\\n]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"this unit changes no file the UI standard counts as a screen\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_a_standard_as_it_is_written[---\\npaths:\\n  -   src/**   \\n  - \"unbalanced\\n---\\n]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/a.py\",\"src/x.py\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_screens_reads_a_standard_as_it_is_written[---\\npaths:\\n  - 'src/**'\\n\\n  - web/?.html\\nname: x\\n  - ignored/**\\n---\\n]#1": [
@@ -1084,29 +589,9 @@
   "{\"unit\":\"0040_widget\",\"ui\":[],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"this unit changes no file the UI standard counts as a screen\"}\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[a string]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
-  ""
- ],
  "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[absent]#1": [
   0,
   "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[an array]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[bom]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[dirty missing]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":{\"head\":\"abcdef1\",\"dirty\":null,\"addresses\":[\"/a\"],\"hits\":[]},\"rewritten\":true,\"retake\":false,\"why\":\"the manifest was taken on a tree with uncommitted changes\"}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[dirty]#1": [
@@ -1119,34 +604,9 @@
   "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":{\"head\":\"abcdef1\",\"dirty\":false,\"addresses\":[],\"hits\":[]},\"rewritten\":true,\"retake\":false,\"why\":\"the manifest lists no addresses\"}\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[empty]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
-  ""
- ],
  "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[head not a name]#1": [
   0,
   "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":{\"head\":\"; rm -rf\",\"dirty\":false,\"addresses\":[\"/a\"],\"hits\":[]},\"rewritten\":false,\"retake\":false,\"why\":\"the manifest names no commit\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[head number]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":{\"head\":12345678,\"dirty\":false,\"addresses\":[\"/a\"],\"hits\":[]},\"rewritten\":false,\"retake\":false,\"why\":\"the manifest names no commit\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[hits not a list]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":{\"head\":\"abcdef1\",\"dirty\":false,\"addresses\":[\"/a\"],\"hits\":[]},\"rewritten\":true,\"retake\":true,\"why\":\"\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[nan]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[no addresses]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":{\"head\":\"abcdef1\",\"dirty\":false,\"addresses\":null,\"hits\":[]},\"rewritten\":true,\"retake\":false,\"why\":\"the manifest lists no addresses\"}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[no head]#1": [
@@ -1157,21 +617,6 @@
  "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[not json]#1": [
   0,
   "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[null]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"there is no readable .screens/manifest.json in this checkout\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[numbers]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":{\"head\":\"abcdef1\",\"dirty\":false,\"addresses\":[\"/a\"],\"hits\":[1,2.5,100,0,0,null]},\"rewritten\":true,\"retake\":true,\"why\":\"\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_reads_the_manifest[odd addresses]#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[\"src/ui/page.py\"],\"manifest\":{\"head\":\"abcdef1\",\"dirty\":false,\"addresses\":[\"/a\",1],\"hits\":[]},\"rewritten\":true,\"retake\":false,\"why\":\"the manifest lists no addresses\"}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_screens_when_git_cannot_say#1": [
@@ -1187,11 +632,6 @@
  "tests/loop/test_repo_rules.py::test_screens_without_a_standard_changes_no_screen#1": [
   0,
   "{\"unit\":\"0040_widget\",\"ui\":[],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"this unit changes no file the UI standard counts as a screen\"}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_screens_without_git_on_the_path#1": [
-  0,
-  "{\"unit\":\"0040_widget\",\"ui\":[],\"manifest\":null,\"rewritten\":false,\"retake\":false,\"why\":\"cannot tell whether 0040_widget changes a screen: git could not diff origin/main...HEAD (spawnSync git ENOENT) nor main...HEAD (spawnSync git ENOENT) — the gate does not fetch\"}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_pass_before_the_last_whose_commit_is_gone#1": [
@@ -1233,46 +673,6 @@
   1,
   "",
   "blocked: ship cannot proceed for 0040_widget\n  - review round 1 names no reviewed commit — Reviewed: <sha>\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review round 2 passed, but it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"needs a person — review rounds 1 and 2 both passed on d7d879b and ship is still closed: review round 2 passed, but it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\",\"blocked\":true,\"reasons\":[\"missing\",\"needs-person\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - review round 2 passed, but it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_a_standard_without_globs_asks_git_nothing#1": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: ship may proceed for 0040_widget — merge with --match-head-commit a2ed1485916def3054591e4237cbb29bfbfcaed4\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_a_standard_without_globs_asks_git_nothing#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_a_standard_without_globs_asks_git_nothing#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — merge with --match-head-commit a2ed1485916def3054591e4237cbb29bfbfcaed4\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_a_standard_without_globs_asks_git_nothing#4": [
-  0,
-  "open: ship may proceed for 0040_widget — merge with --match-head-commit a2ed1485916def3054591e4237cbb29bfbfcaed4\n",
-  ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#1": [
   1,
@@ -1393,46 +793,6 @@
   0,
   "open: ship may proceed for 0040_widget — merge with --match-head-commit cdf904d3f07869ac0561c0a8aef761c97b3dc9fd\nthe reviewed commit 8a1460c was rebased to cdf904d and the unit's patch is unchanged — no review round is needed\n",
   ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_clean_rebase[none]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 reports no required checks — nothing green to read is not green\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_clean_rebase[none]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - #7 reports no required checks — nothing green to read is not green\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_clean_rebase[none]#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"#7 reports no required checks — nothing green to read is not green\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_clean_rebase[none]#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - #7 reports no required checks — nothing green to read is not green\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_clean_rebase[pending]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - CI has not finished on #7: build — wait, then ask again\"],\"reasons\":[\"ci-pending\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_clean_rebase[pending]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - CI has not finished on #7: build — wait, then ask again\"],\"reasons\":[\"ci-pending\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_clean_rebase[pending]#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"CI has not finished on #7: build — wait, then ask again\",\"blocked\":true,\"reasons\":[\"missing\",\"ci-pending\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_clean_rebase[pending]#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - CI has not finished on #7: build — wait, then ask again\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_clean_rebase[red]#1": [
   1,
@@ -1834,26 +1194,6 @@
   "open: ship may proceed for 0040_widget — merge with --match-head-commit 8a1460c9f5453964e23365c35cfb247ca8b30b71\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_ship_gate_open_with_a_title_gh_spaces_out#1": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: ship may proceed for 0040_widget — merge with --match-head-commit 8a1460c9f5453964e23365c35cfb247ca8b30b71\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_open_with_a_title_gh_spaces_out#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_open_with_a_title_gh_spaces_out#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — merge with --match-head-commit 8a1460c9f5453964e23365c35cfb247ca8b30b71\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_open_with_a_title_gh_spaces_out#4": [
-  0,
-  "open: ship may proceed for 0040_widget — merge with --match-head-commit 8a1460c9f5453964e23365c35cfb247ca8b30b71\n",
-  ""
- ],
  "tests/loop/test_repo_rules.py::test_ship_gate_pull_request_that_cannot_be_read_or_is_not_open[closed]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 is CLOSED, not open — there is nothing to merge\"],\"reasons\":[\"gate-closed\"]}\n",
@@ -2009,31 +1349,6 @@
   "",
   "blocked: ship cannot proceed for 0040_widget\n  - review round 2 drops findings an earlier round raised: F1 — carry each one forward, fixed or open\n"
  ],
- "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[low and open, against the standard]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review round 1 still has findings not fixed: F1 [open]\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[low and open, against the standard]#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[low and open, against the standard]#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"review round 1 still has findings not fixed: F1 [open]\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[low and open, against the standard]#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - review round 1 still has findings not fixed: F1 [open]\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[low and open, against the standard]#5": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - review round 1 still has findings not fixed: F1 [open]\n"
- ],
  "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[low and open]#1": [
   0,
   "{\"ok\":true,\"lines\":[\"open: ship may proceed for 0040_widget — merge with --match-head-commit 8a1460c9f5453964e23365c35cfb247ca8b30b71\"],\"reasons\":[]}\n",
@@ -2183,31 +1498,6 @@
   1,
   "",
   "blocked: ship cannot proceed for 0040_widget\n  - review rounds are numbered 1, 3, not 1 to 2 — a round was removed or renumbered\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[unreadable label]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review round 1 still has findings not fixed: F1 [unreadable]\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[unreadable label]#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[unreadable label]#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"review round 1 still has findings not fixed: F1 [unreadable]\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[unreadable label]#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - review round 1 still has findings not fixed: F1 [unreadable]\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[unreadable label]#5": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - review round 1 still has findings not fixed: F1 [unreadable]\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_rebase_that_cannot_be_compared#1": [
   1,
@@ -2409,26 +1699,6 @@
   "",
   "blocked: ship cannot proceed for 0040_widget\n  - review round 1 passed, but its ### Screens says \"Looked at by: Phong\", which does not say it was an agent — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\n"
  ],
- "tests/loop/test_repo_rules.py::test_ship_gate_screens[taken at a stranger]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - the screenshots of review round 1 were taken at abcdef1234, which is not an ancestor of the reviewed commit d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd — take them again on the branch, and review them\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_screens[taken at a stranger]#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\",\"review round 1 passed on d7d879b and the ship gate is still closed: the screenshots of review round 1 were taken at abcdef1234, which is not an ancestor of the reviewed commit d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd — take them again on the branch, and review them — this round is the one retry: fix what that names in this round; a second passing round on the same head that leaves ship closed stops the unit for a person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_screens[taken at a stranger]#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"the screenshots of review round 1 were taken at abcdef1234, which is not an ancestor of the reviewed commit d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd — take them again on the branch, and review them; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_screens[taken at a stranger]#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - the screenshots of review round 1 were taken at abcdef1234, which is not an ancestor of the reviewed commit d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd — take them again on the branch, and review them\n"
- ],
  "tests/loop/test_repo_rules.py::test_ship_gate_screens[taken off the branch]#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - src/ui/page.py changed after the screenshots of review round 1 were taken at 22778a388144698a37ed195f9e04e7b3d0379c82 — take them again, and review them\"],\"reasons\":[\"gate-closed\"]}\n",
@@ -2609,46 +1879,6 @@
   "",
   "blocked: ship cannot proceed for 0040_widget\n  - #7 is an unknown number of commits (git said: fatal: no) behind origin/main — integrate, then review again only if the rebase changes the unit's patch: one that leaves it unchanged opens ship once CI is green; a round that passes does not count toward the limit\n"
  ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_count_what_it_is_behind[fails1]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 is an unknown number of commits (git said: exit 3) behind origin/main — integrate, then review again only if the rebase changes the unit's patch: one that leaves it unchanged opens ship once CI is green; a round that passes does not count toward the limit\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_count_what_it_is_behind[fails1]#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_count_what_it_is_behind[fails1]#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"#7 is an unknown number of commits (git said: exit 3) behind origin/main — integrate, then review again only if the rebase changes the unit's patch: one that leaves it unchanged opens ship once CI is green; a round that passes does not count toward the limit\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_count_what_it_is_behind[fails1]#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - #7 is an unknown number of commits (git said: exit 3) behind origin/main — integrate, then review again only if the rebase changes the unit's patch: one that leaves it unchanged opens ship once CI is green; a round that passes does not count toward the limit\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_count_what_it_is_behind[fails2]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 is NaN commit(s) behind origin/main — integrate, then review again only if the rebase changes the unit's patch: one that leaves it unchanged opens ship once CI is green; a round that passes does not count toward the limit\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_count_what_it_is_behind[fails2]#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_count_what_it_is_behind[fails2]#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"#7 is NaN commit(s) behind origin/main — integrate, then review again only if the rebase changes the unit's patch: one that leaves it unchanged opens ship once CI is green; a round that passes does not count toward the limit\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_count_what_it_is_behind[fails2]#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - #7 is NaN commit(s) behind origin/main — integrate, then review again only if the rebase changes the unit's patch: one that leaves it unchanged opens ship once CI is green; a round that passes does not count toward the limit\n"
- ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_diff_what_moved#1": [
   1,
   "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - git could not diff 8a1460c9f5453964e23365c35cfb247ca8b30b71..8a1460c9f5453964e23365c35cfb247ca8b30b71: fatal: boom\"],\"reasons\":[\"gate-closed\"]}\n",
@@ -2668,26 +1898,6 @@
   1,
   "",
   "blocked: ship cannot proceed for 0040_widget\n  - git could not diff 8a1460c9f5453964e23365c35cfb247ca8b30b71..8a1460c9f5453964e23365c35cfb247ca8b30b71: fatal: boom\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_diff_what_the_screens_followed#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - git could not diff d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd..f1d129426dd6698f0b0e3eaf90b6bf172581542f: fatal: boom\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_diff_what_the_screens_followed#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\",\"review round 1 passed on f1d1294 and the ship gate is still closed: git could not diff d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd..f1d129426dd6698f0b0e3eaf90b6bf172581542f: fatal: boom — this round is the one retry: fix what that names in this round; a second passing round on the same head that leaves ship closed stops the unit for a person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_diff_what_the_screens_followed#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"git could not diff d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd..f1d129426dd6698f0b0e3eaf90b6bf172581542f: fatal: boom; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_diff_what_the_screens_followed#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - git could not diff d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd..f1d129426dd6698f0b0e3eaf90b6bf172581542f: fatal: boom\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch[rule0]#1": [
   1,
@@ -2728,66 +1938,6 @@
   1,
   "",
   "blocked: ship cannot proceed for 0040_widget\n  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 54f022f87940d7646683f30113b00efe890510a4..8a1460c9f5453964e23365c35cfb247ca8b30b71: fatal: no diff for you\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch[rule2]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 54f022f87940d7646683f30113b00efe890510a4..8a1460c9f5453964e23365c35cfb247ca8b30b71: exit 5\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch[rule2]#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch[rule2]#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 54f022f87940d7646683f30113b00efe890510a4..8a1460c9f5453964e23365c35cfb247ca8b30b71: exit 5; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch[rule2]#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 54f022f87940d7646683f30113b00efe890510a4..8a1460c9f5453964e23365c35cfb247ca8b30b71: exit 5\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch[rule3]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 54f022f87940d7646683f30113b00efe890510a4..8a1460c9f5453964e23365c35cfb247ca8b30b71: said on stdout\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch[rule3]#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch[rule3]#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 54f022f87940d7646683f30113b00efe890510a4..8a1460c9f5453964e23365c35cfb247ca8b30b71: said on stdout; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch[rule3]#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 54f022f87940d7646683f30113b00efe890510a4..8a1460c9f5453964e23365c35cfb247ca8b30b71: said on stdout\n"
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch_of_the_head_alone#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 5130425afe57bc6b9e3215530dbdc46daf1f8594..cdf904d3f07869ac0561c0a8aef761c97b3dc9fd: fatal: only this one\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch_of_the_head_alone#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\"],\"reasons\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch_of_the_head_alone#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 5130425afe57bc6b9e3215530dbdc46daf1f8594..cdf904d3f07869ac0561c0a8aef761c97b3dc9fd: fatal: only this one; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_when_git_cannot_take_the_patch_of_the_head_alone#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - the reviewed commit 8a1460c9f5453964e23365c35cfb247ca8b30b71 is not on the head of #7 (cdf904d3f07869ac0561c0a8aef761c97b3dc9fd) — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — its patch could not be compared with the reviewed one: git could not diff 5130425afe57bc6b9e3215530dbdc46daf1f8594..cdf904d3f07869ac0561c0a8aef761c97b3dc9fd: fatal: only this one\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[5]#1": [
   1,

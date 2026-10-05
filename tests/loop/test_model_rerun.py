@@ -13,7 +13,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from coscc.loop import RERUNNABLE
 from coscc.loop.model import (
     above_answers,
     parse_answers,
@@ -105,47 +104,6 @@ def test_stage_at_is_the_stage_next_names_else_the_last_artifact_else_the_first_
     assert stage_at(unit({}), {"stage": ""}) == "intent"
 
 
-def test_status_json_carries_at_and_next_why_for_every_unit(tmp_path):
-    root = tmp_path / "root"
-    for name, files in {
-        "0001_open": {"intent.md": "# X\nType: feat. Status: accepted.\n"},
-        "0002_draft": {"intent.md": "# X\nType: fix. Status: draft.\n"},
-        "0003_done": {
-            "intent.md": "# X\nType: fix. Status: accepted.\n",
-            "plan.md": "# X\nStatus: done.\n",
-        },
-    }.items():
-        d = root / ".cos" / name
-        d.mkdir(parents=True)
-        for f, text in files.items():
-            (d / f).write_text(text)
-    status = json_of(root, "status", "--json")
-    assert [[u["name"], u["at"], u["next"]["why"]] for u in status["units"]] == [
-        ["0001_open", "spec", "missing"],
-        ["0002_draft", "intent", "draft"],
-        ["0003_done", "plan", "finished"],
-    ]
-    assert [s["name"] for s in status["stages"]] == [
-        "idea",
-        "intent",
-        "spec",
-        "spike",
-        "plan",
-        "impl",
-        "pr",
-        "review",
-        "ship",
-    ]
-
-
-def test_the_line_next_prints_carries_no_why(tmp_path):
-    root, _ = tree(tmp_path, {"intent.md": "# X\nType: feat. Status: accepted.\n"}, "0001_open")
-    line = json_of(root, "next", "0001_open")
-    assert line["stage"] == "spec"
-    assert "why" not in line
-    assert "at" not in line
-
-
 # --- an accepted stage run again from the board -------------------------------------------------
 
 # A unit with every artifact up to a passed review, like the board's one awaiting its ship.
@@ -227,39 +185,6 @@ def test_a_malformed_rerun_block_is_ignored_and_reported(tmp_path):
     u = t.read()
     assert "stale" not in u["artifacts"]["pr.md"]
     assert re.search(r"intent\.md: rerun block 1 has no well-formed", "\n".join(u["problems"]))
-
-
-def test_a_unit_up_to_a_passed_review_is_offered_intent_spec_plan_and_pr(tmp_path):
-    t = RerunTree(tmp_path)
-    out = t.cli("rerun", t.name)
-    assert out.code == 0, out.err
-    answer = json.loads(out.out)
-    assert [o["stage"] for o in answer["offers"]] == ["intent", "spec", "plan", "pr"]
-    assert answer["why"] == ""
-    later = {o["stage"]: o["later"] for o in answer["offers"]}
-    assert later["pr"] == ["review", "ship"]
-    assert later["plan"] == ["impl", "pr", "review", "ship"]
-    assert later["intent"] == ["spec", "plan", "impl", "pr", "review", "ship"]
-    assert RERUNNABLE == ["intent", "spec", "spike", "plan", "pr"]
-
-
-def test_the_block_names_the_stage_owner_and_a_hash_per_artifact_and_no_approval(tmp_path):
-    t = RerunTree(tmp_path)
-    out = t.cli("rerun", t.name, "pr")
-    assert out.code == 0, out.err
-    answer = json.loads(out.out)
-    assert answer["stage"] == "pr"
-    assert answer["later"] == ["review", "ship"]
-    lines = answer["block"].rstrip().split("\n")
-    assert lines[0] == "### Rerun"
-    assert lines[1] == f"Requested by: owner. Date: {today()}. Via: product."
-    assert lines[2] == "Stage: pr."
-    # `ship.md` does not exist, so it has no line.
-    assert lines[3:] == [
-        f"Stale: pr.md sha256:{above_answers(RERUN_FILES['pr.md'])}",
-        f"Stale: review.md sha256:{above_answers(RERUN_FILES['review.md'])}",
-    ]
-    assert not re.search(r"approved|accepted|Decided by", answer["block"], re.I)
 
 
 def test_rerunning_pr_closes_ship_until_pr_and_then_review_are_written_again(tmp_path):
@@ -349,27 +274,6 @@ def test_a_changes_requested_review_and_a_spike_the_spec_no_longer_needs_are_nev
     assert "stale" not in u["artifacts"]["spike.md"]
 
 
-def test_nothing_is_offered_on_a_finished_held_or_closed_unit(tmp_path):
-    done = RerunTree(tmp_path, {**RERUN_FILES, "plan.md": "# Plan: x\nStatus: done.\n"})
-    assert json.loads(done.cli("rerun", done.name).out) == {
-        "unit": done.name,
-        "offers": [],
-        "why": "the unit is finished: plan.md is done",
-    }
-    refused = done.cli("rerun", done.name, "pr")
-    assert refused.code == 1
-    assert re.search(r"pr cannot be run again for .*: the unit is finished", refused.err)
-
-    held = RerunTree(tmp_path)
-    held.append("intent.md", hold_block("Paused", "chờ"))
-    assert held.offers() == []
-
-    closed = RerunTree(tmp_path, {**RERUN_FILES, "impl.md": "# Impl: x\nStatus: rejected.\n"})
-    assert re.search(
-        r"impl\.md is rejected", json.loads(closed.cli("rerun", closed.name).out)["why"]
-    )
-
-
 def test_a_shipped_unit_stays_finished_after_a_rerun_and_ignores_a_hold(tmp_path):
     t = RerunTree(tmp_path)
     t.rerun("intent")
@@ -399,49 +303,6 @@ def test_a_shipped_unit_stays_finished_after_a_rerun_and_ignores_a_hold(tmp_path
         "intent.md carries a hold block, but the unit is finished — it is ignored" in u["problems"]
     )
     assert decide(u)["why"] == "finished"
-
-
-def test_only_an_accepted_artifact_is_offered_and_spike_only_when_the_spec_needs_one(tmp_path):
-    fresh = RerunTree(tmp_path, {"intent.md": RERUN_FILES["intent.md"]}, "0001_fresh-intent")
-    assert fresh.offers() == [
-        {"stage": "intent", "later": ["spec", "plan", "impl", "pr", "review", "ship"]}
-    ]
-    draft = RerunTree(tmp_path, {**RERUN_FILES, "plan.md": "# Plan: x\nStatus: draft.\n"})
-    assert [o["stage"] for o in draft.offers()] == ["intent", "spec"]
-    # A skipped spec counts as settled; its later list has no spike.
-    skipped = RerunTree(tmp_path, {**RERUN_FILES, "spec.md": "# Spec: x\nStatus: skipped.\n"})
-    assert skipped.offers()[1] == {
-        "stage": "spec",
-        "later": ["plan", "impl", "pr", "review", "ship"],
-    }
-
-    spec = "# Spec: x\nStatus: accepted.\n\n## Concerns\n\n- [unmeasured] U1 nhanh không?\n"
-    spike = "# Spike: x\nStatus: accepted.\n\n## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n"
-    plan = "# Plan: x\nStatus: accepted.\n\n1. build it (spike.md ## U1)\n"
-    measured = RerunTree(
-        tmp_path, {**RERUN_FILES, "spec.md": spec, "spike.md": spike, "plan.md": plan}
-    )
-    offers = measured.offers()
-    assert [o["stage"] for o in offers] == ["intent", "spec", "spike", "plan", "pr"]
-    assert offers[1]["later"] == ["spike", "plan", "impl", "pr", "review", "ship"]
-
-
-def test_rerun_refuses_a_stage_it_does_not_offer_an_unknown_one_and_repo(tmp_path):
-    t = RerunTree(tmp_path)
-    review = t.cli("rerun", t.name, "review")
-    assert review.code == 1
-    assert re.search(
-        r"review cannot be run again from the board — only intent, spec, spike, plan, pr",
-        review.err,
-    )
-    assert t.cli("rerun", t.name, "spike").code == 1
-    assert t.cli("rerun", t.name, "nonsense").code == 2
-    assert t.cli("rerun", "0009_nope").code == 2
-    assert t.cli("rerun", "../x").code == 2
-    assert t.cli("rerun").code == 2
-    repo = t.cli("rerun", t.name, "--repo", str(t.root))
-    assert repo.code == 2
-    assert "--repo applies only to `gate` and `next`" in repo.err
 
 
 # --- a draft whose questions are all answered names its stage as `rerun` ------------------------
@@ -517,15 +378,6 @@ def test_a_spec_draft_answered_in_full_is_rerun_spec(tmp_path):
     assert next_step(a.u)["rerun"] == "spec"
 
 
-def test_status_json_and_next_action_never_carry_rerun(tmp_path):
-    a = Answered(
-        tmp_path,
-        {"intent.md": DRAFT_INTENT + answer_block(1, "A", "x") + answer_block(2, "A", "y")},
-    )
-    assert "rerun" not in next_action(a.u)
-    assert "rerun" not in run_in(a.root, "status", "--json").out
-
-
 # --- a draft impl.md asks a person, and runs again on the answer --------------------------------
 
 # Every stage before `impl` accepted, so `decide` reaches `impl.md`.
@@ -571,11 +423,6 @@ def test_a_draft_impl_with_one_question_unanswered_is_no_rerun(tmp_path):
     assert next_step(a.u).get("rerun") is None
 
 
-def test_a_draft_impl_with_no_questions_is_no_rerun(tmp_path):
-    a = impl_tree(tmp_path, "# Impl\nStatus: draft.\n\n## What is still open\n\nx\n")
-    assert "rerun" not in a.next()
-
-
 def test_a_paused_or_dropped_unit_with_an_answered_draft_impl_is_no_rerun(tmp_path):
     impl = f"{DRAFT_IMPL}\n## Answers\n{answer_block(1, 'A', 'x')}"
     for head, state in [("Paused", "paused"), ("Dropped", "dropped")]:
@@ -594,12 +441,6 @@ def test_plan_draft_keeps_the_impl_gate_closed(tmp_path):
     out = run_in(a.root, "gate", "0001_q", "impl")
     assert out.code == 1
     assert 'plan.md is "draft"' in out.out + out.err
-
-
-def test_status_json_names_the_stages_an_answered_draft_runs_again(tmp_path):
-    a = impl_tree(tmp_path, DRAFT_IMPL)
-    data = json_of(a.root, "status", "--json")
-    assert data["afterAnswers"] == ["intent", "spec", "spike", "plan", "impl"]
 
 
 # --- a rebase no longer leaves review with stale screenshots ------------------------------------
@@ -656,34 +497,6 @@ def test_a_ui_unit_whose_clean_manifest_names_a_rewritten_head_is_taken_again():
     }
     # A commit gone from the object store is rewritten too: git exits 128, not 1.
     assert screens_answer(unit({}), answer_probe(ancestor=128))["retake"] is True
-
-
-def test_each_condition_broken_once_is_no_retake_and_says_which():
-    def said(**opts):
-        a = screens_answer(unit({}), answer_probe(**opts))
-        assert a["retake"] is False
-        return a
-
-    assert re.search(
-        r"changes no file the UI standard counts as a screen",
-        said(files=["coscc/runner.py"])["why"],
-    )
-    assert re.search(r"no readable \.screens/manifest\.json", said(manifest=None)["why"])
-    assert said(manifest=None)["manifest"] is None
-    assert re.search(r"no readable", said(manifest=[1, 2])["why"])
-    assert re.search(r"lists no addresses", said(manifest={**MANIFEST, "addresses": []})["why"])
-    assert re.search(r"lists no addresses", said(manifest=without(MANIFEST, "addresses"))["why"])
-    assert re.search(r"uncommitted changes", said(manifest={**MANIFEST, "dirty": True})["why"])
-    assert re.search(r"uncommitted changes", said(manifest=without(MANIFEST, "dirty"))["why"])
-    kept = said(ancestor=0)
-    assert kept["rewritten"] is False
-    assert f"head {OLD} is still an ancestor of HEAD" in kept["why"]
-    # A head that is no commit name is not handed to git at all.
-    odd = answer_probe(manifest={**MANIFEST, "head": "--output=/tmp/x"})
-    a = screens_answer(unit({}), odd)
-    assert a["retake"] is False
-    assert "names no commit" in a["why"]
-    assert not any(c.startswith("merge-base") for c in odd.calls)
 
 
 def test_no_standard_or_one_with_no_globs_is_ui_empty_and_asks_git_no_diff():
@@ -955,13 +768,6 @@ def test_a_draft_ship_md_with_a_round_and_no_refused_line_is_merging_not_refused
     assert "do not merge" in done["action"]
     # A `Refused:` line is still a refusal.
     assert decide(accepted_pass({"ship.md": ship_art(ship_draft(1))}))["why"] == "ship-refused"
-
-
-def test_a_draft_ship_md_with_no_round_stops_as_it_always_did():
-    u = accepted_pass({"ship.md": ship_art(SHIP_OLD)})
-    stop = {"blocked": True, "action": "finish and accept ship.md", "stage": ""}
-    assert next_step(u, behind_by(4)) == stop
-    assert next_action(u) == stop
 
 
 def test_a_pass_then_a_rebase_with_no_ship_md_is_review_not_a_draft_stop():

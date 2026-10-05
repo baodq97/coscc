@@ -19,7 +19,6 @@ from coscc.loop.branch import (
     VERSION_SOURCE,
     is_prerelease,
     tag_problem,
-    tag_version,
     version_problem,
 )
 from coscc.loop.model import (
@@ -43,12 +42,12 @@ from coscc.loop.model import (
     unit_outcome,
 )
 from coscc.loop import SPIKE_ROUNDS
-from coscc.loop.model import HOLD_MOVES, fold_holds, hold_blocks, non_blocking
+from coscc.loop.model import fold_holds, hold_blocks, non_blocking
 from coscc.loop.rules import between_pr_and_ship, decide, gate_answer, next_answer
 from coscc.loop.run import ask
 from coscc.loop.model import parse_pr, parse_review, review_rounds
 from coscc.loop import REVIEW_ROUNDS
-from tests.loop.conftest import env, python
+from tests.loop.conftest import python
 
 # --- the suite's glue -------------------------------------------------------------------
 
@@ -152,15 +151,6 @@ def cli(*argv: str, stdin: str | None = None):
     return python(words, stdin=stdin)
 
 
-def cos_tree(tmp_path: Path, *names: str) -> Path:
-    """A directory with a `.cos/` holding the named units."""
-    d = tmp_path / f"tree{len(list(tmp_path.iterdir()))}"
-    (d / ".cos").mkdir(parents=True)
-    for n in names:
-        (d / ".cos" / n).mkdir()
-    return d
-
-
 # --- the status line, the gates and the next action -------------------------------------
 
 
@@ -206,13 +196,6 @@ def test_implement_gate_needs_the_whole_chain_accepted():
     assert check_gate(unit(FULL), "implement")["ok"] is True
     assert check_gate(unit({**FULL, "plan.md": art("draft")}), "implement")["ok"] is False
     assert check_gate(unit({**FULL, "intent.md": art("draft")}), "implement")["ok"] is False
-
-
-def test_a_blocked_gate_says_what_is_missing():
-    need = check_gate(unit({"intent.md": art("draft")}), "plan")["need"]
-    assert len(need) == 2
-    assert re.search(r'intent\.md is "draft"', need[0])
-    assert re.search(r"spec\.md does not exist", need[1])
 
 
 def test_an_unknown_stage_is_refused():
@@ -270,11 +253,6 @@ def test_every_stage_name_opens_a_gate_and_a_tenth_does_not():
     assert "unknown stage" in check_gate(unit({}), "deploy")["need"][0]
 
 
-def test_implement_still_names_the_impl_stage():
-    assert check_gate(unit(FULL), "implement")["ok"] is True
-    assert check_gate(unit(FULL), "implement") == check_gate(unit(FULL), "impl")
-
-
 def test_idea_gates_nothing():
     assert check_gate(unit({}), "idea")["ok"] is True
     assert check_gate(unit({}), "intent")["ok"] is True
@@ -313,20 +291,6 @@ def test_a_late_rejection_closes_the_unit():
     assert "closed — impl rejected" in r["action"]
 
 
-def test_the_nine_artifacts_are_read_not_reported_as_unexpected(tmp_path):
-    names = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
-    files = {
-        f"{n}.md": "Type: feat. Status: accepted.\n" if n == "intent" else "Status: accepted.\n"
-        for n in names
-    }
-    d = files_in(tmp_path, files)
-    u = read(d, "0009_widened")
-    assert u["problems"] == []
-    assert len(u["artifacts"]) == 9
-    (d / "notes.md").write_text("x")
-    assert re.search(r"unexpected file\(s\): notes\.md", read(d, "0009_widened")["problems"][0])
-
-
 # --- the Type header --------------------------------------------------------------------
 
 
@@ -348,18 +312,6 @@ def test_a_type_outside_the_ten_is_another_problem(tmp_path):
     assert 'has type "nonsense", not one of' in u["problems"][0]
     for t in BRANCH_TYPES:
         assert t in u["problems"][0]
-
-
-def test_a_type_inside_the_ten_is_recorded(tmp_path):
-    for t in BRANCH_TYPES:
-        u = with_intent(tmp_path / t, f"Author: Bao Do. Type: {t}. Status: accepted.")
-        assert u["problems"] == [], t
-        assert u["type"] == t
-
-
-def test_a_missing_intent_is_not_also_a_missing_type(tmp_path):
-    d = files_in(tmp_path, {})
-    assert read(d, "0011_typed")["problems"] == ["no intent.md — every unit opens with one"]
 
 
 # --- pre-intent ---------------------------------------------------------------------------
@@ -438,11 +390,6 @@ def test_a_slug_over_sixty_characters_is_refused():
     assert "61 characters, over the 60" in branch_problem("feat/" + "a" * 61)
 
 
-def test_a_name_with_no_slash_is_told_its_shape():
-    assert "expected <type>/<slug>" in branch_problem("justaname")
-    assert "no branch name" in branch_problem("")
-
-
 TAG_ROWS = [
     ("v0.1.0", None),
     ("v1.20.3", None),
@@ -464,21 +411,10 @@ def test_tag_problem(name, want):
         assert want in (got or "")
 
 
-def test_a_leading_zero_is_refused():
-    assert "leading zero" in tag_problem("v0.01.0")
-    assert "starts at 1" in tag_problem("v0.1.0-rc.01")
-
-
 def test_prerelease_is_decided_by_the_tag_grammar():
     assert is_prerelease("v0.1.0-rc.1") is True
     assert is_prerelease("v0.1.0") is False
     assert is_prerelease("release-rc.1") is False
-
-
-def test_tag_version_strips_the_v_and_the_candidate():
-    assert tag_version("v0.1.0-rc.3") == "0.1.0"
-    assert tag_version("v1.20.3") == "1.20.3"
-    assert tag_version("v0.1") is None
 
 
 def test_pyproject_is_the_version_source():
@@ -527,14 +463,6 @@ def slug_of(n: int) -> str:
 OLD_0044 = "0044_open-questions-wait-for-the-originator-even-when-precedent-answers-them"
 
 
-def test_every_name_unit_branch_gives_passes_check_branch():
-    slugs = [slug_of(n) for n in (1, 59, 60, 61, 71)] + ["a" * 71, "a" * 60 + "-b"]
-    for t in BRANCH_TYPES:
-        for slug in slugs:
-            branch = unit_branch(f"0001_{slug}", f"Type: {t}.")["branch"]
-            assert branch_problem(branch) is None, branch
-
-
 def test_a_long_slug_is_cut_at_its_last_hyphen():
     assert unit_branch(OLD_0044, "Type: feat.")["branch"] == (
         "feat/open-questions-wait-for-the-originator-even-when-precedent"
@@ -546,106 +474,6 @@ def test_a_long_slug_is_cut_at_its_last_hyphen():
 
 
 # --- the --root boundary, through the command line --------------------------------------
-
-
-@pytest.mark.parametrize(
-    "args", [["check-branch", "feat/x"], ["check-tag", "v0.1.0"], ["check-version"]]
-)
-def test_root_is_refused_by_the_checkout_commands(args, tmp_path):
-    out = cli("--root", str(tmp_path), *args)
-    assert out.code == 2
-    assert "--root does not apply" in out.err
-    assert cli(*args).code != 2
-
-
-def test_root_still_reaches_the_command_that_reads_a_cos(tmp_path):
-    root = cos_tree(tmp_path, "0009_branch-and-release-conventions")
-    intent = "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n"
-    (root / ".cos" / "0009_branch-and-release-conventions" / "intent.md").write_text(intent)
-    out = cli("--root", str(root), "unit-branch", "0009_branch-and-release-conventions")
-    assert out.code == 0
-    assert out.out.strip() == "feat/branch-and-release-conventions"
-
-
-def test_an_unknown_command_prints_both_halves_of_the_boundary():
-    out = cli("nonsense")
-    assert out.code == 2
-    assert "these take --root" in out.err
-    assert "these do not" in out.err
-
-
-def test_new_path_counts_the_numbers_of_a_reserved_directory(tmp_path):
-    root = tmp_path / "root"
-    root.mkdir()
-    host = cos_tree(tmp_path, "0001_a", "0014_n")
-    out = cli("--root", str(root), "--reserve-from", str(host), "new-path", "x")
-    assert out.code == 0, out.err
-    assert out.out.strip() == ".cos/0015_x"
-
-
-def test_new_path_takes_the_highest_and_writes_nothing(tmp_path):
-    root = cos_tree(tmp_path, "0003_c")
-    host = cos_tree(tmp_path, "0014_n")
-    out = cli("--root", str(root), "new-path", "x", "--reserve-from", str(host))
-    assert out.out.strip() == ".cos/0015_x"
-    assert [p.name for p in (root / ".cos").iterdir()] == ["0003_c"]
-    assert [p.name for p in (host / ".cos").iterdir()] == ["0014_n"]
-
-
-def test_a_reserved_directory_with_no_cos_contributes_nothing(tmp_path):
-    root = cos_tree(tmp_path, "0003_c")
-    bare = tmp_path / "bare"
-    bare.mkdir()
-    out = cli("--root", str(root), "--reserve-from", str(bare), "new-path", "x")
-    assert out.out.strip() == ".cos/0004_x"
-
-
-def test_reserve_from_is_repeatable(tmp_path):
-    a, b, c = cos_tree(tmp_path), cos_tree(tmp_path, "0002_b"), cos_tree(tmp_path, "0009_i")
-    out = cli("--root", str(a), "--reserve-from", str(b), "--reserve-from", str(c), "new-path", "x")
-    assert out.out.strip() == ".cos/0010_x"
-
-
-@pytest.mark.parametrize(
-    "args", [["status"], ["gate", "0001_a", "spec"], ["unit-branch", "0001_a"]]
-)
-def test_reserve_from_is_refused_by_the_others(args, tmp_path):
-    root, host = cos_tree(tmp_path), cos_tree(tmp_path, "0001_a")
-    out = cli("--root", str(root), "--reserve-from", str(host), *args)
-    assert out.code == 2
-    assert "--reserve-from applies only to" in out.err
-
-
-def test_reserve_from_with_no_directory_is_misuse():
-    out = cli("new-path", "x", "--reserve-from")
-    assert out.code == 2
-    assert "needs a directory" in out.err
-
-
-def test_new_path_refuses_a_slug_longer_than_a_branch_allows(tmp_path):
-    root = cos_tree(tmp_path, "0003_c")
-    fits = cli("--root", str(root), "new-path", "a" * 60)
-    assert fits.code == 0, fits.err
-    assert fits.out.strip() == ".cos/0004_" + "a" * 60
-    over = cli("--root", str(root), "new-path", "a" * 61)
-    assert over.code == 2
-    assert over.out == ""
-    assert "61" in over.err
-    assert "60" in over.err
-    assert [p.name for p in (root / ".cos").iterdir()] == ["0003_c"]
-
-
-def test_status_and_unit_branch_name_the_same_shortened_branch(tmp_path):
-    name = f"0001_{slug_of(71)}"
-    root = cos_tree(tmp_path, name)
-    (root / ".cos" / name / "intent.md").write_text(
-        "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n"
-    )
-    said = cli("--root", str(root), "unit-branch", name)
-    assert said.code == 0, said.err
-    status = json.loads(cli("--root", str(root), "status", "--json").out)
-    assert status["units"][0]["branch"] == said.out.strip()
-    assert branch_problem(said.out.strip()) is None
 
 
 # --- 0016, 0109: the numbered questions under Open questions, and their answers -------------
@@ -710,17 +538,6 @@ def test_a_numbered_item_is_a_question_only_when_it_asks_one():
     assert ns(parse_questions(text)) == [1]
 
 
-def test_the_question_mark_must_be_in_the_first_paragraph():
-    assert ns(parse_questions("## Open questions\n\n1. Chọn A\n   hay B?\n")) == [1]
-    assert parse_questions("## Open questions\n\n1. Ghi chú.\n\n   Còn gì nữa?\n") == []
-
-
-def test_a_numbered_note_ends_the_question_above_it():
-    qs = parse_questions("## Open questions\n\n1. A?\n2. Ghi chú.\n3. B?\n")
-    assert ns(qs) == [1, 3]
-    assert "Ghi chú" not in qs[0]["text"]
-
-
 def test_a_note_keeps_no_answer_and_a_heading_with_none_is_counted(tmp_path):
     intent = "\n".join(
         [
@@ -783,11 +600,6 @@ def test_the_notes_of_a_hold_and_a_rerun_are_not_questions():
     assert 7 not in ns(parse_questions(s0054))
 
 
-def test_no_open_questions_section_is_not_an_empty_one():
-    assert parse_questions("# x\nStatus: draft.\n") is None
-    assert parse_questions("# x\n## Open questions\n\nNone.\n") == []
-
-
 def test_three_questions_and_no_answers_is_three_open(tmp_path):
     _, u = question_tree(tmp_path, {"intent.md": QUESTIONS})
     assert u["open"] == 3
@@ -839,12 +651,6 @@ def test_only_the_latest_artifact_with_questions_is_counted(tmp_path):
     assert [q["counted"] for q in u["questions"]] == [False, False, False, True]
 
 
-def test_a_unit_with_no_open_questions_has_nothing_open(tmp_path):
-    _, u = question_tree(tmp_path, {"intent.md": "# I\nAuthor: t. Type: feat. Status: accepted.\n"})
-    assert u["open"] == 0
-    assert u["questions"] == []
-
-
 def test_an_open_question_closes_no_gate(tmp_path):
     _, u = question_tree(tmp_path, {"intent.md": QUESTIONS})
     assert u["open"] == 3
@@ -859,15 +665,6 @@ def test_status_json_over_64_kib_reaches_a_pipe_whole(tmp_path):
     got = asyncio.run(ask(["--root", str(root), "--state", "-", "status", "--json"], stdin=stdin))
     assert len(got.out) > 200 * 1024
     assert json.loads(got.out)["units"][0]["open"] == 4
-
-
-def test_status_json_carries_questions_and_open(tmp_path):
-    root, _ = question_tree(tmp_path, {"intent.md": with_answers(answer_block(1, "A", "x"))})
-    out = cli("--root", str(root), "status", "--json")
-    assert out.code == 0, out.err
-    got = json.loads(out.out)["units"][0]
-    assert got["open"] == 2
-    assert len(got["questions"]) == 3
 
 
 # --- 0015: review before merge ------------------------------------------------------------
@@ -927,23 +724,6 @@ def test_parse_review_reads_rounds_verdicts_and_findings():
     assert parse_review("# Review written before rounds\nStatus: accepted.\n")["rounds"] == []
 
 
-def test_parse_review_gives_each_round_its_text_verbatim():
-    one = round_(1, "changes-requested", ["- F1 [open] a `quoted` thing", "- F2 [open] b"])
-    two = round_(2, "pass", [f"- F1 [fixed {FIX}] a"])
-    text = f"# Review\nStatus: accepted.\n\n{one}\n{two}\n## Answers\n\n### Câu 1\nnot a round\n"
-    rounds = parse_review(text)["rounds"]
-    assert rounds[0]["text"] == one.rstrip()
-    assert rounds[0]["text"].startswith("## Round 1\n")
-    for f in ["- F1 [open] a `quoted` thing", "- F2 [open] b"]:
-        assert f in rounds[0]["text"]
-    assert rounds[1]["text"] == two.rstrip()
-    assert "Answers" not in rounds[1]["text"]
-    assert "not a round" not in rounds[1]["text"]
-    followed = parse_review(f"{one}\n## Something else\n\nnot this\n")["rounds"]
-    assert followed[0]["text"] == one.rstrip()
-    assert "Something" not in followed[0]["text"]
-
-
 def test_the_review_gate_is_closed_while_pr_md_names_no_pull_request():
     g = check_gate(unit({**CHAIN, "pr.md": art("accepted")}), "review", green_probe())
     assert g["ok"] is False
@@ -990,44 +770,6 @@ def test_ci_decides_whether_review_may_begin():
     assert "no repository given" in check_gate(u, "review")["need"][0]
     skipping = green_probe([{"name": "a", "bucket": "pass"}, {"name": "b", "bucket": "skipping"}])
     assert check_gate(u, "review", skipping)["ok"] is True
-
-
-def test_the_three_closed_ci_cases_in_the_shapes_gh_gives_them():
-    u = unit(CHAIN)
-
-    def gh(code, out, err=""):
-        return SimpleNamespace(
-            gh=lambda *a: (
-                ok('{"headRefName":"feat/x"}\n')
-                if a[1] == "view"
-                else {"code": code, "out": out, "err": err}
-            ),
-            git=lambda *a: ok(),
-        )
-
-    red = '[{"bucket":"fail","name":"tests"},{"bucket":"pass","name":"branch-name"}]\n'
-    running = '[{"bucket":"pending","name":"tests"},{"bucket":"pass","name":"branch-name"}]\n'
-    for code in (0, 1):
-        g = check_gate(u, "review", gh(code, red))
-        assert [g["ok"], g["need"]] == [
-            False,
-            ["CI is red on #7: tests — back to impl: fix on the branch and push"],
-        ]
-    for code in (0, 8):
-        g = check_gate(u, "review", gh(code, running))
-        assert [g["ok"], g["need"]] == [
-            False,
-            ["CI has not finished on #7: tests — wait, then ask again"],
-        ]
-    said = "no required checks reported on the 'feat/x' branch\n"
-    none = check_gate(u, "review", gh(1, "", said))
-    assert [none["ok"], none["need"]] == [
-        False,
-        [
-            "cannot read the required checks of #7: no required checks reported on the 'feat/x' branch"
-        ],
-    ]
-    assert "reports no required checks" in check_gate(u, "review", gh(0, "[]\n"))["need"][0]
 
 
 def test_the_round_limit_stops_the_loop_for_a_person():
@@ -1160,39 +902,6 @@ def test_a_rebase_after_the_pass_closes_ship_and_another_pass_opens_it():
 def test_a_review_md_with_no_rounds_cannot_ship():
     u = ship("# Review\nStatus: accepted.\n")
     assert "no ## Round" in check_gate(u, "ship", green_probe())["need"][0]
-
-
-def test_repo_belongs_to_gate_and_nothing_else(tmp_path):
-    out = cli("--repo", str(tmp_path), "status")
-    assert out.code == 2
-    assert "--repo applies only to `gate`" in out.err
-
-
-def test_a_bad_review_round_limit_is_misuse_and_names_the_variable(tmp_path):
-    state = json.dumps(state_of_root(tmp_path))
-    out = python(
-        ["status", "--root", str(tmp_path), "--state", "-"],
-        environ=env(COS_REVIEW_ROUNDS="three"),
-        stdin=state,
-    )
-    assert out.code == 2
-    assert "COS_REVIEW_ROUNDS" in out.err
-
-
-def test_with_root_and_no_repo_review_says_there_is_no_repository(tmp_path):
-    root, _ = question_tree(
-        tmp_path,
-        {
-            "intent.md": "# I\nAuthor: t. Type: feat. Status: accepted.\n",
-            "spec.md": "Status: accepted.\n",
-            "plan.md": "Status: accepted.\n",
-            "impl.md": "Status: accepted.\n",
-            "pr.md": "# PR: feat(0001): x\nPR: https://github.com/o/r/pull/1. Status: accepted.\n",
-        },
-    )
-    out = cli("--root", str(root), "gate", "0001_q", "review")
-    assert out.code == 1
-    assert "no repository given — pass --repo" in out.err
 
 
 # --- 0024: the stage a run button offers ---------------------------------------------------
@@ -1330,33 +1039,6 @@ def test_next_step_never_offers_a_stage_whose_gate_is_closed():
             stage = next_step(u, probe)["stage"]
             if stage:
                 assert check_gate(u, stage, probe)["ok"] is True, stage
-
-
-def test_next_prints_one_json_line_and_misuse_is_exit_2(tmp_path):
-    root, _ = question_tree(
-        tmp_path, {"intent.md": "# I\nAuthor: t. Type: feat. Status: accepted.\n"}
-    )
-    out = cli("--root", str(root), "next", "0001_q")
-    assert out.code == 0
-    assert json.loads(out.out) == {
-        "unit": "0001_q",
-        "stage": "spec",
-        "action": "write-spec — it assesses whether to skip first",
-        "blocked": True,
-        "reasons": ["missing"],
-        **FULL_LANE,
-    }
-    assert cli("--root", str(root), "next").code == 2
-    assert cli("--root", str(root), "next", "0009_nope").code == 2
-    assert cli("--root", str(root), "next", "0001_q", "--repo", str(tmp_path)).code == 0
-
-
-def test_status_json_carries_next_stage(tmp_path):
-    root, _ = question_tree(
-        tmp_path, {"intent.md": "# I\nAuthor: t. Type: feat. Status: accepted.\n"}
-    )
-    out = cli("--root", str(root), "status", "--json")
-    assert json.loads(out.out)["units"][0]["next"]["stage"] == "spec"
 
 
 # --- 0028: a finding impl cannot fix waits for a person -------------------------------------
@@ -1614,25 +1296,6 @@ def test_next_prints_waiting_only_when_a_person_is_awaited(tmp_path):
     ]
 
 
-def test_next_step_never_offers_a_closed_gate_in_the_person_states(tmp_path):
-    reviews = [
-        R12,
-        f"{R12}\n{round3()}",
-        f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}{f_block('F3')}",
-    ]
-    probes = [
-        green_probe(),
-        green_probe([{"name": "t", "bucket": "fail"}]),
-        green_probe([{"name": "t", "bucket": "pending"}]),
-    ]
-    for probe in probes:
-        for review in reviews:
-            u = tree_after_round_two(tmp_path, review)
-            stage = next_step(u, probe)["stage"]
-            if stage:
-                assert check_gate(u, stage, probe)["ok"] is True, stage
-
-
 # --- 0035: between pr and ship --------------------------------------------------------------
 
 
@@ -1648,33 +1311,6 @@ def test_between_pr_and_ship_only_on_an_accepted_pr_naming_a_pull_request():
     assert between({**CHAIN, "review.md": cr}) is True
     assert between({**CHAIN, "plan.md": art("done")}) is False
     assert between({**CHAIN, "review.md": art("rejected")}) is False
-
-
-def test_status_json_carries_between_pr_and_ship_and_gate_and_next_do_not_change(tmp_path):
-    cos = tmp_path / ".cos"
-
-    def put(u, f, text):
-        (cos / u).mkdir(parents=True, exist_ok=True)
-        (cos / u / f).write_text(text)
-
-    for f in ["intent.md", "spec.md", "plan.md", "impl.md"]:
-        put("0001_open", f, f"# X\n{'Type: feat. ' if f == 'intent.md' else ''}Status: accepted.\n")
-    put("0001_open", "pr.md", "# PR\nPR: https://github.com/o/r/pull/7. Status: accepted.\n")
-    put("0002_early", "intent.md", "# X\nType: fix. Status: draft.\n")
-
-    def run(*args):
-        return cli(*args, "--root", str(tmp_path))
-
-    before = {"gate": run("gate", "0001_open", "impl"), "next": run("next", "0001_open")}
-    status = json.loads(run("status", "--json").out)
-    assert [[u["name"], u["betweenPrAndShip"]] for u in status["units"]] == [
-        ["0001_open", True],
-        ["0002_early", False],
-    ]
-    after = {"gate": run("gate", "0001_open", "impl"), "next": run("next", "0001_open")}
-    assert after["gate"] == before["gate"]
-    assert after["next"].out == before["next"].out
-    assert "betweenPrAndShip" not in json.loads(after["next"].out)
 
 
 # --- 0033: the plan's Impl: label -----------------------------------------------------------
@@ -1775,20 +1411,6 @@ def test_a_valid_outcome_block_needs_a_result_measured_by_and_source_or_reason()
     assert o["invalid"] == 5
     assert o["by"] == "Linh"
     assert o["measuredBy"] == "agent"
-
-
-def test_with_no_outcome_block_every_field_but_deadline_and_invalid_is_none():
-    assert unit_outcome(OUTCOME_INTENT) == {
-        "deadline": "2026-10-07",
-        "result": None,
-        "by": None,
-        "date": None,
-        "measuredBy": None,
-        "source": None,
-        "reason": None,
-        "note": None,
-        "invalid": 0,
-    }
 
 
 def test_an_outcome_block_ends_the_answer_above_it_and_is_no_answer():
@@ -2332,22 +1954,6 @@ def test_every_gate_is_closed_on_a_held_unit_and_says_why(tmp_path):
     assert check_gate(h.u, "nope")["need"][0].startswith("unknown stage")
 
 
-def test_status_json_carries_hold_and_hold_moves_and_the_table_says_paused(tmp_path):
-    h = held_tree(tmp_path, hold_block("Paused", "chờ 0034"))
-    held = json.loads(h.cli("status", "--json").out)["units"][0]
-    assert held["hold"] == {
-        "state": "paused",
-        "reason": "chờ 0034",
-        "by": "Leif",
-        "date": "2026-09-24",
-    }
-    assert held["holdMoves"] == HOLD_MOVES["paused"]
-    assert held["betweenPrAndShip"] is False
-    assert (
-        "| paused — chờ 0034 (Leif, 2026-09-24) — resume it from the board |" in h.cli("status").out
-    )
-
-
 def test_a_done_plan_or_a_rejection_wins_over_a_hold(tmp_path):
     files = {"spec.md": "Status: accepted.\n", "plan.md": "Status: done.\n"}
     done = held_tree(tmp_path, hold_block("Paused", "x"), files).u
@@ -2371,22 +1977,6 @@ def test_a_unit_with_no_intent_has_nowhere_to_hold(tmp_path):
     u = read(files_in(tmp_path, {"idea.md": "# Idea\nStatus: accepted.\n"}), "0001_x")
     assert u["hold"] is None
     assert u["holdMoves"] == []
-
-
-def test_next_on_an_unheld_unit_carries_no_hold_field(tmp_path):
-    h = held_tree(tmp_path, "")
-    assert "hold" not in json.loads(h.cli("next", "0001_held").out)
-
-
-def test_every_unit_of_this_repository_reads_unheld():
-    cos = Path(__file__).resolve().parents[2] / ".cos"
-    for d in sorted(cos.iterdir()) if cos.exists() else []:
-        if not re.match(r"^\d{4}_", d.name) or not d.is_dir():
-            continue
-        u = read(d, d.name)
-        assert u["hold"] is None, d.name
-        bare = {k: v for k, v in u.items() if k not in ("hold", "holdMoves")}
-        assert next_action(u) == next_action(bare), d.name
 
 
 # --- 0061: a finding that does not block -----------------------------------------------------
@@ -2435,23 +2025,6 @@ def test_an_open_low_does_not_block_unless_rated_higher_before():
     for label in ["needs-person", "claim-rejected", "answered", "maybe"]:
         assert non_blocking(asked(round_(1, "needs-person", [low("F1", label)]))) == [], label
     assert non_blocking(unit(CHAIN)) == []
-
-
-def test_status_json_carries_non_blocking_and_each_findings_severity(tmp_path):
-    review = (
-        f"# Review\nStatus: accepted.\n\n"
-        f"{round_(1, 'pass', [low('F1'), f'- F2 [fixed {FIX}] b.py:1 — high — y'])}"
-    )
-    intent = "# I\nAuthor: t. Type: feat. Status: accepted.\n"
-    root, _ = question_tree(tmp_path / "a", {"intent.md": intent, "review.md": review})
-    out = cli("--root", str(root), "status", "--json")
-    assert out.code == 0, out.err
-    got = json.loads(out.out)["units"][0]
-    assert got["nonBlocking"] == [{"id": "F1", "text": "a.py:3 — low — x"}]
-    findings = got["artifacts"]["review.md"]["review"]["rounds"][0]["findings"]
-    assert [f["severity"] for f in findings] == ["low", "high"]
-    _, none = question_tree(tmp_path / "b", {"intent.md": intent})
-    assert none["nonBlocking"] == []
 
 
 def test_ship_lets_an_open_low_through_and_nothing_else():

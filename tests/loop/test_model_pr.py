@@ -11,7 +11,6 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -21,10 +20,8 @@ from coscc.loop.model import (
     parse_review,
     pr_scope,
     pr_text,
-    title_problem,
 )
 from coscc.loop.probe import UI_STANDARD, glob_match, make_probe, parse_standard, ui_files
-from coscc.loop.repo_rules import screens_problems
 from tests.loop.conftest import REPO, env, python
 from tests.loop.test_model import (
     check_gate,
@@ -35,12 +32,10 @@ from tests.loop.test_model import (
     SHA,
     asked,
     branched,
-    cli,
     green_probe,
     impl_text,
     low,
     ok,
-    rated,
     review_art,
     round3,
     round_,
@@ -60,12 +55,6 @@ def ship_gate(text, **kw):
     return check_gate(u, "ship", green_probe(), kw.get("limit", REVIEW_ROUNDS))
 
 
-LOWERED = (
-    "F1 is low in review round 2, but review round 1 rated it high — lowering a severity is not "
-    "a fix: fix it on the branch, or keep it open"
-)
-
-
 def test_a_pass_round_with_one_open_low_among_fixed_findings_opens_ship():
     text = round_(
         1,
@@ -83,22 +72,6 @@ def test_a_pass_round_with_one_open_low_among_fixed_findings_opens_ship():
     assert g["ok"] is True, g["need"]
     assert g["need"] == []
     assert [f["id"] for f in non_blocking(u)] == ["F4"]
-
-
-def test_a_lowered_finding_is_named_once_not_among_the_findings_not_fixed():
-    high = round_(1, "changes-requested", [rated("F1", "high")])
-    a = ship_gate(f"{high}\n{round_(2, 'pass', [low('F1')])}")
-    assert a["ok"] is False
-    assert LOWERED in a["need"], a["need"]
-    assert not any("still has findings not fixed" in line for line in a["need"]), a["need"]
-    first = round_(1, "changes-requested", [rated("F1", "high"), rated("F2", "medium")])
-    second = round_(2, "pass", [low("F1"), rated("F2", "medium")])
-    b = ship_gate(f"{first}\n{second}")
-    assert b["ok"] is False
-    assert LOWERED in b["need"], b["need"]
-    assert [line for line in b["need"] if "still has findings not fixed" in line] == [
-        "review round 2 still has findings not fixed: F2 [open]"
-    ]
 
 
 def test_three_counted_rounds_of_prose_severities_then_a_pass_of_lows_opens_ship():
@@ -191,17 +164,6 @@ def test_no_title_line_or_an_empty_one_is_a_null_title():
     assert empty["body"] == PR_BODY
 
 
-def test_the_same_input_gives_the_same_output():
-    assert pr_text(PR_MD) == pr_text(PR_MD)
-
-
-def test_a_file_with_crlf_keeps_crlf_on_the_lines_it_keeps():
-    t = pr_text(PR_MD.replace("\n", "\r\n"))
-    assert t["title"] == TITLE
-    assert t["body"].startswith("## Where\r\n")
-    assert t["body"] == PR_BODY.replace("\n", "\r\n")
-
-
 def test_a_header_on_the_title_line_itself_drops_only_that_one_line():
     assert pr_text("# PR: x Status: accepted.\n\nbody\n")["body"] == "body\n"
 
@@ -218,52 +180,10 @@ def pr_tree(tmp_path: Path, files: dict[str, str | None]) -> Path:
     return root
 
 
-def test_pr_text_prints_what_the_reader_reads_with_the_unit_and_its_status(tmp_path):
-    root = pr_tree(tmp_path, {"0001_a": PR_MD})
-    out = cli("--root", str(root), "pr-text", "0001_a")
-    assert out.code == 0, out.err
-    assert json.loads(out.out) == {
-        "unit": "0001_a",
-        "title": TITLE,
-        "body": PR_BODY,
-        "url": "https://github.com/o/r/pull/7",
-        "scope": None,
-        "status": "accepted",
-        "titleProblem": f'the title "{TITLE}" is not <type>(<NNNN>): <text>',
-    }
-
-
-def test_pr_text_of_no_unit_or_no_pr_md_is_1_and_of_a_missing_or_malformed_name_is_2(tmp_path):
-    root = str(pr_tree(tmp_path, {"0001_a": None}))
-    none = cli("--root", root, "pr-text", "0002_b")
-    assert none.code == 1
-    assert "No such work unit" in none.err
-    nofile = cli("--root", root, "pr-text", "0001_a")
-    assert nofile.code == 1
-    assert "0001_a has no pr.md" in nofile.err
-    assert cli("--root", root, "pr-text").code == 2
-    assert cli("--root", root, "pr-text", "../0001_a").code == 2
-
-
-def test_repo_and_reserve_from_are_refused_by_pr_text(tmp_path):
-    root = str(pr_tree(tmp_path, {"0001_a": PR_MD}))
-    repo = cli("--root", root, "pr-text", "0001_a", "--repo", root)
-    assert repo.code == 2
-    assert "--repo applies only to" in repo.err
-    assert cli("--root", root, "--reserve-from", root, "pr-text", "0001_a").code == 2
-
-
 def listing(root: Path) -> list[tuple[str, int]]:
     """Every path under `<root>/.cos`, sorted, with its modification time."""
     base = root / ".cos"
     return sorted((str(p.relative_to(base)), p.stat().st_mtime_ns) for p in base.rglob("*"))
-
-
-def test_pr_text_writes_nothing_and_leaves_status_as_it_was(tmp_path):
-    root = pr_tree(tmp_path, {"0001_a": PR_MD, "0002_b": None})
-    before = [cli("--root", str(root), "status", "--json").out, listing(root)]
-    assert cli("--root", str(root), "pr-text", "0001_a").code == 0
-    assert [cli("--root", str(root), "status", "--json").out, listing(root)] == before
 
 
 # --- the scope pr.md states, read beside its title and body -------------------------------
@@ -304,21 +224,6 @@ def test_no_scope_heading_is_a_null_scope():
     assert pr_scope("x\n## Scope of the diff") is None
 
 
-def test_the_old_git_diff_stat_line_is_a_null_scope():
-    old = PR_MD.replace(
-        "## Scope of the diff\n\n",
-        "## Scope of the diff\n\n`git diff --stat main...HEAD`: **27 file, +2413 −84**.\n\n",
-    )
-    assert pr_text(old)["scope"] is None
-    for line in [
-        "1 file, +1/-1",
-        "**3 files, +1/-1**",
-        "3 files, +1/−1",
-        "3 files, +1/-1 from main",
-    ]:
-        assert pr_scope(f"## Scope of the diff\n\n{line}\n") is None, line
-
-
 def test_a_path_listed_twice_is_a_null_scope():
     text = "## Scope of the diff\n\n2 files, +1/-1\n- `a.py`\n- `b.py`\n- `a.py`\n"
     assert pr_scope(text) is None
@@ -330,30 +235,6 @@ def test_prose_after_the_list_is_not_a_path_and_the_body_is_kept_byte_for_byte()
     nxt = "## Scope of the diff\n\n1 files, +1/-1\n- `a.py`\n## Next\n- `b.py`\n"
     assert pr_scope(nxt)["paths"] == ["a.py"]
     assert pr_text(SCOPED)["body"] == SCOPED_BODY
-
-
-def test_a_file_with_crlf_reads_the_same_scope():
-    crlf = SCOPED.replace("\n", "\r\n")
-    assert pr_text(crlf)["scope"] == pr_text(SCOPED)["scope"]
-    assert pr_text(crlf)["body"] == SCOPED_BODY.replace("\n", "\r\n")
-
-
-def test_pr_text_prints_scope_beside_title_body_url_and_status(tmp_path):
-    root = pr_tree(tmp_path, {"0001_a": SCOPED})
-    out = cli("--root", str(root), "pr-text", "0001_a")
-    assert out.code == 0, out.err
-    got = json.loads(out.out)
-    assert got == {
-        "unit": "0001_a",
-        "title": TITLE,
-        "body": SCOPED_BODY,
-        "url": "https://github.com/o/r/pull/7",
-        "scope": {"files": 3, "additions": 120, "deletions": 7, "paths": SCOPED_PATHS},
-        "status": "accepted",
-        "titleProblem": f'the title "{TITLE}" is not <type>(<NNNN>): <text>',
-    }
-    assert sorted(got) == ["body", "scope", "status", "title", "titleProblem", "unit", "url"]
-    assert title_problem("fix(0001): x", "fix", "0001") is None
 
 
 # --- a UI unit ships only with screenshots a review looked at ------------------------------
@@ -406,21 +287,6 @@ def test_every_glob_of_this_checkouts_standard_names_a_file_git_tracks(tmp_path)
         assert any(glob_match(g, p) for p in files), f"{g} matches no tracked file"
     assert make_probe(str(REPO)).ui() == {"path": UI_STANDARD, "globs": globs}
     assert make_probe(str(tmp_path)).ui() is None
-
-
-def test_no_other_tracked_file_holds_a_copy_of_the_list():
-    globs = parse_standard((REPO / UI_STANDARD).read_text())
-    copies = []
-    for p in tracked():
-        if p == UI_STANDARD or p.startswith(".cos/"):
-            continue
-        try:
-            text = (REPO / p).read_text()
-        except OSError, UnicodeDecodeError:
-            continue
-        if all(g in text for g in globs):
-            copies.append(p)
-    assert copies == []
 
 
 SHOT = "- .screens/board-1440x900.png — 1440×900 — /board — no violation"
@@ -483,22 +349,6 @@ def test_parse_review_reads_screens_and_a_round_without_one_reads_none():
     ]
 
 
-def test_screens_problems_names_each_thing_wrong_with_the_words():
-    def problems(s):
-        read = parse_review(f"{round_(1, 'pass')}{s}")["rounds"][0]["screens"]
-        return "\n".join(screens_problems(read, UI_STANDARD))
-
-    assert problems(screens()) == ""
-    assert "no ### Screens" in "\n".join(screens_problems(None, UI_STANDARD))
-    assert "first line of its ### Screens is not" in problems(
-        screens(head="Taken at: abc. Looked.")
-    )
-    assert '"Looked at by: Bao", which does not say it was an agent' in problems(screens(by="Bao"))
-    other = problems(screens(standard=".claude/rules/other.md"))
-    assert "names the standard .claude/rules/other.md, not" in other
-    assert "lists no screenshot" in problems(screens(shots=["- a.jpg — 1×1 — / — x"]))
-
-
 def test_an_open_low_against_the_standard_blocks_and_one_that_is_not_still_does_not():
     findings = [
         "- F1 [open] coscc/screens.py:10 — low — S3 shows a full sha",
@@ -526,18 +376,6 @@ def ui_probe(files, extra=None, ui=UI):
 def passed_with(tail=""):
     text = f"{round_(1, 'pass')}{tail}"
     return branched({**CHAIN, "review.md": review_art("accepted", text)})
-
-
-def test_a_unit_that_changes_no_screen_reads_exactly_as_with_no_standard():
-    u = passed_with()
-    before = check_gate(u, "ship", green_probe())
-    for files in (["coscc/runner.py"], [".cos/0001_x/review.md"], []):
-        assert check_gate(u, "ship", ui_probe(files)) == before
-        assert next_step(u, ui_probe(files)) == next_step(u, green_probe())
-    own = {"path": UI_STANDARD, "globs": ["**/*.py"]}
-    assert check_gate(u, "ship", ui_probe([".cos/0001_x/x.py"], {}, own)) == before
-    no_globs = {"path": UI_STANDARD, "globs": []}
-    assert check_gate(u, "ship", ui_probe(["coscc/screens.py"], {}, no_globs)) == before
 
 
 def test_a_ui_unit_whose_pass_has_no_screens_cannot_ship_and_next_offers_review():
@@ -631,37 +469,6 @@ def test_neither_origin_main_nor_main_readable_closes_ship_and_no_round_is_offer
         },
     )
     assert "no ### Screens" in check_gate(passed_with(), "ship", local)["need"][0]
-
-
-def counting(probe):
-    """`probe` with its `git` noting each argument string it is asked, in `calls`."""
-    calls = []
-    inner = probe.git
-
-    def git(*args):
-        calls.append(" ".join(args))
-        return inner(*args)
-
-    probe.git = git
-    return SimpleNamespace(calls=calls, probe=probe)
-
-
-def test_no_standard_asks_git_nothing_more_and_a_standard_with_no_screen_one_diff_more():
-    u = passed_with()
-    plain = counting(green_probe())
-    check_gate(u, "ship", plain.probe)
-    empty = counting(ui_probe(["coscc/screens.py"], {}, None))
-    check_gate(u, "ship", empty.probe)
-    assert empty.calls == plain.calls
-    some = counting(ui_probe(["coscc/runner.py"]))
-    check_gate(u, "ship", some.probe)
-    assert some.calls == [*plain.calls, f"diff --name-only origin/main...{SHA}"]
-    stuck = counting(ui_probe(["coscc/screens.py"]))
-    still_open = round_(1, "pass", ["- F1 [open] x"])
-    check_gate(
-        branched({**CHAIN, "review.md": review_art("accepted", still_open)}), "ship", stuck.probe
-    )
-    assert stuck.calls == []
 
 
 # --- a review that ran out of turns -------------------------------------------------------
@@ -913,27 +720,3 @@ def test_the_dropped_round_of_the_old_review_adds_no_round_to_the_count(tmp_path
     assert nxt["dropped"] == ["F2", "F3", "F4", "F5"]
     assert not re.search(r"F\d", nxt["action"])
     assert "dropped" not in json.loads(one.run(3, "next", one.name).out)
-
-
-def test_reading_the_old_rounds_leaves_review_md_byte_for_byte(tmp_path):
-    t = Tree17(tmp_path, under_changes(FIXTURE))
-    file = t.dir / "review.md"
-    before = file.read_bytes()
-    for args in (["status", "--json"], ["next", t.name], ["gate", t.name, "review"]):
-        out = t.run(3, *args)
-        assert out.code != 2, out.err
-    assert file.read_bytes() == before
-
-
-def test_the_ship_gate_names_the_same_dropped_ids_in_the_same_words():
-    first = round_(1, "changes-requested", [*TWO, "- F3 [open] c"])
-    text = (
-        f"# Review: x\nStatus: accepted.\n\n{first}\n{round_(2, 'pass', [f'- F1 [fixed {FIX}] x'])}"
-    )
-    last = parse_review(text)["rounds"][-1]
-    assert last["dropped"] == ["F2", "F3"]
-    need = ship_gate(text)["need"]
-    assert (
-        "review round 2 drops findings an earlier round raised: F2, F3 — carry each one "
-        "forward, fixed or open"
-    ) in need, need

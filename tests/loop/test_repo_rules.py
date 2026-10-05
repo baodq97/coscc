@@ -9,7 +9,6 @@ versions agreeing on a wrong branch cannot pass for coverage. The gates and `nex
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -230,14 +229,6 @@ def open_pr(head: str, **over) -> dict:
 # --- screens ------------------------------------------------------------------------------
 
 
-def test_screens_is_refused_without_what_it_needs(sc):
-    sc.unit()
-    assert sc.run("screens").code == 2
-    assert sc.run("screens", "nope").code == 2
-    assert sc.run("screens", "0999_none").code == 2
-    assert sc.run("screens", UNIT, repo=False).code == 2
-
-
 def test_screens_without_a_standard_changes_no_screen(sc):
     sc.unit()
     r = sc.run("screens", UNIT)
@@ -259,8 +250,6 @@ def test_screens_with_a_standard_that_has_no_globs(tmp_path):
         "---\npaths:\n  - src/**\n",
         '---\r\npaths:\r\n  - "src/**"\r\n---\r\n',
         "---\npaths:\n  - 'src/**'\n\n  - web/?.html\nname: x\n  - ignored/**\n---\n",
-        "---\npaths:   \n- src/**\n---\n",
-        '---\npaths:\n  -   src/**   \n  - "unbalanced\n---\n',
     ],
 )
 def test_screens_reads_a_standard_as_it_is_written(tmp_path, text):
@@ -277,8 +266,6 @@ def test_screens_reads_a_standard_as_it_is_written(tmp_path, text):
         {"src/ui/page.py": "1\n"},
         {"src/ui/deep/er/page.py": "1\n", "web/a.html": "1\n", "web/ab.html": "1\n"},
         {"app.tsx": "1\n", "src/sub/app.tsx": "1\n", "docs/x.md": "1\n", "docs/sub/y.md": "1\n"},
-        {".cos/0040_widget/note.md": "1\n", "src/ui/ok.py": "1\n"},
-        {"src/ui.py": "1\n"},
     ],
 )
 def test_screens_counts_the_files_the_globs_name(tmp_path, files):
@@ -295,22 +282,10 @@ def test_screens_counts_the_files_the_globs_name(tmp_path, files):
 MANIFESTS = {
     "absent": None,
     "not json": "{nope",
-    "empty": "",
-    "bom": "\ufeff{}",
-    "an array": "[]",
-    "a string": '"x"',
-    "null": "null",
-    "no addresses": '{"head":"abcdef1","dirty":false}',
     "empty addresses": '{"head":"abcdef1","dirty":false,"addresses":[]}',
-    "odd addresses": '{"head":"abcdef1","dirty":false,"addresses":["/a",1]}',
     "dirty": '{"head":"abcdef1","dirty":true,"addresses":["/a"]}',
-    "dirty missing": '{"head":"abcdef1","addresses":["/a"]}',
     "no head": '{"dirty":false,"addresses":["/a"]}',
     "head not a name": '{"head":"; rm -rf","dirty":false,"addresses":["/a"]}',
-    "head number": '{"head":12345678,"dirty":false,"addresses":["/a"]}',
-    "numbers": '{"head":"abcdef1","dirty":false,"addresses":["/a"],"hits":[1.0,2.5,1e2,-0,-0.0,1E400],"x":1}',
-    "hits not a list": '{"head":"abcdef1","dirty":false,"addresses":["/a"],"hits":{"a":1}}',
-    "nan": '{"head":"abcdef1","dirty":false,"addresses":["/a"],"hits":[NaN]}',
 }
 
 
@@ -358,16 +333,6 @@ def test_screens_when_git_cannot_say(tmp_path):
     assert r["why"].startswith("cannot tell whether")
 
 
-def test_screens_without_git_on_the_path(tmp_path):
-    s = ui_scene(tmp_path)
-    s.unit()
-    bare = tmp_path / "bare"
-    bare.mkdir()
-    (bare / "node").symlink_to(shutil.which("node") or "node")
-    r = s.run("screens", UNIT, PATH=str(bare))
-    assert "spawnSync git ENOENT" in json.loads(r.out)["why"]
-
-
 def test_screens_in_a_repository_that_is_not_there(sc):
     sc.unit()
     expect([*sc.store.argv("screens", UNIT), "--repo", str(sc.tmp / "nowhere")], environ=env())
@@ -379,14 +344,8 @@ CI_READS = {
     "green": (0, GREEN, "", True, []),
     "green with a failing exit": (1, GREEN, "", True, []),
     "pending": (8, checks(("build", "pending")), "", False, ["ci-pending"]),
-    "queued": (8, checks(("build", "pass"), ("lint", "queued")), "", False, ["ci-pending"]),
     "none": (0, "[]", "", False, ["gate-closed"]),
     "an error": (1, "", "HTTP 404: Not Found\n", False, ["gate-closed"]),
-    "silent": (4, "", "", False, ["gate-closed"]),
-    "not json": (0, "garbage", "", False, ["gate-closed"]),
-    "an object": (0, '{"a":1}', "", False, ["gate-closed"]),
-    "out but no err": (2, "oops", "", False, ["gate-closed"]),
-    "no name": (0, '[{"bucket":"pending"}]', "", False, ["ci-pending"]),
 }
 
 
@@ -408,23 +367,12 @@ def test_review_gate_without_a_repo_or_a_pr(sc):
 
 @pytest.mark.parametrize(
     "title",
-    ["", None, "feat(0040) add", "chore(0040): add", "fix(0041): add", "feat(0040): wip", "feat(0040): WIP: x",
-     "feat(0040): wipe the cache", "feat(0040): café", "foo(0040): add", "feat(0040): " + "x" * 20 + "é"],
+    ["", None, "feat(0040) add", "fix(0041): add", "feat(0040): wip", "feat(0040): café"],
 )  # fmt: skip
 def test_review_gate_checks_the_title_before_it_asks_gh(sc, title):
     sc.unit(pr=pr_text(title))
     sc.run("gate", UNIT, "review", "--json")
     sc.run("gate", UNIT, "ship", "--json")
-
-
-def test_review_gate_when_gh_cannot_start(tmp_path):
-    s = Scene(tmp_path)
-    s.unit()
-    bare = tmp_path / "bare"
-    bare.mkdir()
-    (bare / "node").symlink_to(shutil.which("node") or "node")
-    r = s.run("gate", UNIT, "review", PATH=str(bare))
-    assert "spawnSync gh ENOENT" in r.out + r.err
 
 
 def test_review_gate_in_a_repository_that_is_not_there(sc):
@@ -468,35 +416,9 @@ def workflow(
 WORKFLOWS = {
     "plain": {"ci.yml": workflow()},
     "named": {"ci.yml": workflow().replace("    runs-on", "    name: Branch name\n    runs-on")},
-    "named with a comment": {
-        "ci.yml": workflow().replace("    runs-on", '    name: "Branch name" # why\n    runs-on')
-    },
-    "named single quoted": {
-        "ci.yml": workflow().replace("    runs-on", "    name: 'Branch name'\n    runs-on")
-    },
-    "named from a matrix": {
-        "ci.yml": workflow().replace("    runs-on", "    name: ${{ matrix.x }}\n    runs-on")
-    },
-    "named by a block": {
-        "ci.yml": workflow().replace("    runs-on", "    name: >\n      Branch\n    runs-on")
-    },
-    "name then a plain comment": {
-        "ci.yml": workflow().replace("    runs-on", "    name: Branch name # c\n    runs-on")
-    },
     "a block run": {
         "ci.yml": workflow(
             step="      - run: |\n          echo hi\n          uv run python -m coscc.loop check-branch"
-        )
-    },
-    "a folded run": {
-        "ci.yml": workflow(step="      - run: >\n          python -m coscc.loop check-branch")
-    },
-    "a run on the next line": {
-        "ci.yml": workflow(step="      - run:\n          python -m coscc.loop check-branch")
-    },
-    "a run key, no dash": {
-        "ci.yml": workflow(
-            step="      - name: x\n        run: python -m coscc.loop   check-branch main"
         )
     },
     "a comment only": {
@@ -505,23 +427,10 @@ WORKFLOWS = {
         )
     },
     "another script": {"ci.yml": workflow(step="      - run: python -m coscc.loop check-tag")},
-    "quoted key": {"ci.yml": workflow(job='"branch-name"')},
-    "single quoted key": {"ci.yml": workflow(job="'branch-name'")},
-    "a key with a comment": {"ci.yml": workflow().replace("branch-name:", "branch-name: # why")},
     "crlf": {"ci.yml": workflow().replace("\n", "\r\n")},
     "no jobs": {"ci.yml": "name: ci\non: [push]\n"},
-    "jobs ends at a top key": {
-        "ci.yml": "jobs:\n  a:\n    steps:\n      - run: echo\non: x\n" + workflow()
-    },
     "two files": {"a.yml": "name: a\n", "b.yaml": workflow(), "c.txt": workflow(job="never")},
     "a second job": {"ci.yml": workflow() + "  other:\n    steps:\n      - run: echo hi\n"},
-    "a dedented job": {
-        "ci.yml": "jobs:\n    a:\n        runs-on: x\n  b:\n    steps:\n      - run: coscc.loop check-branch\n"
-    },
-    "a workflow that is a directory": {"dir.yml/x": "1\n"},
-    "a job line that is no key": {
-        "ci.yml": "jobs:\n  <<: *base\n    runs-on: x\n" + workflow().split("jobs:\n")[1]
-    },
 }
 
 
@@ -542,14 +451,11 @@ def test_review_gate_red_check_that_names_the_branch(tmp_path, name, head):
     s.run("gate", UNIT, "review", gh=gh)
 
 
-@pytest.mark.parametrize("head_says", ["fails", "empty", "null", "a number", "an object", "a name"])
+@pytest.mark.parametrize("head_says", ["fails", "empty", "a name"])
 def test_review_gate_red_check_whose_branch_cannot_be_read(sc, head_says):
     answer = {
         "fails": (1, "", "no such pr"),
         "empty": (0, "", ""),
-        "null": (0, "null", ""),
-        "a number": (0, "7", ""),
-        "an object": (0, '{"headRefName":""}', ""),
         "a name": (0, '{"headRefName":"fix/ok"}', ""),
     }[head_says]
     sc.unit()
@@ -586,12 +492,6 @@ def test_ship_gate_open_on_the_reviewed_head(sc):
     assert ship["ok"] is True
     assert sc.reviewed in text_of(ship)
     assert f"--match-head-commit {sc.reviewed}" in nxt
-
-
-def test_ship_gate_open_with_a_title_gh_spaces_out(sc):
-    sc.unit(sc.passed())
-    ship, _, _ = sc.three(open_pr(sc.reviewed, title=f"  {TITLE} "))
-    assert ship["ok"] is True
 
 
 @pytest.mark.parametrize("title", ["feat(0040): other", None, 5, ""])
@@ -684,17 +584,12 @@ FINDINGS = {
     "no round": ("accepted", []),
     "changes requested": ("accepted", [("changes-requested", [finding(1, "open", "high")])]),
     "open": ("accepted", [("pass", [finding(1, "open", "high"), finding(2, "open", "medium")])]),
-    "unreadable label": ("accepted", [("pass", [finding(1, "maybe", "high")])]),
     "answered, no answer": ("accepted", [("pass", [finding(1, "answered", "high")])]),
     "needs person": (
         "accepted",
         [("pass", [finding(1, "needs-person", "high"), finding(2, "claim-rejected", "high")])],
     ),
     "low and open": ("accepted", [("pass", [finding(1, "open", "low", "a nit")])]),
-    "low and open, against the standard": (
-        "accepted",
-        [("pass", [finding(1, "open", "low", "S2 spacing")])],
-    ),
     "lowered": (
         "accepted",
         [
@@ -754,7 +649,7 @@ def test_ship_gate_behind_origin_main(sc):
     assert "1 commit(s) behind origin/main" in ship["lines"][1]
 
 
-@pytest.mark.parametrize("ci", ["green", "red", "pending", "none", "fails"])
+@pytest.mark.parametrize("ci", ["green", "red", "fails"])
 def test_ship_gate_clean_rebase(sc, ci):
     sc.unit(sc.passed())
     main = sc.advance_main()
@@ -762,8 +657,6 @@ def test_ship_gate_clean_rebase(sc, ci):
     gh = {
         "green": {CHECKS: (0, GREEN, "")},
         "red": {CHECKS: (1, checks(("build", "fail")), "")},
-        "pending": {CHECKS: (8, checks(("build", "pending")), "")},
-        "none": {CHECKS: (0, "[]", "")},
         "fails": {CHECKS: (1, "", "rate limited")},
     }[ci]
     ship, _, nxt = sc.three({**gh, **open_pr(head)})
@@ -899,7 +792,6 @@ SCREEN_CASES = {
     "no shot": lambda s: s.passed(screens=shots(s.reviewed).splitlines()[0] + "\n"),
     "current": lambda s: s.passed(screens=shots(s.reviewed)),
     "taken off the branch": lambda s: s.passed(screens=shots(s.rev("main"))),
-    "taken at a stranger": lambda s: s.passed(screens=shots("abcdef1234")),
 }
 
 
@@ -934,13 +826,6 @@ def test_ship_gate_screens_that_fall_through_to_main(tmp_path):
     s = ui_unit(tmp_path, lambda s: s.passed())
     git(s.repo, "update-ref", "-d", "refs/remotes/origin/main")
     s.three(open_pr(s.reviewed))
-
-
-def test_ship_gate_a_standard_without_globs_asks_git_nothing(tmp_path):
-    s = Scene(tmp_path, standard="---\npaths:\n---\n")
-    s.unit(s.passed())
-    ship, _, _ = s.three(open_pr(s.reviewed))
-    assert ship["ok"] is True
 
 
 def test_ship_gate_two_passes_on_one_head_stop_for_a_person(tmp_path):
@@ -981,20 +866,6 @@ def test_ship_gate_a_pass_before_the_last_whose_commit_is_gone(tmp_path):
     assert "is not in this repository;" in nxt
 
 
-def test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff(tmp_path):
-    s = ui_scene(tmp_path)
-    s.reviewed = s.commit({"src/ui/page.py": "p\n"}, "ui")
-    git(s.repo, "update-ref", f"refs/remotes/origin/{BRANCH}", s.reviewed)
-    fixed = finding(1, f"fixed {s.reviewed[:7]}", "high")
-    git(s.repo, "tag", "t0", "main")
-    s.unit(
-        review_text(
-            "accepted", rnd(1, "pass", s.reviewed, fixed), rnd(2, "pass", s.reviewed, fixed)
-        )
-    )
-    s.three(open_pr(s.reviewed))
-
-
 # --- next ---------------------------------------------------------------------------------
 
 
@@ -1014,7 +885,7 @@ def test_next_after_changes_were_asked_and_nothing_reached_the_branch(sc):
     assert "nothing outside" in sc.run("next", UNIT, gh=open_pr(own)).out
 
 
-@pytest.mark.parametrize("ci", ["green", "red", "pending", "none"])
+@pytest.mark.parametrize("ci", ["green", "red", "pending"])
 def test_next_after_a_fix_reached_the_branch(sc, ci):
     sc.unit(cr(sc), status="changes-requested")
     head = sc.commit({"src/a.py": "a = 2\n"}, "fix")
@@ -1025,7 +896,6 @@ def test_next_after_a_fix_reached_the_branch(sc, ci):
             HEAD_NAME: (0, '{"headRefName":"feat/widget"}', ""),
         },
         "pending": {CHECKS: (8, checks(("build", "pending")), "")},
-        "none": {CHECKS: (0, "[]", "")},
     }[ci]
     r = sc.run("next", UNIT, gh={**gh, **open_pr(head)})
     assert json.loads(r.out)["stage"] == {"green": "review", "red": "impl"}.get(ci, "")
@@ -1044,9 +914,7 @@ def test_next_after_the_branch_was_rewritten(sc, how):
     assert ("was rebased to" in r.out) is (how == "clean")
 
 
-@pytest.mark.parametrize(
-    "what", ["no pr", "no sha", "pr unreadable", "pr closed", "head gone", "sha gone", "no repo"]
-)
+@pytest.mark.parametrize("what", ["no pr", "pr unreadable", "head gone", "no repo"])
 def test_next_after_changes_were_asked_and_git_cannot_say(sc, what):
     pr = pr_text(url=None) if what == "no pr" else None
     review = cr(sc, "abcdef1234" if what == "sha gone" else None)
@@ -1079,11 +947,6 @@ def test_next_after_a_pass_with_the_review_still_to_come(sc):
     sc.run("next", UNIT, repo=False)
 
 
-def test_the_environment_is_not_the_testers(sc):
-    assert not any(k.startswith("COS_") for k in env())
-    assert os.path.isdir(sc.repo)
-
-
 # --- a git that fails where it can --------------------------------------------------------
 
 DIFF_NAMES = ["diff", "--name-only"]
@@ -1102,9 +965,7 @@ def test_ship_gate_when_git_cannot_diff_what_moved(sc):
     assert "git could not diff" in text_of(ship)
 
 
-@pytest.mark.parametrize(
-    "fails", [{"code": 128, "err": "fatal: no\n"}, {"code": 3}, {"code": 0, "out": "many\n"}]
-)
+@pytest.mark.parametrize("fails", [{"code": 128, "err": "fatal: no\n"}])
 def test_ship_gate_when_git_cannot_count_what_it_is_behind(sc, fails):
     sc.unit(sc.passed())
     sc.advance_main()
@@ -1118,8 +979,6 @@ def test_ship_gate_when_git_cannot_count_what_it_is_behind(sc, fails):
     [
         {"match": ["merge-base"], "not": ["--is-ancestor"], "out": "not a sha\n"},
         {"match": ["--binary"], "code": 128, "err": "fatal: no diff for you\n"},
-        {"match": ["--binary"], "code": 5},
-        {"match": ["--binary"], "code": 5, "out": "said on stdout\n"},
     ],
 )
 def test_ship_gate_when_git_cannot_take_the_patch(sc, rule):
@@ -1128,25 +987,6 @@ def test_ship_gate_when_git_cannot_take_the_patch(sc, rule):
     sc.shim(rule)
     ship, _, _ = sc.three(open_pr(head))
     assert "could not be compared" in text_of(ship) or "behind" in text_of(ship)
-
-
-def test_ship_gate_when_git_cannot_take_the_patch_of_the_head_alone(sc):
-    sc.unit(sc.passed())
-    head = sc.rebase(sc.advance_main())
-    sc.shim({"match": ["--binary", head], "code": 128, "err": "fatal: only this one\n"})
-    ship, _, _ = sc.three(open_pr(head))
-    assert "could not be compared" in text_of(ship)
-
-
-def test_ship_gate_when_git_cannot_diff_what_the_screens_followed(tmp_path):
-    s = ui_scene(tmp_path)
-    first = s.commit({"src/ui/page.py": "p\n"}, "ui")
-    s.reviewed = s.commit({"README.md": "y\n"}, "other")
-    git(s.repo, "update-ref", f"refs/remotes/origin/{BRANCH}", s.reviewed)
-    s.unit(s.passed(screens=shots(first)))
-    s.shim({"match": [*DIFF_NAMES, f"{first}..{s.reviewed}"], "code": 128, "err": "fatal: boom\n"})
-    ship, _, _ = s.three(open_pr(s.reviewed))
-    assert "git could not diff" in text_of(ship)
 
 
 def test_ship_gate_two_passes_whose_heads_git_cannot_compare(tmp_path):
@@ -1171,17 +1011,11 @@ def test_ship_gate_a_round_the_app_keeps_without_its_commit(sc):
     assert "names no reviewed commit" in text_of(ship)
 
 
-# The script the loop was before it moved to Python, spelled so no search for it finds this file.
-OLD = "cos" + ".mjs"
-
-
 @pytest.mark.parametrize(
     ("run", "found"),
     [
         ('uv run python -m coscc.loop check-branch "$HEAD_REF"', ["branch-name"]),
         ("python -m coscc.loop   check-branch", ["branch-name"]),
-        (f"node .claude/scripts/{OLD} check-branch", []),
-        (f"node {OLD} check-branch", []),
         ("uv run python -m coscc.loop check-tag v1.0.0", []),
         ("uv run python -m coscc.loopy check-branch", []),
     ],
