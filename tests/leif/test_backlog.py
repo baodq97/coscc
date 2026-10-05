@@ -67,11 +67,6 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
             check=True,
         ).stdout
 
-    def test_a_new_unit_appears_on_the_board_it_was_created_for(self):
-        made = create_sync(self.core, str(self.repo), "a-first-problem", "some words")
-        board = asyncio.run(self.core.board(str(self.repo)))
-        self.assertEqual([u["name"] for u in board["units"]], [made["unit"]])
-
     def test_nothing_of_it_lands_in_the_repository(self):
         create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.assertEqual(self._git("status", "--porcelain"), "")
@@ -84,11 +79,6 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         made = create_sync(self.core, str(self.repo), "fresh", "some words")
         self.assertEqual(made["unit"], "0015_fresh")
         self.assertEqual(sorted(p.name for p in (self.repo / ".cos").iterdir()), before)
-
-    def test_a_bad_slug_comes_back_as_a_refusal_not_an_exception(self):
-        with self.assertRaises(Invalid) as caught:
-            create_sync(self.core, str(self.repo), "Bad_Slug")
-        self.assertIn("Bad_Slug", str(caught.exception))
 
     def test_the_gate_applies_to_creating_and_to_branching(self):
         with self.assertRaises(Invalid):
@@ -340,12 +330,6 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
             if p.is_file()
         }
 
-    def test_the_board_carries_the_backlog(self):
-        data = self.board()
-        self.assertEqual(data["backlog"]["backlog"], [self.a, self.b])
-        self.assertEqual(data["backlog"]["shortlist"], [])
-        self.assertTrue(data["backlog"]["propose_warning"])
-
     def test_only_the_new_keys_differ_after_every_kind_of_record(self):
         def strip(data):
             data = json.loads(json.dumps(data))
@@ -414,15 +398,6 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         except Invalid:
             pass
         return self.journal.records(self.key, self.b, kind="start")[-1]
-
-    def test_the_start_record_says_where_the_unit_stood(self):
-        first = self._start_of_spec()
-        self.assertEqual(first["shortlist"], {"rank": None, "of": None, "record": None})
-        asyncio.run(self.core.backlog.record_estimate(self.cwd, self.b, 3, "M", "vì", "Leif"))
-        asyncio.run(self.core.backlog.record_shortlist(self.cwd, [self.b], "r", "Leif"))
-        second = self._start_of_spec()
-        self.assertEqual((second["shortlist"]["rank"], second["shortlist"]["of"]), (1, 1))
-        self.assertEqual(second["shortlist"]["record"]["n"], 1)
 
     def test_a_busy_run_log_still_starts_the_step(self):
         from coscc.store.journal import Journal

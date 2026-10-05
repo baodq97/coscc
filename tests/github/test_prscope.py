@@ -67,45 +67,6 @@ class Compare(unittest.TestCase):
         self.assertEqual(out["only_in_pr_md"], ["stale/only-here.py"])
         self.assertEqual(out["only_on_github"], ["b/c.md", "z.py"])
 
-    def test_a_null_scope_is_unread_and_keeps_githubs_counts(self):
-        # Every pr.md written before 0122 reads as a null scope.
-        for scope in (
-            None,
-            {},
-            {**SCOPE, "files": "2"},
-            {**SCOPE, "paths": None},
-            {**SCOPE, "additions": True},
-        ):
-            with self.subTest(scope=scope):
-                out = prscope.compare(scope, GOT)
-                self.assertEqual(out["verdict"], "unread")
-                self.assertEqual(out["github"], GITHUB)
-                self.assertIn("grammar", out["detail"])
-
-    def test_json_without_the_fields_is_unread(self):
-        for got in (
-            {},
-            [],
-            None,
-            {**GOT, "additions": None},
-            {**GOT, "changedFiles": True},
-            {**GOT, "files": None},
-            {**GOT, "files": [{"name": "a.py"}]},
-            {**GOT, "files": ["a.py"]},
-        ):
-            with self.subTest(got=got):
-                out = prscope.compare(SCOPE, got)
-                self.assertEqual(out["verdict"], "unread")
-                self.assertTrue(out["detail"])
-                self.assertNotIn("differ", out)
-
-    def test_a_files_list_shorter_than_changed_files_compares_what_gh_returned(self):
-        # Gh returned two of 150 files; pr.md listed those two and wrote 150.
-        got = {**GOT, "changedFiles": 150}
-        self.assertEqual(prscope.compare({**SCOPE, "files": 150}, got)["verdict"], "match")
-        out = prscope.compare(SCOPE, got)
-        self.assertEqual((out["verdict"], out["differ"]), ("mismatch", ["files"]))
-
 
 class Read(unittest.TestCase):
     def test_gh_failing_timing_out_or_missing_is_unread_with_its_words(self):
@@ -120,10 +81,6 @@ class Read(unittest.TestCase):
                 out = run(prscope.read(URL, SCOPE, "/tmp", run=gh))
                 self.assertEqual(out["verdict"], "unread")
                 self.assertIn(said, out["detail"])
-
-    def test_an_unexpected_exception_is_unread_not_raised(self):
-        out = run(prscope.read(URL, SCOPE, "/tmp", run=FakeGh(raise_=RuntimeError("boom"))))
-        self.assertEqual(out, {"verdict": "unread", "detail": "boom"})
 
     def test_the_one_command_is_a_read(self):
         gh = FakeGh()

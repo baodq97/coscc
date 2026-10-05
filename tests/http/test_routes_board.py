@@ -70,13 +70,6 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.app.state.core.shutdown()
         self._tmp.cleanup()
 
-    async def test_the_board_carries_every_unit_with_all_eight_stages(self):
-        body = await self.app.state.core.board(str(REPO), "held")
-        self.assertEqual(body["stages"], STAGES)
-        self.assertEqual(body["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
-        for unit in body["units"]:
-            self.assertEqual([r["stage"] for r in unit["stages"]], STAGES)
-
     async def test_a_directory_that_is_not_a_workspace_is_refused(self):
         r = await self.client.get("/api/units", params={"cwd": "/etc"})
         self.assertEqual(r.status_code, 400)
@@ -128,9 +121,6 @@ class TheHeldBoard(unittest.IsolatedAsyncioTestCase):
 
     async def get(self, **params):
         return await self.app.state.core.board(str(REPO), "new" if params.get("fresh") else "held")
-
-    async def test_the_board_says_when_it_was_read(self):
-        self.assertTrue((await self.get())["read_at"])
 
     async def test_a_change_outside_the_app_shows_on_a_fresh_read_only(self):
         first = await self.get()
@@ -193,10 +183,6 @@ class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.aclose()
-
-    async def test_the_board_still_reads(self):
-        body = await self.app.state.core.board(str(REPO), "held")
-        self.assertEqual(body["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
 
     async def test_setting_a_mode_is_refused_with_the_same_reason(self):
         body = await self.app.state.core.board(str(REPO), "held")

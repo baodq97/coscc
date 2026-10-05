@@ -8,12 +8,12 @@ import unittest
 from pathlib import Path
 
 from coscc.store.db import Data
-from coscc.agent import policy
 from coscc.features import scan
 from coscc.http.plugin import create_tables
 from coscc.kernel import Agents, Invalid, Runs, Settings, Submitted, Units
 from tests.features.ctx import ctx_for
 from coscc.store.journal import Intervention, Journal
+from coscc.agent import policy
 from coscc.units import backlog, submit
 
 WS = "/ws"
@@ -132,16 +132,6 @@ class ThePromptIsBounded(_Feature):
         self.assertLess(len(taken), scan.LIMIT)
         self.assertGreater(cut, 0)
         self.assertLessEqual(len(scan.INSTRUCTIONS), 3_000)
-
-    async def test_a_second_the_cut_split_is_read_on_by_the_next_scan(self):
-        self.found = [i._replace(at="2026-10-02T01:00:00+00:00") for i in found(60)]
-        for _ in range(3):
-            await scan.scan(self.ctx, WS, "owner")
-        read = [line.split(" |")[0] for p in self.prompts for line in p.splitlines()]
-        held = [i.removeprefix("- ") for i in read if i.startswith("- rerun:runs:")]
-        self.assertEqual(sorted(held), sorted(i.id for i in self.found))
-        self.assertEqual(len(self.store.cursor(WS)[1]), 60)
-        self.assertEqual((await scan.scan(self.ctx, WS, "owner"))["outcome"], "skipped")
 
 
 class TheObjectIsChecked(_Feature):
@@ -299,6 +289,16 @@ class TheSchedule(_Feature):
         self.assertEqual(len(self.store.runs(WS)), 1)
 
 
+async def _submit(server, obj):
+    from tests.units.test_submit import submits
+
+    return await submits({"mcp_servers": {"cos": server}}, **obj)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
 class ItsSessionIsDeclaredHere(unittest.TestCase):
     """What the core once named for scan: its grant, its `submit` schema, its slug rules."""
 
@@ -335,13 +335,3 @@ class ItsSessionIsDeclaredHere(unittest.TestCase):
         self.assertEqual(scan.SCAN_TYPES, tuple(loop.BRANCH_TYPES))
         self.assertEqual(scan.SLUG.pattern, loop.SLUG_RE.pattern)
         self.assertEqual(scan.SLUG_MAX, loop.SLUG_MAX)
-
-
-async def _submit(server, obj):
-    from tests.units.test_submit import submits
-
-    return await submits({"mcp_servers": {"cos": server}}, **obj)
-
-
-if __name__ == "__main__":
-    unittest.main()

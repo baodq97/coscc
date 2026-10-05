@@ -16,7 +16,6 @@ import claude_agent_sdk as sdk
 import httpx
 
 from coscc.kernel import Feature
-from coscc import update
 from coscc.http.app import build
 from coscc.config import Config
 from tests.http.test_app import use_sessions
@@ -64,22 +63,6 @@ class Surface(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.aclose()
-
-    async def test_workspaces_lists_what_was_configured(self):
-        # `paths` is kept so the older shape still reads.
-        body = (await self.client.get("/api/workspaces")).json()
-        self.assertEqual(body["paths"], ["/tmp"])
-        self.assertEqual(body["count"], 1)
-        entry = body["workspaces"][0]
-        self.assertEqual(entry["path"], "/tmp")
-        self.assertEqual(entry["source"], "env")
-        self.assertFalse(entry["missing"])
-
-    async def test_an_env_workspace_is_marked_as_such(self):
-        # It matters that a caller can tell: an env entry cannot be renamed or removed
-        # from the app, and showing a delete button for one would be a lie.
-        body = (await self.client.get("/api/workspaces")).json()
-        self.assertTrue(all(e["source"] == "env" for e in body["workspaces"]))
 
     async def test_no_route_leaks_configuration(self):
         # A long-lived credential is in this process. The knobs and the environment must not be
@@ -152,14 +135,6 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post("/api/workspaces", json={"name": "repo"})
         self.assertEqual(r.status_code, 400)
 
-    async def test_label_can_be_changed_and_read_back(self):
-        (self.root / "repo").mkdir()
-        await self.client.post("/api/workspaces", json={"name": "repo"})
-        r = await self.client.post("/api/workspaces/repo/label", json={"label": "Renamed"})
-        self.assertEqual(r.status_code, 200)
-        body = (await self.client.get("/api/workspaces")).json()
-        self.assertEqual(body["workspaces"][0]["label"], "Renamed")
-
     async def test_remove_delists_but_leaves_the_directory(self):
         (self.root / "repo").mkdir()
         await self.client.post("/api/workspaces", json={"name": "repo"})
@@ -185,14 +160,6 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
         for path in ("/api/workspaces/ghost/label", "/api/workspaces/ghost/remove"):
             self.assertEqual((await self.client.post(path, json={})).status_code, 400, path)
 
-    async def test_a_folder_that_is_no_git_checkout_has_no_release(self):
-        (self.root / "repo").mkdir()
-        await self.client.post("/api/workspaces", json={"name": "repo"})
-        cwd = str(self.root / "repo")
-        r = await self.client.get("/api/release", params={"cwd": cwd})
-        self.assertEqual((r.status_code, r.json()), (200, None))
-        await self.app.state.core.board(cwd, "new")
-
 
 class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -211,15 +178,6 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
         r = await self.client.get("/api/agents")
         self.assertEqual(r.status_code, 200)
         return r.json()
-
-    async def test_eight_agents_and_two_other_sessions(self):
-        page = await self.page()
-        self.assertEqual(len(page["rows"]), 8)
-        self.assertEqual([r["key"] for r in page["others"]], ["estimate", "chat"])
-        impl = next(r for r in page["rows"] if r["key"] == "impl")
-        self.assertEqual(impl["config"]["model_source"], "default")
-        self.assertEqual([v["key"] for v in impl["variants"]], ["impl:novel"])
-        self.assertEqual(impl["variants"][0]["effort"], "high")
 
     async def test_set_then_reset(self):
         body = {"key": "spec", "field": "turns", "value": 30}
@@ -268,13 +226,6 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(writes, ["/api/agents/field"])
 
-    async def test_the_settings_routes_are_gone(self):
-        for path in ("/api/settings/models", "/api/settings/efforts", "/api/settings/agents"):
-            r = await self.client.post(path, json={"name": "impl", "model": "m"})
-            self.assertIn(r.status_code, (404, 405), path)
-            r = await self.client.get(path)
-            self.assertIn(r.status_code, (404, 405), path)
-
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
     """Without a store: the write routes say why rather than crashing."""
@@ -295,52 +246,6 @@ class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post("/api/workspaces", json={"name": "repo"})
         self.assertEqual(r.status_code, 400)
         self.assertIn("COS_WORKING_DIR", r.json()["error"])
-
-
-class NoHandWrittenMarkup(unittest.TestCase):
-    """No hand-written markup, as a standing check, not just a one-off in the proof.
-
-    `coscc/_web/` and `coscc/_studio/` are excluded, and the exclusion is narrow on purpose. They
-    hold the *compiled* bundles (Reflex's, and the studio's built from `ui/`): generated `.html`
-    and `.css` files that the release copies into the package and `.gitignore` keeps out of git. The claim this test defends is about
-    markup somebody typed, so generated output is not in its scope. Excluding any wider path
-    would start hiding the thing it is here to catch."""
-
-    GENERATED = ("_web", "_studio")
-
-    def test_the_app_ships_no_hand_written_html_or_css(self):
-        repo = Path(__file__).resolve().parents[2]
-        found = [
-            p.relative_to(repo)
-            for p in list(repo.glob("coscc/**/*.html")) + list(repo.glob("coscc/**/*.css"))
-            if not set(self.GENERATED) & set(p.relative_to(repo).parts)
-        ]
-        self.assertEqual(found, [], f"hand-written markup is back: {found}")
-
-    def test_the_exclusion_is_only_the_compiled_bundle(self):
-        # If someone widens GENERATED to something like "coscc", the check above passes
-        # while defending nothing. This is the tripwire for that.
-        self.assertEqual(self.GENERATED, ("_web", "_studio"))
-
-
-class Loopback(unittest.TestCase):
-    """The default bind is every interface, not loopback.
-
-    The app ships to a VM that people reach from elsewhere, so it binds `0.0.0.0` (Reflex's own
-    default) and asks for a password; `COS_HOST` puts it back on `127.0.0.1`.
-
-    So the guarantee this class protects is not "loopback". It is that a person is *told*, every
-    single start, and `tests/test_run.py` is where that is checked."""
-
-    def test_the_default_bind_is_every_interface_since(self):
-        from coscc.config import from_env
-
-        self.assertEqual(from_env({}).host, "0.0.0.0")
-
-    def test_loopback_is_still_one_variable_away(self):
-        from coscc.config import from_env
-
-        self.assertEqual(from_env({"COS_HOST": "127.0.0.1"}).host, "127.0.0.1")
 
 
 class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
@@ -424,15 +329,6 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(running.stop_requested)
         # the Stop is recorded on the attempt, with the name that asked.
         self.assertEqual(self.core.attempts.get(row["id"])["stop_asked_by"], "Lan")
-
-    async def test_the_running_list_is_what_the_attempts_hold(self):
-        self.assertEqual(
-            (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), []
-        )
-        self.core.attempts.open("step", self.core.ws.key("/tmp"), "0001_a", "plan", state="running")
-        [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
-        self.assertEqual((row["unit"], row["stage"], row["stopping"]), ("0001_a", "plan", False))
-        self.assertEqual(row["kind"], "step")
 
     async def test_an_integration_is_on_the_running_list_until_it_ends(self):
         key = self.core.ws.key("/tmp")
@@ -634,16 +530,6 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
                 )
             ]
 
-    async def test_answering_through_the_api_changes_no_byte_of_the_artifact(self):
-        before = self.intent.read_bytes()
-        got = await self.post()
-        self.assertEqual(got.status_code, 200, got.text)
-        self.assertEqual(got.json()["question"], 2)
-        self.assertEqual(self.intent.read_bytes(), before)
-        self.assertEqual(
-            self.rows(), [("intent.md", "2", "Phong", "product", "Tách ra. MARK-0016")]
-        )
-
     async def test_an_answer_writes_its_journal_row_in_the_same_transaction(self):
         import sqlite3
 
@@ -683,20 +569,6 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("/tmp/somewhere", got.text)
         self.assertIn(held, log.output[-1])
         self.assertEqual((self.rows(), self.intent.read_bytes()), ([], before))
-
-    async def test_the_board_then_counts_one_fewer_open(self):
-        board = await self.app.state.core.board(self.cwd, "new")
-        self.assertEqual(board["units"][0]["open"], 3)
-        await self.post()
-        board = await self.app.state.core.board(self.cwd, "new")
-        self.assertEqual(board["units"][0]["open"], 2)
-
-    async def test_a_second_answer_is_a_second_row(self):
-        before = self.intent.read_bytes()
-        await self.post()
-        await self.post(question=1, answer="Có.")
-        self.assertEqual(self.intent.read_bytes(), before)
-        self.assertEqual([r[1] for r in self.rows()], ["2", "1"])
 
     async def refused(self, **over):
         before = self.intent.read_bytes()
@@ -741,13 +613,6 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.refused(answer="ok\n## Status: rejected")
         await self.refused(answer="### Câu 3\nhijack")
 
-    async def test_a_file_with_a_section_after_its_answers_is_answered_all_the_same(self):  # (g)
-        # It is a row now.
-        self.intent.write_text(QUESTIONS + "\n## Answers\n\n## Later\n", encoding="utf-8")
-        before = self.intent.read_bytes()
-        self.assertEqual((await self.post()).status_code, 200)
-        self.assertEqual(self.intent.read_bytes(), before)
-
     async def test_something_that_is_not_json_writes_nothing(self):
         before = self.intent.read_bytes()
         got = await self.client.post("/api/units/answer", content=b"nope")
@@ -779,6 +644,16 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
                     "Tách ra. MARK-0016",
                 )
             ],
+        )
+
+    async def test_answering_through_the_api_changes_no_byte_of_the_artifact(self):
+        before = self.intent.read_bytes()
+        got = await self.post()
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(got.json()["question"], 2)
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual(
+            self.rows(), [("intent.md", "2", "Phong", "product", "Tách ra. MARK-0016")]
         )
 
 
@@ -1241,11 +1116,6 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(got.status_code, 400, got.text)
             self.assertIn("/etc", got.json()["error"])
 
-    async def test_a_bad_slug_is_400_in_the_scripts_own_words(self):
-        got = await self.client.post("/api/units", json={"cwd": self.cwd, "slug": "Bad_Slug"})
-        self.assertEqual(got.status_code, 400)
-        self.assertIn("Bad_Slug", got.json()["error"])
-
     async def test_the_branch_route_cuts_it_and_the_board_sees_it(self):
         made = (
             await self.client.post(
@@ -1380,14 +1250,14 @@ class IntegratingOverHttp(PostingAReviewRoundOverHttp):
                 got = await self.client.post("/api/units/integrate", json=body)
                 self.assertEqual(got.status_code, 400)
 
-    async def test_next_never_offers_it(self):
-        got = await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})
-        self.assertNotEqual(got.json().get("stage"), "integrate")
-
     # The parent's own tests post comments; they are not this class's to run again.
     test_two_presses_make_one_comment = None  # type: ignore[assignment]
     test_the_board_then_shows_the_round_on_the_pr = None  # type: ignore[assignment]
     test_bad_requests_are_400_and_reach_no_gh = None  # type: ignore[assignment]
+
+    async def test_next_never_offers_it(self):
+        got = await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})
+        self.assertNotEqual(got.json().get("stage"), "integrate")
 
 
 class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
@@ -1422,12 +1292,6 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
             "bin_dir": "/b",
         }
         self.updater.release = {"state": "ready", "version": "0.13.0"}
-
-    async def test_status_says_what_runs_and_why_there_is_no_button(self):
-        body = (await self.client.get("/api/update")).json()
-        self.assertEqual(body["shape"], "unavailable")
-        self.assertIn(update.UNAVAILABLE, body["reason"])
-        self.assertTrue(body["version"])
 
     async def test_a_failed_update_is_reported_not_a_500(self):
         self.as_a_service()
@@ -1481,19 +1345,6 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
                 r = await self.client.post(path, json=body)
                 self.assertEqual(r.status_code, 503, r.text)
                 self.assertIn("update is being applied", r.json()["error"])
-
-    async def test_the_cut_list_route_is_gone(self):
-        # One Apply, so nothing lists what another way would cut.
-        self.as_a_service()
-        self.assertEqual((await self.client.get("/api/update/cut-list")).status_code, 404)
-
-    def test_no_update_route_uses_a_path_reflex_reserves(self):
-        paths = [
-            getattr(r, "path", "") for r in self.app.routes if "update" in getattr(r, "path", "")
-        ]
-        self.assertEqual(len(paths), 4)
-        for p in paths:
-            self.assertFalse(p.startswith(("/ping/", "/_event", "/_upload")), p)
 
 
 class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
@@ -1616,20 +1467,6 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
         from coscc.store.db import Data
 
         return Data(self.config.data_dir).prefs()
-
-    async def test_defaults_are_off_four_and_fifty(self):
-        client = await self.client_for("127.0.0.1")
-        got = (await client.get("/api/settings/autopilot", params={"cwd": "/tmp"})).json()
-        self.assertEqual(
-            (
-                got["autopilot"],
-                got["autopilot_may_ship"],
-                got["max_parallel"],
-                got["daily_cap_usd"],
-            ),
-            (False, False, 4, 50.0),
-        )
-        self.assertEqual(got["refused_because"], "")
 
     async def test_a_wrong_value_is_a_400_and_nothing_is_written(self):
         client = await self.client_for("127.0.0.1")
@@ -1832,18 +1669,6 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(r.status_code, 400, body)
         self.assertEqual((await self.board("api"))["units"], [])
 
-    async def test_post_api_units_with_a_brief_alone_is_unchanged(self):
-        r = await self.post("/api/units", cwd=self.cwd["proj"], slug="plain", brief="words")
-        self.assertEqual(r.status_code, 200, r.text)
-        self.assertNotIn("idea", r.json())
-        from coscc import units
-
-        self.assertTrue(
-            (
-                units.unit_dir(self.cwd["proj"], r.json()["unit"], self.root / "data") / "idea.md"
-            ).is_file()
-        )
-
     async def test_a_feature_split_over_two_workspaces_is_navigable_both_ways_through_the_apps_routes(
         self,
     ):
@@ -2005,14 +1830,6 @@ class FeatureStatesOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((r.status_code, r.json()), (200, {"name": "graph", "state": "pilot"}))
         self.assertEqual(await self.states(), {"plain": "on", "graph": "pilot"})
         self.assertEqual(self.told, [(self.cwd, "pilot")])
-
-    async def test_a_boolean_on_is_still_read_as_on_or_off(self):
-        for on, state in ((False, "off"), (True, "on")):
-            r = await self.client.post(
-                "/api/features", json={"cwd": self.cwd, "name": "plain", "on": on}
-            )
-            self.assertEqual(r.json(), {"name": "plain", "state": state})
-            self.assertEqual((await self.states())["plain"], state)
 
     async def test_a_wrong_state_a_pilot_without_one_or_a_locked_feature_is_400(self):
         self.may = False

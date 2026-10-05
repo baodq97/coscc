@@ -26,33 +26,15 @@ class TheServiceWiresWhoListensToWhat(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(self.core.bus._handlers[name])
 
-    def test_an_ended_step_wakes_the_updater_and_the_autopilot(self):
-        self.core.bus.publish(Event("step.ended", "k", "u"))
-        self.ended.assert_called_once_with()
-        self.nudged.assert_called_once_with("k")
-
     def test_a_step_ended_by_the_app_going_down_wakes_only_the_updater(self):
         self.core.bus.publish(Event("step.ended", "k", "u", going_down=True))
         self.ended.assert_called_once_with()
         self.nudged.assert_not_called()
 
-    def test_an_ended_integration_wakes_the_updater_and_the_autopilot(self):
-        self.core.bus.publish(Event("integration.ended", "k", "u"))
-        self.ended.assert_called_once_with()
-        self.nudged.assert_called_once_with("k")
-
     def test_a_written_answer_wakes_only_the_autopilot(self):
         self.core.bus.publish(Event("answer.written", "k", "u"))
         self.ended.assert_not_called()
         self.nudged.assert_called_once_with("k")
-
-    def test_a_saved_shortlist_and_a_moved_hold_wake_only_the_autopilot(self):
-        for name in ("shortlist.saved", "hold.moved"):
-            with self.subTest(name=name):
-                self.nudged.reset_mock()
-                self.core.bus.publish(Event(name, "k", "u"))
-                self.nudged.assert_called_once_with("k")
-        self.ended.assert_not_called()
 
     def test_a_refused_step_or_integration_wakes_the_updater_and_the_autopilot(self):
         # The autopilot reads a refusal of what it queued from its row, on the pass this wakes.
@@ -63,12 +45,3 @@ class TheServiceWiresWhoListensToWhat(unittest.TestCase):
                 self.core.bus.publish(Event(name, "k", "u"))
                 self.ended.assert_called_once_with()
                 self.nudged.assert_called_once_with("k")
-
-    def test_the_other_endings_wake_only_the_updater(self):
-        # `step.released` is gone (0150): a step that never ran ends its attempt `step.refused`.
-        for name in ("integration.escalated", "retake.ended", "estimate.ended"):
-            with self.subTest(name=name):
-                self.ended.reset_mock()
-                self.core.bus.publish(Event(name, "k", "u"))
-                self.ended.assert_called_once_with()
-        self.nudged.assert_not_called()

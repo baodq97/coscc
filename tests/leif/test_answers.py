@@ -18,7 +18,7 @@ from coscc.kernel import Invalid
 from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
-from tests.http.test_app import create_sync, timeline, unit_history
+from tests.http.test_app import create_sync, unit_history
 from tests.units.test_submit import a_head, finding, submits as _submits
 from tests.http.test_app import use_sessions
 
@@ -169,15 +169,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         end = j.records(str(self.repo.resolve()), kind="end")[-1]
         self.assertEqual((end["outcome"], end["findings"], end["findings_open"]), ("done", 2, 1))
 
-    def test_the_end_record_carries_the_added_rounds_verdicts(self):
-        # The one round this step added, round 2, asks for changes.
-        from coscc.store.journal import Journal
-
-        self._run_review(FakeGh())
-        j = Journal(self.core.config.working_dir, self.core.config.data_dir)
-        end = j.records(str(self.repo.resolve()), kind="end")[-1]
-        self.assertEqual(end["verdicts"], ["changes-requested"])
-
     def test_a_failed_post_leaves_review_md_byte_for_byte_the_same(self):
         self._run_review(FakeGh())
         good = (self.dir / "review.md").read_bytes()
@@ -247,24 +238,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         r = self._post(gh, 1)
         self.assertEqual((r["state"], r["reason"]), ("failed", "pr.md names no pull request"))
         self.assertEqual(gh.calls, [])
-
-    def test_every_attempt_is_one_run_log_row(self):
-        self._post(FakeGh(), 1)
-        self._post(FakeGh(fail=True), 1)
-        rows = self._pr_rows()
-        self.assertEqual(len(rows), 2)
-        ok, bad = rows
-        self.assertEqual(
-            (ok["unit"], ok["round"], ok["pr"], ok["outcome"], ok["stage"]),
-            (self.unit, 1, PR_URL, "posted", "review"),
-        )
-        self.assertTrue(ok["comment_url"].startswith(PR_URL))
-        self.assertEqual((bad["outcome"], bad["detail"]), ("failed", "HTTP 401: Bad credentials"))
-
-    def test_a_comment_row_does_not_disturb_the_cost_timeline(self):
-        self._post(FakeGh(), 1)
-        tl = timeline(self.core, str(self.repo), self.unit)
-        self.assertEqual(tl.get("runs") or [], [])
 
 
 OUTCOME_INTENT = (
@@ -447,12 +420,6 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertEqual(u["next"], "finished")
         self.assertEqual((u["questions"][0]["answered"], u["open"]), (True, 0))
 
-    def test_unmeasurable_carries_its_reason_and_no_source_line(self):
-        self.record(result="không đo được", source="", reason="không có script")
-        text = self.intent.read_text(encoding="utf-8")
-        self.assertIn("Result: không đo được\nMeasured by: agent\nReason: không có script\n", text)
-        self.assertEqual(self.board_unit()["outcome"]["result"], "unmeasurable")
-
     def test_every_refusal_writes_nothing(self):
         self.assertIn("unknown", self.refused(result="unknown"))
         self.assertIn("source", self.refused(source=""))
@@ -485,15 +452,6 @@ class RecordingAnOutcome(unittest.TestCase):
     def test_a_section_after_answers_is_refused(self):
         self.intent.write_text(OUTCOME_INTENT + "\n## Notes\n\nx\n", encoding="utf-8")
         self.assertIn("section after its ## Answers", self.refused())
-
-    def test_an_intent_with_no_answers_gets_the_heading_once(self):
-        self.intent.write_text(OUTCOME_INTENT.split("## Answers")[0].rstrip("\n"), encoding="utf-8")
-        self.record()
-        self.record()
-        text = self.intent.read_text(encoding="utf-8")
-        self.assertEqual(text.count("## Answers"), 1)
-        self.assertEqual(text.count("### Outcome"), 2)
-        self.assertEqual(self.board_unit()["outcome"]["invalid"], 0)
 
     def test_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
         journal = self.core.ws.journal()

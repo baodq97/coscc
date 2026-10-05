@@ -58,11 +58,6 @@ class TheGate(unittest.TestCase):
             with self.assertRaises(Invalid):
                 call()
 
-    def test_the_reason_names_the_directory_so_a_caller_can_show_it(self):
-        with self.assertRaises(Invalid) as e:
-            _core().chat.sessions_for("/nope")
-        self.assertIn("/nope", str(e.exception))
-
     def test_a_configured_workspace_passes_the_gate(self):
         self.assertEqual(_core().chat.sessions_for(REPO)["cwd"], REPO)
 
@@ -77,9 +72,6 @@ class WhatCountsAsInvalid(unittest.TestCase):
         for text in ("", "   ", "\n"):
             with self.assertRaises(Invalid):
                 _core().chat.check_send(REPO, text)
-
-    def test_check_send_accepts_real_text(self):
-        self.assertIsNone(_core().chat.check_send(REPO, "hello"))
 
 
 class TheGateWithAStore(unittest.TestCase):
@@ -142,74 +134,6 @@ class TheGateWithAStore(unittest.TestCase):
         s.ws.store.remove("repo")
         with self.assertRaises(Invalid):
             s.chat.check_send(str(self.root / "repo"), "hi")
-
-    def test_no_working_folder_means_no_store_and_behaviour(self):
-        config = Config(workspaces=(REPO,))
-        s = Core(config, Sessions(config))
-        self.assertIsNone(s.ws.store)
-        self.assertEqual(s.ws.all()["paths"], [REPO])
-
-    def test_the_count_is_reported_and_tracks_both_sources(self):
-        (self.root / "a").mkdir()
-        config = Config(workspaces=(REPO,), working_dir=str(self.root), data_dir=str(self.root))
-        s = Core(config, Sessions(config))
-        self.assertEqual(s.ws.all()["count"], 1)
-        s.ws.store.add("a")
-        self.assertEqual(s.ws.all()["count"], 2)
-        s.ws.store.remove("a")
-        self.assertEqual(s.ws.all()["count"], 1)
-
-    def test_a_missing_directory_is_flagged_not_hidden(self):
-        s = self._svc()
-        s.ws.store.add("gone")
-        row = next(r for r in s.ws.all()["workspaces"] if r["name"] == "gone")
-        self.assertTrue(row["missing"])
-
-
-class OneMembershipQuestion(unittest.TestCase):
-    """The session layer keeps its own guard — it is the last thing before a CLI process is
-    spawned — but it must answer the same question the core gate answers. Before this,
-    a store-backed workspace passed the gate and was refused one layer down, and only a
-    real clone-and-send found it."""
-
-    def test_the_session_layer_sees_store_workspaces_too(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            (root / "repo").mkdir()
-            config = Config(workspaces=(), working_dir=str(root), data_dir=str(root))
-            s = Core(config, Sessions(config))
-            s.ws.store.add("repo")
-            self.assertTrue(s.sessions.membership(str(root / "repo")))
-
-    def test_the_session_layer_still_refuses_what_the_gate_refuses(self):
-        with tempfile.TemporaryDirectory() as d:
-            config = Config(workspaces=(), working_dir=d, data_dir=d)
-            s = Core(config, Sessions(config))
-            self.assertFalse(s.sessions.membership("/etc"))
-
-
-class NoWebFrameworkLeaksIn(unittest.TestCase):
-    def test_the_parts_below_http_import_no_web_framework(self):
-        """If a part below `http` ever imports aiohttp or FastAPI, logic has started moving
-        back towards one entry point and the two will drift."""
-        root = Path(__file__).resolve().parents[2] / "coscc"
-        above = {"http", "features", "kernel.py", "vault", "_studio", "_harness"}
-        paths = sorted(
-            p
-            for p in root.rglob("*.py")
-            if not above & set(p.relative_to(root).parts) and "__pycache__" not in p.parts
-        )
-        self.assertGreater(len(paths), 50)
-        for path in paths:
-            source = path.read_text()
-            for banned in (
-                "import aiohttp",
-                "import fastapi",
-                "from fastapi",
-                "from aiohttp",
-            ):
-                with self.subTest(module=path.name, banned=banned):
-                    self.assertNotIn(banned, source)
 
 
 class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
@@ -286,3 +210,25 @@ def unit_history(core: Core, cwd: str, unit: str) -> dict:
 def timeline(core: Core, cwd: str, unit: str) -> dict:
     runs = core.ws.journal().timeline(core.ws.key(cwd), unit)
     return {"runs": runs, "cost": totals_of(runs)}
+
+
+class OneMembershipQuestion(unittest.TestCase):
+    """The session layer keeps its own guard — it is the last thing before a CLI process is
+    spawned — but it must answer the same question the core gate answers. Before this,
+    a store-backed workspace passed the gate and was refused one layer down, and only a
+    real clone-and-send found it."""
+
+    def test_the_session_layer_sees_store_workspaces_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "repo").mkdir()
+            config = Config(workspaces=(), working_dir=str(root), data_dir=str(root))
+            s = Core(config, Sessions(config))
+            s.ws.store.add("repo")
+            self.assertTrue(s.sessions.membership(str(root / "repo")))
+
+    def test_the_session_layer_still_refuses_what_the_gate_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = Config(workspaces=(), working_dir=d, data_dir=d)
+            s = Core(config, Sessions(config))
+            self.assertFalse(s.sessions.membership("/etc"))

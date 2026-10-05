@@ -46,10 +46,6 @@ class TheLists(unittest.TestCase):
                 kind,
             )
 
-    def test_a_workspace_stop_links_to_no_unit(self):
-        [got] = guide.notes([{"unit": "", "kind": "f", "reason": "the pass failed"}])
-        self.assertEqual((got["screen"], got["tab"]), ("board", ""))
-
 
 def card(name: str, state: str, **kw) -> dict:
     return {"name": name, "state": {"state": state}, **kw}

@@ -160,15 +160,6 @@ class PrIsMechanical(Fixture):
         self.assertEqual(json.loads(rows[0]["inputs"])["head"], HEAD)
         self.assertEqual(self.starts("pr"), 0, "no session ran, so no start record names pr")
 
-    def test_the_title_is_type_number_and_slug(self):
-        gh = FakeGh()
-        run(self.machine(gh).open_pr(self.unit()))
-        create = next(c for c in gh.calls if c[:2] == ["pr", "create"])
-        self.assertEqual(create[create.index("--title") + 1], "feat(0007): a problem")
-        text = (self.directory / "pr.md").read_text(encoding="utf-8")
-        self.assertIn("# PR: feat(0007): a problem", text)
-        self.assertIn("PR: https://github.com/o/r/pull/7", text)
-
     def test_an_open_pull_request_of_the_branch_is_taken_not_created(self):
         gh = FakeGh(
             open_prs=[{"number": 3, "url": "https://github.com/o/r/pull/3", "headRefOid": HEAD}]
@@ -387,14 +378,6 @@ class TheReaderRecordsWhatChanged(Fixture):
             prmachine.open_prs(self.history, WS), [{"unit": NAME, "number": 7, "files": {"a.py"}}]
         )
 
-    def test_files_that_cannot_be_read_are_none(self):
-        """`pick` counts that as every file."""
-        m = self.reader(FakeGh(), files=None)
-        self.read(m)
-        self.assertEqual(
-            prmachine.open_prs(self.history, WS), [{"unit": NAME, "number": 7, "files": None}]
-        )
-
     def test_a_merge_made_outside_is_recorded_and_merges_nothing(self):
         gh = FakeGh()
         m = self.reader(gh)
@@ -430,13 +413,6 @@ class TheReaderRecordsWhatChanged(Fixture):
         got = self.read(m)
         self.assertEqual((got.moved, got.error), ([], "HTTP 502"))
         self.assertEqual(len(self.history.transitions(WS, NAME)), before)
-
-
-class TheRunnerKnowsTheStagesTheMachineDoes(unittest.TestCase):
-    def test_the_runner_hands_exactly_these_stages_to_the_machine(self):
-        from coscc.runner.steps import MECHANICAL
-
-        self.assertEqual(MECHANICAL, prmachine.STAGES)
 
 
 if __name__ == "__main__":

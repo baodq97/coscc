@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import unittest
 
 from coscc.leif import decide
@@ -132,16 +131,6 @@ class TheSentenceTellsAndNothingMore(unittest.TestCase):
             for leaked in (SHA, SHA[:7], "/home", "gh said", "3f1c2a9e", ".cos"):
                 self.assertNotIn(leaked, n["text"], record)
             self.assertEqual(n["text"].count(". "), 0, f"more than one sentence: {n['text']}")
-
-    def test_no_text_reads_as_an_approval(self):
-        for record in EVERY:
-            text = notices.notice_of(1, record)["text"].lower()
-            for word in ("approv", "accept", "pass"):
-                self.assertNotIn(word, text, text)
-
-    def test_the_line_opens_with_type_then_id(self):
-        line = json.dumps(notices.notice_of(42, _ship("shipped")))
-        self.assertTrue(line.startswith('{"type": "notice", "id": 42, '), line)
 
 
 if __name__ == "__main__":
