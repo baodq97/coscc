@@ -906,6 +906,7 @@ class Scripted(_Base):
                     "started_by": by,
                 }
             )
+        self.red_recorded()
         await self.pass_()
         self.assertEqual(
             self.launched, [("0001_a", "impl", "autopilot"), ("0002_b", "integrate", "autopilot")]
@@ -978,6 +979,7 @@ class Scripted(_Base):
                 "started_by": "autopilot",
             }
         )
+        self.red_recorded()
         await self.pass_()
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
         self.assertEqual([p["stage"] for p in self.picks()], ["impl"])
@@ -1322,13 +1324,19 @@ class Scripted(_Base):
             reasons=["changes-requested", "ci-red"],
             rounds=[{"verdict": "changes-requested"}],
         )
+        self.red_recorded()
 
-    def reads(self, head, checks=()):
-        """The PR machine has read `checks` for the unit's pull request at `head`."""
+    def red_recorded(self, head="h1", ci="red"):
+        """The PR machine recorded `ci` at `head`: `red` once the rerun it asked there was red."""
         self.addCleanup(mock.patch.stopall)
         mock.patch.object(
-            prmachine, "state", return_value={"state": "open", "number": 7, "head": head}
+            prmachine, "state", return_value={"state": "open", "number": 7, "head": head, "ci": ci}
         ).start()
+
+    def reads(self, head, checks=()):
+        """The PR machine has read `checks` for the unit's pull request at `head`, and recorded
+        `red` there."""
+        self.red_recorded(head)
         mock.patch.object(
             prmachine,
             "ci_held",
@@ -1401,7 +1409,7 @@ class Scripted(_Base):
         mock.patch.object(
             prmachine,
             "state",
-            side_effect=lambda *_: {"state": "open", "number": 7, "head": head[0]},
+            side_effect=lambda *_: {"state": "open", "number": 7, "head": head[0], "ci": "red"},
         ).start()
         mock.patch.object(
             prmachine,
@@ -1423,14 +1431,23 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual((len(self.launched), self.stops()), (3, {}))
 
-    async def test_a_red_ci_with_no_read_of_the_checks_still_queues_impl_with_a_note(self):
+    async def test_a_red_ci_with_no_checks_held_still_queues_impl_with_a_note(self):
         self.a_red_ci()
         await self.pass_()
         [row] = self.launch_rows
         self.assertEqual(
             (row["note"], row["note_by"]),
-            ("CI is red: the required checks failed. Fix them and push.", "app"),
+            ("CI is red at h1: the required checks failed. Fix them and push.", "app"),
         )
+
+    async def test_a_red_ci_the_machine_has_not_recorded_red_waits_for_its_rerun(self):
+        self.a_red_ci()
+        self.red_recorded(ci="pending")
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops(), self.picks()), ([], {}, []))
+        self.red_recorded()
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
 
     async def test_review_offered_again_for_its_screens_is_queued(self):
         Journal(self.config.working_dir, self.config.data_dir).finished(
@@ -2141,6 +2158,40 @@ class Scripted(_Base):
         # Green at the same head is settled: the next read asks only for the list.
         got = await self.core.autopilot.pr_read(self.key)
         self.assertEqual((got.moved, got.calls), ([], 1))
+
+    async def test_a_red_head_the_machine_reruns_queues_no_impl_until_the_rerun_is_red(self):
+        gh = test_prmachine.FakeGh(buckets=("fail",), link=test_prmachine.LINK)
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        # `next` reads `gh` itself, which still says the red the rerun is to replace.
+        self.add(
+            "0001_a",
+            "impl",
+            action="CI is red on #7: test — back to impl: fix on the branch and push",
+            plan="- `a/b.py`",
+            reasons=["ci-red"],
+        )
+        self.listed()
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {}), "nothing recorded yet")
+        self.assertEqual((await self.core.autopilot.pr_read(self.key)).moved, [("0001_a", "ci")])
+        await self.settled()
+        self.assertEqual(prmachine.state(machine.history, self.key, "0001_a")["ci"], "pending")
+        self.assertEqual((gh.count("run", "rerun"), self.launched, self.stops()), (1, [], {}))
+        gh.completed = test_prmachine.LATER
+        self.assertEqual((await self.core.autopilot.pr_read(self.key)).moved, [("0001_a", "ci")])
+        await self.until(lambda: self.launched, "the pass the red read scheduled")
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
+        self.assertEqual(gh.count("run", "rerun"), 1)
+
+    async def test_a_red_recorded_at_another_head_than_the_boards_waits(self):
+        self.a_red_ci()
+        self.units["0001_a"]["integration"] = {"state": "current", "pr_head": "h2"}
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {}))
+        self.units["0001_a"]["integration"]["pr_head"] = "h1"
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
 
     async def test_a_merge_frees_a_unit_waiting_on_it(self):
         gh = test_prmachine.FakeGh(buckets=("pass",))

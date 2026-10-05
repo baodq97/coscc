@@ -319,6 +319,15 @@ class Autopilot:
             return "", []
         return str((held or {}).get("head") or head), list((held or {}).get("checks") or [])
 
+    def _ci_recorded_red(self, key: str, unit: str, head: str) -> bool:
+        """Whether the PR machine recorded `red` at `head`, the pull request's head the board read
+        (at the head it last read when the board read none): it reruns a red head once first."""
+        try:
+            now = prmachine.state(self.integration.pr_machine().history, key, unit)
+        except sqlite3.Error, OSError, Busy:
+            return False
+        return now.get("ci") == "red" and (not head or now.get("head") == head)
+
     def _files(self, cwd: str, unit: str) -> set[str] | None:
         try:
             return planmap.files_of(
@@ -514,6 +523,13 @@ class Autopilot:
                     reasons[name] = (
                         ("running", here[name]) if name in here else decide.stop_reason(found[name])
                     )
+                    continue
+                # `next` reads the checks of `gh` itself: its red waits like `ci-pending` until the
+                # PR machine, having rerun the head once, recorded `red` there.
+                if decide.is_ci_red(nxt) and not self._ci_recorded_red(
+                    key, name, str((u.get("integration") or {}).get("pr_head") or "")
+                ):
+                    reasons[name] = ("ci", "")
                     continue
                 # A first `exhausted` step of a stage other than `ship` runs again once; so does a first prose
                 # step whose reply lacked its opening.

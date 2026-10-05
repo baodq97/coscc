@@ -12,7 +12,8 @@ Where the machine stands is a fold over those rows (`state`), never a column. `p
 them back to decide.
 
 On GitHub this module does: `git push` of the unit's own branch (no `--force`), `gh pr
-list`/`view`/`checks` to read, `gh pr create`, and `gh pr merge --squash --delete-branch
+list`/`view`/`checks` to read, `gh pr create`, `gh run rerun <run> --failed` once per head whose
+required checks it read red, and `gh pr merge --squash --delete-branch
 --match-head-commit <head>` with the head its own read gave the guard. It merges only when
 guard `ship-ready` is open and after the `merge-requested` row is committed, so a restart can
 tell a merge it may have made from one it never asked for.
@@ -21,10 +22,11 @@ tell a merge it may have made from one it never asked for.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any, Literal, TypedDict, get_args
 
 from coscc.store.db import now as _now
 from coscc.git import gh, gitops
@@ -181,6 +183,47 @@ def ci_of(rows: list[dict]) -> str:
     if any(b not in ("pass", "skipping") for b in buckets):
         return "pending"
     return "green"
+
+
+# The run of a GitHub Actions check, in its `link`: `.../actions/runs/<run>/job/<job>`.
+_RUN = re.compile(r"/actions/runs/(\d+)/job/\d+")
+# `(number, head)` whose rerun this process is asking for: a second read at once does not ask.
+_RERUNNING: set[tuple[int, str]] = set()
+
+
+class RedCheck(TypedDict):
+    name: str | None
+    completedAt: str | None
+
+
+class Rerun(TypedDict):
+    """What a `ci` transition records of the rerun it asked: the runs, the red checks it read,
+    what `gh` or the app said, and whether the rerun was made."""
+
+    runs: list[str]
+    red: list[RedCheck]
+    said: str
+    ok: bool
+
+
+def _red(checks: list[dict]) -> list[dict]:
+    return [c for c in checks if str(c.get("bucket") or "") in ("fail", "cancel")]
+
+
+def rerun_at(history: History, workspace: str, unit: str, head: str) -> Rerun | None:
+    """The `rerun` a `ci` transition recorded at `head`; `None` when the app never reran it there.
+    Read from the rows, so a restart does not rerun the head again.
+    """
+    for row in history.transitions(workspace, unit, PR_FILE):
+        if row.get("guard") != "ci-at-head":
+            continue
+        try:
+            inputs = json.loads(row.get("inputs") or "{}")
+        except ValueError:
+            continue
+        if inputs.get("head") == head and isinstance(inputs.get("rerun"), dict):
+            return inputs["rerun"]
+    return None
 
 
 def state(history: History, workspace: str, unit: str) -> dict[str, Any]:
@@ -450,9 +493,11 @@ class Machine:
         merge_commit: str = "",
         files: list[str] | None = None,
         checks: list[dict] | None = None,
+        ci: str = "",
     ) -> Callable[[Any], None]:
         """A read of the files keeps the ones an earlier read at the same head found: they are the same
-        diff. `checks` is handed in only by a `ci` transition, the one write of the row's `ci`.
+        diff. `checks` is handed in only by a `ci` transition, the one write of the row's `ci`, with
+        the `ci` it decided.
         """
 
         def write(conn: Any) -> None:
@@ -476,7 +521,7 @@ class Machine:
                     "UPDATE pull_requests SET ci = ?, ci_head = head, ci_checks = ?, ci_at = ? "
                     "WHERE root = ? AND workspace = ? AND number = ? AND head = ?",
                     (
-                        ci_of(checks),
+                        ci or ci_of(checks),
                         json.dumps(checks),
                         _now(),
                         str(self.history.working_dir),
@@ -488,15 +533,76 @@ class Machine:
 
         return write
 
-    def record_ci(self, u: Unit, number: int, head: str, checks: list[dict]) -> bool:
+    async def _ci_after_rerun(
+        self, u: Unit, number: int, head: str, checks: list[dict], tree: str
+    ) -> tuple[str, Rerun | None]:
+        """The `ci` to record for checks read at `head`, and the `rerun` to record with it.
+
+        Red at a head the app never reran: `gh run rerun <run> --failed` for each run a red check
+        names, and `pending`. A red check with no run id or no `completedAt`, or a rerun `gh` refused,
+        is `red` now, with what stopped it. Red at a head it reran: `red` once a red check finished
+        after the rerun's (`name`, `completedAt`) pairs, or the rerun was not made; `pending` before,
+        since a read just after the rerun may still be the old one.
+        """
+        ci = ci_of(checks)
+        red = _red(checks)
+        if ci != "red":
+            return ci, None
+        done = rerun_at(self.history, u.workspace, u.name, head)
+        if done is not None:
+            seen = {(r.get("name"), r.get("completedAt")) for r in done.get("red") or []}
+            newer = any((c.get("name"), c.get("completedAt")) not in seen for c in red)
+            return ("red" if newer or not done.get("ok") else "pending"), None
+        if (number, head) in _RERUNNING:
+            return "pending", None
+        rerun: Rerun = {
+            "runs": [],
+            "red": [{"name": c.get("name"), "completedAt": c.get("completedAt")} for c in red],
+            "said": "",
+            "ok": False,
+        }
+        runs: list[str] = []
+        for c in red:
+            found = _RUN.search(str(c.get("link") or ""))
+            if found is None or not c.get("completedAt"):
+                rerun["said"] = (
+                    f"{c.get('name') or '?'}: no GitHub Actions run in its link "
+                    f"{c.get('link') or '(none)'!r}"
+                    if found is None
+                    else f"{c.get('name') or '?'}: no completedAt to tell a later run by"
+                )
+                return "red", rerun
+            if found.group(1) not in runs:
+                runs.append(found.group(1))
+        rerun["runs"] = runs
+        _RERUNNING.add((number, head))
+        try:
+            said = []
+            for run in runs:
+                code, out, err = await self.gh(["run", "rerun", run, "--failed"], tree)
+                if code != 0:
+                    rerun["said"] = "; ".join(said + [f"run {run}: {gh.said(code, out, err)}"])
+                    return "red", rerun
+                said.append(f"run {run}: {(out or err).strip() or 'rerun asked'}")
+            rerun["said"], rerun["ok"] = "; ".join(said), True
+            return "pending", rerun
+        except PrError as e:
+            rerun["said"] = str(e)
+            return "red", rerun
+        finally:
+            _RERUNNING.discard((number, head))
+
+    async def record_ci(self, u: Unit, number: int, head: str, checks: list[dict]) -> bool:
         """The board's read of the required checks at `head`, as the reader's own: a `ci` transition
-        through `ci-at-head` when the head or the answer moved, and the row's `ci` written with it. An
-        answer that did not move only says when it was read again. Returns whether it was taken.
+        through `ci-at-head` when the head or the answer moved, or a rerun was asked, and the row's
+        `ci` written with it. An answer that did not move only says when it was read again. Returns
+        whether it was taken.
         """
         now = state(self.history, u.workspace, u.name)
-        ci = ci_of(checks)
+        ci, rerun = await self._ci_after_rerun(u, number, head, checks, u.tree)
         if (
-            head == now.get("head")
+            rerun is None
+            and head == now.get("head")
             and ci == now.get("ci")
             and ci_held(self.history, u.workspace, number, head)
         ):
@@ -521,6 +627,7 @@ class Machine:
             "ci": ci,
             "was_head": now.get("head"),
             "was_ci": now.get("ci"),
+            **({"rerun": rerun} if rerun is not None else {}),
         }
         applied = self._apply(
             u,
@@ -529,7 +636,7 @@ class Machine:
             "accepted",
             inputs,
             "code",
-            also=self._pull_request_row(u, number, head, checks=checks),
+            also=self._pull_request_row(u, number, head, checks=checks, ci=ci),
         )
         return applied.open
 
@@ -723,7 +830,8 @@ class Machine:
 
     async def _checks(self, tree: str, n: int) -> list[dict]:
         code, out, err = await self.gh(
-            ["pr", "checks", str(int(n)), "--required", "--json", "name,bucket"], tree
+            ["pr", "checks", str(int(n)), "--required", "--json", "name,bucket,link,completedAt"],
+            tree,
         )
         try:
             rows = json.loads(out or "null")
@@ -793,9 +901,10 @@ class Machine:
 
         No call at all when no unit's pull request is `open` or `merge-requested`. Otherwise one
         `gh pr list`; `gh pr checks --required` only for a pull request whose `ci` at the head the list
-        gave is not settled; `gh pr view` only for one gone from the list. Each change is a transition
-        -- `ci`, `merged`, `closed` -- and nothing is written when nothing changed. A call that fails
-        is not asked again before the next read.
+        gave is not settled, and `gh run rerun` once for a head they are first red at; `gh pr view`
+        only for one gone from the list. Each change is a transition -- `ci`, `merged`, `closed` --
+        and nothing is written when nothing changed. A call that fails is not asked again before the
+        next read.
         """
         out = Read()
         watching = watched(self.history, workspace)
@@ -848,15 +957,17 @@ class Machine:
                     continue
                 out.calls += 1
                 checks = await self._checks(root, number)
-                ci = ci_of(checks)
             except PrError as e:
                 out.error = out.error or str(e)
-                continue
-            if head == now.get("head") and ci == now.get("ci"):
                 continue
             files = None
             if head != now.get("head") or files_held(self.history, workspace, number, head) is None:
                 files = await (self._files or _files)(root, head)
+            # Nothing awaited from here to the transition: a board read in between would find
+            # neither the rerun being asked nor the one recorded, and ask it again.
+            ci, rerun = await self._ci_after_rerun(u, number, head, checks, root)
+            if rerun is None and head == now.get("head") and ci == now.get("ci"):
+                continue
             inputs = {
                 "number": number,
                 "head": head,
@@ -864,6 +975,7 @@ class Machine:
                 "ci": ci,
                 "was_head": now.get("head"),
                 "was_ci": now.get("ci"),
+                **({"rerun": rerun} if rerun is not None else {}),
             }
             applied = self._apply(
                 u,
@@ -872,7 +984,7 @@ class Machine:
                 "accepted",
                 inputs,
                 "code",
-                also=self._pull_request_row(u, number, head, files=files, checks=checks),
+                also=self._pull_request_row(u, number, head, files=files, checks=checks, ci=ci),
             )
             if applied.open:
                 out.move(name, "ci", (applied.row or {}).get("id"))
