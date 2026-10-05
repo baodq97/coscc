@@ -24,7 +24,8 @@ Gate: from the board it was asked (the prompt says so); at a terminal ask
    `## Design` names components, boundaries and data crossing them, not files or order of work,
    and where the new work plugs in (the extension points the repository's CLAUDE.md names). A
    need none of them serves is a change to the core: name it apart.
-3. Two contradicting constraints: name it under `## Concerns` and who decides. Never pick silently.
+3. Two contradicting constraints: a numbered item under `## Open questions` with your
+   recommendation, which the board can answer; `## Concerns` holds no decision. Never pick silently.
 4. A doubt you cannot measure from here (does an SDK, CLI or process behave as assumed) is an
    `[unmeasured]` item, not a guess.
 5. On a unit that changes a screen, the UI standard rule's part for this stage applies.
