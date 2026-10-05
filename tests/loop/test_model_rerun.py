@@ -20,6 +20,7 @@ from coscc.loop.model import (
     parse_reruns,
     parse_ship,
     parse_status,
+    read_unit,
 )
 from coscc.loop.probe import UI_STANDARD
 from coscc.loop.repo_rules import screens_answer, screens_needs
@@ -47,6 +48,7 @@ from tests.loop.test_model import (
     read,
     review_art,
     round_,
+    state_of_root,
     unit,
     with_answers,
 )
@@ -366,6 +368,37 @@ def test_nothing_is_offered_on_a_finished_held_or_closed_unit(tmp_path):
     assert re.search(
         r"impl\.md is rejected", json.loads(closed.cli("rerun", closed.name).out)["why"]
     )
+
+
+def test_a_shipped_unit_stays_finished_after_a_rerun_and_ignores_a_hold(tmp_path):
+    t = RerunTree(tmp_path)
+    t.rerun("intent")
+
+    def shipped():
+        state = state_of_root(t.root)
+        state["units"][f"/{t.name}"]["shipped"] = True
+        return read_unit(str(t.dir), t.name, state)
+
+    u = t.read()
+    for f in ["intent.md", "spec.md", "plan.md", "impl.md", "pr.md"]:
+        assert u["artifacts"][f].get("stale"), f
+    assert decide(u)["stage"] == "intent"
+
+    u = shipped()
+    assert {k: decide(u)[k] for k in ("why", "stage", "blocked")} == {
+        "why": "finished",
+        "stage": "",
+        "blocked": False,
+    }
+
+    t.append("intent.md", hold_block("Paused", "chờ"))
+    u = shipped()
+    assert u["hold"] is None
+    assert u["holdMoves"] == []
+    assert (
+        "intent.md carries a hold block, but the unit is finished — it is ignored" in u["problems"]
+    )
+    assert decide(u)["why"] == "finished"
 
 
 def test_only_an_accepted_artifact_is_offered_and_spike_only_when_the_spec_needs_one(tmp_path):

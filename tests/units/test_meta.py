@@ -477,7 +477,13 @@ class AMergeIsARow(Base):
         unit = "0013_open-question"
         (self.store / ".cos" / unit / "ship.md").write_text("# Ship\nStatus: accepted.\n")
         self.meta.ingest(
-            WS, self.store, unit, actor="stage:ship", session="s1", source="run:ship", wrote="ship.md"
+            WS,
+            self.store,
+            unit,
+            actor="stage:ship",
+            session="s1",
+            source="run:ship",
+            wrote="ship.md",
         )
         self.assertTrue(self.shipped(unit))
 

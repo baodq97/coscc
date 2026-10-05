@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import json
 
+from coscc.loop import RERUNNABLE
 from coscc.loop.model import above_answers
-from tests.loop.conftest import UnitStore, entry, header, expect
+from tests.loop.conftest import UnitStore, entry, header, expect, python
 
 UNIT = "0001_x"
 KINDS = {
@@ -205,6 +206,27 @@ def test_a_finished_unit_refuses_a_stage(store):
     r = rerun(store, UNIT, "spec")
     assert r.code == 1
     assert "plan.md is done" in r.err
+
+
+def test_a_shipped_unit_offers_nothing_and_refuses_every_stage(store):
+    accepted = {f: "accepted" for f in KINDS}
+    make(store, accepted, unmeasured=True)
+    assert json.loads(python(store.argv("rerun", UNIT)).out)["offers"] != []
+    store.units[f"ws/{UNIT}"]["shipped"] = True
+    r = python(store.argv("rerun", UNIT))
+    assert r.code == 0
+    assert json.loads(r.out) == {
+        "unit": UNIT,
+        "offers": [],
+        "why": "the unit is finished: it shipped",
+    }
+    for stage in RERUNNABLE:
+        r = python(store.argv("rerun", UNIT, stage))
+        assert r.code == 1, stage
+        assert (
+            r.err.strip()
+            == f"{stage} cannot be run again for {UNIT}: the unit is finished: it shipped"
+        )
 
 
 def test_a_paused_unit_refuses_a_stage(store):

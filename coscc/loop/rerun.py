@@ -37,6 +37,8 @@ def rerun_closed(unit):
     """and (c): why nothing may be run again on `unit` at all, or `None`."""
     if status_of(unit, "plan.md") == "done":
         return "the unit is finished: plan.md is done"
+    if unit.get("shipped"):
+        return "the unit is finished: it shipped"
     rejected = next((s for s in STAGES if status_of(unit, s["file"]) == "rejected"), None)
     if rejected:
         return f"the unit is closed: {rejected['file']} is rejected"

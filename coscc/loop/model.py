@@ -786,6 +786,7 @@ NO_ENTRY = {
     "answers": [],
     "unknowns": [],
     "merged": False,
+    "shipped": False,
 }
 
 
@@ -820,7 +821,8 @@ def settled(s):
 
 
 def ended_of(unit):
-    if status_of(unit, "plan.md") == "done":
+    # A unit that shipped stays finished, whatever ran again after it.
+    if unit.get("shipped") or status_of(unit, "plan.md") == "done":
         return "finished"
     return "closed" if any(status_of(unit, s["file"]) == "rejected" for s in STAGES) else None
 
@@ -830,6 +832,8 @@ def entry_unit(e):
     for file in ARTIFACTS:
         if truthy(dig(e, "artifacts", file)):
             unit["artifacts"][file] = {"status": status_in(e, file)}
+    if dig(e, "shipped") is True:
+        unit["shipped"] = True
     if ended_of(unit) or not unit["artifacts"].get("intent.md"):
         unit["hold"] = None
     else:
@@ -1547,6 +1551,9 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
         held = fold_holds(nullish(dig(known, "holds"), []))
     unit["problems"].extend(f"intent.md: {p}" for p in held["problems"])
     unit["hold"] = held["hold"]
+    # Only when true, so a unit that never shipped reads as it did before.
+    if dig(known, "shipped") is True:
+        unit["shipped"] = True
     ended = ended_of(unit)
     if ended and unit["hold"]:
         unit["problems"].append(
