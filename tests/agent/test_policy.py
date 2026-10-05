@@ -169,7 +169,7 @@ class OneGrantPerStage(unittest.TestCase):
         added = policy.SUBMITTING_SESSIONS - {"estimate", "integrate"}
         self.assertEqual(
             set(policy.GRANTS) - added,
-            set(expected) | {"spec", "integrate", "spike", "estimate"},
+            set(expected) | {"intent", "spec", "integrate", "spike", "estimate"},
         )
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
