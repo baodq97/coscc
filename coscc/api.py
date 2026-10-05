@@ -37,7 +37,7 @@ from coscc import auth, kernel
 from coscc import features, plugin, studio
 from coscc.config import Config, from_env
 from coscc.service import Service
-from coscc.service.answers import opens_with
+from coscc.leif.answers import opens_with
 from coscc.service.common import NotUpdatable, Updating
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
@@ -47,7 +47,7 @@ from coscc.units.read import Cards, Detail, UpNext, cards, detail
 from coscc.runner.steps import NextStep
 from coscc.service.activity import Insights
 from coscc.service.release import ReleaseView
-from coscc.service.sessions import ChatHistory, ChatSessions
+from coscc.leif.chat import ChatHistory, ChatSessions
 from coscc.service.watch import EventsPage
 from coscc.units.backlog import SHORTLIST_MAX
 from coscc.units.workspaces import WorkspaceList

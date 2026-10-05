@@ -9,9 +9,10 @@ import re
 import sqlite3
 from datetime import date
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
-from coscc.units import autopilot, backlog
+from coscc.units import backlog
 from coscc.units import board as board_reader
 from coscc.git import gh, gitops
 from coscc.units import hold as hold_rules
@@ -30,20 +31,22 @@ from coscc.runner.queue import Attempt, describe
 from coscc import units
 from coscc.units import scratch, worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
-from coscc.service.autopilot import autopilot_values
-from coscc.service.common import OUTCOME_RESULTS
+from coscc.leif import decide
+from coscc.leif.autopilot import autopilot_values
 from coscc.runner.queue import Refused
 from coscc.kernel import OWNER
 from coscc.kernel import Invalid
 from coscc.config import Config
 from coscc.units.workspaces import Workspaces
 from coscc.runner.queue import Holds
-from coscc.service.agents import Agents
-from coscc.service.backlog import Backlog
 from coscc.units.ideas import Ideas
 from coscc.bus import Bus, Event
 
 log = logging.getLogger(__name__)
+
+# The three results a `### Outcome` block may carry, as a person types them, and the word
+# the loop's `parseOutcome` reads each one as.
+OUTCOME_RESULTS = {"đạt": "met", "trượt": "missed", "không đo được": "unmeasurable"}
 
 
 def opens_with(by: Any, names: Any) -> bool:
@@ -100,16 +103,14 @@ class Answers:
         config: Config,
         ws: Workspaces,
         holds: Holds,
-        agents: Agents,
-        backlog: Backlog,
+        agent: Callable[[str], dict[str, Any] | None],
         ideas: Ideas,
         bus: Bus,
     ) -> None:
         self.config = config
         self.ws = ws
         self.holds = holds
-        self.agents = agents
-        self.backlog = backlog
+        self.agent = agent
         self.ideas = ideas
         self.bus = bus
         # Held across read-check-append so two answers arriving together cannot interleave.
@@ -185,7 +186,7 @@ class Answers:
             }
         pr_url = (found.get("pr") or {}).get("url") or ""
         # The `review` agent as the table names it now, overrides included.
-        reviewer = self.agents.agent("review")
+        reviewer = self.agent("review")
         result = await prcomment.post(
             unit,
             n,
@@ -402,10 +403,6 @@ class Answers:
                 f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}"
             )
 
-    def _create_lock(self, cwd: str) -> asyncio.Lock:
-        """One lock per workspace, held across numbering and making the tree."""
-        return self._create_locks.setdefault(units.key(cwd), asyncio.Lock())
-
     async def create_unit(
         self, cwd: str, slug: str, brief: str = "", idea: str = "", depends_on: str = ""
     ) -> dict[str, Any]:
@@ -427,7 +424,7 @@ class Answers:
             )
         linked = self.ideas.idea_link(cwd, idea, brief, depends_on) if idea else None
         root = Path(cwd).expanduser().resolve()
-        async with self._create_lock(cwd):
+        async with self._create_locks.setdefault(units.key(cwd), asyncio.Lock()):
             reserve = [root]
             try:
                 reserve += [
@@ -548,8 +545,6 @@ class Answers:
         checked and written under one hold of `_answer_lock` and one board read. A refusal
         raises. Returns `{written: [{artifact, question}], date}`. Each row is a `person`'s.
         """
-        authority = "person"
-        name = answered_by
         today = date.today().isoformat()
         written: list[dict[str, Any]] = []
         async with self._answer_lock:
@@ -571,11 +566,11 @@ class Answers:
                     artifact,
                     question,
                     str(answer or "").strip("\n"),
-                    name,
+                    answered_by,
                 )
                 written.append({"artifact": artifact, "question": finding or number})
                 texts.append(text)
-            self._record_answers(cwd, unit, found, written, texts, name, today, via, authority)
+            self._record_answers(cwd, unit, found, written, texts, answered_by, today, via)
 
         return {"written": written, "date": today}
 
@@ -589,7 +584,6 @@ class Answers:
         name: str,
         today: str,
         via: str,
-        authority: str = "person",
     ) -> None:
         """Each answer's row in `unit_answers` and its `answer` record in the run log in one
         transaction: all are written or none is. Raises `Invalid` when none was.
@@ -614,7 +608,7 @@ class Answers:
                     today,
                     via,
                     conn=conn,
-                    authority=authority,
+                    authority="person",
                 )
 
         journal = self.ws.journal()
@@ -641,9 +635,9 @@ class Answers:
                         "artifact": artifact,
                         "question": w["question"],
                         "via": via,
-                        "authority": authority,
+                        "authority": "person",
                         "status": row.get("status", ""),
-                        "completes": autopilot.answer_completes(found, artifact, given[artifact]),
+                        "completes": decide.answer_completes(found, artifact, given[artifact]),
                         "autopilot": on,
                         "shortlisted": unit in ((listed or {}).get("units") or []),
                         "held": bool(found.get("hold")),

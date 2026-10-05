@@ -12,11 +12,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.units import autopilot, guide
+from coscc.leif import decide, guide
 from coscc.config import Config
 from coscc.github import prmachine
 from tests.github import test_prmachine
-from coscc.store.journal import Journal
+from coscc.store.journal import Journal, is_step
 from coscc.store.db import Busy
 from coscc.service import Service
 from coscc.kernel import Invalid
@@ -105,7 +105,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         return [
             r
             for r in Journal(self.config.working_dir, self.config.data_dir).records(kind="start")
-            if autopilot.is_step(r)
+            if is_step(r)
         ]
 
     def listed(self, *names: str) -> None:
@@ -880,7 +880,7 @@ class Scripted(_Base):
             )
             log.append(
                 {
-                    "kind": autopilot.PR_MACHINE,
+                    "kind": prmachine.RECORD_KIND,
                     "workspace": self.key,
                     "unit": unit,
                     "stage": "ship",
@@ -1038,7 +1038,7 @@ class Scripted(_Base):
         self.assertEqual(len(self.launched), 2)
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(
-            self.service.autopilot.stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"], decide.STILL_RED
         )
 
     async def test_a_rebase_that_turns_ci_red_runs_impl_once_then_stops(self):
@@ -1049,7 +1049,7 @@ class Scripted(_Base):
         self.assertEqual(len(self.launched), 1)
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(
-            self.service.autopilot.stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"], decide.STILL_RED
         )
 
     async def test_red_still_on_the_integrated_head_after_impl_stops(self):
@@ -1059,7 +1059,7 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(
-            self.service.autopilot.stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"], decide.STILL_RED
         )
 
     async def _still_red_once_main_moved(self, state: str) -> None:
@@ -1071,7 +1071,7 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(
-            self.service.autopilot.stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"], decide.STILL_RED
         )
 
     async def test_still_red_and_behind_after_impl_stops(self):
@@ -1084,9 +1084,9 @@ class Scripted(_Base):
         reading = asyncio.Event()
         self.addCleanup(reading.set)
 
-        need = autopilot.reservation("integrate")
+        need = decide.reservation("integrate")
         self.service.autopilot.set_setting(
-            self.ws, "daily_cap_usd", need + autopilot.reservation("spec") / 2
+            self.ws, "daily_cap_usd", need + decide.reservation("spec") / 2
         )
         self.add(
             "0001_a",
@@ -1132,7 +1132,7 @@ class Scripted(_Base):
         self.service.autopilot.set_setting(
             self.ws,
             "daily_cap_usd",
-            autopilot.estimate("spec") + autopilot.reservation("spec") - 0.01,
+            decide.estimate("spec") + decide.reservation("spec") - 0.01,
         )
         self.add("0001_a", "spec")
         await self.pass_()
@@ -1150,9 +1150,7 @@ class Scripted(_Base):
             set(cap), {"limit", "spent", "known", "estimated", "estimated_count", "running", "day"}
         )
         self.assertEqual(cap["spent"], round(cap["known"] + cap["estimated"], 2))
-        self.assertEqual(
-            (cap["estimated"], cap["estimated_count"]), (autopilot.estimate("spec"), 1)
-        )
+        self.assertEqual((cap["estimated"], cap["estimated_count"]), (decide.estimate("spec"), 1))
 
     async def test_today_is_the_cap_figure_with_the_autopilot_off(self):
         log = Journal(self.config.working_dir, self.config.data_dir)
@@ -1280,7 +1278,7 @@ class Scripted(_Base):
         self.assertEqual([q[0] for q in self.queued()], ["0001_a", "0003_c"])
         self.assertEqual(
             self.service.autopilot.cap([], 100.0)["running"],
-            autopilot.reservation("impl") + autopilot.reservation("spec"),
+            decide.reservation("impl") + decide.reservation("spec"),
         )
 
     async def test_wakes_are_one_pass_and_a_wake_during_a_pass_is_one_more(self):
@@ -1608,7 +1606,7 @@ class Scripted(_Base):
 
             with (
                 mock.patch.object(self.service.steps, "enqueue_step", side_effect=refuse),
-                self.assertLogs("coscc.service.autopilot", "INFO") as logged,
+                self.assertLogs("coscc.leif.autopilot", "INFO") as logged,
             ):
                 await self.pass_()
             [record] = [r for r in logged.records if "queue" in r.getMessage()]
@@ -1662,7 +1660,7 @@ class Scripted(_Base):
             )
             if r["stop"]
         ]
-        self.assertEqual((row["workspace"], row["reason"]), (self.key, autopilot.NO_SHORTLIST))
+        self.assertEqual((row["workspace"], row["reason"]), (self.key, decide.NO_SHORTLIST))
 
     async def test_off_loopback_is_logged_with_no_unit(self):
         use_config(self.service, dataclasses.replace(self.config, host="0.0.0.0"))
@@ -1673,7 +1671,7 @@ class Scripted(_Base):
 
     async def test_a_unit_s_launch_failing_keeps_the_workspace_stop_and_logs_only_the_unit(self):
         # A call that looked at one unit did not look at the workspace.
-        workspace = {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}
+        workspace = {"unit": "", "kind": "shortlist", "reason": decide.NO_SHORTLIST}
         self.service.autopilot.set_stops(self.key, {"": workspace})
         self.service.autopilot.set_stops(
             self.key,
@@ -1714,9 +1712,7 @@ class Scripted(_Base):
         await self.service.autopilot.run_pass(self.key)
         await self.started()
         self.assertEqual((self.launched, self.asked, self.stops()), ([], [], {"": "shortlist"}))
-        self.assertEqual(
-            self.service.autopilot.stops[self.key][""]["reason"], autopilot.NO_SHORTLIST
-        )
+        self.assertEqual(self.service.autopilot.stops[self.key][""]["reason"], decide.NO_SHORTLIST)
         self.listed()
         await self.service.autopilot.run_pass(self.key)
         await self.started()
@@ -2439,7 +2435,7 @@ class TheGuideBlock(_Base):
         return {"name": name, "state": {"state": state}, **kw}
 
     def block(self, units: list[dict] | None = None) -> dict:
-        with mock.patch("coscc.service.autopilot.autopilot_values", return_value=self.VALUES):
+        with mock.patch("coscc.leif.autopilot.autopilot_values", return_value=self.VALUES):
             return self.service.autopilot.guide_block(self.key, units or [])
 
     def stops(self, *rows: tuple[str, str]) -> None:
@@ -2513,7 +2509,7 @@ class TheGuideBlock(_Base):
         self.listed("0001_a")
         units = [self.card("0001_a", "needs-you")]
         data = {"units": units}
-        with mock.patch("coscc.service.autopilot.autopilot_values", return_value=self.VALUES):
+        with mock.patch("coscc.leif.autopilot.autopilot_values", return_value=self.VALUES):
             self.service.autopilot.show(self.key, data)
         self.assertEqual(
             (len(data["guide"]["needs_you"]), data["guide"]["shortlist_empty"]), (1, False)

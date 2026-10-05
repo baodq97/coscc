@@ -394,11 +394,13 @@ def _text(v: Any) -> str:
     return "" if v is None else str(v)
 
 
-def _number(v: Any) -> float | None:
+def number(v: Any) -> float | None:
+    """`v` as a float when it is a number and no bool, else `None`."""
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
-def _count(v: Any) -> int | None:
+def count(v: Any) -> int | None:
+    """`v` when it is a whole number and no bool, else `None`."""
     return int(v) if isinstance(v, int) and not isinstance(v, bool) else None
 
 
@@ -411,8 +413,8 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
         return {
             "outcome": _text(r.get("outcome")),
             "ended": _text(r.get("ended")),
-            "turns": _count(r.get("turns")),
-            "cost_usd": _number(r.get("cost_usd")),
+            "turns": count(r.get("turns")),
+            "cost_usd": number(r.get("cost_usd")),
         }
 
     tree = unit.get("worktree")
@@ -479,10 +481,10 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
                 "outcome": _text(r.get("outcome")),
                 "detail": _text(r.get("detail")),
                 "artifact": _text(r.get("artifact")),
-                "cost_usd": _number((r.get("cost") or {}).get("cost_usd"))
+                "cost_usd": number((r.get("cost") or {}).get("cost_usd"))
                 if r.get("reported", True)
                 else None,
-                "turns": _count((r.get("cost") or {}).get("turns"))
+                "turns": count((r.get("cost") or {}).get("turns"))
                 if r.get("turns_reported", True)
                 else None,
                 "run": _text(r.get("run")),

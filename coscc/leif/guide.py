@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 # What one stop asks of a person: `(do, screen, tab)`.
-# Every stop kind of `autopilot.STOP_KINDS` but `full`, which only waits for a free place.
+# Every stop kind of `decide.STOP_KINDS` but `full`, which only waits for a free place.
 TODO: dict[str, tuple[str, str, str]] = {
     "a": ("Answer its open questions.", "unit", "questions"),
     "b": ("Decide what it waits on.", "unit", "overview"),

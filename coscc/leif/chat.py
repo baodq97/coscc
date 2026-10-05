@@ -2,23 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, AsyncIterator, TypedDict
 
+from coscc.agent import models
 from coscc.agent import sessions as reader
 from coscc.agent import transcript
-from coscc.store.journal import BadRecord
-from coscc.store.db import Busy
-from coscc.agent import models
-from coscc.service.update import refuse_while_updating
+from coscc.agent.sessions import Sessions
+from coscc.config import Config
 from coscc.kernel import Invalid
+from coscc.store.db import Busy
+from coscc.store.journal import BadRecord
+from coscc.units.workspaces import Workspaces
 
 # A chat turn's ceiling: `Sessions.stream`'s default, since chat names none, and no budget.
 CHAT_TURNS = 1
-from coscc.config import Config
-from coscc.units.workspaces import Workspaces
-from coscc.agent.sessions import Sessions
-from coscc.update.updater import Updater
-from coscc.service.models import Models
 
 
 class ChatSession(TypedDict):
@@ -51,13 +49,18 @@ class ChatHistory(TypedDict):
 
 class Chat:
     def __init__(
-        self, config: Config, ws: Workspaces, sessions: Sessions, updater: Updater, models: Models
+        self,
+        config: Config,
+        ws: Workspaces,
+        sessions: Sessions,
+        refuse_updating: Callable[[], None],
+        model_for: Callable[[str], tuple[str | None, str]],
     ) -> None:
         self.config = config
         self.ws = ws
         self.sessions = sessions
-        self.updater = updater
-        self.models = models
+        self.refuse_updating = refuse_updating
+        self.model_for = model_for
 
     # -- sessions -----------------------------------------------------------
 
@@ -85,7 +88,7 @@ class Chat:
         caller has committed to streaming, when the status line is gone.
         """
         self.ws.check(cwd)
-        refuse_while_updating(self.updater)
+        self.refuse_updating()
         if not text.strip():
             raise Invalid("text is required")
 
@@ -104,7 +107,7 @@ class Chat:
         """
         self.check_send(cwd, text)
         # Chat is a row of the same table as the stages.
-        model, model_source = self.models.model_for(models.CHAT)
+        model, model_source = self.model_for(models.CHAT)
         extra: dict[str, Any] = {
             "owner": {
                 "kind": "chat",

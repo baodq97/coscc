@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from coscc.units import autopilot
+from coscc.leif import decide
 from coscc.units import board as board_reader
 from coscc.store.db import Data
 from coscc.store.journal import Journal
@@ -109,12 +109,12 @@ class Models:
 
     async def ci_red(self, cwd: str, unit: str, repo: str) -> bool | None:
         """Whether `coscc.loop next` sends `unit` back to `impl` because CI is red, read with
-        `autopilot.is_ci_red`; `None` when it could not be asked. Never raises."""
+        `decide.is_ci_red`; `None` when it could not be asked. Never raises."""
         try:
             found = await board_reader.next_step(
                 self.ws.units_root(cwd), unit, repo=repo, state=self.ws.snapshot(cwd, [unit])
             )
-            return autopilot.is_ci_red(found)
+            return decide.is_ci_red(found)
         except Exception:
             # Recorded as null.
             log.exception("whether the CI of %s is red could not be read", unit)

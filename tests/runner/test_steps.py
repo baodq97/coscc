@@ -14,11 +14,10 @@ from unittest import mock
 from coscc.bus import Bus
 from coscc import units
 from coscc.agent import modeltrial
-from coscc.github import prscope
+from coscc.github import prmachine, prscope
 from coscc.git import fetches
 from coscc.units import worktrees
 from coscc.config import Config
-from coscc.units import autopilot
 from coscc.runner.queue import Refused
 from coscc.runner.steps import step_cwd
 from coscc.units.worktrees import describe_base
@@ -2902,9 +2901,9 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
             with self.subTest(stage=stage, outcome=outcome):
                 service = self.service()
                 # Each subtest makes a new unit over the same data root, so only its own rows count.
-                before = len(service.ws.journal().records(kind=autopilot.PR_MACHINE))
+                before = len(service.ws.journal().records(kind=prmachine.RECORD_KIND))
                 self.drive(service, stage, outcome)
-                [rec] = service.ws.journal().records(kind=autopilot.PR_MACHINE)[before:]
+                [rec] = service.ws.journal().records(kind=prmachine.RECORD_KIND)[before:]
                 self.assertEqual(
                     (rec["unit"], rec["stage"], rec["outcome"], rec["started_by"]),
                     (self.unit, stage, outcome, "person"),
@@ -2920,7 +2919,7 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         service = self.service()
         with mock.patch.object(prmachine, "state", lambda *a: {"state": "merge-requested"}):
             self.drive(service, "ship", "failed")
-        [rec] = service.ws.journal().records(kind=autopilot.PR_MACHINE)
+        [rec] = service.ws.journal().records(kind=prmachine.RECORD_KIND)
         self.assertEqual(
             (rec["outcome"], rec["merge_refused"], rec["detail"]), ("failed", True, "gh down")
         )

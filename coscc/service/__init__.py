@@ -24,12 +24,12 @@ from coscc.update import updater as updater_mod
 
 from coscc.service.activity import Activity
 from coscc.service.agents import Agents
-from coscc.service.answers import Answers
-from coscc.service.autopilot import Autopilot, autopilot_values
+from coscc.leif.answers import Answers
+from coscc.leif.autopilot import Autopilot, autopilot_values
+from coscc.leif.chat import CHAT_TURNS, Chat
 from coscc.service.backlog import Backlog
 from coscc.service.models import Models
 from coscc.service.release import Release
-from coscc.service.sessions import CHAT_TURNS, Chat
 from coscc.store.journal import BadRecord
 from coscc.store.db import Busy
 from coscc.kernel import OWNER
@@ -73,7 +73,13 @@ class Service:
         self.agents = Agents(self.config, self.ws)
         self.models = Models(self.config, self.ws)
         self.activity = Activity(self.config, self.ws)
-        self.chat = Chat(self.config, self.ws, self.sessions, self.updater, self.models)
+        self.chat = Chat(
+            self.config,
+            self.ws,
+            self.sessions,
+            lambda: refuse_while_updating(self.updater),
+            self.models.model_for,
+        )
         self.ideas = Ideas(self.config, self.ws)
         self.backlog = Backlog(
             self.config, self.ws, self.holds, self.sessions, self.updater, self.models, self.bus
@@ -83,7 +89,7 @@ class Service:
         # An answer written and a step or an integration ended each schedule an autopilot
         # pass; the autopilot, built after them, is looked up when the event comes.
         self.answers = Answers(
-            self.config, self.ws, self.holds, self.agents, self.backlog, self.ideas, self.bus
+            self.config, self.ws, self.holds, self.agents.agent, self.ideas, self.bus
         )
         self.steps = Steps(
             self.config,
@@ -132,7 +138,8 @@ class Service:
             self.config,
             self.ws,
             self.holds,
-            self.agents,
+            lambda: self.agents.config_overrides()[0]["budget"],
+            lambda: self.agents.agent_overrides()[0],
             self.steps,
             self.integration,
             self.boards,

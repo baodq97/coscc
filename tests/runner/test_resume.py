@@ -419,7 +419,7 @@ class TakingUpAfterAnUpdate(_Base):
     def test_the_chat_ceiling_is_what_sessions_gives_a_turn_that_names_none(self):
         import inspect
 
-        from coscc.service.sessions import CHAT_TURNS
+        from coscc.leif.chat import CHAT_TURNS
 
         self.assertEqual(
             CHAT_TURNS, inspect.signature(Sessions.stream).parameters["max_turns"].default

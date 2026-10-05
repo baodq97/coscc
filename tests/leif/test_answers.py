@@ -1,4 +1,4 @@
-"""Tests for `Answers` in `coscc/service/answers.py`, split from
+"""Tests for `Answers` in `coscc/leif/answers.py`, split from
 `tests/service/test_service.py`."""
 
 from __future__ import annotations

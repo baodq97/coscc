@@ -13,9 +13,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
 from coscc.agent import labels, models
-from coscc.runlog import spend
-from coscc.units.guards import REASONS as GATE_REASONS
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, is_prose_stage
+from coscc.github import prmachine
+from coscc.leif import spend
+from coscc.store.journal import is_step
+from coscc.units.board import SHIP_UNRECORDED, open_questions
+from coscc.units.guards import REASONS as GATE_REASONS
 
 # Defaults.
 DEFAULT_MAX_PARALLEL = 4
@@ -27,10 +30,6 @@ OPEN_FOR = timedelta(hours=24)
 
 # The stages that write code, and so may not run beside another whose files overlap.
 CODE_STAGES = ("impl", "integrate")
-
-# Run-log lines under a stage that is none of the loop's (an earlier version wrote its answering
-# session here); none of them is the unit's last step, a start, or a failed step.
-NOT_STEPS = ("precedent",)
 
 # The stop kinds `a`-`f`, plus an empty shortlist, a draft run again as often as it may, and
 # one waiting for a free place.
@@ -52,8 +51,6 @@ REASONS = (
 )
 # The stop `e` of a unit whose screenshots could not be taken again before `review`.
 SCREENS_FAILED = "the screenshots could not be taken again before review"
-# The stop `e`, and the board's reason, of a unit `next` reads as merging with no `ship` running.
-SHIP_UNRECORDED = "ship requested a merge and recorded no outcome"
 
 
 def has_nothing_to_integrate(code: Any) -> bool:
@@ -132,26 +129,8 @@ def is_over(answer: Any) -> bool:
     return said(answer, "finished") or said(answer, "closed")
 
 
-# The record a `pr` or `ship` the PR machine ran leaves in place of an `end`: `outcome`
-# `done` or `failed`, and the machine's `result`, `reasons` and `detail`.
-PR_MACHINE = "prmachine"
-
-
-def is_step(record: dict[str, Any]) -> bool:
-    """False for a line of a session that is no stage of the loop (`NOT_STEPS`)."""
-    return record.get("stage") not in NOT_STEPS
-
-
 def _stop(kind: str, reason: str) -> dict[str, str]:
     return {"kind": kind, "reason": reason}
-
-
-def open_questions(unit_row: dict[str, Any]) -> list[dict[str, Any]]:
-    """Every unanswered question of the counted artifact (the loop's `unitQuestions`): the stop `a`,
-    and the `questions` record a step that ends `done` leaves."""
-    return [
-        q for q in unit_row.get("questions") or [] if q.get("counted") and not q.get("answered")
-    ]
 
 
 def _listed(questions: Iterable[dict[str, Any]]) -> str:
@@ -185,7 +164,7 @@ def stop_for(
     """The first stop that holds for one unit, as `{kind, reason}`, or `None`.
 
     `unit_row` is the unit as `Service.board` has it; `nxt` is `Steps.next_step`'s answer;
-    `last` the unit's latest `end`, `integration`, `screens` or `PR_MACHINE` record, or
+    `last` the unit's latest `end`, `integration`, `screens` or `prmachine.RECORD_KIND` record, or
     `None`. `None` back means no stop, which is not the same as something to run.
     `exhausted` and `unopened` are how many steps of `last`'s stage ended `exhausted` or
     `failed` for their reply's opening; at 0 such a step stops at once. `recorded` is whether
@@ -253,7 +232,7 @@ def stop_for(
     # A `pr` or `ship` the PR machine ran that failed, or whose guard refused it, stops as a
     # `failed` session does. A merge GitHub refused stops `f` on what `gh` said, so the pass
     # can still integrate a unit the refusal left behind `main`.
-    if kind == PR_MACHINE and outcome != "done":
+    if kind == prmachine.RECORD_KIND and outcome != "done":
         detail = str(seen.get("detail") or "") or ", ".join(
             str(r) for r in seen.get("reasons") or []
         )
@@ -466,16 +445,6 @@ def reserved(
 # --- which of the candidates run now --------------------------------------
 
 
-def files_of(plan_text: str | None) -> set[str] | None:
-    """The paths under `plan.md ## Files that change`, or `None` when there are none to read.
-
-    `None` overlaps with everything. Only tokens that look like a path count:
-    `labels.listed_paths` keeps every word of the section.
-    """
-    found = {p for p in labels.listed_paths(plan_text) if "/" in p or re.search(r"\.\w+$", p)}
-    return found or None
-
-
 def overlaps(a: set[str] | None, b: set[str] | None) -> bool:
     return a is None or b is None or bool(a & b)
 
@@ -564,6 +533,11 @@ def pick(
 # --- the shortlist's order --------------------------------------------
 
 
+def stop_reason(stop: dict[str, str]) -> tuple[str, str]:
+    """Why a unit with a stop is no candidate, `(reason, detail)`."""
+    return ("stop", f"{stop['kind']}: {stop['reason']}")
+
+
 def reason_for(
     nxt: Mapping[str, Any],
     stage: str,
@@ -577,7 +551,7 @@ def reason_for(
         return None
     action = str(nxt.get("action") or "")
     if stop is not None:
-        return ("stop", f"{stop['kind']}: {stop['reason']}")
+        return stop_reason(stop)
     if nxt.get("hold"):
         return ("held", str((nxt["hold"] or {}).get("state") or "held"))
     if said(nxt, "finished"):
