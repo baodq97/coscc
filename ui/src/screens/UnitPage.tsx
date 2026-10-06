@@ -350,7 +350,7 @@ function Findings({ items }: { items: Round["items"] }) {
     <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
       {items.map((f) => (
         <li key={f.id}>
-          <b>{f.id}</b> <Chip square tone={f.severity === "low" ? "plain" : "amber"}>{f.severity}</Chip> <span className="faint">{f.label}</span>
+          <b>{f.id}</b> <Chip square tone={f.severity === "low" ? "plain" : "amber"}>{f.severity}</Chip> <span className="faint">{f.label} · {f.place}</span>
           <div>{f.text}</div>
         </li>
       ))}

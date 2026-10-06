@@ -53,6 +53,28 @@ class Decision(TypedDict):
     date: str
 
 
+class RoundCriterion(TypedDict):
+    criterion: str
+    source: str
+    met: Literal["yes", "no", "unclear"]
+    evidence: str
+
+
+class RoundFinding(TypedDict):
+    id: str
+    label: str
+    severity: str
+    criterion: str
+    # `path:lines`, or `(none)`.
+    place: str
+    text: str
+
+
+class RoundGrades(TypedDict):
+    criteria: list[RoundCriterion]
+    items: list[RoundFinding]
+
+
 class OutputRecord(TypedDict):
     """What an agent handed back, as the unit page shows it: the latest record of one agent."""
 
@@ -468,6 +490,51 @@ class UnitMeta:
             }
             for r in found
         ]
+
+    def graded(self, workspace: str, unit: str) -> dict[int, RoundGrades]:
+        """What each review round of a unit graded and found, by round number: the unit page's
+        Review tab. The board carries the counts; this carries the words."""
+        out: dict[int, RoundGrades] = {}
+        with self.data.connect() as conn:
+            rounds = conn.execute(
+                f"SELECT id, n, criteria FROM review_rounds WHERE {_ONE} ORDER BY n",
+                (self.root, workspace, unit),
+            ).fetchall()
+            for r in rounds:
+                items = conn.execute(
+                    "SELECT finding, label, severity, criterion, path, lines, text "
+                    "FROM review_findings WHERE round = ? ORDER BY rowid",
+                    (r["id"],),
+                ).fetchall()
+                out[r["n"]] = {
+                    "criteria": [
+                        {
+                            "criterion": str(c["criterion"]),
+                            "source": str(c["source"]),
+                            "met": "yes"
+                            if c["met"] == "yes"
+                            else "no"
+                            if c["met"] == "no"
+                            else "unclear",
+                            "evidence": str(c["evidence"]),
+                        }
+                        for c in json.loads(r["criteria"])
+                    ],
+                    "items": [
+                        {
+                            "id": f["finding"],
+                            "label": f["label"],
+                            "severity": f["severity"],
+                            "criterion": f["criterion"],
+                            "place": f"{f['path']}:{f['lines']}"
+                            if f["path"] and f["lines"]
+                            else f["path"] or "(none)",
+                            "text": f["text"],
+                        }
+                        for f in items
+                    ],
+                }
+        return out
 
     def plan(self, workspace: str, unit: str) -> contracts.Plan | None:
         """The unit's latest plan record (the output of an agent that hands back `variant`),

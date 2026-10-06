@@ -561,7 +561,8 @@ async def get_unit(name: str, request: Request) -> Detail:
     meta = core.ws.unit_meta()
     outputs = await asyncio.to_thread(meta.outputs, core.ws.key(cwd), name)
     decisions = await asyncio.to_thread(meta.decisions, core.ws.key(cwd), name)
-    return detail(unit, timeline, outputs, decisions)
+    graded = await asyncio.to_thread(meta.graded, core.ws.key(cwd), name)
+    return detail(unit, timeline, outputs, decisions, graded)
 
 
 def _number(request: Request, name: str) -> int | None:

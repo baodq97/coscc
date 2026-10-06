@@ -185,7 +185,6 @@ def review_from(rows):
                 ],
             } if shots else None,
             "text": round_text(dig(row, "verdict"), findings, criteria),
-            **({"criteria": criteria} if criteria else {}),
         }  # fmt: skip
     ordered = sorted(by_n.values(), key=lambda r: r["n"])
     return with_dropped(

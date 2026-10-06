@@ -29,7 +29,14 @@ from coscc.store.journal import last_runs, paused_stage, timelines_of, totals_of
 from coscc.units import BadUnit, Invalid, backlog, contracts, scratch, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable, attention_reason, unit_state
-from coscc.units.meta import By, DecisionKind, OutputRecord
+from coscc.units.meta import (
+    By,
+    DecisionKind,
+    OutputRecord,
+    RoundCriterion,
+    RoundFinding,
+    RoundGrades,
+)
 from coscc.units.meta import Decision as DecisionRow
 from coscc.units.workspaces import Workspaces
 
@@ -404,21 +411,6 @@ def _decision_text(d: DecisionRow) -> str:
     return f"recorded the outcome: {fields.get('result')}"
 
 
-class RoundCriterion(TypedDict):
-    criterion: str
-    source: str
-    met: Literal["yes", "no", "unclear"]
-    evidence: str
-
-
-class RoundFinding(TypedDict):
-    id: str
-    label: str
-    severity: str
-    criterion: str
-    text: str
-
-
 class Round(TypedDict):
     n: int
     verdict: str
@@ -511,9 +503,12 @@ def detail(
     timeline: Sequence[Mapping[str, Any]],
     outputs: list[OutputRecord],
     decisions: Sequence[DecisionRow] = (),
+    graded: Mapping[int, RoundGrades] | None = None,
 ) -> Detail:
     """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`), its `outputs`
-    (`UnitMeta.outputs`) and its `decisions` (`UnitMeta.decisions`) as a page shows it."""
+    (`UnitMeta.outputs`), its `decisions` (`UnitMeta.decisions`) and what each review round graded
+    and found (`UnitMeta.graded`) as a page shows it."""
+    graded = graded or {}
 
     def last(r: Mapping[str, Any] | None) -> LastRun | None:
         if not r:
@@ -570,20 +565,8 @@ def detail(
                 "findings": int(r.get("findings") or 0),
                 "findings_open": int(r.get("findings_open") or 0),
                 "unfinished": bool(r.get("unfinished")),
-                "criteria": [
-                    {k: _text(c.get(k)) for k in ("criterion", "source", "met", "evidence")}
-                    for c in r.get("criteria") or []
-                ],
-                "items": [
-                    {
-                        "id": _text(f.get("id")),
-                        "label": _text(f.get("label")),
-                        "severity": _text(f.get("severity")),
-                        "criterion": _text(f.get("rule")),
-                        "text": _text(f.get("text")),
-                    }
-                    for f in r.get("items") or []
-                ],
+                "criteria": graded.get(int(r.get("n") or 0), {"criteria": []})["criteria"],
+                "items": graded.get(int(r.get("n") or 0), {"items": []})["items"],
             }
             for r in unit.get("rounds") or []
         ],

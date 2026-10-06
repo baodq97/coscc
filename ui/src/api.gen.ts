@@ -477,6 +477,7 @@ export type RoundFinding = {
   "label": string;
   "severity": string;
   "criterion": string;
+  "place": string;
   "text": string;
 };
 
