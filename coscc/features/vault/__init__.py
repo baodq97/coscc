@@ -247,8 +247,10 @@ def _usable(get: Callable[[], vault.Store], facts: Facts) -> tuple[str, ...]:
 
 
 def _leaks(ctx: Ctx, get: Callable[[], vault.Store], facts: Facts) -> str | None:
-    """Asked before any action that pushes (the run's grant holds a branch): the unit's work
-    scanned for a value."""
+    """Asked before any action that pushes (the run's grant holds a branch): before a step, on
+    resume, before integrate, and before a session's own `git push` (its gate asks the guards
+    again, `Gate.before_push`). The unit's work scanned for a value; a hit, or work that cannot be
+    read, refuses."""
     if not facts.grant.branch:
         return None
     store = get()

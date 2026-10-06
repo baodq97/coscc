@@ -49,3 +49,8 @@ export type PlacedUnit = Unit & { workspace: Workspace };
 export function allUnits(boards: WorkspaceBoard[]): PlacedUnit[] {
   return boards.flatMap((b) => (b.board?.units ?? []).map((u) => ({ ...u, workspace: b.workspace })));
 }
+
+/** The unit `/unit/<workspace>/<n>` names: `n` is its number (`162`, `0162`) or its full name. */
+export function findUnit(units: PlacedUnit[], workspace: string, n: string): PlacedUnit | undefined {
+  return units.find((u) => u.workspace.name === workspace && (u.name === n || (/^\d+$/.test(n) && u.number === Number(n))));
+}

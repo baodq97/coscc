@@ -484,6 +484,23 @@ class TheGuardHoldsWhatCarriesAValueOut(Bed):
         self.assertIn("ws:db", said)
         self.assert_clean(("said", said))
 
+    def test_an_impls_own_push_is_refused_at_its_gate_on_a_leak(self):
+        from coscc.agent.helpers import Denials, Gate
+        from coscc.agent.policy import GUARDED
+
+        self.tree()
+        self.leak(DB)
+        facts = self.facts("impl")
+        grant = dataclasses.replace(
+            facts.grant, branch="feat/x", secrets=("/data/cos.db",), tools=("Bash",)
+        )
+        facts = dataclasses.replace(facts, grant=grant)
+        gate = Gate(grant, Denials(), before_push=lambda: self.core.steps.hooks.refusal(facts))
+        said = gate.refused("Bash", {"command": "git push origin feat/x"}, None)
+        self.assertTrue(said.startswith(f"{GUARDED}: vault-leak: "), said)
+        self.assertIn("ws:db", said)
+        self.assert_clean(("said", said))
+
     def test_commits_or_a_pull_request_that_cannot_be_read_hold_the_step(self):
         self.facts()
         words = feature._leaks(self.ctx, lambda: self.store, self.facts("pr"))

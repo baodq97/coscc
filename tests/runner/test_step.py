@@ -738,8 +738,8 @@ class AStepWorksInItsUnitsWorktree(unittest.TestCase):
 
 
 class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
-    """The gate a step's session gets: its grant, its worktree and unit to write, the branch the
-    worktree stands on to push, the run's denials and helpers. A spike writes only its `cwd` and
+    """The gate a step's session gets: its grant, its worktree and unit to write, the unit's
+    branch the app hands it to push (never the worktree's `HEAD`), the run's denials and helpers. A spike writes only its `cwd` and
     pushes nothing."""
 
     def _run(self, tree: Path, ws: str, stage: str, **kw):
@@ -788,7 +788,7 @@ class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
     def test_an_impl_writes_its_worktree_and_unit_and_pushes_its_branch(self):
         with tempfile.TemporaryDirectory() as d:
             tree = self._tree(d)
-            gate, directory = self._run(tree, d, "impl", cwd=str(tree))
+            gate, directory = self._run(tree, d, "impl", cwd=str(tree), branch="feat/x")
         self.assertEqual(gate.grant.write, (str(tree), str(directory)))
         self.assertEqual(gate.grant.branch, "feat/x")
         self.assertEqual(gate.grant.lease, "")
@@ -807,12 +807,16 @@ class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
         self.assertEqual(gate.grant.branch, "")
         self.assertIsNone(gate.helpers)
 
-    def test_a_worktree_on_the_trunk_pushes_nothing(self):
+    def test_the_push_is_the_branch_handed_never_the_worktrees_head(self):
+        # The worktree stands on `feat/x`; an impl handed no branch pushes nothing, and one handed
+        # `feat/unit` (a session that switched away, then was taken up again) pushes only that.
         with tempfile.TemporaryDirectory() as d:
             tree = self._tree(d)
-            subprocess.run(["git", "-C", str(tree), "switch", "-q", "main"], check=True)
             gate, _ = self._run(tree, d, "impl", cwd=str(tree))
-        self.assertEqual(gate.grant.branch, "")
+            self.assertEqual(gate.grant.branch, "")
+            gate, _ = self._run(tree, d, "impl", cwd=str(tree), branch="feat/unit")
+        self.assertEqual(gate.grant.branch, "feat/unit")
+        self.assertIn("`git push origin feat/unit`", self.prompt)
 
 
 class AnImplReadsItsSiblings(unittest.TestCase):

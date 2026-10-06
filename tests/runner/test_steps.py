@@ -1285,6 +1285,8 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.assertEqual((start["model"], start["effort"]), ("claude-opus-5-5[1m]", "high"))
         self.assertEqual(self.seen[-1].get("effort"), "high")
         self.assertEqual(start["impl_run"], 1)
+        # The agent's key, as its `end` names it, and its name beside it.
+        self.assertEqual((start["agent"], start["agent_name"]), ("impl", "Uruz"))
 
     def test_the_label_is_the_records_whatever_plan_md_says(self):
         self._plan("coscc/units/board.py")
@@ -2440,7 +2442,7 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
             raise RuntimeError("nope")
 
         self.guarded(boom)
-        with self.assertLogs("coscc.runner.steps", "ERROR"):
+        with self.assertLogs("coscc.kernel", "ERROR"):
             self.assertEqual(self.refused(), "g: failed (RuntimeError)")
 
     def test_a_pr_step_is_refused_before_the_mechanical_path(self):

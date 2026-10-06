@@ -721,6 +721,9 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     for item in items:
         kind = item.get("kind")
         stage = str(item.get("stage") or "")
+        if kind == "start" and item.get("continues") is not None:
+            # A raised session's next run: its `raise` reopened the row.
+            continue
         if kind == "start":
             row = {
                 "stage": stage,
@@ -743,8 +746,8 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 "events_lost": None,
                 # What state opened an `integrate` session. Any other stage has none: None.
                 "integrate_state": item.get("integrate_state"),
-                # The agent's name when the step began. A session no agent row names has none: None.
-                "agent": item.get("agent"),
+                # The agent's name when the step began, else its key.
+                "agent": item.get("agent_name") or item.get("agent"),
                 # The parts its prompt was handed. A session composed elsewhere has none: None.
                 "envelope": item.get("envelope"),
                 # What a ceiling paused (`paused`: the `ceiling` and what was spent of it) and a

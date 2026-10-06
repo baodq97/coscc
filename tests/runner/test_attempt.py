@@ -4,13 +4,11 @@ What a failed attempt left, as the next step and the board are told it."""
 
 from __future__ import annotations
 
-import asyncio
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from coscc.runner.attempt import branch_of, describe_attempt
+from coscc.runner.attempt import describe_attempt
 
 
 class DescribeAttemptRendersTheRecord(unittest.TestCase):
@@ -62,8 +60,6 @@ class AReplyWithoutItsOpeningIsRefusedByItsClass(unittest.TestCase):
     before."""
 
     def test_a_reply_without_its_opening_raises_an_opening_error(self):
-        import tempfile
-        from pathlib import Path
 
         from coscc.runner.attempt import _write_artifact
         from coscc.runner.reply import OpeningError, RunError
@@ -83,37 +79,3 @@ class AReplyWithoutItsOpeningIsRefusedByItsClass(unittest.TestCase):
                 _write_artifact(Path(d), "plan.md", "  ")
             self.assertNotIsInstance(other.exception, OpeningError)
             self.assertFalse((Path(d) / "plan.md").exists())
-
-
-class TheBranchIsTheOneTheWorktreeStandsOn(unittest.TestCase):
-    """What a session may push: the worktree's branch, never the trunk, a detached HEAD or no
-    checkout."""
-
-    def git(self, where: Path, *args: str) -> None:
-        subprocess.run(["git", "-C", str(where), *args], check=True, capture_output=True)
-
-    def test_the_units_branch_and_nothing_else(self):
-        with tempfile.TemporaryDirectory() as d:
-            tree = Path(d)
-            self.assertEqual(asyncio.run(branch_of(d)), "")
-            self.git(tree, "init", "-q", "-b", "main")
-            self.git(
-                tree,
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "commit",
-                "-q",
-                "--allow-empty",
-                "-m",
-                "x",
-            )
-            self.assertEqual(asyncio.run(branch_of(d)), "")
-            self.git(tree, "switch", "-q", "-c", "feat/x")
-            self.assertEqual(asyncio.run(branch_of(d)), "feat/x")
-            self.git(tree, "switch", "-q", "--detach")
-            self.assertEqual(asyncio.run(branch_of(d)), "")
-            for other in ("master", "develop", "feat/Bad_name"):
-                self.git(tree, "switch", "-q", "-c", other)
-                self.assertEqual(asyncio.run(branch_of(d)), "", other)

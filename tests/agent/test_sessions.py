@@ -533,7 +533,11 @@ class AClassifierDenialIsRecorded(unittest.IsolatedAsyncioTestCase):
             }
         )
         denials = Denials()
-        gate = Gate(Grant(cwd="/tmp", write=("/tmp",), secrets=SECRETS), denials)
+        config = Config(workspaces=("/tmp",))
+        grant = Grant(
+            cwd="/tmp", write=("/tmp",), secrets=sessions.secrets_of(config), home=config.home
+        )
+        gate = Gate(grant, denials)
         await self._stream([denied, _result("sid")], gate=gate, step=sessions.StepHandle())
         self.assertEqual(denials.count, 1)
         self.assertIn("[Data Exfiltration]", denials.reasons[0])
@@ -1567,6 +1571,22 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(sessions.Refused) as caught:
                     await self.s.stream("/tmp", "hi", step=step).__anext__()
                 self.assertEqual(str(caught.exception), sessions.PAUSED)
+        self.assertEqual((_CountingClient.made, self.s._steps, self.s._turns), ([], set(), {}))
+
+    async def test_no_stream_opens_on_a_grant_missing_this_apps_secrets_or_home(self):
+        # A grant issued without the app's config denies a thinner list: refused before a client.
+        _CountingClient.made, _CountingClient.fail = [], False
+        full = self.s.secrets()
+        home = self.s.config.home
+        thin = (
+            Grant(cwd="/p", secrets=full[:1], home=home),
+            Grant(cwd="/p", secrets=full, home="/x"),
+        )
+        with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _CountingClient):
+            for grant in thin:
+                with self.assertRaises(sessions.Refused) as caught:
+                    await self.s.stream("/tmp", "hi", gate=Gate(grant)).__anext__()
+                self.assertEqual(str(caught.exception), sessions.THIN_GRANT)
         self.assertEqual((_CountingClient.made, self.s._steps, self.s._turns), ([], set(), {}))
 
     async def test_suspend_closes_every_session_in_parallel(self):

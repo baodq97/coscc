@@ -5,7 +5,7 @@ import { Fragment, useState, type ReactNode } from "react";
 import type { Answer, Decision, Detail, OutputRecord, Paused, StageView, UnitRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import type { PlacedUnit } from "../lib/boards";
-import { allUnits, useBoards } from "../lib/boards";
+import { allUnits, findUnit, useBoards } from "../lib/boards";
 import { FeatureSlots } from "../lib/feature";
 import { STAGE_LABEL, ago, modelName, money, pausedAt, unitCode, unitTitle } from "../lib/format";
 import { AgentAvatar, Icon, LeifMark } from "../lib/icons";
@@ -23,7 +23,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
   const { boards, loading } = useBoards();
   // `#outputs` in the address opens the second tab, so a link can point at what an agent handed back.
   const [tab, setTab] = useState<"activity" | "outputs">(location.hash === "#outputs" ? "outputs" : "activity");
-  const placed = allUnits(boards).find((u) => u.workspace.name === workspace && u.number === Number(number));
+  const placed = findUnit(allUnits(boards), workspace, number);
   const query: Record<string, string> = placed ? { cwd: placed.workspace.path, name: placed.name } : {};
   const detail = useResource(placed ? "/api/units/{name}" : null, query, { on: [""] });
   const next = useResource(placed ? "/api/units/next" : null, placed ? { cwd: placed.workspace.path, unit: placed.name } : {}, { on: [""] });
@@ -51,7 +51,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
     <div className="split">
       <div className="body">
         <div className="row" style={{ gap: 6 }}>
-          <span className="faint">{unitCode(workspace, number)}</span>
+          <span className="faint">{unitCode(workspace, placed.number)}</span>
           {placed.type && <Chip square tone="plain">{placed.type}</Chip>}
           {running ? (
             <Chip square tone="accent">
@@ -78,7 +78,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
               </b>
               <div className="muted">{open[0].text.replace(/\*\*/g, "").slice(0, 140)}</div>
             </div>
-            <Link to={`/inbox/${workspace}/${number}`} className="btn primary sm">
+            <Link to={`/inbox/${workspace}/${placed.number}`} className="btn primary sm">
               Answer
             </Link>
           </div>

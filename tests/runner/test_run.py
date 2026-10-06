@@ -102,6 +102,9 @@ class EachStatus(Base):
             (end["status"], end["outcome"], end["agent"]), ("done", "done", "estimate")
         )
         self.assertEqual((end["cost_usd"], end["run"]), (0.25, got.run))
+        # The start names what the end names: the agent's key, the model, the run and the unit.
+        for field in ("agent", "model", "run", "unit", "stage"):
+            self.assertEqual(start[field], end[field], field)
 
     def test_a_ceiling_is_paused_budget(self):
         got = self.go(Fake(obj={"units": []}, terminal="error_max_budget_usd"))[-1][1]
@@ -187,6 +190,9 @@ class TheRunIsRecorded(Base):
         self.assertEqual((call["session_id"], call["recorder"].run), ("s0", got.run))
         self.assertNotIn("step", call)
         self.assertEqual(self.rows("end")[0]["agent"], "chat")
+        # A chat agent names no model: both records say the app's, the one its session opens on.
+        [start], [end] = self.rows("start"), self.rows("end")
+        self.assertEqual((start["agent"], start["model"]), ("chat", end["model"]))
 
 
 class TheRunIsIssuedItsGrant(Base):

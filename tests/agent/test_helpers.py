@@ -15,7 +15,16 @@ from claude_agent_sdk._internal.query import Query
 from claude_agent_sdk.types import _hooks_to_internal_format
 
 from coscc.agent import sessions
-from coscc.agent.helpers import KINDS, MESSAGE_LINES, PROTOCOL, Denials, Gate, Helpers, malformed
+from coscc.agent.helpers import (
+    KINDS,
+    MESSAGE_LINES,
+    PROTOCOL,
+    Denials,
+    Gate,
+    Helper,
+    Helpers,
+    malformed,
+)
 from coscc.agent.policy import BACKGROUND_REFUSAL, HOST, SUBAGENTS, Grant
 from coscc.config import Config
 
@@ -75,7 +84,9 @@ def _ask(gate: Gate, event: str, hook_input: dict) -> dict:
     return transport.written[-1]["response"]["response"]
 
 
-def _pre(gate: Gate, tool: str, tool_input: dict, agent_id: str | None = None) -> str:
+def _pre(
+    gate: Gate, tool: str, tool_input: dict, agent_id: str | None = None, kind: str = "worker"
+) -> str:
     """The reason the hook denied the call, or "" when it said nothing."""
     said = _ask(
         gate,
@@ -85,7 +96,7 @@ def _pre(gate: Gate, tool: str, tool_input: dict, agent_id: str | None = None) -
             "tool_name": tool,
             "tool_input": tool_input,
             "tool_use_id": "toolu_1",
-            **({"agent_id": agent_id, "agent_type": "worker"} if agent_id else {}),
+            **({"agent_id": agent_id, "agent_type": kind} if agent_id else {}),
         },
     )
     out = said.get("hookSpecificOutput") or {}
@@ -184,6 +195,53 @@ class TheGateFailsClosed(unittest.TestCase):
         self.assertEqual(type(result).__name__, "PermissionResultDeny")
         self.assertEqual(result.message, "auto mode did not approve")
         self.assertEqual(denials.count, 1)
+
+
+class APushTheGrantAllowsAsksTheGuardsAgain(unittest.TestCase):
+    """`before_push`: a session's own `git push` is refused with a guard's words (`vault-leak`),
+    and asked only for a push the grant lets through."""
+
+    def test_the_guards_words_refuse_the_push_and_silence_lets_it_through(self):
+        from dataclasses import replace
+
+        from coscc.agent.policy import GUARDED
+
+        asked: list[int] = []
+        words = ["vault-leak: the value of ws:db appears in this unit's work"]
+        grant = replace(IMPL, branch="feat/x")
+        gate = Gate(grant, Denials(), before_push=lambda: asked.append(1) or words[0])
+        push = {"command": "git push origin feat/x"}
+        said = _pre(gate, "Bash", push)
+        self.assertTrue(said.startswith(GUARDED), said)
+        self.assertIn("ws:db", said)
+        words[0] = ""
+        self.assertEqual(_pre(gate, "Bash", push), "")
+        # Not a push, or a push the grant refuses anyway: the guards are not asked.
+        self.assertEqual(_pre(gate, "Bash", {"command": "git status"}), "")
+        self.assertIn(HOST, _pre(gate, "Bash", {"command": "git push origin main"}))
+        self.assertEqual(len(asked), 2)
+
+    def test_a_guard_that_raises_refuses_the_push(self):
+        from dataclasses import replace
+
+        def boom() -> str:
+            raise RuntimeError("scan failed")
+
+        gate = Gate(replace(IMPL, branch="feat/x"), Denials(), before_push=boom)
+        self.assertIn("refused", _pre(gate, "Bash", {"command": "git push origin feat/x"}))
+
+
+class AHelperIsHeldToItsKind(unittest.TestCase):
+    """The kind comes with the call, else from the run's helpers: a `scout` writes nothing."""
+
+    def test_the_kind_the_ledger_learnt_holds_a_call_that_names_none(self):
+        ledger = Helpers()
+        ledger.seen["a1"] = Helper("a1", kind="scout")
+        ledger.seen["a2"] = Helper("a2", kind="worker")
+        gate = _gate(ledger)
+        self.assertIn("scout may not use Bash", gate.refused("Bash", {"command": "ls"}, "a1"))
+        self.assertEqual(gate.refused("Bash", {"command": "ls"}, "a2"), "")
+        self.assertIn("scout", _pre(_gate(Helpers()), "Bash", {"command": "ls"}, "a3", "scout"))
 
 
 class TheGateRecordsEveryDenial(unittest.TestCase):
