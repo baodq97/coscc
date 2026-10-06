@@ -25,7 +25,8 @@ from starlette.routing import BaseRoute
 
 from coscc.agent.harness import child_env as child_env
 from coscc.agent.policy import Grant as Grant
-from coscc.agent.policy import check_command as check_command
+from coscc.agent.policy import Places as Places
+from coscc.agent.policy import bash_refused as bash_refused
 from coscc.agent.policy import grant_for as grant_for
 from coscc.bus import Bus
 from coscc.bus import Event as Event
@@ -112,8 +113,6 @@ class Facts:
     directory: Path
     # A spike's throwaway directory, else `None`.
     scratch: str | None
-    # The effective `grant.commands`.
-    commands: tuple[str, ...]
     resumed: bool
 
 
@@ -206,7 +205,6 @@ def facts(
     cwd: str,
     watch: str | None,
     directory: Path,
-    commands: tuple[str, ...],
     resumed: bool,
 ) -> Facts:
     """`watch` is set when the run is a spike, whose `cwd` is its throwaway directory."""
@@ -219,7 +217,6 @@ def facts(
         tree=watch or cwd,
         directory=directory,
         scratch=cwd if watch else None,
-        commands=commands,
         resumed=resumed,
     )
 

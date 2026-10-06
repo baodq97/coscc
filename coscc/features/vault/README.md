@@ -50,8 +50,11 @@ All behind the login; none is in `auth.EXEMPT`. Every one refuses a workspace wi
     secret was masked. With `capture`, stdout is stored as a new `ws:` secret and not returned.
     One secret that may not be used means nothing runs, and each is answered with a code:
     `unknown-secret`, `not-granted`, `stage-not-allowed`, `mode-not-allowed`,
-    `broker-ssh-only`. A line `policy.check_command` refuses, or one naming the store or the
-    app's config, is answered `command-refused` with its words.
+    `broker-ssh-only`. The line is read as every session's is (`policy.bash_refused`, the
+    critical blocks), and strictly, because it runs with secrets in it: one naming the store, the
+    key or another secret, pushing or merging, removing outside the unit's places, or that cannot
+    be read or holds a `$()`, backtick or `<()`, is answered `command-refused` with its words. No
+    list of programs is kept: `curl`, `psql` and the rest run.
   - `vault_generate(name, description)`: a random `ws:` secret nobody sees. A name that is taken
     is refused, never overwritten.
 - One prompt block, `vault`, on every stage but a step taken up again. A stage a secret allows

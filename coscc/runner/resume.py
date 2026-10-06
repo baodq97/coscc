@@ -285,7 +285,6 @@ class Resume:
                 cwd=str(scratch or tree),
                 watch=tree if scratch else None,
                 directory=directory,
-                commands=(),
                 resumed=True,
             )
         )

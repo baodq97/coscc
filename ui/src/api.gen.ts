@@ -247,7 +247,6 @@ export type EventsPage = {
 
 export type GrantView = {
   "tools": string[];
-  "commands": string[];
   "mcp": string[];
   "submits": boolean;
   "warning": string;

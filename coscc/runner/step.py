@@ -34,16 +34,11 @@ from coscc.units import scratch as scratch_mod
 from coscc.units import submit as submit_mod
 from coscc.agent.policy import (
     AGENT_TOOL,
-    GRANTS_PREF,
-    LISTED_STAGE,
     Grant,
     Places,
     beyond_reading,
     grant_for_step,
     is_prose_stage,
-    lists_of,
-    protected_paths,
-    with_lists,
 )
 from coscc.store.db import Data, Unusable
 from coscc.units import guards
@@ -440,7 +435,6 @@ async def _compose(
         rerun_note=rerun_note,
         app_note=app_note,
         plan_map=plan_map,
-        commands=grant.commands if stage == "impl" else (),
         unfinished_round=unfinished_round,
         idea_note=idea_note,
         siblings_note=siblings_note,
@@ -1380,25 +1374,14 @@ class Runner:
         self.app = app
 
     def _configured(
-        self, grant: Grant, stage: str, label: str | None, journal_key: str, was: Mapping[str, Any]
+        self, grant: Grant, stage: str, label: str | None, was: Mapping[str, Any]
     ) -> tuple[Grant, models.Ceilings]:
-        """`grant` with its two ceilings as `with_ceilings` resolves them (an override of
-        `turns:<row>` and `budget:<row>` from `cos.db`, else the grant's own) for every stage; this
-        machine's protected paths and, for `impl`, the workspace's `allow` and `block`, before
-        `Facts.commands` is read from it; and the ceilings with their sources. A stand-in `Sessions`
-        with no config (a test's) has no overrides and leaves the rest of the grant as it is."""
+        """`grant` and its two ceilings with their sources, as `with_ceilings` resolves them from
+        a `turns:<row>` or `budget:<row>` override in `cos.db`, else the grant's own, and with no
+        override for a stand-in `Sessions` with no config (a test's)."""
         config = getattr(self.sessions, "config", None)
         turns, budget = _ceiling_overrides(config) if config is not None else ({}, {})
-        grant, ceilings = with_ceilings(grant, stage, label, turns, budget, was)
-        if config is None:
-            return grant, ceilings
-        data = Data(config.data_dir)
-        grant = replace(
-            grant, protected=protected_paths(str(data.root), config.config_home, config.home)
-        )
-        if stage != LISTED_STAGE:
-            return grant, ceilings
-        return with_lists(grant, *lists_of(data.pref(GRANTS_PREF, {}), journal_key)), ceilings
+        return with_ceilings(grant, stage, label, turns, budget, was)
 
     def _scratch(self, workspace: str, unit: str) -> tuple[Path, Path] | None:
         """The unit's `(ram, disk)` scratch directories, made if missing, or `None` for a stand-in
@@ -1442,7 +1425,6 @@ class Runner:
             cwd=cwd,
             watch=watch,
             directory=directory,
-            commands=grant.commands,
             resumed=resumed,
         )
         ledger, blocks = _helpers_of(
@@ -1583,7 +1565,6 @@ class Runner:
             _admitted(started_by, stage, label, directory, workspace, unit),
             stage,
             label,
-            journal_key,
             was,
         )
         directory = Path(directory)

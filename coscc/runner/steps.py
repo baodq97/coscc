@@ -727,7 +727,6 @@ class Steps:
                     cwd=work,
                     watch=None,
                     directory=self.ws.unit_dir(cwd, unit),
-                    commands=(),
                     resumed=False,
                 )
             )

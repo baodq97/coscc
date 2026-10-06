@@ -19,12 +19,12 @@ import subprocess
 import tempfile
 import time
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
 from coscc.agent.harness import child_env
-from coscc.agent.policy import Grant, check_command, programs_of
+from coscc.agent.policy import Places, bash_refused, programs_of
 from coscc.store.db import Busy
 from coscc.store.journal import BadRecord, Journal
 from coscc.vault.filters import mask
@@ -258,16 +258,17 @@ def _checked_capture(store: Store, name: str, workspace: str) -> None:
 
 def _preflight(
     store: Store,
-    grant: Grant,
     command: str,
     uses: Sequence[Use],
     workspace: str,
     stage: str,
+    cwd: str,
 ) -> tuple[str, tuple[tuple[str, str, str], ...]]:
     """`(why the line is refused, the refused secrets)`; both empty when the call may go on. The
-    store's own paths are refused on top of what `grant` holds."""
-    protected = tuple(dict.fromkeys((*grant.protected, *store.protected())))
-    refused = check_command(replace(grant, protected=protected), command)
+    line is read as every session's is (`policy.bash_refused`), the store's and the key's paths being
+    among the secrets, and `strict`: it runs with secrets in it, so no substitution passes."""
+    places = Places(roots=(cwd,), secrets=store.protected(), home=store.home)
+    refused = bash_refused(places, command, strict=True)
     if refused:
         return refused, ()
     refusals = _refusals(store, uses, workspace, stage)
@@ -284,7 +285,6 @@ def run(
     *,
     command: str,
     uses: Sequence[Use],
-    grant: Grant,
     workspace: str,
     stage: str,
     unit: str,
@@ -297,8 +297,8 @@ def run(
 ) -> Result:
     """Check `command`, ask the policy about each use, and only then run it with the secrets in.
 
-    The line is checked as written, with the store's own paths refused on top of what `grant`
-    holds. Nothing runs, and no value is read, while a check or a secret says no. Blocks until the
+    The line is checked as written by `policy.bash_refused`, strictly (`_preflight`). Nothing runs,
+    and no value is read, while a check or a secret says no. Blocks until the
     command ends, so a caller in the event loop hands it to a thread. Every call, refused ones
     too, leaves one run-log line with the names, modes, codes and programs and never a value.
     """
@@ -324,7 +324,7 @@ def run(
             **fields,
         )
 
-    refused, refusals = _preflight(store, grant, command, uses, workspace, stage)
+    refused, refusals = _preflight(store, command, uses, workspace, stage, cwd)
     if refused or refusals:
         logged(refused=refused, codes=[c for _, c, _ in refusals])
         return Result(None, "", "", {}, refusals, refused, 0)

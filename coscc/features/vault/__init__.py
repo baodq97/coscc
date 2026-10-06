@@ -13,7 +13,6 @@ import functools
 import json
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
 from typing import Any, TypedDict
 from urllib.parse import parse_qs
 
@@ -28,14 +27,11 @@ from coscc.kernel import (
     Ctx,
     Facts,
     Feature,
-    Grant,
     Guard,
     Invalid,
     Parts,
     Tool,
     body,
-    check_command,
-    grant_for,
 )
 
 NAME = "vault"
@@ -126,17 +122,12 @@ class Handlers:
             rows.append({**_meta(s, key), "usable_now": now})
         return _text({"secrets": rows})
 
-    def _grant(self) -> Grant:
-        grant = grant_for(self.facts.stage)
-        return replace(grant, commands=self.facts.commands, protected=self.get().protected())
-
     def _run(self, command: str, uses: list[vault.Use], timeout: int, capture: str) -> Any:
         f = self.facts
         return vault.run(
             self.get(),
             command=command,
             uses=uses,
-            grant=self._grant(),
             workspace=f.workspace_key,
             stage=f.stage,
             unit=f.unit,
@@ -155,16 +146,12 @@ class Handlers:
             return _no("command is a shell line")
         if isinstance(uses, str) or not isinstance(capture, str):
             return _no(uses if isinstance(uses, str) else "capture is a ws: name")
-        # The kernel lets the tool through by name; the line is this handler's to check.
-        words = check_command(self._grant(), command)
-        if words:
-            return _text({"result": "command-refused", "reason": words}, True)
         timeout = _seconds(args.get("timeout"))
         try:
             got = await asyncio.to_thread(self._run, command, uses, timeout, capture)
         except vault.BadSecret as e:
             return _no(str(e))
-        return _text(_shown(got, bool(capture)), bool(got.refusals))
+        return _text(_shown(got, bool(capture)), bool(got.refusals or got.refused))
 
     async def _generate(self, args: dict[str, Any]) -> dict[str, Any]:
         raw, said = args.get("name"), args.get("description", "")

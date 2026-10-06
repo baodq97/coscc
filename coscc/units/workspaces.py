@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 from coscc import units
-from coscc.agent.policy import COMMAND_NAME, GRANTS_PREF, lists_of
 from coscc.agent.sessions import Sessions
 from coscc.config import Config
 from coscc.store.db import Busy, Data
@@ -31,24 +30,6 @@ from coscc.units.history import BadTransition
 from coscc.units.meta import MetaError, UnitMeta
 
 log = logging.getLogger(__name__)
-
-
-class CommandLists(TypedDict):
-    allow: list[str]
-    block: list[str]
-
-
-def _command_names(raw: object, field: str) -> list[str]:
-    """`raw` as a list of distinct command names, or `Invalid` naming the first that is not one."""
-    if not isinstance(raw, list):
-        raise Invalid(f"{field} must be a list of command names")
-    names: list[str] = []
-    for n in raw:
-        if not isinstance(n, str) or not COMMAND_NAME.fullmatch(n.strip()):
-            raise Invalid(f"not a command name: {str(n)[:64]!r}")
-        if n.strip() not in names:
-            names.append(n.strip())
-    return names
 
 
 def live_units(workspaces: Iterable[str], data_dir: str | None) -> dict[str, set[str]]:
@@ -293,38 +274,6 @@ class Workspaces:
         cost is that moving a workspace detaches its history from it.
         """
         return str(Path(cwd).expanduser().resolve())
-
-    # -- what `impl` may run here ---------------------------------------------
-
-    def command_lists(self, cwd: str) -> CommandLists:
-        """The commands `impl` gains and loses in this workspace."""
-        allow, block = lists_of(Data(self.config.data_dir).pref(GRANTS_PREF, {}), self.key(cwd))
-        return {"allow": list(allow), "block": list(block)}
-
-    def set_command_lists(self, cwd: str, allow: object, block: object) -> CommandLists:
-        """Replace both lists; `block` wins over `allow` and over `impl`'s own commands. A name
-        that is not a command's (`COMMAND_NAME`) is `Invalid` and nothing changes. Leaves one
-        `grant-config` record, whose failure does not undo the save."""
-        self.check(cwd)
-        lists: CommandLists = {
-            "allow": _command_names(allow, "allow"),
-            "block": _command_names(block, "block"),
-        }
-        data = Data(self.config.data_dir)
-        key = self.key(cwd)
-        stored = data.pref(GRANTS_PREF, {})
-        stored = stored if isinstance(stored, dict) else {}
-        stored[key] = lists
-        data.set_pref(GRANTS_PREF, stored)
-        journal = self.journal()
-        if journal is not None:
-            try:
-                journal.append(
-                    {"kind": "grant-config", "workspace": key, **lists, "actor": "human:owner"}
-                )
-            except BadRecord, Busy:
-                log.warning("the grant-config record for %s was not written", key)
-        return lists
 
     def journal(self) -> Journal | None:
         """The run log, or `None` when there is no working folder to keep it in.
