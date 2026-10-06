@@ -15,7 +15,7 @@ from claude_agent_sdk._internal.query import Query
 from claude_agent_sdk.types import _hooks_to_internal_format
 
 from coscc.agent import sessions
-from coscc.agent.helpers import Denials, Gate, Helpers
+from coscc.agent.helpers import KINDS, MESSAGE_LINES, PROTOCOL, Denials, Gate, Helpers, malformed
 from coscc.agent.policy import BACKGROUND_REFUSAL, HOST, Places, grant_for
 from coscc.config import Config
 
@@ -246,14 +246,15 @@ class TheHookHoldsWhoMayBeStarted(unittest.TestCase):
     def test_a_session_with_no_helpers_holds_the_same_rules(self):
         self.assertIn("only these helpers", _pre(_gate(), "Agent", {"subagent_type": "x"}))
         self.assertIn("SendMessage goes only to", _pre(_gate(), "SendMessage", {"to": "a1"}))
-        self.assertEqual(_pre(_gate(), "SendMessage", {"to": "main"}), "")
+        self.assertEqual(_pre(_gate(), "SendMessage", {"to": "main", "message": "need: x"}), "")
 
 
 class SendMessageStaysInTheStep(unittest.TestCase):
     def test_main_and_a_helper_of_this_run_pass_and_anyone_else_is_denied(self):
         gate = _gate(Helpers())
         _run(gate, "a1", "(a) parallel", 100)
-        self.assertEqual(_pre(gate, "SendMessage", {"to": "main", "message": "done: x"}, "a1"), "")
+        done = {"to": "main", "message": "done: coscc/bus.py:12"}
+        self.assertEqual(_pre(gate, "SendMessage", done, "a1"), "")
         self.assertEqual(_pre(gate, "SendMessage", {"to": "a1", "message": "need: y"}), "")
         for to in ("a2", "other-session", "", None):
             with self.subTest(to=to):
@@ -277,6 +278,45 @@ class SendMessageStaysInTheStep(unittest.TestCase):
         self.assertEqual(ledger.listing(), "no helper has started in this step")
         ledger.close()
         self.assertEqual(told.events, [])
+
+
+class AMessageKeepsTheProtocolsShape(unittest.TestCase):
+    """`PROTOCOL`'s shape: a kind first, at most `MESSAGE_LINES` lines, and a `changed:` or
+    `done:` pointing at `path:line`. A message out of it is denied with what to fix, in the run's
+    denials."""
+
+    def test_each_good_shape_passes(self):
+        for message in (
+            "need: the `Bus.publish` signature",
+            "blocked: tests/test_bus.py fails to import",
+            "changed: `publish` takes a payload, coscc/bus.py:120",
+            "done: step (a)\n- `/w/t/coscc/bus.py:153-160` checks the payload",
+            "done: x\n" + "- coscc/a.py:1\n" * (MESSAGE_LINES - 1),
+        ):
+            with self.subTest(message=message):
+                self.assertEqual(malformed(message), "")
+
+    def test_each_malformed_shape_is_denied_with_its_reason(self):
+        for message, said in (
+            ("thanks, got it", "opens with one of `need:`"),
+            ("Done: coscc/bus.py:1", "opens with one of"),
+            ("", "as text"),
+            ({"type": "shutdown_request"}, "as text"),
+            ("done: x\n" + "- coscc/a.py:1\n" * MESSAGE_LINES, f"at most {MESSAGE_LINES} lines"),
+            ("done: src/screens/coverage/index.tsx rebuilt", "names each `path:line`"),
+            ("changed: the API at 10:30", "names each `path:line`"),
+        ):
+            with self.subTest(message=message):
+                denials = Denials()
+                gate = _gate(Helpers(), denials=denials)
+                got = _pre(gate, "SendMessage", {"to": "main", "message": message}, "a1")
+                self.assertIn(said, got)
+                self.assertEqual((denials.count, denials.reasons), (1, [f"SendMessage: {got}"]))
+
+    def test_the_prompt_says_what_the_gate_holds(self):
+        self.assertIn(f"1 to {MESSAGE_LINES} lines", PROTOCOL)
+        for kind in KINDS:
+            self.assertIn(f"`{kind}:`", PROTOCOL)
 
 
 class TheLedgerFollowsEachHelper(unittest.TestCase):
