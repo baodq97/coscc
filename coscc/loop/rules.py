@@ -743,6 +743,20 @@ def stage_at(unit, next_):
     return next(s for s in STAGES if not s.get("optional") and not s.get("when"))["name"]
 
 
+PROCESS = "coscc-sdlc/full"
+
+
+def shown(u):
+    """The unit as `status --json` prints it: the lane's three keys read as its process."""
+    out = {}
+    for k, v in u.items():
+        if k == "lane":
+            out["process"] = PROCESS
+        elif k not in ("enteredFast", "laneMissing"):
+            out[k] = v
+    return out
+
+
 def _join(base, name):
     """`path.join(base, name)`: normalised, a trailing slash kept."""
     p = os.path.normpath(f"{base}/{name}")
@@ -755,7 +769,7 @@ def cmd_status(json, cos_dir, limit, state, out):
     for u in units:
         next_ = {k: v for k, v in decide(u, limit).items() if k not in ("rerun", "continue")}
         row = {
-            **u,
+            **shown(u),
             "next": next_,
             "at": stage_at(u, next_),
             "betweenPrAndShip": between_pr_and_ship(u, limit),
@@ -822,9 +836,7 @@ def cmd_next(unit_name, cos_dir, repo_dir, limit, state, out, err):
     if answer.get("why") == "dependency":
         body["why"] = answer["why"]
     body["reasons"] = answer["reasons"]
-    body["lane"] = unit["lane"]
-    body["enteredFast"] = unit["enteredFast"]
-    body["laneMissing"] = unit["laneMissing"]
+    body["process"] = PROCESS
     out(stringify(body))
     return 0
 
@@ -881,7 +893,7 @@ def cmd_gate(unit_name, stage, cos_dir, repo_dir, limit, state, json, out, err):
         if rebased:
             body["rebased"] = rebased
         if unit["lane"] == "fast":
-            body["lane"] = "fast"
+            body["via"] = ["fast-lane"]
         out(stringify(body))
     else:
         for line in lines:

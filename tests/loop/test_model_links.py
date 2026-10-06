@@ -755,12 +755,12 @@ def lane_tree(tmp_path, files, statuses, fix=FIX, left_lane=None, holds=None, re
 def test_a_fix_in_the_fast_lane_goes_from_its_accepted_intent_to_impl(tmp_path):
     t = lane_tree(tmp_path, {"intent.md": intent_of()}, {"intent.md": "accepted"})
     n = t.next()
-    assert [n["stage"], n["lane"], n["enteredFast"], n["laneMissing"]] == ["impl", "fast", True, []]
+    assert [n["stage"], n["process"]] == ["impl", "coscc-sdlc/full"]
     assert t.gate("impl") == {
         "ok": True,
         "lines": ["open: impl may proceed for 0001_x"],
         "reasons": [],
-        "lane": "fast",
+        "via": ["fast-lane"],
     }
     for stage in ["spec", "spike", "plan"]:
         g = t.gate(stage)
@@ -771,14 +771,14 @@ def test_a_fix_in_the_fast_lane_goes_from_its_accepted_intent_to_impl(tmp_path):
         assert "not-in-lane" not in t.gate(stage)["reasons"], stage
     status = json.loads(t.ask("status", "--json").out)
     u = status["units"][0]
-    assert [u["lane"], u["enteredFast"], u["laneMissing"]] == ["fast", True, []]
+    assert u["process"] == "coscc-sdlc/full"
     assert all("lanes" not in s for s in status["stages"])
 
 
 def test_a_fix_in_the_fast_lane_still_waits_on_its_intent_being_accepted(tmp_path):
     t = lane_tree(tmp_path, {"intent.md": intent_of(status="draft")}, {"intent.md": "draft"})
     n = t.next()
-    assert [n["stage"], n["action"], n["lane"]] == ["", "finish and accept intent.md", "fast"]
+    assert [n["stage"], n["action"]] == ["", "finish and accept intent.md"]
     assert t.gate("impl")["reasons"] == ["draft"]
 
 
@@ -823,11 +823,7 @@ def test_gate_impl_in_the_fast_lane_stays_shut_while_stale_held_or_a_dependency_
         return json.loads(ask("--root", b, "next", "0001_y", **kw).out)
 
     assert [gate("draft")["ok"], gate("draft")["reasons"]] == [False, ["waiting-on"]]
-    assert [nxt("draft")["stage"], nxt("draft")["why"], nxt("draft")["lane"]] == [
-        "",
-        "dependency",
-        "fast",
-    ]
+    assert [nxt("draft")["stage"], nxt("draft")["why"]] == ["", "dependency"]
     assert gate("accepted")["ok"] is True
     assert nxt("accepted")["stage"] == "impl"
 
@@ -837,12 +833,8 @@ def test_a_fix_whose_intent_cites_no_source_walks_the_full_lane_from_spec(tmp_pa
         tmp_path, {"intent.md": intent_of()}, {"intent.md": "accepted"}, fix=fix_with(text="")
     )
     n = t.next()
-    assert [n["stage"], n["lane"], n["enteredFast"], n["laneMissing"]] == [
-        "spec",
-        "full",
-        False,
-        ["c"],
-    ]
+    assert n["stage"] == "spec"
+    assert "via" not in t.gate("spec")
     assert t.gate("spec")["ok"] is True
     assert t.gate("impl")["reasons"] == ["missing"]
 
@@ -902,12 +894,7 @@ def test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl
         left_lane=LEFT,
     )
     n = t.next()
-    assert [n["stage"], n["lane"], n["enteredFast"], n["laneMissing"]] == [
-        "spec",
-        "full",
-        True,
-        ["e"],
-    ]
+    assert n["stage"] == "spec"
     assert t.gate("spec")["ok"] is True
     (t.dir / "spec.md").write_text("# Spec: x\nIntent: intent.md. Status: accepted.\n")
     t.statuses["spec.md"] = "accepted"
@@ -918,7 +905,7 @@ def test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl
     )
     t.statuses["plan.md"] = "accepted"
     n = t.next()
-    assert [n["stage"], n["reasons"], n["lane"]] == ["impl", ["missing"], "full"]
+    assert [n["stage"], n["reasons"]] == ["impl", ["missing"]]
     assert re.search(r"leaving the fast lane", n["action"])
     assert t.gate("impl")["ok"] is True
     # Once impl hands back its record without `left_lane`, a spec already keeps the unit in full.
@@ -933,12 +920,7 @@ def test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl
         dict(t.statuses),
     )
     n = t.next()
-    assert [n["stage"], n["action"], n["lane"], n["laneMissing"]] == [
-        "",
-        "finish and accept impl.md",
-        "full",
-        ["e"],
-    ]
+    assert [n["stage"], n["action"]] == ["", "finish and accept impl.md"]
 
 
 def test_next_offers_ship_when_a_differing_title_is_the_only_thing_closing_its_gate():

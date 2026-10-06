@@ -64,7 +64,7 @@ class Gate(tuple):
 
 
 def _lane(data: dict[str, Any]) -> str:
-    return "fast" if data.get("lane") == "fast" else "full"
+    return "fast" if "fast-lane" in (data.get("via") or ()) else "full"
 
 
 def _rebased(data: dict[str, Any]) -> dict[str, str] | None:

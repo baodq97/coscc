@@ -543,11 +543,11 @@ class TheGateHandsOnACleanRebase(unittest.TestCase):
 
 
 class TheGateHandsOnTheLane(unittest.TestCase):
-    """`gate --json`'s `lane` reaches the app: `fast` only when the loop says so."""
+    """`gate --json`'s `via` reaches the app: `fast` only when the walk took `fast-lane`."""
 
     def test_the_lane_is_fast_only_when_the_loop_says_fast(self):
-        self.assertEqual(_board._lane({"lane": "fast"}), "fast")
-        for bad in ({}, {"lane": None}, {"lane": "full"}, {"lane": "slow"}, {"lane": 1}):
+        self.assertEqual(_board._lane({"via": ["fast-lane"]}), "fast")
+        for bad in ({}, {"via": None}, {"via": []}, {"lane": "fast"}, {"via": ["other"]}):
             self.assertEqual(_board._lane(bad), "full", bad)
         self.assertEqual(_board.Gate(True, "open", (), None, "fast").lane, "fast")
         self.assertEqual(_board.Gate(True, "open").lane, "full")

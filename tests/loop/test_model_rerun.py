@@ -42,7 +42,7 @@ from tests.loop.test_model_rebase import (
     recorded,
 )
 
-FULL_LANE = {"lane": "full", "enteredFast": False, "laneMissing": []}
+FULL_LANE = {"process": "coscc-sdlc/full"}
 MERGE = "9" * 40
 
 

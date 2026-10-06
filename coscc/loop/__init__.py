@@ -71,7 +71,6 @@ STAGES: list[dict[str, Any]] = [
     for s in states.default().stages
 ]
 
-STAGE_ALIAS = {"implement": "impl"}
 STAGE_NAMES = [s["name"] for s in STAGES]
 ARTIFACTS = [s["file"] for s in STAGES]
 VALID: dict[str, Any] = {s["file"]: s["statuses"] for s in STAGES}
@@ -79,9 +78,8 @@ SPIKE = next(s for s in STAGES if s.get("when") == "unmeasured")
 
 
 def stage_of(name):
-    """`stageOf`: the stage named, through `STAGE_ALIAS`, or `None`."""
-    want = STAGE_ALIAS.get(name, name) if isinstance(name, str) else name
-    return next((s for s in STAGES if s["name"] == want), None)
+    """`stageOf`: the stage named, or `None`."""
+    return next((s for s in STAGES if s["name"] == name), None)
 
 
 RERUNNABLE = ["intent", "spec", "spike", "plan", "pr"]
