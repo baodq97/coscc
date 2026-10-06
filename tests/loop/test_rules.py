@@ -214,7 +214,7 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
     open_one = {"review_md": {"rounds": [row(1, "changes-requested", ("F1", "open"))]}}
     put(s, "0035_awaits-person", accepted("pr.md", **{"review.md": "changes-requested"}),
         texts={**pr, "review.md": review("changes-requested", needs)}, **claim, **asked)  # fmt: skip
-    put(s, "0036_awaits-no-reason", accepted("pr.md", **{"review.md": "changes-requested"}),
+    put(s, "0036_awaits-unclaimed", accepted("pr.md", **{"review.md": "changes-requested"}),
         texts={**pr, "review.md": review("changes-requested", needs)}, **asked)  # fmt: skip
     put(s, "0037_person-answered", accepted("pr.md", **{"review.md": "changes-requested"}),
         texts={**pr, "review.md": review("changes-requested", needs)}, **claim, **asked,
@@ -321,7 +321,7 @@ _NAMES = [
         (26, "fast-lane-impl"), (27, "fast-lane-left"), (28, "review-missing"),
         (29, "review-draft"), (30, "changes-requested"), (31, "out-of-rounds"),
         (32, "more-rounds"), (33, "unfinished"), (34, "incomplete"), (35, "awaits-person"),
-        (36, "awaits-no-reason"), (37, "person-answered"), (38, "every-claimed"),
+        (36, "awaits-unclaimed"), (37, "person-answered"), (38, "every-claimed"),
         (39, "ship-refused"), (40, "ship-draft-old"), (41, "ship-missing"),
         (42, "draft-answered"), (43, "draft-asking"), (44, "waits-on-dependency"),
         (45, "depends-unknown"), (46, "depends-merged"), (47, "merged-one"),
