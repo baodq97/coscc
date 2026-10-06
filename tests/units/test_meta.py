@@ -179,10 +179,26 @@ def seed_fixture(meta: UnitMeta, ws: str) -> None:
     for unit, kw in UNITS.items():
         seed(meta, ws, unit, **kw)
     meta.add_answer(
-        ws, "0013_open-question", "spec.md", 1, "Năm giây.", "Bao", "2026-09-23", "product"
+        ws,
+        "0013_open-question",
+        "spec.md",
+        1,
+        "Năm giây.",
+        "person",
+        "Bao",
+        "2026-09-23",
+        "product",
     )
     meta.add_answer(
-        ws, "0014_changes-requested", "review.md", "F1", "Đã chạy.", "Bao", "2026-09-24", "product"
+        ws,
+        "0014_changes-requested",
+        "review.md",
+        "F1",
+        "Đã chạy.",
+        "person",
+        "Bao",
+        "2026-09-24",
+        "product",
     )
     meta.add_hold(
         ws,
@@ -416,7 +432,7 @@ class TheOutputsTheLoopReads(Base):
             self.record("spike", {"judgement": "ready", "verdicts": verdicts})
 
     def test_an_output_of_another_version_is_refused_when_read(self):
-        self.record("spec", {"judgement": "ready", "questions": []}, version=2)
+        self.record("spec", {"judgement": "ready", "questions": []}, version=3)
         with self.assertRaises(ContractError) as raised:
             self.meta.snapshot(WS, NAMES)
         self.assertEqual(raised.exception.code, "output-version")
@@ -490,7 +506,7 @@ class TheOutputsTheLoopReads(Base):
         got = self.meta.outputs(WS, self.UNIT)
         self.assertEqual([o["agent"] for o in got], ["spec", "intent"])
         spec = got[0]
-        self.assertEqual(spec["version"], 1)
+        self.assertEqual(spec["version"], 2)
         self.assertEqual(spec["fields"], {"judgement": "ready", "questions": []})
 
 
@@ -677,7 +693,15 @@ class AMergeIsARow(Base):
 class AnswersAndHolds(Base):
     def test_an_answer_and_a_hold_reach_the_snapshot_in_order(self):
         self.meta.add_answer(
-            WS, "0013_open-question", "spec.md", 2, "Bao duyệt.", "Bao", "2026-09-28", "product"
+            WS,
+            "0013_open-question",
+            "spec.md",
+            2,
+            "Bao duyệt.",
+            "person",
+            "Bao",
+            "2026-09-28",
+            "product",
         )
         self.meta.add_hold(
             WS, "0013_open-question", "paused", "chờ", "Bao", "2026-09-28", "product"
@@ -690,6 +714,191 @@ class AnswersAndHolds(Base):
         self.assertEqual(unit["open"], 0)
         self.assertEqual(unit["hold"]["state"], "paused")
         self.assertEqual(unit["next"]["why"], "paused")
+
+
+class Rows(Base):
+    """What the snapshot reads off the rows a person's or a machine's decision wrote."""
+
+    UNIT = "0017_linked"
+
+    def entry(self, unit: str | None = None) -> dict:
+        return self.meta.snapshot(WS, NAMES)["units"][f"proj/{unit or self.UNIT}"]
+
+    def record(self, stage: str, obj: dict) -> None:
+        with self.data.write() as conn:
+            self.meta.record_result(
+                conn, WS, self.UNIT, stage, f"{stage}.md", {"run": "r", "object": obj}
+            )
+
+    def ids(self, sql: str) -> list:
+        with self.data.connect() as conn:
+            return [r[0] for r in conn.execute(sql)]
+
+    def named(self, number: int = 7, head: str = "abc") -> None:
+        self.meta.history.record(
+            WS, self.UNIT, "pr.md", "draft", source="prmachine:opened", guard="branch-named",
+            authority="code", inputs={"number": number, "url": f"https://x/pull/{number}", "head": head},
+        )  # fmt: skip
+
+
+class EveryArtifactCarriesItsRecord(Rows):
+    def test_an_agents_artifact_carries_the_id_of_its_latest_output(self):
+        self.record("spec", {"judgement": "draft", "questions": []})
+        self.record("spec", {"judgement": "ready", "questions": []})
+        self.record("plan", {"judgement": "ready", "questions": [], "impl": "novel", "files": [],
+                             "steps": [], "rests_on": []})  # fmt: skip
+        spec_id = self.ids("SELECT MAX(id) FROM outputs WHERE agent = 'spec'")[0]
+        plan_id = self.ids("SELECT MAX(id) FROM outputs WHERE agent = 'plan'")[0]
+        artifacts = self.entry()["artifacts"]
+        self.assertEqual(artifacts["spec.md"]["record"], spec_id)
+        self.assertEqual(artifacts["plan.md"]["record"], plan_id)
+        self.assertNotEqual(spec_id, plan_id)
+
+    def test_review_carries_its_latest_round_and_pr_the_last_branch_named(self):
+        with self.data.write() as conn:
+            for n in (1, 2):
+                self.meta.record_round(
+                    conn, WS, self.UNIT,
+                    {"n": n, "run": "r", "head": "h", "object": {"verdict": "pass", "findings": [], "screens": []}},
+                )  # fmt: skip
+        last = self.ids("SELECT MAX(id) FROM review_rounds")[0]
+        self.assertEqual(self.entry()["artifacts"]["review.md"]["record"], last)
+        self.named(7)
+        self.named(8)
+        row = self.ids("SELECT MAX(id) FROM transitions WHERE guard = 'branch-named'")[0]
+        self.assertEqual(self.entry()["artifacts"]["pr.md"]["record"], row)
+
+    def test_an_artifact_without_a_row_carries_none(self):
+        self.assertNotIn("record", self.entry("0003_old-unit")["artifacts"]["intent.md"])
+
+
+class TheDecisionsAreInTheSnapshot(Rows):
+    def add(self, kind: str, fields: dict, date: str = "2026-10-01") -> None:
+        self.meta.add_decision(WS, self.UNIT, kind, fields, "owner", date, "product")
+
+    def test_reruns_and_the_sum_of_more_rounds_reach_the_entry(self):
+        self.add("rerun", {"stage": "spec", "stale": {"spec.md": 3}}, "2026-10-01")
+        self.add("more-rounds", {"rounds": 1})
+        self.add("more-rounds", {"rounds": 2})
+        self.add("outcome", {"result": "met"})
+        unit = self.entry()
+        self.assertEqual(
+            unit["reruns"], [{"stage": "spec", "stale": {"spec.md": 3}, "date": "2026-10-01"}]
+        )
+        self.assertEqual(unit["roundsGranted"], 3)
+        self.assertNotIn("outcome", unit)
+        self.assertNotIn("outcome", json.dumps(unit))
+
+    def test_a_unit_with_none_has_no_reruns_and_no_rounds(self):
+        unit = self.entry()
+        self.assertEqual((unit["reruns"], unit["roundsGranted"]), ([], 0))
+
+    def test_decisions_lists_every_kind_oldest_first_and_only_that_units(self):
+        self.add("more-rounds", {"rounds": 1}, "2026-10-01")
+        self.add("outcome", {"result": "met"}, "2026-10-02")
+        self.meta.add_decision(
+            WS, "0010_full-loop", "more-rounds", {"rounds": 1}, "owner", "2026-10-03", "product"
+        )
+        self.add("rerun", {"stage": "spec", "stale": {}}, "2026-10-04")
+        got = self.meta.decisions(WS, self.UNIT)
+        self.assertEqual([d["kind"] for d in got], ["more-rounds", "outcome", "rerun"])
+        self.assertEqual([d["date"] for d in got], ["2026-10-01", "2026-10-02", "2026-10-04"])
+        self.assertEqual(
+            got[1],
+            {"kind": "outcome", "fields": {"result": "met"}, "by": "owner", "date": "2026-10-02"},
+        )
+
+
+class ThePullRequestAndTheShipAreReadFromTheirMoves(Rows):
+    def ship(self, guard: str, to: str, **inputs) -> None:
+        self.meta.history.record(
+            WS, self.UNIT, "ship.md", to, source="prmachine:x", guard=guard, authority="code",
+            inputs=inputs,
+        )  # fmt: skip
+
+    def test_the_pull_request_is_the_last_branch_named(self):
+        self.assertNotIn("pr", self.entry()["artifacts"].get("pr.md", {}))
+        self.named(7)
+        self.named(9)
+        self.assertEqual(
+            self.entry()["artifacts"]["pr.md"]["pr"], {"number": 9, "url": "https://x/pull/9"}
+        )
+
+    def test_a_ship_is_its_last_ready_or_refused_move(self):
+        self.ship("ship-ready", "draft", round=1)
+        self.assertEqual(
+            self.entry()["artifacts"]["ship.md"]["ship"], {"round": 1, "refused": None}
+        )
+        self.ship("merge-refused", "draft", round=2, refused="conflicts")
+        self.assertEqual(
+            self.entry()["artifacts"]["ship.md"]["ship"], {"round": 2, "refused": "conflicts"}
+        )
+        self.ship("ship-ready", "draft", round=3)
+        self.assertEqual(
+            self.entry()["artifacts"]["ship.md"]["ship"], {"round": 3, "refused": None}
+        )
+
+    def test_a_ship_move_of_another_guard_says_nothing(self):
+        self.ship("merge-read", "accepted")
+        self.assertNotIn("ship", self.entry()["artifacts"]["ship.md"])
+
+
+class AQuestionKeepsItsRecommendation(Rows):
+    def test_the_record_and_the_snapshot_carry_it(self):
+        self.record(
+            "spec",
+            {"judgement": "ready", "questions": [
+                {"n": 1, "text": "Ai duyệt?", "recommendation": "Bao"},
+                {"n": 2, "text": "Khi nào?"},
+            ]},
+        )  # fmt: skip
+        self.assertEqual(
+            self.entry()["artifacts"]["spec.md"]["questions"],
+            [
+                {"n": 1, "text": "Ai duyệt?", "recommendation": "Bao"},
+                {"n": 2, "text": "Khi nào?", "recommendation": ""},
+            ],
+        )
+
+    def test_a_seeded_question_has_an_empty_one(self):
+        q = self.entry("0013_open-question")["artifacts"]["spec.md"]["questions"][0]
+        self.assertEqual(q["recommendation"], "")
+
+
+class AnAnswerCarriesByAndName(Rows):
+    def test_the_snapshot_answer_has_by_and_name_and_no_authority(self):
+        self.meta.add_answer(
+            WS, self.UNIT, "spec.md", 1, "Có.", "delegated", "Leif (CoS)", "2026-10-02", "product"
+        )
+        got = self.entry()["answers"][-1]
+        self.assertEqual(
+            got,
+            {
+                "artifact": "spec.md",
+                "n": 1,
+                "id": None,
+                "by": "delegated",
+                "name": "Leif (CoS)",
+                "date": "2026-10-02",
+                "via": "product",
+                "text": "Có.",
+            },
+        )
+
+    def test_a_finding_answer_has_its_id_and_a_person_by(self):
+        self.meta.add_answer(
+            WS, self.UNIT, "review.md", "F1", "Đã sửa.", "person", "Bao", "2026-10-02", "product"
+        )
+        got = self.entry()["answers"][-1]
+        self.assertEqual(
+            (got["n"], got["id"], got["by"], got["name"]), (None, "F1", "person", "Bao")
+        )
+
+    def test_by_is_a_person_or_delegated_and_nothing_else(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.meta.add_answer(
+                WS, self.UNIT, "spec.md", 1, "x", "agent", "Jera", "2026-10-02", "product"
+            )
 
 
 class TheSnapshotReport(unittest.TestCase):

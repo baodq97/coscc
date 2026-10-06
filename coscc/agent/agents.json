@@ -8,10 +8,10 @@
       "input": {"artifacts": ["idea?"], "outputs": [], "answers": true, "findings": false, "data": ["mentions"]},
       "output": {
         "kind": "artifact",
-        "version": 1,
+        "version": 2,
         "fields": {
           "judgement": {"enum": ["ready", "not-ready"]},
-          "questions": {"list": {"n": "number", "text": "text"}}
+          "questions": {"list": {"n": "number", "text": "text", "recommendation": "text"}}
         }
       }
     },
@@ -23,10 +23,10 @@
       "input": {"artifacts": ["idea?", "intent?"], "outputs": [], "answers": true, "findings": false, "data": ["idea", "mentions"]},
       "output": {
         "kind": "artifact",
-        "version": 2,
+        "version": 3,
         "fields": {
           "judgement": {"enum": ["ready", "not-ready"]},
-          "questions": {"list": {"n": "number", "text": "text"}},
+          "questions": {"list": {"n": "number", "text": "text", "recommendation": "text"}},
           "type": {"enum": ["feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci", "revert"]},
           "fix?": {
             "reproduction": "text",
@@ -44,10 +44,10 @@
       "input": {"artifacts": ["intent", "spike?", "spec?"], "outputs": [], "answers": true, "findings": false, "data": ["mentions"]},
       "output": {
         "kind": "artifact",
-        "version": 1,
+        "version": 2,
         "fields": {
           "judgement": {"enum": ["ready", "not-ready"]},
-          "questions": {"list": {"n": "number", "text": "text"}},
+          "questions": {"list": {"n": "number", "text": "text", "recommendation": "text"}},
           "unmeasured": {"list": "U[0-9]+"}
         }
       }
@@ -58,10 +58,10 @@
       "input": {"artifacts": ["intent", "spec", "spike?"], "outputs": [], "answers": true, "findings": false, "data": ["mentions"]},
       "output": {
         "kind": "artifact",
-        "version": 1,
+        "version": 2,
         "fields": {
           "judgement": {"enum": ["ready", "not-ready"]},
-          "questions": {"list": {"n": "number", "text": "text"}},
+          "questions": {"list": {"n": "number", "text": "text", "recommendation": "text"}},
           "verdicts": {"list": {"id": "U[0-9]+", "verdict": {"enum": ["holds", "fails"]}}}
         }
       }
@@ -74,10 +74,10 @@
       "input": {"artifacts": ["intent", "spec?", "spike?", "plan?"], "outputs": [], "answers": true, "findings": false, "data": ["mentions"]},
       "output": {
         "kind": "artifact",
-        "version": 2,
+        "version": 3,
         "fields": {
           "judgement": {"enum": ["ready", "not-ready"]},
-          "questions": {"list": {"n": "number", "text": "text"}},
+          "questions": {"list": {"n": "number", "text": "text", "recommendation": "text"}},
           "impl": {"enum": ["routine", "novel"]},
           "files": {"list": "text"},
           "steps": {"list": {"title": "text", "paths": {"list": "text"}, "report": "text"}},
@@ -93,10 +93,10 @@
       "input": {"artifacts": ["intent", "spec?", "plan?"], "outputs": [], "answers": true, "findings": true, "data": ["plan-map", "drift", "siblings", "mentions"]},
       "output": {
         "kind": "artifact",
-        "version": 2,
+        "version": 3,
         "fields": {
           "judgement": {"enum": ["ready", "not-ready"]},
-          "questions": {"list": {"n": "number", "text": "text"}},
+          "questions": {"list": {"n": "number", "text": "text", "recommendation": "text"}},
           "needs_person": {"list": "F[0-9]+"},
           "left_lane?": "text"
         }

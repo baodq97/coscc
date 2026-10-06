@@ -125,6 +125,17 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
             _refusal(raw), "contract-field-missing: impl.needs_person (read by impl-claim)"
         )
 
+    def test_removing_a_questions_recommendation_names_the_questions_reader(self):
+        for agent in ("intent", "spec", "plan"):
+            raw = _shipped()
+            del raw["agents"][agent]["output"]["fields"]["questions"]["list"]["recommendation"]
+            self.assertTrue(
+                _refusal(raw).startswith(
+                    f"contract-field-missing: {agent}.questions.recommendation (read by "
+                ),
+                agent,
+            )
+
     def test_a_row_with_no_output_is_refused(self):
         raw = _shipped()
         del raw["agents"]["plan"]["output"]
@@ -207,12 +218,12 @@ class AnOptionalFieldIsNotRequired(unittest.TestCase):
 # Each declaration's version and the hash of its kind and fields. A change to a declaration
 # changes its hash: bump its version, add the migration of the stored records, then pin both.
 PINNED = {
-    "idea": (1, "608eff07e373"),
-    "intent": (2, "bb733744ab18"),
-    "spec": (1, "c50763129465"),
-    "spike": (1, "f77fe54c7b07"),
-    "plan": (2, "6e9a474db6cb"),
-    "impl": (2, "010f750cb2c2"),
+    "idea": (2, "ea807636d79d"),
+    "intent": (3, "ca57a2f691e3"),
+    "spec": (2, "aea0a6c62a73"),
+    "spike": (2, "95f4668e18e5"),
+    "plan": (3, "ad5956be3844"),
+    "impl": (3, "0e0331fd23e0"),
     "review": (1, "c88ced722098"),
     "integrate": (1, "9e29819d42c2"),
     "estimate": (1, "cd5fc053a8e3"),
@@ -233,9 +244,9 @@ class AChangedDeclarationNeedsANewVersion(unittest.TestCase):
 
     def test_a_record_of_another_version_is_refused(self):
         with self.assertRaises(ContractError) as e:
-            contracts.check_stored("spec", 2)
-        self.assertEqual(str(e.exception), "output-version: spec stored v2, declared v1")
-        contracts.check_stored("spec", 1)
+            contracts.check_stored("spec", 1)
+        self.assertEqual(str(e.exception), "output-version: spec stored v1, declared v2")
+        contracts.check_stored("spec", 2)
 
 
 class TheBlockNamesEveryDeclaredField(unittest.TestCase):

@@ -34,8 +34,9 @@ from typing import Any, Iterator
 # `500` on a database a newer one has touched**, so rolling the app back means rolling the
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
-# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped; 13: `stage_results` becomes `outputs`; 17: plan records v2).
-SCHEMA_VERSION = 17
+# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped; 13: `stage_results` becomes `outputs`; 17: plan records v2;
+# 18: `unit_decisions`, questions carry a recommendation, answers carry `by` and `name`).
+SCHEMA_VERSION = 18
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -225,24 +226,28 @@ CREATE TABLE IF NOT EXISTS unit_questions (
     unit      TEXT NOT NULL,
     artifact  TEXT NOT NULL,
     n         INTEGER NOT NULL,
-    text      TEXT NOT NULL
+    text      TEXT NOT NULL,
+    recommendation TEXT NOT NULL DEFAULT ''
 )""",
     """CREATE INDEX IF NOT EXISTS unit_questions_scope ON unit_questions (root, workspace, unit)""",
-    """-- A person's answer, to a question (`ref` its number) or to a review finding
--- (`ref` `F<k>`). Appended and never edited; the last for a `ref` is the one in force.
--- `once_key` is what makes the import re-runnable, as `transitions_once`.
+    """-- An answer, to a question (`ref` its number) or to a review finding (`ref` `F<k>`).
+-- Appended and never edited; the last for a `ref` is the one in force. `by` is whose decision
+-- it is, as sent: `person` (a person's press) or `delegated` (decided for them); `name` is the
+-- name the caller gave. The default is `delegated`: a writer that forgot `by` never writes a
+-- person's word.
 CREATE TABLE IF NOT EXISTS unit_answers (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    root        TEXT NOT NULL,
-    workspace   TEXT NOT NULL,
-    unit        TEXT NOT NULL,
-    artifact    TEXT NOT NULL,
-    ref         TEXT NOT NULL,
-    text        TEXT NOT NULL,
-    answered_by TEXT NOT NULL,
-    date        TEXT NOT NULL,
-    via         TEXT NOT NULL,
-    once_key    TEXT NOT NULL DEFAULT ''
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    root      TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    unit      TEXT NOT NULL,
+    artifact  TEXT NOT NULL,
+    ref       TEXT NOT NULL,
+    text      TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    date      TEXT NOT NULL,
+    via       TEXT NOT NULL,
+    once_key  TEXT NOT NULL DEFAULT '',
+    "by"      TEXT NOT NULL DEFAULT 'delegated' CHECK ("by" IN ('person', 'delegated'))
 )""",
     """CREATE INDEX IF NOT EXISTS unit_answers_scope ON unit_answers (root, workspace, unit, id)""",
     """CREATE UNIQUE INDEX IF NOT EXISTS unit_answers_once
@@ -262,6 +267,22 @@ CREATE TABLE IF NOT EXISTS unit_holds (
     once_key   TEXT NOT NULL DEFAULT ''
 )""",
     """CREATE INDEX IF NOT EXISTS unit_holds_scope ON unit_holds (root, workspace, unit, id)""",
+    """-- A person's decision on a unit that is not an answer or a hold: run a stage again
+-- (`rerun`, `fields` `{stage, stale: {file: record}}`), allow review more rounds
+-- (`more-rounds`, `{rounds}`), or what the unit's outcome was (`outcome`, `{result,
+-- measured_by, source, reason, note}`). Appended and never edited.
+CREATE TABLE IF NOT EXISTS unit_decisions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    root       TEXT NOT NULL,
+    workspace  TEXT NOT NULL,
+    unit       TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('rerun', 'more-rounds', 'outcome')),
+    fields     TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    via        TEXT NOT NULL
+)""",
+    """CREATE INDEX IF NOT EXISTS unit_decisions_scope ON unit_decisions (root, workspace, unit, id)""",
     """CREATE UNIQUE INDEX IF NOT EXISTS unit_holds_once
     ON unit_holds (once_key) WHERE once_key <> ''""",
     """-- A record that could not be applied, and why: `field` is `ingest`. The board shows it.
@@ -403,8 +424,6 @@ _COLUMNS = (
     # The head and the artifacts' revisions a run was handed when it opened.
     ("step_runs", "head", "TEXT NOT NULL DEFAULT ''"),
     ("step_runs", "revisions", "TEXT NOT NULL DEFAULT '{}'"),
-    # Whose answer a row is: `person` or `agent` (an earlier version's precedent answers).
-    ("unit_answers", "authority", "TEXT NOT NULL DEFAULT 'unknown'"),
     # The CI answer read at `ci_head`, written only with a `ci-at-head` transition; the checks
     # it was read from (JSON, for the names of the red ones) and when.
     ("pull_requests", "ci", "TEXT NOT NULL DEFAULT 'pending'"),
@@ -604,12 +623,15 @@ class Data:
                 )
             if found < SCHEMA_VERSION:
                 self._outputs_from_stage_results(conn)
+                self._decisions_v18(conn)
                 for statement in _SCHEMA:
                     conn.execute(statement)
                 self._records_v2(conn)
                 self._links_v15(conn)
                 self._status_v16(conn)
                 self._plan_v2(conn)
+                self._questions_v18(conn)
+                self._answers_v18(conn)
                 for table, column, declaration in _COLUMNS:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
@@ -688,6 +710,63 @@ class Data:
             "AND s.unit = outputs.unit AND s.agent = 'spec' ORDER BY s.id DESC LIMIT 1), '[]'))) "
             "WHERE agent = 'plan' AND version = 1"
         )
+
+    @staticmethod
+    def _decisions_v18(conn: sqlite3.Connection) -> None:
+        """18: a `unit_decisions` left by the removed decisions feature (no `kind` column) is
+        dropped before the new one is made."""
+        have = {r[1] for r in conn.execute("PRAGMA table_info(unit_decisions)")}
+        if have and "kind" not in have:
+            conn.execute("DROP TABLE unit_decisions")
+
+    @staticmethod
+    def _questions_v18(conn: sqlite3.Connection) -> None:
+        """18: every artifact record's questions gain `recommendation` `""`, one version up."""
+        for agent, old in (
+            ("idea", 1),
+            ("spec", 1),
+            ("spike", 1),
+            ("intent", 2),
+            ("plan", 2),
+            ("impl", 2),
+        ):
+            conn.execute(
+                "UPDATE outputs SET version = ?, object = CASE "
+                "WHEN json_type(object, '$.questions') = 'array' THEN json_set(object, '$.questions', "
+                "(SELECT json_group_array(json_set(value, '$.recommendation', '')) "
+                "FROM json_each(outputs.object, '$.questions'))) ELSE object END "
+                "WHERE agent = ? AND version = ?",
+                (old + 1, agent, old),
+            )
+        if "recommendation" not in {
+            r[1] for r in conn.execute("PRAGMA table_info(unit_questions)")
+        }:
+            conn.execute(
+                "ALTER TABLE unit_questions ADD COLUMN recommendation TEXT NOT NULL DEFAULT ''"
+            )
+
+    @staticmethod
+    def _answers_v18(conn: sqlite3.Connection) -> None:
+        """18: `answered_by` becomes `name`, and `by` replaces `authority`: `delegated` where
+        `authority` was not `person` or the name opens with Leif, Claude or agent, else
+        `person`. Once, by the rule `/api/decided` used until then."""
+        have = {r[1] for r in conn.execute("PRAGMA table_info(unit_answers)")}
+        if "answered_by" not in have:
+            return
+        conn.execute("ALTER TABLE unit_answers RENAME COLUMN answered_by TO name")
+        conn.execute(
+            "ALTER TABLE unit_answers ADD COLUMN \"by\" TEXT NOT NULL DEFAULT 'delegated' "
+            "CHECK (\"by\" IN ('person', 'delegated'))"
+        )
+        agent_named = " OR ".join(
+            f"(lower(trim(name)) = '{n}' OR (lower(trim(name)) LIKE '{n}%' AND "
+            f"substr(lower(trim(name)), {len(n) + 1}, 1) NOT BETWEEN 'a' AND 'z'))"
+            for n in ("leif", "claude", "agent")
+        )
+        person = "authority IN ('person', '') AND " if "authority" in have else ""
+        conn.execute(f"UPDATE unit_answers SET \"by\" = 'person' WHERE {person}NOT ({agent_named})")
+        if "authority" in have:
+            conn.execute("ALTER TABLE unit_answers DROP COLUMN authority")
 
     def version(self) -> int:
         with self.connect() as conn:

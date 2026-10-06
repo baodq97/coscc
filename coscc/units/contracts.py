@@ -101,7 +101,10 @@ def _enum(literal: object) -> FieldType:
 READS: dict[str, dict[str, tuple[str, FieldType]]] = {
     "artifact": {
         "judgement": ("stage-result", _enum(Judgement)),
-        "questions": ("awaits-person", {"list": {"n": "number", "text": "text"}}),
+        "questions": (
+            "awaits-person",
+            {"list": {"n": "number", "text": "text", "recommendation": "text"}},
+        ),
     },
     "review": {
         "verdict": ("review-round", _enum(Verdict)),

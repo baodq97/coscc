@@ -54,6 +54,7 @@ OWNERS: dict[str, str] = {
     "step_runs": "coscc.store.db",
     "transitions": "coscc.units.meta",
     "unit_answers": "coscc.units.meta",
+    "unit_decisions": "coscc.units.meta",
     "unit_holds": "coscc.units.meta",
     "unit_links": "coscc.units.meta",
     "unit_meta": "coscc.units.meta",
@@ -74,6 +75,8 @@ FOREIGN_SQL: set[tuple[str, str]] = {
     # The v16 migration drops what a file fed and rewrites a stored `done`.
     ("coscc.store.db", "transitions"),
     ("coscc.store.db", "unit_unknowns"),
+    # The v18 migration turns `answered_by` into `name` and `authority` into `by`.
+    ("coscc.store.db", "unit_answers"),
     ("coscc.run", "workspaces"),
     ("coscc.github.integration", "transitions"),
     ("coscc.units.history", "transitions"),
@@ -128,8 +131,6 @@ DICT_ANY: set[str] = {
     "coscc.github.prmachine:open_prs",
     "coscc.github.prmachine:state",
     "coscc.github.prmachine:watched",
-    "coscc.github.prscope:compare",
-    "coscc.github.prscope:read",
     "coscc.kernel:body",
     "coscc.kernel:line",
     "coscc.runlog.events:Recorder.subscribe",
@@ -274,7 +275,6 @@ DICT_ANY: set[str] = {
     "coscc.units.backlog:undetermined",
     "coscc.units.board:gate",
     "coscc.units.board:next_step",
-    "coscc.units.board:pr_text",
     "coscc.units.board:read",
     "coscc.units.board:rerun",
     "coscc.units.board:screens",
