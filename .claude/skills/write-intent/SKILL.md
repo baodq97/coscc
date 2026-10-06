@@ -36,11 +36,12 @@ is the code as it stands; an idea may describe code that has moved since.
 
 `uv run python -m coscc.loop new-path <slug>` allocates the directory (slug
 lowercase-hyphenated, names the problem). Write `intent.md` there, at most 2 KB, in their words where they decided something. No
-solution design: the spec decides how. `Type` is a conventional-commit type.
+solution design: the spec decides how. The type of the unit, a conventional-commit type, goes
+in `type` of `submit`, never in the file.
 
 ````markdown
 # Intent: <title>
-Author: <name>. Type: <type>. Status: accepted.
+Author: <name>. Status: accepted.
 
 ## Problem
 <what cannot be done today, the evidence, and why it matters now>
@@ -63,8 +64,9 @@ Author: <name>. Type: <type>. Status: accepted.
   else is a plain sentence, never an item. Keep the heading when none is left.
 - `Status: accepted` records your judgement, not approval; `draft` if something is missing.
 
-**A fix the originator showed you.** Only for `Type: fix`, and only when they gave all three,
-add these after `## Problem`, copying their command, log and words as they wrote them:
+**A fix the originator showed you.** Only for a `fix`, and only when they gave all three, add these
+after `## Problem`, copying their command, log and words as they wrote them, and hand the same three
+back in `fix` of `submit` (`reproduction`, `expected` with `source` and `text`, `actual`):
 
 ````markdown
 ## Reproduction
@@ -73,16 +75,15 @@ add these after `## Problem`, copying their command, log and words as they wrote
 ```
 
 ## Expected
-Source: <path>[:<L1>-<L2>]
-<what that file says should happen>
+<what the file in `fix.expected.source` says should happen>
 
 ## Actual
 <what happens instead>
 ````
 
-`Source:` is a path they or an answer under `## Answers` named: relative, outside `.cos/`,
-never one you inferred. With all three the unit takes the fast lane. If one is missing, write
-none of them.
+`source` is a path they or an answer under `## Answers` named, as `path` or `path:L1-L2`: relative,
+outside `.cos/`, never one you inferred. With all three the unit takes the fast lane. If one is
+missing, write none of them and leave `fix` out.
 
 ## Done when
 
