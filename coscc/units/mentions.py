@@ -14,9 +14,10 @@ from pathlib import Path
 from typing import Any
 
 from coscc import units
+from coscc.units import states
 
 # The files of a named unit a step is told about.
-FILES = ("idea.md", "intent.md")
+FILES = tuple(f"{n}.md" for n in states.opening_states())
 
 # Four digits standing alone, and not the year of a `YYYY-MM-DD` date.
 _NUMBER = re.compile(r"(?<!\d)(\d{4})(?!\d|-\d{2}-\d{2}(?!\d))", re.ASCII)
@@ -50,7 +51,7 @@ def mentioned(
             if len(hit) == 1:
                 found.setdefault(("", hit[0]), source)
 
-    numbers(idea, "idea.md")
+    numbers(idea, states.brief_file())
     for artifact, text in answers:
         numbers(text, f"## Answers of {artifact}")
     links = (meta or {}).get("links") or {}

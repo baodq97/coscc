@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from coscc.loop import run
-from coscc.units import guards
+from coscc.units import guards, states
 
 # The stop `e`, and the board's reason, of a unit `next` reads as merging with no `ship` running.
 SHIP_UNRECORDED = "ship requested a merge and recorded no outcome"
@@ -215,7 +215,10 @@ async def read(
             # Whether the unit used its review rounds with findings still open, and how many rounds a person granted it.
             "more_rounds": bool(u.get("moreRounds")),
             "rounds_granted": int(
-                ((u.get("artifacts") or {}).get("review.md") or {}).get("roundsGranted") or 0
+                ((u.get("artifacts") or {}).get(states.first_file(kind="review")) or {}).get(
+                    "roundsGranted"
+                )
+                or 0
             ),
             # On each row too, so whoever holds one row from this read sees the same list.
             "after_answers": list(after_answers),
@@ -495,7 +498,7 @@ def _person_findings_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
     """`{url, number}` of the pull request the app recorded, as the loop read it, or None."""
-    pr = ((unit.get("artifacts") or {}).get("pr.md") or {}).get("pr")
+    pr = ((unit.get("artifacts") or {}).get(states.first_file(action="open-pr")) or {}).get("pr")
     if not isinstance(pr, dict) or not pr.get("url"):
         return None
     return {"url": str(pr["url"]), "number": pr.get("number")}
@@ -507,7 +510,9 @@ def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
     `findings` and `findings_open` are counted off the round's own list; `dropped` and
     `unfinished` are carried as the loop set them.
     """
-    review = ((unit.get("artifacts") or {}).get("review.md") or {}).get("review") or {}
+    review = ((unit.get("artifacts") or {}).get(states.first_file(kind="review")) or {}).get(
+        "review"
+    ) or {}
     out = []
     for r in review.get("rounds") or []:
         if not isinstance(r, dict):
@@ -668,7 +673,11 @@ def unit_state(
         return _state("awaiting", "Awaiting a dependency")
     # A `review` or `ship` made stale by a rerun waits on CI as a missing one does; a stale
     # `pr.md` in the window is a stage to run, not a wait.
-    due = why == "missing" or (why == "stale" and unit.get("at") in ("review", "ship"))
+    due = why == "missing" or (
+        why == "stale"
+        and unit.get("at")
+        in states.states_where(kind="review") + states.states_where(action="merge")
+    )
     if unit.get("between_pr_and_ship") and due:
         return _state("awaiting")
     return _state("ready")

@@ -136,29 +136,6 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
             },
         ),
     },
-    "spec": {"unmeasured": ("spike-holds", {"list": _U})},
-    "spike": {"verdicts": ("spike-holds", {"list": {"id": _U, "verdict": _enum(SpikeVerdict)}})},
-    "intent": {
-        "type": ("branch_for", _enum(BranchType)),
-        "fix?": (
-            "fast-lane",
-            {
-                "reproduction": "text",
-                "expected": {"source": SOURCE, "text": "text"},
-                "actual": "text",
-            },
-        ),
-    },
-    "plan": {
-        "variant": ("label_of", _enum(Label)),
-        "files": ("label_of", {"list": "text"}),
-        "steps": (
-            "render",
-            {"list": {"title": "text", "paths": {"list": "text"}, "report": "text"}},
-        ),
-        "rests_on": ("evaluate", {"list": _U}),
-    },
-    "impl": {"needs_person": ("impl-claim", {"list": _F}), "left_lane?": ("fast-lane", "text")},
     "integrate": {
         "needs_person": ("outcome_of_session", {"list": {"commit": "text", "why": "text"}})
     },
@@ -178,6 +155,38 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
         )
     },
 }
+
+# The fields the engine reads of any artifact that declares them, keyed by the field and not by
+# the state or agent that has it: a row that declares one declares it as written here.
+FIELD_READS: dict[str, tuple[str, FieldType]] = {
+    "unmeasured": ("spike-holds", {"list": _U}),
+    "verdicts": ("spike-holds", {"list": {"id": _U, "verdict": _enum(SpikeVerdict)}}),
+    "type": ("branch_for", _enum(BranchType)),
+    "fix?": (
+        "fast-lane",
+        {
+            "reproduction": "text",
+            "expected": {"source": SOURCE, "text": "text"},
+            "actual": "text",
+        },
+    ),
+    "variant": ("label_of", _enum(Label)),
+    "files": ("label_of", {"list": "text"}),
+    "steps": (
+        "render",
+        {"list": {"title": "text", "paths": {"list": "text"}, "report": "text"}},
+    ),
+    "rests_on": ("evaluate", {"list": _U}),
+    "needs_person": ("impl-claim", {"list": _F}),
+    "left_lane?": ("fast-lane", "text"),
+}
+
+# Fields declared together: a row that declares one declares the rest of its group.
+GROUPS = (
+    ("variant", "files", "steps", "rests_on"),
+    ("type", "fix?"),
+    ("needs_person", "left_lane?"),
+)
 
 _WORDS = ("text", "number")
 _NAME = re.compile(r"[a-z][a-z0-9_]*\??")
@@ -274,6 +283,19 @@ def check(agent: str, output: object) -> Output:
             if field not in (fields if field.endswith("?") else have):
                 raise ContractError("contract-field-missing", f"{agent}.{field} (read by {reader})")
             _covers(f"{agent}.{field.rstrip('?')}", reader, fields[field], want)
+    # An artifact's field read by name: declared as the reader expects, optional where it reads
+    # it when present, and with the rest of its group once one is declared. A session (Gebo, an
+    # estimate) names its own fields above.
+    if kind == "artifact":
+        declared = {n.rstrip("?") for n in fields}
+        wanted = {f for g in GROUPS if declared & {x.rstrip("?") for x in g} for f in g}
+        for field, (reader, want) in FIELD_READS.items():
+            bare = field.rstrip("?")
+            if bare not in declared and field not in wanted:
+                continue
+            if field not in (fields if field.endswith("?") else have):
+                raise ContractError("contract-field-missing", f"{agent}.{field} (read by {reader})")
+            _covers(f"{agent}.{bare}", reader, fields[field], want)
     return Output(
         kind=kind, version=version, fields=fields, purpose=str(output.get("purpose") or "")
     )
@@ -286,7 +308,33 @@ def load(rows: Mapping[str, Mapping[str, object]]) -> dict[str, Output]:
         output = row.get("output")
         if isinstance(output, dict) and output.get("kind") in KINDS:
             out[agent] = check(agent, output)
+    _check_process_reads(out)
     return out
+
+
+def _branch_fields(process: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """`(agent, field)` of every `{field, is}` a state of `process` branches on."""
+    out = []
+    for state in process["states"].values():
+        for way in state.get("next") or ():
+            when = way.get("when") or []
+            out += [
+                (str(state.get("agent")), c["field"])
+                for c in (when if isinstance(when, list) else [when])
+                if c.get("field")
+            ]
+    return out
+
+
+def _check_process_reads(declared: Mapping[str, Output]) -> None:
+    """A field a process branches on is one its state's agent declares, as the reader of that
+    field expects."""
+    for process in pack.processes().values():
+        for agent, field in _branch_fields(process):
+            reader = (FIELD_READS.get(field) or FIELD_READS.get(f"{field}?") or ("",))[0]
+            out = declared.get(agent)
+            if reader and out and field not in {n.rstrip("?") for n in out["fields"]}:
+                raise ContractError("contract-field-missing", f"{agent}.{field} (read by {reader})")
 
 
 class Input(TypedDict):
@@ -424,7 +472,20 @@ def check_stored(agent: str, stored: int) -> None:
 
 def reads(agent: str, obj: dict[str, object]) -> dict[str, object]:
     """The fields of `obj` the engine decides on, and no other."""
-    read = {**READS.get(output(agent)["kind"], {}), **READS.get(agent, {})}
+    out = output(agent)
+    read = {
+        **READS.get(out["kind"], {}),
+        **READS.get(agent, {}),
+        **(
+            {
+                f: v
+                for f, v in FIELD_READS.items()
+                if f.rstrip("?") in out["fields"] or f in out["fields"]
+            }
+            if out["kind"] == "artifact"
+            else {}
+        ),
+    }
     return {k: v for k, v in obj.items() if k in read or f"{k}?" in read}
 
 

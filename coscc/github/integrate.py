@@ -27,6 +27,7 @@ from typing import Any, Literal, get_args
 from coscc.agent import agents
 from coscc.git import gh
 from coscc.runner.step import check_started_by
+from coscc.units import states
 from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
 
 STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown")
@@ -576,7 +577,7 @@ def build_prompt(
     if names:
         parts.append("\n# Artifacts you may read for their intent\n")
         for name in names:
-            for f in ("intent.md", "spec.md", "plan.md"):
+            for f in states.files_where(kind="artifact"):
                 parts.append(f"- {units_root / name / f}")
     # Named, not carried: Gebo reads what it needs of them.
     parts.append("\n# This unit's own artifacts\n")

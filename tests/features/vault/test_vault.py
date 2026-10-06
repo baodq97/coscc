@@ -142,6 +142,8 @@ class Bed(unittest.IsolatedAsyncioTestCase):
             "directory": directory,
             "scratch": None,
             "resumed": False,
+            # The engine action a state is: the merge's body becomes the squashed commit message.
+            "action": {"ship": "merge", "pr": "open-pr"}.get(stage, ""),
         }
         base = Facts(**{**fields, **over})
         if "grant" in over:

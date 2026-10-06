@@ -13,6 +13,7 @@ import math
 import re
 from typing import Any, Iterable, Literal, get_args
 
+from coscc.units import states
 from coscc.units.submit import AGAIN as SUBMIT_AGAIN
 from coscc.store import journal
 from coscc.units.hold import _line_problem
@@ -42,7 +43,8 @@ def is_agent(by: str | None) -> bool:
 def in_backlog(unit: dict[str, Any]) -> bool:
     """Has an idea or intent, is not finished, closed (rejected) or dropped."""
     has_start = any(
-        r.get("stage") in ("idea", "intent") and (r.get("status") or "not started") != "not started"
+        r.get("stage") in states.opening_states()
+        and (r.get("status") or "not started") != "not started"
         for r in unit.get("stages") or []
     )
     # The code `next` answered with, never its words.

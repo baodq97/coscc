@@ -453,7 +453,9 @@ class Autopilot:
             at_ship = {
                 u["name"]
                 for u in data["units"]
-                if u["name"] in names and u.get("between_pr_and_ship") and u.get("at") == "ship"
+                if u["name"] in names
+                and u.get("between_pr_and_ship")
+                and decide.is_merge(u.get("at"))
             }
             unfetched: dict[str, Any] | None = None
             if at_ship:
@@ -521,7 +523,7 @@ class Autopilot:
                 # A first prose step whose reply lacked its opening runs again once.
                 last_stage = str((last.get(name) or {}).get("stage") or "")
                 unopened = decide.unopened_of(records, key, name, last_stage)
-                shipping = here.get(name) == "ship"
+                shipping = decide.is_merge(here.get(name))
                 stop = decide.stop_for(
                     u,
                     nxt,
@@ -565,7 +567,12 @@ class Autopilot:
                         stop, stage = None, "integrate"
                 # Once the `impl` pushed: the board no longer reads the head as the integrated one, and only
                 # `next`'s words say CI is still red.
-                if stop is None and stage == "impl" and own is not None and own[1] is not None:
+                if (
+                    stop is None
+                    and decide.is_coder(stage)
+                    and own is not None
+                    and own[1] is not None
+                ):
                     stage, stop = own
                 # A draft whose questions are all answered runs again, at most `MAX_RERUNS` times, and only on
                 # an answer given since its last run; with none, it is a stop. Before `reason`, which raises on
@@ -601,18 +608,18 @@ class Autopilot:
                     head, _ = self._ci_read(key, name)
                     tries = decide.tries_on_head(records, key, name, head)
                     if tries >= decide.MAX_TRIES:
-                        stop = decide.tries_stop("impl", tries)
+                        stop = decide.tries_stop(str(nxt["continue"]), tries)
                     else:
                         stage, app_note, extra = (
-                            "impl",
+                            str(nxt["continue"]),
                             decide.CONTINUE_NOTE,
                             {"continued": True},
                         )
-                elif stop is None and stage == "impl" and decide.is_ci_red(nxt):
+                elif stop is None and decide.is_coder(stage) and decide.is_ci_red(nxt):
                     head, checks = self._ci_read(key, name)
                     tries = decide.tries_on_head(records, key, name, head)
                     if tries >= decide.MAX_TRIES:
-                        stop = decide.tries_stop("impl", tries)
+                        stop = decide.tries_stop(stage, tries)
                     else:
                         app_note = decide.ci_note(head, checks)
                         extra = {"ci_note": app_note}
@@ -638,7 +645,7 @@ class Autopilot:
                     continue
                 if not stage:
                     continue
-                files = self._files(cwd, name) if stage in decide.CODE_STAGES else None
+                files = self._files(cwd, name) if decide.is_code(stage) else None
                 candidates.append(
                     {
                         "unit": name,
@@ -653,7 +660,7 @@ class Autopilot:
                 )
 
             for r in running:
-                if r["stage"] in decide.CODE_STAGES:
+                if decide.is_code(r["stage"]):
                     r["files"] = self._files(cwd, r["unit"])
             now = datetime.now().astimezone()
             # A `start` with no `end`, from a process before this one, counts against N for 24 hours.

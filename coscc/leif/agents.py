@@ -23,7 +23,7 @@ from coscc.runner import run as run_mod
 from coscc.store.db import Busy, Unusable
 from coscc.store.journal import BadRecord, Journal
 from coscc.units import board as board_reader
-from coscc.units import contracts
+from coscc.units import contracts, states
 from coscc.units.contracts import Plan
 from coscc.units.workspaces import Workspaces
 
@@ -518,9 +518,11 @@ class Models:
         journal: Journal,
         key: str,
         unit: str,
+        agent: str | None = None,
     ) -> dict[str, Any]:
-        """The label a step runs under, the model and effort it resolves to, and for `impl`
-        which run of the unit's this is. Called after the gate, before any money is spent.
+        """The label a step runs under, the model and effort its `agent` row resolves to (the
+        stage's own when none is given), and for a state that writes in the unit's branch which
+        run of the unit's this is. Called after the gate, before any money is spent.
         The label chooses a configuration and nothing else.
 
         `Busy` from the run log is left to the caller, as `failed_attempts` is.
@@ -529,12 +531,13 @@ class Models:
         and `trial_record` says which arm and what was asked for; the model the session really
         ran is filled in once its `init` names it. Any other step has no `trial_record` key.
         """
-        history = [r for r in journal.records(key, unit) if r.get("stage") == "impl"]
+        row = agent or stage
+        history = [r for r in journal.records(key, unit) if r.get("stage") == stage]
         label_declared, label, label_source = models.label_of(stage, process, plan)
-        arm = modeltrial.arm(unit, stage) if modeltrial.applies(stage, label) else None
-        trial_model = modeltrial.model_for(stage, label, arm) if arm else None
+        arm = modeltrial.arm(unit, row) if modeltrial.applies(row, label) else None
+        trial_model = modeltrial.model_for(row, label, arm) if arm else None
         model, model_source, effort, effort_source = models.resolve(
-            stage, label, self.config.model, trial_model
+            row, label, self.config.model, trial_model
         )
         trial_record = (
             {"trial_record": {modeltrial.FIELD: {"arm": arm, "requested": model}}} if arm else {}
@@ -551,7 +554,7 @@ class Models:
             # Every `start` of `impl` counts, the review-driven fixes included; a raise's does not.
             "impl_run": (
                 sum(1 for r in history if r.get("kind") == "start" and "continues" not in r) + 1
-                if stage == "impl"
+                if states.by_of(process, stage) == "session"
                 else None
             ),
         }

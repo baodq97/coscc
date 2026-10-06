@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from coscc.agent import agents, pack
-from coscc.units import contracts, submit
+from coscc.units import contracts, states, submit
 from coscc.runner.review import finding_line
 from coscc.runner.reply import RunError
 
@@ -124,7 +124,14 @@ def _answers(stage: str, unit_meta: dict[str, Any] | None, included: list[str]) 
 def _review_rounds(unit_meta: dict[str, Any] | None) -> list[dict[str, Any]]:
     """The review rounds handed back through `submit`, oldest first, as `cos.db` holds them."""
     arts = (unit_meta or {}).get("artifacts") or {}
-    return list((arts.get("review.md") or {}).get("rounds") or [])
+    return next(
+        (
+            list(a["rounds"])
+            for f in states.files_where(kind="review")
+            if (a := arts.get(f) or {}).get("rounds")
+        ),
+        [],
+    )
 
 
 def _left_open(round_: dict[str, Any]) -> str:
@@ -290,9 +297,12 @@ def _where_you_work(
     stage: str,
     workspace: str | Path,
     worktree: str,
+    artifact: str,
+    process: str | None,
 ) -> list[str]:
-    """`spike` only: its scratch directory, the worktree it may read, its progress file."""
-    if stage != "spike":
+    """A state written `by: scratch` only: its scratch directory, the worktree it may read, its
+    progress file."""
+    if states.by_of(process, stage) != "scratch":
         return []
     scratch = Path(workspace).expanduser().resolve()
     return [
@@ -303,14 +313,14 @@ def _where_you_work(
         + (
             f"The unit's worktree is `{worktree}`. Read it; never write to it. The app "
             "records its `HEAD` and `git status --porcelain` before this step and again "
-            "after, and fails the step, writing no `spike.md`, if either changed."
+            f"after, and fails the step, writing no `{artifact}`, if either changed."
             if worktree
             else "No worktree was named for this step."
         )
         + "\n\n"
-        f"Your progress file is `{scratch / PROGRESS_FILE}` (the rules' *The progress "
+        f"Your progress file is `{scratch / artifact}` (the rules' *The progress "
         f"file*). If this step ends without a usable final reply — a reply with no usable end, a "
-        "session that broke — the app writes `spike.md` from this file."
+        f"session that broke — the app writes `{artifact}` from this file."
     ]
 
 
@@ -372,42 +382,66 @@ _FAST_REVIEW = (
     "- `impl.md` shows that test failing at the first commit and passing at the fix;\n"
     "- `{source}` says what intent's record says it should: {expected}"
 )
-_LANE_BLOCKS = {"impl": _FAST_IMPL, "review": _FAST_REVIEW}
+# By what the state is: a state that writes in the unit's branch, and a review.
+_LANE_BLOCKS = {"session": _FAST_IMPL, "review": _FAST_REVIEW}
 
 
 def _lane(
-    stage: str, lane: str, unit_meta: dict[str, Any] | None, included: list[str]
+    stage: str,
+    lane: str,
+    unit_meta: dict[str, Any] | None,
+    included: list[str],
+    process: str | None,
 ) -> list[str]:
-    """What only a unit in the fast lane is told, with the `source` and `expected` of intent's
-    record. The gate says the lane; the record is read as the snapshot carries it."""
-    if lane != "fast" or stage not in _LANE_BLOCKS:
+    """What only a unit in the fast lane is told, with the `source` and `expected` of the `fix`
+    record the unit's artifacts hold. The gate says the lane; the record is read as the snapshot
+    carries it."""
+    role = states.by_of(process, stage)
+    role = "review" if states.kind_of(process, stage) == "review" else role
+    if lane != "fast" or role not in _LANE_BLOCKS:
         return []
-    fix = ((unit_meta or {}).get("artifacts", {}).get("intent.md", {}).get("result") or {}).get(
-        "fix"
-    ) or {}
+    fix = next(
+        (
+            f
+            for a in ((unit_meta or {}).get("artifacts") or {}).values()
+            if (f := (a.get("result") or {}).get("fix"))
+        ),
+        {},
+    )
     expected = fix.get("expected") or {}
     included.append("fast-lane")
     return [
-        _LANE_BLOCKS[stage].format(
+        _LANE_BLOCKS[role].format(
             source=expected.get("source", "the file intent names"),
             expected=expected.get("text", ""),
         )
     ]
 
 
-def _findings(stage: str, unit_meta: dict[str, Any] | None, included: list[str]) -> list[str]:
-    """The findings the last review round left open, from `cos.db`: what `impl` fixes when a
-    review sent the unit back, what `review` carries forward into its next round."""
+def _findings(
+    stage: str,
+    key: str,
+    unit_meta: dict[str, Any] | None,
+    included: list[str],
+    process: str | None,
+) -> list[str]:
+    """The findings the last review round left open, from `cos.db`: what a session state fixes
+    when a review sent the unit back, what a review carries forward into its next round."""
     rounds = _review_rounds(unit_meta)
-    if not rounds or not contracts.input_of(stage)["findings"]:
+    if not rounds or not contracts.input_of(key)["findings"]:
         return []
     last = rounds[-1]
     left = _left_open(last) or "(no finding is left open)"
-    status = (((unit_meta or {}).get("artifacts") or {}).get("review.md") or {}).get("status")
-    if stage == "impl" and status != "changes-requested":
+    arts = (unit_meta or {}).get("artifacts") or {}
+    status = next(
+        (a.get("status") for f in states.files_where(kind="review") if (a := arts.get(f) or {})),
+        None,
+    )
+    fixing = states.by_of(process, stage) == "session"
+    if fixing and status != "changes-requested":
         return []
     included.append("findings")
-    if stage == "impl":
+    if fixing:
         return [
             "# The findings the last review round left open\n\n"
             "The last review asked for changes. Fix every finding below on the branch, one "
@@ -427,24 +461,27 @@ def _findings(stage: str, unit_meta: dict[str, Any] | None, included: list[str])
     ]
 
 
-def _push(stage: str, branch: str) -> list[str]:
-    """`impl` only: the one push the gate lets through, spelled with the branch it reads."""
-    if stage != "impl" or not branch:
+def _push(stage: str, branch: str, process: str | None) -> list[str]:
+    """A session state only: the one push the gate lets through, spelled with the branch it reads."""
+    if states.by_of(process, stage) != "session" or not branch:
         return []
     return [f"# Pushing\n\nPush with `git push origin {branch}`."]
 
 
 def _unfinished_round(
-    stage: str, unfinished_round: dict[str, Any] | None, included: list[str]
+    stage: str,
+    unfinished_round: dict[str, Any] | None,
+    included: list[str],
+    process: str | None,
 ) -> list[str]:
-    """`review` only: why it runs again after a round the loop did not count.
+    """A review only: why it runs again after a round the loop did not count.
 
     The last round asked for changes but dropped ids an earlier round raised, so the loop does
     not count it and sent the unit here again. The block above may say nothing is left open;
     this says why the review runs anyway. The ids are the loop's, carried by
     `runner.steps.Steps.run_step`.
     """
-    if stage != "review" or not unfinished_round:
+    if states.kind_of(process, stage) != "review" or not unfinished_round:
         return []
     number = int(unfinished_round["n"])
     dropped = ", ".join(f"`{i}`" for i in unfinished_round.get("dropped") or [])
@@ -459,15 +496,15 @@ def _unfinished_round(
     ]
 
 
-def _commit_reviewed(stage: str, head: str) -> list[str]:
-    """`review` only: the commit it reviews.
+def _commit_reviewed(stage: str, head: str, process: str | None) -> list[str]:
+    """A review only: the commit it reviews.
 
     `write-review` needs the commit it reviewed, and the `ship` gate reads that line. A step
     runs in the unit's worktree, whose `.git` is a file pointing into the main repository, and
     a `Read` there is refused as outside both the worktree and the unit. The app has already
     read the head for the run log, so it hands the same value over rather than widen the boundary.
     """
-    if stage != "review":
+    if states.kind_of(process, stage) != "review":
         return []
     if head:
         return [
@@ -587,6 +624,7 @@ def compose_prompt(
     blocks: tuple[tuple[str, str], ...] = (),
     branch: str = "",
     lane: str = "full",
+    process: str | None = None,
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and its envelope: the name of every part it was handed.
 
@@ -600,7 +638,7 @@ def compose_prompt(
     `agent` is the stage's resolved row of the agent table; its section opens the prompt.
     `rerun` is true only for a stage a person ran again from the board, with `rerun_note`
     their note; `app_note` is the autopilot's own, under its own heading. `unfinished_round` is
-    `{"n", "dropped"}` of a last round the loop read so (`review` only). `lane` is what the gate said of the unit (`fast` or `full`).
+    `{"n", "dropped"}` of a last round the loop read so (a review only). `process` is the unit's. `lane` is what the gate said of the unit (`fast` or `full`).
     `runs_commands` is true when the step's grant holds `Bash`. `branch` is the unit's branch
     the worktree stands on, the one push `impl` may make. `blocks` are the named texts features
     add, in order, before the rerun block and the task.
@@ -610,23 +648,29 @@ def compose_prompt(
     """
     directory = Path(directory)
     included: list[str] = []
-    opening = _opening(stage, agent)
+    # The row the state's process binds it to: what it declares is read by that key, what the
+    # state is (`states`) by the state's name.
+    key = (
+        (agent or {}).get("key") or pack.agent_for(process or pack.DEFAULT_PROCESS, stage) or stage
+    )
+    key = str(key)
+    opening = _opening(key, agent)
     # The order of these calls is the order of the prompt.
     parts = [
         *_already_asked(gate_said, base_note),
-        *_artifacts(stage, directory, included),
-        *_outputs(stage, unit_meta, included),
-        *_shared(stage, drift_note, idea_note, siblings_note, mentions_note, included),
-        *_where_you_work(stage, workspace, worktree),
+        *_artifacts(key, directory, included),
+        *_outputs(key, unit_meta, included),
+        *_shared(key, drift_note, idea_note, siblings_note, mentions_note, included),
+        *_where_you_work(stage, workspace, worktree, artifact, process),
         *_room(ceilings, included),
-        *_tools(stage, directory, plan_map, runs_commands, state_file, included),
-        *_lane(stage, lane, unit_meta, included),
-        *_answers(stage, unit_meta, included),
-        *_findings(stage, unit_meta, included),
-        *_push(stage, branch),
-        *_unfinished_round(stage, unfinished_round, included),
-        *_commit_reviewed(stage, head),
-        *_handed(stage, last_attempt, integration_note, screens_note, included),
+        *_tools(key, directory, plan_map, runs_commands, state_file, included),
+        *_lane(stage, lane, unit_meta, included, process),
+        *_answers(key, unit_meta, included),
+        *_findings(stage, key, unit_meta, included, process),
+        *_push(stage, branch, process),
+        *_unfinished_round(stage, unfinished_round, included, process),
+        *_commit_reviewed(stage, head, process),
+        *_handed(key, last_attempt, integration_note, screens_note, included),
     ]
     parts = [*opening, *_given(directory, included), *parts]
     parts += [text for _name, text in blocks if text]
@@ -636,7 +680,7 @@ def compose_prompt(
     if rerun:
         parts.append(_why_it_runs_again(artifact, rerun_note))
     parts.append(_task(workspace, directory, unit, artifact, writes_own))
-    block = submit_block(stage, artifact, writes_own)
+    block = submit_block(key, artifact, writes_own)
     if block:
         parts.append(block)
     return "\n\n---\n\n".join(parts), included
@@ -694,9 +738,10 @@ def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
     (`contracts.output`): the object is all the app reads of it. `""` for a stage that hands back
     no stage result. English: an instruction to the model.
     """
-    if stage == submit.ROUND:
-        return round_block()
-    if stage not in submit.STAGE_RESULT:
+    kind = (contracts.declarations().get(stage) or {}).get("kind")
+    if kind == "review":
+        return round_block(stage, artifact)
+    if kind != "artifact":
         return ""
     when = (
         f"Call it once `{artifact}` is written and final. Writing the file again after that "
@@ -716,7 +761,7 @@ def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
     )
 
 
-def round_block() -> str:
+def round_block(stage: str, artifact: str) -> str:
     """How a review hands back its round, written from its declaration. English: an
     instruction to the model.
     """
@@ -726,8 +771,8 @@ def round_block() -> str:
         f"object you hand it through the `submit` tool (`{submit.NAME}`), and writes the round's "
         "`Reviewed:` line, its `### Findings` and its `### Screens` from it, with the head this "
         "step ran on and the round's number. Call it before you reply; once it answers, reply "
-        "with `review.md` and nothing after it. The object:\n\n"
-        + "\n".join(_fields("review"))
+        f"with `{artifact}` and nothing after it. The object:\n\n"
+        + "\n".join(_fields(stage))
         + "\n\n"
         "If `submit` returns an error, the app has checked your object against the unit: "
         f"{submit.AGAIN} Keep calling it until it is accepted. A review that hands back no round "
@@ -741,7 +786,7 @@ def submit_prompt(stage: str, artifact: str, why: str) -> str:
     """
     what, section = (
         ("round", "Hand back your round")
-        if stage == submit.ROUND
+        if (contracts.declarations().get(stage) or {}).get("kind") == "review"
         else ("judgement", "Hand back your judgement")
     )
     return (
@@ -753,4 +798,3 @@ def submit_prompt(stage: str, artifact: str, why: str) -> str:
 
 
 # A spike's progress file, read when its reply is not an artifact.
-PROGRESS_FILE = "spike.md"

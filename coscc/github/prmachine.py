@@ -27,24 +27,23 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, TypedDict, get_args
+from typing import Any, TypedDict
 
 from coscc.bus import Bus
 from coscc.store.db import now as _now
 from coscc.git import gh, gitops
 from coscc.store.journal import Journal
-from coscc.units import pr_title, transitions
+from coscc.units import pr_title, states, transitions
 from coscc.units.history import History
 
-PR_FILE = "pr.md"
-SHIP_FILE = "ship.md"
+# The artifacts of the process's two engine actions: the state that opens the pull request and
+# the one that merges it.
+PR_FILE = states.files_where(action="open-pr")[0]
+SHIP_FILE = states.files_where(action="merge")[0]
 MACHINE = "pr"
 # The run-log record a `pr` or `ship` the PR machine ran leaves in place of an `end`: `outcome`
 # `done` or `failed`, and the machine's `result`, `reasons` and `detail`.
 RECORD_KIND = "prmachine"
-# The stages the board runs through this module rather than a session.
-Stage = Literal["pr", "ship"]
-STAGES: tuple[Stage, ...] = get_args(Stage)
 # What `state` answers. `none` is a unit whose pull request the app never opened: `ship` then
 # finds it by its branch.
 STATES = ("none", "open", "merge-requested", "merged", "closed")

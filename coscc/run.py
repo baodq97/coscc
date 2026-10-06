@@ -225,18 +225,20 @@ def _workspace(config, data, target: str) -> tuple[dict[str, str], str | None]:
     return names, wanted
 
 
-SKIP_USAGE = "usage: coscc skip <workspace> <unit> spec <reason>"
+SKIP_USAGE = "usage: coscc skip <workspace> <unit> <state that may be skipped> <reason>"
 
 
 def _skip(args: list[str]) -> int:
-    """Record a person's decision to skip a unit's spec.
+    """Record a person's decision to skip one of a unit's states.
 
     Shell-only, so no session can make it. It writes the transition through guard
-    `skip-decision` and no file. Only `spec`: the unit machine has no `skipped` for `plan.md`.
+    `skip-decision` and no file. Only a state its process lets be skipped (`skip`).
     """
+    from coscc.units import states
+
     rest = list(args)
     reason = " ".join(rest[3:]).strip()
-    if len(rest) < 4 or rest[2] != "spec" or not reason:
+    if len(rest) < 4 or rest[2] not in states.skippable() or not reason:
         print(f"coscc: {SKIP_USAGE}", file=sys.stderr)
         return 2
     target, unit = rest[0], rest[1]
@@ -277,7 +279,7 @@ def _skip(args: list[str]) -> int:
             transition="skip",
             workspace=wanted,
             unit=unit,
-            artifact="spec.md",
+            artifact=f"{rest[2]}.md",
             to_state="skipped",
             inputs={"authority": authority, "reason": reason},
             authority=authority,
@@ -293,7 +295,7 @@ def _skip(args: list[str]) -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"coscc: {unit} spec.md skipped by {authority} — {reason}")
+    print(f"coscc: {unit} {rest[2]}.md skipped by {authority} — {reason}")
     return 0
 
 

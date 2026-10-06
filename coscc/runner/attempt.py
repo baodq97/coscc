@@ -11,6 +11,7 @@ from typing import Any
 
 from claude_agent_sdk.types import SystemPromptPreset
 
+from coscc.units import states
 from coscc.git import gitops
 from coscc.agent import sessions as sessions_mod
 from coscc.runner.reply import (
@@ -237,7 +238,7 @@ def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | Non
         # Typed, so `Runner.run` can tell this refusal from the others by its class.
         raise OpeningError(opening_reason(artifact, problem, blocks), problem)
     target = directory / artifact
-    if artifact == "review.md":
+    if artifact in states.files_where(kind="review"):
         try:
             existing = target.read_text(encoding="utf-8", errors="replace")
         except FileNotFoundError:

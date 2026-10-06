@@ -128,6 +128,8 @@ class Facts:
     # A spike's throwaway directory, else `None`.
     scratch: str | None
     resumed: bool
+    # The engine action the run is (`open-pr`, `merge`), `""` for an agent's session.
+    action: str = ""
     # The unit's plan record, handed to a board step's features; `None` elsewhere or with none.
     plan: Plan | None = None
     # What the run was issued (`coscc/runner/run.py`'s `issue`); the locked `Grant()` while a
@@ -291,6 +293,7 @@ def facts(
     resumed: bool,
     plan: Plan | None = None,
     grant: Grant | None = None,
+    action: str = "",
 ) -> Facts:
     """`watch` is set when the run is a spike, whose `cwd` is its throwaway directory."""
     return Facts(
@@ -303,6 +306,7 @@ def facts(
         directory=directory,
         scratch=cwd if watch else None,
         resumed=resumed,
+        action=action,
         plan=plan,
         grant=grant if grant is not None else Grant(),
     )

@@ -268,7 +268,7 @@ def _leaks(ctx: Ctx, get: Callable[[], vault.Store], facts: Facts) -> str | None
         facts.directory,
         facts.tree,
         # The merge's: the pull request's body becomes the squashed commit's message.
-        pull_request=facts.agent == "ship",
+        pull_request=facts.action == "merge",
         unread=unread,
     )
     hits = vault.scan(values, sources)

@@ -52,6 +52,12 @@ class TheShippedDeclarationsLoad(unittest.TestCase):
         self.assertEqual(declared["integrate"]["kind"], "session")
 
 
+def _row_without(agent, field):
+    row = copy.deepcopy(pack.rows()[agent])
+    del row["output"]["fields"][field]
+    return row
+
+
 class RemovingAFieldRefusesTheLoad(unittest.TestCase):
     def test_each_field_the_engine_reads_names_its_reader(self):
         declared = contracts.load(pack.rows())
@@ -66,10 +72,27 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
                     f"contract-field-missing: {agent}.{field} (read by {reader})",
                 )
                 cases += 1
+        # The fields read by name: refused when their group's other field is declared (type with
+        # fix, needs_person with left_lane, the plan's four) or a process branches on them
+        # (unmeasured, left_lane). A spike's `verdicts` stands alone: nothing refuses its absence.
+        for agent, out in declared.items():
+            if out["kind"] != "artifact":
+                continue
+            for field, (reader, _) in contracts.FIELD_READS.items():
+                if field.rstrip("?") not in {n.rstrip("?") for n in out["fields"]}:
+                    continue
+                raw = _shipped()
+                del _output(raw, agent)["fields"][field]
+                if field == "verdicts":
+                    contracts.load({**pack.rows(), agent: _row_without(agent, field)})
+                    continue
+                self.assertEqual(
+                    _refusal(raw), f"contract-field-missing: {agent}.{field} (read by {reader})"
+                )
+                cases += 1
         # judgement and questions for six artifacts, three review fields, one field each for
-        # spec, spike, impl, integrate and estimate, then intent's type and fix and impl's
-        # left_lane, and plan's impl, files, steps and rests_on.
-        self.assertEqual(cases, 6 * 2 + 3 + 5 + 3 + 4)
+        # integrate and estimate; then the nine read by name.
+        self.assertEqual(cases, 6 * 2 + 3 + 2 + 9)
 
     def test_the_intents_type_names_branch_for(self):
         raw = _shipped()
@@ -250,7 +273,7 @@ class TheBlockNamesEveryDeclaredField(unittest.TestCase):
             if out["kind"] == "artifact":
                 block = prompt.submit_block(agent, f"{agent}.md", writes_own=False)
             elif out["kind"] == "review":
-                block = prompt.round_block()
+                block = prompt.round_block("review", "review.md")
             else:
                 continue
             for field in out["fields"]:
@@ -309,7 +332,7 @@ class TheBlockIsTheDeclaration(unittest.TestCase):
     def test_a_review_round_block_says_what_goes_in_each_required_field(self):
         from coscc.runner import prompt
 
-        block = prompt.round_block()
+        block = prompt.round_block("review", "review.md")
         for part in ("`verdict`", "`findings`", "`screens`", "`fixed_in`", "`claim-rejected`"):
             self.assertIn(part, block)
 
@@ -319,7 +342,7 @@ class TheBlockIsTheDeclaration(unittest.TestCase):
         for agent, out in contracts.load(pack.rows()).items():
             if out["kind"] == "artifact":
                 self.assertNotIn("Status:", self.block(agent), agent)
-        self.assertNotIn("Status:", prompt.round_block())
+        self.assertNotIn("Status:", prompt.round_block("review", "review.md"))
 
 
 class TheSchemasAreGenerated(unittest.TestCase):

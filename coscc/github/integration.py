@@ -34,8 +34,8 @@ from coscc.runner.run import NO_SUBMISSION
 from coscc.runner.step import check_started_by, config_sources, with_ceilings
 from coscc.runner.steps import Steps
 from coscc.store.db import Busy, now as _now
-from coscc.store.journal import BadRecord, Journal
-from coscc.units import submit as submit_mod, worktrees
+from coscc.store.journal import SHIP_RECORD, BadRecord, Journal
+from coscc.units import states, submit as submit_mod, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
 from coscc.units.board import Unavailable
@@ -67,7 +67,7 @@ def integration_since_review(journal: Journal, key: str, unit: str) -> dict[str,
             found = rec
         elif (
             rec.get("kind") == "end"
-            and rec.get("stage") == "review"
+            and states.is_review(rec.get("stage"))
             and rec.get("outcome") == "done"
         ):
             found = None
@@ -313,7 +313,12 @@ class Integration:
         verdict = integrate.classify(pr_row, missing, origin_sha, last_record, checks)
         state = verdict["state"]
         review_status = next(
-            (r.get("status") or "" for r in u.get("stages") or [] if r.get("stage") == "review"), ""
+            (
+                r.get("status") or ""
+                for r in u.get("stages") or []
+                if states.is_review(r.get("stage"))
+            ),
+            "",
         )
         gebo = state in integrate.GEBO_STATES
         # A `current` unit also has the button, since the count may be against a
@@ -823,7 +828,7 @@ class Integration:
             assert info is not None
             # By path; Gebo reads what it needs of them.
             own = {}
-            for artifact in ("intent.md", "spec.md", "plan.md", "impl.md"):
+            for artifact in states.files_where(kind="artifact"):
                 path = Path(directory).resolve() / artifact
                 if path.exists():
                     own[artifact] = path
@@ -1074,8 +1079,9 @@ class Integration:
         started_by: str,
         again: bool = False,
         rebased: dict[str, str] | None = None,
+        process: str | None = None,
     ) -> dict[str, Any]:
-        """One `pr` or `ship`, with no session, no `start` and no `end` row;
+        """One `open-pr` or `merge` state, with no session, no `start` and no `end` row;
         what it did is its transitions and, for `ship`, the `ship` row notices read.
         Returns the `done` item a session's step would have ended with. `rebased` is the
         `ship` gate's clean-rebase read, which guard `ship-ready` takes."""
@@ -1101,13 +1107,13 @@ class Integration:
             expected.partition("/")[0] or None,
         )
         machine = self.pr_machine()
-        if stage == "pr":
+        if states.action_of(process, stage) == "open-pr":
             out = await machine.open_pr(u, again=again)
         else:
             out = await machine.ship(
                 u, authority="code" if started_by == "autopilot" else "person", rebased=rebased
             )
-        artifact = prmachine.PR_FILE if stage == "pr" else prmachine.SHIP_FILE
+        artifact = f"{stage}.md"
         done: dict[str, Any] = {
             "unit": unit,
             "stage": stage,
@@ -1121,14 +1127,14 @@ class Integration:
             "model_source": None,
             "mechanical": out.as_dict(),
         }
-        if stage == "pr" and out.ok:
+        if states.action_of(process, stage) == "open-pr" and out.ok:
             # The title and body the app wrote go onto a pull request it
             # found open rather than created, and the scope is read once, as after a session.
             done["pr_sync"] = await self.steps.sync_pr(
                 cwd, unit, out.url if out.result in ("found", "already") else ""
             )
         refused = False
-        if stage == "ship":
+        if states.action_of(process, stage) == "merge":
             merged = out.result in ("merged", "recorded", "already")
             refused = (
                 not merged
@@ -1171,10 +1177,10 @@ class Integration:
             try:
                 journal.append(
                     {
-                        "kind": "ship",
+                        "kind": SHIP_RECORD,
                         "workspace": key,
                         "unit": unit,
-                        "stage": "ship",
+                        "stage": states.states_where(action="merge")[0],
                         "result": result,
                     }
                 )

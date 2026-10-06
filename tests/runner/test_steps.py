@@ -2514,7 +2514,10 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
                 pass
 
             async def run(self, **kw):
+                sessions.append(kw["stage"])
                 yield ("done", {"outcome": outcome})
+
+        sessions = self.sessions = []
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return board_reader.Gate(True, f"open: {stage} may proceed", (), rebased)
@@ -2573,6 +2576,11 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
             mock.patch.object(core.steps, "sync_pr", nothing),
         ):
             asyncio.run(go())
+
+    def test_an_open_pr_or_merge_state_opens_no_session(self):
+        for stage in ("pr", "ship"):
+            self.drive(self.core(), stage, "done")
+        self.assertEqual(self.sessions, [])
 
     def test_the_gates_clean_rebase_reaches_the_machines_guard(self):
         core = self.core()
