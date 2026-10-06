@@ -228,6 +228,7 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
                 d, directory, UNIT, "review", STAGES, "review.md", branch="feat/x"
             )
         self.assertIn("# Pushing\n\nPush with `git push origin feat/x`.", told)
+        self.assertNotIn("Any other form", told)
         self.assertNotIn("# Pushing", plain)
         self.assertNotIn("# Pushing", review)
 

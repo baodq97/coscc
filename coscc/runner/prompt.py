@@ -637,10 +637,7 @@ def _push(stage: str, branch: str) -> list[str]:
     """`impl` only: the one push the gate lets through, spelled with the branch it reads."""
     if stage != "impl" or not branch:
         return []
-    return [
-        f"# Pushing\n\nPush with `git push origin {branch}`. Any other form is refused, a bare "
-        "`git push` and `HEAD` among them: the app does not read where HEAD stands."
-    ]
+    return [f"# Pushing\n\nPush with `git push origin {branch}`."]
 
 
 def _rounds_so_far(stage: str, directory: Path, review: str, included: list[str]) -> list[str]:
