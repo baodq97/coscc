@@ -22,7 +22,6 @@ from coscc.runner.reply import (
     opening_problem,
     opening_reason,
 )
-from coscc.runner.prompt import answers_section, strip_answers, with_answers
 from coscc.runner.review import merge_review
 
 log = logging.getLogger(__name__)
@@ -275,29 +274,23 @@ def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | Non
     many pieces the session said it in, for the reason. Synchronous on purpose: see the comment
     where `Runner.run` calls it.
     """
-    # The reply's own `## Answers` never reaches disk; only the section already there does, read
-    # as late as possible (after every `await` of the step, with no yield before the write), so a
-    # block a person appended while the step ran is carried through untouched.
-    body = strip_answers(from_title(unfence(text), artifact) + "\n")
-    # Asked of what will be written, below the reply's own `## Answers` cut, and before the file
-    # is read: a refusal leaves it byte for byte.
+    body = from_title(unfence(text), artifact) + "\n"
+    # Asked of what will be written, and before the file is read: a refusal leaves it byte for
+    # byte.
     problem = opening_problem(body, artifact)
     if problem:
         # Typed, so `Runner.run` can tell this refusal from the others by its class.
         raise OpeningError(opening_reason(artifact, problem, blocks), problem)
     target = directory / artifact
-    try:
-        raw = target.read_bytes()
-    except FileNotFoundError:
-        raw = b""
-    section = answers_section(raw)
-    above = raw[: len(raw) - len(section)] if section is not None else raw
     if artifact == "review.md":
-        # `merge_review` never sees the Answers section. A reply that rewrites an earlier round, or
-        # adds none, still raises before anything below is written.
-        body = merge_review(above.decode("utf-8", errors="replace"), body)
+        try:
+            existing = target.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            existing = ""
+        # A reply that rewrites an earlier round, or adds none, raises before anything is written.
+        body = merge_review(existing, body)
         # Asked of the merged text so what reaches disk is what was checked.
         problem = opening_problem(body, artifact)
         if problem:
             raise OpeningError(opening_reason(artifact, problem, blocks), problem)
-    target.write_bytes(with_answers(body, section))
+    target.write_bytes(body.encode("utf-8"))

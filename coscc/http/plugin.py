@@ -102,8 +102,9 @@ def add_sessions(core: Core, features: Sequence[Feature]) -> None:
     """Every feature's `sessions` into the core's tables: its output declaration (`submit`), its
     grant (`policy`), its attempt machine; and the updater hears each one end, as it hears the
     core's. Every declaration, the shipped ones first, is checked here: a broken one stops the
-    build with its `ContractError`."""
+    build with its `ContractError`; so is every agent's input."""
     contracts.declarations()
+    contracts.input_of("")
     for f in features:
         for s in f.sessions:
             submit.add_session(s.kind, s.output, s.purpose)

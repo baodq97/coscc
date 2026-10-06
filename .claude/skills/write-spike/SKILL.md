@@ -10,8 +10,8 @@ build nothing to keep, never edit the spec.
 
 ## What you are given (trust it)
 
-`spec.md` and any previous `spike.md` are in the prompt; every `U<n>` under its `## Concerns`
-is one question to answer. Do not re-read them.
+`intent.md`, `spec.md` and any previous `spike.md` are in the prompt, each under its own heading;
+every `U<n>` under the spec's `## Concerns` is one question to answer. Do not Read them.
 
 Gate: from the board it was asked (the prompt says so); at a terminal ask
 `uv run python -m coscc.loop gate <unit> spike` first and stop on non-zero.

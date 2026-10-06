@@ -107,6 +107,7 @@ export type Card = {
   "at": string;
   "updated": string;
   "attention_reason": string;
+  "missing": string[];
   "idea": string;
   "rank": number | null;
   "effort": string | null;
@@ -557,6 +558,7 @@ export type UnitRun = {
   "cost_usd": number | null;
   "turns": number | null;
   "run": string;
+  "envelope": string[];
 };
 
 export type UpNext = {

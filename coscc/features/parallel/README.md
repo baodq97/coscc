@@ -13,7 +13,8 @@ does not, or a path two steps share.
 
 - One prompt block, `parallel`, on `impl` only, when the record names two or more steps: each
   step's `(a) <title>`, its paths and its report, and the instruction to start one `worker` per
-  step.
+  step with that step's slice of the envelope (its part of `plan.md`, the answers and findings
+  on its paths) in the worker's prompt.
 - No tool and no guard. The `worker` helper, the hooks holding `Agent` and `SendMessage`, `peers`
   and the block on how the agents talk are the kernel's.
 

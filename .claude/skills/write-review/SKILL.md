@@ -11,9 +11,10 @@ nothing here reads as a person's approval.
 
 ## What you are given (trust it)
 
-`impl.md` (scope, test counts, answers), the commit under review, the gate, the earlier
-findings and any answers are in the prompt. CI is green and `impl.md` records its tests: do not
-re-run the suite or report what CI enforces. From the board the gate was asked (the prompt
+`intent.md`, `spec.md`, `plan.md` and its record, `impl.md` (scope, test counts), `pr.md`, the
+commit under review, the gate, the last round's open findings and the answers are in the prompt,
+each under its own heading: do not Read them. CI is green and `impl.md` records its tests: do
+not re-run the suite or report what CI enforces. From the board the gate was asked (the prompt
 says so); at a terminal ask `uv run python -m coscc.loop gate <unit> review` first and stop on
 non-zero. Read the changed files, not the whole tree.
 

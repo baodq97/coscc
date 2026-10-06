@@ -52,7 +52,7 @@ describe("unit state", () => {
   const base: Unit = {
     name: "0001_x", number: 1, slug: "x", type: "fix", phase: "started", next_stage: "spec", why: "", open: 0,
     state: { state: "ready", label: "Ready", color: "gray" }, hold: null, pr: null, cost_usd: 0, at: "", updated: "",
-    attention_reason: "", idea: "", rank: null, effort: null,
+    attention_reason: "", missing: [], idea: "", rank: null, effort: null,
   };
 
   it("reads a paused hold as paused", () => {
@@ -61,6 +61,10 @@ describe("unit state", () => {
 
   it("puts a unit with open questions under Needs you", () => {
     expect(unitState({ ...base, open: 2 })).toEqual({ group: "Needs you", label: "2 questions" });
+  });
+
+  it("says what the next stage lacks, under Needs you", () => {
+    expect(unitState({ ...base, next_stage: "review", missing: ["impl.md"] })).toEqual({ group: "Needs you", label: "Needs impl.md" });
   });
 
   it("reads a finished unit as shipped and a pre-intent one as an idea", () => {

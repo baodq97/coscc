@@ -1,5 +1,6 @@
-"""A review's rounds and findings: merging a round into `review.md`, reading which findings
-are open, and checking a closing round.
+"""A review's rounds as `review.md` holds them: merging a round into it, rendering a round from
+its object, and checking a closing round. Which findings are open is read from `cos.db`'s
+rounds, never from this file.
 """
 
 from __future__ import annotations
@@ -10,13 +11,19 @@ from typing import Any
 from coscc.runner.reply import RunError, unfence
 
 
-# # One `## Round N` section of review.md: from its heading to the next `## ` heading.
-_ROUND_RE = re.compile(r"^## Round \d+\b.*?(?=^## |\Z)", re.MULTILINE | re.DOTALL)
+def _sections(text: str) -> list[tuple[int, str]]:
+    """`text` cut at each `## ` heading: `(start, section)`, the part before the first included."""
+    starts = [0, *(m.start() for m in re.finditer(r"^## ", text, re.MULTILINE))]
+    return [(a, text[a:b]) for a, b in zip(starts, [*starts[1:], len(text)]) if b > a]
+
+
+def _is_round(section: str) -> bool:
+    return re.match(r"## Round \d+\b", section) is not None
 
 
 def _round_number(section: str) -> int:
     found = re.match(r"## Round (\d+)", section)
-    # Every section `_ROUND_RE` finds starts so.
+    # Every section `_is_round` keeps starts so.
     return int(found.group(1)) if found else 0
 
 
@@ -51,7 +58,7 @@ def merge_review(existing: str, reply: str) -> str:
 
 def _rounds(text: str) -> list[str]:
     """Every round already recorded, each exactly as it stands in the file."""
-    return [m.group(0).rstrip() for m in _ROUND_RE.finditer(text or "")]
+    return [sec.rstrip() for _, sec in _sections(text or "") if _is_round(sec)]
 
 
 # # The standard a round's screenshots are judged against, as the loop names it.
@@ -120,11 +127,13 @@ def replace_new_rounds(text: str, before: set[int], rendered: str) -> str:
     kept: list[str] = []
     placed = False
     last = 0
-    for m in _ROUND_RE.finditer(text):
-        kept.append(text[last : m.start()])
-        last = m.end()
-        if _round_number(m.group(0)) in before:
-            kept.append(m.group(0))
+    for start, section in _sections(text):
+        if not _is_round(section):
+            continue
+        kept.append(text[last:start])
+        last = start + len(section)
+        if _round_number(section) in before:
+            kept.append(section)
         elif not placed:
             kept.append(rendered + "\n\n")
             placed = True
@@ -135,59 +144,13 @@ def replace_new_rounds(text: str, before: set[int], rendered: str) -> str:
     return out.rstrip() + "\n"
 
 
-# # A finding line as the loop's `FINDING` reads it, and the one label it counts closed: `fixed`
-# # with a sha. An `[answered]` is closed only by a validated block under `## Answers`, which
-# # is left to the loop, so it is kept here.
-_FINDING_RE = re.compile(r"^- (F\d+)\s+\[([^\]]*)\]")
-_FIXED_RE = re.compile(r"^fixed\s+[0-9a-f]{7,40}$", re.IGNORECASE)
-
-
-def open_findings(text: str) -> tuple[int | None, str]:
-    """`review.md`'s last round's number, and that round's findings still open, each with the
-    indented lines under it.
-
-    Only cuts text out to embed in a prompt; the loop is the one reader of findings that opens
-    anything. "Open" is every label but `fixed <sha>` (a `fixed` with no sha and unreadable
-    labels included), so nothing the loop may count open is dropped from the prompt.
-
-    A file with no `## Round` is read whole, as a single round with no number.
-    """
-    text = text or ""
-    rounds = _rounds(text)
-    if rounds:
-        body, number = rounds[-1], _round_number(rounds[-1])
-    else:
-        body, number = re.split(r"^## Answers\s*$", text, maxsplit=1, flags=re.MULTILINE)[0], None
-    kept: list[str] = []
-    keeping = False
-    for line in body.splitlines():
-        found = _FINDING_RE.match(line)
-        if found:
-            keeping = not _FIXED_RE.match(found.group(2).strip())
-        elif not (line[:1].isspace() and line.strip()):
-            keeping = False
-            continue
-        if keeping:
-            kept.append(line)
-    return number, "\n".join(kept)
-
-
 # # The three sections of a round the closing turn writes, in this order.
 INCOMPLETE_SECTIONS = ("### Reviewed so far", "### Findings", "### What was not reviewed")
-# # A round's first non-blank line as the loop's `ROUND_META` reads it.
-_ROUND_META_RE = re.compile(
-    r"^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*(pass|changes-requested|needs-person|incomplete)\.?\s*$",
-    re.IGNORECASE,
-)
 
 
-def _round_meta(section: str) -> tuple[str, str] | None:
-    """A round's `(reviewed, verdict)`, lower-cased, or `None` when the loop could not read it."""
-    for line in section.splitlines()[1:]:
-        if line.strip():
-            m = _ROUND_META_RE.match(line.strip())
-            return (m.group(1).lower(), m.group(2).lower()) if m else None
-    return None
+def _first_line(section: str) -> str:
+    """A round's first non-blank line after its heading."""
+    return next((line.strip() for line in section.splitlines()[1:] if line.strip()), "")
 
 
 def _headings_in_order(section: str, headings: tuple[str, ...]) -> bool:
@@ -244,11 +207,11 @@ def closing_round_problem(existing: str, reply: str, head: str) -> str | None:
     number = max(on_disk, default=0) + 1
     if _round_number(new[0]) != number:
         return f"{new[0].splitlines()[0]} is not ## Round {number}, the next round"
-    meta = _round_meta(new[0])
-    if meta is None or meta[1] != "incomplete":
-        return f"{new[0].splitlines()[0]} does not open with Verdict: incomplete"
-    if meta[0] != (head or "").lower():
-        return f"{new[0].splitlines()[0]} names {meta[0]}, not the head this step ran on, {head}"
+    if _first_line(new[0]) != f"Reviewed: {head}. Verdict: incomplete.":
+        return (
+            f"{new[0].splitlines()[0]} does not open with "
+            f"`Reviewed: {head}. Verdict: incomplete.`, the head this step ran on"
+        )
     if not _headings_in_order(new[0], INCOMPLETE_SECTIONS):
         return f"{new[0].splitlines()[0]} lacks {', '.join(INCOMPLETE_SECTIONS)}, in that order"
     return None

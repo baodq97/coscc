@@ -779,6 +779,8 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 "integrate_state": item.get("integrate_state"),
                 # The agent's name when the step began. A session no agent row names has none: None.
                 "agent": item.get("agent"),
+                # The parts its prompt was handed. A session composed elsewhere has none: None.
+                "envelope": item.get("envelope"),
             }
             rows.append(row)
             open_runs[stage] = row

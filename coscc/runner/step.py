@@ -378,7 +378,6 @@ async def _compose(
     directory: Path,
     unit: str,
     stage: str,
-    stages: list[str],
     artifact: str,
     grant: Grant,
     resume: dict[str, Any] | None,
@@ -398,27 +397,27 @@ async def _compose(
     app_note: str,
     plan_map: str,
     unfinished_round: dict[str, Any] | None,
+    incomplete_round: dict[str, Any] | None,
     idea_note: str,
     siblings_note: str,
     mentions_note: str,
     agent: dict[str, Any] | None,
     meta: dict[str, Any] | None,
     state_file: str | None,
-) -> tuple[str, str, list, list]:
-    """`(head, prompt, included, pointed)` of the step: the message of a step taken up again, or the
+) -> tuple[str, str, list]:
+    """`(head, prompt, envelope)` of the step: the message of a step taken up again, or the
     prompt composed from the unit's files."""
     if resume is not None:
         # Nothing of git is read or run on a step taken up again; what the first start read is in its
         # owner.
-        return str(was.get("head") or ""), str(resume.get("message") or ""), [], []
+        return str(was.get("head") or ""), str(resume.get("message") or ""), []
     head = await _head_of(watch or cwd)
     branch = await branch_of(cwd) if stage == "impl" and not watch else ""
-    prompt, included, pointed = compose_prompt(
+    prompt, envelope = compose_prompt(
         cwd,
         directory,
         unit,
         stage,
-        stages,
         artifact,
         writes_own=not grant.app_writes_artifact,
         gate_said=gate_said,
@@ -436,6 +435,7 @@ async def _compose(
         app_note=app_note,
         plan_map=plan_map,
         unfinished_round=unfinished_round,
+        incomplete_round=incomplete_round,
         idea_note=idea_note,
         siblings_note=siblings_note,
         mentions_note=mentions_note,
@@ -446,7 +446,7 @@ async def _compose(
         blocks=blocks,
         branch=branch,
     )
-    return head, prompt, included, pointed
+    return head, prompt, envelope
 
 
 def _session_kw(
@@ -503,7 +503,7 @@ def _channel_for(
     directory: Path,
     artifact: str,
     head: str,
-    open_findings: tuple[str, ...],
+    open_ids: tuple[str, ...],
     claims_round: int | None,
 ) -> submit_mod.Channel | None:
     """This run's `submit`, bound to it: a stage that hands back a stage result ends `done` only
@@ -517,7 +517,7 @@ def _channel_for(
         artifact=artifact,
         own=not grant.app_writes_artifact,
         head=head,
-        open_findings=tuple(open_findings),
+        open_ids=tuple(open_ids),
         claims_round=claims_round,
     )
 
@@ -1471,7 +1471,6 @@ class Runner:
         unit: str,
         stage: str,
         artifact: str,
-        stages: list[str],
         mode: str,
         gate_said: str = "",
         gate_reasons: tuple[str, ...] = (),
@@ -1505,7 +1504,8 @@ class Runner:
         plan_map_record: dict[str, Any] | None = None,
         plan: kernel.Plan | None = None,
         unfinished_round: dict[str, Any] | None = None,
-        open_findings: tuple[str, ...] = (),
+        incomplete_round: dict[str, Any] | None = None,
+        open_ids: tuple[str, ...] = (),
         claims_round: int | None = None,
         rounds_known: tuple[int, ...] = (),
         idea_note: str = "",
@@ -1584,12 +1584,11 @@ class Runner:
             resumed=resume is not None,
             plan=plan,
         )
-        head, prompt, included, pointed = await _compose(
+        head, prompt, envelope = await _compose(
             cwd,
             directory,
             unit,
             stage,
-            stages,
             artifact,
             grant,
             resume,
@@ -1608,6 +1607,7 @@ class Runner:
             app_note=app_note,
             plan_map=plan_map,
             unfinished_round=unfinished_round,
+            incomplete_round=incomplete_round,
             idea_note=idea_note,
             siblings_note=siblings_note,
             mentions_note=mentions_note,
@@ -1617,7 +1617,7 @@ class Runner:
         )
         kw = _session_kw(workspace, cwd, model, effort, grant, agent)
         channel = _channel_for(
-            grant, recorder, stage, directory, artifact, head, open_findings, claims_round
+            grant, recorder, stage, directory, artifact, head, open_ids, claims_round
         )
         grant, servers = self._with_tools(grant, channel, facts, ledger)
         start_at = self._write_start(
@@ -1629,8 +1629,7 @@ class Runner:
             mode,
             started_by,
             prompt,
-            included,
-            pointed,
+            envelope,
             grant,
             head,
             cwd,
@@ -1845,7 +1844,7 @@ class Runner:
                 "outcome": outcome,
                 "artifact": artifact if outcome == "done" else None,
                 "session_id": session_id,
-                "included": included,
+                "envelope": envelope,
                 "error": detail,
                 "cost": cost,
                 "model": model,
@@ -1880,8 +1879,7 @@ class Runner:
         mode: str,
         started_by: str,
         prompt: str,
-        included: list,
-        pointed: list,
+        envelope: list,
         grant: Grant,
         head: str,
         cwd: str,
@@ -1922,9 +1920,9 @@ class Runner:
             mode,
             started_by=started_by,
             prompt_chars=len(prompt),
-            included=included,
-            # The artifacts named by path only, `[]` for a stage that names none.
-            pointed=pointed,
+            # The parts the prompt was handed: the artifacts, records, answers, findings and data its
+            # row declares, and the app's own sections; `[]` for a step taken up again.
+            envelope=envelope,
             # Which build ran the step, so a measurement splits by what ran rather than by a date.
             **(
                 {

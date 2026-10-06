@@ -135,8 +135,8 @@ stateDiagram-v2
 
 | Transition | Decided by | Recorded |
 |---|---|---|
-| refuse before spend: busy mark, held, `coscc.loop gate` non-zero, impl tree prep fails, review screenshot retake fails (`coscc/runner/steps.py` `_open`, `_prepare`) | CODE | none / `screens` |
-| prompt assembly (skill + gate text + artifacts + answers + review history + note) (`runner/prompt.py:409-823`) | CODE | `start` (`included`, `pointed`, model, effort, grant) |
+| refuse before spend: busy mark, held, `coscc.loop gate` non-zero, impl tree prep fails, review screenshot retake fails, a required input the stage's row declares is missing (`input-missing`, `units/contracts.py` `missing`) (`coscc/runner/steps.py` `_open`, `_prepare`) | CODE | none / `screens` |
+| prompt assembly: skill + gate text + the envelope the row's `input` declares (`agents.json`: artifacts whole, earlier records, answers and open findings from `cos.db` rows, the app's data) + note (`runner/prompt.py` `compose_prompt`) | CODE | `start` (`envelope`, model, effort, grant) |
 | the work itself, and the record it hands back through `submit` | **AGENT** | the file, `outputs` |
 | prose stages: app writes the file from the reply, checks the title | CODE on AGENT text | `end.opening` |
 | tool stages: file must exist before `submit` is taken | CODE on AGENT file | — |

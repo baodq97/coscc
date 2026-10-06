@@ -71,6 +71,8 @@ REASONS = (
     "no-branch",
     "no-git",
     "no-run-log",
+    # A required part of the stage's declared input (`agents.json` `input`) is missing.
+    "input-missing",
     # An integration refused because the unit's state has nothing to integrate.
     "nothing-to-integrate",
     # A feature refused the step; the words name the feature, and its reason follows.
@@ -142,8 +144,8 @@ def review_round(inputs: Mapping[str, Any]) -> Verdict:
 
 
 def impl_claim(inputs: Mapping[str, Any]) -> Verdict:
-    """`claims`, the `F<k>` ids; `open_findings`, the open ids of the last round."""
-    open_ids = set(inputs.get("open_findings") or ())
+    """`claims`, the `F<k>` ids; `open_ids`, the open ids of the last round."""
+    open_ids = set(inputs.get("open_ids") or ())
     if any(c not in open_ids for c in inputs.get("claims") or ()):
         return _closed("not-open-finding")
     return OPEN

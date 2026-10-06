@@ -151,10 +151,10 @@ class TheGuards(unittest.TestCase):
         self.assertEqual(guards.review_round({"run": "r", "open_run": "r"}).reasons, ("no-head",))
 
     def test_impl_may_claim_only_an_open_finding(self):
-        self.assertEqual(guards.impl_claim({"claims": ["F1"], "open_findings": ["F1", "F2"]}), OPEN)
-        self.assertEqual(guards.impl_claim({"claims": [], "open_findings": []}), OPEN)
+        self.assertEqual(guards.impl_claim({"claims": ["F1"], "open_ids": ["F1", "F2"]}), OPEN)
+        self.assertEqual(guards.impl_claim({"claims": [], "open_ids": []}), OPEN)
         self.assertEqual(
-            guards.impl_claim({"claims": ["F3"], "open_findings": ["F1"]}).reasons,
+            guards.impl_claim({"claims": ["F3"], "open_ids": ["F1"]}).reasons,
             ("not-open-finding",),
         )
 

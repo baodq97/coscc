@@ -111,6 +111,9 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
             f"# PR: a problem\nAuthor: t. Status: accepted.\nPR: {PR_URL}\n", encoding="utf-8"
         )
         (self.dir / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
+        # What review declares it needs.
+        for name in ("intent.md", "impl.md"):
+            (self.dir / name).write_text("# x\n", encoding="utf-8")
         self.unit = self.made["unit"]
 
     def _post(self, gh, n):

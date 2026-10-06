@@ -11,6 +11,6 @@ paths:
 - The run button offers what `next` names, even for a stage that has an artifact; it offers
   nothing on `waiting`.
 - An `impl` that commits and does not push reads as not done: the button stays on `impl`.
-- A prose-stage rewrite keeps `## Answers` byte for byte: the app owns that section, a reply
-  that rewrites one is refused.
+- An answer is a row, never a file's section: a prose-stage reply is written as it comes, and
+  every later prompt renders the rows.
 - Nothing re-asks on a timer: a pending check shows no button until someone asks.

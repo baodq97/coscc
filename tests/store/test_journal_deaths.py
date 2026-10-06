@@ -97,7 +97,6 @@ class EveryWayAStepDies(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                     running=running,
                 ):

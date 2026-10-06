@@ -405,3 +405,39 @@ class TheLoopsBranchTypesAreTheDeclaredEnum(unittest.TestCase):
         bad = {**fix, "expected": {"source": "a b", "text": "t"}}
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate({**base, "fix": bad}, schema)
+
+
+class AnInputDeclarationIsChecked(unittest.TestCase):
+    """Each stage's `input` names stages, agents and data sources there are, or the load refuses."""
+
+    def inputs(self, raw: dict[str, Any]) -> dict[str, contracts.Input]:
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "agents.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            return contracts.load_inputs(path)
+
+    def test_every_stage_that_composes_a_prompt_declares_one(self):
+        loaded = self.inputs(_shipped())
+        for stage in ("idea", "intent", "spec", "spike", "plan", "impl", "review"):
+            self.assertIn(stage, loaded)
+        self.assertEqual(loaded["impl"]["artifacts"], ["intent", "spec?", "plan?"])
+
+    def test_an_unknown_artifact_output_or_source_refuses_it(self):
+        for part, value in (
+            ("artifacts", ["intent", "notes"]),
+            ("outputs", ["pr"]),
+            ("data", ["weather"]),
+            ("answers", "yes"),
+        ):
+            raw = copy.deepcopy(_shipped())
+            raw["agents"]["review"]["input"][part] = value
+            with self.assertRaises(ContractError, msg=part) as caught:
+                self.inputs(raw)
+            self.assertEqual(caught.exception.code, "contract-bad-type")
+            self.assertIn(f"review.input.{part}", str(caught.exception))
+
+    def test_a_missing_key_refuses_it(self):
+        raw = copy.deepcopy(_shipped())
+        del raw["agents"]["spec"]["input"]["findings"]
+        with self.assertRaises(ContractError):
+            self.inputs(raw)

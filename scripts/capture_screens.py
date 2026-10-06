@@ -460,13 +460,15 @@ def make_unread_fixture(api: httpx.Client, proj: Path, rows: Rows) -> None:
 
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     """One ended `plan` run of `0004_finished` in the running app's run log, keyed
-    as `Workspaces.key` keys it. `at` is when it is written, so the page reads "just now"."""
+    as `Workspaces.key` keys it, with the envelope its `start` names. `at` is when it is written, so the page reads "just now"."""
     import uuid
 
     from coscc.store.journal import Journal
 
     journal, key = Journal(work, data_dir), str(proj.resolve())
-    journal.started(key, "0004_finished", "plan", "manual")
+    journal.started(
+        key, "0004_finished", "plan", "manual", envelope=["intent.md", "spec.md", "answers"]
+    )
     journal.finished(key, "0004_finished", "plan", "done", session_id=str(uuid.uuid4()))
 
 

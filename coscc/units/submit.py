@@ -139,7 +139,7 @@ class Channel:
         own: bool,
         open_run: Callable[[], str] | None = None,
         head: str = "",
-        open_findings: tuple[str, ...] = (),
+        open_ids: tuple[str, ...] = (),
         claims_round: int | None = None,
     ):
         self.run = run
@@ -153,7 +153,7 @@ class Channel:
         self.head = head
         # The `F<k>` the last round left `open`, as the board read them before the step, and
         # that round's number: what an impl may claim only a person can close.
-        self.open_findings = tuple(open_findings)
+        self.open_ids = tuple(open_ids)
         self.claims_round = claims_round
         # What the runner adds once the artifact is written, all of it the app's: a round's
         # number and where its screenshots were taken.
@@ -181,7 +181,7 @@ class Channel:
         if self.stage == "impl":
             out.update(
                 claims=list(obj.get("needs_person") or ()),
-                open_findings=list(self.open_findings),
+                open_ids=list(self.open_ids),
                 claims_round=self.claims_round,
             )
         return {**out, **self.extra}
@@ -220,7 +220,7 @@ class Channel:
             if "not-open-finding" in verdict.reasons:
                 return refusal(
                     "guard impl-claim refused: `needs_person` may name only a finding the last review "
-                    f"round left open, and those are: {', '.join(self.open_findings) or 'none'}."
+                    f"round left open, and those are: {', '.join(self.open_ids) or 'none'}."
                 )
             return refusal(
                 f"guard {self.guard_id} refused: {', '.join(verdict.reasons)} "

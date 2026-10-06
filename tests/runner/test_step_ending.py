@@ -20,12 +20,11 @@ from coscc.git import gitops
 from coscc.store.journal import Journal
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner
-from coscc.runner.prompt import answers_section, build_prompt, skill_for
+from coscc.runner.prompt import compose_prompt, skill_for
 from coscc.runner.attempt import snapshot
 from tests.runner.test_step import (
     REVIEW_R1,
     SPIKE_REPLY,
-    STAGES,
     UNIT,
     _git_repo,
     asks,
@@ -57,7 +56,6 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                 ):
                     out.append(item)
@@ -96,7 +94,6 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                 ):
                     out.append(item)
@@ -136,7 +133,6 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                 ):
                     out.append(item)
@@ -167,7 +163,6 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                 ):
                     out.append(item)
@@ -188,7 +183,6 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                 ):
                     pass
@@ -215,12 +209,12 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
     def test_the_prompt_always_carries_the_rules_section(self):
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
-            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md")
+            prompt, _ = compose_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "spec", "spec.md")
             self.assertIn("# The rules for this stage", prompt)
 
     def test_it_refuses_before_the_journal_is_touched_or_a_session_is_made(self):
         # The two things a step costs: a row saying it started, and a request that bills.
-        # Both come after `build_prompt` in `Runner.run`, and this is what holds them there.
+        # Both come after `compose_prompt` in `Runner.run`, and this is what holds them there.
         class Counting:
             def __init__(self):
                 self.streams = 0
@@ -255,7 +249,6 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
                         unit=UNIT,
                         stage="spec",
                         artifact="spec.md",
-                        stages=STAGES,
                         mode="manual",
                     ):
                         pass
@@ -299,7 +292,6 @@ class AnUnusableReplyIsKeptBesideTheReason(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                 ):
                     out.append(item)
@@ -361,7 +353,6 @@ class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
                         unit=UNIT,
                         stage="plan",
                         artifact="plan.md",
-                        stages=STAGES,
                         mode="autonomous",
                     )
                 ]
@@ -470,7 +461,6 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
                         unit=UNIT,
                         stage="impl",
                         artifact="impl.md",
-                        stages=STAGES,
                         mode="manual",
                         cwd=str(repo),
                     )
@@ -512,7 +502,6 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
                         unit=UNIT,
                         stage="impl",
                         artifact="impl.md",
-                        stages=STAGES,
                         mode="manual",
                         cwd=str(repo),
                     )
@@ -556,7 +545,6 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
                         unit=UNIT,
                         stage="impl",
                         artifact="impl.md",
-                        stages=STAGES,
                         mode="manual",
                         cwd=str(repo),
                     )
@@ -594,7 +582,6 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
                         unit=UNIT,
                         stage="spec",
                         artifact="spec.md",
-                        stages=STAGES,
                         mode="manual",
                     )
                 ]
@@ -626,7 +613,6 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
                         unit=UNIT,
                         stage="spec",
                         artifact="spec.md",
-                        stages=STAGES,
                         mode="manual",
                         last_attempt="PREVIOUS-ATTEMPT-TEXT",
                     )
@@ -635,7 +621,7 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
             asyncio.run(go())
             self.assertIn("PREVIOUS-ATTEMPT-TEXT", probe.seen_prompt)
             [start] = journal.records(d, UNIT, kind="start")
-            self.assertIn("last-attempt", start["included"])
+            self.assertIn("last-attempt", start["envelope"])
 
     def test_snapshot_on_a_non_git_directory_names_the_reason_and_still_tries_the_excerpt(self):
         with tempfile.TemporaryDirectory() as d:
@@ -696,7 +682,6 @@ class ASpikeThatTouchesTheWorktreeFails(unittest.TestCase):
                         unit=UNIT,
                         stage="spike",
                         artifact="spike.md",
-                        stages=STAGES,
                         mode="autonomous",
                         cwd=scratch,
                         watch=str(tree),
@@ -831,7 +816,6 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
                         unit=UNIT,
                         stage="spike",
                         artifact="spike.md",
-                        stages=STAGES,
                         mode="autonomous",
                         cwd=scratch,
                         watch=str(tree),
@@ -906,7 +890,6 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
                         unit=UNIT,
                         stage="spike",
                         artifact="spike.md",
-                        stages=STAGES,
                         mode="manual",
                         cwd=scratch,
                         watch=str(tree),
@@ -943,18 +926,6 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
         self.assertEqual(written, SPIKE_REPLY.encode("utf-8"))
         self.assertEqual((final["outcome"], end["spike_md"]), ("done", "reply"))
         self.assertEqual(attempts, [])
-
-    def test_g_the_answers_on_disk_stay_byte_for_byte(self):
-        section = (
-            "## Answers\n\n### Câu 1\nAnswered by: Lan. Date: 2026-09-25. Via: product.\n\nCó.\n"
-        )
-        final, written, end, _ = self.run_spike(answers=SPIKE_REPLY + "\n" + section)
-        self.assertEqual(end["spike_md"], "progress")
-        self.assertEqual(
-            answers_section(written),
-            answers_section((SPIKE_REPLY + "\n" + section).encode("utf-8")),
-        )
-        self.assertTrue(written.startswith(PROGRESS.encode("utf-8")))
 
     def test_a_worktree_not_read_before_the_step_is_unchecked(self):
         # No reading to compare with, so nothing is written -- and it is the app's failure, not a
@@ -1004,7 +975,6 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
                         unit=UNIT,
                         stage="plan",
                         artifact="plan.md",
-                        stages=STAGES,
                         mode="autonomous",
                     )
                 ]
@@ -1069,7 +1039,6 @@ class AStoppedStepEndsStopped(unittest.TestCase):
                     unit=UNIT,
                     stage=stage,
                     artifact=artifact,
-                    stages=STAGES,
                     mode="manual",
                     running=running,
                 ):
@@ -1240,7 +1209,6 @@ class ADeadStepKeepsItsTurns(unittest.TestCase):
                         unit=UNIT,
                         stage="impl",
                         artifact="impl.md",
-                        stages=STAGES,
                         mode="manual",
                         cwd=str(repo),
                         running=running,
@@ -1394,7 +1362,6 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                         unit=UNIT,
                         stage=stage,
                         artifact=artifact,
-                        stages=STAGES,
                         mode="manual",
                         cwd=str(tree),
                         running=running,
@@ -1607,7 +1574,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertEqual(review, REVIEW_R1)
         self.assertEqual(end["review_md"], "none")
         self.assertIn("closing", end)
-        self.assertIn("does not open with Verdict: incomplete", end["detail"])
+        self.assertIn("does not open with `Reviewed: ", end["detail"])
 
     def test_a_closing_turn_that_breaks_still_leaves_an_end(self):
         sessions = self.Closes(raises=RuntimeError("the CLI died"))
@@ -1732,7 +1699,6 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
                         unit=UNIT,
                         stage=stage,
                         artifact=f"{stage}.md",
-                        stages=STAGES,
                         mode="autonomous",
                         **({"running": handle} if handle is not None else {}),
                         **({"resume": resume} if resume is not None else {}),
@@ -1822,7 +1788,8 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         text = written.decode("utf-8")
         self.assertTrue(text.startswith(REPAIRED_PLAN), text[:120])
         self.assertNotIn("PHẦN-ĐẦU", text)
-        self.assertEqual(answers_section(written), section.encode("utf-8"))
+        # The reply is the file: what the old one held under `## Answers` is a row, not carried.
+        self.assertNotIn("CŨ", text)
         self.assertEqual(
             (end["outcome"], end["opening"], end["artifact"]), ("done", "repaired", "plan.md")
         )
@@ -1979,7 +1946,6 @@ class ABackgroundRunIsRefusedAndCounted(unittest.TestCase):
                         unit=UNIT,
                         stage=stage,
                         artifact=artifact,
-                        stages=STAGES,
                         mode="manual",
                         cwd=str(repo),
                     )

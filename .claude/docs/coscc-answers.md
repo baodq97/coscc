@@ -1,15 +1,13 @@
 # Routes that write into a unit's artifacts
 
-Read this before changing the answer, outcome, hold or more-rounds routes, `rerun`, or the
-runner's `## Answers` guard.
+Read this before changing the answer, outcome, hold or more-rounds routes, or `rerun`.
 
 - **An answer is a row, rendered into the next prompt.** It carries `owner` unless the request
   names someone; anyone with the password can write text a stage will read as a person's
   decision. A finding answer also feeds a gate.
-- **A prose-stage rewrite keeps `## Answers` byte for byte;** a reply's own attempt at one is
-  dropped silently. The runner reads the section right before it writes. `impl.md` and `pr.md`
-  are written by the session, so their section is checked afterwards and not restored. A renumbered
-  question leaves an old `### Câu N` pointing at another question.
+- **No file holds the answers a prompt shows:** every stage that declares `answers` gets the
+  rows, each under its question; a reply is written as it comes. A renumbered question leaves an
+  old answer pointing at another question.
 - **An outcome is recorded for the board's label** and read by no gate.
 - **A hold closes the pull request under the machine's `gh` login** and removes a clean
   worktree; a failed side effect is not retried from the board. A hold closes every gate and

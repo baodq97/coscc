@@ -24,7 +24,6 @@ from coscc.git import drift, fetches, gitops
 from coscc.kernel import OWNER, Facts, Hooks, Invalid, facts as facts_of
 from coscc.runlog import events
 from coscc.runner.attempt import describe_attempt
-from coscc.runner.prompt import answers_for, answers_section
 from coscc.runner.queue import MACHINES, STOPPABLE, Attempt, Holds, Refused, describe
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner, check_started_by
@@ -35,7 +34,7 @@ from coscc.units import backlog, mentions, planmap, retake, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
 from coscc.units.board import Unavailable
-from coscc.units.contracts import ContractError, Plan
+from coscc.units.contracts import ContractError, Plan, missing
 from coscc.units.ideas import Ideas
 from coscc.units.read import HoldView
 from coscc.units.workspaces import Workspaces
@@ -139,16 +138,6 @@ def step_cwd(stage: str, work: str, directory: Path, spike_dir: str | None = Non
     return str(directory) if stage == "ship" else work
 
 
-def _answers_kept(path: Path, before: bytes) -> bool:
-    """Whether `path` still ends with the `## Answers` section it had, `before`,
-    byte for byte. A `pr` step writes `pr.md` itself, and an `impl` step
-    `impl.md`, so nothing else guards that section."""
-    try:
-        return path.read_bytes().endswith(before)
-    except OSError:
-        return False
-
-
 def _gate_reasons(answer: board_reader.Gate) -> tuple[str, ...]:
     """The codes that go with the gate's words, so no reader downstream parses these. A stand-in
     gate that answers a plain pair has none."""
@@ -167,20 +156,21 @@ def _round_kwargs(
     found: dict[str, Any], row: dict[str, Any], stage: str, rounds_before: set[Any] | None
 ) -> dict[str, Any]:
     """From the same board: a last round the loop read as unfinished, and the ids it dropped,
-    for the review that runs again. Whether it counts is not asked here."""
+    or as incomplete, and its text, for the review that runs again. Whether it counts is not
+    asked here."""
     last_round = (found.get("rounds") or [None])[-1] if row["file"] == "review.md" else None
-    kw: dict[str, Any] = (
-        {"unfinished_round": {"n": last_round["n"], "dropped": list(last_round["dropped"])}}
-        if last_round and last_round.get("unfinished")
-        else {}
-    )
+    kw: dict[str, Any] = {}
+    if last_round and last_round.get("unfinished"):
+        kw["unfinished_round"] = {"n": last_round["n"], "dropped": list(last_round["dropped"])}
+    if last_round and last_round.get("verdict") == "incomplete":
+        kw["incomplete_round"] = {"n": last_round["n"], "text": last_round.get("text") or ""}
     # The findings the last round left open, which an `impl` may claim only a
     # person can close: guard `impl-claim` reads them when its object arrives.
     if rounds_before:
         kw["rounds_known"] = tuple(sorted(n for n in rounds_before if isinstance(n, int)))
     if stage == "impl" and found.get("rounds"):
         last = found["rounds"][-1]
-        kw.update(open_findings=tuple(last.get("open_ids") or ()), claims_round=last.get("n"))
+        kw.update(open_ids=tuple(last.get("open_ids") or ()), claims_round=last.get("n"))
     return kw
 
 
@@ -226,18 +216,6 @@ def _shortlist(journal: Journal, key: str, unit: str) -> dict[str, Any]:
         return {"rank": None, "of": None, "record": None, "error": str(e) or type(e).__name__}
 
 
-def _answers_before(stage: str, directory: Path, row: dict[str, Any]) -> bytes | None:
-    """The `## Answers` an `impl` step finds in its artifact. Read after the last refusal
-    that reads nothing more, before any money is spent: every `impl` step writes `impl.md`
-    itself, so only a comparison afterwards can tell whether its `## Answers` survived."""
-    if stage != "impl":
-        return None
-    try:
-        return answers_section((directory / row["file"]).read_bytes())
-    except OSError:
-        return None
-
-
 def _read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -245,20 +223,9 @@ def _read_text(path: Path) -> str:
         return ""
 
 
-def _answers_of(directory: Path, meta: dict[str, Any]) -> list[tuple[str, str]]:
-    """`(artifact, ## Answers)` for each artifact of the unit, as a prompt shows it: the files
-    there are, then the artifacts only `cos.db` has answers for. A name from the database is a
-    label only; nothing is read by it."""
-    raws: dict[str, bytes] = {}
-    for path in sorted(directory.glob("*.md")):
-        try:
-            raws[path.name] = path.read_bytes()
-        except OSError:
-            continue
-    for a in meta.get("answers") or []:
-        raws.setdefault(str(a.get("artifact")), b"")
-    found = ((artifact, answers_for(raw, artifact, meta)) for artifact, raw in raws.items())
-    return [(artifact, text) for artifact, text in found if text]
+def _answers_of(meta: dict[str, Any]) -> list[tuple[str, str]]:
+    """`(artifact, answer)` for each answer `cos.db` holds for the unit."""
+    return [(str(a.get("artifact")), str(a.get("text") or "")) for a in meta.get("answers") or []]
 
 
 # The one stage the run button may offer for a unit, as `coscc.loop next` answered it.
@@ -755,7 +722,7 @@ class Steps:
             )
             directory = self.ws.unit_dir(cwd, unit)
             rounds_before = _rounds_before(found, row)
-            inputs, answers_before = await self._gather_inputs(
+            inputs = await self._gather_inputs(
                 cwd=cwd,
                 key=key,
                 journal=journal,
@@ -764,14 +731,20 @@ class Steps:
                 stages=data["stages"],
                 found=found,
                 row=row,
-                directory=directory,
                 tree=tree,
                 work=work,
                 rounds_before=rounds_before,
             )
+            inputs.update(await self._link_kwargs(cwd, unit, stage))
+            lacks = missing(stage, directory, inputs.get("meta"))
+            if lacks:
+                raise Refused(
+                    f"{stage} cannot start: it needs {' and '.join(lacks)}, and this unit has "
+                    "none yet.",
+                    ("input-missing",),
+                )
             if rerun:
                 await self.append_to_answers(directory / "intent.md", "\n" + rerun_block, "a rerun")
-            inputs.update(await self._link_kwargs(cwd, unit, stage))
             # Emptied before the step, whatever an earlier one left, and removed
             # after it however it ends -- in `drive`, so a client that drops the stream does
             # not decide when.
@@ -781,7 +754,6 @@ class Steps:
                 key=key,
                 unit=unit,
                 stage=stage,
-                stages=data["stages"],
                 artifact=row["file"],
                 directory=directory,
                 answer=answer,
@@ -809,12 +781,10 @@ class Steps:
                 unit=unit,
                 stage=stage,
                 artifact=row["file"],
-                directory=directory,
                 base=base,
                 rounds_before=rounds_before,
                 scratch=scratch,
                 kwargs=kwargs,
-                answers_before=answers_before,
             )
             handed = True
         except asyncio.CancelledError:
@@ -1049,14 +1019,13 @@ class Steps:
         stages: list[str],
         found: dict[str, Any],
         row: dict[str, Any],
-        directory: Path,
         tree: dict[str, Any] | None,
         work: str,
         rounds_before: set[Any] | None,
-    ) -> tuple[dict[str, Any], bytes | None]:
+    ) -> dict[str, Any]:
         """What the stage is handed beyond who runs it and where: keyword arguments for
-        `Runner.run`, and `## Answers` as the artifact had it. Only a busy run log refuses
-        the step here; every other read that fails is recorded as the reason."""
+        `Runner.run`. Only a busy run log refuses the step here; every other read that fails is
+        recorded as the reason."""
         mode = journal.modes(key).get((unit, stage), "manual")
         round_kw = _round_kwargs(found, row, stage, rounds_before)
         try:
@@ -1072,7 +1041,6 @@ class Steps:
         # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
         plan_kw = planmap.for_step(plan["files"] if plan else [], work) if stage == "impl" else {}
         shortlist = _shortlist(journal, key, unit)
-        answers_before = _answers_before(stage, directory, row)
         # `dict(...)`, not a literal: two sources naming one key is a `TypeError`, not an override.
         return dict(
             mode=mode,
@@ -1083,12 +1051,10 @@ class Steps:
             plan_drift=plan_drift,
             drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
             shortlist=shortlist,
-            end_fields=self._end_fields(
-                cwd, unit, rounds_before, answers_before, directory / row["file"]
-            ),
+            end_fields=self._end_fields(cwd, unit, rounds_before),
             **plan_kw,
             plan=plan,
-        ), answers_before
+        )
 
     async def _stage_config(
         self,
@@ -1122,28 +1088,17 @@ class Steps:
         return config, failed
 
     def _end_fields(
-        self,
-        cwd: str,
-        unit: str,
-        rounds_before: set[Any] | None,
-        answers_before: bytes | None,
-        artifact: Path,
+        self, cwd: str, unit: str, rounds_before: set[Any] | None
     ) -> Callable[[], Awaitable[dict[str, Any]]] | None:
-        """What a step that ends `done` adds to its record, asked only then: whether `impl.md`
-        kept its `## Answers`, else the findings a `review` added to `review.md`."""
-        if answers_before is not None:
+        """What a step that ends `done` adds to its record, asked only then: the findings a
+        `review` added to `review.md`."""
+        if rounds_before is None:
+            return None
 
-            async def answers_kept() -> dict[str, Any]:
-                return {"answers_kept": _answers_kept(artifact, answers_before)}
+        async def findings_added() -> dict[str, Any]:
+            return await self.findings_added(cwd, unit, rounds_before)
 
-            return answers_kept
-        if rounds_before is not None:
-
-            async def findings_added() -> dict[str, Any]:
-                return await self.findings_added(cwd, unit, rounds_before)
-
-            return findings_added
-        return None
+        return findings_added
 
     async def _link_kwargs(self, cwd: str, unit: str, stage: str) -> dict[str, Any]:
         """The keyword arguments the database and the unit's idea add to the prompt."""
@@ -1178,7 +1133,7 @@ class Steps:
             cwd,
             unit,
             _read_text(directory / "idea.md"),
-            _answers_of(directory, link_kw["meta"]),
+            _answers_of(link_kw["meta"]),
             link_kw["meta"],
             self.ws.name(cwd),
             self.ws.all()["workspaces"],
@@ -1195,7 +1150,6 @@ class Steps:
         key: str,
         unit: str,
         stage: str,
-        stages: list[str],
         artifact: str,
         directory: Path,
         answer: board_reader.Gate,
@@ -1220,7 +1174,6 @@ class Steps:
             unit=unit,
             stage=stage,
             artifact=artifact,
-            stages=list(stages),
             gate_said=answer[1],
             gate_reasons=_gate_reasons(answer),
             lane=getattr(answer, "lane", "full"),
@@ -1261,12 +1214,10 @@ class Steps:
         unit: str,
         stage: str,
         artifact: str,
-        directory: Path,
         base: dict[str, Any] | None,
         rounds_before: set[Any] | None,
         scratch: Path | None,
         kwargs: dict[str, Any],
-        answers_before: bytes | None,
     ) -> None:
         """Start `drive` as the step's own task, its attempt `running`."""
         # The step's `run` and recorder, from here to the task with no `await`
@@ -1293,12 +1244,10 @@ class Steps:
                 unit,
                 stage,
                 artifact,
-                directory,
                 base,
                 rounds_before,
                 scratch,
                 kwargs,
-                answers_before=answers_before,
             )
         )
         running.task.add_done_callback(lambda _task: self.never_driven(running))
@@ -1406,22 +1355,16 @@ class Steps:
         unit: str,
         stage: str,
         artifact: str,
-        directory: Path,
         base: dict[str, Any] | None,
         rounds_before: set[Any] | None,
         scratch: Path | None,
         kwargs: dict[str, Any],
-        answers_before: bytes | None = None,
         resumed: bool = False,
     ) -> None:
         """One board step, start to end, as its own task.
 
         Every item goes to the step's listeners with `put_nowait` -- this never waits on a
         reader -- and a `stopped` step records no transition, cleans nothing and posts nothing.
-
-        `answers_before` is `pr.md`'s `## Answers` as a `pr` rerun found it, or `impl.md`'s
-        as an `impl` step found it; a `done` that no longer ends with
-        it says `answers_lost`.
         """
 
         def tell(item: tuple[str, Any]) -> None:
@@ -1462,12 +1405,6 @@ class Steps:
                                 "comments": await self.post_new_rounds(cwd, unit, rounds_before),
                             },
                         )
-                    if (
-                        answers_before is not None
-                        and item[1].get("outcome") == "done"
-                        and not _answers_kept(directory / artifact, answers_before)
-                    ):
-                        item = ("done", {**item[1], "answers_lost": True})
                     told_done = True
                     outcome = str(item[1].get("outcome") or "done")
                 tell(item)
@@ -1699,7 +1636,6 @@ class Steps:
             unit=unit,
             stage=stage,
             artifact=artifact,
-            stages=[],
             mode="manual",
             cwd=str(record.get("cwd") or cwd),
             model=record.get("model"),
@@ -1720,7 +1656,6 @@ class Steps:
                 unit,
                 stage,
                 artifact,
-                directory,
                 None,
                 rounds,
                 scratch,
