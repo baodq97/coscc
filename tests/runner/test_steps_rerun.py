@@ -15,9 +15,8 @@ from unittest import mock
 
 from coscc.bus import Bus
 from coscc.units import board as _board
-from tests.units.test_meta import WithSnapshot
+from tests.units.test_meta import WithSnapshot, seed
 
-board_reader = WithSnapshot(_board)
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.runner.reply import RunError
@@ -65,6 +64,16 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         for name, text in ARTIFACTS.items():
             (self.dir / name).write_text(text, encoding="utf-8")
         self.store = self.core.ws.units_root(self.cwd)
+        meta, key = self.core.ws.unit_meta(), self.core.ws.key(self.cwd)
+        seed(
+            meta,
+            key,
+            self.unit,
+            statuses={name: "accepted" for name in ARTIFACTS},
+            type="feat",
+            questions={"review.md": ["Một?"]},
+        )
+        self.board = WithSnapshot(_board, lambda: meta.snapshot(key, {Path(key).name: key}))
         self.seen: list[dict] = []
         self.items: list[tuple] = []
 
@@ -157,7 +166,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.assertEqual(self.intent(), ARTIFACTS["intent.md"])
 
     def test_rerun_pr_then_next_is_review_and_ship_is_closed(self):
-        open_before, said_before = self.ask(board_reader.gate(self.store, self.unit, "ship"))
+        open_before, said_before = self.ask(self.board.gate(self.store, self.unit, "ship"))
         self.assertNotIn("stale", said_before)
         self.run_step("pr", rerun=True, note="Sửa tiêu đề: nêu R10.")
         self.assertEqual(self.seen, [])
@@ -169,24 +178,24 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.assertIn("Requested by: owner.", text)
         self.assertNotIn("Sửa tiêu đề", text)
 
-        allowed, said = self.ask(board_reader.gate(self.store, self.unit, "ship"))
+        allowed, said = self.ask(self.board.gate(self.store, self.unit, "ship"))
         self.assertFalse(allowed)
         self.assertIn("review.md is stale: pr was rerun on", said)
         # With no --repo the ship gate was closed before too, but only for want of git and gh.
         self.assertFalse(open_before)
         self.assertIn("no repository given", said_before)
-        nxt = self.ask(board_reader.next_step(self.store, self.unit))
+        nxt = self.ask(self.board.next_step(self.store, self.unit))
         self.assertTrue(nxt["action"].startswith("review.md is stale"), nxt["action"])
         # `pr` was written again, so it is no longer offered by the run button.
         self.assertNotIn("pr.md is stale", nxt["action"])
         # The card reads the stale review as the wait on CI a missing one is.
         row = next(
-            u for u in self.ask(board_reader.read(self.store))["units"] if u["name"] == self.unit
+            u for u in self.ask(self.board.read(self.store))["units"] if u["name"] == self.unit
         )
         self.assertEqual(
             (row["at"], row["why"], row["between_pr_and_ship"]), ("review", "stale", True)
         )
-        # The fixture's `intent.md` leaves Câu 1 open, and *Needs you* is tried first.
+        # The fixture's `review.md` leaves Câu 1 open (the latest artifact asks), and *Needs you* is tried first.
         self.assertEqual(unit_state(row, None, None)["state"], "needs-you")
         got = unit_state({**row, "open": 0}, None, None)
         self.assertEqual(got["state"], "awaiting")
@@ -195,7 +204,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.run_step("pr", write=None, rerun=True)
         self.assertEqual(self.items[-1][1]["outcome"], "failed")
         self.assertEqual(self.intent().count("### Rerun"), 1)
-        nxt = self.ask(board_reader.next_step(self.store, self.unit))
+        nxt = self.ask(self.board.next_step(self.store, self.unit))
         self.assertEqual(nxt["stage"], "pr")
         self.assertTrue(nxt["action"].startswith("pr.md is stale"), nxt["action"])
 

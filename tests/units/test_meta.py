@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -510,12 +511,23 @@ class TheIngestAppliesTheRecordOnly(unittest.TestCase):
 
     def test_a_failed_write_is_a_problem_on_the_card(self):
         done = {"outcome": "done", "stage": "spec", "submitted": {"object": {"judgement": "ready"}}}
-        with mock.patch(
-            "coscc.units.transitions.apply", side_effect=__import__("sqlite3").OperationalError("x")
-        ):
+        with mock.patch("coscc.units.transitions.apply", side_effect=sqlite3.OperationalError("x")):
             self.assertIn("ingest_error", self.ingest(done))
         unit = self.core.ws.meta_of(self.cwd, self.UNIT)
         self.assertEqual([u["field"] for u in unit["unknowns"]], ["ingest"])
+
+    def test_a_busy_database_names_no_path_on_the_card(self):
+        from coscc.store.db import Busy
+
+        done = {"outcome": "done", "stage": "spec", "submitted": {"object": {"judgement": "ready"}}}
+        with (
+            mock.patch("coscc.units.transitions.apply", side_effect=Busy("/secret/cos.db")),
+            self.assertLogs("coscc", "WARNING"),
+        ):
+            said = self.ingest(done)
+        self.assertEqual(said, {"ingest_error": "the database could not be written"})
+        reasons = [u["reason"] for u in self.core.ws.meta_of(self.cwd, self.UNIT)["unknowns"]]
+        self.assertEqual(reasons, ["the database could not be written"])
 
 
 class TheIngest(Base):

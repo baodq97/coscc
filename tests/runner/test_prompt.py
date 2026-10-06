@@ -545,12 +545,25 @@ class AnswersComeFromTheDatabase(unittest.TestCase):
 
     def prompt(self, d: str, stage: str) -> str:
         from coscc.runner import prompt as runner_prompt
-        from tests.units.test_meta import snapshot_of
+        from coscc.store.db import Data
+        from coscc.units.meta import UnitMeta
+        from tests.units.test_meta import seed
 
         unit = Path(d) / ".cos" / "0001_x"
         unit.mkdir(parents=True)
         (unit / "intent.md").write_text(self.INTENT, encoding="utf-8")
-        snap = snapshot_of(d)
+        meta = UnitMeta(Path(d) / "work", Data(Path(d) / "data"))
+        seed(
+            meta,
+            d,
+            "0001_x",
+            statuses={"intent.md": "accepted"},
+            type="feat",
+            questions={"intent.md": ["Một?"]},
+        )
+        meta.add_answer(d, "0001_x", "intent.md", 1, "Có.", "Leif", "2026-09-01", "product")
+        meta.add_hold(d, "0001_x", "paused", "chờ 0034", "Leif", "2026-09-02", "product")
+        snap = meta.snapshot(d, {Path(d).name: d})
         entry = snap["units"][f"{snap['workspace']}/0001_x"]
         with mock.patch.object(runner_prompt, "skill_for", lambda s: f"RULES-FOR-{s}"):
             prompt, _, _ = compose_prompt(
@@ -558,7 +571,7 @@ class AnswersComeFromTheDatabase(unittest.TestCase):
             )
         return prompt
 
-    def test_the_prompt_of_an_imported_unit_carries_each_answer_once(self):
+    def test_the_prompt_of_a_unit_carries_each_answer_once(self):
         with tempfile.TemporaryDirectory() as d:
             text = self.prompt(d, "spec")
         self.assertEqual(
