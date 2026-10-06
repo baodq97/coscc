@@ -226,7 +226,7 @@ FIXTURE = {
             + ROUND.format(sha="a" * 40),
         },
         "pr": 1,
-        "rounds": [(1, "a" * 40, "pass", [], [CRITERIA[0], CRITERIA[2]])],
+        "rounds": [(1, "a" * 40, "pass", [], [{**CRITERIA[0], "met": "yes"}, CRITERIA[2]])],
     },
     # One question Leif answered and one you answered, so `/decisions` and the Activity tab show
     # both kinds; one nobody answered, so the Questions tab has something to show read-only. A

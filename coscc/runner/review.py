@@ -123,7 +123,11 @@ def render_round(
         )
     out = [f"## Round {n}", "", f"Reviewed: {head}. Verdict: {obj['verdict']}.", ""]
     done: set[str] = set()
+    kept = {heading for heading, _ in sections}
     for heading, lines in sections:
+        if heading == "### Findings" and "### Criteria" not in done and "### Criteria" not in kept:
+            out += ["### Criteria", "", rendered["### Criteria"], ""]
+            done.add("### Criteria")
         if heading in ("### Criteria", "### Findings", "### Screens"):
             if heading in rendered and heading not in done:
                 out += [heading, "", rendered[heading], ""]
