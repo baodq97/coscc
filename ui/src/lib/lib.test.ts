@@ -63,6 +63,10 @@ describe("unit state", () => {
     expect(unitState({ ...base, open: 2 })).toEqual({ group: "Needs you", label: "2 questions" });
   });
 
+  it("says what the next stage lacks, under Needs you", () => {
+    expect(unitState({ ...base, next_stage: "review", missing: ["impl.md"] })).toEqual({ group: "Needs you", label: "Needs impl.md" });
+  });
+
   it("reads a finished unit as shipped and a pre-intent one as an idea", () => {
     expect(unitState({ ...base, why: "finished" }).group).toBe("Shipped");
     expect(unitState({ ...base, phase: "pre-intent" }).group).toBe("Ideas");

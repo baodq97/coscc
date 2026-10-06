@@ -41,8 +41,6 @@ After them `make_idea_fixture` makes `0006_frontend-calls-api`, and
                            one head by the autopilot (`make_autopilot_fixture`)
     0009_refused-impl      an accepted plan, whose `impl` the autopilot queued and
                            the gate refused with `gate-closed` (`seed_refusal`)
-    0010_missing-input     an accepted plan with no `intent.md`, which `impl` declares:
-                           its card reads `Needs intent.md`
 
 Every file is written by hand as prose; each unit's states (the `statuses`, `type`, `shipped`
 and `questions` its fixture carries) are seeded as rows in `cos.db` by `seed_fixture`, since
@@ -258,16 +256,6 @@ AUTOPILOT_FIXTURE = {
             "intent.md": INTENT.format(title="refused impl", problem="Một impl bị gate từ chối."),
             "spec.md": "# Spec: refused impl\nIntent: intent.md. Author: capture_screens.\n",
             "plan.md": "# Plan: refused impl\nIntent: intent.md. Author: capture_screens.\n",
-        },
-    },
-    # An accepted plan whose `intent.md` is gone: `impl` declares it, so the card says what is
-    # missing and a press is refused `input-missing`.
-    "missing-input": {
-        "statuses": dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"),
-        "type": "feat",
-        "files": {
-            "spec.md": "# Spec: missing input\nIntent: intent.md. Author: capture_screens.\n",
-            "plan.md": "# Plan: missing input\nIntent: intent.md. Author: capture_screens.\n",
         },
     },
 }
