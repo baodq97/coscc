@@ -89,7 +89,6 @@ class FactsFollowTheRunsTree(unittest.TestCase):
             cwd="/scratch",
             watch=watch,
             directory=Path("/w/.cos/0001_u"),
-            commands=("git",),
             resumed=False,
         )
 
@@ -100,4 +99,10 @@ class FactsFollowTheRunsTree(unittest.TestCase):
     def test_any_other_run_works_in_its_cwd_and_has_no_scratch(self):
         f = self._facts(None)
         self.assertEqual((f.tree, f.scratch), ("/scratch", None))
-        self.assertEqual((f.workspace_key, f.commands, f.resumed), ("k", ("git",), False))
+        self.assertEqual((f.workspace_key, f.resumed), ("k", False))
+        self.assertFalse(hasattr(f, "commands"))
+
+    def test_a_feature_gets_the_critical_check_and_no_command_list(self):
+        self.assertTrue(callable(kernel.bash_refused))
+        self.assertTrue(kernel.Places)
+        self.assertFalse(hasattr(kernel, "check_command"))

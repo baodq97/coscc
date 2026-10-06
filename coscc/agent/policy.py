@@ -34,8 +34,6 @@ class Grant:
     """What one step may do. The default is the locked position."""
 
     tools: tuple[str, ...] = ()
-    # Commands the step may run, matched on the first word of the command line. Empty means none.
-    commands: tuple[str, ...] = ()
     # Chosen, not measured: they turn a loop that will not end into a named failure.
     max_turns: int = 1
     max_budget_usd: float = 0.0
@@ -45,14 +43,6 @@ class Grant:
     # Shown on the page before the step is started: a capability from the machine's own
     # configuration is invisible in an app, so it is said where the button is.
     warning: str = ""
-    # Command prefixes refused even though their first word is allowed, each with the reason
-    # given. Matched on the leading tokens of a segment: the plain spelling and nothing cleverer.
-    denied: tuple[tuple[tuple[str, ...], str], ...] = ()
-    # Every `git push` of a command the app checks with `check_command` must carry
-    # `--force-with-lease` bound to the head the pull request had when the step began, and name
-    # the unit's own branch. The lease is per run, so it is passed as `lease`, not through the
-    # grant.
-    push_needs_lease: bool = False
     # Whether the session is handed `submit` (`coscc/units/submit.py`), the one tool beyond this
     # grant's list the gate lets through. It writes nothing and runs nothing, and is not in
     # `tools`: `--tools` names the built-in set, and an SDK server's tool reaches the session anyway.
@@ -60,9 +50,6 @@ class Grant:
     # Full names of MCP tools a feature's server holds, derived by `coscc/kernel.py`. Not in `tools`
     # (`--tools` names the built-in set) and not in `opens_anything`.
     mcp: tuple[str, ...] = ()
-    # Paths no word of a command may point into (`protected_paths`), whatever `commands` holds.
-    # Empty in the table: the runner fills it from the data root when a step runs.
-    protected: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in self.mcp:
@@ -72,7 +59,7 @@ class Grant:
 
     @property
     def opens_anything(self) -> bool:
-        return bool(self.tools or self.commands)
+        return bool(self.tools)
 
 
 # Tools that only read, listed separately so the write set is short.
@@ -129,82 +116,11 @@ SUBAGENTS = {
     },
 }
 
-# Commands `impl` may run, matched on the first word of every segment of the command line.
-# Deliberately short: enough to check its own work, not a shell.
-IMPL_COMMANDS = (
-    "git",
-    "npm",
-    "node",
-    "uv",
-    "python",
-    "python3",
-    "pytest",
-    "ls",
-    "cat",
-    "head",
-    "tail",
-    "wc",
-    "grep",
-    "rg",
-    "find",
-    "diff",
-    "mkdir",
-    "true",
-    "echo",
-    "printf",
-    "test",
-    "which",
-    "pwd",
-    "sort",
-    "uniq",
-)
-
-# No session merges: a pull request is merged only by the PR machine
-# (`coscc/github/prmachine.py`), and no stage has a `pr` or `ship` grant.
-#
-# Matched on the words left once flags are removed (`_words` below), so a `-R o/r` in front does
-# not walk past it. `gh alias set` is refused too: a defined alias can run under another name.
-MERGE_IS_SHIPS = (
-    (("gh", "pr", "merge"), "merging is the ship stage's"),
-    (("gh", "alias", "set"), "an alias is a merge under another name; merging is the ship stage's"),
-)
-
-# Gebo, the integration step. Not a stage: it runs outside the loop, between `pr` and `ship`,
-# when a person presses the button, but is keyed in the same table so it starts locked.
-# `impl`'s commands (resolving a conflict means running the tests), plus `gh` to read the pull
-# request and its CI.
-INTEGRATE_COMMANDS = IMPL_COMMANDS + ("gh",)
-
 INTEGRATE_WARNING = (
     "Integrating runs `git` and `gh` with the GitHub login already on this machine, and "
     "force-pushes (with a lease) to this unit's branch. That login reaches every repository "
     "its account can reach, not just this workspace. What it resolves is an agent's word, "
     "not a person's approval."
-)
-
-# Rebase only. `git merge` and `git pull` would bring `main` in by merging, and
-# `gh pr update-branch` would move the head on GitHub's side under the lease: the push has
-# exactly one road.
-INTEGRATE_DENIED = MERGE_IS_SHIPS + (
-    (("git", "merge"), "integration is by rebase, never by merge"),
-    (("git", "pull"), "integration is by rebase, never by merge"),
-    (("gh", "pr", "update-branch"), "the head the push is leased to would move under it"),
-    # Roads to the branch that are not `git push` and so never meet the lease: `gh api` reaches
-    # `git/refs` with `force=true`. `gh pr view` and `gh pr checks` stay open.
-    (
-        ("gh", "api"),
-        "it can move the branch on GitHub with no lease; read with `gh pr view` or `gh pr checks`",
-    ),
-    (("gh", "repo", "sync"), "it can force the branch on GitHub with no lease"),
-    (("gh", "extension"), "an extension is a command this grant cannot read"),
-    (
-        ("git", "send-pack"),
-        "it pushes without the lease; push only with `git push --force-with-lease`",
-    ),
-    (
-        ("git", "http-push"),
-        "it pushes without the lease; push only with `git push --force-with-lease`",
-    ),
 )
 
 # An alias or an included config file made during the step renames `push` into a word
@@ -215,16 +131,11 @@ _GIT_CONFIG_ROAD = re.compile(
     r"(?:^|[\s='\"])(?:alias|include|includeif)\.|\bGIT_CONFIG", re.IGNORECASE
 )
 
-# ᛈ Perthro, the spike step. `impl`'s commands without `git`: `git -C <worktree> commit` is the
-# shortest road for throwaway code into the unit's branch. Everything else is kept, because
-# measuring means running things.
-SPIKE_COMMANDS = tuple(c for c in IMPL_COMMANDS if c != "git")
-
 SPIKE_WARNING = (
     "This step runs arbitrary code (`python`, `node`, `npm`, `uv`) under this process's "
-    "user, in a throwaway directory the app deletes afterwards. Nothing is a sandbox: a "
-    "write outside that directory is caught only inside the unit's worktree, where it "
-    "fails the step, and is not undone. Anywhere else, `~` included, it is not seen."
+    "user, in a throwaway directory the app deletes afterwards. Nothing is a sandbox: Claude "
+    "Code's auto mode and the app's few hard blocks hold the session, and what they miss is "
+    "not undone."
 )
 
 # Said on the Backlog panel above the button, before it is pressed.
@@ -244,14 +155,13 @@ GRANTS: dict[str, Grant] = {
     # so a $5 cap would only move the same premature stop to the other ceiling.
     "impl": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS + (AGENT_TOOL, SEND_MESSAGE),
-        commands=IMPL_COMMANDS,
         max_turns=120,
         max_budget_usd=8.0,
         app_writes_artifact=False,
     ),
     # `plan` reads, and only reads: `write-plan` requires every path under `## Files that change`
     # to be verified before it is written down, and without read tools a plan names paths it
-    # never saw. No write tools and no commands: the app still writes `plan.md` from the reply,
+    # never saw. No write tools and no Bash: the app still writes `plan.md` from the reply,
     # which stops a plan authoring itself, and `beyond_reading` keeps that true if this widens.
     "plan": Grant(
         tools=READ_TOOLS,
@@ -264,7 +174,7 @@ GRANTS: dict[str, Grant] = {
     ),
     # `spec` reads, and only reads, for the reason `plan` does: `write-spec` requires every
     # figure to name its source and every citation a path and line range. No write tools and no
-    # commands; the app writes `spec.md` from the reply. Both ceilings are `plan`'s, not measured.
+    # Bash; the app writes `spec.md` from the reply. Both ceilings are `plan`'s, not measured.
     "spec": Grant(
         tools=READ_TOOLS,
         max_turns=40,
@@ -272,17 +182,16 @@ GRANTS: dict[str, Grant] = {
     ),
     # `intent` reads, and only reads: `write-intent` checks the idea's problem against the
     # worktree's code before `## Problem` is written, and without read tools it restates the idea
-    # about code it never opened. No write tools and no commands; the app writes `intent.md` from
+    # about code it never opened. No write tools and no Bash; the app writes `intent.md` from
     # the reply. Both ceilings are `spec`'s, chosen, not measured.
     "intent": Grant(
         tools=READ_TOOLS,
         max_turns=40,
         max_budget_usd=4.0,
     ),
-    # The first grant that both holds commands and has the app write its artifact from the
-    # reply. `beyond_reading` guards only `PROSE_STAGES`, which this is not, so `policy_test`
-    # pins `git` out of `commands` instead. Writing is held to the session's `cwd`, a throwaway
-    # directory `runner.steps.Steps.run_step` makes and removes.
+    # The first grant that both holds Bash and has the app write its artifact from the reply.
+    # `beyond_reading` guards only `PROSE_STAGES`, which this is not. Writing is held to the
+    # session's `cwd`, a throwaway directory `runner.steps.Steps.run_step` makes and removes.
     #
     # Ceilings chosen, not measured. Spikes that finished were recorded at 36-44 turns and 40
     # turns / $4.0 stopped several before writing `spike.md`. The recorded `turns` is not the
@@ -291,7 +200,6 @@ GRANTS: dict[str, Grant] = {
     # dearer ones before the turn ceiling; $8.0 is `impl`'s.
     "spike": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
-        commands=SPIKE_COMMANDS,
         max_turns=80,
         max_budget_usd=8.0,
         app_writes_artifact=True,
@@ -315,16 +223,13 @@ GRANTS: dict[str, Grant] = {
     # are recorded.
     "integrate": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
-        commands=INTEGRATE_COMMANDS,
         max_turns=120,
         max_budget_usd=8.0,
         app_writes_artifact=False,
         warning=INTEGRATE_WARNING,
-        denied=INTEGRATE_DENIED,
-        push_needs_lease=True,
     ),
     # Not a stage either: the backlog's *Propose estimates* button, one session per press. No
-    # tools and no commands, like `idea`; it hands its estimate back through
+    # tools, like `idea`; it hands its estimate back through
     # `submit` (`SUBMITTING_SESSIONS`) and the reply is not read. Ceilings chosen, not measured.
     "estimate": Grant(
         max_turns=1,
@@ -349,11 +254,11 @@ def beyond_reading(grant: Grant) -> tuple[str, ...]:
     """What a grant carries that a prose stage may not: anything beyond reading.
 
     A prose stage's artifact is written by **the app** from the reply. A step holding write
-    tools could write its own artifact behind the app's back, and one holding commands is not
+    tools could write its own artifact behind the app's back, and one holding Bash is not
     a prose stage at all; reading is neither. The guard in `coscc/runner/step.py` asks
     this rather than whether the grant is empty ("no tools" is not "no capability").
     """
-    return tuple(t for t in grant.tools if t not in READ_TOOLS) + tuple(grant.commands)
+    return tuple(t for t in grant.tools if t not in READ_TOOLS)
 
 
 # The stages whose run hands back an object through `submit`: a stage result, or `review`'s
@@ -407,7 +312,7 @@ def grant_for_step(stage: str, label: str | None) -> Grant:
     """The grant for one step run under a plan's effective label.
 
     Only the exact `novel` label, on a stage `NOVEL_CEILINGS` names, changes anything, and
-    only the two ceilings: the tools, commands and refusals are `grant_for(stage)`'s.
+    only the two ceilings: the tools and refusals are `grant_for(stage)`'s.
     """
     grant = grant_for(stage)
     if label == NOVEL and stage in NOVEL_CEILINGS:
@@ -418,38 +323,6 @@ def grant_for_step(stage: str, label: str | None) -> Grant:
 
 def is_prose_stage(stage: str) -> bool:
     return stage in PROSE_STAGES
-
-
-# The one stage a workspace's `allow` and `block` change, and the pref holding them:
-# `{workspace key: {"allow": [...], "block": [...]}}`, written by `coscc/units/workspaces.py`.
-LISTED_STAGE = "impl"
-GRANTS_PREF = "grants.impl"
-# What `allow` and `block` may name: a command, never a path. Chosen, not measured.
-COMMAND_NAME = re.compile(r"[A-Za-z0-9._+-]{1,64}")
-
-
-def lists_of(stored: object, key: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """`(allow, block)` of one workspace in the pref; a name `COMMAND_NAME` refuses is dropped."""
-    entry = stored.get(key) if isinstance(stored, dict) else None
-    if not isinstance(entry, dict):
-        return (), ()
-
-    def names(field: str) -> tuple[str, ...]:
-        raw = entry.get(field)
-        if not isinstance(raw, list):
-            return ()
-        return tuple(
-            dict.fromkeys(n for n in raw if isinstance(n, str) and COMMAND_NAME.fullmatch(n))
-        )
-
-    return names("allow"), names("block")
-
-
-def with_lists(grant: Grant, allow: tuple[str, ...], block: tuple[str, ...]) -> Grant:
-    """`grant` with `allow` added to its commands and `block` taken out; `block` wins. Only
-    `commands` changes: `denied`, `protected` and every other rule of `check_command` stay."""
-    merged = dict.fromkeys((*grant.commands, *allow))
-    return replace(grant, commands=tuple(c for c in merged if c not in block))
 
 
 # The app's database file in its data root, `coscc/store/db.py`'s `DB_FILENAME`; spelled here so
@@ -1110,76 +983,6 @@ def check_push(words: list[str], branch: str, lease_head: str = "") -> str:
     return ""
 
 
-def check_command(
-    grant: Grant,
-    command: str,
-    lease: tuple[str, str] | None = None,
-    scratch: tuple[str, str] | None = None,
-    ram_cap: int = 0,
-) -> str:
-    """ "" if the command may run, else why not.
-
-    **A best-effort reading of a shell command, and the weakest guard here**: a first-word
-    allowlist does not bound what `git` or `npm` can be told to do. What bounds the step is that
-    the session runs with `cwd` set to the workspace and writes are checked against it. Treat
-    this as turning obvious mistakes into refusals, not as a sandbox.
-
-    The line is read as bash reads it (`_read`) and checked in this order: a line that cannot
-    be read, a lone `&`, a substitution in effect, a redirect that writes, then every simple
-    command. `scratch` is the unit's `(ram, disk)` directories: a redirect may write below
-    either (`_redirect_refused`), the ram one only while its files add up to less than
-    `ram_cap` bytes.
-    """
-    text = (command or "").strip()
-    if not text:
-        return "an empty command"
-    parsed = _read(command)
-    if isinstance(parsed, _Unreadable):
-        return (
-            f"this command could not be read as the shell reads it: {parsed.what} "
-            f"at character {parsed.at + 1}; nothing was guessed"
-        )
-    if parsed.background:
-        # `&&`, `&>`, `&>>`, `>&`, `<&` and `|&` are read elsewhere and never land here.
-        return f"`&` at character {parsed.background[0] + 1} runs a command in the background: {BACKGROUND_REFUSAL}"
-    if parsed.substitutions:
-        # With substitution in play the first word no longer says what runs.
-        token = parsed.substitutions[0][0]
-        kind = {"$((": "arithmetic", "<(": "process", ">(": "process"}.get(token, "command")
-        return f"{kind} substitution is not allowed: {token}"
-    for simple in parsed.commands:
-        for redirect in simple.redirects:
-            reason = _redirect_refused(redirect, scratch, ram_cap, text)
-            if reason:
-                return reason
-    for simple in parsed.commands:
-        reason = _protected_refused(grant, simple)
-        if reason:
-            return reason
-    for simple in parsed.commands:
-        reason = _check_simple(grant, simple, lease)
-        if reason:
-            return reason
-    return ""
-
-
-def _protected_refused(grant: Grant, simple: _Simple) -> str:
-    """Why a word or redirect target of `simple` points into one of `grant.protected`, or "".
-
-    Read on the text, so `--key=/…/vault.key` counts, and a glob that could expand into one
-    (`~/.config/cos*/vault.key`, `/srv/*/vault`) is refused too. A relative path, a variable
-    holding the path, a brace expansion or a program that builds the path is not seen.
-    """
-    import os
-
-    for word in (*simple.words, *(r.target for r in simple.redirects)):
-        for text in {word, os.path.normpath(word)} if word else ():
-            for p in grant.protected:
-                if re.search(re.escape(p) + r"(?:/|$)", text) or _glob_reaches(text, p):
-                    return f"this step may not touch {p}: it holds the app's secrets"
-    return ""
-
-
 def _glob_reaches(text: str, protected: str) -> bool:
     """Whether a word with `*`, `?` or `[` in it could expand into `protected`: its path, from
     the word's start or after an `=`, matches `protected` part by part."""
@@ -1196,7 +999,7 @@ def _glob_reaches(text: str, protected: str) -> bool:
 
 
 def programs_of(command: str) -> tuple[str, ...]:
-    """The program each simple command of the line runs, read as `check_command` reads it: the
+    """The program each simple command of the line runs, read as `bash_refused` reads it: the
     first word after any `NAME=value`, its directory dropped. `()` for a line it cannot read."""
     parsed = _read(command or "")
     if isinstance(parsed, _Unreadable):
@@ -1207,127 +1010,6 @@ def programs_of(command: str) -> tuple[str, ...]:
         if words:
             out.append(words[0].rsplit("/", 1)[-1])
     return tuple(out)
-
-
-def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) -> str:
-    """ "" if one simple command may run, else why not."""
-    all_words = list(simple.words)
-    if not all_words:
-        # Redirects alone: `_redirect_refused` has already read them.
-        return ""
-    # `VAR=x cmd` puts the assignment first; step over any of them. One standing alone is
-    # still refused by its name.
-    k = 0
-    while k < len(all_words) - 1 and _ASSIGNMENT.match(all_words[k]):
-        k += 1
-    word = all_words[k]
-    if assigned := _ASSIGNMENT.match(word):
-        # Refused by what it is: named by the last `/` of its value it would read `this step may
-        # not run 'coscc-fb0599d12eeb'` for `S=/home/.../coscc-fb0599d12eeb`, which is no command.
-        name = assigned.group(0)
-        return f"a command that only assigns ({name}…) is not allowed: this step runs only the commands it names"
-    if simple.expanded[k]:
-        # What runs is whatever the variable holds, which this reader cannot know.
-        return f"the command's name is a variable ({word}): this step runs only names it can read"
-    base = word.rsplit("/", 1)[-1]
-    if base not in grant.commands:
-        return f"this step may not run {base!r}"
-    if base in ("git", "gh") and (grant.denied or grant.push_needs_lease):
-        # `gh $P merge` is `gh pr merge` once `P=pr`. Refused by the variable's name, since the
-        # value is not known here.
-        for other, expanded in zip(all_words, simple.expanded):
-            if expanded:
-                return (
-                    f"this step may not pass {other} to {base}: a variable can hide a refused word"
-                )
-    raw = all_words[k + 1 :]
-    words = _words(base, raw)
-    for prefix, reason in grant.denied:
-        if words[: len(prefix)] == prefix:
-            return f"this step may not run {' '.join(prefix)!r}: {reason}"
-    if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
-        # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
-        return "this step may not call the merge endpoint: merging is the ship stage's"
-    # Read on the text as written, quotes kept, and on the words with their quotes removed too,
-    # so `al\ias.p` or `$'\x61lias.p'` is not a way round it.
-    config_road = bool(_GIT_CONFIG_ROAD.search(simple.source)) or any(
-        _GIT_CONFIG_ROAD.search(" " + t) for t in all_words
-    )
-    if base == "git" and grant.push_needs_lease and config_road:
-        return "this step may not define a git alias, an include or GIT_CONFIG_*: it can rename `push` past the lease"
-    if base == "git" and grant.push_needs_lease and _may_be_push(raw):
-        # `push` must be the first word after `git`, so a `-C dir` or `-c k=v` in front cannot
-        # hide what it pushes.
-        if raw[0] != "push":
-            return "a push must be spelled `git push …`, with nothing between"
-        if lease is None:
-            return "no lease was fixed for this step, so it may not push"
-        reason = check_push(raw[1:], *lease)
-        if reason:
-            return reason
-    return ""
-
-
-# Redirection into a file, which is a write that no write-tool check would ever see: a redirect
-# writes a file without any write tool being called, so no write tool's path check sees it.
-#
-# Safe: `> /dev/null`, `2>&1`, and writes below the unit's two scratch directories (`_scratch_of`).
-# Writing a file in the worktree stays refused: use Write/Edit.
-_READ_REDIRECTS = frozenset({"<", "<<", "<<-", "<<<", "<&"})
-_DESCRIPTOR = re.compile(r"\d*-?")
-
-
-def _redirect_refused(
-    redirect: _Redirect, scratch: tuple[str, str] | None = None, ram_cap: int = 0, line: str = ""
-) -> str:
-    """ "" if the redirect may happen, else why not. `line` is the whole command line."""
-    if redirect.op in _READ_REDIRECTS:
-        return ""
-    if redirect.op == ">&" and redirect.target and _DESCRIPTOR.fullmatch(redirect.target):
-        # `2>&1`, `>&2`, `3>&-`: between descriptors, touching no file. `>&word` is `&>word`.
-        return ""
-    allowed = "a redirect may go only to /dev/null or to another descriptor (2>&1)"
-    if scratch:
-        allowed = (
-            "a redirect may go only to /dev/null, to another descriptor (2>&1), "
-            f"or below $COS_SCRATCH_RAM ({scratch[0]}) or $COS_SCRATCH_DISK ({scratch[1]})"
-        )
-    if redirect.op == "<>":
-        return f"redirecting into a file is not allowed: {redirect.target} (<> opens it for writing) — use the write tools; {allowed}"
-    if redirect.target == "/dev/null" and not redirect.expanded:
-        return ""
-    target = (
-        _scratch_named(redirect.target, scratch, line) if redirect.expanded else redirect.target
-    )
-    if target:
-        full = _scratch_refused(target, scratch, ram_cap)
-        if full is not None:
-            return full
-    return f"redirecting into a file is not allowed: {redirect.target} — use the write tools; {allowed}"
-
-
-# What a session's environment names the scratch directories (`sessions.child_env`): ram, disk, disk.
-_SCRATCH_VARS = ("COS_SCRATCH_RAM", "COS_SCRATCH_DISK", "TMPDIR")
-_LEADING_VAR = re.compile(r"\$(?:\{(\w+)\}|(\w+))((?:/[^$`*?\[]*)?)")
-
-
-def _scratch_named(target: str, scratch: tuple[str, str] | None, line: str) -> str:
-    """`target` with a leading `$COS_SCRATCH_RAM`, `$COS_SCRATCH_DISK` or `$TMPDIR` (braced or
-    not) replaced by the path the session's environment holds, or "" when it is anything else.
-
-    Only when `line` names that variable nowhere but as `$NAME` or `${NAME}`: an assignment,
-    `export` or `read` on the same line could point it elsewhere before bash opens the file.
-    """
-    found = _LEADING_VAR.fullmatch(target)
-    if not scratch or not found:
-        return ""
-    name = found.group(1) or found.group(2)
-    values = dict(zip(_SCRATCH_VARS, (scratch[0], scratch[1], scratch[1])))
-    if name not in values:
-        return ""
-    if re.search(rf"\b{name}\b", re.sub(rf"\$(?:\{{{name}\}}|{name}\b)", "", line)):
-        return ""
-    return values[name] + found.group(3)
 
 
 def _scratch_of(raw: str, scratch: tuple[str, str] | None) -> int | None:
@@ -1406,7 +1088,6 @@ _GH_VALUE_FLAGS = frozenset({"-R", "--repo", "--hostname"})
 # The same for `git`, in front of the subcommand: `git -C . rebase main` must read as
 # `git rebase main`. Only the two git itself reads a separate value after.
 _GIT_VALUE_FLAGS = frozenset({"-C", "-c"})
-_MERGE_ENDPOINT = re.compile(r"pulls/[^/\s]+/merge\b")
 
 
 def _may_be_push(raw: list[str]) -> bool:
@@ -1737,7 +1418,9 @@ _CONFIG_SCOPE = ("--global", "--local", "--system", "--worktree", "--show-", "--
 _REMOTE_WRITES = frozenset({"add", "set-url", "rename", "remove", "rm"})
 
 
-def bash_refused(places: Places, command: str, agent_id: str | None = None) -> str:
+def bash_refused(
+    places: Places, command: str, agent_id: str | None = None, strict: bool = False
+) -> str:
     """ "" unless a Bash line is critical, else why. Read as bash reads it (`_read`):
     a line it cannot read is refused, and so is a substitution or a variable program on a line
     that names a critical road, since what runs there is not read.
@@ -1745,14 +1428,23 @@ def bash_refused(places: Places, command: str, agent_id: str | None = None) -> s
     `git`, `gh`, `rm` and `find` are checked wherever they stand among a command's words, so a
     wrapper (`timeout 9 git push`) does not hide them; a quoted word shaped like a script is
     read again as a line. Paths are read from where the line stands, `cd` and `pushd` followed.
+
+    `strict` is for a line that runs with secrets in it (the vault's): any substitution, of any
+    kind, is refused too, since what runs must be what the line spells.
     """
     roots = _resolved(places.roots[:1])
     cwds = [str(roots[0]) if roots else None]
-    return _line_refused(places, command, agent_id, cwds, _scratch_known(places, command))
+    known = _scratch_known(places, command)
+    return _line_refused(places, command, agent_id, cwds, known, strict)
 
 
 def _line_refused(
-    places: Places, command: str, agent_id: str | None, cwds: list[str | None], known: dict
+    places: Places,
+    command: str,
+    agent_id: str | None,
+    cwds: list[str | None],
+    known: dict,
+    strict: bool = False,
 ) -> str:
     parsed = _read(command)
     if isinstance(parsed, _Unreadable):
@@ -1763,6 +1455,10 @@ def _line_refused(
     if parsed.background:
         # `&&`, `&>`, `&>>`, `>&`, `<&` and `|&` are read elsewhere and never land here.
         return f"{HELPERS}: `&` at character {parsed.background[0] + 1} runs a command in the background: {BACKGROUND_REFUSAL}"
+    if strict and parsed.substitutions:
+        token = parsed.substitutions[0][0]
+        kind = {"$((": "arithmetic", "<(": "process", ">(": "process"}.get(token, "command")
+        return f"{kind} substitution is not allowed here: {token}; the line runs with secrets in it"
     hidden = any(t != "$((" for t, _ in parsed.substitutions) or any(
         s.expanded[k] and not _ASSIGNMENT.match(s.words[k])
         for s in parsed.commands
@@ -2229,6 +1925,11 @@ def classified(grant: Grant, places: Places, tool: str, tool_input: dict) -> boo
     if tool in EXEC_TOOLS:
         return not _reads_only(str(tool_input.get("command") or ""))
     return tool in (AGENT_TOOL, SEND_MESSAGE, HANDBACK)
+
+
+# A redirect that only reads, or moves between descriptors, writes no file.
+_READ_REDIRECTS = frozenset({"<", "<<", "<<-", "<<<", "<&"})
+_DESCRIPTOR = re.compile(r"\d*-?")
 
 
 def _reads_only(command: str) -> bool:

