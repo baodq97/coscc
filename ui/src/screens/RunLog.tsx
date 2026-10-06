@@ -65,9 +65,7 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
           ) : undefined
         }
       />
-      <div className="card card-b" style={{ marginTop: 16 }}>
-        {cwd ? <RunLog cwd={cwd} run={run} live={false} /> : <SkeletonRows rows={3} />}
-      </div>
+      <div style={{ marginTop: 16 }}>{cwd ? <RunLog cwd={cwd} run={run} live={false} /> : <SkeletonRows rows={3} />}</div>
     </div>
   );
 }

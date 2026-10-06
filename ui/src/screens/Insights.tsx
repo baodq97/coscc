@@ -189,7 +189,7 @@ function Agents({ rows, workspace }: { rows: AgentSpend[]; workspace: Workspace 
             </div>
             <b className="nowrap" style={{ width: 72, textAlign: "right" }}>{money(r.usd ?? 0)}</b>
             <span className="faint nowrap" style={{ width: 150, fontSize: 12 }}>
-              {r.steps} runs{r.unknown ? `, ${r.unknown} cost unknown` : ""}
+              {r.steps} run{r.steps === 1 ? "" : "s"}{r.unknown ? `, ${r.unknown} cost unknown` : ""}
             </span>
           </summary>
           <div className="agent-runs">

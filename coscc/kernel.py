@@ -362,7 +362,7 @@ class Session:
     # `kind`; `None` is the app's default.
     model: str | None = None
     effort: str | None = None
-    # Whether `grant.max_turns` holds below the floor a submitting session gets, because one
+    # Whether `grant.max_turns` holds below the floor a session that submits gets, because one
     # more turn could pass its budget; a refused object is then not submitted again.
     own_turns: bool = False
 

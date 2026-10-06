@@ -209,6 +209,8 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
 .lrow .meta { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: 12px; flex: none; }
 details.agent > summary { list-style: none; cursor: pointer; }
 details.agent > summary::-webkit-details-marker { display: none; }
+details.agent > summary::before { content: "›"; color: var(--text-3); width: 10px; flex: none; transition: transform 0.15s; }
+details.agent[open] > summary::before { transform: rotate(90deg); }
 details.agent:last-child > summary { border-bottom: 0; }
 .agent-runs { background: var(--bg-sunk); border-bottom: 1px solid var(--line); }
 .agent-runs .lrow { padding-left: 32px; }
