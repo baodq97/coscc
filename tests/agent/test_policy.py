@@ -608,8 +608,8 @@ class GeboPushesOnlyWithTheLease(unittest.TestCase):
             "git push --force-with-lease origin feat/x": "needs a value",
             f"git push --force-with-lease=feat/x:{'b' * 40} origin feat/x": "bound to",
             f"git push --force-with-lease=feat/x:{'a' * 7} origin feat/x": "bound to",
-            f"git push --force-with-lease=feat/x:{self.HEAD} origin main": "push with",
-            f"git push --force-with-lease=feat/x:{self.HEAD} origin feat/x:main": "push with",
+            f"git push --force-with-lease=feat/x:{self.HEAD} origin main": "may only name",
+            f"git push --force-with-lease=feat/x:{self.HEAD} origin feat/x:main": "may only name",
             f"git push --force-with-lease=feat/x:{self.HEAD} --all origin": "--all",
             f"git push --force-with-lease=feat/x:{self.HEAD} --mirror origin": "--mirror",
             f"git push --force-with-lease=feat/x:{self.HEAD} --tags origin feat/x": "--tags",
@@ -1595,23 +1595,6 @@ class OnlyTheUnitsBranchIsPushed(_Unit):
             with self.subTest(line=line):
                 self.assertEqual(self.bash(line), "")
 
-    def test_head_spelled_with_the_branch_is_pushed_and_head_alone_is_not(self):
-        for line in ("git push origin HEAD:refs/heads/feat/x", "git push -u origin HEAD:feat/x"):
-            with self.subTest(line=line):
-                self.assertEqual(self.bash(line), "")
-        for line in (
-            "git push origin HEAD",
-            "git push -u origin HEAD",
-            "git push",
-            "git commit -qm x && git push -q origin HEAD",
-            "git push origin HEAD:refs/heads/main",
-            "git push origin HEAD:refs/tags/feat/x",
-        ):
-            with self.subTest(line=line):
-                said = self.bash(line)
-                self.assertIn(policy.HOST, said)
-                self.assertIn("git push origin feat/x", said)
-
     def test_no_branch_pushes_nothing(self):
         places = replace(self.places, branch="")
         self.assertIn(policy.HOST, self.bash("git push origin feat/x", places=places))
@@ -1768,76 +1751,6 @@ class RecursiveRmStaysInsideAndNoClaudeIsNested(_Unit):
                 self.assertIn(policy.REMOVAL, self.bash(line))
         self.assertEqual(self.bash("grep -rn claude coscc"), "")
         self.assertEqual(self.bash("ls ~/.claude"), "")
-
-
-class TextNoShellRunsIsNotReadAsAScript(_Unit):
-    """A commit's or a tag's message and a search's pattern are text: read again as a line, or
-    scanned for a secret's name, they would refuse what no shell runs."""
-
-    def test_a_message_or_a_pattern_naming_a_road_or_a_secret_runs(self):
-        for line in (
-            'git commit -q -m "docs: drop git push origin main from the guide"',
-            'git commit -m "feat(x): rm -r ../y and the redirect > are named; cd ~ too"',
-            'git add -A && git commit -qm "fix: gh pr merge stays the app\'s"',
-            'git commit --message="names cd ~/.ssh && cat id_rsa"',
-            'git commit -m "the vault key sits in ~/.config/coscc/vault.key"',
-            'git tag -a v1 -m "git push origin main is refused"',
-            'grep -rn "git push origin main" coscc',
-            'rg -e "rm -rf ~" -g "*.md" .',
-            'grep -A 3 "cat ~/.ssh/id_rsa" notes.md',
-            "git log --oneline $(git merge-base HEAD origin/main)..HEAD",
-        ):
-            with self.subTest(line=line):
-                self.assertEqual(self.bash(line), "")
-
-    def test_the_same_words_where_a_shell_runs_them_are_refused(self):
-        for line, rule in (
-            ("bash -c 'git push origin main'", policy.HOST),
-            ('git commit -qm "x" && git push origin main', policy.HOST),
-            ('git commit -m "$(cat ~/.ssh/id_rsa)"', policy.SECRETS),
-            ("git commit -F ~/.config/coscc/env", policy.SECRETS),
-            ("grep -rn token ~/.ssh", policy.SECRETS),
-            ("grep -e x -- ~/.aws/credentials", policy.SECRETS),
-            ("echo 'git push origin main' | sh", policy.HOST),
-            ("python3 - <<EOF\nopen('~/.config/coscc/env')\nEOF", policy.SECRETS),
-            ("echo $(git merge origin/main)", "hides what runs"),
-        ):
-            with self.subTest(line=line):
-                self.assertIn(rule, self.bash(line))
-
-
-class TheScratchIsNamedByItsVariables(_Unit):
-    """`$COS_SCRATCH_RAM` and `$COS_SCRATCH_DISK` are the unit's scratch, and a variable the line
-    sets from them is too; any other variable stays unknown."""
-
-    def test_rm_below_the_scratch_by_its_name_runs(self):
-        for line in (
-            "rm -rf $COS_SCRATCH_RAM/pr",
-            'rm -rf "${COS_SCRATCH_DISK}/shot"',
-            "S=$COS_SCRATCH_DISK/shot && rm -rf $S && mkdir -p $S",
-            f"S={self.disk}/sim; rm -rf $S",
-            "cd $COS_SCRATCH_RAM && rm -rf old",
-        ):
-            with self.subTest(line=line):
-                self.assertEqual(self.bash(line), "")
-
-    def test_a_name_set_elsewhere_or_pointing_out_is_refused(self):
-        for line in (
-            "rm -rf $COS_SCRATCH_RAM/../..",
-            "COS_SCRATCH_RAM=/ && rm -rf $COS_SCRATCH_RAM",
-            "COS_SCRATCH_DISK=$X; rm -rf $COS_SCRATCH_DISK/a",
-            "S=$X/y && rm -rf $S",
-            "rm -rf $OTHER/x",
-            "S=$COS_SCRATCH_DISK; bash -c 'rm -rf $S/x'",
-            "bash -c 'S=/; rm -rf $S'",
-            "find $COS_SCRATCH_RAM/.. -delete",
-        ):
-            with self.subTest(line=line):
-                self.assertIn(policy.REMOVAL, self.bash(line))
-
-    def test_a_session_without_a_scratch_knows_no_name(self):
-        places = replace(self.places, scratch=None)
-        self.assertIn(policy.REMOVAL, self.bash("rm -rf $COS_SCRATCH_RAM/pr", places=places))
 
 
 class TheHelperRulesHold(_Unit):

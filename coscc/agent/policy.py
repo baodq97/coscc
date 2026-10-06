@@ -1064,8 +1064,8 @@ _PUSH_WIDE = frozenset(
 def check_push(words: list[str], branch: str, lease_head: str = "") -> str:
     """ "" if `git push <words>` is the one push allowed, else why not.
 
-    `words` are the tokens after `push`. The one allowed shape is `origin <branch>`, or
-    `HEAD:<branch>` or `HEAD:refs/heads/<branch>` in its place, never forced. With `lease_head` (Gebo's) it carries exactly one
+    `words` are the tokens after `push`. The one allowed shape is `origin <branch>` or
+    `origin HEAD:<branch>`, never forced. With `lease_head` (Gebo's) it carries exactly one
     `--force-with-lease=<branch>:<lease_head>` with a full SHA; without, no lease at all. Pure:
     the branch and the head come from the app, never the session.
     """
@@ -1101,15 +1101,8 @@ def check_push(words: list[str], branch: str, lease_head: str = "") -> str:
         return "a push must carry exactly one --force-with-lease=<branch>:<head this step began at>"
     if lease_head and leases[0] != f"{branch}:{lease_head}":
         return f"the lease must be bound to {branch}:{lease_head}, the head this step began at"
-    if positional not in (
-        ["origin", branch],
-        ["origin", f"HEAD:{branch}"],
-        ["origin", f"HEAD:refs/heads/{branch}"],
-    ):
-        return (
-            f"push with `git push origin {branch}`: a push names this unit's branch, since "
-            "where HEAD stands is not read here (a bare `git push` and `origin HEAD` are refused)"
-        )
+    if positional not in (["origin", branch], ["origin", f"HEAD:{branch}"]):
+        return f"a push may only name `origin {branch}` or `origin HEAD:{branch}`"
     return ""
 
 
@@ -1708,11 +1701,11 @@ def _secret_refused(tool: str, tool_input: dict, places: Places) -> str:
 
 
 # What a line names when a command hidden in it could be one of the critical roads.
-_ROADS = re.compile(r"\b(?:push|merge(?!-base)|release|rm|gh|claude)\b")
+_ROADS = re.compile(r"\b(?:push|merge|release|rm|gh|claude)\b")
 # A word shaped like a line that names a road, `git` or a move: a script another program may run
 # (`sh -c`, `ssh host`, `watch`, `eval`, `echo … | bash`), so it is read again as a line.
 _SCRIPT_SHAPE = re.compile(r"[\s;|&]")
-_SCRIPT_WORDS = re.compile(r"\b(?:push|merge(?!-base)|release|rm|gh|claude|git|cd|pushd|find)\b")
+_SCRIPT_WORDS = re.compile(r"\b(?:push|merge|release|rm|gh|claude|git|cd|pushd|find)\b")
 # Where an unreadable script would start a critical program.
 _AT_COMMAND = re.compile(r"(?:^|[;&|\n(`])\s*(?:[\w./-]*/)?(?:git|gh|rm|claude|cd|pushd)\b")
 # Programs that run the words after them as a program.
@@ -1722,12 +1715,6 @@ _WRAPPERS = frozenset(
 )
 _CLAUDE = frozenset({"claude", "claude-code"})
 _CD = frozenset({"cd", "pushd"})
-# Text no shell runs: a commit's or a tag's message, a search's pattern.
-_GREPS = frozenset({"grep", "egrep", "fgrep", "rg"})
-_GREP_VALUED = frozenset(
-    {"-A", "-B", "-C", "-m", "-f", "-g", "-t", "-T", "-d", "-D", "-M", "--max-count", "--glob"}
-    | {"--type", "--type-not", "--context", "--after-context", "--before-context", "--file"}
-)
 # `gh <group> <verb>`: these verbs only read. Any other may write to the host, and a group
 # `gh` does not ship may be an extension, whose code is not read here.
 _GH_READS = frozenset(
@@ -1744,23 +1731,6 @@ _CONFIG_WRITES = frozenset(
 )
 _CONFIG_SCOPE = ("--global", "--local", "--system", "--worktree", "--show-", "--type", "--null")
 _REMOTE_WRITES = frozenset({"add", "set-url", "rename", "remove", "rm"})
-_VARIABLE = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
-
-
-@dataclass
-class _Stand:
-    """Where a line stands as it is read: each working directory it may be in (`None` for one
-    not known), and the variables it has set to a known value."""
-
-    cwds: list[str | None]
-    names: dict[str, str]
-
-
-def _env_names(places: Places) -> dict[str, str]:
-    """The variables a session's environment holds that a path may start with: its scratch."""
-    if not places.scratch:
-        return {}
-    return {"COS_SCRATCH_RAM": places.scratch[0], "COS_SCRATCH_DISK": places.scratch[1]}
 
 
 def bash_refused(places: Places, command: str, agent_id: str | None = None) -> str:
@@ -1770,15 +1740,15 @@ def bash_refused(places: Places, command: str, agent_id: str | None = None) -> s
 
     `git`, `gh`, `rm` and `find` are checked wherever they stand among a command's words, so a
     wrapper (`timeout 9 git push`) does not hide them; a quoted word shaped like a script is
-    read again as a line, but for a message or a search pattern, which no shell runs. Paths are
-    read from where the line stands, `cd`, `pushd` and the line's own variables followed.
+    read again as a line. Paths are read from where the line stands, `cd` and `pushd` followed.
     """
     roots = _resolved(places.roots[:1])
-    cwd = str(roots[0]) if roots else None
-    return _line_refused(places, command, agent_id, _Stand([cwd], _env_names(places)))
+    return _line_refused(places, command, agent_id, [str(roots[0]) if roots else None])
 
 
-def _line_refused(places: Places, command: str, agent_id: str | None, at: _Stand) -> str:
+def _line_refused(
+    places: Places, command: str, agent_id: str | None, cwds: list[str | None]
+) -> str:
     parsed = _read(command)
     if isinstance(parsed, _Unreadable):
         return (
@@ -1799,14 +1769,7 @@ def _line_refused(places: Places, command: str, agent_id: str | None, at: _Stand
             "a substitution or a variable program hides what runs, on a line that names push, "
             "merge, release, rm, gh or claude: spell each command out"
         )
-    # The whole line, for a heredoc body, less the text no shell runs.
-    scanned = command
-    for s in parsed.commands:
-        for k in _inert(list(s.words)):
-            w = s.words[k]
-            text = w.partition("=")[2] if w.startswith("--") else w
-            scanned = scanned.replace(text[2:] if re.fullmatch(r"-[me].+", w) else text, "", 1)
-    for form in _braces(scanned):
+    for form in _braces(command):
         for p in places.secrets:
             if re.search(re.escape(p) + r"(?![\w.-])", form):
                 return f"{SECRETS}: {p}"
@@ -1821,23 +1784,21 @@ def _line_refused(places: Places, command: str, agent_id: str | None, at: _Stand
     reason = _helper_git(parsed, agent_id)
     if reason:
         return f"{HELPERS}: {reason}"
-    at = _Stand(list(at.cwds), dict(at.names))
+    cwds = list(cwds)
     for simple in parsed.commands:
-        reason = _simple_refused(places, simple, agent_id, at, command)
+        reason = _simple_refused(places, simple, agent_id, cwds, command)
         if reason:
             return reason
     return ""
 
 
 def _simple_refused(
-    places: Places, simple: _Simple, agent_id: str | None, at: _Stand, line: str
+    places: Places, simple: _Simple, agent_id: str | None, cwds: list[str | None], line: str
 ) -> str:
-    """Why one simple command is critical, or ""; a `cd`, a `pushd` or an assignment moves
-    `at` on."""
+    """Why one simple command is critical, or ""; a `cd` or `pushd` moves `cwds` on."""
     words, unknown = list(simple.words), list(simple.expanded)
-    inert = _inert(words)
-    for k, word in enumerate((*words, *(r.target for r in simple.redirects))):
-        hit = "" if k in inert else _word_secret(places, word, at)
+    for word in (*words, *(r.target for r in simple.redirects)):
+        hit = _word_secret(places, word, cwds)
         if hit:
             return f"{SECRETS}: {hit}"
     names = [w.rsplit("/", 1)[-1] for w in words]
@@ -1849,9 +1810,9 @@ def _simple_refused(
             reason = _gh_refused(rest, rest_unknown)
         elif name == "rm":
             fed = any(n == "xargs" or w in _FIND_EXEC for n, w in zip(names[:i], words[:i]))
-            reason = _rm_refused(places, rest, rest_unknown, at, fed)
+            reason = _rm_refused(places, rest, rest_unknown, cwds, fed)
         elif name == "find":
-            reason = _find_refused(places, rest, rest_unknown, at)
+            reason = _find_refused(places, rest, rest_unknown, cwds)
         else:
             continue
         if reason:
@@ -1862,90 +1823,20 @@ def _simple_refused(
         wrapped and any(n in _CLAUDE for n in names[launched[0] + 1 :])
     ):
         return f"{REMOVAL}: a session may not start Claude Code inside itself"
-    for k, word in enumerate(words):
-        reason = "" if k in inert else _script_refused(places, word, agent_id, at, line)
+    for word in words:
+        reason = _script_refused(places, word, agent_id, cwds, line)
         if reason:
             return reason
     if launched and names[launched[0]] in _CD:
-        return _cd_refused(places, words[launched[0] + 1 :], unknown[launched[0] + 1 :], at)
-    if words and all(_ASSIGNMENT.match(w) for w in words):
-        for word, var in zip(words, unknown):
-            name, _, value = word.partition("=")
-            known = _named(value, at.names) if var else value
-            at.names.pop(name, None)
-            if known is not None and not name.endswith(("]", "+")):
-                at.names[name] = _expand(known, places.home)
+        return _cd_refused(places, words[launched[0] + 1 :], cwds)
     return ""
 
 
-def _inert(words: list[str]) -> set[int]:
-    """Where in one command's words stands text no shell runs: the message of `git commit` or
-    `git tag` (`-m`, `--message`), and the pattern of a search (`-e`, `--regexp`, or the first
-    word that is no flag). One with a substitution in it is not inert."""
-    out: set[int] = set()
-    for i, word in enumerate(words):
-        name = word.rsplit("/", 1)[-1]
-        if name == "git":
-            sub = _positions("git", words[i + 1 :])[:1]
-            if sub and words[i + 1 + sub[0]] in ("commit", "tag"):
-                out |= _messages(words, i + 2 + sub[0])
-        elif name in _GREPS:
-            out |= _patterns(words, i + 1)
-    return {k for k in out if k < len(words) and "$(" not in words[k] and "`" not in words[k]}
-
-
-def _messages(words: list[str], start: int) -> set[int]:
-    out = set()
-    for k in range(start, len(words)):
-        w = words[k]
-        if w == "--message" or re.fullmatch(r"-[A-Za-z]*m", w):
-            out.add(k + 1)
-        elif w.startswith("--message=") or re.fullmatch(r"-m.+", w):
-            out.add(k)
-    return out
-
-
-def _patterns(words: list[str], start: int) -> set[int]:
-    out, skip, ended = set(), False, False
-    for k in range(start, len(words)):
-        w = words[k]
-        if skip:
-            skip = False
-        elif ended or not w.startswith("-") or w == "-":
-            return out or {k}
-        elif w == "--":
-            ended = True
-        elif w in ("-e", "--regexp"):
-            out.add(k + 1)
-            skip = True
-        elif w.startswith("--regexp=") or re.fullmatch(r"-e.+", w):
-            out.add(k)
-        elif w in _GREP_VALUED:
-            skip = True
-    return out
-
-
-def _named(text: str, names: dict[str, str]) -> str | None:
-    """`text` with each `$NAME` or `${NAME}` the line knows put in, or `None` if any is not
-    known (a substitution included)."""
-    if "$(" in text or "`" in text:
-        return None
-    unknown = False
-
-    def put(m: re.Match) -> str:
-        nonlocal unknown
-        value = names.get(m.group(1) or m.group(2))
-        unknown = unknown or value is None
-        return value or ""
-
-    out = _VARIABLE.sub(put, text)
-    return None if unknown or "$" in out else out
-
-
-def _script_refused(places: Places, word: str, agent_id: str | None, at: _Stand, line: str) -> str:
+def _script_refused(
+    places: Places, word: str, agent_id: str | None, cwds: list[str | None], line: str
+) -> str:
     """A word shaped like a line, read again as one: what `sh -c`, `ssh`, `watch` or a pipe into
-    a shell would run. `NAME=` or `--flag=` in front is the value's, not the script's. The
-    script starts in the line's place, with only the environment's variables."""
+    a shell would run. `NAME=` or `--flag=` in front is the value's, not the script's."""
     if not _SCRIPT_SHAPE.search(word) or not _SCRIPT_WORDS.search(word):
         return ""
     head, eq, value = word.partition("=")
@@ -1954,29 +1845,26 @@ def _script_refused(places: Places, word: str, agent_id: str | None, at: _Stand,
         # A substitution reads back as itself; `hidden` has judged it.
         return ""
     if isinstance(_read(script), _Unreadable) and not _AT_COMMAND.search(script):
-        # Prose: a shell could not run it as it stands either.
+        # Prose, such as a commit message: a shell could not run it as it stands either.
         return ""
-    return _line_refused(places, script, agent_id, _Stand(at.cwds, _env_names(places)))
+    return _line_refused(places, script, agent_id, cwds)
 
 
-def _cd_refused(places: Places, args: list[str], unknown: list[bool], at: _Stand) -> str:
-    """Where `cd` or `pushd` moves the line: added to `at.cwds`, since it may fail and leave the
+def _cd_refused(places: Places, args: list[str], cwds: list[str | None]) -> str:
+    """Where `cd` or `pushd` moves the line: added to `cwds`, since it may fail and leave the
     line where it was. A folder that is or holds a secret is refused."""
-    target, var = next(
-        ((a, u) for a, u in zip(args, unknown) if a == "-" or not a.startswith("-")), ("~", False)
-    )
+    target = next((a for a in args if a == "-" or not a.startswith("-")), "~")
     text = _expand(target, places.home)
-    known = _named(text, at.names) if var and text == target else text
-    if target == "-" or known is None or "`" in known:
-        at.cwds.append(None)
+    if target == "-" or "$" in text or "`" in text:
+        cwds.append(None)
         return ""
     secrets = _secret_dirs(places.secrets)
-    for form in _braces(_expand(known, places.home)):
-        for real in _real(form, at.cwds):
+    for form in _braces(text):
+        for real in _real(form, cwds):
             for s in secrets:
                 if real == s or real.startswith(s + "/") or s.startswith(real.rstrip("/") + "/"):
                     return f"{SECRETS}: {real} holds {s}"
-            at.cwds.append(real)
+            cwds.append(real)
     return ""
 
 
@@ -2037,23 +1925,20 @@ def _secret_dirs(secrets: tuple[str, ...]) -> tuple[str, ...]:
     )
 
 
-def _word_secret(places: Places, word: str, at: _Stand) -> str:
+def _word_secret(places: Places, word: str, cwds: list[str | None]) -> str:
     """The secret one word reaches, or "": by its text, a glob, a brace expansion, or the path
-    it names from where the line stands, links and the line's variables followed. A `--flag=`
-    or `NAME=` value counts."""
+    it names from where the line stands, links followed. A `--flag=` or `NAME=` value counts."""
     import os
 
     if not word or not places.secrets:
         return ""
     secrets = _secret_dirs(places.secrets)
-    named = _named(word, at.names) if "$" in word else None
-    forms = {f for w in (word, word.partition("=")[2], named) if w for f in _braces(w)}
-    for form in forms:
+    for form in {f for w in (word, word.partition("=")[2]) if w for f in _braces(w)}:
         for text in (form, os.path.normpath(form)):
             for p in places.secrets:
                 if re.search(re.escape(p) + r"(?![\w.-])", text) or _glob_reaches(text, p):
                     return p
-        for real in _real(_expand(form, places.home), at.cwds):
+        for real in _real(_expand(form, places.home), cwds):
             for s in secrets:
                 if real == s or real.startswith(s + "/") or _glob_reaches(real, s):
                     return s
@@ -2133,9 +2018,11 @@ def _api_writes(rest: list[str]) -> bool:
     return False
 
 
-def _rm_refused(places: Places, rest: list[str], unknown: list[bool], at: _Stand, fed: bool) -> str:
-    """`rm -r` of a target outside the unit's places, of a variable the line does not know, or
-    of what `xargs` or `find -exec` hands it (where that points is not read here)."""
+def _rm_refused(
+    places: Places, rest: list[str], unknown: list[bool], cwds: list[str | None], fed: bool
+) -> str:
+    """`rm -r` of a target outside the unit's places, of a variable, or of what `xargs` or
+    `find -exec` hands it (where that points is not read here)."""
     flags, targets, ended = [], [], False
     for token, var in zip(rest, unknown):
         if not ended and token == "--":
@@ -2151,15 +2038,16 @@ def _rm_refused(places: Places, rest: list[str], unknown: list[bool], at: _Stand
             f"{REMOVAL}: rm -r of what another program hands it: where it points is not known here"
         )
     for target, var in targets:
-        known = _named(target, at.names) if var else target
-        if known is None or "{}" in known:
+        if var or "{}" in target:
             return f"{REMOVAL}: rm -r of a variable ({target}): where it points is not known here"
-        if _outside(places, known, at):
+        if _outside(places, target, cwds):
             return f"{REMOVAL}: rm -r outside this unit's places: {target}"
     return ""
 
 
-def _find_refused(places: Places, rest: list[str], unknown: list[bool], at: _Stand) -> str:
+def _find_refused(
+    places: Places, rest: list[str], unknown: list[bool], cwds: list[str | None]
+) -> str:
     """`find <start> -delete` removes below `start`, as `rm -r` would."""
     if "-delete" not in rest:
         return ""
@@ -2169,20 +2057,19 @@ def _find_refused(places: Places, rest: list[str], unknown: list[bool], at: _Sta
             break
         starts.append((token, var))
     for start, var in starts or [(".", False)]:
-        known = _named(start, at.names) if var else start
-        if known is None or _outside(places, known, at):
+        if var or _outside(places, start, cwds):
             return f"{REMOVAL}: find -delete outside this unit's places: {start}"
     return ""
 
 
-def _outside(places: Places, target: str, at: _Stand) -> bool:
+def _outside(places: Places, target: str, cwds: list[str | None]) -> bool:
     """Whether a removal target may lie outside the unit's places, from any place the line may
     stand; a relative one from an unknown place may."""
     roots = _resolved(places.roots)
     for form in _braces(_expand(target, places.home)):
-        if not form.startswith("/") and (not at.cwds or None in at.cwds):
+        if not form.startswith("/") and (not cwds or None in cwds):
             return True
-        for real in _real(form, at.cwds):
+        for real in _real(form, cwds):
             if not (_inside(real, roots, None) or _scratch_of(real, places.scratch) is not None):
                 return True
     return False
