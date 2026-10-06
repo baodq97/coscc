@@ -13,14 +13,17 @@ paths:
 - Every session runs auto mode. The app's hook refuses the critical calls before the
   classifier sees them, and the classifier judges the rest. A hook that raises lets the call
   through, so the gate catches every error and refuses.
+- A `Row` is an agent's data (catalog tools, ceilings); a `Grant` is one run's permission, issued
+  by `runner/run.py` `issue` and read alone by `critical`: no grant, no action. A feature binds by
+  catalog name and reads `facts.grant`, never a stage name.
 - The critical check reads words and is a tripwire, not a sandbox: assume `python -c` walks
   past it. Keep it to the few calls that must never run; do not add enforcement by wording.
 - There is no read boundary: a session reads anything but the secrets, and prompts name
   artifacts by path.
 - A quoted word shaped like a command line is read again as one (a wrapper may run it),
   except a commit's message or a search's pattern given to the program itself.
-- The write tools are held to the unit's places; a command that writes is the classifier's.
+- The write tools are held to the grant's `write`; a command that writes is the classifier's.
   `impl` reads a sibling repository and a command can still write it.
 - A path is resolved once, when checked: a later symlink swap is missed.
-- Ceilings and who may change a model: `.claude/docs/coscc-settings.md`; the spike grant:
+- Ceilings and who may change a model: `.claude/docs/coscc-settings.md`; the spike row:
   `.claude/docs/coscc-spike.md`.

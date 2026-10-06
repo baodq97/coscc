@@ -14,6 +14,11 @@ Read this before adding a route, a button or a grant.
   calls by their words and a classifier judges the rest, so assume a program it lets run can
   walk past both. What stops a merge or a force-push on `main` is the host's ruleset, not this
   harness.
+- **A grant is the engine's, per run.** No route, button or agent writes one: the engine issues
+  it as a run opens, from the agent's row and where the run stands (its worktree, the unit's
+  branch, the vault's list of agents per secret), and it ends with the run. No grant, no action:
+  a write, a push, a helper or an MCP tool the run's grant does not hold is refused, and the
+  secrets are refused whatever it holds. Widening a row is a code change, reviewed like any other.
 - **No list of programs, and no route to widen one.** What a session may run is auto mode's
   judgement plus the few critical blocks; a person adds nothing at runtime. The one place a line
   is read strictly (no substitution at all) is the vault's `vault_exec`, since it runs with secrets
