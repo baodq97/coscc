@@ -37,7 +37,7 @@ from coscc.units import BadUnit, CannotCreate
 from coscc.units.board import Unavailable
 from coscc.units.contracts import ContractError, Plan, missing
 from coscc.units.ideas import Ideas
-from coscc.units.read import HoldView
+from coscc.units.read import BUDGET_REACHED, HoldView
 from coscc.units.workspaces import Workspaces
 from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK, describe_base
 
@@ -816,7 +816,7 @@ class Steps:
                 raise Refused(
                     f"{unit}'s {stage} paused at its ceiling: raise it to go on, or rerun it "
                     "from scratch",
-                    ("budget-reached",),
+                    (BUDGET_REACHED,),
                 )
             asked_rerun = rerun and paused is None
             stale = (

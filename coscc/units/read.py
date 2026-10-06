@@ -125,11 +125,17 @@ class PullRequest(TypedDict):
     url: str
 
 
+# The reason code (`guards.REASONS`) of a stage paused at its ceiling.
+BUDGET_REACHED = "budget-reached"
+
+
 class Paused(TypedDict):
     """A run that stopped at a ceiling and kept its session: the `stage`, which `ceiling` it hit
-    (`turns` or `usd`), what it spent and both ceilings. The unit is held `budget-reached`."""
+    (`turns` or `usd`), what it spent and both ceilings. The unit is held: `code` is
+    `budget-reached`, what a plain run of the stage is refused with."""
 
     stage: str
+    code: str
     ceiling: str
     usd: float | None
     max_usd: float | None
@@ -295,6 +301,7 @@ def paused(p: Mapping[str, Any] | None) -> Paused | None:
         return None
     return {
         "stage": _text(p.get("stage")),
+        "code": BUDGET_REACHED,
         "ceiling": _text(p.get("ceiling")),
         "usd": number(p.get("usd")),
         "max_usd": number(p.get("max_usd")),

@@ -6,6 +6,7 @@ as a missing test rather than as a bug only one entry point has."""
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -244,3 +245,26 @@ class OneMembershipQuestion(unittest.TestCase):
             config = Config(workspaces=(), working_dir=d, data_dir=d)
             s = Core(config, Sessions(config))
             self.assertFalse(s.sessions.membership("/etc"))
+
+
+class ARefusalBodyCarriesItsCode(unittest.TestCase):
+    """A gate's refusal says its reason code beside its words, so a caller branches on the code."""
+
+    def test_a_paused_stage_says_budget_reached_and_a_plain_refusal_says_no_code(self):
+        from coscc.http.app import _refused
+        from coscc.kernel import Invalid
+        from coscc.runner.queue import Refused
+        from coscc.units.read import BUDGET_REACHED, paused
+        from starlette.requests import Request
+
+        asked = Request({"type": "http"})
+        said = asyncio.run(_refused(asked, Refused("paused", (BUDGET_REACHED,))))
+        self.assertEqual(
+            (said.status_code, json.loads(said.body)),
+            (400, {"error": "paused", "code": BUDGET_REACHED, "reasons": [BUDGET_REACHED]}),
+        )
+        said = asyncio.run(_refused(asked, Invalid("no")))
+        self.assertEqual(json.loads(said.body), {"error": "no"})
+        # Where the board shows the hold, the same code.
+        shown = paused({"stage": "impl", "ceiling": "usd"})
+        self.assertEqual(shown["code"] if shown else "", BUDGET_REACHED)

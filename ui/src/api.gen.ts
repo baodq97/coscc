@@ -332,6 +332,7 @@ export type OutputRecord = {
 
 export type Paused = {
   "stage": string;
+  "code": string;
   "ceiling": string;
   "usd": number | null;
   "max_usd": number | null;
