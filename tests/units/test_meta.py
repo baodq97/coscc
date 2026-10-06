@@ -69,11 +69,11 @@ def snapshot_of(root, peers=(), units_=None) -> dict:
         return meta.snapshot(own, names, units_)
 
 
-
 def _link(meta, *args):
     """`UnitMeta.link` in a transaction of its own, as the press that opens a unit writes it."""
     with meta.data.write() as conn:
         meta.link(conn, *args)
+
 
 class WithSnapshot:
     """Test glue (plan step 8): `coscc/units/board.py` as a test module sees it, each question

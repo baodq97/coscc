@@ -156,7 +156,7 @@ class Workspaces:
         return peers, problems
 
     def peers(self) -> list[tuple[str, Path]]:
-        """Every named workspace as `(name, store root)`, the stores an `Idea:` may name."""
+        """Every named workspace as `(name, store root)`, the stores an idea or a dependency may name."""
         return [(name, self.units_root(path)) for name, path in self.peer_table()[0]]
 
     # -- changing the list ----------------------------------------------------

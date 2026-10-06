@@ -1156,7 +1156,7 @@ class Steps:
             link_kw["state_file"] = str(path)
         except OSError, Invalid:
             pass
-        # Only for a unit an idea lists, and only for `intent` and `impl`;
+        # Only for a unit opened from an idea, and only for `intent` and `impl`;
         # every other step is handed no key.
         if stage == "intent":
             idea_note = self.ideas.idea_note(cwd, unit)

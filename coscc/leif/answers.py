@@ -481,9 +481,7 @@ class Answers:
         """
         self.ws.check(cwd)
         if depends_on and not idea:
-            raise Invalid(
-                "depends_on needs an idea: it names another unit of the same idea."
-            )
+            raise Invalid("depends_on needs an idea: it names another unit of the same idea.")
         if idea:
             self.ideas.idea_link(cwd, idea, brief, depends_on)
         root = Path(cwd).expanduser().resolve()
@@ -508,9 +506,7 @@ class Answers:
                 raise Invalid(str(e)) from e
             # The new unit's row, its idea's rows, and its `idea.md` accepted when it has a brief.
             made.update(
-                await self._open_unit(
-                    cwd, made["unit"], bool(made.get("brief")), idea, depends_on
-                )
+                await self._open_unit(cwd, made["unit"], bool(made.get("brief")), idea, depends_on)
             )
             if idea:
                 if "ingest_error" in made:

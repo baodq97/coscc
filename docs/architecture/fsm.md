@@ -88,7 +88,7 @@ Derived states (CODE, recomputed each read):
 |---|---|---|
 | finished | plan done, or every stage settled | — |
 | paused / dropped | hold | — |
-| unreadable | file without `Status:`, broken idea link | — |
+| unreadable | file without `Status:` | — |
 | needs-person | spike fails at round ≥ 2; review out of rounds; incomplete review past the limit | — |
 | spike-fails / spike-missing | spike accepted with fails / a U<n> without verdict | spec / spike |
 | missing | artifact absent | that stage |
