@@ -242,7 +242,7 @@ def _impl_answers_block(directory: Path, meta: dict[str, Any] | None = None) -> 
 # Headings and advice for `impl` only.
 PLAN_MAP_HEADING = "# The files this plan changes, as they stand"
 PLAN_MAP_ADVICE = (
-    "Each file above is one the plan's `## Files that change` names, with its line count and, "
+    "Each file above is one the plan's record names in `files`, with its line count and, "
     "for Python and JavaScript, the line each top-level and class-level definition starts on, "
     "as the tree stood when this step began; `new` is a file not there yet. Read the part you "
     "need with `Read` and `offset`/`limit` instead of searching for it again. The numbers move "

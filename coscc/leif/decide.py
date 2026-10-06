@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
-from coscc.agent import labels, models
+from coscc.agent import models, policy
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, is_prose_stage
 from coscc.github import prmachine
 from coscc.leif import spend
@@ -370,7 +370,7 @@ def reservation(stage: str, budget: Mapping[str, Any] | None = None) -> float:
     return float(
         max(
             models.ceilings(stage, label, {}, budget or {})["max_budget_usd"] or 0.0
-            for label in (None, labels.NOVEL)
+            for label in (None, policy.NOVEL)
         )
     )
 

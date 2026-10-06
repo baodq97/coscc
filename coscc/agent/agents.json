@@ -69,10 +69,14 @@
       "role": "Orders the work and names its proof, and writes no code.",
       "output": {
         "kind": "artifact",
-        "version": 1,
+        "version": 2,
         "fields": {
           "judgement": {"enum": ["ready", "not-ready"]},
-          "questions": {"list": {"n": "number", "text": "text"}}
+          "questions": {"list": {"n": "number", "text": "text"}},
+          "impl": {"enum": ["routine", "novel"]},
+          "files": {"list": "text"},
+          "steps": {"list": {"title": "text", "paths": {"list": "text"}, "report": "text"}},
+          "rests_on": {"list": "U[0-9]+"}
         }
       }
     },

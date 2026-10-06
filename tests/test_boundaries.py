@@ -96,7 +96,7 @@ DICT_ANY: set[str] = {
     "coscc.agent.agents:resolve",
     "coscc.agent.agents:settings_json",
     "coscc.agent.agents:table",
-    "coscc.agent.labels:label_for",
+    "coscc.agent.models:label_of",
     "coscc.agent.sessions:Sessions.send",
     "coscc.agent.sessions:Sessions.stream",
     "coscc.agent.sessions:Sessions.suspend_all",

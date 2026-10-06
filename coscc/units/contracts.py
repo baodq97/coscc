@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Literal, TypedDict, get_args
 
 from coscc.agent.agents import DEFAULT_PATH
+from coscc.agent.policy import Label
 
-# What a stage's `judgement` says of its artifact. `rejected` and `done` are a person's, or a
-# later machine's, and no agent chooses them.
+# What a stage's `judgement` says of its artifact. `rejected` is a machine's, and no agent
+# chooses it.
 Judgement = Literal["ready", "not-ready"]
 # What a review round's `verdict` says.
 Verdict = Literal["pass", "changes-requested", "needs-person"]
@@ -53,6 +54,24 @@ class Output(TypedDict):
     kind: Kind
     version: int
     fields: dict[str, FieldType]
+
+
+class PlanStep(TypedDict):
+    """One parallel step of a plan: a helper's title, the paths it alone edits, what it reports."""
+
+    title: str
+    paths: list[str]
+    report: str
+
+
+class Plan(TypedDict):
+    """What the app reads of a plan's record: its label, its files, its parallel steps and the
+    spike items it rests on."""
+
+    impl: Label
+    files: list[str]
+    steps: list[PlanStep]
+    rests_on: list[str]
 
 
 class ContractError(Exception):
@@ -122,6 +141,15 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
                 "actual": "text",
             },
         ),
+    },
+    "plan": {
+        "impl": ("label_of", _enum(Label)),
+        "files": ("label_of", {"list": "text"}),
+        "steps": (
+            "render",
+            {"list": {"title": "text", "paths": {"list": "text"}, "report": "text"}},
+        ),
+        "rests_on": ("evaluate", {"list": _U}),
     },
     "impl": {"needs_person": ("impl-claim", {"list": _F}), "left_lane?": ("lane_of", "text")},
     "integrate": {

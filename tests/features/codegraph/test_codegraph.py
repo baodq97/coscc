@@ -3,6 +3,7 @@ condition, the Settings sentence, the bus handler and the report, with a fake in
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import tempfile
 import unittest
@@ -105,6 +106,27 @@ class Setup(unittest.IsolatedAsyncioTestCase):
                 "VALUES (?, '/w/proj', 'ready', ?, ?, '/data/_main')",
                 (KEY, SHA, now()),
             )
+
+
+class TheImplMapAsksForThePlanRecordsFiles(Setup):
+    async def test_the_files_are_the_records_not_plan_md(self):
+        (self.root / "plan.md").write_text("## Files that change\n- not/this.py\n")
+        facts = self.facts("0002_a")
+        asked: list = []
+        with (
+            mock.patch.object(codegraph, "changed_files", return_value=[]),
+            mock.patch.object(codegraph, "impl_map", lambda *a: asked.append(a[3]) or "map"),
+        ):
+            plan = {
+                "impl": "routine",
+                "files": ["b.py", "a.py", "b.py"],
+                "steps": [],
+                "rests_on": [],
+            }
+            with_plan = dataclasses.replace(facts, plan=plan)
+            codegraph._map(self.ctx, with_plan, Path("/bin/node"), Ready("/r", SHA, 0))
+            codegraph._map(self.ctx, facts, Path("/bin/node"), Ready("/r", SHA, 0))
+        self.assertEqual(asked, [["a.py", "b.py"], []])
 
 
 class TheToolsGoOnlyToAnOnArmRunWithAReadyIndex(Setup):

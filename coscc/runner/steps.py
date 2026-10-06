@@ -35,6 +35,7 @@ from coscc.units import backlog, mentions, planmap, retake, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
 from coscc.units.board import Unavailable
+from coscc.units.contracts import Plan
 from coscc.units.ideas import Ideas
 from coscc.units.read import HoldView
 from coscc.units.workspaces import Workspaces
@@ -188,18 +189,18 @@ async def _plan_drift(
     key: str,
     unit: str,
     stage: str,
-    directory: Path,
+    plan: Plan | None,
     tree: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Which files the plan names `main` changed since the plan ran, for `impl`
-    only. Unlike `failed_attempts`, nothing here may refuse the step: a busy run log, an
-    unreadable `plan.md` or a bug in `drift.py` is "could not check"."""
+    """Which files the plan's record names `main` changed since the plan ran, for `impl`
+    only. Unlike `failed_attempts`, nothing here may refuse the step: a busy run log or a bug
+    in `drift.py` is "could not check"."""
     if stage != "impl":
         return None
     try:
         return await drift.compute(
             journal.records(key, unit),
-            (directory / "plan.md").read_text(encoding="utf-8"),
+            plan["files"] if plan else None,
             tree["path"] if tree else None,
         )
     except Exception as e:
@@ -1058,14 +1059,15 @@ class Steps:
         the step here; every other read that fails is recorded as the reason."""
         mode = journal.modes(key).get((unit, stage), "manual")
         round_kw = _round_kwargs(found, row, stage, rounds_before)
+        plan = self.ws.unit_meta().plan(key, unit)
         config, failed = await self._stage_config(
-            cwd, key, journal, unit, stage, stages, directory, work
+            cwd, key, journal, unit, stage, stages, plan, work
         )
         integration_note = self.integration_note(journal, key, unit) if stage == "review" else ""
-        plan_drift = await _plan_drift(journal, key, unit, stage, directory, tree)
-        # The files the plan names, as they stand in the tree the step runs
+        plan_drift = await _plan_drift(journal, key, unit, stage, plan, tree)
+        # The files the plan's record names, as they stand in the tree the step runs
         # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
-        plan_kw = planmap.for_step(directory / "plan.md", work) if stage == "impl" else {}
+        plan_kw = planmap.for_step(plan["files"] if plan else [], work) if stage == "impl" else {}
         shortlist = _shortlist(journal, key, unit)
         answers_before = _answers_before(stage, directory, row)
         # `dict(...)`, not a literal: two sources naming one key is a `TypeError`, not an override.
@@ -1082,6 +1084,7 @@ class Steps:
                 cwd, unit, rounds_before, answers_before, directory / row["file"]
             ),
             **plan_kw,
+            plan=plan,
         ), answers_before
 
     async def _stage_config(
@@ -1092,7 +1095,7 @@ class Steps:
         unit: str,
         stage: str,
         stages: list[str],
-        directory: Path,
+        plan: Plan | None,
         work: str,
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """The stage's configuration and the failed attempts before this run. Resolved after
@@ -1100,7 +1103,7 @@ class Steps:
         `impl`, which run this is, read before any money is spent. `Runner` does not read the
         run log itself; `build_prompt` only places what it is handed, the same as `base_note`."""
         try:
-            config = self.stage_config(stage, list(stages), directory, journal, key, unit)
+            config = self.stage_config(stage, list(stages), plan, journal, key, unit)
             failed = journal.failed_attempts(key, unit, stage)
         except Busy as e:
             raise Refused(str(e), ("unavailable",)) from e

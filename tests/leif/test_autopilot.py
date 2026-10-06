@@ -540,11 +540,7 @@ class Scripted(_Base):
             "reasons": list(reasons),
         }
         if plan is not None:
-            d = self.core.ws.unit_dir(self.ws, name)
-            d.mkdir(parents=True, exist_ok=True)
-            (d / "plan.md").write_text(
-                f"# Plan\n\n## Files that change\n\n{plan}\n\n## Order\n", encoding="utf-8"
-            )
+            seed(self.core.ws.unit_meta(), self.core.ws.key(self.ws), name, plan={"files": plan})
 
     def listed(self, *names: str) -> None:
         """No names: every unit added, in the order it was added."""
@@ -580,9 +576,9 @@ class Scripted(_Base):
         self.assertEqual(len(self.launched), 1)
 
     async def test_overlapping_impls_run_one_after_the_other(self):
-        self.add("0001_a", "impl", plan="- `coscc/x.py`\n- `coscc/y.py`")
-        self.add("0002_b", "impl", plan="- `coscc/y.py`")
-        self.add("0003_c", "impl", plan="- `coscc/z.py`")
+        self.add("0001_a", "impl", plan=["coscc/x.py", "coscc/y.py"])
+        self.add("0002_b", "impl", plan=["coscc/y.py"])
+        self.add("0003_c", "impl", plan=["coscc/z.py"])
         await self.pass_()
         self.assertEqual([u for u, _, _ in self.launched], ["0001_a", "0003_c"])
         # `spec.md ## Answers`, câu 1: one ranked above that overlaps does not hold the rest.
@@ -598,6 +594,18 @@ class Scripted(_Base):
         del self.units["0001_a"], self.units["0003_c"]
         await self.pass_()
         self.assertEqual([u for u, _, _ in self.launched], ["0002_b"])
+
+    async def test_the_files_are_the_plan_records_not_plan_md(self):
+        self.add("0001_a", "impl", plan=["coscc/x.py"])
+        self.add("0002_b", "impl")
+        d = self.core.ws.unit_dir(self.ws, "0002_b")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "plan.md").write_text("# Plan\n\n## Files that change\n\n- `coscc/x.py`\n")
+        self.add("0003_c", "impl", plan=[])
+        files = self.core.autopilot._files
+        self.assertEqual(files(self.ws, "0001_a"), {"coscc/x.py"})
+        self.assertIsNone(files(self.ws, "0002_b"))
+        self.assertIsNone(files(self.ws, "0003_c"))
 
     async def test_turned_off_in_the_middle_of_a_pass_starts_nothing(self):
         read = self.core.boards.read
@@ -871,7 +879,7 @@ class Scripted(_Base):
         """CI red on its own integration runs the `impl` that `next` names, once. A person's
         integration is still integrated again."""
         red = "CI is red on #3: tests — back to impl: fix on the branch and push"
-        for unit, action, plan in (("0001_a", red, "- `a/x.py`"), ("0002_b", "", "- `b/y.py`")):
+        for unit, action, plan in (("0001_a", red, ["a/x.py"]), ("0002_b", "", ["b/y.py"])):
             self.add(
                 unit,
                 "impl",
@@ -918,7 +926,7 @@ class Scripted(_Base):
             "0001_a",
             "",
             action=action,
-            plan="- `a/x.py`",
+            plan=["a/x.py"],
             integration={"state": "red-after-integration"},
             reasons=["changes-requested", "ci-unfixable", "needs-person"],
             rounds=[{"verdict": "changes-requested"}],
@@ -950,7 +958,7 @@ class Scripted(_Base):
             "0001_a",
             "impl",
             action=red,
-            plan="- `a/x.py`",
+            plan=["a/x.py"],
             integration={"state": "red-after-integration"},
             reasons=["ci-red"],
             rounds=[{"verdict": "pass"}],
@@ -1230,8 +1238,8 @@ class Scripted(_Base):
     async def test_a_queued_attempt_holds_max_parallel_and_the_overlap_and_the_cap(self):
         self.core.attempts.admitting = lambda: False
         self.core.autopilot.set_setting(self.ws, "max_parallel", 2)
-        self.add("0001_a", "impl", plan="- `coscc/x.py`")
-        self.add("0002_b", "impl", plan="- `coscc/x.py`")
+        self.add("0001_a", "impl", plan=["coscc/x.py"])
+        self.add("0002_b", "impl", plan=["coscc/x.py"])
         self.add("0003_c", "spec")
         self.add("0004_d", "spec")
         await self.pass_()
@@ -1309,7 +1317,7 @@ class Scripted(_Base):
             name,
             "impl",
             action="CI is red on #7: tests — back to impl: fix on the branch and push",
-            plan="- `a/b.py`",
+            plan=["a/b.py"],
             reasons=["changes-requested", "ci-red"],
             rounds=[{"verdict": "changes-requested"}],
         )
@@ -1462,7 +1470,7 @@ class Scripted(_Base):
             "0001_a",
             "impl",
             action="fix the open findings of review round 1 on the branch",
-            plan="- `a/b.py`",
+            plan=["a/b.py"],
             reasons=["changes-requested"],
             rounds=[{"verdict": "changes-requested"}],
         )
@@ -1476,7 +1484,7 @@ class Scripted(_Base):
         """A gate closed after the pass picked: the attempt is `refused`, and the pass after it
         says so once and queues nothing again, however many follow."""
         self.refuse["0001_a"] = "no-worktree"
-        self.add("0001_a", "impl", plan="- `a/b.py`")
+        self.add("0001_a", "impl", plan=["a/b.py"])
         await self.pass_()
         self.assertEqual((self.refused(), self.stops()), ([("0001_a", "no-worktree")], {}))
         for _ in range(4):
@@ -1536,7 +1544,7 @@ class Scripted(_Base):
 
     async def test_a_refusal_that_is_not_a_gate_code_has_no_code_in_its_stop(self):
         self.refuse["0001_a"] = "invalid"
-        self.add("0001_a", "impl", plan="- `a/b.py`")
+        self.add("0001_a", "impl", plan=["a/b.py"])
         await self.pass_()
         await self.pass_()
         self.assertNotIn("code", self.core.autopilot.stops[self.key]["0001_a"])
@@ -1722,7 +1730,7 @@ class Scripted(_Base):
         self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {}))
 
         self.refuse["0002_b"] = "draft"
-        self.add("0002_b", "impl", plan="- `a/b.py`")
+        self.add("0002_b", "impl", plan=["a/b.py"])
         self.listed()
         await self.pass_()
         await self.pass_()
@@ -1732,7 +1740,7 @@ class Scripted(_Base):
 
     def add_rerun(self, name, stage="intent", *before, plan=None):
         """`next` says `rerun: stage`, after `before`'s records and then one `answer`. `plan` is for
-        a code stage, whose files the autopilot reads off `plan.md`."""
+        a code stage, whose files the autopilot reads off the plan's record."""
         self.add(
             name,
             "",
@@ -1871,7 +1879,7 @@ class Scripted(_Base):
     # --- , an answered draft impl runs again --------------------------------
 
     async def test_an_answered_draft_impl_runs_impl_again(self):
-        self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
+        self.add_rerun("0001_a", "impl", "start", plan=["coscc/x.py"])
         await self.pass_()
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
         self.assertEqual([(p["unit"], p["stage"]) for p in self.picks()], [("0001_a", "impl")])
@@ -1879,7 +1887,7 @@ class Scripted(_Base):
 
     async def test_two_impl_reruns_after_answers_stop_it(self):
         self.add_rerun(
-            "0001_a", "impl", "start", "answer", "start", "answer", "start", plan="- `coscc/x.py`"
+            "0001_a", "impl", "start", "answer", "start", "answer", "start", plan=["coscc/x.py"]
         )
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "reruns"}))
@@ -1889,7 +1897,7 @@ class Scripted(_Base):
         )
 
     async def test_off_starts_no_impl(self):
-        self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
+        self.add_rerun("0001_a", "impl", "start", plan=["coscc/x.py"])
         self.core.autopilot.set_setting(self.ws, "autopilot", False)
         await self.pass_()
         self.assertEqual(self.launched, [])
@@ -1944,7 +1952,7 @@ class Scripted(_Base):
 
         self.refuse["0002_b"] = "draft"
         self.ran_out("0002_b", "impl")
-        self.add("0002_b", "impl", plan="- `a/b.py`")
+        self.add("0002_b", "impl", plan=["a/b.py"])
         await self.pass_()
         await self.pass_()
         self.assertEqual([p["unit"] for p in self.picks()], ["0002_b"])
@@ -2157,7 +2165,7 @@ class Scripted(_Base):
             "0001_a",
             "impl",
             action="CI is red on #7: test — back to impl: fix on the branch and push",
-            plan="- `a/b.py`",
+            plan=["a/b.py"],
             reasons=["ci-red"],
         )
         self.listed()
@@ -2186,7 +2194,7 @@ class Scripted(_Base):
         gh = test_prmachine.FakeGh(buckets=("pass",))
         machine = self.a_machine(gh)
         await self.an_open_pr(machine, "0001_a")
-        self.add("0002_b", "impl", plan="- `coscc/b.py`")
+        self.add("0002_b", "impl", plan=["coscc/b.py"])
         self.waiting(
             machine,
             lambda: prmachine.state(machine.history, self.key, "0001_a")["state"] == "merged",
@@ -2250,8 +2258,8 @@ class Scripted(_Base):
         await self.an_open_pr(machine, "0001_a")
         await self.core.autopilot.pr_read(self.key)
         await self.settled()
-        self.add("0002_b", "impl", plan="- `coscc/a.py`")
-        self.add("0003_c", "impl", plan="- `coscc/c.py`")
+        self.add("0002_b", "impl", plan=["coscc/a.py"])
+        self.add("0003_c", "impl", plan=["coscc/c.py"])
         await self.pass_()
         self.assertEqual(self.launched, [("0003_c", "impl", "autopilot")])
         [pick] = self.picks()
@@ -2306,7 +2314,7 @@ class Scripted(_Base):
         self.assertIn("could not record", self.core.autopilot.stops[self.key][""]["reason"])
 
     async def test_no_answer_since_the_last_impl_is_the_stop_f(self):
-        self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
+        self.add_rerun("0001_a", "impl", "start", plan=["coscc/x.py"])
         Journal(self.config.working_dir, self.config.data_dir).append(
             {
                 "kind": "start",

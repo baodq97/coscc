@@ -321,9 +321,9 @@ class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
 
     HEAD = (
         "# Plan: 0085 again\nIntent: intent.md. Spec: spec.md. Author: t. Status: accepted. "
-        "Impl: routine.\n\n## Files that change\n\nPHẦN-ĐẦU\n"
+        "Impl: routine.\n\n## Order of work\n\nPHẦN-ĐẦU\n"
     )
-    UNTITLED = "## Files that change\n\nPHẦN-ĐẦU\n"
+    UNTITLED = "## Order of work\n\nPHẦN-ĐẦU\n"
     TAIL = "Lượt chốt (closing turn) không chạy… PHẦN-ĐUÔI\n"
 
     class Pieces:
@@ -1645,9 +1645,9 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
 
 REPAIRED_PLAN = (
     "# Plan: x\nIntent: intent.md. Spec: spec.md. Author: t. Status: accepted. Impl: routine.\n\n"
-    "## Files that change\n\nPHẦN-SỬA\n"
+    "## Order of work\n\nPHẦN-SỬA\n"
 )
-UNOPENED_PLAN = "## Files that change\n\nPHẦN-ĐẦU\n"
+UNOPENED_PLAN = "## Order of work\n\nPHẦN-ĐẦU\n"
 
 
 class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
@@ -1881,7 +1881,7 @@ class TheOtherTwoWritesAreCheckedTheSame(unittest.TestCase):
             (directory / "plan.md").write_bytes(before)
             with self.assertRaises(RunError) as caught:
                 _write_artifact(
-                    directory, "plan.md", "## Files that change\n\nStatus: accepted.\n", blocks=2
+                    directory, "plan.md", "## Order of work\n\nStatus: accepted.\n", blocks=2
                 )
             self.assertIn("(the session replied in 2 blocks)", str(caught.exception))
             self.assertEqual((directory / "plan.md").read_bytes(), before)

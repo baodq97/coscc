@@ -1408,6 +1408,7 @@ class Runner:
         watch: str | None,
         directory: Path,
         resumed: bool,
+        plan: kernel.Plan | None,
     ) -> tuple[Any, kernel.Facts, tuple[tuple[str, str], ...], Helpers | None]:
         """The step's recorder, when `Steps.run_step` gave it one (its `run` goes into `start` and
         `end`, and it is closed, everything on disk, before `end` is written); this run as the
@@ -1424,6 +1425,7 @@ class Runner:
             watch=watch,
             directory=directory,
             resumed=resumed,
+            plan=plan,
         )
         ledger, blocks = _helpers_of(
             grant, recorder, () if resumed else await self._blocks(facts), resumed
@@ -1501,6 +1503,7 @@ class Runner:
         app_note: str = "",
         plan_map: str = "",
         plan_map_record: dict[str, Any] | None = None,
+        plan: kernel.Plan | None = None,
         unfinished_round: dict[str, Any] | None = None,
         open_findings: tuple[str, ...] = (),
         claims_round: int | None = None,
@@ -1579,6 +1582,7 @@ class Runner:
             watch=watch,
             directory=directory,
             resumed=resume is not None,
+            plan=plan,
         )
         head, prompt, included, pointed = await _compose(
             cwd,

@@ -21,7 +21,12 @@ import re
 from dataclasses import dataclass, replace
 from typing import Literal, get_args
 
-from coscc.agent.labels import NOVEL
+
+# How a plan rates its work (its record's `impl`): `novel` runs under `NOVEL_CEILINGS` and the
+# `<stage>:novel` model rows, `routine` in the model trial.
+Label = Literal["routine", "novel"]
+ROUTINE: Label = "routine"
+NOVEL: Label = "novel"
 
 # Stages whose artifact is prose. The app writes these from the text the session returns, so
 # the session needs no ability to write. `ship` is not one: it runs `gh pr merge`.
@@ -102,7 +107,7 @@ SUBAGENTS = {
     },
     "worker": {
         "description": (
-            "Does one step of the plan's ## Parallelization: edits only that step's paths, runs "
+            "Does one parallel step of the plan: edits only that step's paths, runs "
             "only its tests, never commits."
         ),
         "prompt": (
@@ -159,7 +164,7 @@ GRANTS: dict[str, Grant] = {
         max_budget_usd=8.0,
         app_writes_artifact=False,
     ),
-    # `plan` reads, and only reads: `write-plan` requires every path under `## Files that change`
+    # `plan` reads, and only reads: `write-plan` requires every path its record's `files` names
     # to be verified before it is written down, and without read tools a plan names paths it
     # never saw. No write tools and no Bash: the app still writes `plan.md` from the reply,
     # which stops a plan authoring itself, and `beyond_reading` keeps that true if this widens.
@@ -238,7 +243,7 @@ GRANTS: dict[str, Grant] = {
     ),
 }
 
-# The ceilings a step gets when its plan's label is `novel` (`coscc/agent/labels.py`), as
+# The ceilings a step gets when its plan's label is `novel` (`models.label_of`), as
 # `(max_turns, max_budget_usd)`; everything else about the grant stays the stage's own. A stage
 # not named here runs the same grant whatever its label.
 #

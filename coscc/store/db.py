@@ -34,8 +34,8 @@ from typing import Any, Iterator
 # `500` on a database a newer one has touched**, so rolling the app back means rolling the
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
-# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped; 13: `stage_results` becomes `outputs`).
-SCHEMA_VERSION = 16
+# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped; 13: `stage_results` becomes `outputs`; 17: plan records v2).
+SCHEMA_VERSION = 17
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -609,6 +609,7 @@ class Data:
                 self._records_v2(conn)
                 self._links_v15(conn)
                 self._status_v16(conn)
+                self._plan_v2(conn)
                 for table, column, declaration in _COLUMNS:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
@@ -674,6 +675,19 @@ class Data:
         conn.execute("DELETE FROM migrations WHERE key LIKE 'unit-meta:%'")
         conn.execute("UPDATE transitions SET to_state = 'accepted' WHERE to_state = 'done'")
         conn.execute("UPDATE transitions SET from_state = 'accepted' WHERE from_state = 'done'")
+
+    @staticmethod
+    def _plan_v2(conn: sqlite3.Connection) -> None:
+        """17: plan's records gain `impl` (`novel`), empty `files` and `steps`, and `rests_on`,
+        the unit's latest spec record's `unmeasured`, so no stored unit's gate changes."""
+        conn.execute(
+            "UPDATE outputs SET version = 2, object = json_set(object, "
+            "'$.impl', 'novel', '$.files', json('[]'), '$.steps', json('[]'), '$.rests_on', "
+            "json(COALESCE((SELECT json_extract(s.object, '$.unmeasured') FROM outputs s "
+            "WHERE s.root = outputs.root AND s.workspace = outputs.workspace "
+            "AND s.unit = outputs.unit AND s.agent = 'spec' ORDER BY s.id DESC LIMIT 1), '[]'))) "
+            "WHERE agent = 'plan' AND version = 1"
+        )
 
     def version(self) -> int:
         with self.connect() as conn:

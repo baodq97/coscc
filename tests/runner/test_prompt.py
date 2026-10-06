@@ -752,3 +752,26 @@ class NoCommandBlockIsComposed(unittest.TestCase):
             )
         self.assertNotIn("The commands this step may run", text)
         self.assertNotIn("one of these words", text)
+
+
+class NoPromptNamesAPlanSection(unittest.TestCase):
+    """The plan's files and steps are its record: no word an agent is given names a section."""
+
+    def test_the_map_advice_the_drift_note_the_protocol_and_the_worker(self):
+        from coscc.agent import helpers
+        from coscc.git import drift
+        from coscc.runner import prompt
+
+        note = drift.describe(
+            {"checked": True, "files": ["a.py"], "plan_sha": "a" * 40, "main_sha": "b" * 40}
+        )
+        worker = policy.SUBAGENTS["worker"]
+        for said in (
+            prompt.PLAN_MAP_ADVICE,
+            note,
+            helpers.PROTOCOL,
+            worker["description"],
+            worker["prompt"],
+        ):
+            self.assertNotIn("Files that change", said)
+            self.assertNotIn("Parallelization", said)

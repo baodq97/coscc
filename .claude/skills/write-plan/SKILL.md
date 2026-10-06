@@ -5,8 +5,8 @@ description: Write the plan.md that turns an accepted spec into an implementatio
 
 # Write a plan
 
-A plan names the files that change, the order, what could break, how done is checked and what
-can run in parallel. Accepting it authorizes the code.
+A plan orders the work, says what could break and how done is checked; its record names the
+files, the label and what can run in parallel. Accepting it authorizes the code.
 
 ## Where it runs
 
@@ -31,20 +31,17 @@ it as `spec.md ## Answers, câu N`. Do not check the spec again.
 
 1. Read the inputs, then the tree as above.
 2. Write the plan from the template, at most 4 KB. At most 10 paths per step, not per unit: the
-   repository's shared files are one step under `## Order of work`, done first; the new work's
-   own files split into steps on disjoint paths under `## Parallelization`, which run at the
-   same time. Only past about 30 paths in all is the unit too big: say how to split it and stop.
-   Most new work is its own files, one registration line and its test.
+   repository's shared files come first under `## Order of work`, in no step; the new work's
+   own files split into the record's `steps` on disjoint paths, which run at the same time.
+   Only past about 30 paths in all is the unit too big: say how to split it and stop. Most new
+   work is its own files, one registration line and its test.
 3. `## Risks` answers what could break, which step is riskiest and which option you rejected.
 4. Present it with `ExitPlanMode`; revise until the person approves.
 5. Write it to the unit's `plan.md`, and nothing else.
 
 ````markdown
 # Plan: <title>
-Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Impl: routine | novel.
-
-## Files that change
-- path (new)
+Intent: intent.md. Spec: spec.md. Author: <name>.
 
 ## Order of work
 1. <a step that leaves the repository checkable; cite the spec's requirement, do not restate it>
@@ -59,29 +56,17 @@ to measure is not impl's work: name it under `## Risks`>
 ## Verification
 <the commands impl runs at the end, and their healthy output: lint, `tests/test_*.py` and the
 tests of the modules that change, never the whole suite, which CI runs>
-
-## Parallelization
-(a) <title>
-- <path or glob, one per bullet, none shared with another step>
-Report: <what the step reports when done>
-
-(b) <title>
-- <path>
-Report: <…>
 ````
 
-Or, under the heading, the one line `none: one session`.
+## What `submit` carries
 
-## Lines the app and the loop read
-
-- `Impl: novel` for new logic or a security-sensitive file; otherwise `routine`. A missing label
-  runs as `novel`.
-- `## Files that change` is one path or glob per bullet, no prose.
-- `## Parallelization` is `(a) <title>`, then its path bullets, then its report, per step: impl
-  starts one helper per step from it, so a step's paths are its only files.
-- When the spec had `[unmeasured] U<n>` items, every step resting on one cites
-  `spike.md ## U<n>`; the `impl` gate is closed on a plan that never names `spike.md`. Never
-  write "measure X first, stop if not" for such a question: a new one goes back to the spec.
+- `impl`: `novel` for new logic or a security-sensitive file, otherwise `routine`.
+- `files`: every path the unit edits or creates, one per item; mark none `(new)` here.
+- `steps`: each parallel step, `{title, paths, report}`; its `paths` are files of `files` no other
+  step names, and impl starts one helper per step. `[]` for one session.
+- `rests_on`: each `U<n>` of the spec a step rests on; the `impl` gate is closed while the spec
+  has `[unmeasured]` items and this is empty. Never write "measure X first, stop if not" for
+  such a question: a new one goes back to the spec.
 - "Verify manually" is not proof.
 
 ## Done when

@@ -1785,7 +1785,7 @@ class AStepAnUpdatePaused(unittest.TestCase):
     """At `Runner.run`: a step `suspend_all` paused writes no `end`, and one taken up again goes
     on in its own session and ends once."""
 
-    PLAN = "# Plan: a problem\nIntent: intent.md. Status: accepted.\n\n## Files that change\n\n- a.py\n"
+    PLAN = "# Plan: a problem\nIntent: intent.md. Status: accepted.\n\n## Order of work\n\n- a.py\n"
 
     class Paused:
         """A session that says something and is then paused by an update."""
@@ -2026,7 +2026,7 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
             self.submitted = await _submits(kw)
             yield ("done", {"session_id": "s", "cost": {}})
 
-    def _run(self, d, hooks, stage, unit=UNIT, journal=None, cwd=None):
+    def _run(self, d, hooks, stage, unit=UNIT, journal=None, cwd=None, plan=None):
         probe = self.Probe()
         directory = make_unit(
             Path(d),
@@ -2050,12 +2050,19 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
                     artifact=f"{stage}.md",
                     stages=STAGES,
                     mode="autonomous",
+                    plan=plan,
                     **({"cwd": cwd} if cwd else {}),
                 )
             ]
 
         _, final = asyncio.run(go())[-1]
         return probe, final
+
+    def test_the_features_get_the_plan_record_the_step_was_handed(self):
+        record = {"impl": "routine", "files": ["a.py"], "steps": [], "rests_on": []}
+        with tempfile.TemporaryDirectory() as d:
+            self._run(d, self._hooks(), "impl", plan=record)
+        self.assertEqual(self.made[0].plan, record)
 
     def test_an_enabled_impl_step_gets_cos_and_the_feature_server(self):
         with tempfile.TemporaryDirectory() as d:

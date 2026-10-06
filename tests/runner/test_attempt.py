@@ -107,7 +107,7 @@ class AReplyWithoutItsOpeningIsRefusedByItsClass(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(OpeningError) as caught:
                 _write_artifact(
-                    Path(d), "plan.md", "## Files that change\n\nStatus: accepted.\n", blocks=2
+                    Path(d), "plan.md", "## Order of work\n\nStatus: accepted.\n", blocks=2
                 )
             self.assertEqual(caught.exception.problem, "no `# Plan:` title")
             self.assertEqual(

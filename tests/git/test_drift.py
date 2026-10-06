@@ -1,6 +1,6 @@
 """Which files `main` changed since a unit's plan was written.
 
-The pure parts are tested on strings and record lists; `compute` on a temporary repository
+The pure parts are tested on record lists; `compute` on a temporary repository
 whose `origin` is a bare directory, so no network is touched. The expected list is always
 `git diff --name-only` run by subprocess, never something this test worked out itself."""
 
@@ -14,32 +14,6 @@ from pathlib import Path
 
 from coscc.git import drift
 
-PLAN = """# Plan: x
-Intent: intent.md. Status: accepted.
-
-## Files that change
-
-| Path | What |
-|---|---|
-| `coscc/a.py` | table form |
-| `coscc/c.py:19-27` | table form with lines |
-
-- `coscc/b.py:10` bullet form
-- coscc/d.py, bare
-
-### A subheading still inside
-
-`coscc/e.py`
-
-## Order of work
-
-`coscc/f.py`
-
-## Answers
-
-`coscc/g.py`
-"""
-
 
 def start(head: str = "a" * 40, **kw) -> dict:
     return {"kind": "start", "stage": "plan", "head": head, **kw}
@@ -47,45 +21,6 @@ def start(head: str = "a" * 40, **kw) -> dict:
 
 def end(outcome: str = "done") -> dict:
     return {"kind": "end", "stage": "plan", "outcome": outcome}
-
-
-class TheSectionAndTheMatch(unittest.TestCase):
-    def setUp(self):
-        self.section = drift.files_section(PLAN)
-
-    def test_the_section_stops_at_the_next_level_two_heading(self):
-        self.assertIn("coscc/e.py", self.section)
-        self.assertNotIn("coscc/f.py", self.section)
-        self.assertNotIn("coscc/g.py", self.section)
-
-    def test_table_bullet_and_line_suffix_forms_all_match(self):
-        got = drift.mentioned(
-            self.section,
-            ["coscc/a.py", "coscc/b.py", "coscc/c.py", "coscc/d.py", "coscc/e.py"],
-        )
-        self.assertEqual(
-            got, ["coscc/a.py", "coscc/b.py", "coscc/c.py", "coscc/d.py", "coscc/e.py"]
-        )
-
-    def test_a_path_inside_a_longer_one_does_not_match_either_way(self):
-        self.assertEqual(
-            drift.mentioned(
-                self.section, ["lib/coscc/a.py", "coscc/a.pyx", "oscc/a.py", "coscc/a.p"]
-            ),
-            [],
-        )
-        self.assertEqual(
-            drift.mentioned("## Files that change\n`lib/coscc/a.py`\n", ["coscc/a.py"]), []
-        )
-        self.assertEqual(
-            drift.mentioned("## Files that change\n`coscc/a.pyx`\n", ["coscc/a.py"]), []
-        )
-
-    def test_a_path_only_under_answers_or_a_later_section_is_not_counted(self):
-        self.assertEqual(drift.mentioned(self.section, ["coscc/f.py", "coscc/g.py"]), [])
-
-    def test_a_path_in_the_diff_the_plan_does_not_name_is_left_out(self):
-        self.assertEqual(drift.mentioned(self.section, ["coscc/a.py", "README.md"]), ["coscc/a.py"])
 
 
 class ChoosingTheRunOfPlan(unittest.TestCase):
@@ -142,7 +77,7 @@ class ComputingOnARealRepository(unittest.TestCase):
         self.a = self._git("rev-parse", "HEAD").strip()
         self._git("remote", "add", "origin", str(self.remote))
         self._git("push", "-q", "origin", "main")
-        self.plan = "## Files that change\n\n| `src/a.py` | x |\n| `src/b.py:3` | y |\n"
+        self.files = ["src/a.py", "src/b.py"]
 
     def _git(self, *args: str) -> str:
         return subprocess.run(
@@ -172,10 +107,11 @@ class ComputingOnARealRepository(unittest.TestCase):
         self._git("fetch", "-q", "origin")
         return self._git("rev-parse", "HEAD").strip()
 
-    def _compute(self, records=None, plan=None, tree="repo") -> dict:
+    def _compute(self, records=None, files: object = "plan", tree="repo") -> dict:
         records = [start(self.a), end()] if records is None else records
         tree = self.repo if tree == "repo" else tree
-        return asyncio.run(drift.compute(records, self.plan if plan is None else plan, tree))
+        files = self.files if files == "plan" else files
+        return asyncio.run(drift.compute(records, files, tree))
 
     def test_the_changed_files_the_plan_names(self):
         b = self._merge("src/a.py", "lib/src/a.py")
@@ -193,12 +129,17 @@ class ComputingOnARealRepository(unittest.TestCase):
         self.assertEqual(got["files"], [])
         self.assertTrue(got["checked"])
 
+    def test_only_the_records_files_count_not_a_longer_path(self):
+        self._merge("lib/src/a.py", "src/b.py")
+        self.assertEqual(self._compute()["files"], ["src/b.py"])
+
     def test_each_cause_is_unchecked_with_a_reason(self):
         self._merge("src/a.py")
         cases = {
             "no run of plan": dict(records=[]),
             "empty head": dict(records=[start(""), end()]),
-            "no section": dict(plan="# Plan\n\n## Order of work\n\n`src/a.py`\n"),
+            "no plan record": dict(files=None),
+            "no files named": dict(files=[]),
             "unknown commit": dict(records=[start("0" * 40), end()]),
             "no worktree": dict(tree=None),
         }
