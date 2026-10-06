@@ -163,6 +163,9 @@ class Suspended(Exception):
 
 # What a stream begun after `suspend_all` is refused with.
 PAUSED = "every session was paused for an update, so no new one may open"
+# What a stream is refused with when its gate's grant does not deny this app's secrets or names
+# another home: a grant issued without the app's config (`runner.run.issue`).
+THIN_GRANT = "the run's grant does not deny this app's secrets, so no session opens on it"
 
 
 # --- Read layer ---
@@ -816,8 +819,8 @@ class Sessions:
         `session_id` (`_options`). `spent_before` is what the session cost before this client:
         `{}` makes `done.cost` the whole session's, since the CLI's total carries over a resume.
         A stream `suspend_all` paused raises `Suspended` and yields no `done`; one begun after
-        it is `Refused`. `mcp_servers` goes to `_options` as it is. `gate` stands in front of the
-        session's `auto` mode and hears every system message, its grant issued for this run
+        it is `Refused`, as is one whose `gate` misses this app's secrets or `home`. `mcp_servers`
+        goes to `_options` as it is. `gate` stands in front of the session's `auto` mode and hears every system message, its grant issued for this run
         (`runner.run.issue`); with none (`send`), the session gets a locked one: its own tool list,
         its `cwd` to write when that list holds a write tool, and this app's secrets.
         `unit_scratch` is the unit's `(ram, disk)` directories, in the session's environment
@@ -826,6 +829,10 @@ class Sessions:
         """
         if self.paused:
             raise Refused(PAUSED)
+        if gate is not None and (
+            not set(self.secrets()) <= set(gate.grant.secrets) or gate.grant.home != self.config.home
+        ):
+            raise Refused(THIN_GRANT)
         resolved_model = model if model is not None else self.config.model
         flow: StepHandle | dict[str, Any]
         if step is None:
