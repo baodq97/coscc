@@ -76,9 +76,9 @@ Derived states (CODE, recomputed each read):
 
 - **settled** = accepted | skipped; **missing** file vs **unreadable** (a file with no status row: no record was handed back for it).
 - **stale** = a person's `rerun` row (`unit_decisions`) names the artifact at the record it still holds: its latest `outputs` row, `review_rounds` row or `branch-named` transition (`stale_marks`).
-- **held** = last valid `### Paused|Dropped|Resumed` block in intent `## Answers` (`:193-229`); moves active→paused/dropped, paused→dropped/active, dropped→paused (`:200`).
+- **held** = the unit's latest hold row (`unit_holds`); moves active→paused/dropped, paused→dropped/active, dropped→paused.
 - **rejected** anywhere closes the unit (`:1239`).
-- **open questions** = numbered items with `?` under `## Open questions` without a `### Câu N` answer (`:112-126,348`). They gate nothing in `coscc.loop`; a *draft* does (`:451,1255`).
+- **open questions** = the record's `questions` with no `unit_answers` row. They gate nothing in `coscc.loop`; a *draft* does.
 - **review rounds used** / **out of rounds** (`COS_REVIEW_ROUNDS`, default 3, plus the `more-rounds` rows of `unit_decisions`); rounds come only from `review_rounds`.
 - **dependency merged** = the snapshot's `merged` for that unit: the PR machine's `merge-read` row, or, for a unit it never moved, a `ship.md: accepted` from the `0135` import or a `ship` session (`0139` R5, `units/meta.py` `snapshot`).
 
@@ -233,10 +233,6 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 
 **Defects found while mapping (verified in code):**
 
-- `STATUS_RE` has no hyphen (`coscc/runner/reply.py:13`), so after a review step the history
-  records `changes` instead of `changes-requested`; the history refuses it and the error is
-  swallowed (`Answers.ingest` in `coscc/leif/answers.py`). Review transitions are likely never recorded.
-- Three `## Round` patterns disagree (`loop:517` strict vs `review.py:13`, `priorfindings.py:29` loose).
 - After a repair or closing turn, `cost_usd` is the session total but tokens/turns are the first turn's (`runner/__init__.py:228`).
 
 **Structural facts the redesign must answer:**
