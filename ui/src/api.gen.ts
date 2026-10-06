@@ -25,6 +25,22 @@ export type AgentRow = {
   "chip": string;
 };
 
+export type AgentRun = {
+  "run": string;
+  "unit": string;
+  "at": string;
+  "usd": number | null;
+  "outcome": string;
+};
+
+export type AgentSpend = {
+  "agent": string;
+  "usd": number | null;
+  "steps": number;
+  "unknown": number;
+  "runs": AgentRun[];
+};
+
 export type Answer = {
   "artifact": string;
   "n": number;
@@ -265,7 +281,7 @@ export type Insights = {
   "shipped": Shipped[];
   "targets": Target[];
   "by_day": DaySpend[];
-  "by_stage": StageSpend[];
+  "by_agent": AgentSpend[];
   "waste": Waste[];
 };
 
@@ -484,13 +500,6 @@ export type Source = {
   "kind": string;
   "unit": string;
   "at": string;
-};
-
-export type StageSpend = {
-  "stage": string;
-  "usd": number | null;
-  "steps": number;
-  "unknown": number;
 };
 
 export type StageView = {

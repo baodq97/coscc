@@ -49,11 +49,26 @@ class DaySpend(TypedDict):
     steps: int
 
 
-class StageSpend(TypedDict):
-    stage: str
+class AgentRun(TypedDict):
+    """One run of an agent, which `/api/runs/{run}` opens: its unit (`""` for none), when it
+    ended, what it cost and how."""
+
+    run: str
+    unit: str
+    at: str
+    usd: float | None
+    outcome: str
+
+
+class AgentSpend(TypedDict):
+    """What one agent spent: a stage's, the estimate's, a feature's session's, Gebo's or chat's,
+    with its latest runs."""
+
+    agent: str
     usd: float | None
     steps: int
     unknown: int
+    runs: list[AgentRun]
 
 
 class Waste(TypedDict):
@@ -72,7 +87,7 @@ class Insights(TypedDict):
     shipped: list[Shipped]
     targets: list[Target]
     by_day: list[DaySpend]
-    by_stage: list[StageSpend]
+    by_agent: list[AgentSpend]
     waste: list[Waste]
 
 
@@ -100,7 +115,7 @@ class Activity:
         now: datetime | None = None,
     ) -> Insights:
         """How one workspace did over the last `days`: each unit it shipped with its cost and
-        review rounds, the median of each against its target, the money by day and by stage, and
+        review rounds, the median of each against its target, the money by day and by agent, and
         what was spent again. `units` are the board's, for which shipped and their rounds."""
         rows = self._records_or_none(cwd)
         out: Insights = {
@@ -109,7 +124,7 @@ class Activity:
             "shipped": [],
             "targets": [],
             "by_day": [],
-            "by_stage": [],
+            "by_agent": [],
             "waste": [],
         }
         if rows is None:
@@ -159,9 +174,15 @@ class Activity:
         out["by_day"] = [
             {"day": d["key"], "usd": d["usd"], "steps": d["steps"]} for d in found["by_day"]
         ]
-        out["by_stage"] = [
-            {"stage": r["key"], "usd": r["usd"], "steps": r["steps"], "unknown": r["unknown"]}
-            for r in found["by_stage"]
+        out["by_agent"] = [
+            {
+                "agent": r["key"],
+                "usd": r["usd"],
+                "steps": r["steps"],
+                "unknown": r["unknown"],
+                "runs": r["runs"],
+            }
+            for r in found["by_agent"]
         ]
         out["waste"] = [
             {

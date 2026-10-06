@@ -207,6 +207,11 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
 .lrow .id { width: 74px; color: var(--text-3); font-size: 12px; flex: none; }
 .lrow .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .lrow .meta { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: 12px; flex: none; }
+details.agent > summary { list-style: none; cursor: pointer; }
+details.agent > summary::-webkit-details-marker { display: none; }
+details.agent:last-child > summary { border-bottom: 0; }
+.agent-runs { background: var(--bg-sunk); border-bottom: 1px solid var(--line); }
+.agent-runs .lrow { padding-left: 32px; }
 .lgroup { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 20px; background: var(--bg-sunk); border-bottom: 1px solid var(--line); font-weight: 600; font-size: 12.5px; position: sticky; top: 0; z-index: 2; }
 .lgroup .n { color: var(--text-3); font-weight: 500; }
 .lgroup .r { margin-left: auto; color: var(--text-3); font-weight: 500; font-size: 12px; }

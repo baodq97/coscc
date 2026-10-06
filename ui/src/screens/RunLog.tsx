@@ -4,9 +4,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { EventsPage, StepEvent } from "../api.gen";
-import { api } from "../lib/api";
-import { money } from "../lib/format";
-import { Button, ErrorState, SkeletonRows } from "../components/ui";
+import { api, useResource } from "../lib/api";
+import { AGENT_LABEL, money, unitCode, unitTitle } from "../lib/format";
+import { Link } from "../lib/router";
+import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 const PAGE = "200";
 
@@ -34,6 +35,41 @@ export function merged(events: StepEvent[], more: StepEvent[]): StepEvent[] {
 function firstLine(content: unknown): string {
   const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((c) => (c && typeof c === "object" && "text" in c ? String(c.text) : "")).join(" ") : "";
   return text.trim().split("\n")[0].slice(0, 200);
+}
+
+/** One run on a page of its own, any agent's: what ran, for which unit if any, and what it did. */
+export function RunPage({ workspace, run }: { workspace: string; run: string }) {
+  const list = useResource("/api/workspaces");
+  const cwd = list.data?.workspaces.find((w) => w.name === workspace)?.path ?? "";
+  const head = useResource(cwd ? "/api/runs/{run}" : null, { cwd, run, limit: "1" });
+  if (list.state === "error") return <ErrorState error={list.error} onRetry={list.reload} />;
+  if (head.state === "error") return <ErrorState error={head.error} onRetry={head.reload} />;
+  const page = head.data;
+  const number = page?.unit ? Number(page.unit.slice(0, 4)) : 0;
+  return (
+    <div className="page mid">
+      <PageHead
+        title={page ? `${AGENT_LABEL[page.stage] ?? page.stage} run` : "Run"}
+        lede={
+          page ? (
+            <>
+              {page.unit ? (
+                <Link to={`/unit/${workspace}/${number}`}>
+                  {unitCode(workspace, number)} {unitTitle(page.unit)}
+                </Link>
+              ) : (
+                "No unit: a run of the workspace."
+              )}{" "}
+              {page.status === "running" ? <Chip tone="accent">running</Chip> : null}
+            </>
+          ) : undefined
+        }
+      />
+      <div className="card card-b" style={{ marginTop: 16 }}>
+        {cwd ? <RunLog cwd={cwd} run={run} live={false} /> : <SkeletonRows rows={3} />}
+      </div>
+    </div>
+  );
 }
 
 export function RunLog({ cwd, run, live }: { cwd: string; run: string; live: boolean }) {

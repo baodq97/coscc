@@ -21,6 +21,8 @@ RERUN_LIMIT = {"review": 3}
 RERUN_DEFAULT = 2
 TOKENS_PER_TURN_TIMES = 3
 TOKENS_PER_TURN_MIN_STEPS = 5
+# How many of an agent's latest runs the screen lists. Chosen.
+RUNS_SHOWN = 10
 
 FAILED = ("exhausted", "failed")
 CHANGES_REQUESTED = "changes-requested"
@@ -141,6 +143,8 @@ def model(  # noqa: PLR0915 - still to split
     total = _zero()
     by_unit: dict[str, dict[str, Any]] = {}
     by_stage: dict[str, dict[str, Any]] = {}
+    by_agent: dict[str, dict[str, Any]] = {}
+    agent_runs: dict[str, list[dict[str, Any]]] = {}
     by_day: dict[str, dict[str, Any]] = {}
     unit_stages: dict[str, dict[str, dict[str, Any]]] = {}
     for r in ends:
@@ -148,6 +152,19 @@ def model(  # noqa: PLR0915 - still to split
         _add(total, r)
         _add(by_unit.setdefault(unit, _zero()), r)
         _add(by_stage.setdefault(stage, _zero()), r)
+        # Who ran it: an older `end` names no agent, and its stage is its agent's key.
+        agent = str(r.get("agent") or stage)
+        _add(by_agent.setdefault(agent, _zero()), r)
+        if r.get("run"):
+            agent_runs.setdefault(agent, []).append(
+                {
+                    "run": str(r["run"]),
+                    "unit": unit,
+                    "at": str(r.get("at") or ""),
+                    "usd": _usd(r),
+                    "outcome": str(r.get("outcome") or ""),
+                }
+            )
         _add(unit_stages.setdefault(unit, {}).setdefault(stage, _zero()), r)
         day = _day(r.get("at"), tz)
         if day:
@@ -241,6 +258,11 @@ def model(  # noqa: PLR0915 - still to split
         "total": _rounded(total),
         "by_unit": unit_rows,
         "by_stage": _rows(by_stage),
+        # Each agent's runs that can be opened, the latest `RUNS_SHOWN` first.
+        "by_agent": [
+            {**row, "runs": agent_runs.get(row["key"], [])[::-1][:RUNS_SHOWN]}
+            for row in _rows(by_agent)
+        ],
         "by_day": day_rows,
         "offset": offset(tz),
         "unit_stages": {unit: _rows(stages) for unit, stages in unit_stages.items()},
