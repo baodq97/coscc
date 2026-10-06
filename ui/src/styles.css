@@ -584,7 +584,20 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
 .run-group { margin-bottom: 12px; }
 .run-settings { padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 12px; background: var(--bg-sunk); }
 
+.menu-btn, .side-scrim { display: none; }
 @media (max-width: 700px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .side { position: fixed; z-index: 40; inset: 0 auto 0 0; width: min(var(--side-w), 84vw); transform: translateX(-100%); transition: transform .16s ease; overflow-y: auto; }
+  .nav-open .side { transform: none; box-shadow: var(--shadow-3); }
+  .nav-open .side-scrim { display: block; position: fixed; inset: 0; z-index: 30; background: rgba(10, 12, 20, .28); }
+  .menu-btn { display: inline-grid; margin-left: -6px; }
+  .top { padding: 0 12px 0 14px; }
+  .top .crumbs { min-width: 0; flex: 1; }
+  .top-r .btn .kbd, .top-r .btn kbd { display: none; }
+  .leifp { position: fixed; z-index: 35; inset: 0 0 0 auto; width: min(var(--leif-w), 92vw); }
+  .split { flex-direction: column; }
+  .split > .body { padding: 20px 16px 48px; }
+  .props { width: auto; border-left: 0; border-top: 1px solid var(--line); }
   .page { padding: 20px 16px 64px; }
   .field { grid-template-columns: 1fr; gap: 8px; }
   .agent-line { grid-template-columns: 20px minmax(0, 1fr) auto; }

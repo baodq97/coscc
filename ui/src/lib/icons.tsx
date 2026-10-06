@@ -19,6 +19,7 @@ const PATHS: Record<string, string> = {
   warn: '<path d="M8 2.3 14 13H2z"/><path d="M8 6.5v3"/><circle cx="8" cy="11.3" r=".5"/>',
   check: '<path d="m3.2 8.4 3 3 6.6-6.8"/>',
   x: '<path d="m4 4 8 8M12 4l-8 8"/>',
+  menu: '<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>',
   clock: '<circle cx="8" cy="8" r="5.8"/><path d="M8 4.8V8l2.2 1.4"/>',
   arrow: '<path d="M3 8h10M9 4l4 4-4 4"/>',
   chevd: '<path d="m4 6 4 4 4-4"/>',

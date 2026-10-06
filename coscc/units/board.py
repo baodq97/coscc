@@ -17,7 +17,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import pack
 from coscc.loop import run
 from coscc.units import guards
 
@@ -143,23 +142,6 @@ def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _hold_state_gone(units: list[dict[str, Any]], state: dict[str, Any] | None) -> None:
-    """A unit whose recorded process no pack has is held `state-gone`: the loop walks the default
-    in its place, so it shows what the unit recorded and nothing runs on it."""
-    own, recorded = (state or {}).get("workspace", ""), (state or {}).get("units") or {}
-    for u in units:
-        ref = (recorded.get(f"{own}/{u['name']}") or {}).get("process")
-        if ref and pack.process(ref) is None:
-            u["process"] = str(ref)
-            u["hold"] = u["hold"] or {
-                "state": "paused",
-                "by": "app",
-                "date": "",
-                "reason": f"its process {ref} is in no pack",
-                "code": "state-gone",
-            }
-
-
 async def read(
     units_root: str | Path, timeout: float = TIMEOUT, state: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -244,7 +226,6 @@ async def read(
         for u in data.get("units") or []
     ]
 
-    _hold_state_gone(units, state)
     return {
         "workspace": str(path),
         "stages": [s["name"] for s in stages],

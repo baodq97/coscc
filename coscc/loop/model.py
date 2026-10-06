@@ -31,6 +31,7 @@ from coscc.loop import (
     trim,
     truthy,
 )
+from coscc.agent import pack
 from coscc.units import guards
 
 A = re.ASCII
@@ -835,6 +836,22 @@ def stale_marks(unit, known):
             a["stale"] = {"stage": by["stage"], "date": by["date"]}
 
 
+def hold_state_gone(unit, known):
+    """A unit whose recorded process is in no pack shows that process and is held `state-gone`
+    (unless a person's hold is already on it): the loop walks the default in its place, and
+    nothing runs on it."""
+    ref = nullish(dig(known, "process"))
+    if isinstance(ref, str) and ref and pack.process(ref) is None:
+        unit["process"] = ref
+        unit["hold"] = unit["hold"] or {
+            "state": "paused",
+            "by": "app",
+            "date": "",
+            "reason": f"its process {ref} is in no pack",
+            "code": "state-gone",
+        }
+
+
 def read_unit(dir_, name, state):  # noqa: PLR0915 - `readUnit` kept whole
     """`readUnit`: `state` is the snapshot, the one source; the directory says which artifacts
     are present."""
@@ -930,6 +947,7 @@ def read_unit(dir_, name, state):  # noqa: PLR0915 - `readUnit` kept whole
     where = "intent.md: " if has_intent else ""
     unit["problems"].extend(f"{where}{p}" for p in held["problems"])
     unit["hold"] = held["hold"]
+    hold_state_gone(unit, known)
     # Only when true, so a unit that never shipped reads as it did before.
     if dig(known, "shipped") is True:
         unit["shipped"] = True
@@ -942,6 +960,8 @@ def read_unit(dir_, name, state):  # noqa: PLR0915 - `readUnit` kept whole
         unit["hold"] = None
     hold_state = dig(unit, "hold", "state") if unit["hold"] else "active"
     unit["holdMoves"] = [] if ended else list(HOLD_MOVES[hold_state])
+    if dig(unit, "hold", "code") == "state-gone":
+        unit["holdMoves"] = ["dropped"]
 
     stale_marks(unit, known)
 

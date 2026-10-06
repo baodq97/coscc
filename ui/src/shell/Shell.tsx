@@ -2,7 +2,7 @@
 // and the keys that work everywhere (⌘K, /, C, L, G then a letter).
 
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { navigate } from "../lib/router";
+import { navigate, usePath } from "../lib/router";
 import { SCREENS } from "../routes";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
@@ -10,6 +10,8 @@ import { LeifPanel } from "./LeifPanel";
 import { CommandBar } from "./CommandBar";
 
 type ShellState = {
+  navOpen: boolean;
+  toggleNav: () => void;
   leifOpen: boolean;
   toggleLeif: () => void;
   openPalette: () => void;
@@ -32,6 +34,10 @@ function stored<T extends string>(key: string, fallback: T): T | string {
 export function Shell({ title, crumbs, children }: { title: string; crumbs: string[]; children: ReactNode }) {
   const [leifOpen, setLeifOpen] = useState(() => stored("cos-leif", "0") === "1");
   const [palette, setPalette] = useState(false);
+  // On a phone the sidebar is a drawer: shut until the menu button opens it, shut again on a move.
+  const [navOpen, setNavOpen] = useState(false);
+  const path = usePath();
+  useEffect(() => setNavOpen(false), [path]);
   const [theme, setTheme] = useState<"light" | "dark">(() => (stored("cos-theme", "light") === "dark" ? "dark" : "light"));
   const pendingG = useRef(0);
 
@@ -70,6 +76,8 @@ export function Shell({ title, crumbs, children }: { title: string; crumbs: stri
   }, [palette]);
 
   const state: ShellState = {
+    navOpen,
+    toggleNav: () => setNavOpen((o) => !o),
     leifOpen,
     toggleLeif: () => setLeifOpen((o) => !o),
     openPalette: () => setPalette(true),
@@ -79,8 +87,9 @@ export function Shell({ title, crumbs, children }: { title: string; crumbs: stri
 
   return (
     <Ctx.Provider value={state}>
-      <div className="app" id="studio-shell">
+      <div className={`app${navOpen ? " nav-open" : ""}`} id="studio-shell">
         <Sidebar />
+        <div className="side-scrim" onClick={() => setNavOpen(false)} />
         <main className="main">
           <Topbar crumbs={crumbs} />
           <div className="scroll">{children}</div>

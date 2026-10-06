@@ -2119,6 +2119,9 @@ class PacksOverHttp(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(Refused) as caught:
             await core.steps._find_stage(self.cwd, made["unit"], "intent")
         self.assertEqual(caught.exception.reasons, ("state-gone",))
+        board = (await self.client.get("/api/units", params={"cwd": self.cwd})).json()
+        self.assertEqual(board["units"][0]["process"], "gone/pack")
+        self.assertEqual(board["units"][0]["why"], "state-gone")
 
     async def test_a_pack_or_process_not_known_is_a_400(self):
         for body in (

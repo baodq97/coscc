@@ -154,6 +154,9 @@ class History:
             if row["from_state"] is None:
                 row["from_state"] = latest.get(key, self.machine.absent)
             complaint = self.machine.refuse(row["artifact"], row["from_state"])
+            if complaint is None:
+                ref = self._process_of(conn, row)
+                complaint = self.machine.refuse(row["artifact"], row["to_state"], ref)
             if complaint is not None:
                 raise BadTransition(complaint)
             placeholders = ", ".join("?" for _ in _TRANSITION_COLUMNS)
@@ -166,6 +169,14 @@ class History:
                 latest[key] = row["to_state"]
                 stored.append({**row, "id": cursor.lastrowid})
         return stored
+
+    def _process_of(self, conn: sqlite3.Connection, row: dict[str, Any]) -> str | None:
+        """The process the unit records, `None` while it has no `unit_meta` row yet."""
+        found = conn.execute(
+            "SELECT process FROM unit_meta WHERE root = ? AND workspace = ? AND unit = ?",
+            (self._root, row["workspace"], row["unit"]),
+        ).fetchone()
+        return found[0] if found else None
 
     def _validate(self, item: dict[str, Any]) -> dict[str, Any]:
         """One row, checked against the state set and filled out.

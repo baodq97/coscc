@@ -123,6 +123,33 @@ class ADifferentStateSetIsAnsweredFromItsData(unittest.TestCase):
         self.assertNotIn("intent.md", reason)
 
 
+class AStatusIsKeyedByTheUnitsProcess(unittest.TestCase):
+    def test_a_skip_in_one_process_is_not_a_skip_in_another(self):
+        machine = states.Machine.of(
+            {
+                "name": "m",
+                "absent": "none",
+                "settled": ["accepted", "skipped"],
+                "stages": [
+                    {"name": "a", "artifact": "a.md", "statuses": ["draft", "accepted", "skipped"]}
+                ],
+                "by_process": {
+                    "p/skips": {"a.md": ["draft", "accepted", "skipped"]},
+                    "p/keeps": {"a.md": ["draft", "accepted"]},
+                },
+            }
+        )
+        self.assertIsNone(machine.refuse("a.md", "skipped", "p/skips"))
+        self.assertIn("cannot be 'skipped'", machine.refuse("a.md", "skipped", "p/keeps") or "")
+        # No process named (or an artifact the process lacks): the union, as before.
+        self.assertIsNone(machine.refuse("a.md", "skipped"))
+
+    def test_the_built_in_review_may_ask_for_changes_in_both_processes(self):
+        machine = states.default()
+        for ref in pack.processes():
+            self.assertTrue(machine.allows("review.md", "changes-requested", ref), ref)
+
+
 class ThePackagedFilesAreCoherent(unittest.TestCase):
     """A mistake in either file would pass silently and report nothing, so the files are held to
     what the code that reads them assumes."""
