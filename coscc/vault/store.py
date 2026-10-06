@@ -34,6 +34,11 @@ def vault_agents() -> tuple[str, ...]:
     return tuple(k for k, r in pack.rows().items() if "vault" in pack.tools(r))
 
 
+def default_agents() -> tuple[str, ...]:
+    """The agents a new secret is kept for: those that write in the unit's branch and hold the vault."""
+    return tuple(k for k in states.coder_agents() if k in vault_agents())
+
+
 NAME = re.compile(r"(global|ws):[a-z0-9][a-z0-9._-]{0,63}")
 
 # Chosen, not measured: turns a hung `age` into an error.
@@ -188,11 +193,7 @@ class Store:
     ) -> Secret:
         """A secret with no value yet. A name in use is refused, never overwritten."""
         name, column = self._row_key(name, workspace)
-        stages = _subset(
-            "stage",
-            stages or tuple(k for k in states.coder_agents() if k in vault_agents()),
-            vault_agents(),
-        )
+        stages = _subset("stage", stages or default_agents(), vault_agents())
         modes = ("ssh",) if broker else _subset("mode", modes, MODES)
         self._tables()
         try:

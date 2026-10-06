@@ -207,7 +207,7 @@ function VaultPage({ workspace }: { workspace: Workspace }) {
           </label>
           <fieldset>
             <legend>Access</legend>
-            <Checks label="Agents that may use it" name="stage" options={v.stages} on={["impl"]} />
+            <Checks label="Agents that may use it" name="stage" options={v.stages} on={v.default_stages} />
             <Checks label="Passed as" name="mode" options={v.modes} on={["env", "file"]} />
             <label>
               <input type="checkbox" name="broker" value="1" /> Broker: passed as ssh only
