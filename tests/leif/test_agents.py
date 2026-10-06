@@ -237,7 +237,7 @@ class EveryPartReachesTheNextRun(_WithAService):
 
     def test_the_trigger_is_shown_and_not_saved(self):
         row = self._row(self.core.agents.agent_page(now=NOW), "intent")
-        self.assertEqual(row["row"]["trigger"], {"state": "intent"})
+        self.assertEqual(row["row"]["trigger"], {"state": "intent in full, short"})
         with self.assertRaises(Invalid):
             self.core.agents.set_agent_field("intent", "trigger", {"state": "spec"})
 

@@ -180,21 +180,33 @@ SECURITY_SURFACE = (
     "coscc/loop/rules.py",
     ".claude/settings.json",
 )
-# Where a step's label came from: the record's `impl`; `forced` by a file of `SECURITY_SURFACE`;
+# Where a step's label came from: the record's `variant`; `forced` by a file of `SECURITY_SURFACE`;
 # `missing`, no plan record, run as `novel`.
 DECLARED, FORCED, MISSING = "declared", "forced", "missing"
 
 
 def label_of(
-    stage: str, stages: list[str], plan: Mapping[str, Any] | None
+    stage: str, process: str | None, plan: Mapping[str, Any] | None
 ) -> tuple[str | None, str | None, str | None]:
-    """`(label_declared, label, label_source)` for one step; `(None, None, None)` at or before
-    `plan`, whose record is not written yet. `plan` is the plan's record (`contracts.Plan`)."""
-    if "plan" not in stages or stage not in stages or stages.index(stage) <= stages.index("plan"):
+    """`(label_declared, label, label_source)` for one step of a unit on `process`. The label is
+    the `variant` of the last record before `stage` whose agent declares one (`plan`, the record
+    as `contracts.Plan` reads it); `(None, None, None)` at or before that state. With no such
+    state before it, a state whose row has variants runs as `novel`, and any other has none."""
+    states = list((pack.process(process) or {}).get("states") or {})
+    if stage not in states:
+        return None, None, None
+    declares = [
+        s
+        for s in states[: states.index(stage)]
+        if "variant" in pack.output_fields(pack.row(pack.agent_for(process, s) or ""))
+    ]
+    if not declares:
+        if (pack.row(pack.agent_for(process, stage) or "") or {}).get("variants"):
+            return MISSING, policy.NOVEL, MISSING
         return None, None, None
     if plan is None:
         return MISSING, policy.NOVEL, MISSING
-    said = plan["impl"]
+    said = plan["variant"]
     if set(plan["files"]) & set(SECURITY_SURFACE):
         return said, policy.NOVEL, FORCED
     return said, said, DECLARED

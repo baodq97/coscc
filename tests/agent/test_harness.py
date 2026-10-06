@@ -36,8 +36,7 @@ RUNNABLE = (
     "coscc/_studio/index.html",
     # Committed rather than generated, unlike the studio, and checked anyway: an installed copy
     # cannot tell how a missing file came to be missing.
-    "coscc/units/states.json",
-    "coscc/units/lanes.json",
+    "coscc/packs/coscc-sdlc/process.json",
     # The commit the board shows is read from here.
     STAMP,
     "coscc/__init__.py",
@@ -78,15 +77,15 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertEqual(len(complaints), 1, complaints)
             self.assertIn("_studio/index.html", complaints[0])
 
-    def test_a_wheel_without_the_state_set_is_caught(self):
+    def test_a_wheel_without_the_processes_is_caught(self):
         # `coscc/units/states.py` has nothing to validate a transition against, so the log can
         # neither be read nor written. The wheel installs and the page renders.
         with tempfile.TemporaryDirectory() as tmp:
-            names = [n for n in RUNNABLE if not n.endswith("states.json")]
+            names = [n for n in RUNNABLE if not n.endswith("process.json")]
             wheel = _wheel(Path(tmp) / "nostates.whl", names)
             complaints = harness.wheel_complaints(wheel)
             self.assertEqual(len(complaints), 1, complaints)
-            self.assertIn("states.json", complaints[0])
+            self.assertIn("process.json", complaints[0])
 
     def test_skills_are_counted_not_named(self):
         # Nine is today's number. A tenth skill must not need this file edited.

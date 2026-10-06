@@ -1,6 +1,6 @@
 """The one place a transition of the unit, the run or the pull request is applied.
 
-`apply` asks the lane's guard (writing nothing when closed), writes the transition and its
+`apply` asks the transition's guard (writing nothing when closed), writes the transition and its
 event in one transaction, then tells `notify`. `to_state` comes from code, never an agent.
 """
 
@@ -12,7 +12,6 @@ from typing import Any
 
 from coscc.store.journal import Journal
 from coscc.units import guards
-from coscc.units import states
 from coscc.units.history import AUTHORITIES, UNKNOWN, BadTransition, History
 
 
@@ -43,8 +42,6 @@ def apply(
     session: str = UNKNOWN,
     actor: str = UNKNOWN,
     source: str = UNKNOWN,
-    lane: str = "full",
-    lanes: states.Lanes | None = None,
     notify: Callable[[Applied], None] | None = None,
     also: Callable[[Any], None] | None = None,
 ) -> Applied:
@@ -55,9 +52,8 @@ def apply(
     """
     if authority not in AUTHORITIES:
         raise BadTransition(f"authority must be one of {', '.join(AUTHORITIES)}, got {authority!r}")
-    config = (lanes or states.default_lanes()).lane(lane)
     try:
-        guard_id = config.guard_for(machine, transition)
+        guard_id = guards.TRANSITIONS[machine][transition]
     except KeyError:
         raise BadTransition(f"the {machine!r} machine has no transition {transition!r}") from None
     g = guards.guard(guard_id)

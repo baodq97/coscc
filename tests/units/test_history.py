@@ -146,7 +146,7 @@ class EveryFieldIsWrittenOrSaysItIsNotKnown(Fixture):
         self.history.record(WS, UNIT, "intent.md", "draft")
         self.other_history().record(WS, UNIT, "ticket.txt", "open")
         machines = [row["machine"] for row in self.rows()]
-        self.assertEqual(machines, ["coscc-default", "two-step"])
+        self.assertEqual(machines, ["coscc-sdlc", "two-step"])
 
 
 class FromStateComesFromTheLog(Fixture):

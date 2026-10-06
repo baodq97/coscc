@@ -24,11 +24,12 @@ import re
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 BUILTIN = Path(__file__).resolve().parent.parent / "packs" / "coscc-sdlc"
 LOCAL = Path("packs") / "local"
 MANIFEST = Path(".claude-plugin") / "plugin.json"
+PROCESS_FILE = "process.json"
 SKILL_FILE = "SKILL.md"
 
 # The data root the owner's layer lives under; `None` is `store.db.DEFAULT_DIR`. The app sets it.
@@ -76,6 +77,14 @@ OUTPUT_KINDS = ("artifact", "review", "session", "reply", "helper")
 WRITERS = ("app", "scratch", "session")
 VARIANTS = ("novel",)
 ENGINES = ("integrate", "estimate", "chat")
+# What a process state may do in place of running an agent: the engine opens the pull request, or
+# merges it.
+ACTIONS = ("open-pr", "merge")
+# The named guards a process transition may ask; each is a guard of `coscc/units/guards.py`.
+PROCESS_GUARDS = ("skip-decision", "spike-holds", "dependency-merged", "ship-ready", "fast-lane")
+# What a `{field, is}` condition may ask of a field that is no enum.
+EMPTINESS = ("non-empty", "empty")
+DEFAULT_PROCESS = "coscc-sdlc/full"
 AGENT_TOOL = "Agent"
 
 
@@ -164,7 +173,7 @@ def check(
 
     `catalog` maps each tool a row may name to its effect (`kernel.Hooks.catalog`); without it the
     tool names and the read-only rule are not asked. `rows` are the other rows, for the rules
-    between rows (a unique name, helpers that are helper rows, one row per state). The output's
+    between rows (a unique name, helpers that are helper rows). The output's
     fields are `contracts`' to check.
     """
     key = str(row.get("key") or "")
@@ -184,7 +193,7 @@ def check(
         out.append(f"output.by must be one of {', '.join(WRITERS)}")
     out += _check_tools(row, kind, output.get("by"), catalog)
     out += _check_links(row, rows)
-    out += _check_trigger(key, row, kind, rows)
+    out += _check_trigger(row, kind)
     if "input" in row and not isinstance(row["input"], dict):
         out.append("input is {artifacts, outputs, answers, findings, data}")
     if BODY in row and not isinstance(row[BODY], str):
@@ -280,25 +289,18 @@ def _check_links(row: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]] |
     return out
 
 
-def _check_trigger(
-    key: str, row: Mapping[str, Any], kind: Any, rows: Mapping[str, Mapping[str, Any]] | None
-) -> list[str]:
+def _check_trigger(row: Mapping[str, Any], kind: Any) -> list[str]:
+    """A helper has none; an engine row names its engine; a state's agent has none, the process
+    names it (`agent_for`)."""
     trigger = row.get("trigger")
+    if trigger is None:
+        return []
     if kind == "helper":
-        return ["a helper has no trigger"] if trigger is not None else []
-    if not isinstance(trigger, dict) or len(trigger) != 1:
-        return ['trigger is {"state": <state>} or {"engine": <engine>}']
-    ((how, what),) = trigger.items()
-    if how == "engine":
-        return [] if what in ENGINES else [f"trigger.engine must be one of {', '.join(ENGINES)}"]
-    if how != "state" or not isinstance(what, str) or not what:
-        return ['trigger is {"state": <state>} or {"engine": <engine>}']
-    other = [
-        k
-        for k, r in (rows or {}).items()
-        if k != key and (r.get("trigger") or {}).get("state") == what
-    ]
-    return [f"trigger: the state {what} is already {other[0]}'s"] if other else []
+        return ["a helper has no trigger"]
+    if not isinstance(trigger, dict) or set(trigger) != {"engine"}:
+        return ['trigger is {"engine": <engine>}']
+    what = trigger["engine"]
+    return [] if what in ENGINES else [f"trigger.engine must be one of {', '.join(ENGINES)}"]
 
 
 # --- loading ------------------------------------------------------------------
@@ -458,12 +460,244 @@ def hash_of(found: Mapping[str, Any]) -> str:
     return hashlib.sha256(said.encode("utf-8")).hexdigest()[:12]
 
 
-def stamp(key: str) -> dict[str, Any]:
-    """What a run of `key` records of its row: `pack`, `row_hash`, `edited`."""
+def stamp(key: str, process_ref: str | None = None) -> dict[str, Any]:
+    """What a run of `key` records of its row: `pack`, `row_hash`, `edited`; with the unit's
+    process, `process` and `process_hash`."""
     found = row(key)
     if found is None:
         return {}
-    return {"pack": version(), "row_hash": hash_of(found), "edited": list(found["edited"])}
+    out = {"pack": version(), "row_hash": hash_of(found), "edited": list(found["edited"])}
+    if process(process_ref) is not None:
+        out.update(process=process_ref, process_hash=process_hash(process_ref))
+    return out
+
+
+# --- processes ----------------------------------------------------------------
+#
+# `process.json` beside the rows: `{version, processes: {<name>: {start, end, states}}}`. A state
+# runs an `agent` (a row) or an engine `action`; `next` is `[{to, when?}]`, the first whose `when`
+# holds taken, the last the main line. A `when` is one condition or a list (all hold):
+# `{field, is}` reads the state's own last output, `{guard}` asks a named engine guard. The
+# state's artifact is `<state>.md`; its statuses follow from what it is (`statuses`).
+
+
+# A condition of a `when`: `{field, is}` or `{guard}`.
+Condition = TypedDict("Condition", {"field": str, "is": str, "guard": str}, total=False)
+
+
+class Way(TypedDict):
+    """A way on from a state: where to, and when it is taken."""
+
+    to: str
+    when: NotRequired[Condition | list[Condition]]
+
+
+class State(TypedDict, total=False):
+    """A state of a process: the agent it runs or the engine's action, and its ways on."""
+
+    agent: str
+    action: str
+    optional: bool
+    hint: str
+    skip: str
+    rerun: list[str]
+    next: list[Way]
+    when: Condition | list[Condition]
+
+
+class Process(TypedDict):
+    start: str
+    end: str
+    states: dict[str, State]
+
+
+def _conditions(when: Any) -> list[Any]:
+    if when is None:
+        return []
+    return list(when) if isinstance(when, list) else [when]
+
+
+def output_fields(found: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """A row's output fields, `?` dropped from optional names."""
+    fields = ((found or {}).get("output") or {}).get("fields") or {}
+    return {k.rstrip("?"): t for k, t in fields.items()} if isinstance(fields, dict) else {}
+
+
+def statuses(state: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]]) -> tuple[str, ...]:
+    """What the state's artifact may carry: `changes-requested` for a review, `skipped` with `skip`."""
+    kind = ((rows.get(str(state.get("agent"))) or {}).get("output") or {}).get("kind")
+    return (
+        "draft",
+        *(("changes-requested",) if kind == "review" else ()),
+        "accepted",
+        "rejected",
+        *(("skipped",) if state.get("skip") else ()),
+    )
+
+
+def _check_condition(where: str, c: Any, fields: Mapping[str, Any] | None) -> list[str]:
+    if not isinstance(c, dict) or set(c) not in ({"guard"}, {"field", "is"}):
+        return [f"{where}: a condition is {{guard}} or {{field, is}}"]
+    if "guard" in c:
+        if c["guard"] not in PROCESS_GUARDS:
+            return [f"{where}: no guard {c['guard']} (use one of {', '.join(PROCESS_GUARDS)})"]
+        return []
+    if fields is None:
+        return [f"{where}: an action has no output to read {c['field']} from"]
+    if c["field"] not in fields:
+        return [f"{where}: {c['field']} is no field of the agent's output"]
+    t = fields[c["field"]]
+    allowed = t["enum"] if isinstance(t, dict) and "enum" in t else list(EMPTINESS)
+    if c["is"] not in allowed:
+        return [f"{where}: {c['field']} is never {c['is']!r} (it may be {', '.join(allowed)})"]
+    return []
+
+
+def _required_inputs(found: Mapping[str, Any] | None) -> list[str]:
+    given = (found or {}).get("input") or {}
+    names = [*(given.get("artifacts") or []), *(given.get("outputs") or [])]
+    return [n for n in names if isinstance(n, str) and not n.endswith("?")]
+
+
+def _check_state(
+    where: str, st: Any, states: Mapping[str, Any], rows: Mapping[str, Any]
+) -> list[str]:
+    """One state: an agent or an action, its skip and rerun, each `when` and each way on."""
+    if not isinstance(st, dict):
+        return [f"{where}: a state is an object"]
+    out: list[str] = []
+    fields: Mapping[str, Any] | None = None
+    if ("agent" in st) == ("action" in st):
+        out.append(f"{where}: a state names exactly one of agent or action")
+    elif "agent" in st:
+        found = rows.get(str(st["agent"]))
+        if found is None or (found.get("output") or {}).get("kind") == "helper":
+            out.append(f"{where}: agent {st['agent']} is no row that runs a state")
+        else:
+            fields = output_fields(found)
+    elif st["action"] not in ACTIONS:
+        out.append(f"{where}: action must be one of {', '.join(ACTIONS)}")
+    if st.get("skip") is not None and st["skip"] not in PROCESS_GUARDS:
+        out.append(f"{where}.skip: no guard {st['skip']}")
+    if not set(st.get("rerun") or []) <= {"fresh", "answers"}:
+        out.append(f"{where}.rerun is a list of fresh, answers")
+    for c in _conditions(st.get("when")):
+        out += _check_condition(f"{where}.when", c, fields)
+    for i, edge in enumerate(st.get("next") or []):
+        if not isinstance(edge, dict) or edge.get("to") not in states:
+            out.append(f"{where}.next[{i}]: {(edge or {}).get('to')!r} is no state")
+            continue
+        for c in _conditions(edge.get("when")):
+            out += _check_condition(f"{where}.next[{i}]", c, fields)
+    return out
+
+
+def _must_reach(
+    start: str, states: Mapping[str, Any], nexts: Mapping[str, list[str]], reached: set[str]
+) -> dict[str, set[str]]:
+    """What every path from `start` to each reached state has produced: each state on it, and its
+    agent."""
+    every = {n for k, st in states.items() for n in (k, st.get("agent")) if n}
+    avail = {k: set() if k == start else set(every) for k in reached}
+    changed = True
+    while changed:
+        changed = False
+        for k in reached - {start}:
+            got = set(every)
+            for p in (p for p in reached if k in nexts[p]):
+                got &= avail[p] | {p, states[p].get("agent")}
+            if got != avail[k]:
+                avail[k], changed = got, True
+    return avail
+
+
+def check_process(name: str, process: Any, rows: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """Why `process` cannot run on `rows`, `[]` when it can: the start and every way on name a
+    state; each state runs an agent (a row that is no helper) or an action; a `{guard}` is one of
+    `PROCESS_GUARDS`; a `{field, is}` names a field of the state's agent output and a value it
+    may take; every state is reached from the start and a path reaches the end; every input an
+    agent requires is produced on every path to its state."""
+    if not isinstance(process, dict) or not isinstance(process.get("states"), dict):
+        return [f"{name}: a process is {{start, end, states}}"]
+    states: dict[str, Any] = process["states"]
+    start = process.get("start")
+    out = [] if start in states else [f"{name}: start {start!r} is no state"]
+    for key, st in states.items():
+        out += _check_state(f"{name}.{key}", st, states, rows)
+    if out:
+        return out
+    nexts = {k: [e["to"] for e in st.get("next") or []] for k, st in states.items()}
+    reached, todo = {str(start)}, [str(start)]
+    while todo:
+        for to in nexts[todo.pop()]:
+            if to not in reached:
+                reached.add(to)
+                todo.append(to)
+    out += [f"{name}.{k}: no path from start reaches it" for k in states if k not in reached]
+    if not any(not nexts[k] for k in reached):
+        out.append(f"{name}: no path reaches the end")
+    avail = _must_reach(str(start), states, nexts, reached)
+    for k in sorted(reached, key=list(states).index):
+        for n in _required_inputs(rows.get(str(states[k].get("agent")))):
+            if n not in avail[k]:
+                out.append(f"{name}.{k}: its input {n} is not produced on every path to it")
+    return out
+
+
+_PROCESSES: dict[str, Any] = {}
+
+
+def builtin_rows() -> Mapping[str, Mapping[str, Any]]:
+    """The built-in rows, read once: the processes are checked against them."""
+    if "rows" not in _PROCESSES:
+        _PROCESSES["rows"] = _builtin()
+    return _PROCESSES["rows"]
+
+
+def processes() -> dict[str, Process]:
+    """The built-in pack's processes as `<pack>/<name>`; `PackError` with every reason when one
+    cannot run on the built-in rows."""
+    if "all" not in _PROCESSES:
+        raw = json.loads((BUILTIN / PROCESS_FILE).read_text(encoding="utf-8"))
+        rows_ = builtin_rows()
+        pack_name = manifest()["name"]
+        problems = [r for n, p in raw["processes"].items() for r in check_process(n, p, rows_)]
+        if problems:
+            raise PackError("the built-in pack cannot be used:\n" + "\n".join(problems))
+        _PROCESSES["all"] = {f"{pack_name}/{n}": p for n, p in raw["processes"].items()}
+    return _PROCESSES["all"]
+
+
+def process(ref: str | None) -> Process | None:
+    """The process `<pack>/<name>` names, `None` when none does."""
+    return processes().get(str(ref or ""))
+
+
+def agent_for(ref: str | None, state: str) -> str | None:
+    """The agent the process's state runs: the one binding of a state to a row."""
+    found = (process(ref) or {}).get("states", {}).get(state) or {}
+    return found.get("agent")
+
+
+def process_hash(ref: str | None) -> str:
+    """12 hex of sha256 over the process (sorted JSON), as a run's `start` records it."""
+    said = json.dumps(process(ref), sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(said.encode("utf-8")).hexdigest()[:12]
+
+
+def state_names() -> tuple[str, ...]:
+    """Every state of every process, first seen first."""
+    return tuple(dict.fromkeys(k for p in processes().values() for k in p["states"]))
+
+
+def states_of(key: str) -> str:
+    """Where `key` runs, in words: `impl in full, short`; `""` for a row no state runs."""
+    where: dict[str, list[str]] = {}
+    for ref, p in processes().items():
+        for state, st in p["states"].items():
+            if st.get("agent") == key:
+                where.setdefault(state, []).append(ref.rpartition("/")[2])
+    return "; ".join(f"{s} in {', '.join(ps)}" for s, ps in where.items())
 
 
 # --- the owner's layer --------------------------------------------------------

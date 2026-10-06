@@ -21,7 +21,6 @@ from typing import Any, Literal, NotRequired, TypedDict, get_args
 
 from coscc.agent import pack
 from coscc.agent.policy import Label
-from coscc.units.states import STAGE_NAMES
 
 # What a stage's `judgement` says of its artifact. `rejected` is a machine's, and no agent
 # chooses it.
@@ -73,7 +72,7 @@ class Plan(TypedDict):
     """What the app reads of a plan's record: its label, its files, its parallel steps and the
     spike items it rests on."""
 
-    impl: Label
+    variant: Label
     files: list[str]
     steps: list[PlanStep]
     rests_on: list[str]
@@ -142,7 +141,7 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
     "intent": {
         "type": ("branch_for", _enum(BranchType)),
         "fix?": (
-            "lane_of",
+            "fast-lane",
             {
                 "reproduction": "text",
                 "expected": {"source": SOURCE, "text": "text"},
@@ -151,7 +150,7 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
         ),
     },
     "plan": {
-        "impl": ("label_of", _enum(Label)),
+        "variant": ("label_of", _enum(Label)),
         "files": ("label_of", {"list": "text"}),
         "steps": (
             "render",
@@ -159,7 +158,7 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
         ),
         "rests_on": ("evaluate", {"list": _U}),
     },
-    "impl": {"needs_person": ("impl-claim", {"list": _F}), "left_lane?": ("lane_of", "text")},
+    "impl": {"needs_person": ("impl-claim", {"list": _F}), "left_lane?": ("fast-lane", "text")},
     "integrate": {
         "needs_person": ("outcome_of_session", {"list": {"commit": "text", "why": "text"}})
     },
@@ -309,12 +308,12 @@ DATA = ("idea", "siblings", "mentions", "plan-map", "drift", "integration", "scr
 
 def check_input(agent: str, raw: object, agents: Iterable[str]) -> Input:
     """`raw` as `agent`'s input declaration, or a `ContractError` naming what is wrong. An
-    artifact names a stage (`states.STAGE_NAMES`), an output an agent of `agents`, either with
+    artifact names a state of the pack's processes, an output an agent of `agents`, either with
     `?` when it may be missing."""
     keys = set(Input.__annotations__)
     if not isinstance(raw, dict) or set(raw) != keys:
         raise _bad(f"{agent}.input", f"an input is {{{', '.join(sorted(keys))}}}")
-    for part, known in (("artifacts", set(STAGE_NAMES)), ("outputs", set(agents))):
+    for part, known in (("artifacts", set(pack.state_names())), ("outputs", set(agents))):
         names = raw[part]
         if not isinstance(names, list) or not all(
             isinstance(n, str) and n.rstrip("?") in known for n in names

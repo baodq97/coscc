@@ -248,7 +248,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
   plan shares a file with another unit's open PR waits with `overlap-pr #n`.*
 - There is no poller for CI or merge state; freshness depends on board reads and the 300 s pass.
   *Fixed by `0136` R23: while a workspace's autopilot is on, the PR machine reads its open pull
-  requests every `ci_poll_seconds` (60, `coscc/units/lanes.json`); a new CI answer, a new head,
+  requests every `CI_POLL_SECONDS` (60, `coscc/leif/autopilot.py`); a new CI answer, a new head,
   a merge or a close is a transition, and schedules one pass.*
 - pr.md and ship.md are agent sessions for what is mechanical (title/body from metadata; merge
   with a pinned head) — 5% of spend and 11 failures across 90 units. *Fixed by `0136` R12, R13:
@@ -259,6 +259,9 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 
 - One explicit FSM per unit in the app, state and metadata in the DB; markdown holds prose only.
 - Lanes (feat full, fix fast) and parameters in a committed config; guards are named code and cannot be disabled by config.
+  *Idea 0006 M5: the config is a pack's `process.json`; a state names its agent or an engine
+  action, a way on names a field of the state's output or a named guard, and the fast lane is
+  the `fast-lane` branch of `full`. A unit records its process (`unit_meta.process`).*
 - Every agent output that drives a transition comes back **structured** (a tool call or a JSON
   object validated against a schema), never parsed out of prose.
 - pr and ship become mechanical app transitions; required artifacts per lane: idea, intent,

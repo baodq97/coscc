@@ -1,6 +1,6 @@
 {
   "name": "coscc-sdlc",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "coscc's software delivery agents: one row per agent, the stage skills beside them.",
   "agents": [
     "./agents/idea.md",

@@ -12,7 +12,6 @@ tools: {"Read": "allow", "Glob": "allow", "Grep": "allow", "Write": "allow", "Ed
 helpers: ["scout", "worker"]
 input: {"artifacts": ["intent", "spec?", "plan?"], "outputs": [], "answers": true, "findings": true, "data": ["plan-map", "drift", "siblings", "mentions"]}
 output: {"kind": "artifact", "version": 3, "by": "session", "fields": {"judgement": {"enum": ["ready", "not-ready"]}, "questions": {"list": {"n": "number", "text": "text", "recommendation": "text"}}, "needs_person": {"list": "F[0-9]+"}, "left_lane?": "text"}}
-trigger: {"state": "impl"}
 ceilings: {"turns": 120, "usd": 8.0}
 ---
 Builds what the accepted plan names and nothing beyond it.

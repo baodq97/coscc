@@ -60,7 +60,7 @@ tests of the modules that change, never the whole suite, which CI runs>
 
 ## What `submit` carries
 
-- `impl`: `novel` for new logic or a security-sensitive file, otherwise `routine`.
+- `variant`: `novel` for new logic or a security-sensitive file, otherwise `routine`.
 - `files`: every path the unit edits or creates, one per item; mark none `(new)` here.
 - `steps`: each parallel step, `{title, paths, report}`; its `paths` are files of `files` no other
   step names, and impl starts one helper per step. `[]` for one session.

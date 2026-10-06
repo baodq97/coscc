@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
 from coscc.leif import decide, guide
-from coscc.units import backlog, states
+from coscc.units import backlog
 from coscc.git import fetches
 from coscc.github import integrate, prmachine
 from coscc.git.gitops import GitError
@@ -41,6 +41,8 @@ log = logging.getLogger(__name__)
 # the journal key; the cap is one for the whole app, since the quota is the machine's account.
 # Not in `PREFERENCES`: those are the page's.
 
+# How often the pull requests of a workspace are read, beside the 300-second pass.
+CI_POLL_SECONDS = 60.0
 SETTINGS = ("autopilot", "autopilot_may_ship", "max_parallel", "daily_cap_usd")
 CAP_PREF = "autopilot_daily_cap_usd"
 
@@ -223,10 +225,10 @@ class Autopilot:
             await asyncio.sleep(decide.POLL_SECONDS)
 
     async def _pr_reader_loop(self, key: str) -> None:
-        """Every `ci_poll_seconds` of the lane config, one read of the workspace's pull requests. The
-        300-second pass goes on beside it as the net.
+        """Every `CI_POLL_SECONDS`, one read of the workspace's pull requests. The 300-second pass
+        goes on beside it as the net.
         """
-        poll = states.default_lanes().ci_poll_seconds
+        poll = CI_POLL_SECONDS
         while True:
             await asyncio.sleep(poll)
             try:

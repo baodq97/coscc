@@ -197,12 +197,13 @@ class TheBoundsOfAnOverride(unittest.TestCase):
             self.assertTrue(reason, (field, value))
 
 
-LOOP = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
+LOOP = "coscc-sdlc/full"
+SHORT = "coscc-sdlc/short"
 
 
-def _plan(impl: str = "routine", *files: str) -> dict:
+def _plan(variant: str = "routine", *files: str) -> dict:
     """A plan record as `UnitMeta.plan` returns it."""
-    return {"impl": impl, "files": list(files or ("coscc/units/board.py",)), "steps": [],
+    return {"variant": variant, "files": list(files or ("coscc/units/board.py",)), "steps": [],
             "rests_on": []}  # fmt: skip
 
 
@@ -241,6 +242,13 @@ class TheLabelIsThePlansRecord(unittest.TestCase):
         self.assertEqual(
             models.label_of("review", LOOP, _plan("novel")), ("novel", "novel", "declared")
         )
+
+    def test_with_no_plan_in_its_process_a_row_with_variants_runs_novel_and_others_have_none(self):
+        for stage in ("impl", "review"):
+            self.assertEqual(models.label_of(stage, SHORT, None), ("missing", "novel", "missing"))
+        for stage in ("intent", "pr", "ship"):
+            self.assertEqual(models.label_of(stage, SHORT, None), (None, None, None), stage)
+        self.assertEqual(models.label_of("spec", SHORT, _plan()), (None, None, None))
 
     def test_a_ceiling_never_moves_the_label(self):
         """A run that hit a ceiling pauses and a raise goes on in it: no dearer row takes over."""

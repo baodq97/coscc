@@ -111,6 +111,15 @@ class TheBuiltInPackIsTheTablesItReplaced(unittest.TestCase):
                         **want,
                         "skill": want["skill"].replace(SPEC_LINE, SPEC_LINE + SPEC_ADDED),
                     }
+                if key == "plan":
+                    # M5: plan's label is `variant`, version 4.
+                    fields = dict(want["output"]["fields"])
+                    fields["variant"] = fields.pop("impl")
+                    want = {
+                        **want,
+                        "output": {**want["output"], "version": 4, "fields": fields},
+                        "skill": want["skill"].replace("- `impl`: `novel`", "- `variant`: `novel`"),
+                    }
                 self.assertEqual(got, want)
 
     def test_every_built_in_row_passes_check_with_the_catalog(self):
@@ -156,10 +165,9 @@ class CheckRefusesABadRowByName(unittest.TestCase):
             "tools.Read must be one of allow, ask, off", self.reasons(_row(tools={"Read": "yes"}))
         )
 
-    def test_two_rows_on_one_state(self):
+    def test_a_row_names_no_state_the_process_does(self):
         self.assertIn(
-            "trigger: the state spec is already spec's",
-            self.reasons(_row(trigger={"state": "spec"})),
+            'trigger is {"engine": <engine>}', self.reasons(_row(trigger={"state": "spec"}))
         )
 
     def test_a_name_another_agent_has(self):
@@ -191,13 +199,13 @@ class CheckRefusesABadRowByName(unittest.TestCase):
 
     def test_a_removed_required_output_field(self):
         output = json.loads(json.dumps(pack.rows()["plan"]["output"]))
-        del output["fields"]["impl"]
+        del output["fields"]["variant"]
         rows = {k: dict(r) for k, r in pack.rows().items()}
         rows["plan"]["output"] = output
         with self.assertRaises(contracts.ContractError) as caught:
             contracts.load(rows)
         self.assertEqual(caught.exception.code, "contract-field-missing")
-        self.assertIn("plan.impl", caught.exception.words)
+        self.assertIn("plan.variant", caught.exception.words)
 
     def test_a_bad_built_in_pack_stops_the_load_with_every_reason(self):
         with tempfile.TemporaryDirectory() as d:
@@ -210,6 +218,141 @@ class CheckRefusesABadRowByName(unittest.TestCase):
             with mock.patch.object(pack, "BUILTIN", copy), self.assertRaises(pack.PackError) as e:
                 pack.rows()
         self.assertIn("plan: tools.Read must be one of", str(e.exception))
+
+
+def _process(**states) -> dict:
+    """`short` with `states` laid over its own: a state given `None` goes."""
+    base = json.loads(json.dumps(pack.process("coscc-sdlc/short")))
+    for k, v in states.items():
+        if v is None:
+            base["states"].pop(k)
+        else:
+            base["states"][k] = v
+    return base
+
+
+class AProcessIsCheckedAtLoad(unittest.TestCase):
+    """`check_process`: one test per reason, on `short` changed in one place."""
+
+    def reasons(self, process: dict) -> str:
+        return "\n".join(pack.check_process("p", process, pack.builtin_rows()))
+
+    def test_full_and_short_load_clean(self):
+        self.assertEqual(list(pack.processes()), ["coscc-sdlc/full", "coscc-sdlc/short"])
+        for ref, process in pack.processes().items():
+            self.assertEqual(pack.check_process(ref, process, pack.builtin_rows()), [], ref)
+
+    def test_a_way_on_to_no_state(self):
+        bad = _process(pr={"action": "open-pr", "next": [{"to": "reveiw"}]})
+        self.assertIn("p.pr.next[0]: 'reveiw' is no state", self.reasons(bad))
+
+    def test_a_start_that_is_no_state(self):
+        self.assertIn("p: start 'idea' is no state", self.reasons({**_process(), "start": "idea"}))
+
+    def test_a_state_no_path_reaches(self):
+        bad = _process(spec={"agent": "spec", "next": [{"to": "impl"}]})
+        self.assertIn("p.spec: no path from start reaches it", self.reasons(bad))
+
+    def test_no_path_to_the_end(self):
+        bad = _process(ship={"action": "merge", "next": [{"to": "review"}]})
+        self.assertIn("p: no path reaches the end", self.reasons(bad))
+
+    def test_a_guard_not_listed(self):
+        bad = _process(
+            pr={"action": "open-pr", "next": [{"to": "review", "when": {"guard": "ci-green"}}]}
+        )
+        self.assertIn("p.pr.next[0]: no guard ci-green", self.reasons(bad))
+
+    def test_a_field_not_in_the_output(self):
+        impl = {
+            **_process()["states"]["impl"],
+            "next": [{"to": "pr", "when": {"field": "verdict", "is": "pass"}}],
+        }
+        self.assertIn(
+            "p.impl.next[0]: verdict is no field of the agent's output",
+            self.reasons(_process(impl=impl)),
+        )
+
+    def test_an_action_has_no_field_to_read(self):
+        bad = _process(
+            pr={
+                "action": "open-pr",
+                "next": [{"to": "review", "when": {"field": "judgement", "is": "ready"}}],
+            }
+        )
+        self.assertIn(
+            "p.pr.next[0]: an action has no output to read judgement from", self.reasons(bad)
+        )
+
+    def test_a_value_the_field_never_takes(self):
+        impl = {
+            **_process()["states"]["impl"],
+            "next": [{"to": "pr", "when": {"field": "judgement", "is": "done"}}],
+        }
+        self.assertIn(
+            "p.impl.next[0]: judgement is never 'done'", self.reasons(_process(impl=impl))
+        )
+        listed = {**impl, "next": [{"to": "pr", "when": {"field": "needs_person", "is": "ready"}}]}
+        self.assertIn("(it may be non-empty, empty)", self.reasons(_process(impl=listed)))
+
+    def test_an_input_missing_on_one_path(self):
+        # A way from the start straight to impl, past intent: impl's `intent` is not there on it.
+        bad = {**_process(), "start": "begin"}
+        bad["states"] = {
+            "begin": {"action": "open-pr", "next": [{"to": "intent"}, {"to": "impl"}]},
+            **bad["states"],
+        }
+        self.assertIn(
+            "p.impl: its input intent is not produced on every path to it", self.reasons(bad)
+        )
+
+    def test_agent_and_action_together(self):
+        bad = _process(pr={"agent": "review", "action": "open-pr", "next": [{"to": "review"}]})
+        self.assertIn("p.pr: a state names exactly one of agent or action", self.reasons(bad))
+
+    def test_a_helper_runs_no_state_and_an_action_is_one_the_engine_has(self):
+        self.assertIn(
+            "p.impl: agent worker is no row that runs a state",
+            self.reasons(_process(impl={"agent": "worker", "next": [{"to": "pr"}]})),
+        )
+        self.assertIn(
+            "p.pr.action must be one of open-pr, merge",
+            self.reasons(_process(pr={"action": "deploy", "next": [{"to": "review"}]})).replace(
+                ": action", ".action"
+            ),
+        )
+
+    def test_a_bad_built_in_process_stops_the_load_with_its_reasons(self):
+        with tempfile.TemporaryDirectory() as d:
+            import shutil
+
+            copy = Path(d) / "coscc-sdlc"
+            shutil.copytree(pack.BUILTIN, copy)
+            path = copy / pack.PROCESS_FILE
+            path.write_text(path.read_text().replace('"to": "review"}', '"to": "reveiw"}', 1))
+            with (
+                mock.patch.object(pack, "BUILTIN", copy),
+                mock.patch.dict(pack._PROCESSES, clear=True),
+                self.assertRaises(pack.PackError) as e,
+            ):
+                pack.processes()
+        self.assertIn("full.pr.next[0]: 'reveiw' is no state", str(e.exception))
+
+    def test_the_state_names_its_agent_and_the_hash_is_the_processes(self):
+        self.assertEqual(pack.agent_for("coscc-sdlc/short", "impl"), "impl")
+        self.assertIsNone(pack.agent_for("coscc-sdlc/short", "ship"))
+        self.assertIsNone(pack.agent_for("coscc-sdlc/short", "spec"))
+        self.assertEqual(pack.states_of("impl"), "impl in full, short")
+        self.assertEqual(pack.states_of("spec"), "spec in full")
+        self.assertEqual(len(pack.process_hash("coscc-sdlc/full")), 12)
+        self.assertNotEqual(
+            pack.process_hash("coscc-sdlc/full"), pack.process_hash("coscc-sdlc/short")
+        )
+        stamp = pack.stamp("impl", "coscc-sdlc/short")
+        self.assertEqual(
+            (stamp["process"], stamp["process_hash"]),
+            ("coscc-sdlc/short", pack.process_hash("coscc-sdlc/short")),
+        )
 
 
 class TheOwnersLayer(unittest.TestCase):
