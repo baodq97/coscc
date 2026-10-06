@@ -487,6 +487,23 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((reads, self.core.boards.reads), ([], {}))
 
 
+class TheUnitPageCarriesItsOutputs(unittest.TestCase):
+    def test_what_each_agent_handed_back_reaches_the_page(self):
+        from coscc.units.read import detail
+
+        outputs = [
+            {"agent": "spec", "version": 1, "at": "t", "fields": {"judgement": "ready"}},
+        ]
+        unit = {
+            "name": "0001_x",
+            "number": 1,
+            "slug": "x",
+            "state": {"state": "ready", "label": "Ready", "color": "gray"},
+        }
+        got = detail(unit, [], outputs)
+        self.assertEqual(got["outputs"], outputs)
+
+
 class AUnitPageShowsItsRuns(unittest.TestCase):
     def test_a_run_whose_cost_was_never_reported_says_unknown_not_zero(self):
         from coscc.units.read import detail
@@ -520,7 +537,7 @@ class AUnitPageShowsItsRuns(unittest.TestCase):
             },
             {"stage": "plan", "started": "t2", "ended": None, "outcome": None, "cost": {}},
         ]
-        got = detail(unit, timeline)
+        got = detail(unit, timeline, [])
         self.assertEqual((got["runs"][0]["cost_usd"], got["runs"][0]["turns"]), (None, 3))
         self.assertEqual(got["runs"][1]["ended"], "")
         self.assertEqual(got["answers"][0]["authority"], "agent")

@@ -38,8 +38,9 @@ From the board the gate was asked (the prompt says so); at a terminal ask
 5. Write `impl.md`.
 
 **A finding this stage cannot close** (needs real money, a command the grant lacks, a person's
-measurement): one line under `## Needs a person`, exactly `- F<k>: <reason>`; the loop
-reads only the id. It is a claim the review accepts or rejects. Fix everything you can first.
+measurement): name its `F<k>` in `needs_person` of `submit`, and say why under
+`## Needs a person` for the reviewer. It is a claim the review accepts or rejects. Fix
+everything you can first.
 
 **Work only a person can do** goes under `## Open questions`, one `N. …?` per item at column 0.
 What waits on nobody goes under `## What is still open`. Never edit `## Answers`; cite an

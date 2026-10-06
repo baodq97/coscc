@@ -35,10 +35,7 @@ from coscc.loop.paths import next_number, read_ideas, unit_meta
 from coscc.loop import stringify
 from coscc.loop.model import (
     parse_deadline,
-    parse_needs_person,
     parse_outcome,
-    parse_spike,
-    parse_unmeasured,
     unit_outcome,
 )
 from coscc.loop import SPIKE_ROUNDS
@@ -64,8 +61,28 @@ def next_step(unit, probe=None, limit=REVIEW_ROUNDS):
     return {k: v for k, v in next_answer(unit, probe, limit).items() if k != "reasons"}
 
 
-def entry_from(m: dict) -> dict:
-    """The snapshot entry the app builds of `meta`'s reading; a skip stands for a person's."""
+_BASE = {"judgement": "ready", "questions": []}
+
+
+def spec_record(*ids: str) -> dict:
+    """The spec's submitted record, naming `ids` unmeasured."""
+    return {"spec.md": {"result": {**_BASE, "unmeasured": list(ids)}}}
+
+
+def spike_record(rnd: int | None = 1, **verdicts: str) -> dict:
+    """The spike's submitted record, a verdict per id, with the round the app counted."""
+    found = [{"id": i, "verdict": v} for i, v in verdicts.items()]
+    return {"spike.md": {"round": rnd, "result": {**_BASE, "verdicts": found}}}
+
+
+def claim_record(*ids: str) -> dict:
+    """impl's submitted record, claiming `ids` only a person can close."""
+    return {"impl.md": {"result": {**_BASE, "needs_person": list(ids)}}}
+
+
+def entry_from(m: dict, records: dict | None = None) -> dict:
+    """The snapshot entry the app builds of `meta`'s reading; a skip stands for a person's.
+    `records` are the submitted records, `{file: {"result", ...}}`."""
     arts = {
         f: {
             "status": a.get("status"),
@@ -75,6 +92,8 @@ def entry_from(m: dict) -> dict:
         }
         for f, a in m["artifacts"].items()
     }
+    for f, rec in (records or {}).items():
+        arts.setdefault(f, {"status": None, "raw": None, "questions": None}).update(rec)
     return {
         "artifacts": arts,
         "type": m.get("type"),
@@ -86,22 +105,22 @@ def entry_from(m: dict) -> dict:
     }
 
 
-def state_of_root(root: Path) -> dict:
-    """The snapshot of `<root>/.cos/`, as the app would hand `--state`."""
+def state_of_root(root: Path, records: dict | None = None) -> dict:
+    """The snapshot of `<root>/.cos/`, as the app would hand `--state`; `records` by unit name."""
     cos = root / ".cos"
     units = {}
     if cos.exists():
         for d in sorted(cos.iterdir()):
             if d.is_dir() and d.name != "ideas":
-                units[f"/{d.name}"] = entry_from(unit_meta(str(d)))
+                units[f"/{d.name}"] = entry_from(unit_meta(str(d)), (records or {}).get(d.name))
     ideas = read_ideas(str(cos)) if (cos / "ideas").exists() else []
     return {"workspace": "", "workspaces": [], "units": units, "ideas": {"": ideas}}
 
 
-def read(dir_: Path, name: str) -> dict:
-    """`read_unit` of `dir_` under `name`, with the snapshot of its files."""
+def read(dir_: Path, name: str, records: dict | None = None) -> dict:
+    """`read_unit` of `dir_` under `name`, with the snapshot of its files and `records`."""
     state = {"workspace": "", "workspaces": [], "units": {}, "ideas": {"": []}}
-    state["units"][f"/{name}"] = entry_from(unit_meta(str(dir_)))
+    state["units"][f"/{name}"] = entry_from(unit_meta(str(dir_)), records)
     return read_unit(str(dir_), name, state)
 
 
@@ -506,13 +525,15 @@ def with_answers(*blocks):
     return f"{QUESTIONS}\n## Answers\n{''.join(blocks)}"
 
 
-def question_tree(tmp_path: Path, files: dict[str, str]) -> tuple[Path, dict]:
+def question_tree(
+    tmp_path: Path, files: dict[str, str], records: dict | None = None
+) -> tuple[Path, dict]:
     root = tmp_path / "qroot"
     d = root / ".cos" / "0001_q"
     d.mkdir(parents=True)
     for f, text in files.items():
         (d / f).write_text(text)
-    return root, read(d, "0001_q")
+    return root, read(d, "0001_q", records)
 
 
 def ns(qs):
@@ -1043,15 +1064,12 @@ def test_next_step_never_offers_a_stage_whose_gate_is_closed():
 
 # --- 0028: a finding impl cannot fix waits for a person -------------------------------------
 
-NEEDS = (
-    "## Needs a person\n\n- F2: the grant holds no budget for --paid\n- F3: the grant holds no gh\n"
-)
 REVIEW_HEAD = "# Review: x\nPR: pr.md. Author: t. Status: changes-requested.\n\n"
 ROUND1 = round_(1, "changes-requested", ["- F1 [open] a", "- F2 [open] b", "- F3 [open] c"])
 ROUND2 = round_(2, "changes-requested", [f"- F1 [fixed {FIX}] a", "- F2 [open] b", "- F3 [open] c"])
 
 
-def impl_text(needs=NEEDS):
+def impl_text(needs=""):
     return (
         "# Impl: x\nIntent: intent.md. Plan: plan.md. Author: t. Status: accepted.\n\n"
         f"## What was built\n\nx\n\n{needs}"
@@ -1070,38 +1088,25 @@ def round3(f3="needs-person", extra=()):
     )
 
 
-def tree_after_round_two(tmp_path, review, impl=None):
-    """A unit right after its second review round, as files on disk."""
+def tree_after_round_two(tmp_path, review, claims=("F2", "F3")):
+    """A unit right after its second review round, as files on disk, impl's record claiming
+    `claims` only a person can close."""
     _, u = question_tree(
         tmp_path / str(len(list(tmp_path.iterdir()))),
         {
             "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
             "spec.md": "# S\nStatus: accepted.\n",
             "plan.md": "# P\nStatus: accepted.\n",
-            "impl.md": impl_text() if impl is None else impl,
+            "impl.md": impl_text(),
             "pr.md": "# PR: fix(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n",
             "review.md": review,
         },
+        claim_record(*claims),
     )
     return u
 
 
 R12 = f"{REVIEW_HEAD}{ROUND1}\n{ROUND2}"
-
-
-def test_needs_a_person_reads_well_formed_lines_and_stops_at_answers():
-    body = (
-        "## Needs a person\n\n- F2: no gh in this grant\n- F3 no colon\n-F4: no space\n"
-        "- F5:   \n* F6: a star\n- F7: real money\n"
-    )
-    text = f"{impl_text(body)}\n## Answers\n\n## Needs a person\n\n- F9: under answers\n"
-    assert parse_needs_person(text) == [
-        {"id": "F2", "reason": "no gh in this grant"},
-        {"id": "F7", "reason": "real money"},
-    ]
-    assert parse_needs_person(impl_text("")) == []
-    tail = "# Impl\nStatus: accepted.\n\n## Answers\n\n## Needs a person\n\n- F1: x\n"
-    assert parse_needs_person(tail) == []
 
 
 def test_parse_answers_reads_numbered_and_finding_blocks_side_by_side(tmp_path):
@@ -1146,7 +1151,7 @@ def test_the_person_labels_and_the_needs_person_verdict_are_read():
 def test_a_needs_person_round_is_not_counted_toward_the_limit():
     three = "\n".join(round_(n, "changes-requested", ["- F1 [open] x"]) for n in (1, 2, 3))
     text = f"{three}\n{round_(4, 'needs-person', ['- F1 [needs-person] x'])}"
-    assert "needs a person — F1: impl.md gives no reason" in next_action(asked(text), 4)["action"]
+    assert "needs a person — F1: x" in next_action(asked(text), 4)["action"]
     assert "3 of 4 rounds used" in next_action(asked(three), 4)["action"]
     assert "needs a person — review used 3 of 3" in next_action(asked(text), 3)["action"]
     one = next_action(asked(round_(1, "needs-person", ["- F1 [needs-person] x"])), 1)
@@ -1157,7 +1162,7 @@ def test_a_needs_person_round_is_not_counted_toward_the_limit():
 def test_every_open_finding_claimed_and_unconfirmed_is_review(tmp_path):
     n = next_step(tree_after_round_two(tmp_path, R12), green_probe())
     assert n["stage"] == "review"
-    assert "claimed in impl.md ## Needs a person — review confirms or rejects each" in n["action"]
+    assert "claimed as needing a person — review confirms or rejects each" in n["action"]
     assert "waiting" not in n
 
 
@@ -1167,8 +1172,7 @@ def test_both_claims_confirmed_names_a_person(tmp_path):
     assert n["stage"] == ""
     assert n["blocked"] is True
     assert n["action"].startswith(
-        "needs a person — F2: the grant holds no budget for --paid; F3: the grant holds no gh "
-        "— answer each on the Questions tab"
+        "needs a person — F2: b; F3: c — answer each on the Questions tab"
     )
     assert n["waiting"] == ["F2", "F3"]
     assert next_step(u)["waiting"] == ["F2", "F3"]
@@ -1180,7 +1184,7 @@ def test_one_answered_one_not_still_waits_for_the_other(tmp_path):
     u = tree_after_round_two(tmp_path, f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}")
     n = next_step(u, green_probe())
     assert n["stage"] == ""
-    assert n["action"].startswith("needs a person — F3: the grant holds no gh")
+    assert n["action"].startswith("needs a person — F3: c")
     assert n["waiting"] == ["F3"]
 
 
@@ -1249,8 +1253,8 @@ def test_a_needs_person_verdict_written_wrong_falls_back(tmp_path):
     assert b["personFindings"] == []
 
 
-def test_an_impl_with_no_needs_a_person_section_changes_nothing(tmp_path):
-    n = next_step(tree_after_round_two(tmp_path, R12, impl_text("")), green_probe())
+def test_an_impl_that_claims_nothing_changes_nothing(tmp_path):
+    n = next_step(tree_after_round_two(tmp_path, R12, claims=()), green_probe())
     assert n["stage"] == "impl"
     assert "nothing outside .cos/0001_q/ has reached #7" in n["action"]
 
@@ -1291,8 +1295,8 @@ def test_next_prints_waiting_only_when_a_person_is_awaited(tmp_path):
     status = json.loads(cli("--root", str(root), "status", "--json").out)["units"][0]
     assert status["next"]["waiting"] == ["F3"]
     assert status["personFindings"] == [
-        {"id": "F2", "reason": "the grant holds no budget for --paid", "answered": True},
-        {"id": "F3", "reason": "the grant holds no gh", "answered": False},
+        {"id": "F2", "reason": "b", "answered": True},
+        {"id": "F3", "reason": "c", "answered": False},
     ]
 
 
@@ -1465,53 +1469,6 @@ def spec_text(concerns, status="accepted"):
     )
 
 
-def test_parse_unmeasured_reads_items_under_concerns_only():
-    assert parse_unmeasured(spec_text("- **C1.** nothing unmeasured here.")) == {
-        "ids": [],
-        "problems": [],
-    }
-    two = spec_text("- [unmeasured] U1. does it exit?\n* [unmeasured] U2. how long?")
-    assert parse_unmeasured(two)["ids"] == ["U1", "U2"]
-    assert parse_unmeasured(spec_text("1. [unmeasured] U3 numbered"))["ids"] == ["U3"]
-    prose = spec_text("- C1 says [unmeasured] U1 in passing.\n  - [unmeasured] U2 nested")
-    assert parse_unmeasured(prose)["ids"] == []
-    assert parse_unmeasured("## Requirements\n\n- [unmeasured] U1. x\n")["ids"] == []
-
-
-def test_an_unmeasured_item_with_no_id_or_twice_is_a_problem_that_closes_plan(tmp_path):
-    no_id = parse_unmeasured(spec_text("- [unmeasured] does it exit?"))
-    assert no_id["ids"] == []
-    assert 'carries no U<n>: "- [unmeasured] does it exit?"' in no_id["problems"][0]
-    twice = parse_unmeasured(spec_text("- [unmeasured] U1. a\n- [unmeasured] U1. b"))
-    assert twice["problems"] == ["spec.md: U1 is marked [unmeasured] twice"]
-    files = {
-        "intent.md": "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n",
-        "spec.md": spec_text("- [unmeasured] does it exit?"),
-    }
-    u = read(files_in(tmp_path, files), "0039_x")
-    assert "carries no U<n>" in " ".join(u["problems"])
-    assert "carries no U<n>" in " ".join(check_gate(u, "plan")["need"])
-    assert next_action(u)["stage"] == ""
-    assert next_action(u)["action"].startswith("fix spec.md — an [unmeasured] item carries no U<n>")
-
-
-def test_parse_spike_reads_verdicts_and_blocks_and_stops_at_answers():
-    text = (
-        "Round: 2. Status: accepted.\n\n## U1\n\nVerdict: holds.\n\n```\n$ x\ny\n```\n\n"
-        "## U2\n\nno verdict here\n\n```\nout\n```\n\n## U3\n\nVerdict: fails.\n\n```\n```\n\n"
-        "## Answers\n\n## U4\n\nVerdict: holds.\n\n```\nz\n```\n"
-    )
-    assert parse_spike(text) == {
-        "round": 2,
-        "items": {
-            "U1": {"verdict": "holds", "hasBlock": True},
-            "U2": {"verdict": None, "hasBlock": True},
-            "U3": {"verdict": "fails", "hasBlock": False},
-        },
-    }
-    assert parse_spike("## U1\nVerdict: holds.\n")["round"] is None
-
-
 INTENT_0039 = "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n"
 
 
@@ -1521,11 +1478,11 @@ def spike_text(rnd, items):
     return head + body
 
 
-def spike_unit(tmp_path, files):
+def spike_unit(tmp_path, files, records=None):
     d = files_in(
         tmp_path, {"intent.md": INTENT_0039, **files}, name=f"s{len(list(tmp_path.iterdir()))}"
     )
-    return read(d, "0039_x")
+    return read(d, "0039_x", records)
 
 
 def with_entry(d, name="0039_x"):
@@ -1569,6 +1526,24 @@ def test_a_stage_result_decides_the_specs_ids_and_the_spikes_verdicts(tmp_path):
     held = read_({"unmeasured": ["U1"]}, {"verdicts": [{"id": "U1", "verdict": "holds"}]})
     assert check_gate(held, "plan")["ok"] is True
     assert "unmeasured" not in read_({"unmeasured": []})["artifacts"]["spec.md"]
+
+
+def test_the_loop_reads_no_prose_for_spec_spike_and_impl_decisions(tmp_path):
+    files = {
+        "intent.md": INTENT_0039,
+        "spec.md": spec_text("- [unmeasured] U1. a"),
+        "spike.md": spike_text(1, [("U1", "fails")]),
+        "impl.md": "# Impl: x\nStatus: accepted.\n\n## Needs a person\n\n- F2: a login\n",
+    }
+    d = files_in(tmp_path, files)
+    state, entry = with_entry(d)
+    u = read_unit(str(d), "0039_x", state)
+    assert "unmeasured" not in u["artifacts"]["spec.md"]
+    assert u["artifacts"]["spike.md"]["spike"] == {"round": None, "items": {}}
+    assert u["artifacts"]["impl.md"]["needsPerson"] == []
+    entry["artifacts"]["spike.md"]["round"] = 2
+    again = read_unit(str(d), "0039_x", state)
+    assert again["artifacts"]["spike.md"]["spike"]["round"] == 2
 
 
 def test_a_round_and_the_claims_the_app_holds_decide(tmp_path):
@@ -1622,19 +1597,9 @@ def test_a_round_and_the_claims_the_app_holds_decide(tmp_path):
     assert u["artifacts"]["impl.md"]["needsPerson"] == []
     entry["artifacts"]["impl.md"]["result"]["needs_person"] = ["F2"]
     again = read_unit(str(d), "0039_x", state)
-    assert again["artifacts"]["impl.md"]["needsPerson"] == [{"id": "F2", "reason": "a login"}]
+    assert again["artifacts"]["impl.md"]["needsPerson"] == [{"id": "F2"}]
     entry["artifacts"]["review.md"]["rounds"][0]["findings"] = [row("open", "low")]
     assert non_blocking(read_unit(str(d), "0039_x", state)) == []
-
-
-def test_parse_spike_reads_round_from_the_header_line_only(tmp_path):
-    text = (
-        "# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Status: accepted.\n\n"
-        "## U1\n\nVerdict: fails.\n\n```\n$ cat notes\nRound: 3\n```\n"
-    )
-    assert parse_spike(text)["round"] is None
-    u = spike_unit(tmp_path, {"spec.md": spec_text("- [unmeasured] U1. a"), "spike.md": text})
-    assert next_action(u)["stage"] == "spec"
 
 
 def test_a_unit_with_nothing_unmeasured_walks_as_if_spike_did_not_exist(tmp_path):
@@ -1650,46 +1615,50 @@ def test_a_unit_with_nothing_unmeasured_walks_as_if_spike_did_not_exist(tmp_path
     ]
 
 
+SPEC = spec_text("- [unmeasured] U1. a")
+SPIKE = spike_text(1, [("U1", "holds")])
+
+
 def test_a_skipped_spec_never_needs_a_spike(tmp_path):
     files = {
         "spec.md": spec_text("- [unmeasured] U1. x", "skipped"),
         "spike.md": spike_text(1, [("U1", "fails")]),
         "plan.md": "Status: accepted.\n",
     }
-    u = spike_unit(tmp_path, files)
+    u = spike_unit(tmp_path, files, {**spec_record("U1"), **spike_record(U1="fails")})
     assert check_gate(u, "impl")["ok"] is True
     assert "write-impl" in next_action(u)["action"]
 
 
 def test_an_unmeasured_spec_sends_the_unit_to_spike_and_closes_plan(tmp_path):
-    spec = spec_text("- [unmeasured] U1. a\n- [unmeasured] U2. b")
-    none = spike_unit(tmp_path, {"spec.md": spec})
+    asked = spec_record("U1", "U2")
+    none = spike_unit(tmp_path, {"spec.md": SPEC}, asked)
     assert none["artifacts"]["spec.md"]["unmeasured"]["ids"] == ["U1", "U2"]
     assert next_action(none)["stage"] == "spike"
     assert check_gate(none, "spike")["ok"] is True
     need = "\n".join(check_gate(none, "plan")["need"])
     assert "spike.md does not exist" in need
     assert "U1: spike.md is missing, not accepted" in need
-    spike = spike_text(1, [("U1", "holds")]) + "\n## U2\n\nVerdict: holds.\n"
-    no_block = spike_unit(tmp_path, {"spec.md": spec, "spike.md": spike})
-    need = check_gate(no_block, "plan")["need"]
+    no_verdict = spike_unit(
+        tmp_path, {"spec.md": SPEC, "spike.md": SPIKE}, {**asked, **spike_record(U1="holds")}
+    )
+    need = check_gate(no_verdict, "plan")["need"]
     assert len(need) == 1
-    assert re.match(r"U2: .* no fenced block", need[0])
-    assert next_action(no_block)["stage"] == "spike"
+    assert re.match(r"U2: .* does not measure U2", need[0])
+    assert next_action(no_verdict)["stage"] == "spike"
     held = spike_unit(
-        tmp_path, {"spec.md": spec, "spike.md": spike_text(1, [("U1", "holds"), ("U2", "holds")])}
+        tmp_path,
+        {"spec.md": SPEC, "spike.md": SPIKE},
+        {**asked, **spike_record(U1="holds", U2="holds")},
     )
     assert check_gate(held, "plan")["ok"] is True
     assert next_action(held)["stage"] == "plan"
 
 
 def test_spec_spike_spec_again_spike_plan(tmp_path):
+    files = {"spec.md": SPEC, "spike.md": SPIKE}
     first = spike_unit(
-        tmp_path,
-        {
-            "spec.md": spec_text("- [unmeasured] U1. a\n- [unmeasured] U2. b"),
-            "spike.md": spike_text(1, [("U1", "holds"), ("U2", "fails")]),
-        },
+        tmp_path, files, {**spec_record("U1", "U2"), **spike_record(U1="holds", U2="fails")}
     )
     assert next_action(first)["stage"] == "spec"
     assert "U2 does not hold" in next_action(first)["action"]
@@ -1698,20 +1667,12 @@ def test_spec_spike_spec_again_spike_plan(tmp_path):
     )
     assert check_gate(first, "spec")["ok"] is True
     rewritten = spike_unit(
-        tmp_path,
-        {
-            "spec.md": spec_text("- [unmeasured] U1. a\n- [unmeasured] U3. c"),
-            "spike.md": spike_text(1, [("U1", "holds"), ("U2", "fails")]),
-        },
+        tmp_path, files, {**spec_record("U1", "U3"), **spike_record(U1="holds", U2="fails")}
     )
     assert next_action(rewritten)["stage"] == "spike"
     assert "does not measure U3" in next_action(rewritten)["action"]
     measured = spike_unit(
-        tmp_path,
-        {
-            "spec.md": spec_text("- [unmeasured] U1. a\n- [unmeasured] U3. c"),
-            "spike.md": spike_text(2, [("U1", "holds"), ("U3", "holds")]),
-        },
+        tmp_path, files, {**spec_record("U1", "U3"), **spike_record(2, U1="holds", U3="holds")}
     )
     assert next_action(measured)["stage"] == "plan"
     assert check_gate(measured, "plan")["ok"] is True
@@ -1720,10 +1681,8 @@ def test_spec_spike_spec_again_spike_plan(tmp_path):
 def test_fails_ahead_of_missing(tmp_path):
     u = spike_unit(
         tmp_path,
-        {
-            "spec.md": spec_text("- [unmeasured] U1. a\n- [unmeasured] U2. b"),
-            "spike.md": spike_text(1, [("U2", "fails")]),
-        },
+        {"spec.md": SPEC, "spike.md": SPIKE},
+        {**spec_record("U1", "U2"), **spike_record(U2="fails")},
     )
     assert next_action(u)["stage"] == "spec"
 
@@ -1731,10 +1690,8 @@ def test_fails_ahead_of_missing(tmp_path):
 def test_a_question_still_failing_at_the_last_spike_round_needs_a_person(tmp_path):
     u = spike_unit(
         tmp_path,
-        {
-            "spec.md": spec_text("- [unmeasured] U3. c"),
-            "spike.md": spike_text(SPIKE_ROUNDS, [("U3", "fails")]),
-        },
+        {"spec.md": SPEC, "spike.md": SPIKE},
+        {**spec_record("U3"), **spike_record(SPIKE_ROUNDS, U3="fails")},
     )
     n = next_action(u)
     assert n["stage"] == ""
@@ -1748,6 +1705,7 @@ def test_a_spec_rewritten_without_its_questions_needs_no_spike(tmp_path):
     u = spike_unit(
         tmp_path,
         {"spec.md": spec_text("- none left"), "spike.md": spike_text(1, [("U1", "fails")])},
+        {**spec_record(), **spike_record(U1="fails")},
     )
     assert next_action(u)["stage"] == "plan"
     assert check_gate(u, "plan")["ok"] is True
@@ -1817,17 +1775,19 @@ def test_a_skip_a_person_decided_opens_plan_with_or_without_a_file(tmp_path):
 
 
 def test_with_a_spike_required_impl_opens_only_on_a_plan_citing_it(tmp_path):
-    files = {
-        "spec.md": spec_text("- [unmeasured] U1. a"),
-        "spike.md": spike_text(1, [("U1", "holds")]),
-    }
-    silent = spike_unit(tmp_path, {**files, "plan.md": "Status: accepted.\n\n1. build it\n"})
+    files = {"spec.md": SPEC, "spike.md": SPIKE}
+    records = {**spec_record("U1"), **spike_record(U1="holds")}
+    silent = spike_unit(
+        tmp_path, {**files, "plan.md": "Status: accepted.\n\n1. build it\n"}, records
+    )
     assert silent["artifacts"]["plan.md"]["citesSpike"] is False
     assert check_gate(silent, "impl")["need"] == [
         "plan.md does not cite spike.md — every step that rests on a U<n> cites spike.md ## U<n>"
     ]
     cites = spike_unit(
-        tmp_path, {**files, "plan.md": "Status: accepted.\n\n1. build it (spike.md ## U1)\n"}
+        tmp_path,
+        {**files, "plan.md": "Status: accepted.\n\n1. build it (spike.md ## U1)\n"},
+        records,
     )
     assert check_gate(cites, "impl")["ok"] is True
 

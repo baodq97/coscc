@@ -34,7 +34,6 @@ from tests.loop.test_model import (
     asked,
     branched,
     green_probe,
-    impl_text,
     low,
     ok,
     review_art,
@@ -88,10 +87,8 @@ def test_a_needs_person_round_beside_an_open_low_is_still_a_wait_for_a_person(tm
     u = tree_after_round_two(tmp_path, review)
     n = next_action(u)
     assert n["waiting"] == ["F2", "F3"]
-    assert re.search(
-        r"^needs a person — F2: the grant holds no budget for --paid; F3: the grant holds no gh",
-        n["action"],
-    )
+    # Each claim with what its finding says in the last round: `b` and `c`.
+    assert re.search(r"^needs a person — F2: b; F3: c", n["action"])
     assert [p["id"] for p in u["personFindings"]] == ["F2", "F3"]
     assert [f["id"] for f in u["nonBlocking"]] == ["F4"]
 
@@ -102,8 +99,7 @@ def test_every_blocking_finding_claimed_and_one_low_unclaimed_is_review_not_impl
     u = tree_after_round_two(tmp_path, f"{REVIEW_HEAD}{ROUND1}\n{r2}")
     assert next_step(u, green_probe())["stage"] == "review"
     only_low = round_(1, "changes-requested", [low("F1")])
-    impl = impl_text("## Needs a person\n\n- F1: the grant holds no gh\n")
-    u = tree_after_round_two(tmp_path, f"{REVIEW_HEAD}{only_low}", impl)
+    u = tree_after_round_two(tmp_path, f"{REVIEW_HEAD}{only_low}", claims=("F1",))
     assert next_step(u, green_probe())["stage"] == "impl"
 
 

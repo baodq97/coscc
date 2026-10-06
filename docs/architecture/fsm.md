@@ -65,7 +65,7 @@ and `prefs`. The two halves meet through `coscc.loop status/next/gate` called as
 | idea | draft, accepted, rejected — optional, but a *draft* idea blocks `next` (`loop:32,1236,1255`) | PERSON (brief, written `accepted` by the app) or AGENT write-idea |
 | intent | draft, accepted, rejected (`:33`) | AGENT (prose; the app writes the reply) |
 | spec | draft, accepted, rejected, **skipped** — never used on 90 shipped units (`:34`) | AGENT (prose) |
-| spike | draft, accepted, rejected; only when spec `## Concerns` has `[unmeasured] U<n>` (`:35,1122-1126`) | AGENT (prose) |
+| spike | draft, accepted, rejected; only when the spec record's `unmeasured` is not empty | AGENT (prose); verdicts and round from the record |
 | plan | draft, accepted, rejected, **done** (terminal, `:36,1196`) | AGENT (prose) |
 | impl | draft, accepted, rejected, done (`:37`) | AGENT (tools; writes the file itself) |
 | pr | draft, accepted, rejected; `PR: <url>` (`:38,469`) | AGENT (tools, runs `gh pr create`) |
@@ -88,7 +88,7 @@ Derived states (CODE, recomputed each read):
 |---|---|---|
 | finished | plan done, or every stage settled | — |
 | paused / dropped | hold | — |
-| unreadable | bad `[unmeasured]` ids, file without `Status:`, broken idea link | — |
+| unreadable | file without `Status:`, broken idea link | — |
 | needs-person | spike fails at round ≥ 2; review out of rounds; incomplete review past the limit | — |
 | spike-fails / spike-missing | spike accepted with fails / a U<n> without verdict | spec / spike |
 | missing | artifact absent | that stage |
@@ -109,7 +109,7 @@ rebase + CI red → impl; changes-requested → impl if code must change, else r
 
 ### 1.3 Gates (`loop:2046-2097`) — all CODE
 
-- every stage: not held; every earlier required stage exists, is settled and not stale; spike only when required; plan waits for every `U<n>` `Verdict: holds`.
+- every stage: not held; every earlier required stage exists, is settled and not stale; spike only when required; plan waits for every `U<n>` the spike record gives `holds`.
 - impl: + idea links resolve and every `Depends on:` is merged (`:2094`).
 - review: + `PR:` present, not out of rounds, `gh pr checks --required` all green (empty = not green; red branch-name check = unfixable) (`:1669-1746`).
 - ship: + last verdict pass, no open finding but fixed/answered/non-blocking low, no demoted severity, reviewed sha named and still the head (or a clean rebase with green CI), not behind `origin/main`, UI screens block valid when UI files changed, `S<n>` findings block (`:1791-1906`). Open gate prints `--match-head-commit <sha>`.
@@ -216,7 +216,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 | app ↔ coscc.loop | subprocess | JSON on stdout (`status`, `next`, `pr-text`, `rerun`, `screens`); `gate` = prose lines on stdout/stderr, exit 0/1/2, merged into one string by the app (`board.py:352`) | JSON / substring |
 | app ↔ GitHub | `gh` subprocess | `--json` fields; PR comments with a hidden marker `<!-- coscc-review unit=U round=N -->` | JSON |
 | person ↔ app | REST, SSE (`/api/stream`, a run's `follow`) and NDJSON streams (`/api/board/run`, `/api/chat`, `/api/notices/follow`) | NDJSON `{type, …}` | JSON |
-| agent ↔ agent | artifacts on disk | review rounds `## Round N` / `Reviewed: <sha>. Verdict: …` / `- F<k> [state] path:line — severity — text`; `impl.md ## Needs a person`; `### Rerun` notes | regex in **three** places (`loop:517`, `review.py:13`, `priorfindings.py:29`) |
+| agent ↔ agent | artifacts on disk | review rounds `## Round N` / `Reviewed: <sha>. Verdict: …` / `- F<k> [state] path:line — severity — text`; `### Rerun` notes | regex in **three** places (`loop:517`, `review.py:13`, `priorfindings.py:29`) |
 | everything → history | SQLite `runs` | JSON record per kind (`start`, `end`, `attempt`, `autopilot-pick`, `autopilot-stop`, `integration`, `answer`, `hold`, `shortlist`, …) | JSON |
 
 ## 6. What the as-is map shows
@@ -225,7 +225,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 
 1. Every `Status:` an agent writes opens or closes a gate. *`0136`: the stage result the run hands back through `submit`, guard `stage-result`. Left, for the next unit: a run that handed back no result (one at a terminal) still reaches `cos.db` through `coscc.loop meta`, which reads the file's `Status:` (`parseStatus`).*
 2. Review `Verdict`, finding states and severities decide the ship gate. *`0136`: the round object, guard `review-round`, at the head the app recorded. Left, for the next unit: a round `cos.db` holds no row for (a terminal run's, or the closing turn's `incomplete`) is still read from `review.md` (`parseReview`).*
-3. `impl.md ## Needs a person` routes the unit back to review. *`0136`: `needs_person` of impl's stage result, guard `impl-claim`. Left, for the next unit: when the last impl run handed back no result, `coscc.loop` still reads the claims from `## Needs a person`.*
+3. `impl.md ## Needs a person` routes the unit back to review. *`0136`: `needs_person` of impl's stage result, guard `impl-claim`. Spec's `unmeasured`, spike's `verdicts` (and the round the app counts) and impl's `needs_person` are the only source of those decisions: `coscc.loop` reads the submitted record, never the prose, and no record means no spike item and no claim. A claim's sentence cites the finding's text from the last review round.*
 4. Gebo's `[needs-person]` lines decide the integration outcome. *`0136`: R7's order — the head moved, else `needs_person` of the object Gebo hands back through `submit`, else `failed`.*
 5. Estimate JSON becomes backlog rows. *`0136`: the object handed back through `submit`, guard `run-submitted`; each row carries `authority: agent`.*
 6. The reviewed sha and the merge pin are copied by the model out of prompt prose. *`0136`: `ship` is the PR machine's (`coscc/github/prmachine.py`); guard `ship-ready` reads the head the review run recorded and the head its own `gh pr view` found, and the merge is pinned to that read. A head the `ship` gate reads as a clean rebase of the reviewed one (`0067`) stands in for it: `gate --json` hands the guard `rebased`, and the guard checks that it names those two commits.*

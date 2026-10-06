@@ -48,10 +48,10 @@ Intent: intent.md. Author: <name>. Status: accepted.
 
 ## Lines the app and the loop read
 
-- `- [unmeasured] U1. <question>` at column 0 under `## Concerns`; list the ids in `unmeasured`
-  of `submit`. It sends the unit to `spike`. The id is the question's identity: keep it across
-  rewrites, never reuse or duplicate one. After a spike `fails`, drop that id and every
-  requirement resting on it; if no direction holds, write `Status: draft` with the question.
+- `- [unmeasured] U1. <question>` at column 0 under `## Concerns`, and its id in `unmeasured`
+  of `submit`: a non-empty `unmeasured` sends the unit to `spike`, the line alone does not.
+  The id is the question's identity: keep it across rewrites, never reuse or duplicate one.
+  After a spike `fails`, drop that id and every requirement resting on it; if no direction holds, write `Status: draft` with the question.
 - `## Open questions`: a real question is an item `N. ` at column 0 whose first paragraph holds
   a `?`, and the same go into `questions` of `submit`. Anything else is a plain sentence. Keep
   the heading even when empty.

@@ -54,7 +54,6 @@ from coscc.loop.model import (
     spike_findings,
     spike_needs,
     status_of,
-    unmeasured_of,
     wait_on_dependencies,
 )
 from coscc.loop.repo_rules import (
@@ -100,15 +99,6 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
         }
 
     for s in STAGES:
-        if s.get("when"):
-            problems = unmeasured_of(unit)["problems"]
-            if problems:
-                return {
-                    "blocked": True,
-                    "action": f"fix spec.md — {problems[0].removeprefix('spec.md: ')}",
-                    "stage": "",
-                    "why": code("unreadable"),
-                }
         if not s.get("optional") and not required(unit, s):
             continue
         status = status_of(unit, s["file"])
@@ -288,10 +278,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
             if person is not None:
                 waiting = [p for p in person if not p["answered"]]
                 if waiting:
-                    told = "; ".join(
-                        f"{p['id']}: {nullish(p['reason'], 'impl.md gives no reason')}"
-                        for p in waiting
-                    )
+                    told = "; ".join(f"{p['id']}: {p['reason']}" for p in waiting)
                     return {
                         "blocked": True,
                         "action": (
@@ -649,7 +636,7 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
             return on_review(
                 [
                     f"every open finding of review round {js(last_round(unit)['n'])} is claimed "
-                    "in impl.md ## Needs a person — review confirms or rejects each"
+                    "as needing a person — review confirms or rejects each"
                 ]
             )
         if not probe:

@@ -84,13 +84,10 @@ def review(status: str, *rounds: str, tail: str = "") -> str:
 
 F1 = "- F1 [open] src/a.py:3 — high — hàm trả sai kết quả khi đầu vào rỗng"
 F2 = "- F2 [open] src/b.py:9 — medium — thiếu kiểm tra"
-UNMEASURED = "## Concerns\n- [unmeasured] U1 tốc độ đọc mười nghìn dòng chưa đo\n"
-FENCE = "```\n$ time run\n3.2s\n```\n"
 PR = "PR: https://github.com/o/r/pull/7\n"
 MORE = (
     "\n## Answers\n### More rounds\nDecided by: Phong. Date: 2026-10-01. Via: board.\nRounds: 2\n"
 )
-NEEDS = "## Needs a person\n- F1: cần quyết định về giấy phép dữ liệu\n"
 FIX_INTENT = (
     "# Intent: lỗi\nAuthor: test. Status: accepted. Type: fix.\n\n"
     "## Reproduction\n```\n$ run\nboom\n```\n\n## Expected\nSource: src/a.py:1-3\n"
@@ -100,10 +97,28 @@ ASKED = "## Open questions\n1. Ai chịu trách nhiệm cho phần này?\n"
 ANSWER = {"artifact": "intent.md", "n": 1, "id": None, "text": "Người dùng.", **PERSON}
 
 
-def spike_text(status: str, verdict: str | None, rnd: int = 1, fence: bool = True) -> str:
-    said = "" if verdict is None else f"Verdict: {verdict}.\n"
-    body = f"## U1\n{said}\n{FENCE if fence else ''}"
-    return text("spike.md", status, head=f"Round: {rnd}.", body=body)
+def spike_md(verdict: str | None, rnd: int = 1) -> dict:
+    return {
+        "round": rnd,
+        "result": {"verdicts": [{"id": "U1", "verdict": verdict}] if verdict else []},
+    }
+
+
+SPEC_U = {"result": {"unmeasured": ["U1"]}}
+
+
+def row(n: int, verdict: str, *findings: tuple[str, str]) -> dict:
+    return {
+        "n": n,
+        "verdict": verdict,
+        "reviewed": "aaaaaaa",
+        "screens": {},
+        "findings": [
+            {"id": i, "label": label, "severity": "high", "path": "src/a.py", "lines": "3",
+             "text": "cần quyết định"}
+            for i, label in findings
+        ],
+    }  # fmt: skip
 
 
 def rerun_block(stage: str, **stale: str) -> str:
@@ -157,27 +172,22 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
         accepted("plan.md"),
         texts={"intent.md": it + rerun_block("intent", **{"spec.md": above_answers(sp)})},
     )
-    sp_u = text("spec.md", "accepted", body=UNMEASURED)
-    put(s, "0015_spike-missing", accepted("spec.md"), texts={"spec.md": sp_u})
+    put(s, "0015_spike-missing", accepted("spec.md"), spec_md=SPEC_U)
     put(s, "0016_spike-draft", accepted("spec.md", **{"spike.md": "draft"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("draft", "holds")})  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md("holds"))  # fmt: skip
     put(s, "0017_spike-fails", accepted("spec.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", "fails")})  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md("fails"))  # fmt: skip
     put(s, "0018_spike-fails-twice", accepted("spec.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", "fails", rnd=2)})  # fmt: skip
-    put(s, "0019_spike-no-fence", accepted("spec.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", "holds", fence=False)})  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md("fails", 2))  # fmt: skip
     put(s, "0020_spike-no-verdict", accepted("spec.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", None)})  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md(None))  # fmt: skip
     cite = text("plan.md", "accepted", body="Dựa trên spike.md ## U1.\n")
     put(s, "0021_spike-ok", accepted("plan.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", "holds"), "plan.md": cite})  # fmt: skip
+        texts={"plan.md": cite}, spec_md=SPEC_U, spike_md=spike_md("holds"))  # fmt: skip
     put(s, "0022_spike-no-cite", accepted("plan.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", "holds")})  # fmt: skip
-    put(s, "0023_spike-unnamed", accepted("spec.md"),
-        texts={"spec.md": text("spec.md", "accepted", body="## Concerns\n- [unmeasured] chưa có mã\n")})  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md("holds"))  # fmt: skip
     put(s, "0024_spike-skipped-spec", accepted("intent.md", **{"spec.md": "skipped"}),
-        texts={"spec.md": text("spec.md", "skipped", body=UNMEASURED)}, spec_md={"authority": "person"})  # fmt: skip
+        texts={"spec.md": text("spec.md", "skipped")}, spec_md={"authority": "person", **SPEC_U})  # fmt: skip
     put(s, "0025_fast-lane", {"intent.md": "accepted"}, texts={"intent.md": FIX_INTENT}, type="fix")
     put(s, "0026_fast-lane-impl", {"intent.md": "accepted", "impl.md": "accepted"},
         texts={"intent.md": FIX_INTENT}, type="fix")  # fmt: skip
@@ -199,16 +209,19 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
     put(s, "0034_incomplete", accepted("pr.md", **{"review.md": "draft"}),
         texts={**pr, "review.md": review("draft", round_(1, "incomplete"))})  # fmt: skip
     needs = round_(1, "needs-person", "- F1 [needs-person] src/a.py:3 — high — cần quyết định")
-    impl_claim = {"impl.md": text("impl.md", "accepted", body=NEEDS)}
+    claim = {"impl_md": {"result": {"needs_person": ["F1"]}}}
+    asked = {"review_md": {"rounds": [row(1, "needs-person", ("F1", "needs-person"))]}}
+    open_one = {"review_md": {"rounds": [row(1, "changes-requested", ("F1", "open"))]}}
     put(s, "0035_awaits-person", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, **impl_claim, "review.md": review("changes-requested", needs)})  # fmt: skip
-    put(s, "0036_awaits-no-reason", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", needs)})  # fmt: skip
+        texts={**pr, "review.md": review("changes-requested", needs)}, **claim, **asked)  # fmt: skip
+    put(s, "0036_awaits-unclaimed", accepted("pr.md", **{"review.md": "changes-requested"}),
+        texts={**pr, "review.md": review("changes-requested", needs)}, **asked)  # fmt: skip
     put(s, "0037_person-answered", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, **impl_claim, "review.md": review("changes-requested", needs)},
+        texts={**pr, "review.md": review("changes-requested", needs)}, **claim, **asked,
         answers=[{**ANSWER, "artifact": "review.md", "n": None, "id": "F1"}])  # fmt: skip
     put(s, "0038_every-claimed", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, **impl_claim, "review.md": review("changes-requested", round_(1, "changes-requested", F1))})  # fmt: skip
+        texts={**pr, "review.md": review("changes-requested", round_(1, "changes-requested", F1))},
+        **claim, **open_one)  # fmt: skip
     put(s, "0039_ship-refused", accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
         texts={**pr, "review.md": review("accepted", round_(1, "pass")),
                "ship.md": text("ship.md", "draft", head="Round: 1.", body="## What went out\nRefused: not up to date\n")})  # fmt: skip
@@ -302,13 +315,13 @@ _NAMES = [
         (5, "plan-missing"), (6, "impl-missing"), (7, "paused"), (8, "dropped"),
         (9, "rejected"), (10, "finished"), (11, "agent-skip"), (12, "agent-skip-named"),
         (13, "person-skip"), (14, "stale"), (15, "spike-missing"), (16, "spike-draft"),
-        (17, "spike-fails"), (18, "spike-fails-twice"), (19, "spike-no-fence"),
+        (17, "spike-fails"), (18, "spike-fails-twice"),
         (20, "spike-no-verdict"), (21, "spike-ok"), (22, "spike-no-cite"),
-        (23, "spike-unnamed"), (24, "spike-skipped-spec"), (25, "fast-lane"),
+        (24, "spike-skipped-spec"), (25, "fast-lane"),
         (26, "fast-lane-impl"), (27, "fast-lane-left"), (28, "review-missing"),
         (29, "review-draft"), (30, "changes-requested"), (31, "out-of-rounds"),
         (32, "more-rounds"), (33, "unfinished"), (34, "incomplete"), (35, "awaits-person"),
-        (36, "awaits-no-reason"), (37, "person-answered"), (38, "every-claimed"),
+        (36, "awaits-unclaimed"), (37, "person-answered"), (38, "every-claimed"),
         (39, "ship-refused"), (40, "ship-draft-old"), (41, "ship-missing"),
         (42, "draft-answered"), (43, "draft-asking"), (44, "waits-on-dependency"),
         (45, "depends-unknown"), (46, "depends-merged"), (47, "merged-one"),

@@ -43,7 +43,8 @@ Copy `notices`. A need no extension point serves is a kernel change, planned fir
 - Extension points: `routes`, `tables`, `agent` giving `Parts` of `Tool`, `Guard`
   (`check(Facts)` returns words to deny, or `None`; asked before every step and integration) and `Block` (`render(Facts)` adds prompt
   text); `sessions=(Session(kind,
-  grant, schema, purpose),)`, a paid session it runs through `ctx.agents.session(cwd, kind, prompt)`.
+  grant, output, purpose),)`, a paid session it runs through `ctx.agents.session(cwd, kind, prompt)`;
+  `output` is its declaration `{kind: session, version, fields}` (`coscc/units/contracts.py`).
   The core never writes a feature's name (`CoreNamesNoFeature` in `tests/test_boundaries.py`).
 - `Ctx` is built for this feature alone: `units` (`key`, `create_unit`, `main_tree`, `units`,
   `open_prs`, `own_tree`), `runs` (`journal`, `interventions`), `agents` (`session`), `store` (the

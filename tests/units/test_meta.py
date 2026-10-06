@@ -15,6 +15,7 @@ from unittest import mock
 from coscc.agent import harness
 from coscc.store.db import Data
 from coscc.store.journal import Journal
+from coscc.units.contracts import ContractError
 from coscc.units.history import History
 from coscc.units.meta import SOURCE, MetaError, UnitMeta
 
@@ -257,6 +258,59 @@ class TheSnapshotDecides(Base):
             check=False,
         )
         self.assertIn("waiting-on", json.loads(gate.stdout)["reasons"])
+
+
+class TheOutputsTheLoopReads(Base):
+    UNIT = "0010_full-loop"
+
+    def record(self, stage: str, obj: dict, version: int | None = None) -> None:
+        self.meta.import_store(WS, self.store)
+        submitted = {"run": "r", "revision": "h", "object": obj}
+        with self.data.write() as conn:
+            self.meta.record_result(conn, WS, self.UNIT, stage, f"{stage}.md", submitted)
+            if version is not None:
+                conn.execute("UPDATE outputs SET version = ? WHERE agent = ?", (version, stage))
+
+    def artifact(self, name: str) -> dict:
+        return self.meta.snapshot(WS, NAMES)["units"][f"proj/{self.UNIT}"]["artifacts"][name]
+
+    def spike(self, *rounds: str) -> None:
+        for verdict in rounds:
+            verdicts = [{"id": "U1", "verdict": verdict}]
+            self.record("spike", {"judgement": "ready", "verdicts": verdicts})
+
+    def test_an_output_of_another_version_is_refused_when_read(self):
+        self.record("spec", {"judgement": "ready", "questions": []}, version=2)
+        with self.assertRaises(ContractError) as raised:
+            self.meta.snapshot(WS, NAMES)
+        self.assertEqual(raised.exception.code, "output-version")
+
+    def test_the_loop_sees_only_the_fields_it_reads(self):
+        self.record(
+            "spec",
+            {"stage": "spec", "judgement": "ready", "questions": [], "unmeasured": [], "extra": 1},
+        )
+        self.assertEqual(
+            self.artifact("spec.md")["result"],
+            {"judgement": "ready", "questions": [], "unmeasured": []},
+        )
+
+    def test_the_app_counts_the_spike_round(self):
+        self.spike("fails", "holds")
+        self.assertEqual(self.artifact("spike.md")["round"], 2)
+
+    def test_a_spike_that_failed_only_last_is_still_round_one(self):
+        self.spike("holds", "fails")
+        self.assertEqual(self.artifact("spike.md")["round"], 1)
+
+    def test_the_unit_page_gets_the_latest_output_of_each_agent(self):
+        self.record("spec", {"stage": "spec", "judgement": "draft", "questions": []})
+        self.record("spec", {"stage": "spec", "judgement": "ready", "questions": []})
+        self.record("intent", {"stage": "intent", "judgement": "ready"})
+        got = self.meta.outputs(WS, self.UNIT)
+        self.assertEqual([o["agent"] for o in got], ["spec", "intent"])
+        self.assertEqual(got[0]["version"], 1)
+        self.assertEqual(got[0]["fields"], {"judgement": "ready", "questions": []})
 
 
 class TheIngest(Base):

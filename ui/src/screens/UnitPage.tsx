@@ -2,7 +2,7 @@
 // panel holds the facts; the timeline holds every run and answer, newest first.
 
 import { Fragment, useState, type ReactNode } from "react";
-import type { Answer, Detail, StageView, UnitRun } from "../api.gen";
+import type { Answer, Detail, OutputRecord, StageView, UnitRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import type { PlacedUnit } from "../lib/boards";
 import { allUnits, useBoards } from "../lib/boards";
@@ -21,6 +21,7 @@ const TARGET_USD = 15;
 
 export function UnitPage({ workspace, number }: { workspace: string; number: string }) {
   const { boards, loading } = useBoards();
+  const [tab, setTab] = useState<"activity" | "outputs">("activity");
   const placed = allUnits(boards).find((u) => u.workspace.name === workspace && u.number === Number(number));
   const query: Record<string, string> = placed ? { cwd: placed.workspace.path, name: placed.name } : {};
   const detail = useResource(placed ? "/api/units/{name}" : null, query, { on: [""] });
@@ -91,12 +92,15 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         )}
         <FeatureSlots at="unit" workspace={placed.workspace} unit={placed.name} />
         <div className="tabs" style={{ marginTop: 22 }}>
-          <a className="on">Activity</a>
+          <a className={tab === "activity" ? "on" : ""} onClick={() => setTab("activity")}>Activity</a>
+          <a className={tab === "outputs" ? "on" : ""} onClick={() => setTab("outputs")}>Outputs</a>
         </div>
         {detail.state === "error" ? (
           <ErrorState error={detail.error} onRetry={detail.reload} />
         ) : !d ? (
           <SkeletonRows rows={4} />
+        ) : tab === "outputs" ? (
+          <Outputs outputs={d.outputs} names={names} />
         ) : (
           <Timeline detail={d} names={names} live={running?.stage} cwd={placed.workspace.path} unit={placed.name} />
         )}
@@ -216,6 +220,57 @@ export function Track({ stages, now, done, waiting }: { stages: StageView[]; now
       })}
     </div>
   );
+}
+
+/** What each agent last handed back: one block per agent, its contract version, then every field. */
+function Outputs({ outputs, names }: { outputs: OutputRecord[]; names: Record<string, string> }) {
+  if (!outputs.length)
+    return (
+      <Empty icon="clock" title="No outputs yet">
+        No agent has handed back an output yet.
+      </Empty>
+    );
+  return (
+    <div className="col gap6">
+      {outputs.map((o) => (
+        <div key={o.agent} style={{ padding: "10px 12px", background: "var(--bg-sunk)", borderRadius: "var(--r2)" }}>
+          <div className="row" style={{ gap: 6 }}>
+            <AgentAvatar stage={o.agent} />
+            <b>{names[o.agent] ?? o.agent}</b>
+            <Chip square tone="plain">v{o.version}</Chip>
+            <span className="faint" title={o.at}>{ago(o.at)}</span>
+          </div>
+          {Object.entries(o.fields).map(([k, v]) => (
+            <div key={k} style={{ marginTop: 6 }}>
+              <span className="faint">{k}</span>
+              <FieldValue value={v} />
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const pairs = (o: object) =>
+  Object.entries(o)
+    .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+    .join(", ");
+
+/** A list is one line per item (an object item as `key: value` pairs); anything else is text. */
+function FieldValue({ value }: { value: unknown }) {
+  if (Array.isArray(value))
+    return value.length ? (
+      <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+        {value.map((item, i) => (
+          <li key={i}>{item && typeof item === "object" ? pairs(item) : String(item)}</li>
+        ))}
+      </ul>
+    ) : (
+      <div className="faint">none</div>
+    );
+  if (value && typeof value === "object") return <div>{pairs(value)}</div>;
+  return <div>{String(value)}</div>;
 }
 
 type Item = { at: string; key: string; node: ReactNode };

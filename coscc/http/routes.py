@@ -555,7 +555,8 @@ async def get_unit(name: str, request: Request) -> Detail:
         raise Invalid(f"no unit {name} in {cwd}")
     journal = core.ws.journal()
     timeline = await asyncio.to_thread(journal.timeline, core.ws.key(cwd), name) if journal else []
-    return detail(unit, timeline)
+    outputs = await asyncio.to_thread(core.ws.unit_meta().outputs, core.ws.key(cwd), name)
+    return detail(unit, timeline, outputs)
 
 
 def _number(request: Request, name: str) -> int | None:

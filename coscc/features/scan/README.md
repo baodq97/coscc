@@ -50,8 +50,9 @@ hours passed since the last scan of the workspace, a skipped one included.
 ## What the agent sees
 
 - One prompt, written in `INSTRUCTIONS` and `prompt_of`: no skill and no file is read.
-- One tool, `submit`, against the schema `scan` of `coscc/units/submit.py`: `proposals`, each
-  `type`, `slug`, `title`, `problem`, `sources`. No other tool and no command.
+- One tool, `submit`, against the schema generated from its declaration `SESSION.output`
+  (`kind: session`): `proposals`, each `type`, `slug`, `title`, `problem`, `sources`. No other
+  tool and no command.
 
 ## Hazards
 
