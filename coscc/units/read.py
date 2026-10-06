@@ -164,6 +164,8 @@ class Card(TypedDict):
     # When its last run ended, or empty: what a list sorts by.
     updated: str
     attention_reason: str
+    # The process the unit walks, `<pack>/<name>`.
+    process: str
     # What the next stage declares it needs and the unit lacks: the step is refused until it is there.
     missing: list[str]
     idea: str
@@ -287,6 +289,7 @@ def card(u: Mapping[str, Any]) -> Card:
             default="",
         ),
         "attention_reason": str(u.get("attention_reason") or ""),
+        "process": str(u.get("process") or ""),
         "missing": [str(m) for m in u.get("missing") or []],
         "idea": str(u.get("idea") or ""),
         "rank": backlog_.get("rank"),

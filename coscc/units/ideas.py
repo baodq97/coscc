@@ -115,6 +115,7 @@ class Ideas:
     def create_idea(self, cwd: str, slug: str, brief: str) -> dict[str, Any]:
         """The idea's home is `cwd`'s store; its text is the brief, and nothing else."""
         self.ws.check(cwd)
+        self.ws.new_unit_process(cwd)
         if not str(brief or "").strip():
             raise Invalid("An idea needs a brief.")
         name = self.ws.name(cwd)

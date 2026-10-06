@@ -974,7 +974,7 @@ class Steps:
         if held:
             raise Refused(
                 f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it",
-                ("held",),
+                (str(held.get("code") or "held"),),
             )
         return data, found, row
 

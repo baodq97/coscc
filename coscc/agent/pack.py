@@ -736,6 +736,88 @@ def states_of(key: str) -> str:
     return "; ".join(f"{s} in {', '.join(ps)}" for s, ps in where.items())
 
 
+# --- on or off per workspace -------------------------------------------------
+#
+# The prefs `packs.state` `{pack: {workspace key: "on" | "off"}}` and `packs.process`
+# `{workspace key: "<pack>/<process>"}`. A pack is on and its `full` process the default until
+# the owner says otherwise. A unit records the process when it opens; nothing re-reads these after.
+
+STATE_PREF = "packs.state"
+PROCESS_PREF = "packs.process"
+
+
+def _pref(data: Any, name: str) -> dict[str, Any]:
+    stored = data.pref(name, {})
+    return stored if isinstance(stored, dict) else {}
+
+
+class ProcessShown(Process):
+    ref: str
+    name: str
+
+
+class PackShown(TypedDict):
+    name: str
+    version: str
+    description: str
+    on: bool
+    process: str
+    processes: list[ProcessShown]
+
+
+def pack_on(data: Any, name: str, key: str) -> bool:
+    mine = _pref(data, STATE_PREF).get(name)
+    return not (isinstance(mine, dict) and mine.get(key) == "off")
+
+
+def chosen_process(data: Any, key: str) -> str:
+    ref = _pref(data, PROCESS_PREF).get(key)
+    return ref if isinstance(ref, str) and process(ref) is not None else DEFAULT_PROCESS
+
+
+def default_process(data: Any, key: str) -> str | None:
+    """The process a new unit of workspace `key` walks; `None` when its pack is off."""
+    ref = chosen_process(data, key)
+    return ref if pack_on(data, ref.partition("/")[0], key) else None
+
+
+def packs_shown(data: Any, key: str) -> list[PackShown]:
+    """The packs for Settings: name, version, on, the default process and each process's states."""
+    name = manifest()["name"]
+    return [
+        {
+            "name": name,
+            "version": str(manifest()["version"]),
+            "description": str(manifest().get("description") or ""),
+            "on": pack_on(data, name, key),
+            "process": chosen_process(data, key),
+            "processes": [
+                ProcessShown(ref=ref, name=ref.rpartition("/")[2], **p)
+                for ref, p in processes().items()
+            ],
+        }
+    ]
+
+
+def set_packs(
+    data: Any, key: str, name: str, on: bool | None = None, chosen: str | None = None
+) -> None:
+    """Switch pack `name` on or off for workspace `key` and/or choose its default process;
+    `PackError` for a pack or a process that is not there."""
+    if name != manifest()["name"]:
+        raise PackError(f"not a pack: {name}")
+    if chosen is not None and (process(chosen) is None or not chosen.startswith(f"{name}/")):
+        raise PackError(f"not a process of {name}: {chosen}")
+    if on is not None:
+        state = _pref(data, STATE_PREF)
+        mine = state.get(name)
+        state[name] = {**(mine if isinstance(mine, dict) else {}), key: "on" if on else "off"}
+        data.set_pref(STATE_PREF, state)
+    if chosen is not None:
+        refs = _pref(data, PROCESS_PREF)
+        data.set_pref(PROCESS_PREF, {**refs, key: chosen})
+
+
 # --- the owner's layer --------------------------------------------------------
 
 

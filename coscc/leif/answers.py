@@ -293,7 +293,7 @@ class Answers:
             return {"ingest_error": reason}
 
     async def _open_unit(
-        self, cwd: str, unit: str, brief: bool, idea: str = "", depends_on: str = ""
+        self, cwd: str, unit: str, brief: bool, process: str, idea: str = "", depends_on: str = ""
     ) -> dict[str, Any]:
         """A new unit's `unit_meta` row, its `idea` and `depends` rows when opened from an idea,
         and, given a brief, its `idea.md` accepted through guard `unit-created`, in one
@@ -303,7 +303,7 @@ class Answers:
         deps = [depends_on] if depends_on else []
 
         def opening(conn: sqlite3.Connection) -> None:
-            meta.add_unit(conn, workspace, unit)
+            meta.add_unit(conn, workspace, unit, process)
             if idea:
                 meta.link(conn, workspace, unit, idea, deps)
 
@@ -444,6 +444,7 @@ class Answers:
         `unit_links` are what ties it to the idea (the idea file is never written).
         """
         self.ws.check(cwd)
+        process = self.ws.new_unit_process(cwd)
         if depends_on and not idea:
             raise Invalid("depends_on needs an idea: it names another unit of the same idea.")
         if idea:
@@ -470,7 +471,9 @@ class Answers:
                 raise Invalid(str(e)) from e
             # The new unit's row, its idea's rows, and its `idea.md` accepted when it has a brief.
             made.update(
-                await self._open_unit(cwd, made["unit"], bool(made.get("brief")), idea, depends_on)
+                await self._open_unit(
+                    cwd, made["unit"], bool(made.get("brief")), process, idea, depends_on
+                )
             )
             if idea:
                 if "ingest_error" in made:
