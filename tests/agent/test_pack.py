@@ -252,6 +252,14 @@ class TheOwnersLayer(unittest.TestCase):
             Steps.refuse_unready(steps, "intent", Path(self.d.name), None)
         self.assertEqual(caught.exception.reasons, ("agent-invalid",))
 
+    def test_a_skill_name_off_the_pattern_is_never_written(self):
+        row = pack.row("spec")
+        for name in ("../../x", "A", "a/b", ""):
+            with self.subTest(name=name):
+                with mock.patch.dict(row, {"skills": [name]}), self.assertRaises(ValueError):
+                    pack._write_skill(row, name, "text")
+        self.assertFalse((pack.owner_dir() / "x").exists())
+
     def test_a_file_that_does_not_parse_names_its_line(self):
         self.own("plan", "---\nmodel: not json\n---\n")
         self.assertIn("line 2: model is not one line of JSON", pack.problems("plan")[0])

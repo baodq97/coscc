@@ -322,9 +322,13 @@ def _stamp(directory: Path) -> tuple[tuple[str, int, int], ...]:
     return tuple(found)
 
 
+def _skill_name(name: Any) -> bool:
+    return isinstance(name, str) and re.fullmatch(r"[a-z][a-z0-9-]*", name) is not None
+
+
 def skill_path(name: str) -> Path | None:
     """Where `name`'s text is read from: the owner's copy first, then the built-in."""
-    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+    if not _skill_name(name):
         return None
     for root in (owner_dir(), BUILTIN):
         path = root / "skills" / name / SKILL_FILE
@@ -395,19 +399,36 @@ def _loaded() -> dict[str, dict[str, Any]]:
             except (OSError, ValueError) as e:
                 row["problems"] = [f"{path}: {e}"]
             else:
-                row.update(fields)
-                if body:
-                    row[BODY] = body
-                row["edited"] = [*fields, *([BODY] if body else [])]
+                mine = {**base, **fields, **({BODY: body} if body else {})}
+                bad = _safely(mine)
+                if bad:
+                    # The owner's values stay out: the row is the built-in's, its runs refused.
+                    row["problems"] = [f"{path}: {r}" for r in bad]
+                else:
+                    row.update(fields)
+                    if body:
+                        row[BODY] = body
+                    row["edited"] = [*fields, *([BODY] if body else [])]
         rows[key] = row
     owned_skills = {p.parent.name for p in (owner / "skills").glob(f"*/{SKILL_FILE}")}
     for key, row in rows.items():
         row["edited"] += [f"skill:{s}" for s in row.get("skills", []) if s in owned_skills]
         if not row["problems"]:
-            row["problems"] = check(_fields(row), None, {k: _fields(r) for k, r in rows.items()})
+            others = {k: _fields(r) for k, r in rows.items()}
+            row["problems"] = _safely(_fields(row), others)
     stray = sorted(p.stem for p in (owner / "agents").glob("*.md") if p.stem not in rows)
     _CACHE.update(stamp=stamp, rows=rows, stray=stray)
     return rows
+
+
+def _safely(
+    row: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]] | None = None
+) -> list[str]:
+    """`check`'s reasons, or the one a value of a shape no check expected raises (a hand edit)."""
+    try:
+        return check(row, None, rows)
+    except (TypeError, AttributeError, ValueError, KeyError) as e:
+        return [f"{type(e).__name__}: {e}"]
 
 
 def _fields(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -530,6 +551,8 @@ def write(
 
 
 def _write_skill(found: Mapping[str, Any], name: str, value: Any) -> tuple[str, str]:
+    if not _skill_name(name):
+        raise ValueError(f"{SKILL}{name}: a skill name is lowercase letters, digits and hyphens")
     if name not in (found.get("skills") or []):
         raise ValueError(f"{SKILL}{name}: {found['key']} names no such skill")
     if value is not None and not isinstance(value, str):

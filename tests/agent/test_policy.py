@@ -982,6 +982,7 @@ class ASecretIsOutOfEveryToolsReach(_Unit):
         data, cfg = str(self.root / "data"), str(self.home / ".config")
         for path in (
             f"{data}/vault",
+            f"{data}/packs",
             f"{data}/cos.db",
             f"{data}/cos.db-wal",
             f"{data}/cos.db-shm",
@@ -992,6 +993,12 @@ class ASecretIsOutOfEveryToolsReach(_Unit):
             f"{self.home}/.gnupg",
         ):
             self.assertIn(path, self.secrets)
+
+    def test_a_bash_write_into_the_owners_rows_is_refused(self):
+        rows = self.root / "data" / "packs" / "local" / "agents" / "spec.md"
+        for command in (f"echo x > {rows}", f"rm {rows}", f"sed -i s/a/b/ {rows}"):
+            with self.subTest(command=command):
+                self.assertIn(policy.SECRETS, self.bash(command))
 
     def test_the_database_is_the_apps(self):
         from coscc.store.db import DB_FILENAME
