@@ -23,6 +23,7 @@ from coscc.store.db import Data
 from coscc.store.journal import Journal
 from coscc.http.app import Core
 from coscc.kernel import Invalid
+from tests.http.test_app import seed_unit
 from tests.units.test_submit import submits as _submits
 
 SLUG = "proof-of-hold"
@@ -286,13 +287,18 @@ class Repo(unittest.TestCase):
         made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, self.directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (self.directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
+            (self.directory / name).write_text("# X: fixture\n", encoding="utf-8")
         (self.directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
+            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}.\n", encoding="utf-8"
+        )
+        seed_unit(
+            self.core,
+            self.cwd,
+            self.unit,
+            statuses=dict.fromkeys(
+                ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md"), "accepted"
+            ),
+            type="feat",
         )
         self.tree = Path(asyncio.run(self.core.answers.worktree(self.cwd, self.unit))["path"])
         self.key = self.core.ws.key(self.cwd)

@@ -69,7 +69,6 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             "unit_answers",
             "unit_holds",
             "unit_unknowns",
-            "unit_seen",
         }
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
@@ -702,3 +701,59 @@ class TheRunningAppsDatabaseIsNotOpened(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class V16DropsWhatTheFilesFed(unittest.TestCase):
+    def test_a_v15_database_loses_what_a_file_fed_and_done_becomes_accepted(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.connect() as conn:
+                conn.execute(
+                    "CREATE TABLE unit_seen (root TEXT, workspace TEXT, unit TEXT, "
+                    "artifact TEXT, sha256 TEXT, questions INTEGER)"
+                )
+                conn.execute(
+                    "INSERT INTO unit_seen VALUES ('/w', 'p', '0001_a', 'plan.md', 'x', 1)"
+                )
+                conn.execute("ALTER TABLE unit_unknowns ADD COLUMN raw TEXT")
+                for field, raw in (("status", "approved"), ("ingest", None)):
+                    conn.execute(
+                        "INSERT INTO unit_unknowns (root, workspace, unit, artifact, field, "
+                        "reason, raw, at) VALUES ('/w', 'p', '0001_a', 'plan.md', ?, 'r', ?, 't')",
+                        (field, raw),
+                    )
+                for key in ("unit-meta:0135:/w/p", "unit-meta:0136-authority:/w/p", "keep"):
+                    conn.execute("INSERT INTO migrations (key, at) VALUES (?, 't')", (key,))
+                for frm, to in (
+                    ("not started", "done"),
+                    ("done", "accepted"),
+                    ("draft", "accepted"),
+                ):
+                    conn.execute(
+                        "INSERT INTO transitions (at, root, workspace, unit, artifact, stage, "
+                        "from_state, to_state, actor, session, source, machine) "
+                        f"VALUES ('t', '/w', 'p', '0001_a', 'plan.md', 'plan', '{frm}', '{to}', "
+                        "'a', 's', 'src', 'unit')"
+                    )
+                conn.execute("PRAGMA user_version=15")
+
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+                cols = {r["name"] for r in conn.execute("PRAGMA table_info(unit_unknowns)")}
+                unknown = [r["field"] for r in conn.execute("SELECT field FROM unit_unknowns")]
+                keys = [r["key"] for r in conn.execute("SELECT key FROM migrations")]
+                moves = [
+                    (r["from_state"], r["to_state"])
+                    for r in conn.execute(
+                        "SELECT from_state, to_state FROM transitions ORDER BY id"
+                    )
+                ]
+            self.assertNotIn("unit_seen", tables)
+            self.assertNotIn("raw", cols)
+            self.assertEqual(unknown, ["ingest"])
+            self.assertEqual(keys, ["keep"])
+            self.assertEqual(
+                moves,
+                [("not started", "accepted"), ("accepted", "accepted"), ("draft", "accepted")],
+            )

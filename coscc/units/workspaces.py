@@ -23,11 +23,10 @@ from coscc.config import Config
 from coscc.store.db import Busy, Data
 from coscc.git import gitops
 from coscc.git.gitops import GitError
-from coscc.store.journal import BadRecord, Journal
+from coscc.store.journal import Journal
 from coscc.store.workspaces import BadName, Store, require_name, valid_name
 from coscc.units import BadUnit, Invalid, scratch
-from coscc.units.history import BadTransition
-from coscc.units.meta import MetaError, UnitMeta
+from coscc.units.meta import UnitMeta
 
 log = logging.getLogger(__name__)
 
@@ -70,9 +69,6 @@ class Workspaces:
         self.sessions = sessions
         # No working folder means no store.
         self.store = Store(config.working_dir, config.data_dir) if config.working_dir else None
-        # Journal keys whose `cos.db` store was imported: an import is never undone, so
-        # `snapshot` stops asking once it is.
-        self.imported: set[str] = set()
 
     # -- the list -------------------------------------------------------------
 
@@ -313,13 +309,11 @@ class Workspaces:
         peers: list[tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
         """What `coscc.loop --state` decides on: `cwd`'s units and those of every workspace a link
-        may name, from `cos.db`; `units_` narrows it as `UnitMeta.snapshot` says. A store not
-        imported yet is imported first.
+        may name, from `cos.db`; `units_` narrows it as `UnitMeta.snapshot` says.
 
-        Raises `Invalid` when an import cannot run: a board read on metadata nobody could
-        read would show every unit as not started. So also when `cos.db` cannot be read, in one
-        sentence that names the workspace; the error, which may name the database's path, goes
-        to the log. `peers` is `peer_table`'s, when the caller read it already.
+        Raises `Invalid` when `cos.db` cannot be read, in one sentence that names the workspace;
+        the error, which may name the database's path, goes to the log. `peers` is
+        `peer_table`'s, when the caller read it already.
         """
         meta = self.unit_meta()
         own = self.key(cwd)
@@ -328,16 +322,6 @@ class Workspaces:
             for name, path in (self.peer_table()[0] if peers is None else peers)
         }
         try:
-            for key in {own, *names.values()} - self.imported:
-                # A workspace with no units yet has nothing to import: one `stat`, not a query.
-                if not (units.root(key, self.config.data_dir) / units.COS_DIR).is_dir():
-                    continue
-                if meta.imported(key):
-                    # The answers imported before a row said whose each was.
-                    meta.classify_answers(key)
-                    self.imported.add(key)
-                else:
-                    self._import(meta, key)
             return meta.snapshot(own, names, units_)
         except (Busy, sqlite3.Error, OSError) as e:
             log.warning("the units of %s could not be read: %s", own, e)
@@ -349,33 +333,3 @@ class Workspaces:
         """`unit`'s entry in the snapshot, `{}` when the app has none."""
         snap = self.snapshot(cwd, [unit])
         return snap["units"].get(f"{snap['workspace']}/{unit}") or {}
-
-    def _import(self, meta: UnitMeta, key: str) -> None:
-        """One store into `cos.db`, once; what it could not read, if anything, goes to
-        the log and to one `import` row of the run log. A store with no `.cos/` yet is left
-        for later."""
-        store = units.root(key, self.config.data_dir)
-        if not (store / units.COS_DIR).is_dir():
-            return
-        try:
-            unknowns = meta.import_store(key, store)
-        except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
-            # The workspace by name and the error in the log: `key` is a path, and `Busy` and
-            # `MetaError` carry the database's path or the loop's stderr.
-            log.warning("the units of %s could not be imported: %s", key, e)
-            raise Invalid(
-                f"the units of {self.name(key) or 'a workspace'} could not be imported"
-            ) from e
-        # Only when there is something to report, so a store read cleanly adds no row.
-        if not unknowns:
-            return
-        for u in unknowns:
-            log.warning(
-                "import %s: %s %s %s: %s", key, u["unit"], u["artifact"], u["field"], u["reason"]
-            )
-        journal = self.journal()
-        if journal is not None:
-            try:
-                journal.append({"kind": "import", "workspace": key, "unknowns": unknowns})
-            except BadRecord, Busy:
-                pass

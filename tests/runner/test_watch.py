@@ -13,6 +13,7 @@ from coscc.config import Config
 from coscc.kernel import Invalid
 from coscc.http.app import Core
 from tests.http.test_app import create_sync
+from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
 
 
@@ -53,10 +54,16 @@ class AStepCanBeWatched(unittest.TestCase):
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = self.made["unit"]
         self.other = create_sync(self.core, str(self.repo), "another", "words")["unit"]
-        for made in (self.made["path"],):
-            (Path(made) / "intent.md").write_text(
-                "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
-            )
+        (Path(self.made["path"]) / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        seed(
+            self.core.ws.unit_meta(),
+            self.core.ws.key(str(self.repo)),
+            self.unit,
+            statuses={"intent.md": "accepted"},
+            type="feat",
+        )
 
     def test_pages_and_following_while_running_and_after(self):
         ws = str(self.repo)

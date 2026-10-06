@@ -171,15 +171,13 @@ def _answer_and_stop(args: list[str]) -> None:
 def _state(target: str) -> int:
     """Print the snapshot `coscc.loop --state` reads for workspace `target` (board name or path).
 
-    A store not imported yet is imported first. Workspaces are named as `Workspaces.peer_table`
-    names them: a shared name, or one `valid_name` refuses, gets none.
+    Workspaces are named as `Workspaces.peer_table` names them: a shared name, or one `valid_name` refuses, gets none.
     """
     import json
 
-    from coscc import units
     from coscc.config import from_env
     from coscc.store.db import Data
-    from coscc.units.meta import MetaError, UnitMeta
+    from coscc.units.meta import UnitMeta
 
     config = from_env()
     if not config.working_dir:
@@ -193,14 +191,6 @@ def _state(target: str) -> int:
     if wanted is None:
         return 2
     meta = UnitMeta(config.working_dir, data)
-    try:
-        for key in {wanted, *names.values()}:
-            store = units.root(key, config.data_dir)
-            if (store / units.COS_DIR).is_dir():
-                meta.import_store(key, store)
-    except MetaError as e:
-        print(f"coscc: {e}", file=sys.stderr)
-        return 1
     print(json.dumps(meta.snapshot(wanted, names), ensure_ascii=False))
     return 0
 
@@ -248,13 +238,12 @@ def _skip(args: list[str]) -> int:
         return 2
     target, unit = rest[0], rest[1]
 
-    from coscc import units
     from coscc.config import from_env
     from coscc.store.db import Data
     from coscc.store.journal import Journal
     from coscc.units import transitions
     from coscc.units.history import BadTransition
-    from coscc.units.meta import MetaError, UnitMeta
+    from coscc.units.meta import UnitMeta
 
     config = from_env()
     if not config.working_dir:
@@ -268,13 +257,6 @@ def _skip(args: list[str]) -> int:
     if wanted is None:
         return 2
     meta = UnitMeta(config.working_dir, data)
-    try:
-        store = units.root(wanted, config.data_dir)
-        if (store / units.COS_DIR).is_dir():
-            meta.import_store(wanted, store)
-    except MetaError as e:
-        print(f"coscc: {e}", file=sys.stderr)
-        return 1
     with data.connect() as conn:
         known = conn.execute(
             "SELECT 1 FROM unit_meta WHERE root = ? AND workspace = ? AND unit = ?",

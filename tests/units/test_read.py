@@ -18,7 +18,7 @@ from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
 from tests.leif.test_answers import REVIEW_ONE
-from tests.http.test_app import create_sync
+from tests.http.test_app import create_sync, seed_unit
 from tests.github.test_integration import PR, SLUG, StandIn, git
 from tests.units.test_submit import submits as _submits
 
@@ -55,7 +55,10 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = self.made["unit"]
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\n", encoding="utf-8"
+        )
+        seed_unit(
+            self.core, str(self.repo), self.unit, statuses={"intent.md": "accepted"}, type="feat"
         )
 
     def held(self) -> list[dict]:
@@ -388,13 +391,18 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         made = await self.core.answers.create_unit(self.cwd, SLUG, "fixture")
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
+            (directory / name).write_text("# X: fixture\n", encoding="utf-8")
         (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
+            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}.\n", encoding="utf-8"
+        )
+        seed_unit(
+            self.core,
+            self.cwd,
+            self.unit,
+            statuses=dict.fromkeys(
+                ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md"), "accepted"
+            ),
+            type="feat",
         )
         (directory / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
         self.hang = False

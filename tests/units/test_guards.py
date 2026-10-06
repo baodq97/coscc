@@ -49,6 +49,19 @@ class AUnitOpensAcceptedOnlyFromABrief(unittest.TestCase):
         self.assertEqual(lane.guard_for("unit", "create"), "unit-created")
 
 
+class AReviewGoesBackToDraftOnlyOnItsIncompleteRound(unittest.TestCase):
+    def test_a_round_number_opens_it_and_none_closes_it_with_a_code(self):
+        self.assertEqual(guards.guard("incomplete-round").check({"round": 2}), OPEN)
+        for inputs in ({"round": 0}, {}):
+            verdict = guards.guard("incomplete-round").check(inputs)
+            self.assertFalse(verdict.open)
+            self.assertEqual(verdict.reasons, ("no-round",))
+
+    def test_the_lane_names_it_for_the_incomplete_transition(self):
+        lane = states.default_lanes().lane("full")
+        self.assertEqual(lane.guard_for("unit", "incomplete"), "incomplete-round")
+
+
 class TheReasonTableIsClosed(unittest.TestCase):
     def test_a_closed_verdict_with_a_code_outside_the_table_is_refused(self):
         with self.assertRaises(BadVerdict):

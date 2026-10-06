@@ -20,7 +20,13 @@ from coscc.kernel import Invalid
 from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 from tests.http.test_app import create_sync
+from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
+
+
+def state_of(core, cwd, unit, **kw):
+    """The unit's state as rows, where the app keeps it."""
+    seed(core.ws.unit_meta(), core.ws.key(cwd), unit, **kw)
 
 
 class StartingAUnitAndItsBranch(unittest.TestCase):
@@ -94,9 +100,9 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
 
     def test_the_branch_name_is_the_one_the_intents_type_implies(self):
         made = create_sync(self.core, str(self.repo), "a-problem", "some words")
-        directory = Path(made["path"])
-        (directory / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
+        (Path(made["path"]) / "intent.md").write_text("# Intent\nAuthor: t.\n", encoding="utf-8")
+        state_of(
+            self.core, str(self.repo), made["unit"], statuses={"intent.md": "accepted"}, type="fix"
         )
         got = asyncio.run(self.core.backlog.start_branch(str(self.repo), made["unit"]))
         self.assertEqual(got["branch"], "fix/a-problem")
@@ -136,8 +142,9 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
 
     def test_cutting_the_same_branch_twice_is_refused_rather_than_rejoined(self):
         made = create_sync(self.core, str(self.repo), "a-problem", "some words")
-        (Path(made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
+        (Path(made["path"]) / "intent.md").write_text("# Intent\nAuthor: t.\n", encoding="utf-8")
+        state_of(
+            self.core, str(self.repo), made["unit"], statuses={"intent.md": "accepted"}, type="fix"
         )
         asyncio.run(self.core.backlog.start_branch(str(self.repo), made["unit"]))
         self._git("switch", "-q", "main")
@@ -147,8 +154,9 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
 
     def _typed_unit(self, slug: str = "a-problem") -> str:
         made = create_sync(self.core, str(self.repo), slug, "some words")
-        (Path(made["path"]) / "intent.md").write_text(
-            f"# Intent: {slug}\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
+        (Path(made["path"]) / "intent.md").write_text("# Intent\nAuthor: t.\n", encoding="utf-8")
+        state_of(
+            self.core, str(self.repo), made["unit"], statuses={"intent.md": "accepted"}, type="fix"
         )
         return made["unit"]
 
@@ -307,15 +315,17 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         made = create_sync(self.core, self.cwd, "has-intent", "words")
         self.b = made["unit"]
         (Path(made["path"]) / "intent.md").write_text(
-            "# Intent: b\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n",
-            encoding="utf-8",
+            "# Intent: b\nAuthor: t.\n\n## Problem\n\np\n", encoding="utf-8"
         )
-        done = Path(create_sync(self.core, self.cwd, "finished", "words")["path"])
-        for name in ("intent", "spec", "plan"):
-            status = "done" if name == "plan" else "accepted"
-            (done / f"{name}.md").write_text(
-                f"# {name}\nAuthor: t. Status: {status}.\n", encoding="utf-8"
-            )
+        state_of(self.core, self.cwd, self.b, statuses={"intent.md": "accepted"}, type="feat")
+        done = create_sync(self.core, self.cwd, "finished", "words")["unit"]
+        state_of(
+            self.core,
+            self.cwd,
+            done,
+            statuses={"intent.md": "accepted", "spec.md": "accepted", "plan.md": "accepted"},
+            shipped=True,
+        )
         self.journal = self.core.ws.journal()
         self.key = self.core.ws.key(self.cwd)
 

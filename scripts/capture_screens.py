@@ -26,7 +26,7 @@ directory, and five units in it, always the same, so a spec can name its address
     0002_open-question     an intent with one open question nobody answered
     0003_awaiting-ship     every artifact up to a passing review.md; pr.md names
                            github.com/o/r/pull/1
-    0004_finished          plan.md: done; its intent has a `## Proposed outcome` whose
+    0004_finished          shipped (a merge-read row), plan.md accepted; its intent has a `## Proposed outcome` whose
                            deadline (2026-09-20) has passed and two open questions;
                            one `plan` run of it, ended, in the run log, so `/`, `/activity` and its Timeline show a time
     0005_unfinished-review every artifact up to a review.md whose round 2 asked for
@@ -34,16 +34,16 @@ directory, and five units in it, always the same, so a spec can name its address
                            github.com/o/r/pull/2
 
 After them `make_idea_fixture` makes `0006_frontend-calls-api`, and
-`0007_unread-status` has a spec whose status no stage writes, so `/settings` lists it in
-its import report. Then `AUTOPILOT_FIXTURE`:
+`0007_unread-status` has a spec with no state (a status no stage writes is no transition). Then `AUTOPILOT_FIXTURE`:
 
     0008_draft-impl        a draft impl.md with no question, gone on with twice on
                            one head by the autopilot (`make_autopilot_fixture`)
     0009_refused-impl      an accepted plan, whose `impl` the autopilot queued and
                            the gate refused with `gate-closed` (`seed_refusal`)
 
-Every file is written by hand, then goes into `cos.db` through the
-import and an ingest (`ingest_fixture`), since the board reads a unit from there.
+Every file is written by hand as prose; each unit's states (the `statuses`, `type`, `shipped`
+and `questions` its fixture carries) are seeded as rows in `cos.db` by `seed_fixture`, since
+the board reads a unit from there and never from its files.
 
 The run log holds a `spec` run that ended `done` for $0.52 and an `impl` run
 that ended `failed` after 109 turns with no known cost on `0002_open-question`, and an
@@ -103,7 +103,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -118,7 +118,7 @@ from scripts.proof_harness import (
     EXIT_PASS,
     RealApp,
     ensure_studio,
-    ingest_fixture,
+    seed_fixture,
     make_repo,
     require_browser,
     seed_session,
@@ -151,51 +151,83 @@ ROUND = "\n## Round 1\n\nReviewed: {sha}. Verdict: pass.\n\n### Findings\n\n### 
 ASKED = "\n## Round {n}\n\nReviewed: {sha}. Verdict: changes-requested.\n\n### Findings\n\n{findings}\n\n### What was not reviewed\n\nNothing.\n"
 FIXTURE = {
     "fresh-intent": {
-        "intent.md": INTENT.format(title="fresh intent", problem="Một intent vừa được chấp nhận.")
+        "statuses": {"intent.md": "accepted"},
+        "type": "feat",
+        "files": {
+            "intent.md": INTENT.format(
+                title="fresh intent", problem="Một intent vừa được chấp nhận."
+            )
+        },
     },
     # Two open questions, so the Questions tab's dialog shows both above its fold at 1440×900.
     "open-question": {
-        "intent.md": INTENT.format(title="open question", problem="Một intent còn một câu hỏi.")
-        + "\n## Open questions\n\n1. Nhánh lấy tên từ đâu?\n"
-        + "2. Có nên trả thêm tiền cho việc này không?\n",
+        "statuses": {"intent.md": "accepted"},
+        "type": "feat",
+        "questions": {
+            "intent.md": ["Nhánh lấy tên từ đâu?", "Có nên trả thêm tiền cho việc này không?"]
+        },
+        "files": {
+            "intent.md": INTENT.format(title="open question", problem="Một intent còn một câu hỏi.")
+            + "\n## Open questions\n\n1. Nhánh lấy tên từ đâu?\n"
+            + "2. Có nên trả thêm tiền cho việc này không?\n",
+        },
     },
     "awaiting-ship": {
-        "intent.md": INTENT.format(
-            title="awaiting ship", problem="Một unit đã qua review, chờ ship."
+        "statuses": dict.fromkeys(
+            ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md", "review.md"), "accepted"
         ),
-        "spec.md": "# Spec: awaiting ship\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
-        "plan.md": "# Plan: awaiting ship\nAuthor: capture_screens. Status: accepted.\n",
-        "impl.md": "# Impl: awaiting ship\nAuthor: capture_screens. Status: accepted.\n",
-        "pr.md": "# PR: awaiting ship\nPR: https://github.com/o/r/pull/1. Author: capture_screens. Status: accepted.\n",
-        "review.md": "# Review: awaiting ship\nAuthor: capture_screens. Status: accepted.\n"
-        + ROUND.format(sha="a" * 40),
+        "type": "feat",
+        "files": {
+            "intent.md": INTENT.format(
+                title="awaiting ship", problem="Một unit đã qua review, chờ ship."
+            ),
+            "spec.md": "# Spec: awaiting ship\nIntent: intent.md. Author: capture_screens.\n",
+            "plan.md": "# Plan: awaiting ship\nAuthor: capture_screens.\n",
+            "impl.md": "# Impl: awaiting ship\nAuthor: capture_screens.\n",
+            "pr.md": "# PR: awaiting ship\nPR: https://github.com/o/r/pull/1. Author: capture_screens.\n",
+            "review.md": "# Review: awaiting ship\nAuthor: capture_screens.\n"
+            + ROUND.format(sha="a" * 40),
+        },
     },
     # A deadline already past, so the card carries an outcome badge, and two
     # questions nobody answered, so the Questions tab has something to show read-only.
     "finished": {
-        "intent.md": INTENT.format(title="finished", problem="Một unit đã xong.")
-        + "\n## Proposed outcome\n\nĐến hết ngày 2026-09-20, việc này đã được đo.\n"
-        + "\n## Open questions\n\n1. Có cần đo lại sau một tuần không?\n2. Ai đọc kết quả?\n",
-        "spec.md": "# Spec: finished\nAuthor: capture_screens. Status: accepted.\n",
-        "plan.md": "# Plan: finished\nAuthor: capture_screens. Status: done.\n",
+        "statuses": dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"),
+        "type": "feat",
+        "shipped": True,
+        "questions": {"intent.md": ["Có cần đo lại sau một tuần không?", "Ai đọc kết quả?"]},
+        "files": {
+            "intent.md": INTENT.format(title="finished", problem="Một unit đã xong.")
+            + "\n## Proposed outcome\n\nĐến hết ngày 2026-09-20, việc này đã được đo.\n"
+            + "\n## Open questions\n\n1. Có cần đo lại sau một tuần không?\n2. Ai đọc kết quả?\n",
+            "spec.md": "# Spec: finished\nAuthor: capture_screens.\n",
+            "plan.md": "# Plan: finished\nAuthor: capture_screens.\n",
+        },
     },
     # A last round that does not count, so the unit's dialog lists the id
     # it left out.
     "unfinished-review": {
-        "intent.md": INTENT.format(
-            title="unfinished review", problem="Một vòng review bỏ sót một finding."
-        ),
-        "spec.md": "# Spec: unfinished review\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
-        "plan.md": "# Plan: unfinished review\nAuthor: capture_screens. Status: accepted.\n",
-        "impl.md": "# Impl: unfinished review\nAuthor: capture_screens. Status: accepted.\n",
-        "pr.md": "# PR: unfinished review\nPR: https://github.com/o/r/pull/2. Author: capture_screens. Status: accepted.\n",
-        "review.md": "# Review: unfinished review\nAuthor: capture_screens. Status: changes-requested.\n"
-        + ASKED.format(
-            n=1,
-            sha="b" * 40,
-            findings="- F1 [open] a.py:1 — medium — Thiếu test.\n- F2 [open] b.py:2 — low — Tên chưa rõ.",
-        )
-        + ASKED.format(n=2, sha="c" * 40, findings="- F2 [open] b.py:2 — low — Tên chưa rõ."),
+        "statuses": {
+            **dict.fromkeys(("intent.md", "spec.md", "plan.md", "impl.md", "pr.md"), "accepted"),
+            "review.md": "changes-requested",
+        },
+        "type": "feat",
+        "files": {
+            "intent.md": INTENT.format(
+                title="unfinished review", problem="Một vòng review bỏ sót một finding."
+            ),
+            "spec.md": "# Spec: unfinished review\nIntent: intent.md. Author: capture_screens.\n",
+            "plan.md": "# Plan: unfinished review\nAuthor: capture_screens.\n",
+            "impl.md": "# Impl: unfinished review\nAuthor: capture_screens.\n",
+            "pr.md": "# PR: unfinished review\nPR: https://github.com/o/r/pull/2. Author: capture_screens.\n",
+            "review.md": "# Review: unfinished review\nAuthor: capture_screens.\n"
+            + ASKED.format(
+                n=1,
+                sha="b" * 40,
+                findings="- F1 [open] a.py:1 — medium — Thiếu test.\n- F2 [open] b.py:2 — low — Tên chưa rõ.",
+            )
+            + ASKED.format(n=2, sha="c" * 40, findings="- F2 [open] b.py:2 — low — Tên chưa rõ."),
+        },
     },
 }
 
@@ -203,19 +235,32 @@ FIXTURE = {
 AUTOPILOT_FIXTURE = {
     # A draft `impl.md` with no question, gone on with twice on one head: stop `e`.
     "draft-impl": {
-        "intent.md": INTENT.format(title="draft impl", problem="Một impl còn draft."),
-        "spec.md": "# Spec: draft impl\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
-        "plan.md": "# Plan: draft impl\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
-        "impl.md": "# Impl: draft impl\nIntent: intent.md. Author: capture_screens. Status: draft.\n",
+        "statuses": {
+            **dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"),
+            "impl.md": "draft",
+        },
+        "type": "feat",
+        "files": {
+            "intent.md": INTENT.format(title="draft impl", problem="Một impl còn draft."),
+            "spec.md": "# Spec: draft impl\nIntent: intent.md. Author: capture_screens.\n",
+            "plan.md": "# Plan: draft impl\nIntent: intent.md. Author: capture_screens.\n",
+            "impl.md": "# Impl: draft impl\nIntent: intent.md. Author: capture_screens.\n",
+        },
     },
     # An `impl` the autopilot queued that the gate refused (`seed_refusal`): stop `f`.
     "refused-impl": {
-        "intent.md": INTENT.format(title="refused impl", problem="Một impl bị gate từ chối."),
-        "spec.md": "# Spec: refused impl\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
-        "plan.md": "# Plan: refused impl\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
+        "statuses": dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"),
+        "type": "feat",
+        "files": {
+            "intent.md": INTENT.format(title="refused impl", problem="Một impl bị gate từ chối."),
+            "spec.md": "# Spec: refused impl\nIntent: intent.md. Author: capture_screens.\n",
+            "plan.md": "# Plan: refused impl\nIntent: intent.md. Author: capture_screens.\n",
+        },
     },
 }
 DRAFT_IMPL, REFUSED_IMPL = "0008_draft-impl", "0009_refused-impl"
+
+Rows = list[tuple[Path, str, Mapping[str, Any]]]
 
 FAKE_GH = '#!/bin/sh\nif [ "$1" = pr ] && [ "$2" = list ]; then echo \'[]\'; exit 0; fi\nexit 1\n'
 
@@ -317,11 +362,13 @@ def with_env(**values: str) -> dict[str, str]:
 
 
 def make_fixture(
-    api: httpx.Client, proj: Path, fixture: Mapping[str, Mapping[str, str]] = FIXTURE
+    api: httpx.Client, proj: Path, rows: Rows, fixture: Mapping[str, Mapping[str, Any]] = FIXTURE
 ) -> None:
     """The units of `fixture`, numbered in this order after those already there (0001–0005
-    for `FIXTURE`), through the app's own route."""
-    for name, files in fixture.items():
+    for `FIXTURE`), through the app's own route. Each goes onto `rows` with its states, for
+    `seed_fixture`."""
+    for name, unit in fixture.items():
+        files = unit["files"]
         made = api.post(
             "/api/units",
             json={
@@ -334,9 +381,21 @@ def make_fixture(
             raise RuntimeError(f"could not make the unit {name}: {made.text}")
         for file, text in files.items():
             (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
+        states = {k: v for k, v in unit.items() if k != "files"}
+        rows.append((proj, made.json()["unit"], states))
 
 
-def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
+def make_all(api: httpx.Client, work: Path, data_dir: Path, proj: Path, other: Path) -> None:
+    """Every unit of the capture, then each one's states as rows."""
+    rows: Rows = []
+    make_fixture(api, proj, rows)
+    make_idea_fixture(api, proj, other, rows)
+    make_unread_fixture(api, proj, rows)
+    make_autopilot_fixture(api, work, data_dir, proj, rows)
+    seed_fixture(work, data_dir, rows)
+
+
+def make_idea_fixture(api: httpx.Client, proj: Path, other: Path, rows: Rows) -> None:
     """`proj/ideas/0001_one-feature.md`, `api/0001_backend-adds-api` opened from it (its `idea` row), and
     `proj/0006_frontend-calls-api`, whose `impl` waits on the api unit: it has no `ship.md`."""
     idea = api.post(
@@ -355,8 +414,10 @@ def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
         raise RuntimeError(f"could not open the api unit: {back.text}")
     back_ref = f"api/{back.json()['unit']}"
     Path(back.json()["path"], "intent.md").write_text(
-        "# Intent: backend adds api\nAuthor: the originator. Type: feat. Status: accepted.\n",
-        encoding="utf-8",
+        "# Intent: backend adds api\nAuthor: the originator.\n", encoding="utf-8"
+    )
+    rows.append(
+        (other, back.json()["unit"], {"statuses": {"intent.md": "accepted"}, "type": "feat"})
     )
     front = api.post(
         "/api/units",
@@ -365,17 +426,19 @@ def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
     if front.status_code != 200:
         raise RuntimeError(f"could not open the frontend unit: {front.text}")
     for file, text in {
-        "intent.md": "# Intent: frontend calls api\nAuthor: the originator. Type: feat. Status: accepted.\n",
-        "spec.md": "# Spec: frontend calls api\nIntent: intent.md. Author: t. Status: accepted.\n",
-        "plan.md": "# Plan: frontend calls api\nIntent: intent.md. Author: t. Status: accepted.\n",
+        "intent.md": "# Intent: frontend calls api\nAuthor: the originator.\n",
+        "spec.md": "# Spec: frontend calls api\nIntent: intent.md. Author: t.\n",
+        "plan.md": "# Plan: frontend calls api\nIntent: intent.md. Author: t.\n",
     }.items():
         Path(front.json()["path"], file).write_text(text, encoding="utf-8")
+    states = dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted")
+    rows.append((proj, front.json()["unit"], {"statuses": states, "type": "feat"}))
 
 
-def make_unread_fixture(api: httpx.Client, proj: Path) -> None:
-    """`proj/0007_unread-status`, whose `spec.md` carries a status no stage writes,
-    so the import report on `/settings` has a row. Made after `make_idea_fixture`, so the
-    numbers a spec names stay where they were."""
+def make_unread_fixture(api: httpx.Client, proj: Path, rows: Rows) -> None:
+    """`proj/0007_unread-status`, whose `spec.md` has no state (an accepted intent and a spec
+    with no row). Made after `make_idea_fixture`, so the numbers a spec names stay where
+    they were."""
     made = api.post(
         "/api/units",
         json={"cwd": str(proj), "slug": "unread-status", "brief": "The unread status fixture."},
@@ -386,9 +449,12 @@ def make_unread_fixture(api: httpx.Client, proj: Path) -> None:
         "intent.md": INTENT.format(
             title="unread status", problem="Một spec mang status không stage nào viết."
         ),
-        "spec.md": "# Spec: unread status\nIntent: intent.md. Author: capture_screens. Status: approved.\n",
+        "spec.md": "# Spec: unread status\nIntent: intent.md. Author: capture_screens.\n",
     }.items():
         (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
+    rows.append(
+        (proj, made.json()["unit"], {"statuses": {"intent.md": "accepted"}, "type": "feat"})
+    )
 
 
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
@@ -439,7 +505,7 @@ def seed_transitions(work: Path, data_dir: Path, proj: Path) -> None:
         key,
         "0004_finished",
         "plan.md",
-        "done",
+        "accepted",
         guard="stage-result",
         authority="agent",
         run="capture-plan-1",
@@ -608,13 +674,15 @@ def seed_pilot(data_dir: Path, proj: Path) -> None:
     data.set_pref(STATE_PREF, {**states, "codegraph": mine})
 
 
-def make_autopilot_fixture(api: httpx.Client, work: Path, data_dir: Path, proj: Path) -> None:
+def make_autopilot_fixture(
+    api: httpx.Client, work: Path, data_dir: Path, proj: Path, rows: Rows
+) -> None:
     """`AUTOPILOT_FIXTURE`, a shortlist of those two units alone, and two tries of
     `0008_draft-impl` on one head: each an `autopilot-pick` that went on with the draft and the
     step it began, ended. Then the scan's proposals, the rest of what the Backlog shows."""
     from coscc.store.journal import Journal
 
-    make_fixture(api, proj, AUTOPILOT_FIXTURE)
+    make_fixture(api, proj, rows, AUTOPILOT_FIXTURE)
     make_scan_fixture(api, data_dir, proj)
     journal, key = Journal(work, data_dir), str(proj.resolve())
     for _ in range(2):
@@ -803,11 +871,7 @@ def capture(args: argparse.Namespace, roots: list[Path]) -> int:
                     print(f"could not adopt the second workspace: {added.text}", file=sys.stderr)
                     return EXIT_BROKEN
                 try:
-                    make_fixture(api, proj)
-                    make_idea_fixture(api, proj, other)
-                    make_unread_fixture(api, proj)
-                    make_autopilot_fixture(api, work, data_dir, proj)
-                    ingest_fixture(work, data_dir, proj, other)
+                    make_all(api, work, data_dir, proj, other)
                     seed_runs(work, data_dir, proj)
                     seed_transitions(work, data_dir, proj)
                 except RuntimeError as e:

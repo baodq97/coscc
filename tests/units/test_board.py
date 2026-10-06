@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -16,10 +17,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.units.test_meta import WithSnapshot, loop, snapshot_of
+from tests.units.test_meta import loop, seed
 from coscc.units import board as _board
-
-board = WithSnapshot(_board)
 from coscc.agent import harness
 from coscc.store.db import Data
 from coscc.loop import run as loop_run
@@ -32,9 +31,86 @@ from coscc.units.board import (
     shown_state,
     unit_state,
 )
+from coscc.units import states
 from coscc.units.meta import UnitMeta
 
 REPO = Path(__file__).resolve().parents[2]
+
+_STATUS = re.compile(r"\bStatus: ([a-z-]+)\.")
+_TYPE = re.compile(r"\bType: ([a-z]+)\.")
+_ANSWER = re.compile(
+    r"^### (F\d+)\nAnswered by: (.+?)\. Date: (.+?)\. Via: (.+?)\.\n\n(.*?)(?=\n###|\Z)",
+    re.M | re.S,
+)
+
+
+def seed_store(meta: UnitMeta, key: str) -> None:
+    """Test glue: each unit under `key/.cos` as rows, in the state its files' first line names
+    (an unrecognised or missing `Status:` is no transition; a plan `done` is a merged unit)."""
+    cos = Path(key) / ".cos"
+    for d in sorted(cos.iterdir()) if cos.is_dir() else ():
+        if not d.is_dir():
+            continue
+        statuses, kind, shipped = {}, None, False
+        for f in sorted(d.glob("*.md")):
+            head = "\n".join(f.read_text(encoding="utf-8").splitlines()[:3])
+            found = _STATUS.search(head)
+            if f.name == "intent.md" and (t := _TYPE.search(head)):
+                kind = t.group(1)
+            if found and found.group(1) == "done":
+                statuses[f.name], shipped = "accepted", True
+            elif found and states.default().refuse(f.name, found.group(1)) is None:
+                statuses[f.name] = found.group(1)
+        seed(meta, key, d.name, statuses=statuses, type=kind, shipped=shipped)
+        for f in sorted(d.glob("*.md")):
+            for ref, by, date, via, text in _ANSWER.findall(f.read_text(encoding="utf-8")):
+                meta.add_answer(
+                    key, d.name, f.name, ref, text.strip(), by, date, via, authority="person"
+                )
+
+
+def snapshot_of(root, peers=(), units_=None) -> dict:
+    """Test glue: the snapshot of the store `root` (and each `(name, store)` of `peers`) as rows
+    seeded from its files' headers, into a throwaway database. A store is keyed by its path."""
+    with tempfile.TemporaryDirectory() as d:
+        meta = UnitMeta(Path(d) / "work", Data(Path(d) / "data"))
+        own = str(Path(root).resolve())
+        names = {name: str(Path(store).resolve()) for name, store in peers}
+        for key in {own, *names.values()}:
+            seed_store(meta, key)
+        return meta.snapshot(own, names, units_)
+
+
+class WithHeaders:
+    """`coscc/units/board.py` as these tests see it: each question to the loop is handed
+    `snapshot_of` its store when the test gave no `state`. Every other attribute, and every patch
+    a test sets on it, is the module's own."""
+
+    ASKS = ("read", "gate", "next_step", "pr_text", "rerun", "screens")
+
+    def __init__(self, module):
+        object.__setattr__(self, "_module", module)
+
+    def __getattr__(self, name):
+        found = getattr(self._module, name)
+        if name not in self.ASKS:
+            return found
+
+        def asked(units_root, *args, **kwargs):
+            if kwargs.get("state") is None:
+                kwargs["state"] = snapshot_of(units_root)
+            return found(units_root, *args, **kwargs)
+
+        return asked
+
+    def __setattr__(self, name, value):
+        setattr(self._module, name, value)
+
+    def __delattr__(self, name):
+        delattr(self._module, name)
+
+
+board = WithHeaders(_board)
 
 _ROUND = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
 AWAITING_PERSON = {
@@ -87,7 +163,7 @@ class TheRepositoryReadsAsABoard(unittest.TestCase):
         # Two answers to "what next" is exactly the drift `board.py` exists to avoid, so
         # the value must be the script's, verbatim.
         data = run(board.read(REPO))
-        unit = next(u for u in data["units"] if _by_stage(u)["plan"] == "done")
+        unit = next(u for u in data["units"] if _by_stage(u)["ship"] == "accepted")
         self.assertEqual(unit["next"], "finished")
         self.assertFalse(unit["blocked"])
 
@@ -257,7 +333,7 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
             (d / "intent.md").write_text("# I\nAuthor: t. Type: fix. Status: accepted.\n")
             key = str(Path(tmp).resolve())
             meta = UnitMeta(Path(tmp) / "work", Data(Path(tmp) / "data"))
-            meta.import_store(key, key)
+            seed_store(meta, key)
             submitted = {"run": "r", "revision": "h", "object": {"judgement": "ready", "fix": fix}}
             with meta.data.write() as conn:
                 meta.record_result(conn, key, "0001_a-clear-fix", "intent", "intent.md", submitted)
@@ -271,7 +347,7 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
         # A unit closed under the old loop: every stage behind it is settled, so any
         # stage's gate is open. Chosen by shape, not by number.
         data = run(board.read(REPO))
-        unit = next(u for u in data["units"] if _by_stage(u)["plan"] == "done")
+        unit = next(u for u in data["units"] if _by_stage(u)["ship"] == "accepted")
         allowed, said = run(board.gate(REPO, unit["name"], "impl"))
         self.assertTrue(allowed, said)
         self.assertIn("open", said.lower())

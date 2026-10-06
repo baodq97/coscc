@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.runner.test_step import asks
-from tests.units.test_meta import ingest
+from tests.units.test_meta import seed
 from coscc.agent.policy import grant_for
 from coscc.bus import Bus
 from coscc.github import integrate
@@ -59,6 +59,22 @@ def commit(where: Path, text: str, push: str) -> None:
     (where / "f.txt").write_text(text, encoding="utf-8")
     git(where, "commit", "-q", "-am", f"f.txt: {text.strip()}")
     git(where, "push", "-q", "origin", push)
+
+
+def a_unit_at_pr(core, cwd, unit, directory):
+    """The unit's files as prose, and its state, intent to pr accepted, as rows."""
+    for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
+        (directory / name).write_text("# X: fixture\nAuthor: t.\n", encoding="utf-8")
+    (directory / "pr.md").write_text(
+        f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}.\n", encoding="utf-8"
+    )
+    seed(
+        core.ws.unit_meta(),
+        core.ws.key(cwd),
+        unit,
+        statuses={f"{n}.md": "accepted" for n in ("intent", "spec", "plan", "impl", "pr")},
+        type="feat",
+    )
 
 
 class StandIn:
@@ -132,15 +148,7 @@ class GeboThroughTheService(unittest.TestCase):
         made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
         self.directory = directory
-        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
-        (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
-        )
+        a_unit_at_pr(self.core, self.cwd, self.unit, directory)
         # Both sides change the same line: a real conflict when the branch is rebased.
         git(seed, "switch", "-q", "-c", BRANCH)
         commit(seed, "branch\n", BRANCH)
@@ -616,15 +624,7 @@ class AStaleOriginMain(unittest.TestCase):
         self.core = Core(config, StandIn(self._no_act))
         made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
-        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
-        (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
-        )
+        a_unit_at_pr(self.core, self.cwd, self.unit, directory)
         # The branch changes `g.txt`; `main` later changes `f.txt`: no line in common.
         git(seed, "switch", "-q", "-c", BRANCH)
         (seed / "g.txt").write_text("branch\n", encoding="utf-8")
@@ -785,11 +785,16 @@ class AStaleOriginMain(unittest.TestCase):
         before and after, the calls, and the stops the pass left."""
         head = self.remote_head()
         (self.core.ws.unit_dir(self.cwd, self.unit) / "review.md").write_text(
-            f"# Review: fixture\nAuthor: t. Status: accepted.\n\n## Round 1\n\nReviewed: {head}. Verdict: pass.\n\n"
+            f"# Review: fixture\nAuthor: t.\n\n## Round 1\n\nReviewed: {head}. Verdict: pass.\n\n"
             "### Findings\n\n### What was not reviewed\n\nnothing\n",
             encoding="utf-8",
         )
-        ingest(self.core, self.cwd, self.unit)
+        seed(
+            self.core.ws.unit_meta(),
+            self.core.ws.key(self.cwd),
+            self.unit,
+            statuses={"review.md": "accepted"},
+        )
         use_config(self.core, dataclasses.replace(self.core.config, host="127.0.0.1"))
         calls: list[tuple[str, str]] = []
 
@@ -889,15 +894,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self.core = Core(config, StandIn(None))
         made = await self.core.answers.create_unit(self.cwd, SLUG, "fixture")
         self.unit, directory = made["unit"], Path(made["path"])
-        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
-        (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
-        )
+        a_unit_at_pr(self.core, self.cwd, self.unit, directory)
         self.head = "a" * 40
         self.checks: list[dict] | None = None  # None: `pr checks` never answers
         self.never = asyncio.Event()

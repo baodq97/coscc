@@ -884,6 +884,10 @@ async def _spike_progress(
         return "unusable", _noted(detail, said), None
 
 
+def _last_round(path: Path) -> int:
+    return max((_round_number(r) for r in _rounds(_read(path))), default=0)
+
+
 async def _close_review(
     sessions: Sessions,
     cwd: str,
@@ -928,13 +932,7 @@ async def _close_review(
         if not steps.seal(running):
             review_md = "withheld"
         else:
-            number = (
-                max(
-                    (_round_number(r) for r in _rounds(_read(directory / artifact))),
-                    default=0,
-                )
-                + 1
-            )
+            number = _last_round(directory / artifact) + 1
             reply, done = await asyncio.wait_for(
                 _closing_turn(
                     sessions,
@@ -1794,7 +1792,7 @@ class Runner:
                 # the work may be half finished.
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
-            outcome, detail, cost, stopped_by = await self._conclude(
+            outcome, detail, cost, stopped_by, review_md = await self._conclude(
                 ledger=ledger,
                 journal_key=journal_key,
                 unit=unit,
@@ -1849,6 +1847,12 @@ class Runner:
                 "model": model,
                 "model_source": model_source,
                 **({"stopped_by": stopped_by} if outcome == "stopped" else {}),
+                # The round a closing turn wrote, for `Answers.ingest` to record as the review gone back to draft.
+                **(
+                    {"incomplete_round": _last_round(directory / artifact)}
+                    if review_md == "incomplete"
+                    else {}
+                ),
                 # What guard `stage-result` read, for `Answers.ingest` to apply.
                 **(
                     {
@@ -2086,9 +2090,9 @@ class Runner:
         error: dict[str, str] | None,
         cost: dict[str, Any],
         ledger: Helpers | None = None,
-    ) -> tuple[Outcome, str, dict[str, Any], str | None]:
+    ) -> tuple[Outcome, str, dict[str, Any], str | None, str | None]:
         """The end of a step, whatever ended it: the turns that repair a reply, the attempt record and
-        the `end` row. `(outcome, detail, cost, stopped_by)`. `ledger` tells what its helpers left
+        the `end` row. `(outcome, detail, cost, stopped_by, review_md)`. `ledger` tells what its helpers left
         untold first, while the recorder is open.
 
         `shutting_down` is set when the task is cancelled with no Stop behind it: the app is going
@@ -2337,4 +2341,4 @@ class Runner:
                 raise pending
             # A Stop's cancel that landed in the capture rather than the session.
             _uncancel()
-        return outcome, detail, cost, stopped_by
+        return outcome, detail, cost, stopped_by, review_md

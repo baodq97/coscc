@@ -23,12 +23,12 @@ from tests.github.test_prmachine import HEAD, FakeGh, run
 from tests.github.test_prmachine import Fixture as _PrFixture
 from coscc.config import Config
 from coscc.http.app import Core
-from tests.http.test_app import create_sync
+from tests.http.test_app import create_sync, seed_unit
 from coscc.leif import decide
 from coscc.units import board as board_reader
 from coscc.units import guards
 from tests.units.test_board import _store
-from tests.units.test_meta import snapshot_of
+from tests.units.test_board import snapshot_of
 from tests.http.test_app import use_sessions
 
 
@@ -60,8 +60,9 @@ class Place1(unittest.TestCase):
         self.core = Core(self.config, _Nobody())
         made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = made["unit"]
-        (Path(made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        (Path(made["path"]) / "intent.md").write_text("# Intent: a problem\n", encoding="utf-8")
+        seed_unit(
+            self.core, str(self.repo), self.unit, statuses={"intent.md": "accepted"}, type="feat"
         )
 
     def _spec(self, says: str, judgement: str) -> dict:
@@ -199,10 +200,14 @@ class _Review(unittest.TestCase):
             ("impl", "Impl"),
             ("pr", "PR"),
         ):
-            extra = " Type: feat." if name == "intent" else ""
-            (self.dir / f"{name}.md").write_text(
-                f"# {title}: a problem\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
+            (self.dir / f"{name}.md").write_text(f"# {title}: a problem\n", encoding="utf-8")
+        seed_unit(
+            self.core,
+            str(self.repo),
+            self.unit,
+            statuses={f"{n}.md": "accepted" for n in ("intent", "spec", "plan", "impl", "pr")},
+            type="feat",
+        )
 
     def _run(self, stage: str, reply: str, **obj) -> dict:
         directory = self.dir

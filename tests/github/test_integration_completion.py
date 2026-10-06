@@ -22,7 +22,7 @@ from unittest import mock
 from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
-from tests.github.test_integration import BRANCH, PR, SLUG, StandIn, git
+from tests.github.test_integration import BRANCH, PR, SLUG, StandIn, a_unit_at_pr, git
 from coscc.http.app import Core
 from coscc.kernel import Invalid
 from tests.http.test_app import use_sessions, use_config
@@ -69,15 +69,7 @@ class ACutIntegration(unittest.TestCase):
         self.core = Core(config, StandIn(self._no_act))
         made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
-        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
-        (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
-        )
+        a_unit_at_pr(self.core, self.cwd, self.unit, directory)
         git(seed, "switch", "-q", "-c", BRANCH)
         (seed / "g.txt").write_text("branch\n", encoding="utf-8")
         git(seed, "commit", "-q", "-am", "g.txt: branch")

@@ -62,7 +62,6 @@ OWNERS: dict[str, str] = {
     "unit_links": "coscc.units.meta",
     "unit_meta": "coscc.units.meta",
     "unit_questions": "coscc.units.meta",
-    "unit_seen": "coscc.units.meta",
     "unit_unknowns": "coscc.units.meta",
     "workspaces": "coscc.store.workspaces",
 }
@@ -76,6 +75,9 @@ FOREIGN_SQL: set[tuple[str, str]] = {
     ("coscc.store.db", "unit_meta"),
     # The v15 migration rebuilds `unit_links` without its `repo` rows.
     ("coscc.store.db", "unit_links"),
+    # The v16 migration drops what a file fed and rewrites a stored `done`.
+    ("coscc.store.db", "transitions"),
+    ("coscc.store.db", "unit_unknowns"),
     ("coscc.run", "workspaces"),
     ("coscc.github.integration", "transitions"),
     ("coscc.units.history", "transitions"),
@@ -295,13 +297,9 @@ DICT_ANY: set[str] = {
     "coscc.units.hold:record",
     "coscc.units.hold:refusal",
     "coscc.units.ideas:create_idea",
-    "coscc.units.meta:UnitMeta.import_store",
-    "coscc.units.meta:UnitMeta.ingest",
     "coscc.units.meta:UnitMeta.snapshot",
     "coscc.units.meta:UnitMeta.snapshot.artifact",
     "coscc.units.meta:UnitMeta.snapshot.entry",
-    "coscc.units.meta:UnitMeta.unknowns",
-    "coscc.units.meta:read",
     "coscc.units.more_rounds:refusal",
     "coscc.units.planmap:for_step",
     "coscc.units.planmap:select",

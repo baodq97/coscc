@@ -20,8 +20,6 @@ from coscc.units import CannotCreate, Invalid, ideas
 from coscc.units import board as _board
 from tests.units.test_meta import WithSnapshot
 
-board_reader = WithSnapshot(_board)
-
 WS = "/tmp/a-workspace"
 
 
@@ -96,6 +94,7 @@ class ServiceFixture(unittest.TestCase):
         self.proj = _repo(self.root / "a" / "proj")
         self.api = _repo(self.root / "b" / "api")
         self.core = self.make(self.proj, self.api)
+        self.board_reader = WithSnapshot(_board, lambda: self.core.ws.snapshot(self.api))
 
     def make(self, *workspaces: str) -> Core:
         class NoSessions:
@@ -191,7 +190,7 @@ class AUnitOpenedFromAnIdeaIsARow(ServiceFixture):
         self.assertNotIn("- proj:", note)
 
     def test_a_dependency_outside_the_idea_is_refused_and_nothing_is_made(self):
-        before = self.run_(board_reader.read(self.core.ws.units_root(self.api)))["count"]
+        before = self.run_(self.board_reader.read(self.core.ws.units_root(self.api)))["count"]
         with self.assertRaises(Invalid):
             self.run_(
                 self.core.answers.create_unit(
@@ -199,7 +198,7 @@ class AUnitOpenedFromAnIdeaIsARow(ServiceFixture):
                 )
             )
         self.assertEqual(
-            self.run_(board_reader.read(self.core.ws.units_root(self.api)))["count"], before
+            self.run_(self.board_reader.read(self.core.ws.units_root(self.api)))["count"], before
         )
 
     def test_the_link_is_written_with_the_units_row_or_not_at_all(self):
@@ -216,11 +215,11 @@ class AUnitOpenedFromAnIdeaIsARow(ServiceFixture):
         )
 
     def test_a_brief_with_an_idea_is_refused_and_nothing_is_made(self):
-        before = self.run_(board_reader.read(self.core.ws.units_root(self.api)))["count"]
+        before = self.run_(self.board_reader.read(self.core.ws.units_root(self.api)))["count"]
         with self.assertRaises(Invalid):
             self.run_(
                 self.core.answers.create_unit(self.api, "again", "a copy", idea=self.idea["ref"])
             )
         self.assertEqual(
-            self.run_(board_reader.read(self.core.ws.units_root(self.api)))["count"], before
+            self.run_(self.board_reader.read(self.core.ws.units_root(self.api)))["count"], before
         )

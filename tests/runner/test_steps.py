@@ -24,8 +24,14 @@ from coscc.kernel import Invalid
 from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 from tests.http.test_app import create_sync, timeline, unit_history
+from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
 from tests.http.test_app import use_sessions
+
+
+def state_of(core, cwd, unit, **kw):
+    """The unit's state as rows, where the app keeps it."""
+    seed(core.ws.unit_meta(), core.ws.key(cwd), unit, **kw)
 
 
 def live(core, unit: str):
@@ -120,7 +126,10 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
     def _typed_unit(self, slug: str = "a-problem") -> str:
         made = create_sync(self.core, str(self.repo), slug, "some words")
         (Path(made["path"]) / "intent.md").write_text(
-            f"# Intent: {slug}\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
+            f"# Intent: {slug}\nAuthor: t. Type: fix.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core, str(self.repo), made["unit"], statuses={"intent.md": "accepted"}, type="fix"
         )
         return made["unit"]
 
@@ -359,9 +368,8 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
     def _unit_with_spec(self) -> tuple[str, Path]:
         unit = self._typed_unit()
         directory = units.unit_dir(str(self.repo), unit, str(self.root / "data"))
-        (directory / "spec.md").write_text(
-            "# Spec: a problem\nAuthor: t. Status: accepted.\n", encoding="utf-8"
-        )
+        (directory / "spec.md").write_text("# Spec: a problem\nAuthor: t.\n", encoding="utf-8")
+        state_of(self.core, str(self.repo), unit, statuses={"spec.md": "accepted"})
         return unit, directory
 
     def _planned(self) -> str:
@@ -452,7 +460,14 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.core = Core(config, self.Replies())
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
 
     def _run(self, stage: str) -> None:
@@ -470,58 +485,6 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertEqual(row["actor"], "stage:spec")
         self.assertEqual(row["session"], "sess-42")
         self.assertNotEqual(row["session"], "unknown")
-
-    def test_a_failed_ingest_is_on_the_step_and_in_the_database(self):
-        """The step still ends `done`, and the failure is kept, not dropped. What is kept is one
-        fixed sentence; the error, which may carry a path, goes to the log."""
-        from unittest import mock
-
-        from coscc.units import meta
-
-        async def go():
-            return [
-                item
-                async for item in self.core.steps.run_step(
-                    str(self.repo), self.made["unit"], "spec"
-                )
-            ]
-
-        # The store is imported on its first read, before `meta` is broken: only the ingest fails.
-        asyncio.run(self.core.board(str(self.repo)))
-        error = meta.MetaError("coscc.loop meta did not run: no interpreter at /home/x/units")
-        with (
-            mock.patch.object(meta, "read", side_effect=error),
-            self.assertLogs("coscc", "WARNING") as log,
-        ):
-            _, payload = asyncio.run(go())[-1]
-        self.assertEqual(payload["outcome"], "done")
-        self.assertEqual(payload["ingest_error"], "its files could not be read")
-        with self.core.ws.unit_meta().data.connect() as conn:
-            [row] = conn.execute(
-                "SELECT unit, field, reason FROM unit_unknowns WHERE field = 'ingest'"
-            ).fetchall()
-        self.assertEqual(tuple(row), (self.made["unit"], "ingest", "its files could not be read"))
-        self.assertIn("/home/x/units", log.output[-1])
-        self.assertIn(self.made["unit"], log.output[-1])
-
-    def test_a_failed_ingest_on_the_database_names_no_path(self):
-        from unittest import mock
-
-        from coscc.store.db import Busy
-
-        asyncio.run(self.core.board(str(self.repo)))
-        busy = Busy(self.core.config.data_dir + "/cos.db")
-        with (
-            mock.patch("coscc.units.meta.UnitMeta.ingest", side_effect=busy),
-            self.assertLogs("coscc", "WARNING") as log,
-        ):
-            said = asyncio.run(
-                self.core.answers.ingest(
-                    str(self.repo), self.made["unit"], {"outcome": "done", "stage": "spec"}
-                )
-            )
-        self.assertEqual(said, {"ingest_error": "the database could not be written"})
-        self.assertIn("cos.db", log.output[-1])
 
     def test_a_failed_step_records_nothing(self):
         class Empty:
@@ -582,7 +545,14 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = self.made["unit"]
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
         self.key = self.core.ws.key(str(self.repo))
 
@@ -804,7 +774,14 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         for slug in ("a-problem", "b-problem"):
             made = create_sync(self.core, str(self.repo), slug, "some words")
             (Path(made["path"]) / "intent.md").write_text(
-                "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+                "# Intent: x\nAuthor: t. Type: feat.\n", encoding="utf-8"
+            )
+            state_of(
+                self.core,
+                str(self.repo),
+                made["unit"],
+                statuses={"intent.md": "accepted"},
+                type="feat",
             )
             self.units.append(made)
         self.sessions.units = [u["unit"] for u in self.units]
@@ -880,7 +857,13 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         self.assertEqual((end["outcome"], end["stopped_by"]), ("stopped", "Lan"))
         found = unit_history(self.core, self.ws, a["unit"])
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
-        self.assertIn("Status: accepted.", (Path(a["path"]) / "intent.md").read_text())
+        self.assertEqual(
+            (Path(a["path"]) / "intent.md").read_text(), "# Intent: x\nAuthor: t. Type: feat.\n"
+        )
+        self.assertEqual(
+            [r["to_state"] for r in found["transitions"] if r["artifact"] == "intent.md"][-1:],
+            ["accepted"],
+        )
         self.assertEqual(self.core.steps.running_steps(self.ws), [])
 
     def test_a_stop_at_ending_is_recorded_and_the_step_runs_on_and_ends_stop_late(self):
@@ -1002,7 +985,14 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
         self.core = Core(config, self.Empty())
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
 
     def _run(self, stage: str) -> None:
@@ -1138,7 +1128,14 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
 
     def _run(self, stage: str):
@@ -1769,6 +1766,13 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
             "- [unmeasured] U1. does it exit?\n",
             encoding="utf-8",
         )
+        state_of(
+            core,
+            str(self.repo),
+            made["unit"],
+            statuses={"intent.md": "accepted", "spec.md": "accepted"},
+            type="feat",
+        )
         # The loop reads what is unmeasured from the spec's record, never from the file.
         meta = core.ws.unit_meta()
         spec = {"stage": "spec", "judgement": "ready", "questions": [], "unmeasured": ["U1"]}
@@ -2061,6 +2065,13 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         directory = self.core.ws.unit_dir(str(self.repo), unit)
         if prepare:
             prepare(directory)
+        # The file's header, as the row the app holds: the PR step reads the state, not the file.
+        written = text or ""
+        if (directory / "pr.md").exists():
+            written = (directory / "pr.md").read_text(encoding="utf-8")
+        for word in ("accepted", "draft"):
+            if f"Status: {word}" in written:
+                state_of(self.core, str(self.repo), unit, statuses={"pr.md": word})
         replies = self.Replies(text, hold)
         replies.directory = directory
         use_sessions(self.core, replies)
@@ -2388,7 +2399,14 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
         self.key = self.core.ws.key(str(self.repo))
 

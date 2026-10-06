@@ -20,6 +20,7 @@
           "result": "stage-result",
           "round": "review-round",
           "claim": "impl-claim",
+          "incomplete": "incomplete-round",
           "skip": "skip-decision",
           "plan": "spike-holds",
           "impl": "dependency-merged",
