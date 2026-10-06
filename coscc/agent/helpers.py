@@ -103,7 +103,7 @@ def malformed(message: object) -> str:
             f"a message is at most {MESSAGE_LINES} lines; this one is {lines}: keep what the "
             "receiver acts on and point at `path:line` for the rest"
         )
-    if kind in POINTING and not _PATH.search(message[found.end() :]):
+    if kind in POINTING and not _PATH.search(message.split(":", 1)[1]):
         return f"a `{kind}:` names each file it means (as `coscc/bus.py:42`); this one names none"
     return ""
 
