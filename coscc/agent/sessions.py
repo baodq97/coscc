@@ -829,7 +829,7 @@ class Sessions:
         if gate is None:
             listed = self.config.effective_tools() if tools is None else tools
             gate = Gate(Grant(tools=tuple(listed)), Places(roots=(cwd,)))
-        gate.places = replace(gate.places, secrets=self.secrets())
+        gate.places = replace(gate.places, secrets=self.secrets(), home=self.config.home)
         inner = self._stream(
             cwd,
             text,

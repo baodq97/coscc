@@ -16,6 +16,7 @@ every call (`coscc/agent/helpers.py`).
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, replace
 from typing import Literal, get_args
@@ -86,6 +87,8 @@ EXEC_TOOLS = ("Bash",)
 # reaches the same gate and grant as the session's own, with its `agent_id`, and its spend is in
 # the session's cost.
 AGENT_TOOL = "Agent"
+# The same tool under its older name.
+TASK_TOOL = "Task"
 # The SDK's own message between the agents of one session; the same hook holds where it goes.
 SEND_MESSAGE = "SendMessage"
 # The kernel's own tool listing the helpers of the run, on `submit`'s server.
@@ -1444,10 +1447,13 @@ def _positions(base: str, rest: list[str]) -> list[int]:
     return out
 
 
+_PATH_KEYS = ("file_path", "path", "notebook_path", "target_file")
+
+
 def _paths_in(tool_input: dict) -> list[str]:
     """Every path-shaped argument a write tool was given."""
     out = []
-    for key in ("file_path", "path", "notebook_path", "target_file"):
+    for key in _PATH_KEYS:
         value = tool_input.get(key)
         if isinstance(value, str) and value:
             out.append(value)
@@ -1469,28 +1475,30 @@ def _write_refused(
     return ""
 
 
-def _helper_git(command: str, agent_id: str | None) -> str:
+def _helper_git(parsed: _Parsed, agent_id: str | None) -> str:
     """Why a helper's `git` is refused, or "": its subcommand must be one of `HELPER_GIT`. The
     leading session's call (`agent_id` `None`) is never refused here.
 
-    Read on the words `_words` leaves, so `git -C . commit` reads as `git commit`, and on the
-    program `_launched` finds, so `uv run git commit` and `find . -exec git commit` read so too.
-    A tripwire like the rest: `git diff --output=<file>` still writes, and `python -c` or
-    `uv run --with x git` hide the program.
+    Read on the words `_words` leaves, so `git -C . commit` reads as `git commit`. Every word
+    `git` counts, so a wrapper (`timeout 5 git commit`, `xargs git add`) hides nothing, except
+    after a program that only reads its words (`grep -rn git .`). A tripwire like the rest:
+    `git diff --output=<file>` still writes, and `python -c` hides the program.
     """
     if agent_id is None:
         return ""
-    parsed = _read(command)
-    if isinstance(parsed, _Unreadable):
-        # `check_command` has refused it already.
-        return ""
     for simple in parsed.commands:
         words = list(simple.words)
-        for k in _launched(words):
-            if k >= len(words) or words[k].rsplit("/", 1)[-1] != "git":
+        launched = [k for k in _launched(words) if k < len(words)]
+        reader = bool(launched) and words[launched[0]].rsplit("/", 1)[-1] in _READ_ONLY
+        for k, word in enumerate(words):
+            first = k in launched
+            if first:
+                if word.rsplit("/", 1)[-1] != "git":
+                    continue
+            elif reader or not (word == "git" or (word[:1] == "/" and word.endswith("/git"))):
                 continue
             sub = _words("git", words[k + 1 :])[1:2]
-            if not sub or sub[0] not in HELPER_GIT:
+            if (first and not sub) or (sub and sub[0] not in HELPER_GIT):
                 return (
                     f"a helper runs git only to read ({', '.join(HELPER_GIT)}): "
                     "only the leading session commits"
@@ -1580,6 +1588,8 @@ class Places:
     lease: str = ""
     # `protected_paths`: no tool may reach one.
     secrets: tuple[str, ...] = ()
+    # What `~` and `$HOME` name in a command; "" reads this process's own.
+    home: str = ""
 
 
 def allowed_mcp(grant: Grant) -> tuple[str, ...]:
@@ -1604,7 +1614,7 @@ def critical(
         if tool in allowed_mcp(grant):
             return ""
         return f"{HELD}: {tool} is not one"
-    if tool == AGENT_TOOL:
+    if tool in (AGENT_TOOL, TASK_TOOL):
         return _agent_refused(tool_input, agent_id)
     if tool == LIST_AGENTS:
         return f"{HELPERS}: ListAgents lists sessions outside this step; call {PEERS_TOOL}"
@@ -1615,6 +1625,11 @@ def critical(
         roots = _resolved(places.roots)
         if not roots:
             return f"{WRITES}: this session has no place to write"
+        if not _paths_in(tool_input) or any(
+            k in tool_input and not (isinstance(tool_input[k], str) and tool_input[k])
+            for k in _PATH_KEYS
+        ):
+            return f"{WRITES}: a write tool must name the file it writes"
         own = places.scratch if any(t in grant.tools for t in EXEC_TOOLS) else None
         reason = _write_refused(tool_input, roots, own, places.ram_cap)
         return f"{WRITES}: {reason}" if reason else ""
@@ -1667,7 +1682,8 @@ def _secret_refused(tool: str, tool_input: dict, places: Places) -> str:
                 break
             fixed.append(part)
         start = str(tool_input.get("path") or "")
-        targets.append((str(Path(start) / "/".join(fixed)) if start else "/".join(fixed), True))
+        joined = "/".join(fixed) or ("/" if pattern.startswith("/") else "")
+        targets.append((str(Path(start) / joined) if start else joined, True))
     if searches and not tool_input.get("path"):
         targets.append((".", True))
     for raw, folder in targets:
@@ -1686,23 +1702,35 @@ def _secret_refused(tool: str, tool_input: dict, places: Places) -> str:
 
 # What a line names when a command hidden in it could be one of the critical roads.
 _ROADS = re.compile(r"\b(?:push|merge|release|rm|gh|claude)\b")
+# A word shaped like a line that names a road, `git` or a move: a script another program may run
+# (`sh -c`, `ssh host`, `watch`, `eval`, `echo … | bash`), so it is read again as a line.
+_SCRIPT_SHAPE = re.compile(r"[\s;|&]")
+_SCRIPT_WORDS = re.compile(r"\b(?:push|merge|release|rm|gh|claude|git|cd|pushd|find)\b")
+# Where an unreadable script would start a critical program.
+_AT_COMMAND = re.compile(r"(?:^|[;&|\n(`])\s*(?:[\w./-]*/)?(?:git|gh|rm|claude|cd|pushd)\b")
 # Programs that run the words after them as a program.
 _WRAPPERS = frozenset(
     {"env", "exec", "command", "nohup", "nice", "setsid", "stdbuf", "time", "timeout", "xargs"}
     | {"npx", "uvx", "sudo"}
 )
-_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "eval"})
 _CLAUDE = frozenset({"claude", "claude-code"})
-# `gh` commands that push, merge or release on the host, or run what this reader cannot read.
-_GH_ROADS = (
-    ("pr", "merge"),
-    ("pr", "update-branch"),
-    ("repo", "sync"),
-    ("release",),
-    ("alias", "set"),
-    ("extension",),
+_CD = frozenset({"cd", "pushd"})
+# `gh <group> <verb>`: these verbs only read. Any other may write to the host, and a group
+# `gh` does not ship may be an extension, whose code is not read here.
+_GH_READS = frozenset(
+    {"view", "list", "diff", "checks", "status", "checkout", "clone", "watch", "download", "get"}
 )
+_GH_LOCAL = frozenset({"search", "status", "browse", "help", "version", "completion"})
+_GH_WHOLE = frozenset({"release", "secret", "variable", "extension"})
 _GH_FIELDS = ("-f", "-F", "--field", "--raw-field", "--input")
+# `git config`: what reads it. Any other form writes, and a write can turn a push.
+_CONFIG_READS = frozenset({"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"})
+_CONFIG_WRITES = frozenset(
+    {"--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section"}
+    | {"--edit", "-e"}
+)
+_CONFIG_SCOPE = ("--global", "--local", "--system", "--worktree", "--show-", "--type", "--null")
+_REMOTE_WRITES = frozenset({"add", "set-url", "rename", "remove", "rm"})
 
 
 def bash_refused(places: Places, command: str, agent_id: str | None = None) -> str:
@@ -1710,11 +1738,17 @@ def bash_refused(places: Places, command: str, agent_id: str | None = None) -> s
     a line it cannot read is refused, and so is a substitution or a variable program on a line
     that names a critical road, since what runs there is not read.
 
-    `git`, `gh` and `rm` are checked wherever they stand among a command's words, so a wrapper
-    (`timeout 9 git push`) does not hide them; `sh -c` and `eval` are read again inside.
+    `git`, `gh`, `rm` and `find` are checked wherever they stand among a command's words, so a
+    wrapper (`timeout 9 git push`) does not hide them; a quoted word shaped like a script is
+    read again as a line. Paths are read from where the line stands, `cd` and `pushd` followed.
     """
-    import os
+    roots = _resolved(places.roots[:1])
+    return _line_refused(places, command, agent_id, [str(roots[0]) if roots else None])
 
+
+def _line_refused(
+    places: Places, command: str, agent_id: str | None, cwds: list[str | None]
+) -> str:
     parsed = _read(command)
     if isinstance(parsed, _Unreadable):
         return (
@@ -1735,16 +1769,10 @@ def bash_refused(places: Places, command: str, agent_id: str | None = None) -> s
             "a substitution or a variable program hides what runs, on a line that names push, "
             "merge, release, rm, gh or claude: spell each command out"
         )
-    for p in places.secrets:
-        named = re.compile(re.escape(p) + r"(?![\w.-])")
-        words = [w for s in parsed.commands for w in (*s.words, *(r.target for r in s.redirects))]
-        if named.search(command) or any(
-            named.search(form) or _glob_reaches(form, p)
-            for w in words
-            if w
-            for form in (w, os.path.normpath(w))
-        ):
-            return f"{SECRETS}: {p}"
+    for form in _braces(command):
+        for p in places.secrets:
+            if re.search(re.escape(p) + r"(?![\w.-])", form):
+                return f"{SECRETS}: {p}"
     runs_git = any(w.rsplit("/", 1)[-1] == "git" for s in parsed.commands for w in s.words)
     if runs_git and (
         _GIT_CONFIG_ROAD.search(command)
@@ -1753,18 +1781,26 @@ def bash_refused(places: Places, command: str, agent_id: str | None = None) -> s
         return (
             f"{HOST}: a git alias, an include or GIT_CONFIG_* can rename `push`: none may be made"
         )
-    reason = _helper_git(command, agent_id)
+    reason = _helper_git(parsed, agent_id)
     if reason:
         return f"{HELPERS}: {reason}"
+    cwds = list(cwds)
     for simple in parsed.commands:
-        reason = _simple_refused(places, simple, agent_id, command)
+        reason = _simple_refused(places, simple, agent_id, cwds, command)
         if reason:
             return reason
     return ""
 
 
-def _simple_refused(places: Places, simple: _Simple, agent_id: str | None, line: str) -> str:
+def _simple_refused(
+    places: Places, simple: _Simple, agent_id: str | None, cwds: list[str | None], line: str
+) -> str:
+    """Why one simple command is critical, or ""; a `cd` or `pushd` moves `cwds` on."""
     words, unknown = list(simple.words), list(simple.expanded)
+    for word in (*words, *(r.target for r in simple.redirects)):
+        hit = _word_secret(places, word, cwds)
+        if hit:
+            return f"{SECRETS}: {hit}"
     names = [w.rsplit("/", 1)[-1] for w in words]
     for i, name in enumerate(names):
         rest, rest_unknown = words[i + 1 :], unknown[i + 1 :]
@@ -1773,7 +1809,10 @@ def _simple_refused(places: Places, simple: _Simple, agent_id: str | None, line:
         elif name == "gh":
             reason = _gh_refused(rest, rest_unknown)
         elif name == "rm":
-            reason = _rm_refused(places, rest, rest_unknown)
+            fed = any(n == "xargs" or w in _FIND_EXEC for n, w in zip(names[:i], words[:i]))
+            reason = _rm_refused(places, rest, rest_unknown, cwds, fed)
+        elif name == "find":
+            reason = _find_refused(places, rest, rest_unknown, cwds)
         else:
             continue
         if reason:
@@ -1784,31 +1823,126 @@ def _simple_refused(places: Places, simple: _Simple, agent_id: str | None, line:
         wrapped and any(n in _CLAUDE for n in names[launched[0] + 1 :])
     ):
         return f"{REMOVAL}: a session may not start Claude Code inside itself"
-    for k in launched:
-        if names[k] not in _SHELLS:
-            continue
-        at = k + 1 if names[k] == "eval" else _script_at(words, k + 1)
-        if at is None or at >= len(words):
-            continue
-        if unknown[at] and _ROADS.search(line):
-            return "a variable script hides what runs, on a line that names a critical road: spell it out"
-        reason = bash_refused(
-            places, " ".join(words[at:]) if names[k] == "eval" else words[at], agent_id
-        )
+    for word in words:
+        reason = _script_refused(places, word, agent_id, cwds, line)
         if reason:
             return reason
+    if launched and names[launched[0]] in _CD:
+        return _cd_refused(places, words[launched[0] + 1 :], cwds)
     return ""
 
 
-def _script_at(words: list[str], j: int) -> int | None:
-    """Where the script of `sh -c <script>` stands, from `j`; `None` for a script file."""
-    for i in range(j, len(words)):
-        w = words[i]
-        if not w.startswith("-"):
-            return None
-        if w == "-c" or (not w.startswith("--") and "c" in w[1:]):
-            return i + 1
-    return None
+def _script_refused(
+    places: Places, word: str, agent_id: str | None, cwds: list[str | None], line: str
+) -> str:
+    """A word shaped like a line, read again as one: what `sh -c`, `ssh`, `watch` or a pipe into
+    a shell would run. `NAME=` or `--flag=` in front is the value's, not the script's."""
+    if not _SCRIPT_SHAPE.search(word) or not _SCRIPT_WORDS.search(word):
+        return ""
+    head, eq, value = word.partition("=")
+    script = value if eq and head and not _SCRIPT_SHAPE.search(head) else word
+    if len(script) >= len(line):
+        # A substitution reads back as itself; `hidden` has judged it.
+        return ""
+    if isinstance(_read(script), _Unreadable) and not _AT_COMMAND.search(script):
+        # Prose, such as a commit message: a shell could not run it as it stands either.
+        return ""
+    return _line_refused(places, script, agent_id, cwds)
+
+
+def _cd_refused(places: Places, args: list[str], cwds: list[str | None]) -> str:
+    """Where `cd` or `pushd` moves the line: added to `cwds`, since it may fail and leave the
+    line where it was. A folder that is or holds a secret is refused."""
+    target = next((a for a in args if a == "-" or not a.startswith("-")), "~")
+    text = _expand(target, places.home)
+    if target == "-" or "$" in text or "`" in text:
+        cwds.append(None)
+        return ""
+    secrets = _secret_dirs(places.secrets)
+    for form in _braces(text):
+        for real in _real(form, cwds):
+            for s in secrets:
+                if real == s or real.startswith(s + "/") or s.startswith(real.rstrip("/") + "/"):
+                    return f"{SECRETS}: {real} holds {s}"
+            cwds.append(real)
+    return ""
+
+
+_BRACE = re.compile(r"\{([^{}]*)\}")
+
+
+def _braces(word: str, limit: int = 64) -> list[str]:
+    """The words a brace expansion makes of `word` (`~/.{ssh,aws}` is two); a range (`{1..9}`),
+    or more than `limit` forms, reads as `*`."""
+    out, todo = [], [word]
+    while todo:
+        if len(out) + len(todo) > limit:
+            return [_BRACE.sub("*", word)]
+        w = todo.pop()
+        m = next((m for m in _BRACE.finditer(w) if "," in m.group(1)), None)
+        if m is None:
+            out.append(_BRACE.sub(lambda r: "*" if ".." in r.group(1) else r.group(0), w))
+        else:
+            todo += [w[: m.start()] + part + w[m.end() :] for part in m.group(1).split(",")]
+    return out
+
+
+def _expand(word: str, home: str) -> str:
+    """`~`, `$HOME` or `${HOME}` at the start of `word`, as the shell expands it."""
+    import os
+
+    for lead in ("~", "${HOME}", "$HOME"):
+        if word == lead or word.startswith(lead + "/"):
+            return (home or os.path.expanduser("~")) + word[len(lead) :]
+    return word
+
+
+def _real(text: str, cwds: list[str | None]) -> list[str]:
+    """`text` from each place the line may stand, links followed; a relative one from an
+    unknown place is left out."""
+    import os
+
+    bases = [""] if text.startswith("/") else [c for c in cwds if c]
+    out = []
+    for base in bases:
+        try:
+            out.append(os.path.realpath(os.path.join(base, text) if base else text))
+        except OSError, ValueError:
+            continue
+    return out
+
+
+@functools.lru_cache(maxsize=16)
+def _secret_dirs(secrets: tuple[str, ...]) -> tuple[str, ...]:
+    """The absolute secrets as given and with their links followed."""
+    import os
+
+    absolute = [p for p in secrets if p.startswith("/")]
+    return tuple(
+        dict.fromkeys(
+            [os.path.normpath(p) for p in absolute] + [str(r) for r in _resolved(absolute)]
+        )
+    )
+
+
+def _word_secret(places: Places, word: str, cwds: list[str | None]) -> str:
+    """The secret one word reaches, or "": by its text, a glob, a brace expansion, or the path
+    it names from where the line stands, links followed. A `--flag=` or `NAME=` value counts."""
+    import os
+
+    if not word or not places.secrets:
+        return ""
+    secrets = _secret_dirs(places.secrets)
+    for form in {f for w in (word, word.partition("=")[2]) if w for f in _braces(w)}:
+        for text in (form, os.path.normpath(form)):
+            for p in places.secrets:
+                if re.search(re.escape(p) + r"(?![\w.-])", text) or _glob_reaches(text, p):
+                    return p
+        for real in _real(_expand(form, places.home), cwds):
+            for s in secrets:
+                if real == s or real.startswith(s + "/") or _glob_reaches(real, s):
+                    return s
+    return ""
 
 
 def _git_refused(places: Places, rest: list[str], unknown: list[bool]) -> str:
@@ -1818,6 +1952,10 @@ def _git_refused(places: Places, rest: list[str], unknown: list[bool]) -> str:
     sub = rest[at[0]] if at else ""
     if sub in ("send-pack", "http-push"):
         return f"{HOST}: git {sub} pushes past the one push allowed"
+    if sub == "config" and _config_writes(rest[at[0] + 1 :]):
+        return f"{HOST}: git config is only read here: a setting can send a push elsewhere"
+    if sub == "remote" and len(at) > 1 and rest[at[1]] in _REMOTE_WRITES:
+        return f"{HOST}: git remote {rest[at[1]]} changes where a push goes"
     if not _may_be_push(rest):
         return ""
     if rest[0] != "push":
@@ -1826,17 +1964,42 @@ def _git_refused(places: Places, rest: list[str], unknown: list[bool]) -> str:
     return f"{HOST}: {reason}" if reason else ""
 
 
+def _config_writes(args: list[str]) -> bool:
+    """Whether `git config <args>` may write: anything but a read flag, `get`, `list`, or one
+    name with only scope and format flags."""
+    if any(a.split("=", 1)[0] in _CONFIG_WRITES for a in args):
+        return True
+    if any(a in _CONFIG_READS for a in args):
+        return False
+    named = [a for a in args if not a.startswith("-")]
+    if named[:1] in (["get"], ["list"]):
+        return False
+    flags = [a for a in args if a.startswith("-")]
+    return len(named) != 1 or not all(f.startswith(_CONFIG_SCOPE) or f == "-z" for f in flags)
+
+
 def _gh_refused(rest: list[str], unknown: list[bool]) -> str:
     at = _positions("gh", rest)
     if any(unknown[i] for i in at[:2]):
         return f"{HOST}: gh's command may not be a variable: it can hide a merge"
     words = tuple(rest[i] for i in at)
-    for prefix in _GH_ROADS:
-        if words[: len(prefix)] == prefix:
-            return f"{HOST}: `gh {' '.join(prefix)}` acts on the host"
-    if words[:1] == ("api",) and _api_writes(rest):
-        return f"{HOST}: a `gh api` call that writes (a method other than GET, or a field) is refused; read with `gh pr view` or `gh pr checks`"
-    return ""
+    if not words or words[0] in _GH_LOCAL:
+        return ""
+    if words[:2] == ("auth", "token"):
+        return f"{SECRETS}: `gh auth token` prints the machine's GitHub login"
+    if words[0] == "api":
+        if _api_writes(rest):
+            return f"{HOST}: a `gh api` call that writes (a method other than GET, or a field) is refused; read with `gh pr view` or `gh pr checks`"
+        return ""
+    if words[0] not in _GH_WHOLE:
+        if words[1:2] and words[1] in _GH_READS:
+            return ""
+        if len(words) == 1 and ("--help" in rest or "-h" in rest):
+            return ""
+    return (
+        f"{HOST}: `gh {' '.join(words[:2])}` may write to the host or run an extension; "
+        "read with view, list, diff, checks or status"
+    )
 
 
 def _api_writes(rest: list[str]) -> bool:
@@ -1855,9 +2018,11 @@ def _api_writes(rest: list[str]) -> bool:
     return False
 
 
-def _rm_refused(places: Places, rest: list[str], unknown: list[bool]) -> str:
-    from pathlib import Path
-
+def _rm_refused(
+    places: Places, rest: list[str], unknown: list[bool], cwds: list[str | None], fed: bool
+) -> str:
+    """`rm -r` of a target outside the unit's places, of a variable, or of what `xargs` or
+    `find -exec` hands it (where that points is not read here)."""
     flags, targets, ended = [], [], False
     for token, var in zip(rest, unknown):
         if not ended and token == "--":
@@ -1868,17 +2033,46 @@ def _rm_refused(places: Places, rest: list[str], unknown: list[bool]) -> str:
             targets.append((token, var))
     if not any(f == "--recursive" or (f[1:2] != "-" and ("r" in f or "R" in f)) for f in flags):
         return ""
-    roots = _resolved(places.roots)
+    if fed or not targets:
+        return (
+            f"{REMOVAL}: rm -r of what another program hands it: where it points is not known here"
+        )
     for target, var in targets:
-        if var:
+        if var or "{}" in target:
             return f"{REMOVAL}: rm -r of a variable ({target}): where it points is not known here"
-        path = Path(target).expanduser()
-        if not path.is_absolute() and roots:
-            path = roots[0] / path
-        if _inside(str(path), roots, None) or _scratch_of(str(path), places.scratch) is not None:
-            continue
-        return f"{REMOVAL}: rm -r outside this unit's places: {target}"
+        if _outside(places, target, cwds):
+            return f"{REMOVAL}: rm -r outside this unit's places: {target}"
     return ""
+
+
+def _find_refused(
+    places: Places, rest: list[str], unknown: list[bool], cwds: list[str | None]
+) -> str:
+    """`find <start> -delete` removes below `start`, as `rm -r` would."""
+    if "-delete" not in rest:
+        return ""
+    starts = []
+    for token, var in zip(rest, unknown):
+        if token.startswith("-") or token in ("(", "!", ")"):
+            break
+        starts.append((token, var))
+    for start, var in starts or [(".", False)]:
+        if var or _outside(places, start, cwds):
+            return f"{REMOVAL}: find -delete outside this unit's places: {start}"
+    return ""
+
+
+def _outside(places: Places, target: str, cwds: list[str | None]) -> bool:
+    """Whether a removal target may lie outside the unit's places, from any place the line may
+    stand; a relative one from an unknown place may."""
+    roots = _resolved(places.roots)
+    for form in _braces(_expand(target, places.home)):
+        if not form.startswith("/") and (not cwds or None in cwds):
+            return True
+        for real in _real(form, cwds):
+            if not (_inside(real, roots, None) or _scratch_of(real, places.scratch) is not None):
+                return True
+    return False
 
 
 # Programs `auto` runs without its classifier when every command of a line is one of them.

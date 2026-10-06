@@ -1331,6 +1331,7 @@ class _Unit(unittest.TestCase):
             ram_cap=10,
             branch="feat/x",
             secrets=self.secrets,
+            home=str(self.home),
         )
 
     def critical(self, tool, tool_input, grant=IMPL, places=None, agent_id=None) -> str:
@@ -1383,6 +1384,12 @@ class AWriteOutsideTheUnitsPlacesIsRefused(_Unit):
         inside = {"file_path": str(self.tree / "a")}
         self.assertIn(policy.WRITES, self.critical("Write", inside, places=policy.Places()))
 
+    def test_a_write_with_no_path_is_refused(self):
+        for tool_input in ({}, {"file_path": ""}, {"file_path": 3}, {"content": "x"}):
+            for tool in policy.WRITE_TOOLS:
+                with self.subTest(tool=tool, tool_input=tool_input):
+                    self.assertIn(policy.WRITES, self.critical(tool, tool_input))
+
 
 class ASecretIsOutOfEveryToolsReach(_Unit):
     """The vault, the app's config and database, and the machine's keys, for every tool."""
@@ -1426,6 +1433,7 @@ class ASecretIsOutOfEveryToolsReach(_Unit):
             ("Glob", {"pattern": "**/*", "path": str(self.home)}),
             ("Glob", {"pattern": f"{self.home}/**/id_*"}),
             ("Glob", {"pattern": "../home/**"}),
+            ("Glob", {"pattern": "/**/id_ed25519"}),
         ):
             with self.subTest(tool=tool, tool_input=tool_input):
                 self.assertIn(policy.SECRETS, self.critical(tool, tool_input))
@@ -1455,8 +1463,37 @@ class ASecretIsOutOfEveryToolsReach(_Unit):
             with self.subTest(line=line):
                 self.assertIn(policy.SECRETS, self.bash(line))
 
+    def test_a_relative_word_a_link_or_a_cd_reaching_one_is_refused(self):
+        (self.tree / "k").symlink_to(self.home / ".ssh")
+        for line in (
+            "cat ../home/.ssh/id_ed25519",
+            "ln -s ../home/.ssh k2 && cat k2/id_*",
+            "cat k/id_ed25519",
+            "cat k/id_*",
+            "cd ../data/ws && sqlite3 ../cos.db",
+            "cd ../data && sqlite3 cos.db",
+            "cd ~ && cat .ssh/id_ed25519",
+            "cd $HOME && cat .aws/credentials",
+            "pushd ../home && cat .ssh/id_ed25519",
+            "cd ~",
+            "cd /",
+            "cat ~/.{ssh,aws}/id_ed25519",
+            "cp -r ~/.s{s,}h /x",
+            f"cat {self.home}/.{{gnupg,x}}/a",
+            "gh auth token",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.SECRETS, self.bash(line))
+
     def test_a_bash_line_near_one_runs(self):
-        for line in (f"ls {self.home}/.config", "cat ~/.sshx/a", f"ls {self.root}/data"):
+        for line in (
+            f"ls {self.home}/.config",
+            "cat ~/.sshx/a",
+            f"ls {self.root}/data",
+            "cd ../data/ws && ls",
+            "cd build && cat a.txt",
+            "echo {a,b}.txt",
+        ):
             with self.subTest(line=line):
                 self.assertEqual(self.bash(line), "")
 
@@ -1498,6 +1535,66 @@ class OnlyTheUnitsBranchIsPushed(_Unit):
             with self.subTest(line=line):
                 self.assertIn(policy.HOST, self.bash(line))
 
+    def test_a_script_behind_a_wrapper_or_a_runner_is_read(self):
+        push = "git push origin main"
+        for line in (
+            f"timeout 5 bash -c '{push}'",
+            f"env sh -c '{push}'",
+            f"nohup bash -c '{push}'",
+            f"xargs sh -c '{push}'",
+            f"sudo sh -c '{push}'",
+            f"bash -c -- '{push}'",
+            f"script -qc '{push}' /dev/null",
+            f"watch -n 99 '{push}'",
+            f"flock f -c '{push}'",
+            f"ssh localhost '{push}'",
+            f"busybox sh -c '{push}'",
+            f"ksh -c '{push}'",
+            f"fish -c '{push}'",
+            f"eval '{push}'",
+            f"echo '{push}' | bash",
+            f"S='{push}'; bash -c \"$S\"",
+            "timeout 5 sh -c 'gh pr merge 1'",
+            f"bash -c \"sh -c '{push}'\"",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.HOST, self.bash(line))
+
+    def test_the_push_config_and_the_remotes_are_not_changed(self):
+        for line in (
+            "git config remote.origin.push refs/heads/feat/x:refs/heads/main",
+            "git config remote.origin.pushurl https://example.com/o/r",
+            "git config url.https://example.com/.pushInsteadOf https://x/",
+            "git config core.hooksPath hooks",
+            "git config push.default upstream",
+            "git config --global push.default current",
+            "git config --unset remote.origin.push",
+            "git config set push.default current",
+            "git -C . config remote.origin.push x",
+            "git remote add o2 https://example.com/o/r",
+            "git remote set-url origin https://example.com/o/r",
+            "git remote rename origin x",
+            "git remote remove origin",
+            "git remote rm origin",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.HOST, self.bash(line))
+
+    def test_reading_the_config_and_the_remotes_runs(self):
+        for line in (
+            "git config --get user.name",
+            "git config --get-all remote.origin.push",
+            "git config --list",
+            "git config -l",
+            "git config --get-regexp remote",
+            "git config user.email",
+            "git config get user.name",
+            "git remote -v",
+            "git remote show origin",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
     def test_no_branch_pushes_nothing(self):
         places = replace(self.places, branch="")
         self.assertIn(policy.HOST, self.bash("git push origin feat/x", places=places))
@@ -1527,6 +1624,43 @@ class OnlyTheUnitsBranchIsPushed(_Unit):
             "gh alias set m 'pr merge'",
             "gh pr update-branch 7",
             "gh $P merge 7",
+            "gh auth login",
+            "gh auth logout",
+            "gh auth refresh",
+            "gh auth setup-git",
+            "gh pr create -t x -b y",
+            "gh pr edit 7 -t x",
+            "gh pr close 7",
+            "gh pr reopen 7",
+            "gh pr review 7 --approve",
+            "gh pr comment 7 -b x",
+            "gh pr ready 7",
+            "gh issue create -t x",
+            "gh issue edit 7",
+            "gh issue close 7",
+            "gh issue comment 7 -b x",
+            "gh issue delete 7",
+            "gh repo create o/x",
+            "gh repo edit --visibility public",
+            "gh repo delete o/r",
+            "gh repo rename x",
+            "gh repo archive",
+            "gh repo set-default o/r",
+            "gh release list",
+            "gh workflow run ci",
+            "gh workflow enable ci",
+            "gh workflow disable ci",
+            "gh run rerun 7",
+            "gh run cancel 7",
+            "gh secret list",
+            "gh secret set X",
+            "gh variable set X",
+            "gh label create x",
+            "gh label edit x",
+            "gh label delete x",
+            "gh extension install o/x",
+            "gh api graphql -f query='mutation { x }'",
+            "gh some-extension",
         ):
             with self.subTest(line=line):
                 self.assertIn(policy.HOST, self.bash(line))
@@ -1536,6 +1670,14 @@ class OnlyTheUnitsBranchIsPushed(_Unit):
             "gh pr view 7 --json headRefOid",
             "gh pr checks 7",
             "gh api repos/o/r/pulls/7",
+            "gh pr list --state open",
+            "gh pr diff 7",
+            "gh pr status",
+            "gh issue view 7",
+            "gh run view 7 --log-failed",
+            "gh run list",
+            "gh auth status",
+            "gh pr view --help",
             "git fetch origin && git rebase origin/main",
             "git log --grep push",
             'git commit -m "$MSG"',
@@ -1569,9 +1711,39 @@ class RecursiveRmStaysInsideAndNoClaudeIsNested(_Unit):
             'rm -rf "$TMPDIR/x"',
             "rm -rf -- -x ../y",
             "find . -exec rm -rf ../y ;",
+            "find .. -exec rm -rf {} +",
+            "find / -maxdepth 0 -exec rm -rf {} ;",
+            "ls .. | xargs rm -rf",
+            "ls | xargs -I X rm -rf X",
+            "rm -rf",
+            "cd ../sibling && rm -rf outside",
+            "pushd ../sibling && rm -rf outside",
+            "cd $X && rm -rf build",
+            "find .. -delete",
+            f"find {self.root}/elsewhere -name x -delete",
+            "watch -n 99 'rm -rf ~'",
+            "ssh localhost 'rm -rf ~'",
+            "env bash -c 'claude -p x'",
+            "bash -c -- 'claude -p x'",
         ):
             with self.subTest(line=line):
                 self.assertIn(policy.REMOVAL, self.bash(line))
+
+    def test_a_cd_above_the_worktree_and_an_rm_there_is_refused(self):
+        # Here the folder above holds the secrets, so the `cd` is what is refused.
+        for line in ("cd .. && rm -rf outside", "pushd .. && rm -rf outside"):
+            with self.subTest(line=line):
+                self.assertNotEqual(self.bash(line), "")
+
+    def test_a_find_or_a_cd_inside_runs(self):
+        for line in (
+            "find . -name '*.pyc' -delete",
+            "find build -type f -delete",
+            "cd build && rm -rf dist",
+            f"find {self.disk}/old -delete",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
 
     def test_claude_is_not_started_inside_a_session(self):
         for line in ("claude -p hi", "npx claude -p hi", "env X=1 claude", "uv run claude"):
@@ -1601,6 +1773,25 @@ class TheHelperRulesHold(_Unit):
         self.assertEqual(self.bash("git diff HEAD", agent_id="a1"), "")
         self.assertIn(policy.HELPERS, self.bash("git commit -m x", agent_id="a1"))
         self.assertEqual(self.bash("git commit -m x"), "")
+
+    def test_a_helpers_git_behind_a_wrapper_is_read(self):
+        for line in (
+            "env git commit -m x",
+            "timeout 5 git commit -m x",
+            "nohup git commit -m x",
+            "command git commit -m x",
+            "echo x | xargs git add",
+            "bash -c 'git commit -m x'",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.HELPERS, self.bash(line, agent_id="a1"))
+        for line in ("grep -rn git .", "echo git commit", "timeout 5 git log"):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line, agent_id="a1"), "")
+
+    def test_task_is_the_agent_tool(self):
+        self.assertIn(policy.HELPERS, self.critical("Task", {"subagent_type": "general-purpose"}))
+        self.assertEqual(self.critical("Task", {"subagent_type": "worker"}), "")
 
     def test_nothing_runs_in_the_background(self):
         background = {"command": "npm test", "run_in_background": True}
@@ -1681,7 +1872,7 @@ class ACommandOffTheOldListsRuns(_Unit):
             "curl -s https://example.com",
             "jq .x a.json",
             "make test",
-            "cd .. && ls",
+            "cd ../sibling && ls",
             "echo x > notes.txt",
             "git -C ../sibling status",
             "cat /etc/hosts",
