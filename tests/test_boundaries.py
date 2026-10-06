@@ -67,15 +67,12 @@ FOREIGN_SQL: set[tuple[str, str]] = {
     ("coscc.github.prmachine", "review_rounds"),
     ("coscc.github.prmachine", "transitions"),
     ("coscc.run", "unit_meta"),
-    # The v14 migration rewrites intent and impl records and drops `unit_meta.lane`.
+    # The step to 13 rewrites records, links, unknowns, a stored `done` and answers.
     ("coscc.store.db", "outputs"),
     ("coscc.store.db", "unit_meta"),
-    # The v15 migration rebuilds `unit_links` without its `repo` rows.
     ("coscc.store.db", "unit_links"),
-    # The v16 migration drops what a file fed and rewrites a stored `done`.
     ("coscc.store.db", "transitions"),
     ("coscc.store.db", "unit_unknowns"),
-    # The v18 migration turns `answered_by` into `name` and `authority` into `by`.
     ("coscc.store.db", "unit_answers"),
     ("coscc.run", "workspaces"),
     ("coscc.github.integration", "transitions"),

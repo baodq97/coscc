@@ -34,9 +34,9 @@ from typing import Any, Iterator
 # `500` on a database a newer one has touched**, so rolling the app back means rolling the
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
-# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped; 13: `stage_results` becomes `outputs`; 17: plan records v2;
-# 18: `unit_decisions`, questions carry a recommendation, answers carry `by` and `name`).
-SCHEMA_VERSION = 18
+# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped;
+# 13: idea 0006 M2 in one step, `_before_13` and `_after_13`).
+SCHEMA_VERSION = 13
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -622,16 +622,12 @@ class Data:
                     f"(database schema {found}, this build understands {SCHEMA_VERSION})"
                 )
             if found < SCHEMA_VERSION:
-                self._outputs_from_stage_results(conn)
-                self._decisions_v18(conn)
+                if found == 12:
+                    self._before_13(conn)
                 for statement in _SCHEMA:
                     conn.execute(statement)
-                self._records_v2(conn)
-                self._links_v15(conn)
-                self._status_v16(conn)
-                self._plan_v2(conn)
-                self._questions_v18(conn)
-                self._answers_v18(conn)
+                if found == 12:
+                    self._after_13(conn)
                 for table, column, declaration in _COLUMNS:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
@@ -645,38 +641,53 @@ class Data:
             conn.execute("COMMIT")
 
     @staticmethod
-    def _outputs_from_stage_results(conn: sqlite3.Connection) -> None:
-        """13: the table was `stage_results` (column `stage`, no `version`); ids and objects stay."""
-        old = "SELECT 1 FROM sqlite_master WHERE type='table' AND name='stage_results'"
-        if conn.execute(old).fetchone() is None:
-            return
-        conn.execute("DROP TABLE IF EXISTS outputs")
+    def _before_13(conn: sqlite3.Connection) -> None:
+        """13, from 12 (the only older database outside tests): `stage_results` becomes
+        `outputs` (column `agent`, a `version`), and the removed decisions feature's
+        `unit_decisions` goes so the new one can be made."""
         conn.execute("ALTER TABLE stage_results RENAME TO outputs")
         conn.execute("ALTER TABLE outputs RENAME COLUMN stage TO agent")
         conn.execute("ALTER TABLE outputs ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
         conn.execute("DROP INDEX IF EXISTS stage_results_scope")
+        conn.execute("DROP TABLE IF EXISTS unit_decisions")
 
     @staticmethod
-    def _records_v2(conn: sqlite3.Connection) -> None:
-        """14: intent's records gain `type`, from the unit's, impl's change version only, and
-        `unit_meta` loses `lane`."""
+    def _after_13(conn: sqlite3.Connection) -> None:
+        """13, the rest. Records move to their current contract: intent gains the unit's
+        `type`, plan gains `impl` `novel`, empty `files` and `steps` and `rests_on` (the unit's
+        latest spec record's `unmeasured`, so no stored gate changes), every question a
+        `recommendation` `""`. What a file fed goes (`unit_seen`, `idea_meta`, `repo` links,
+        `unit_meta.lane`, the `raw` unknowns, the import's `migrations` keys); a stored `done`
+        is `accepted`. An answer's `answered_by` becomes `name`, and `by` replaces `authority`:
+        `delegated` where `authority` was not `person` or the name opens with Leif, Claude or
+        agent, else `person`."""
         conn.execute(
-            "UPDATE outputs SET version = 2, object = json_set(object, '$.type', "
+            "UPDATE outputs SET object = json_set(object, '$.type', "
             "COALESCE((SELECT type FROM unit_meta m WHERE m.root = outputs.root "
             "AND m.workspace = outputs.workspace AND m.unit = outputs.unit), 'unknown')) "
-            "WHERE agent = 'intent' AND version = 1"
+            "WHERE agent = 'intent'"
         )
-        conn.execute("UPDATE outputs SET version = 2 WHERE agent = 'impl' AND version = 1")
-        if "lane" in {r[1] for r in conn.execute("PRAGMA table_info(unit_meta)")}:
-            conn.execute("ALTER TABLE unit_meta DROP COLUMN lane")
-
-    @staticmethod
-    def _links_v15(conn: sqlite3.Connection) -> None:
-        """15: `idea_meta` is gone and `unit_links` is rebuilt without its `repo` rows."""
-        conn.execute("DROP TABLE IF EXISTS idea_meta")
-        (sql,) = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'unit_links'").fetchone()
-        if "'repo'" not in sql:
-            return
+        conn.execute(
+            "UPDATE outputs SET object = json_set(object, "
+            "'$.impl', 'novel', '$.files', json('[]'), '$.steps', json('[]'), '$.rests_on', "
+            "json(COALESCE((SELECT json_extract(s.object, '$.unmeasured') FROM outputs s "
+            "WHERE s.root = outputs.root AND s.workspace = outputs.workspace "
+            "AND s.unit = outputs.unit AND s.agent = 'spec' ORDER BY s.id DESC LIMIT 1), '[]'))) "
+            "WHERE agent = 'plan'"
+        )
+        conn.execute(
+            "UPDATE outputs SET object = json_set(object, '$.questions', "
+            "(SELECT json_group_array(json_set(value, '$.recommendation', '')) "
+            "FROM json_each(outputs.object, '$.questions'))) "
+            "WHERE json_type(object, '$.questions') = 'array' "
+            "AND agent IN ('idea', 'intent', 'spec', 'spike', 'plan', 'impl')"
+        )
+        conn.execute(
+            "UPDATE outputs SET version = CASE WHEN agent IN ('intent', 'plan', 'impl') THEN 3 "
+            "ELSE 2 END WHERE agent IN ('idea', 'intent', 'spec', 'spike', 'plan', 'impl')"
+        )
+        conn.execute("ALTER TABLE unit_meta DROP COLUMN lane")
+        conn.execute("DROP TABLE idea_meta")
         kept = conn.execute(
             "SELECT root, workspace, unit, kind, ref, pos FROM unit_links WHERE kind != 'repo'"
         ).fetchall()
@@ -685,74 +696,15 @@ class Data:
             if "unit_links" in statement:
                 conn.execute(statement)
         conn.executemany("INSERT INTO unit_links VALUES (?, ?, ?, ?, ?, ?)", kept)
-
-    @staticmethod
-    def _status_v16(conn: sqlite3.Connection) -> None:
-        """16: what a file fed is gone (`unit_seen`, the `raw` column, the import's `migrations`
-        keys, every unknown but `ingest`), and a stored `done` is `accepted`."""
-        conn.execute("DROP TABLE IF EXISTS unit_seen")
-        if "raw" in {r[1] for r in conn.execute("PRAGMA table_info(unit_unknowns)")}:
-            conn.execute("DELETE FROM unit_unknowns WHERE field <> 'ingest'")
-            conn.execute("ALTER TABLE unit_unknowns DROP COLUMN raw")
+        conn.execute("DROP TABLE unit_seen")
+        conn.execute("DELETE FROM unit_unknowns WHERE field <> 'ingest'")
+        conn.execute("ALTER TABLE unit_unknowns DROP COLUMN raw")
         conn.execute("DELETE FROM migrations WHERE key LIKE 'unit-meta:%'")
         conn.execute("UPDATE transitions SET to_state = 'accepted' WHERE to_state = 'done'")
         conn.execute("UPDATE transitions SET from_state = 'accepted' WHERE from_state = 'done'")
-
-    @staticmethod
-    def _plan_v2(conn: sqlite3.Connection) -> None:
-        """17: plan's records gain `impl` (`novel`), empty `files` and `steps`, and `rests_on`,
-        the unit's latest spec record's `unmeasured`, so no stored unit's gate changes."""
         conn.execute(
-            "UPDATE outputs SET version = 2, object = json_set(object, "
-            "'$.impl', 'novel', '$.files', json('[]'), '$.steps', json('[]'), '$.rests_on', "
-            "json(COALESCE((SELECT json_extract(s.object, '$.unmeasured') FROM outputs s "
-            "WHERE s.root = outputs.root AND s.workspace = outputs.workspace "
-            "AND s.unit = outputs.unit AND s.agent = 'spec' ORDER BY s.id DESC LIMIT 1), '[]'))) "
-            "WHERE agent = 'plan' AND version = 1"
+            "ALTER TABLE unit_questions ADD COLUMN recommendation TEXT NOT NULL DEFAULT ''"
         )
-
-    @staticmethod
-    def _decisions_v18(conn: sqlite3.Connection) -> None:
-        """18: a `unit_decisions` left by the removed decisions feature (no `kind` column) is
-        dropped before the new one is made."""
-        have = {r[1] for r in conn.execute("PRAGMA table_info(unit_decisions)")}
-        if have and "kind" not in have:
-            conn.execute("DROP TABLE unit_decisions")
-
-    @staticmethod
-    def _questions_v18(conn: sqlite3.Connection) -> None:
-        """18: every artifact record's questions gain `recommendation` `""`, one version up."""
-        for agent, old in (
-            ("idea", 1),
-            ("spec", 1),
-            ("spike", 1),
-            ("intent", 2),
-            ("plan", 2),
-            ("impl", 2),
-        ):
-            conn.execute(
-                "UPDATE outputs SET version = ?, object = CASE "
-                "WHEN json_type(object, '$.questions') = 'array' THEN json_set(object, '$.questions', "
-                "(SELECT json_group_array(json_set(value, '$.recommendation', '')) "
-                "FROM json_each(outputs.object, '$.questions'))) ELSE object END "
-                "WHERE agent = ? AND version = ?",
-                (old + 1, agent, old),
-            )
-        if "recommendation" not in {
-            r[1] for r in conn.execute("PRAGMA table_info(unit_questions)")
-        }:
-            conn.execute(
-                "ALTER TABLE unit_questions ADD COLUMN recommendation TEXT NOT NULL DEFAULT ''"
-            )
-
-    @staticmethod
-    def _answers_v18(conn: sqlite3.Connection) -> None:
-        """18: `answered_by` becomes `name`, and `by` replaces `authority`: `delegated` where
-        `authority` was not `person` or the name opens with Leif, Claude or agent, else
-        `person`. Once, by the rule `/api/decided` used until then."""
-        have = {r[1] for r in conn.execute("PRAGMA table_info(unit_answers)")}
-        if "answered_by" not in have:
-            return
         conn.execute("ALTER TABLE unit_answers RENAME COLUMN answered_by TO name")
         conn.execute(
             "ALTER TABLE unit_answers ADD COLUMN \"by\" TEXT NOT NULL DEFAULT 'delegated' "
@@ -763,10 +715,11 @@ class Data:
             f"substr(lower(trim(name)), {len(n) + 1}, 1) NOT BETWEEN 'a' AND 'z'))"
             for n in ("leif", "claude", "agent")
         )
-        person = "authority IN ('person', '') AND " if "authority" in have else ""
-        conn.execute(f"UPDATE unit_answers SET \"by\" = 'person' WHERE {person}NOT ({agent_named})")
-        if "authority" in have:
-            conn.execute("ALTER TABLE unit_answers DROP COLUMN authority")
+        conn.execute(
+            "UPDATE unit_answers SET \"by\" = 'person' "
+            f"WHERE authority IN ('person', '') AND NOT ({agent_named})"
+        )
+        conn.execute("ALTER TABLE unit_answers DROP COLUMN authority")
 
     def version(self) -> int:
         with self.connect() as conn:

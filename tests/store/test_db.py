@@ -188,128 +188,6 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 data.version()
 
 
-class StageResultsBecomeOutputs(unittest.TestCase):
-    def test_a_v12_database_keeps_its_rows_under_the_new_names_at_version_1(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            with data.connect() as conn:
-                conn.execute("DROP TABLE outputs")
-                conn.execute("CREATE TABLE outputs (id INTEGER PRIMARY KEY, path TEXT)")
-                conn.execute(
-                    "CREATE TABLE stage_results (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                    "at TEXT NOT NULL, root TEXT NOT NULL, workspace TEXT NOT NULL, "
-                    "unit TEXT NOT NULL, stage TEXT NOT NULL, run TEXT NOT NULL, "
-                    "revision TEXT NOT NULL, judgement TEXT NOT NULL, object TEXT NOT NULL)"
-                )
-                conn.execute(
-                    "CREATE INDEX stage_results_scope ON stage_results (root, workspace, unit, id)"
-                )
-                for n in (7, 9):
-                    conn.execute(
-                        "INSERT INTO stage_results (id, at, root, workspace, unit, stage, run, "
-                        "revision, judgement, object) VALUES "
-                        f"({n}, 't', '/w', 'p', '0001_x', 'spec', 'r', 'h', 'ready', '{{\"n\": {n}}}')"
-                    )
-                conn.execute("PRAGMA user_version=12")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                names = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master")}
-                rows = [
-                    tuple(r)
-                    for r in conn.execute(
-                        "SELECT id, agent, version, object FROM outputs ORDER BY id"
-                    )
-                ]
-            self.assertEqual(rows, [(7, "spec", 2, '{"n": 7}'), (9, "spec", 2, '{"n": 9}')])
-            self.assertIn("outputs_scope", names)
-            self.assertFalse({"stage_results", "stage_results_scope"} & names)
-
-
-class IntentRecordsRiseToV2WithTheirType(unittest.TestCase):
-    def test_a_v13_database_gets_a_type_in_every_intent_record_and_loses_the_lane(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            with data.connect() as conn:
-                conn.execute("ALTER TABLE unit_meta ADD COLUMN lane TEXT NOT NULL DEFAULT 'full'")
-                for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):
-                    conn.execute(
-                        "INSERT INTO unit_meta (root, workspace, unit, type, imported_at) "
-                        f"VALUES ('/w', 'p', '{unit}', '{kind}', 't')"
-                    )
-                rows = [
-                    (1, "intent", "0001_a", '{"stage": "intent", "judgement": "ready"}'),
-                    (2, "intent", "0002_b", '{"stage": "intent", "judgement": "ready"}'),
-                    (3, "impl", "0001_a", '{"stage": "impl", "needs_person": []}'),
-                    (4, "spec", "0001_a", '{"stage": "spec"}'),
-                ]
-                for n, agent, unit, obj in rows:
-                    conn.execute(
-                        "INSERT INTO outputs (id, at, root, workspace, unit, agent, version, run, "
-                        "revision, judgement, object) VALUES "
-                        f"({n}, 't', '/w', 'p', '{unit}', '{agent}', 1, 'r', 'h', 'ready', '{obj}')"
-                    )
-                conn.execute("PRAGMA user_version=13")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                got = [
-                    tuple(r)
-                    for r in conn.execute(
-                        "SELECT id, agent, version, json_extract(object, '$.type'), "
-                        "json_extract(object, '$.judgement') FROM outputs ORDER BY id"
-                    )
-                ]
-                cols = {r["name"] for r in conn.execute("PRAGMA table_info(unit_meta)")}
-            self.assertEqual(
-                got,
-                [
-                    (1, "intent", 3, "fix", "ready"),
-                    (2, "intent", 3, "feat", "ready"),
-                    (3, "impl", 3, None, None),
-                    (4, "spec", 2, None, None),
-                ],
-            )
-            self.assertNotIn("lane", cols)
-
-
-class LinksLoseRepoAndIdeaMetaGoes(unittest.TestCase):
-    def test_a_v14_database_loses_idea_meta_and_the_repo_rows(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            with data.connect() as conn:
-                conn.execute("DROP TABLE unit_links")
-                conn.execute(
-                    "CREATE TABLE unit_links (root TEXT NOT NULL, workspace TEXT NOT NULL, "
-                    "unit TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('idea', 'repo', "
-                    "'depends')), ref TEXT NOT NULL, pos INTEGER NOT NULL)"
-                )
-                conn.execute(
-                    "CREATE TABLE idea_meta (root TEXT, workspace TEXT, idea TEXT, read TEXT)"
-                )
-                conn.execute("INSERT INTO idea_meta VALUES ('/w', 'p', '0001_x', '{}')")
-                for pos, (kind, ref) in enumerate(
-                    [("idea", "p/ideas/0001_x.md"), ("repo", "p"), ("depends", "p/0002_b")]
-                ):
-                    conn.execute(
-                        "INSERT INTO unit_links VALUES ('/w', 'p', '0003_c', ?, ?, ?)",
-                        (kind, ref, pos),
-                    )
-                conn.execute("PRAGMA user_version=14")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
-                got = [
-                    tuple(r)
-                    for r in conn.execute("SELECT kind, ref, pos FROM unit_links ORDER BY pos")
-                ]
-                with self.assertRaises(sqlite3.IntegrityError):
-                    conn.execute("INSERT INTO unit_links VALUES ('/w', 'p', 'u', 'repo', 'p', 0)")
-            self.assertNotIn("idea_meta", tables)
-            self.assertEqual(got, [("idea", "p/ideas/0001_x.md", 0), ("depends", "p/0002_b", 2)])
-
-
 class AStepsEvents(unittest.TestCase):
     """The two tables, as the recorder writes them and the service reads."""
 
@@ -699,105 +577,11 @@ class TheRunningAppsDatabaseIsNotOpened(unittest.TestCase):
             self.assertEqual(Data(self.tmp / "app").version(), SCHEMA_VERSION)
 
 
-class V16DropsWhatTheFilesFed(unittest.TestCase):
-    def test_a_v15_database_loses_what_a_file_fed_and_done_becomes_accepted(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            with data.connect() as conn:
-                conn.execute(
-                    "CREATE TABLE unit_seen (root TEXT, workspace TEXT, unit TEXT, "
-                    "artifact TEXT, sha256 TEXT, questions INTEGER)"
-                )
-                conn.execute(
-                    "INSERT INTO unit_seen VALUES ('/w', 'p', '0001_a', 'plan.md', 'x', 1)"
-                )
-                conn.execute("ALTER TABLE unit_unknowns ADD COLUMN raw TEXT")
-                for field, raw in (("status", "approved"), ("ingest", None)):
-                    conn.execute(
-                        "INSERT INTO unit_unknowns (root, workspace, unit, artifact, field, "
-                        "reason, raw, at) VALUES ('/w', 'p', '0001_a', 'plan.md', ?, 'r', ?, 't')",
-                        (field, raw),
-                    )
-                for key in ("unit-meta:0135:/w/p", "unit-meta:0136-authority:/w/p", "keep"):
-                    conn.execute("INSERT INTO migrations (key, at) VALUES (?, 't')", (key,))
-                for frm, to in (
-                    ("not started", "done"),
-                    ("done", "accepted"),
-                    ("draft", "accepted"),
-                ):
-                    conn.execute(
-                        "INSERT INTO transitions (at, root, workspace, unit, artifact, stage, "
-                        "from_state, to_state, actor, session, source, machine) "
-                        f"VALUES ('t', '/w', 'p', '0001_a', 'plan.md', 'plan', '{frm}', '{to}', "
-                        "'a', 's', 'src', 'unit')"
-                    )
-                conn.execute("PRAGMA user_version=15")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
-                cols = {r["name"] for r in conn.execute("PRAGMA table_info(unit_unknowns)")}
-                unknown = [r["field"] for r in conn.execute("SELECT field FROM unit_unknowns")]
-                keys = [r["key"] for r in conn.execute("SELECT key FROM migrations")]
-                moves = [
-                    (r["from_state"], r["to_state"])
-                    for r in conn.execute(
-                        "SELECT from_state, to_state FROM transitions ORDER BY id"
-                    )
-                ]
-            self.assertNotIn("unit_seen", tables)
-            self.assertNotIn("raw", cols)
-            self.assertEqual(unknown, ["ingest"])
-            self.assertEqual(keys, ["keep"])
-            self.assertEqual(
-                moves,
-                [("not started", "accepted"), ("accepted", "accepted"), ("draft", "accepted")],
-            )
-
-
-class V17PlanRecordsBecomeV2(unittest.TestCase):
-    def test_a_v1_plan_gains_its_label_empty_lists_and_the_specs_unmeasured(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            with data.connect() as conn:
-                rows = (
-                    ("0001_a", "spec", 1, '{"unmeasured": ["U9"]}'),
-                    ("0001_a", "spec", 1, '{"unmeasured": ["U1"]}'),
-                    ("0001_a", "plan", 1, '{"judgement": "ready"}'),
-                    ("0002_b", "plan", 1, '{"judgement": "ready"}'),
-                )
-                for unit, agent, version, obj in rows:
-                    conn.execute(
-                        "INSERT INTO outputs (at, root, workspace, unit, agent, version, run, "
-                        "revision, judgement, object) "
-                        "VALUES ('t', '/w', 'p', ?, ?, ?, 'r', 'h', 'ready', ?)",
-                        (unit, agent, version, obj),
-                    )
-                conn.execute("PRAGMA user_version=16")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                plans = conn.execute(
-                    "SELECT unit, version, json_extract(object, '$.impl') AS impl, "
-                    "json_type(object, '$.files') AS files, json_type(object, '$.steps') AS steps, "
-                    "json_extract(object, '$.rests_on') AS rests_on FROM outputs "
-                    "WHERE agent = 'plan' ORDER BY unit"
-                ).fetchall()
-            self.assertEqual(
-                [tuple(r) for r in plans],
-                [
-                    ("0001_a", 3, "novel", "array", "array", '["U1"]'),
-                    ("0002_b", 3, "novel", "array", "array", "[]"),
-                ],
-            )
-
-
 class DecisionsGetATable(unittest.TestCase):
-    def test_the_table_and_its_index_exist_at_version_18(self):
+    def test_the_table_and_its_index_exist(self):
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
-            self.assertEqual(SCHEMA_VERSION, 18)
-            self.assertEqual(data.version(), 18)
+            self.assertEqual(data.version(), SCHEMA_VERSION)
             with data.connect() as conn:
                 names = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master")}
             self.assertLessEqual({"unit_decisions", "unit_decisions_scope"}, names)
@@ -815,32 +599,46 @@ class DecisionsGetATable(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError), data.write() as conn:
                 conn.execute(insert, ("approve",))
 
-    def test_an_old_shaped_table_is_dropped_and_recreated(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            with data.connect() as conn:
-                conn.execute("DROP TABLE unit_decisions")
-                conn.execute(
-                    "CREATE TABLE unit_decisions (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                    "root TEXT, workspace TEXT, unit TEXT, text TEXT, authority TEXT, "
-                    "recorded_by TEXT)"
-                )
-                conn.execute(
-                    "INSERT INTO unit_decisions (root, workspace, unit, text, authority, "
-                    "recorded_by) VALUES ('/w', 'p', '0001_a', 't', 'person', 'x')"
-                )
-                conn.execute("PRAGMA user_version=17")
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                cols = {r["name"] for r in conn.execute("PRAGMA table_info(unit_decisions)")}
-                count = conn.execute("SELECT COUNT(*) FROM unit_decisions").fetchone()[0]
-            self.assertLessEqual({"kind", "fields", "decided_by"}, cols)
-            self.assertFalse({"text", "authority", "recorded_by"} & cols)
-            self.assertEqual(count, 0)
+
+# The tables 13 changes, as a database at 12 has them.
+V12 = (
+    "CREATE TABLE stage_results (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, "
+    "root TEXT NOT NULL, workspace TEXT NOT NULL, unit TEXT NOT NULL, stage TEXT NOT NULL, "
+    "run TEXT NOT NULL, revision TEXT NOT NULL, judgement TEXT NOT NULL, object TEXT NOT NULL)",
+    "CREATE INDEX stage_results_scope ON stage_results (root, workspace, unit, id)",
+    "CREATE TABLE unit_meta (root TEXT NOT NULL, workspace TEXT NOT NULL, unit TEXT NOT NULL, "
+    "type TEXT NOT NULL, lane TEXT NOT NULL DEFAULT 'full', number INTEGER, slug TEXT, "
+    "imported_at TEXT NOT NULL, PRIMARY KEY (root, workspace, unit))",
+    "CREATE TABLE idea_meta (root TEXT NOT NULL, workspace TEXT NOT NULL, idea TEXT NOT NULL, "
+    "read TEXT NOT NULL, PRIMARY KEY (root, workspace, idea))",
+    "CREATE TABLE unit_links (root TEXT NOT NULL, workspace TEXT NOT NULL, unit TEXT NOT NULL, "
+    "kind TEXT NOT NULL CHECK (kind IN ('idea', 'repo', 'depends')), ref TEXT NOT NULL, "
+    "pos INTEGER NOT NULL)",
+    "CREATE TABLE unit_seen (root TEXT NOT NULL, workspace TEXT NOT NULL, unit TEXT NOT NULL, "
+    "artifact TEXT NOT NULL, sha256 TEXT NOT NULL, questions INTEGER NOT NULL DEFAULT 0)",
+    "CREATE TABLE unit_unknowns (root TEXT NOT NULL, workspace TEXT NOT NULL, "
+    "unit TEXT NOT NULL, artifact TEXT NOT NULL, field TEXT NOT NULL, reason TEXT NOT NULL, "
+    "raw TEXT, at TEXT NOT NULL)",
+    "CREATE TABLE unit_questions (root TEXT NOT NULL, workspace TEXT NOT NULL, "
+    "unit TEXT NOT NULL, artifact TEXT NOT NULL, n INTEGER NOT NULL, text TEXT NOT NULL)",
+    "CREATE TABLE unit_answers (id INTEGER PRIMARY KEY AUTOINCREMENT, root TEXT NOT NULL, "
+    "workspace TEXT NOT NULL, unit TEXT NOT NULL, artifact TEXT NOT NULL, ref TEXT NOT NULL, "
+    "text TEXT NOT NULL, answered_by TEXT NOT NULL, date TEXT NOT NULL, via TEXT NOT NULL, "
+    "once_key TEXT NOT NULL DEFAULT '', authority TEXT NOT NULL DEFAULT 'unknown')",
+    "CREATE TABLE unit_decisions (id INTEGER PRIMARY KEY AUTOINCREMENT, workspace TEXT NOT NULL, "
+    "unit TEXT NOT NULL, text TEXT NOT NULL, authority TEXT NOT NULL, "
+    "recorded_by TEXT NOT NULL, date TEXT NOT NULL)",
+)
+
+TWO_QUESTIONS = (
+    '{"judgement": "ready", "questions": [{"n": 1, "text": "a"}, {"n": 2, "text": "b"}]}'
+)
 
 
-class AnswersCarryTheirProvenance(unittest.TestCase):
-    ROWS = (
+class AV12DatabaseTakesOneStepTo13(unittest.TestCase):
+    """Idea 0006 M2's schema in one step; the end state is what each part used to prove."""
+
+    ANSWERS = (
         ("person", "Leif (CoS), x"),
         ("person", "Claude (CoS), y"),
         ("person", "agent, z"),
@@ -848,40 +646,152 @@ class AnswersCarryTheirProvenance(unittest.TestCase):
         ("person", "the originator (relayed by Leif)"),
         ("agent", "Jera"),
     )
+    OUTPUTS = (
+        ("0001_a", "intent", TWO_QUESTIONS),
+        ("0002_b", "intent", '{"stage": "intent", "judgement": "ready"}'),
+        ("0001_a", "impl", '{"stage": "impl", "needs_person": []}'),
+        ("0001_a", "spec", '{"unmeasured": ["U9"]}'),
+        ("0001_a", "spec", TWO_QUESTIONS.replace("{", '{"unmeasured": ["U1"], ', 1)),
+        ("0001_a", "plan", '{"judgement": "ready"}'),
+        ("0002_b", "plan", '{"judgement": "ready"}'),
+        ("0001_a", "spike", '{"judgement": "ready"}'),
+    )
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.data = Data(self.tmp.name)
         with self.data.connect() as conn:
-            conn.execute("DROP TABLE unit_answers")
-            conn.execute(
-                "CREATE TABLE unit_answers (id INTEGER PRIMARY KEY AUTOINCREMENT, root TEXT NOT NULL, "
-                "workspace TEXT NOT NULL, unit TEXT NOT NULL, artifact TEXT NOT NULL, "
-                "ref TEXT NOT NULL, text TEXT NOT NULL, answered_by TEXT NOT NULL, "
-                "authority TEXT NOT NULL, date TEXT NOT NULL, via TEXT NOT NULL, "
-                "once_key TEXT NOT NULL DEFAULT '')"
-            )
-            for n, (authority, name) in enumerate(self.ROWS, 1):
-                conn.execute(
-                    "INSERT INTO unit_answers (root, workspace, unit, artifact, ref, text, "
-                    "answered_by, authority, date, via) VALUES ('/w', 'p', '0001_a', 'spec.md', "
-                    "?, 't', ?, ?, 'd', 'v')",
-                    (str(n), name, authority),
-                )
-            conn.execute("PRAGMA user_version=17")
-
-    def test_by_is_derived_once_and_the_old_columns_are_gone(self):
+            for table in (
+                "outputs",
+                "unit_meta",
+                "unit_links",
+                "unit_unknowns",
+                "unit_questions",
+                "unit_answers",
+                "unit_decisions",
+            ):
+                conn.execute(f"DROP TABLE {table}")
+            for statement in V12:
+                conn.execute(statement)
+            self._rows(conn)
+            conn.execute("PRAGMA user_version=12")
         self.assertEqual(self.data.version(), SCHEMA_VERSION)
+        self.assertEqual(SCHEMA_VERSION, 13)
+
+    def _rows(self, conn):
+        for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):
+            conn.execute(
+                "INSERT INTO unit_meta (root, workspace, unit, type, imported_at) "
+                "VALUES ('/w', 'p', ?, ?, 't')",
+                (unit, kind),
+            )
+        for unit, agent, obj in self.OUTPUTS:
+            conn.execute(
+                "INSERT INTO stage_results (at, root, workspace, unit, stage, run, revision, "
+                "judgement, object) VALUES ('t', '/w', 'p', ?, ?, 'r', 'h', 'ready', ?)",
+                (unit, agent, obj),
+            )
+        conn.execute("INSERT INTO idea_meta VALUES ('/w', 'p', '0001_x', '{}')")
+        for pos, (kind, ref) in enumerate(
+            [("idea", "p/ideas/0001_x.md"), ("repo", "p"), ("depends", "p/0002_b")]
+        ):
+            conn.execute(
+                "INSERT INTO unit_links VALUES ('/w', 'p', '0003_c', ?, ?, ?)", (kind, ref, pos)
+            )
+        conn.execute("INSERT INTO unit_seen VALUES ('/w', 'p', '0001_a', 'plan.md', 'x', 1)")
+        for field, raw in (("status", "approved"), ("ingest", None)):
+            conn.execute(
+                "INSERT INTO unit_unknowns VALUES ('/w', 'p', '0001_a', 'plan.md', ?, 'r', ?, 't')",
+                (field, raw),
+            )
+        for key in ("unit-meta:0135:/w/p", "unit-meta:0136-authority:/w/p", "keep"):
+            conn.execute("INSERT INTO migrations (key, at) VALUES (?, 't')", (key,))
+        for frm, to in (("not started", "done"), ("done", "accepted"), ("draft", "accepted")):
+            conn.execute(
+                "INSERT INTO transitions (at, root, workspace, unit, artifact, stage, "
+                "from_state, to_state, actor, session, source, machine) "
+                "VALUES ('t', '/w', 'p', '0001_a', 'plan.md', 'plan', ?, ?, 'a', 's', 'src', 'unit')",
+                (frm, to),
+            )
+        conn.execute("INSERT INTO unit_questions VALUES ('/w', 'p', '0001_a', 'spec.md', 1, 'q')")
+        for n, (authority, name) in enumerate(self.ANSWERS, 1):
+            conn.execute(
+                "INSERT INTO unit_answers (root, workspace, unit, artifact, ref, text, "
+                "answered_by, authority, date, via) VALUES ('/w', 'p', '0001_a', 'spec.md', "
+                "?, 't', ?, ?, 'd', 'v')",
+                (str(n), name, authority),
+            )
+        conn.execute(
+            "INSERT INTO unit_decisions (workspace, unit, text, authority, recorded_by, date) "
+            "VALUES ('p', '0001_a', 't', 'person', 'x', 'd')"
+        )
+
+    def _all(self, sql):
         with self.data.connect() as conn:
-            cols = {r["name"] for r in conn.execute("PRAGMA table_info(unit_answers)")}
-            got = [
-                tuple(r) for r in conn.execute('SELECT name, "by" FROM unit_answers ORDER BY id')
-            ]
+            return [tuple(r) for r in conn.execute(sql)]
+
+    def _columns(self, table):
+        return {r[1] for r in self._all(f"PRAGMA table_info({table})")}
+
+    def test_what_a_file_fed_and_the_old_tables_are_gone(self):
+        names = {r[0] for r in self._all("SELECT name FROM sqlite_master")}
+        self.assertFalse({"stage_results", "stage_results_scope", "idea_meta", "unit_seen"} & names)
+        self.assertLessEqual({"outputs_scope", "unit_links_scope", "unit_decisions_scope"}, names)
+        self.assertNotIn("lane", self._columns("unit_meta"))
+        self.assertNotIn("raw", self._columns("unit_unknowns"))
+        self.assertEqual(self._all("SELECT field FROM unit_unknowns"), [("ingest",)])
+        self.assertEqual(self._all("SELECT key FROM migrations"), [("keep",)])
+
+    def test_links_keep_their_order_without_repo_rows(self):
+        self.assertEqual(
+            self._all("SELECT kind, ref, pos FROM unit_links ORDER BY pos"),
+            [("idea", "p/ideas/0001_x.md", 0), ("depends", "p/0002_b", 2)],
+        )
+        with self.assertRaises(sqlite3.IntegrityError), self.data.connect() as conn:
+            conn.execute("INSERT INTO unit_links VALUES ('/w', 'p', 'u', 'repo', 'p', 0)")
+
+    def test_a_stored_done_is_accepted(self):
+        self.assertEqual(
+            self._all("SELECT from_state, to_state FROM transitions ORDER BY id"),
+            [("not started", "accepted"), ("accepted", "accepted"), ("draft", "accepted")],
+        )
+
+    def test_records_rise_to_their_current_contract(self):
+        got = self._all(
+            "SELECT id, unit, agent, version, json_extract(object, '$.type'), "
+            "json_extract(object, '$.impl'), json_type(object, '$.files'), "
+            "json_type(object, '$.steps'), json_extract(object, '$.rests_on'), "
+            "json_extract(object, '$.questions[0].recommendation'), "
+            "json_extract(object, '$.questions[1].recommendation') FROM outputs ORDER BY id"
+        )
+        self.assertEqual(
+            got,
+            [
+                (1, "0001_a", "intent", 3, "fix", None, None, None, None, "", ""),
+                (2, "0002_b", "intent", 3, "feat", None, None, None, None, None, None),
+                (3, "0001_a", "impl", 3, None, None, None, None, None, None, None),
+                (4, "0001_a", "spec", 2, None, None, None, None, None, None, None),
+                (5, "0001_a", "spec", 2, None, None, None, None, None, "", ""),
+                (6, "0001_a", "plan", 3, None, "novel", "array", "array", '["U1"]', None, None),
+                (7, "0002_b", "plan", 3, None, "novel", "array", "array", "[]", None, None),
+                (8, "0001_a", "spike", 2, None, None, None, None, None, None, None),
+            ],
+        )
+        self.assertEqual(self._all("SELECT recommendation FROM unit_questions"), [("",)])
+
+    def test_an_old_shaped_decisions_table_is_replaced_empty(self):
+        cols = self._columns("unit_decisions")
+        self.assertLessEqual({"kind", "fields", "decided_by", "root"}, cols)
+        self.assertFalse({"text", "authority", "recorded_by"} & cols)
+        self.assertEqual(self._all("SELECT COUNT(*) FROM unit_decisions"), [(0,)])
+
+    def test_answers_carry_by_from_the_name_rule_and_the_old_columns_are_gone(self):
+        cols = self._columns("unit_answers")
         self.assertFalse({"answered_by", "authority"} & cols)
         self.assertLessEqual({"name", "by"}, cols)
         self.assertEqual(
-            got,
+            self._all('SELECT name, "by" FROM unit_answers ORDER BY id'),
             [
                 ("Leif (CoS), x", "delegated"),
                 ("Claude (CoS), y", "delegated"),
@@ -891,66 +801,12 @@ class AnswersCarryTheirProvenance(unittest.TestCase):
                 ("Jera", "delegated"),
             ],
         )
-        self.assertEqual([by for _, by in got].count("delegated"), 4)
-        self.assertEqual([by for _, by in got].count("person"), 2)
-
-    def test_a_by_that_is_not_a_person_or_delegated_is_refused(self):
-        self.data.version()
         with self.assertRaises(sqlite3.IntegrityError), self.data.write() as conn:
             conn.execute(
                 "INSERT INTO unit_answers (root, workspace, unit, artifact, ref, text, name, "
                 "date, via, \"by\") VALUES ('/w', 'p', '0001_a', 'spec.md', '9', 't', "
                 "'n', 'd', 'v', 'agent')"
             )
-
-
-class QuestionsGainARecommendation(unittest.TestCase):
-    def test_v2_intent_and_v1_spec_records_rise_with_an_empty_recommendation(self):
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            with data.connect() as conn:
-                conn.execute("DROP TABLE unit_questions")
-                conn.execute(
-                    "CREATE TABLE unit_questions (root TEXT NOT NULL, workspace TEXT NOT NULL, "
-                    "unit TEXT NOT NULL, artifact TEXT NOT NULL, n INTEGER NOT NULL, "
-                    "text TEXT NOT NULL)"
-                )
-                conn.execute(
-                    "INSERT INTO unit_questions VALUES ('/w', 'p', '0001_a', 'spec.md', 1, 'q')"
-                )
-                two = '{"judgement": "ready", "questions": [{"n": 1, "text": "a"}, {"n": 2, "text": "b"}]}'
-                for agent, version, obj in (
-                    ("intent", 2, two),
-                    ("spec", 1, two),
-                    ("intent", 2, '{"judgement": "ready"}'),
-                ):
-                    conn.execute(
-                        "INSERT INTO outputs (at, root, workspace, unit, agent, version, run, "
-                        "revision, judgement, object) "
-                        f"VALUES ('t', '/w', 'p', '0001_a', '{agent}', {version}, 'r', 'h', 'ready', ?)",
-                        (obj,),
-                    )
-                conn.execute("PRAGMA user_version=17")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                got = conn.execute(
-                    "SELECT agent, version, json_type(object, '$.questions') AS kind, "
-                    "json_type(object, '$.questions[0]') AS item, "
-                    "json_extract(object, '$.questions[0].recommendation') AS first, "
-                    "json_extract(object, '$.questions[1].recommendation') AS second "
-                    "FROM outputs ORDER BY id"
-                ).fetchall()
-                asked = conn.execute("SELECT recommendation FROM unit_questions").fetchall()
-            self.assertEqual(
-                [tuple(r) for r in got],
-                [
-                    ("intent", 3, "array", "object", "", ""),
-                    ("spec", 2, "array", "object", "", ""),
-                    ("intent", 3, None, None, None, None),
-                ],
-            )
-            self.assertEqual([r[0] for r in asked], [""])
 
 
 if __name__ == "__main__":
