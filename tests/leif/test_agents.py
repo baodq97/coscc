@@ -145,10 +145,10 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
 
 
 class ThePage(_WithAService):
-    def test_a_grant_has_no_command_list_and_no_stage_defaults_to_haiku(self):
+    def test_a_row_has_no_command_list_and_no_stage_defaults_to_haiku(self):
         page = self.core.agents.agent_page(now=NOW)
         for row in page["rows"]:
-            self.assertNotIn("commands", row["grant"], row["key"])
+            self.assertNotIn("commands", row["row"], row["key"])
         self.assertNotIn("haiku", json.dumps(page).lower())
 
     def test_runs_last_five_and_thirty_days(self):

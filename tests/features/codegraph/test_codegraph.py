@@ -77,16 +77,19 @@ class Setup(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patch.stop)
 
     def facts(self, unit: str, stage: str = "impl", run: str = "r1") -> kernel.Facts:
+        """A run of `stage`: an impl's grant writes its tree, a review's reads only."""
+        writes = (str(self.root),) if stage == "impl" else ()
         return kernel.facts(
             workspace="/w/proj",
             workspace_key=KEY,
             unit=unit,
-            stage=stage,
+            agent=stage,
             run=run,
             cwd=str(self.root),
             watch=None,
             directory=self.root,
             resumed=False,
+            grant=kernel.Grant(cwd=str(self.root), write=writes),
         )
 
     def rows(self) -> list[tuple]:

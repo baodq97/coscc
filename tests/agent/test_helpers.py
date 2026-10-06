@@ -16,10 +16,18 @@ from claude_agent_sdk.types import _hooks_to_internal_format
 
 from coscc.agent import sessions
 from coscc.agent.helpers import KINDS, MESSAGE_LINES, PROTOCOL, Denials, Gate, Helpers, malformed
-from coscc.agent.policy import BACKGROUND_REFUSAL, HOST, Places, grant_for
+from coscc.agent.policy import BACKGROUND_REFUSAL, HOST, SUBAGENTS, Grant
 from coscc.config import Config
 
-IMPL = grant_for("impl")
+# The grant an impl run holds: its worktree, helpers and `peers`, and the secrets.
+IMPL = Grant(
+    cwd="/w",
+    write=("/w",),
+    helpers=tuple(SUBAGENTS),
+    mcp=("mcp__cos__submit", "mcp__cos__peers"),
+    secrets=("/data/cos.db",),
+    tools=("Read", "Write", "Bash", "Agent", "SendMessage"),
+)
 
 
 class _Transport:
@@ -33,7 +41,7 @@ class _Transport:
 
 
 def _gate(ledger: Helpers | None = None, denials: Denials | None = None) -> Gate:
-    return Gate(IMPL, Places(roots=("/w",)), denials, ledger)
+    return Gate(IMPL, denials, ledger)
 
 
 def _query(gate: Gate) -> tuple[Query, _Transport]:
@@ -381,3 +389,19 @@ class EachWriteOfAWorkerIsTold(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AGateNeedsItsGrantsSecretsAndNamesWhatADenialLacked(unittest.TestCase):
+    def test_a_grant_without_secrets_opens_no_gate(self):
+        with self.assertRaises(ValueError):
+            Gate(Grant(cwd="/w", write=("/w",)))
+
+    def test_the_listener_hears_the_grant_a_refusal_lacked(self):
+        denials = Denials()
+        heard: list[tuple] = []
+        denials.listener = lambda *a: heard.append(a)
+        gate = _gate(denials=denials)
+        _pre(gate, "Bash", {"command": "git push origin main"})
+        _pre(gate, "Write", {"file_path": "/etc/x"})
+        _pre(gate, "Read", {"file_path": "/data/cos.db"})
+        self.assertEqual([a[3] for a in heard], ["push", "write", "never granted"])

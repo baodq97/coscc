@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from coscc.agent import policy
-from coscc.agent.policy import is_prose_stage
 from coscc.bus import Name
 from coscc.agent.sessions import Suspended
 from coscc.git.gitops import GitError
@@ -27,6 +26,7 @@ from coscc.github import integrate
 from coscc.store.db import Data
 from coscc.store.journal import Intervention
 from coscc.kernel import (
+    BUILTINS,
     STATES,
     Agents,
     Arm,
@@ -101,7 +101,7 @@ def create_tables(data: Data, tables: Sequence[str]) -> None:
 
 def add_sessions(core: Core, features: Sequence[Feature]) -> None:
     """Every feature's `sessions` into the core's tables: its output declaration (`submit`), its
-    grant (`policy`), its attempt machine; and the updater hears each one end, as it hears the
+    row (`policy`), its attempt machine; and the updater hears each one end, as it hears the
     core's. Every declaration, the shipped ones first, is checked here: a broken one stops the
     build with its `ContractError`; so is every agent's input."""
     contracts.declarations()
@@ -109,7 +109,7 @@ def add_sessions(core: Core, features: Sequence[Feature]) -> None:
     for f in features:
         for s in f.sessions:
             submit.add_session(s.kind, s.output, s.purpose)
-            policy.add_session(s.kind, s.grant, s.own_turns)
+            policy.add_session(s.kind, s.row, s.own_turns)
             queue.add_session(s.kind)
             for end in ("ended", "refused"):
                 core.bus.subscribe(
@@ -118,28 +118,26 @@ def add_sessions(core: Core, features: Sequence[Feature]) -> None:
 
 
 def hooks_of(features: Sequence[Feature], ctxs: dict[str, Ctx]) -> Hooks:
-    """Every feature's agent parts, tagged with its name; a clash or a tool on a prose stage is
-    a `ValueError` naming the feature."""
+    """Every feature's agent parts, tagged with its name; a clash is a `ValueError` naming the
+    feature, and so is a row (`policy.ROWS`) naming a tool the catalog does not hold."""
     parts: list[tuple[str, Parts]] = []
     servers: dict[str, str] = {}
+    builtin = {t.name for t in BUILTINS} | {"cos"}
     names: dict[str, dict[str, str]] = {"guard": {}, "block": {}}
     for f in features:
         if f.agent is None:
             continue
         made = f.agent(ctxs[f.name])
         for tool in made.tools:
-            if tool.server in servers:
-                raise ValueError(
-                    f"{f.name}: the MCP server {tool.server!r} is also {servers[tool.server]}'s; "
-                    "rename it"
-                )
-            servers[tool.server] = f.name
-            prose = sorted(s for s in tool.stages if is_prose_stage(s))
-            if prose:
-                raise ValueError(
-                    f"{f.name}: the tool {tool.server!r} names prose stages "
-                    f"({', '.join(prose)}); a prose stage cannot carry a tool, so drop them"
-                )
+            for taken in (tool.server, tool.name):
+                if taken in servers or taken in builtin:
+                    raise ValueError(
+                        f"{f.name}: the tool {taken!r} is also "
+                        f"{servers.get(taken, 'the kernel')}'s; rename it"
+                    )
+            if not tool.server:
+                raise ValueError(f"{f.name}: the tool {tool.name!r} names no MCP server")
+            servers[tool.server] = servers[tool.name] = f.name
         for kind, named in (("guard", made.guards), ("block", made.blocks)):
             for part in named:
                 if part.name in names[kind]:
@@ -149,9 +147,15 @@ def hooks_of(features: Sequence[Feature], ctxs: dict[str, Ctx]) -> Hooks:
                     )
                 names[kind][part.name] = f.name
         parts.append((f.name, made))
-    return Hooks(
+    hooks = Hooks(
         parts=tuple(parts), enabled=lambda feature, cwd: ctxs[feature].settings.enabled(cwd)
     )
+    catalog = hooks.catalog()
+    for key, row in policy.ROWS.items():
+        unknown = [t for t in row.tools if t not in catalog]
+        if unknown:
+            raise ValueError(f"the row {key!r} names {', '.join(unknown)}: not in the catalog")
+    return hooks
 
 
 def _pref(data: Data, name: str) -> dict[str, Any]:
@@ -217,7 +221,7 @@ def ctx_of(core: Core, feature: Feature) -> Ctx:
         got = Run("cancelled", detail="the session ended before it handed anything back")
         try:
             stream = run_mod.run(
-                core.models.agent(kind, policy.grant_for(kind), own.model, own.effort),
+                core.models.agent(kind, policy.row_for(kind), own.model, own.effort),
                 run_mod.Input(workspace, prompt, key, channel=submit.Collector(kind)),
                 ctx=run_mod.Ctx(core.sessions, journal, core.config.data_dir),
             )

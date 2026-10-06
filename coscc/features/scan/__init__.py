@@ -27,8 +27,8 @@ from coscc.kernel import (
     OWNER,
     Ctx,
     Feature,
-    Grant,
     Intervention,
+    Row,
     Invalid,
     Schedule,
     Session,
@@ -55,7 +55,7 @@ CONSEQUENCE = "Opens one paid session, about $1 at most, that proposes work from
 # sample): a scan stays near $1 at worst, not under it for sure. One more turn could pass it.
 SESSION = Session(
     NAME,
-    Grant(
+    Row(
         max_turns=2,
         max_budget_usd=0.68,
         warning="Scanning opens one paid session (2 turns, $0.68 ceiling, about $1 at most) on "
@@ -642,7 +642,7 @@ def routes(ctx: Ctx) -> Sequence[BaseRoute]:
             "schedule": ctx.settings.schedule(cwd),
             "note": note_of(ctx, cwd, runs),
             "consequence": CONSEQUENCE,
-            "warning": SESSION.grant.warning,
+            "warning": SESSION.row.warning,
         }
 
     @router.post("/api/scan/proposals/{pid}")

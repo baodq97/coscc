@@ -1,9 +1,9 @@
 """One way to run an agent: `run(agent, given, ctx=...)`, for every session the app opens.
 
-A run resolves nothing itself: the caller hands the `Agent` (its key, grant with both ceilings,
+A run resolves nothing itself: the caller hands the `Agent` (its key, row with both ceilings,
 model, effort) and the `Input` (where, the prompt, whose, its own `start` and owner fields). The
 run writes `start`, records its events (`step_runs`/`step_events`, unit `""` allowed), opens the
-session under its gate, collects `submit`, maps how it ended to a `kernel.Status`, writes `end`
+session under the gate of the grant it issues (`issue`), collects `submit`, maps how it ended to a `kernel.Status`, writes `end`
 with the same fields for every agent (`ended`), and goes on from a `suspend` row under what is
 left of its ceilings. A caller keeps only its own work: the estimate its records, a feature its
 object, Gebo its rebase, chat its reply.
@@ -18,15 +18,17 @@ import asyncio
 import logging
 import os
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from coscc.agent import policy
 from coscc.agent.helpers import Denials, Gate
-from coscc.agent.policy import Grant, Places
-from coscc.agent.sessions import Refused, StepHandle, Suspended
+from coscc.agent.policy import Grant, Row
+from coscc.agent.sessions import Refused, StepHandle, Suspended, secrets_of
 from coscc.agent.transcript import ceilings_left
+from coscc.config import Config
 from coscc.kernel import Run, Status
 from coscc.runlog.events import Recorder
 from coscc.runner.attempt import CLAUDE_CODE_PRESET
@@ -34,6 +36,7 @@ from coscc.runner.reply import CEILING_MARKERS
 from coscc.store.db import Busy, Data
 from coscc.store.journal import BadRecord, Journal, Outcome
 from coscc.units import submit as submit_mod
+from coscc.units.scratch import RAM_CAP
 
 log = logging.getLogger(__name__)
 
@@ -56,14 +59,14 @@ OUTCOME: dict[Status, Outcome] = {
 
 @dataclass(frozen=True)
 class Agent:
-    """Who runs: its key (a stage, `estimate`, `integrate`, `chat`, a feature's session), its grant
+    """Who runs: its key (a stage, `estimate`, `integrate`, `chat`, a feature's session), its row
     with both ceilings resolved, and what it runs on, with where each came from (`sources`:
     `model_source`, `effort_source`, `max_turns_source`, `max_budget_source`). `name` is the
     agent's name for its `start`; `settings` its commit attribution; `preset` whether the session
     gets Claude Code's system prompt."""
 
     key: str
-    grant: Grant
+    row: Row
     model: str | None = None
     effort: str | None = None
     sources: Mapping[str, str] = field(default_factory=dict)
@@ -77,8 +80,8 @@ class Input:
     """What one run is asked: `prompt` in `cwd`, for the workspace `workspace` (the run log's key,
     whose path `workspace_dir` is asked about membership), of `unit` (`""` for none), recorded
     under `stage` (the agent's key when empty). `start` and `owner` are the caller's own fields of
-    the `start` record and of the owner a `suspend` row keeps. `places` is what the gate lets it
-    write and push (its `cwd` alone when `None`); `channel` the `submit` it hands its object
+    the `start` record and of the owner a `suspend` row keeps. `branch` is the branch its grant may
+    push and `lease` the head each push must carry (Gebo's), "" for none; `channel` the `submit` it hands its object
     back through (`None`: its output is its reply). `session_id` continues a session (chat);
     `keep` keeps its client for the next turn (chat). `resume` is a `suspend` row to go on from."""
 
@@ -91,7 +94,8 @@ class Input:
     started_by: str = "person"
     start: Mapping[str, Any] = field(default_factory=dict)
     owner: Mapping[str, Any] = field(default_factory=dict)
-    places: Places | None = None
+    branch: str = ""
+    lease: str = ""
     channel: Any = None
     session_id: str | None = None
     keep: bool = False
@@ -112,6 +116,64 @@ class Ctx:
 # Told the run as it ended, before its `end`: may set its `status` and `detail`, and returns the
 # fields the caller adds to the `end`.
 Finish = Callable[[Run], Awaitable[Mapping[str, Any]]]
+
+
+def issue(
+    row: Row,
+    sessions: Any,
+    *,
+    cwd: str,
+    unit_dir: str = "",
+    scratch: tuple[str, str] | None = None,
+    branch: str = "",
+    lease: str = "",
+    features: Collection[str] = (),
+    held: tuple[str, ...] = (),
+    mcp: tuple[str, ...] = (),
+    use: tuple[tuple[str, str], ...] = (),
+) -> Grant:
+    """The grant of one run, issued as it opens and held by its session's gate only: no grant, no
+    action (`policy.critical`).
+
+    - `write`: its `cwd` and `unit_dir` (none for a spike), only when `row` holds a write tool;
+      the unit's `scratch` only when it holds Bash too, under `scratch.RAM_CAP`.
+    - `branch` and `lease` as the caller found them: the branch the worktree stands on as the
+      session opens (none on the trunk, detached, or for a spike) and Gebo's lease.
+    - `helpers`: `policy.SUBAGENTS`, only when `row` holds `Agent`.
+    - `mcp`: `submit` when `row` submits, `peers` with helpers, and `mcp`, the full names of the
+      catalog tools `row` lists, on for the workspace and admitted (`kernel.Hooks.tools_for`).
+    - `use`: what those tools may use (`kernel.Tool.uses`).
+    - `tools`: the names in `row` that are no feature's (`features`, the catalog's feature
+      entries), Claude Code's own; `held`: the features' entries `row` names that are on, whether
+      or not their `when` admitted the run.
+    - `secrets`: this app's (`sessions.secrets_of`), the deny list no grant lifts; never empty.
+    """
+    config = getattr(sessions, "config", None)
+    secrets = secrets_of(config if config is not None else Config())
+    if not secrets:
+        raise ValueError("a grant needs the secrets it denies")
+    writes = any(t in policy.WRITE_TOOLS for t in row.tools)
+    bash = writes and any(t in policy.EXEC_TOOLS for t in row.tools)
+    helpers = tuple(policy.SUBAGENTS) if policy.AGENT_TOOL in row.tools else ()
+    return Grant(
+        cwd=cwd,
+        write=tuple(dict.fromkeys(p for p in (cwd, unit_dir) if p)) if writes else (),
+        scratch=scratch if bash else None,
+        ram_cap=RAM_CAP if bash and scratch else 0,
+        branch=branch,
+        lease=lease if branch else "",
+        helpers=helpers,
+        mcp=(
+            *((policy.SUBMIT_TOOL,) if row.submits else ()),
+            *((policy.PEERS_TOOL,) if helpers else ()),
+            *mcp,
+        ),
+        use=use,
+        secrets=secrets,
+        home=config.home if config is not None else "",
+        tools=tuple(t for t in row.tools if t not in features),
+        held=held,
+    )
 
 
 def hit_ceiling(terminal: str) -> bool:
@@ -194,11 +256,13 @@ def tell_config(
     sources: Mapping[str, str],
     turns: int,
     budget: float | None,
+    grant: Grant | None = None,
 ) -> None:
     """The recorder's `config` event: the values the session about to open is handed, with where
-    each came from. Nothing here may change the run."""
+    each came from, and what its grant holds (`policy.granted`). Nothing here may change the run."""
     try:
         recorder.config(
+            granted=policy.granted(grant) if grant is not None else [],
             model=model,
             model_source=str(sources.get("model_source") or ""),
             effort=effort,
@@ -238,8 +302,8 @@ def open_session(
     workspace: str = "",
     **extra: Any,
 ) -> Any:
-    """The one way a run's session opens: `session_kw`, the agent's tools, under `gate` and the
-    two ceilings. `extra` is passed as it is (`step`, `owner`, `resume_at`, `mcp_servers`,
+    """The one way a run's session opens: `session_kw`, the built-in tools of the gate's grant,
+    under `gate` and the two ceilings. `extra` is passed as it is (`step`, `owner`, `resume_at`, `mcp_servers`,
     `agents`, `unit_scratch`, `recorder`)."""
     return sessions.stream(
         cwd,
@@ -247,19 +311,19 @@ def open_session(
         session_id or None,
         max_turns=turns,
         gate=gate,
-        # The grant's list, `[]` when empty: `None` would fall back to `COS_TOOLS`.
-        tools=list(agent.grant.tools),
+        # The grant's own tools, `[]` when none: `None` would fall back to `COS_TOOLS`.
+        tools=list(gate.grant.tools),
         max_budget_usd=budget,
         **session_kw(agent, cwd, workspace),
         **extra,
     )
 
 
-def _started(ctx: Ctx, agent: Agent, given: Input, stage: str, run: str) -> Any:
+def _started(ctx: Ctx, agent: Agent, given: Input, stage: str, run: str, grant: Grant) -> Any:
     """The run's `start`, and its `at`; `None` when the run log refused it."""
     if ctx.journal is None:
         return None
-    grant = agent.grant
+    row = agent.row
     try:
         return ctx.journal.started(
             given.workspace,
@@ -268,10 +332,9 @@ def _started(ctx: Ctx, agent: Agent, given: Input, stage: str, run: str) -> Any:
             "manual",
             started_by=given.started_by,
             prompt_chars=len(given.prompt),
-            granted=list(grant.tools),
-            mcp=list(grant.mcp),
-            max_turns=grant.max_turns,
-            max_budget_usd=grant.max_budget_usd or None,
+            grants=policy.record(grant),
+            max_turns=row.max_turns,
+            max_budget_usd=row.max_budget_usd or None,
             model=agent.model,
             model_source=str(agent.sources.get("model_source") or ""),
             effort=agent.effort,
@@ -319,18 +382,21 @@ async def run(
     stage = given.stage or agent.key
     recorder = recorder_for(ctx, given.workspace, given.unit, stage)
     out = Run("failed", run=recorder.run if recorder is not None else "")
-    text, turns, budget, used_up, start_at = _begin(ctx, agent, given, stage, out)
+    grant = issue(agent.row, ctx.sessions, cwd=given.cwd, branch=given.branch, lease=given.lease)
+    text, turns, budget, used_up, start_at = _begin(ctx, agent, given, stage, out, grant)
     owner = _owner(agent, given, stage, start_at, out.run)
     denials = Denials()
     if recorder is not None:
         denials.listener = recorder.denied
         recorder.start()
-        tell_config(recorder, agent.model, agent.effort, agent.sources, turns, budget)
+        tell_config(recorder, agent.model, agent.effort, agent.sources, turns, budget, grant)
     reply, terminal, models_used = "", used_up, []
     channel = given.channel
     try:
         if not used_up:
-            stream = _stream(ctx, agent, given, text, out.session, turns, budget, denials, owner)
+            stream = _stream(
+                ctx, agent, given, text, out.session, turns, budget, Gate(grant, denials), owner
+            )
             async for kind, payload in stream:
                 if kind == "chunk":
                     reply += payload
@@ -410,10 +476,10 @@ def _stream(
     session_id: str,
     turns: int,
     budget: float | None,
-    denials: Denials,
+    gate: Gate,
     owner: dict[str, Any],
 ) -> Any:
-    """The run's session: under its gate, with its `submit`, going on from a `suspend` row's safe
+    """The run's session: under the gate of its grant, with its `submit`, going on from a `suspend` row's safe
     point when there is one."""
     channel, resume = given.channel, given.resume
     recorder = LIVE.get(str(owner["run"]))
@@ -425,7 +491,7 @@ def _stream(
         session_id,
         turns=turns,
         budget=budget,
-        gate=Gate(agent.grant, given.places or Places(roots=(given.cwd,)), denials),
+        gate=gate,
         workspace=given.workspace_dir,
         owner=owner,
         **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
@@ -436,18 +502,18 @@ def _stream(
 
 
 def _begin(
-    ctx: Ctx, agent: Agent, given: Input, stage: str, out: Run
+    ctx: Ctx, agent: Agent, given: Input, stage: str, out: Run, grant: Grant
 ) -> tuple[str, int, float | None, str, Any]:
     """`(text, turns, budget, used_up, start_at)` the session opens with: the prompt under the
-    grant's two ceilings, after its `start`; or a `suspend` row's message under what is left of
+    row's two ceilings, after its `start`; or a `suspend` row's message under what is left of
     them, with the `start` it had. `out` gets the session id it goes on from."""
-    grant, resume = agent.grant, given.resume
+    row, resume = agent.row, given.resume
     if resume is None:
         out.session = given.session_id or ""
-        start_at = _started(ctx, agent, given, stage, out.run)
-        return given.prompt, grant.max_turns, grant.max_budget_usd or None, "", start_at
+        start_at = _started(ctx, agent, given, stage, out.run, grant)
+        return given.prompt, row.max_turns, row.max_budget_usd or None, "", start_at
     out.session = str(resume.get("session_id") or "")
-    turns, budget, used_up = ceilings_left(grant.max_turns, grant.max_budget_usd, dict(resume))
+    turns, budget, used_up = ceilings_left(row.max_turns, row.max_budget_usd, dict(resume))
     start_at = (resume.get("owner") or {}).get("start_at")
     return str(resume.get("message") or ""), turns, budget, used_up, start_at
 
@@ -468,8 +534,8 @@ def _owner(agent: Agent, given: Input, stage: str, start_at: Any, run: str) -> d
         "unit": given.unit,
         "stage": stage,
         "start_at": start_at,
-        "max_turns": agent.grant.max_turns,
-        "max_budget_usd": agent.grant.max_budget_usd,
+        "max_turns": agent.row.max_turns,
+        "max_budget_usd": agent.row.max_budget_usd,
         "effort": agent.effort,
         **agent.sources,
         "run": run,

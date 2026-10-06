@@ -35,10 +35,11 @@ from coscc.units import submit as submit_mod
 from coscc.agent.policy import (
     AGENT_TOOL,
     Grant,
-    Places,
+    Row,
     beyond_reading,
-    grant_for_step,
     is_prose_stage,
+    record,
+    row_for_step,
 )
 from coscc.store.db import Data, Unusable
 from coscc.units import guards
@@ -95,6 +96,9 @@ def check_started_by(value: str) -> str:
 SESSIONS_PER_STEP = 1
 
 
+# The kernel's own catalog names (`kernel.BUILTINS`).
+_BUILTIN = frozenset(t.name for t in kernel.BUILTINS)
+
 # # How long the closing turn may take. Chosen, not measured: one took 9.8 s, the longest 25.5 s.
 CLOSING_TIMEOUT = 180.0
 
@@ -123,7 +127,7 @@ async def _closing_turn(
         prompt,
         session_id,
         max_turns=1,
-        gate=Gate(Grant(), Places(roots=(cwd,)), denials),
+        gate=Gate(run_mod.issue(Row(), sessions, cwd=cwd), denials),
         tools=[],
         step=sessions_mod.StepHandle(),
         **kw,
@@ -157,7 +161,7 @@ async def _opening_turn(
         prompt,
         session_id,
         max_turns=1,
-        gate=Gate(Grant(), Places(roots=(cwd,)), denials),
+        gate=Gate(run_mod.issue(Row(), sessions, cwd=cwd), denials),
         tools=[],
         step=sessions_mod.StepHandle(),
         **kw,
@@ -191,7 +195,7 @@ async def _submit_turn(
         prompt,
         session_id,
         max_turns=SUBMIT_TURNS,
-        gate=Gate(Grant(submits=True), Places(roots=(cwd,)), denials),
+        gate=Gate(run_mod.issue(Row(submits=True), sessions, cwd=cwd), denials),
         tools=[],
         step=sessions_mod.StepHandle(),
         mcp_servers={submit_mod.SERVER: channel.server()},
@@ -355,22 +359,31 @@ def _noted(detail: str, said: str) -> str:
 
 
 def _admitted(
-    started_by: str, stage: str, label: str | None, directory: str | Path, workspace: str, unit: str
-) -> Grant:
-    """The stage's grant, once the step may run at all: else `ValueError` or `RunError`."""
+    started_by: str,
+    stage: str,
+    label: str | None,
+    directory: str | Path,
+    workspace: str,
+    unit: str,
+    hooks: kernel.Hooks,
+) -> Row:
+    """The stage's row, once the step may run at all: else `ValueError` or `RunError`."""
     check_started_by(started_by)
-    grant = grant_for_step(stage, label)
+    row = row_for_step(stage, label)
     if not Path(directory).exists():
         raise RunError(f"no such work unit for {workspace}: {unit}")
     if is_prose_stage(stage):
         # Belt and braces against a future edit to the table: a prose stage that acquired the ability
         # to write or run a command would stop being covered. Asks `beyond_reading`, not
         # `opens_anything`, because `plan` holds `Read`, `Glob` and `Grep`; the guard's purpose is that
-        # the app writes a prose stage's artifact, so the stage must not be able to.
-        beyond = beyond_reading(grant)
+        # the app writes a prose stage's artifact, so the stage must not be able to. Reading is a
+        # catalog entry whose effect is `read`, a feature's included; a name no catalog holds is
+        # never granted.
+        catalog = hooks.catalog()
+        beyond = beyond_reading(row, (*hooks.reads(), *(t for t in row.tools if t not in catalog)))
         if beyond:
             raise RunError(f"{stage} is a prose stage and must not carry {', '.join(beyond)}")
-    return grant
+    return row
 
 
 async def _compose(
@@ -379,7 +392,7 @@ async def _compose(
     unit: str,
     stage: str,
     artifact: str,
-    grant: Grant,
+    row: Row,
     resume: dict[str, Any] | None,
     was: dict[str, Any],
     watch: str | None,
@@ -419,7 +432,7 @@ async def _compose(
         unit,
         stage,
         artifact,
-        writes_own=not grant.app_writes_artifact,
+        writes_own=not row.app_writes_artifact,
         gate_said=gate_said,
         head=head,
         base_note=base_note,
@@ -429,7 +442,7 @@ async def _compose(
         drift_note=drift_note,
         lane=lane,
         worktree=watch or "",
-        ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
+        ceilings=(row.max_turns, row.max_budget_usd) if stage == "spike" else None,
         rerun=rerun,
         rerun_note=rerun_note,
         app_note=app_note,
@@ -439,7 +452,7 @@ async def _compose(
         idea_note=idea_note,
         siblings_note=siblings_note,
         mentions_note=mentions_note,
-        runs_commands="Bash" in grant.tools,
+        runs_commands="Bash" in row.tools,
         agent=agent,
         unit_meta=meta,
         state_file=state_file,
@@ -451,21 +464,21 @@ async def _compose(
 
 def _runs_as(
     stage: str,
-    grant: Grant,
+    row: Row,
     model: str | None,
     effort: str | None,
     agent: dict[str, Any] | None,
 ) -> run_mod.Agent:
-    """The step as `run_mod` opens its session: Claude Code's system prompt for a grant that opens
+    """The step as `run_mod` opens its session: Claude Code's system prompt for a row that opens
     anything, and the commit attribution only beside it, so a tool-less session's argv is
     unchanged."""
     return run_mod.Agent(
         stage,
-        grant,
+        row,
         model=model,
         effort=effort,
         settings=agents.settings_json(agent) if agent is not None else None,
-        preset=grant.opens_anything,
+        preset=row.opens_anything,
     )
 
 
@@ -489,7 +502,7 @@ def _turn_kw(
 
 
 def _channel_for(
-    grant: Grant,
+    row: Row,
     recorder: Any,
     stage: str,
     directory: Path,
@@ -500,14 +513,14 @@ def _channel_for(
 ) -> submit_mod.Channel | None:
     """This run's `submit`, bound to it: a stage that hands back a stage result ends `done` only
     once the channel holds an object its guard still opens on."""
-    if not grant.submits:
+    if not row.submits:
         return None
     return submit_mod.Channel(
         run=str(recorder.run) if recorder is not None else uuid.uuid4().hex,
         stage=stage,
         directory=directory,
         artifact=artifact,
-        own=not grant.app_writes_artifact,
+        own=not row.app_writes_artifact,
         head=head,
         open_ids=tuple(open_ids),
         claims_round=claims_round,
@@ -528,15 +541,15 @@ def _ceiling_overrides(config: Any) -> tuple[dict[str, models.Value], dict[str, 
 
 
 def with_ceilings(
-    grant: Grant,
+    row: Row,
     stage: str,
     label: str | None,
     turns: Mapping[str, models.Value],
     budget: Mapping[str, models.Value],
     was: Mapping[str, Any],
-) -> tuple[Grant, models.Ceilings]:
-    """`grant` with its two ceilings as `models.ceilings` resolves them from the stored overrides,
-    and those ceilings with where each came from. Gebo's grant is given the same way.
+) -> tuple[Row, models.Ceilings]:
+    """`row` with its two ceilings as `models.ceilings` resolves them from the stored overrides,
+    and those ceilings with where each came from. Gebo's row is given the same way.
 
     `was` is the owner of a step taken up again (`{}` for a first segment): it goes on under what
     its first segment ran under, as its owner kept it. An owner with none (an older build's)
@@ -551,8 +564,8 @@ def with_ceilings(
         )
     return (
         replace(
-            grant,
-            max_turns=int(ceilings["max_turns"] or grant.max_turns),
+            row,
+            max_turns=int(ceilings["max_turns"] or row.max_turns),
             max_budget_usd=ceilings["max_budget_usd"] or 0.0,
         ),
         ceilings,
@@ -581,7 +594,7 @@ def _owner(
     unit: str,
     stage: str,
     start_at: Any,
-    grant: Grant,
+    row: Row,
     head: str,
     label: str | None,
     effort: str | None,
@@ -610,8 +623,8 @@ def _owner(
         "unit": unit,
         "stage": stage,
         "start_at": start_at,
-        "max_turns": grant.max_turns,
-        "max_budget_usd": grant.max_budget_usd,
+        "max_turns": row.max_turns,
+        "max_budget_usd": row.max_budget_usd,
         "head": head,
         "label": label,
         "effort": effort,
@@ -661,15 +674,15 @@ async def _tree_before(
 
 
 def _helpers_of(
-    grant: Grant,
+    row: Row,
     recorder: Any,
     blocks: tuple[tuple[str, str], ...],
     resumed: bool,
 ) -> tuple[Helpers | None, tuple[tuple[str, str], ...]]:
-    """This run's helpers, for a grant that may start them (its hooks hold `Agent` and
+    """This run's helpers, for a row that may start them (its hooks hold `Agent` and
     `SendMessage`), and the prompt blocks with `PROTOCOL` added. A step taken up again composes no
     prompt."""
-    if AGENT_TOOL not in grant.tools:
+    if AGENT_TOOL not in row.tools:
         return None, blocks
     ledger = Helpers(recorder.helper if recorder is not None else None)
     return ledger, blocks if resumed else (*blocks, ("helpers", PROTOCOL))
@@ -709,7 +722,7 @@ def _reply_done(
 
 
 def _rounds_before(
-    grant: Grant,
+    row: Row,
     channel: submit_mod.Channel | None,
     stage: str,
     directory: Path,
@@ -720,13 +733,13 @@ def _rounds_before(
 
     Taken before the write and kept when it is refused: the round is numbered past these.
     """
-    if not (grant.app_writes_artifact and channel is not None and stage == submit_mod.ROUND):
+    if not (row.app_writes_artifact and channel is not None and stage == submit_mod.ROUND):
         return None
     return {_round_number(r) for r in _rounds(_read(directory / artifact))}
 
 
 def _write_reply(
-    grant: Grant,
+    row: Row,
     directory: Path,
     artifact: str,
     stage: str,
@@ -740,7 +753,7 @@ def _write_reply(
     review_md: str | None,
 ) -> tuple[str | None, str | None]:
     """The artifact, written from the reply or found on disk: `(spike_md, review_md)`."""
-    if not grant.app_writes_artifact:
+    if not row.app_writes_artifact:
         # The session had the tools to write it. Believing it did, rather than looking, is how a step
         # reports success for a file that is not there.
         if not (directory / artifact).exists():
@@ -1344,14 +1357,14 @@ class Runner:
         self.app = app
 
     def _configured(
-        self, grant: Grant, stage: str, label: str | None, was: Mapping[str, Any]
-    ) -> tuple[Grant, models.Ceilings]:
-        """`grant` and its two ceilings with their sources, as `with_ceilings` resolves them from
-        a `turns:<row>` or `budget:<row>` override in `cos.db`, else the grant's own, and with no
+        self, row: Row, stage: str, label: str | None, was: Mapping[str, Any]
+    ) -> tuple[Row, models.Ceilings]:
+        """`row` and its two ceilings with their sources, as `with_ceilings` resolves them from
+        a `turns:<row>` or `budget:<row>` override in `cos.db`, else the row's own, and with no
         override for a stand-in `Sessions` with no config (a test's)."""
         config = getattr(self.sessions, "config", None)
         turns, budget = _ceiling_overrides(config) if config is not None else ({}, {})
-        return with_ceilings(grant, stage, label, turns, budget, was)
+        return with_ceilings(row, stage, label, turns, budget, was)
 
     def _scratch(self, workspace: str, unit: str) -> tuple[Path, Path] | None:
         """The unit's `(ram, disk)` scratch directories, made if missing, or `None` for a stand-in
@@ -1369,7 +1382,7 @@ class Runner:
 
     async def _features(
         self,
-        grant: Grant,
+        row: Row,
         running: Any,
         *,
         workspace: str,
@@ -1381,17 +1394,28 @@ class Runner:
         directory: Path,
         resumed: bool,
         plan: kernel.Plan | None,
-    ) -> tuple[Any, kernel.Facts, tuple[tuple[str, str], ...], Helpers | None]:
+    ) -> tuple[
+        Any,
+        kernel.Facts,
+        tuple[tuple[str, str], ...],
+        Helpers | None,
+        tuple[kernel.Tool, ...],
+        tuple[str, str] | None,
+    ]:
         """The step's recorder, when `Steps.run_step` gave it one (its `run` goes into `start` and
         `end`, and it is closed, everything on disk, before `end` is written); this run as the
-        features see it; the prompt blocks they add; and the run's helpers (`_helpers_of`). A step
-        taken up again composes no prompt, so it has no block."""
+        features see it, its grant issued; the prompt blocks they add; the run's helpers
+        (`_helpers_of`); the catalog tools it was granted; and the unit's `(ram, disk)` scratch
+        directories, made here. A step taken up again composes no prompt, so it has no block.
+
+        The grant (`run_mod.issue`) holds its `cwd` and, unless it is a spike, the unit's folder to
+        write, and the branch the worktree stands on now, the one it may push (a spike has none)."""
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
-        facts = kernel.facts(
+        asked = kernel.facts(
             workspace=workspace,
             workspace_key=journal_key,
             unit=unit,
-            stage=stage,
+            agent=stage,
             run=str(recorder.run) if recorder is not None else uuid.uuid4().hex,
             cwd=cwd,
             watch=watch,
@@ -1399,35 +1423,50 @@ class Runner:
             resumed=resumed,
             plan=plan,
         )
-        ledger, blocks = _helpers_of(
-            grant, recorder, () if resumed else await self._blocks(facts), resumed
+        tools = self.hooks.tools_for(asked, row)
+        made = self._scratch(workspace, unit)
+        # A step with nothing to name passes nothing, so a stand-in `stream` keeps working.
+        own = (str(made[0]), str(made[1])) if made is not None else None
+        grant = run_mod.issue(
+            row,
+            self.sessions,
+            cwd=cwd,
+            unit_dir="" if watch else str(directory),
+            scratch=own,
+            branch="" if watch else await branch_of(cwd),
+            # What the row names beyond the kernel's own tools is a feature's: never `--tools`.
+            features=tuple(t for t in row.tools if t not in _BUILTIN),
+            held=tuple(t.name for t in self.hooks.held(row, workspace)),
+            mcp=kernel.granted(tools),
+            use=tuple((t.name, r) for t in tools if t.uses is not None for r in t.uses(asked)),
         )
-        return recorder, facts, blocks, ledger
+        facts = replace(asked, grant=grant)
+        ledger, blocks = _helpers_of(
+            row, recorder, () if resumed else await self._blocks(facts), resumed
+        )
+        return recorder, facts, blocks, ledger, tools, own
 
     def _with_tools(
         self,
-        grant: Grant,
         channel: submit_mod.Channel | None,
         facts: kernel.Facts,
+        tools: tuple[kernel.Tool, ...],
         ledger: Helpers | None = None,
-    ) -> tuple[Grant, dict[str, Any]]:
-        """The grant with the MCP names features' tools add, and the `mcp_servers` argument holding
-        `submit` (when there is a channel) and one server per tool, each made from this run's facts.
-        `ledger`'s `peers` rides on `submit`'s server: a grant holding `Agent` (impl) submits."""
+    ) -> dict[str, Any]:
+        """The `mcp_servers` argument holding `submit` (when there is a channel) and one server per
+        granted catalog tool, each made from this run's facts. `ledger`'s `peers` rides on
+        `submit`'s server: a row holding `Agent` (impl) submits."""
         extra = (ledger.tool(),) if ledger is not None else ()
         servers: dict[str, Any] = (
             {submit_mod.SERVER: channel.server(*extra)} if channel is not None else {}
         )
-        tools = self.hooks.tools_for(facts)
-        if tools:
-            grant = replace(grant, mcp=kernel.granted(tools))
-            servers.update({t.server: t.make(facts) for t in tools})
-        return grant, ({"mcp_servers": servers} if servers else {})
+        servers.update({t.server: t.make(facts) for t in tools if t.make is not None})
+        return {"mcp_servers": servers} if servers else {}
 
     async def _blocks(self, facts: kernel.Facts) -> tuple[tuple[str, str], ...]:
         """The prompt blocks features add to this run, in order, those with words only."""
         out = []
-        for b in self.hooks.for_step(facts.stage, facts.workspace).blocks:
+        for b in self.hooks.blocks_for(facts):
             text = b.render(facts)
             if inspect.isawaitable(text):
                 text = await text
@@ -1526,15 +1565,15 @@ class Runner:
 
         `resume` is a `suspend` row, with the `message` to send and the `pieces` the transcript held
         before its safe point. The step goes on in the same session under what is left of the
-        grant's two ceilings and writes no `start`; one whose ceiling is used up opens no session and
+        row's two ceilings and writes no `start`; one whose ceiling is used up opens no session and
         ends `exhausted`. A row whose `owner.kind` is `opening` or `closing` goes through the main
         reply again from those pieces and takes up that one turn. `owner_extra` is what `Core`
         adds to the owner a `suspend` row carries.
         """
         was = dict((resume or {}).get("owner") or {})
         # A step taken up again goes on under the ceilings its owner kept.
-        grant, ceilings = self._configured(
-            _admitted(started_by, stage, label, directory, workspace, unit),
+        row, ceilings = self._configured(
+            _admitted(started_by, stage, label, directory, workspace, unit, self.hooks),
             stage,
             label,
             was,
@@ -1542,8 +1581,8 @@ class Runner:
         directory = Path(directory)
         cwd = cwd or workspace
         turn_kind = str(was.get("kind") or "step") if resume is not None else ""
-        recorder, facts, blocks, ledger = await self._features(
-            grant,
+        recorder, facts, blocks, ledger, tools, own = await self._features(
+            row,
             running,
             workspace=workspace,
             journal_key=journal_key,
@@ -1561,7 +1600,7 @@ class Runner:
             unit,
             stage,
             artifact,
-            grant,
+            row,
             resume,
             was,
             watch,
@@ -1587,10 +1626,10 @@ class Runner:
             state_file=state_file,
         )
         channel = _channel_for(
-            grant, recorder, stage, directory, artifact, head, open_ids, claims_round
+            row, recorder, stage, directory, artifact, head, open_ids, claims_round
         )
-        grant, servers = self._with_tools(grant, channel, facts, ledger)
-        runs_as = _runs_as(stage, grant, model, effort, agent)
+        servers = self._with_tools(channel, facts, tools, ledger)
+        runs_as = _runs_as(stage, row, model, effort, agent)
         start_at = self._write_start(
             was.get("start_at"),
             resume,
@@ -1601,7 +1640,8 @@ class Runner:
             started_by,
             prompt,
             envelope,
-            grant,
+            row,
+            facts.grant,
             head,
             cwd,
             recorder,
@@ -1629,7 +1669,7 @@ class Runner:
             unit,
             stage,
             start_at,
-            grant,
+            row,
             head,
             label,
             effort,
@@ -1645,9 +1685,9 @@ class Runner:
         trial_at = start_at if (trial_record or {}).get(modeltrial.FIELD) and start_at else None
         # What is left of the two ceilings after the part of the session before the cut.
         turns_left, budget_left, used_up = (
-            transcript.ceilings_left(grant.max_turns, grant.max_budget_usd, resume)
+            transcript.ceilings_left(row.max_turns, row.max_budget_usd, resume)
             if resume is not None
-            else (grant.max_turns, grant.max_budget_usd or None, "")
+            else (row.max_turns, row.max_budget_usd or None, "")
         )
         denials = _denials(recorder)
         pieces, blocks, terminal, session_id, cost = _carried(resume, was, turn_kind)
@@ -1679,17 +1719,14 @@ class Runner:
                 turns_left,
                 budget_left,
                 runs_as,
-                denials,
-                watch,
-                directory,
+                Gate(facts.grant, denials, ledger),
+                own,
                 running,
                 owner,
                 resume,
                 servers,
                 turn_kind,
-                ledger,
                 workspace,
-                unit,
             ):
                 if kind == "chunk":
                     pieces[-1] += payload
@@ -1737,9 +1774,9 @@ class Runner:
                     "withheld" if stage == "review" else review_md,
                 )
                 raise _Stopped()
-            rounds_before = _rounds_before(grant, channel, stage, directory, artifact)
+            rounds_before = _rounds_before(row, channel, stage, directory, artifact)
             spike_md, review_md = _write_reply(
-                grant,
+                row,
                 directory,
                 artifact,
                 stage,
@@ -1774,7 +1811,7 @@ class Runner:
                 cwd=cwd,
                 watch=watch,
                 directory=directory,
-                grant=grant,
+                row=row,
                 head=head,
                 agent=agent,
                 kw=dict(run_mod.session_kw(runs_as, cwd, workspace)),
@@ -1849,6 +1886,7 @@ class Runner:
         started_by: str,
         prompt: str,
         envelope: list,
+        row: Row,
         grant: Grant,
         head: str,
         cwd: str,
@@ -1901,10 +1939,9 @@ class Runner:
                 if self.app is not None
                 else {}
             ),
-            granted=list(grant.tools),
-            mcp=list(grant.mcp),
+            grants=record(grant),
             blocks=blocks,
-            max_turns=grant.max_turns,
+            max_turns=row.max_turns,
             head=head,
             model=model,
             model_source=model_source,
@@ -1919,7 +1956,7 @@ class Runner:
             # Which system prompt the step ran on. `""` means no preset, and nothing more: a step
             # without one whose `cwd` holds project instructions runs on those as its whole system
             # prompt, and only `instructions` below says whether it did.
-            system_prompt="claude_code" if grant.opens_anything else "",
+            system_prompt="claude_code" if row.opens_anything else "",
             # Which project files `_options` puts into the system prompt, whole or as a line of contents.
             # Read again there, so a file edited in between is not seen here.
             instructions=instructions.read(cwd).record(),
@@ -1962,24 +1999,18 @@ class Runner:
         turns_left: int,
         budget_left: float | None,
         runs_as: run_mod.Agent,
-        denials: Denials,
-        watch: str | None,
-        directory: Path,
+        gate: Gate,
+        own: tuple[str, str] | None,
         running: steps.Running | None,
         owner: dict[str, Any],
         resume: dict[str, Any] | None,
         servers: dict[str, Any],
         turn_kind: str,
-        ledger: Helpers | None = None,
         workspace: str = "",
-        unit: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """The main reply's stream. An `opening` or `closing` turn taken up again has its main reply
-        already. The unit's `(ram, disk)` scratch directories are made before the session opens:
-        the gate lets the step write below them and the session's environment names them. The gate
-        holds the step's places: its `cwd` and, unless it is a spike, the unit's folder to write,
-        and the branch the worktree stands on as the session opens, the one it may push (a spike
-        has none).
+        already. `gate` holds the grant issued for the step (`_features`), and the session's
+        environment names the unit's scratch directories `own`.
 
         The recorder is handed the segment's `config` first, so it comes before any SDK event: the
         model and effort it runs on, the two ceilings as the session gets them, and the sources
@@ -1987,19 +2018,16 @@ class Runner:
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
         if recorder is not None:
             run_mod.tell_config(
-                recorder, runs_as.model, runs_as.effort, owner, turns_left, budget_left
+                recorder,
+                runs_as.model,
+                runs_as.effort,
+                owner,
+                turns_left,
+                budget_left,
+                gate.grant,
             )
         if turn_kind in ("opening", "closing"):
             return nothing()
-        made = self._scratch(workspace, unit)
-        # A step with nothing to name passes nothing, so a stand-in `stream` keeps working.
-        own = (str(made[0]), str(made[1])) if made is not None else None
-        places = Places(
-            roots=(cwd,) if watch else (cwd, str(directory)),
-            scratch=own,
-            ram_cap=scratch_mod.RAM_CAP,
-            branch="" if watch else await branch_of(cwd),
-        )
         return run_mod.open_session(
             self.sessions,
             runs_as,
@@ -2008,7 +2036,7 @@ class Runner:
             session_id,
             turns=turns_left,
             budget=budget_left,
-            gate=Gate(runs_as.grant, places, denials, ledger),
+            gate=gate,
             workspace=workspace,
             # Only a board step has a row.
             **({"step": running.handle, "owner": owner} if running is not None else {}),
@@ -2016,8 +2044,8 @@ class Runner:
             **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
             # Only a step with a channel.
             **servers,
-            # Only a grant holding the helpers' tool gets them (impl); the gate holds their ledger.
-            **({"agents": DEFINITIONS} if ledger is not None else {}),
+            # Only a grant holding helpers gets them (impl); the gate holds their ledger.
+            **({"agents": DEFINITIONS} if gate.helpers is not None else {}),
             **({"unit_scratch": own} if own is not None else {}),
         )
 
@@ -2031,7 +2059,7 @@ class Runner:
         cwd: str,
         watch: str | None,
         directory: Path,
-        grant: Grant,
+        row: Row,
         head: str,
         agent: dict[str, Any] | None,
         kw: dict[str, Any],
@@ -2089,7 +2117,7 @@ class Runner:
             shutting_down = held is not None
         if (
             stage == "review"
-            and grant.app_writes_artifact
+            and row.app_writes_artifact
             and not shutting_down
             and outcome == "exhausted"
             and review_md is None
@@ -2123,7 +2151,7 @@ class Runner:
         if (
             unopened is not None
             and is_prose_stage(stage)
-            and grant.app_writes_artifact
+            and row.app_writes_artifact
             and not watch
             and outcome == "failed"
             and not shutting_down

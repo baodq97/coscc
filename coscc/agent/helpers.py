@@ -36,10 +36,9 @@ from coscc.agent.policy import (
     SUBAGENTS,
     WRITE_TOOLS,
     Grant,
-    Places,
-    allowed_mcp,
     classified,
     critical,
+    lacked,
 )
 
 log = logging.getLogger(__name__)
@@ -312,33 +311,33 @@ class Denials:
             self.reasons.append(f"{tool}: {reason}")
         if self.listener is not None:
             try:
-                self.listener(tool, tool_input, reason)
+                self.listener(tool, tool_input, reason, lacked(reason))
             except Exception:
                 # The recorder never reaches the gate.
                 log.exception("a refused tool was not recorded")
 
 
 class Gate:
-    """What stands in front of one session's `auto` mode: its grant, its `Places`, the run's
+    """What stands in front of one session's `auto` mode: the grant issued for its run, the run's
     `Denials`, and the run's `Helpers` when it may start them. Built by the app before the
-    session opens; `Sessions` fills in the secrets from its own configuration."""
+    session opens, and dropped with it; a grant without its secrets is refused here."""
 
     def __init__(
         self,
         grant: Grant,
-        places: Places,
         denials: Denials | None = None,
         helpers: Helpers | None = None,
     ):
+        if not grant.secrets:
+            raise ValueError("a gate needs a grant that names the secrets it denies")
         self.grant = grant
-        self.places = places
         self.denials = denials if denials is not None else Denials()
         self.helpers = helpers
 
     def refused(self, tool_name: str, tool_input: dict, agent_id: str | None) -> str:
         """Why the hook denies this call, or ""."""
         return (self.helpers or Helpers()).refused(tool_name, tool_input) or critical(
-            self.grant, self.places, tool_name, tool_input, agent_id
+            self.grant, tool_name, tool_input, agent_id
         )
 
     async def pre_tool_use(
@@ -369,7 +368,7 @@ class Gate:
         }
 
     def _let_through(self, tool_name: str, tool_input: dict, agent_id: str | None) -> None:
-        if classified(self.grant, self.places, tool_name, tool_input):
+        if classified(self.grant, tool_name, tool_input):
             self.denials.classified += 1
         if self.helpers is not None and agent_id is not None and tool_name in WRITE_TOOLS:
             self.helpers.wrote(agent_id, tool_name, tool_input)
@@ -395,7 +394,7 @@ class Gate:
 
     def allowed(self) -> list[str]:
         """The app's own MCP tools this session holds, allowed by name so they skip the classifier."""
-        return list(allowed_mcp(self.grant))
+        return list(self.grant.mcp)
 
     def hooks(self) -> dict[HookEvent, list[HookMatcher]]:
         """For `ClaudeAgentOptions.hooks`: every tool call and, with helpers, each one's start and

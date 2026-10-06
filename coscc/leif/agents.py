@@ -56,11 +56,11 @@ class RunView(TypedDict):
     cost_usd: float | None
 
 
-class GrantView(TypedDict):
-    """What `grant_for` gives a step, to be read and never written: changing one widens what a step may do."""
+class RowView(TypedDict):
+    """What `row_for` gives an agent, to be read and never written: changing one widens what its
+    runs may be granted. `tools` are catalog names (`coscc/kernel.py`)."""
 
     tools: list[str]
-    mcp: list[str]
     submits: bool
     warning: str
 
@@ -77,7 +77,7 @@ class AgentRow(TypedDict):
     # The `:novel` rows of this agent's stage, edited in its drawer.
     variants: list[models.ConfigRow]
     skill: str
-    grant: GrantView
+    row: RowView
     last: RunView | None
     # The last `RECENT`, newest first.
     runs: list[RunView]
@@ -107,14 +107,9 @@ def chip_of(last: RunView | None, budget: float | None, runs_in_window: int) -> 
     return "ok"
 
 
-def _grant_view(key: str) -> GrantView:
-    grant = policy.grant_for(key)
-    return GrantView(
-        tools=list(grant.tools),
-        mcp=list(grant.mcp),
-        submits=grant.submits,
-        warning=grant.warning,
-    )
+def _row_view(key: str) -> RowView:
+    row = policy.row_for(key)
+    return RowView(tools=list(row.tools), submits=row.submits, warning=row.warning)
 
 
 def _run_view(record: dict[str, Any]) -> RunView:
@@ -204,7 +199,7 @@ class Agents:
 
         `rows`, one per agent, failed and costly first and otherwise in `agents.json`'s order:
         identity, model, effort and the two ceilings each with its source, its `:novel` rows
-        under `variants`, the grant (read only), the skill, the last run, the last `RECENT`,
+        under `variants`, the row (read only), the skill, the last run, the last `RECENT`,
         the cost and count of the last `WINDOW_DAYS`, and the chip. `others`: `estimate` and
         `chat`. `problems`: every override, default or record that was skipped.
 
@@ -252,7 +247,7 @@ class Agents:
                     config=config_row,
                     variants=variants,
                     skill=skill_of(key),
-                    grant=_grant_view(key),
+                    row=_row_view(key),
                     last=last,
                     runs=[_run_view(r) for r in mine[:RECENT]],
                     runs_30d=len(recent),
@@ -411,13 +406,13 @@ class Models:
     def agent(
         self,
         key: str,
-        grant: policy.Grant,
+        row: policy.Row,
         model: str | None = None,
         effort: str | None = None,
     ) -> run_mod.Agent:
         """The `run` agent of a session no stage runs: the estimate, a feature's session (whose own
         `model` and `effort` stand where no override and no shipped row name one) and chat, on the
-        grant's own ceilings."""
+        row's own ceilings."""
         defaults, _ = models.load_defaults()
         defaults.setdefault(key, {"model": model, "effort": effort})
         model, model_source, effort, effort_source = models.resolve(
@@ -430,14 +425,14 @@ class Models:
         )
         return run_mod.Agent(
             key,
-            grant,
+            row,
             model=model,
             effort=effort,
             sources={
                 "model_source": model_source,
                 "effort_source": effort_source,
                 "max_turns_source": models.DEFAULT,
-                "max_budget_source": models.DEFAULT if grant.max_budget_usd else models.NONE,
+                "max_budget_source": models.DEFAULT if row.max_budget_usd else models.NONE,
             },
         )
 

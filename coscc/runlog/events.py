@@ -198,12 +198,15 @@ class Recorder:
         max_turns_source: str,
         max_budget_usd: float | None,
         max_budget_source: str,
+        granted: list[str] | None = None,
     ) -> None:
         """`config`: what the session was handed, once, as it opens and before any SDK event, and
-        again for the segment of a step taken up after an update. The runner hands the values in;
-        nothing is resolved here."""
+        again for the segment of a step taken up after an update: the values, with where each came
+        from, and what its grant holds (`policy.granted`). The runner hands them in; nothing is
+        resolved here."""
         self._emit(
             "config",
+            granted=list(granted or ()),
             model=model,
             model_source=model_source,
             effort=effort,
@@ -283,9 +286,10 @@ class Recorder:
         else:
             self._emit("system", **_system_fields(block))
 
-    def denied(self, tool: str, tool_input: Any, reason: str) -> None:
-        """`denied`: one refusal of the grant's gate. Every one, not the first five."""
-        self._emit("denied", tool=tool, input=tool_input, reason=reason)
+    def denied(self, tool: str, tool_input: Any, reason: str, lacked: str = "") -> None:
+        """`denied`: one refusal of the run's gate, with the grant it lacked when the hook's rule
+        names one (`policy.lacked`). Every one, not the first five."""
+        self._emit("denied", tool=tool, input=tool_input, reason=reason, lacked=lacked)
 
     def helper(self, kind: str, fields: Mapping[str, object]) -> None:
         """One of `HELPER_KINDS`, as `coscc/agent/helpers.py` tells it; any other kind is dropped."""

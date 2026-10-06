@@ -1,17 +1,20 @@
 """Scratch: tells every step where it may write besides the worktree.
 
 The kernel makes the unit's two directories and puts their paths in `COS_SCRATCH_RAM` and
-`COS_SCRATCH_DISK` (`coscc/units/scratch.py`); this only says which is for what. The block is
-the same for every step, since reading scratch is open to all of them.
+`COS_SCRATCH_DISK` (`coscc/units/scratch.py`); this only says which is for what. The block goes
+to a run whose grant holds Bash, the one its scratch is issued with.
 """
 
 from __future__ import annotations
 
 from coscc.kernel import SCRATCH_RAM_CAP, Block, Facts, Feature, Parts
 
+# The tool the block teaches: the unit's scratch is written through it.
+BASH = "Bash"
+
 
 def render(_facts: Facts) -> str:
-    """The three places an agent writes, whatever the step."""
+    """The three places an agent writes."""
     cap = SCRATCH_RAM_CAP // 2**20
     return "\n".join(
         [
@@ -36,6 +39,6 @@ def render(_facts: Facts) -> str:
 FEATURE = Feature(
     "scratch",
     lambda _ctx: [],
-    agent=lambda _ctx: Parts(blocks=(Block("scratch", render),)),
-    summary="Tells every step where it may write besides the worktree: one folder in RAM, one on disk.",
+    agent=lambda _ctx: Parts(blocks=(Block("scratch", render, tool=BASH),)),
+    summary="Tells a step that runs commands where it may write besides the worktree: RAM or disk.",
 )

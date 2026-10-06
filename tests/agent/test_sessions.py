@@ -11,7 +11,6 @@ import sys
 import tempfile
 import unittest
 from contextlib import suppress
-from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -20,7 +19,7 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 
 from coscc.agent import sessions
 from coscc.agent.helpers import Denials, Gate, Helpers
-from coscc.agent.policy import Grant, Places, grant_for
+from coscc.agent.policy import SUBAGENTS, Grant
 from coscc.config import PROTECTED_DB_VAR, Config
 from coscc.store.db import Data
 from coscc.agent.sessions import (
@@ -32,9 +31,18 @@ from coscc.agent.sessions import (
 )
 
 
+# What every gate of these tests denies; a real run's are the app's (`sessions.secrets_of`).
+SECRETS = ("/data/cos.db",)
+
+
+def _grant(**kw) -> Grant:
+    """A run's grant in `/p`, holding `kw`."""
+    return Grant(**{"cwd": "/p", "secrets": SECRETS, **kw})
+
+
 def _options(*args, **kw):
     kw.setdefault("data_dir", tempfile.gettempdir())
-    kw.setdefault("gate", Gate(Grant(), Places(roots=("/p",))))
+    kw.setdefault("gate", Gate(_grant()))
     return sessions._options(*args, **kw)
 
 
@@ -226,7 +234,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         from coscc.agent import policy
         from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
-        gate = Gate(Grant(tools=policy.READ_TOOLS), Places(roots=("/p",)))
+        gate = Gate(_grant(tools=policy.READ_TOOLS))
         common = dict(max_turns=40, tools=list(policy.READ_TOOLS), gate=gate)
         bare = _options(Config(), "/p", None, **common)
         preset = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET, **common)
@@ -413,7 +421,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
                     "/p",
                     None,
                     tools=tools,
-                    gate=Gate(Grant(), Places(roots=("/p",)), helpers=helpers),
+                    gate=Gate(_grant(), helpers=helpers),
                     system_prompt=prompt,
                     effort=effort,
                     max_budget_usd=budget,
@@ -464,7 +472,7 @@ class EverySessionRunsAuto(unittest.TestCase):
             "a step": {"tools": ["Read", "Bash"], "system_prompt": CLAUDE_CODE_PRESET},
         }.items():
             with self.subTest(name):
-                gate = Gate(Grant(tools=tuple(kw.get("tools") or ())), Places(roots=("/p",)))
+                gate = Gate(_grant(tools=tuple(kw.get("tools") or ())))
                 options = _options(Config(), "/p", None, gate=gate, **kw)
                 self.assertEqual(options.permission_mode, "auto")
                 self.assertEqual(json.loads(options.settings or "")["autoMode"], sessions.AUTO_MODE)
@@ -483,8 +491,11 @@ class EverySessionRunsAuto(unittest.TestCase):
         self.assertIn("worktree", sessions.AUTO_MODE["environment"][1])
 
     def test_the_apps_own_mcp_tools_are_allowed_by_name_and_no_command_is(self):
-        grant = replace(grant_for("impl"), submits=True, mcp=("mcp__vault__vault_exec",))
-        options = _options(Config(), "/p", None, gate=Gate(grant, Places(roots=("/p",))))
+        grant = _grant(
+            helpers=tuple(SUBAGENTS),
+            mcp=("mcp__cos__submit", "mcp__cos__peers", "mcp__vault__vault_exec"),
+        )
+        options = _options(Config(), "/p", None, gate=Gate(grant))
         self.assertEqual(
             options.allowed_tools,
             ["mcp__cos__submit", "mcp__cos__peers", "mcp__vault__vault_exec"],
@@ -522,7 +533,7 @@ class AClassifierDenialIsRecorded(unittest.IsolatedAsyncioTestCase):
             }
         )
         denials = Denials()
-        gate = Gate(grant_for("impl"), Places(roots=("/tmp",)), denials)
+        gate = Gate(Grant(cwd="/tmp", write=("/tmp",), secrets=SECRETS), denials)
         await self._stream([denied, _result("sid")], gate=gate, step=sessions.StepHandle())
         self.assertEqual(denials.count, 1)
         self.assertIn("[Data Exfiltration]", denials.reasons[0])
@@ -532,9 +543,9 @@ class AClassifierDenialIsRecorded(unittest.IsolatedAsyncioTestCase):
         options = _Recording.options
         (matcher,) = options.hooks["PreToolUse"]
         gate = matcher.hooks[0].__self__
-        self.assertEqual(gate.places.roots, ("/tmp",))
+        self.assertEqual((gate.grant.cwd, gate.grant.write), ("/tmp", ()))
         self.assertEqual(gate.grant.tools, ())
-        self.assertIn(str(Data(Config().data_dir).db_path), gate.places.secrets)
+        self.assertIn(str(Data(Config().data_dir).db_path), gate.grant.secrets)
         self.assertEqual(options.permission_mode, "auto")
 
 

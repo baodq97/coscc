@@ -24,7 +24,9 @@ from coscc.config import from_env
 from coscc.store.db import Data, now
 
 MODES = ("env", "file", "placeholder", "ssh")
-VAULT_STAGES = ("impl", "spike")
+# The agents a secret's list may name ("Agents that may use it"): those whose row holds `vault`.
+# The column keeps its name, `stages`.
+VAULT_AGENTS = tuple(k for k, row in policy.ROWS.items() if policy.VAULT in row.tools)
 NAME = re.compile(r"(global|ws):[a-z0-9][a-z0-9._-]{0,63}")
 
 # Chosen, not measured: turns a hung `age` into an error.
@@ -179,7 +181,7 @@ class Store:
     ) -> Secret:
         """A secret with no value yet. A name in use is refused, never overwritten."""
         name, column = self._row_key(name, workspace)
-        stages = _subset("stage", stages, VAULT_STAGES)
+        stages = _subset("stage", stages, VAULT_AGENTS)
         modes = ("ssh",) if broker else _subset("mode", modes, MODES)
         self._tables()
         try:
@@ -234,7 +236,7 @@ class Store:
     ) -> Secret:
         """A broker secret keeps `ssh` as its only mode, whatever `modes` says."""
         secret = self.known(name, workspace)
-        stages = _subset("stage", stages, VAULT_STAGES)
+        stages = _subset("stage", stages, VAULT_AGENTS)
         modes = ("ssh",) if secret.broker else _subset("mode", modes, MODES)
         with self.data.write() as conn:
             conn.execute(

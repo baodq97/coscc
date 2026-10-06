@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
 from coscc.agent import models, policy
-from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, is_prose_stage
+from coscc.agent.policy import NOVEL_CEILINGS, ROWS, is_prose_stage
 from coscc.github import prmachine
 from coscc.leif import spend
 from coscc.store.journal import is_step
@@ -377,14 +377,14 @@ def reservation(stage: str, budget: Mapping[str, Any] | None = None) -> float:
 
 def estimate(stage: str, budget: Mapping[str, Any] | None = None) -> float:
     """What an `end` of `stage` with no `cost_usd` is counted at: its reservation, or, for a
-    stage no grant gives a budget, the largest budget in the grant table or the overrides
+    stage no row gives a budget, the largest budget in the row table or the overrides
     (read, never copied)."""
     own = reservation(stage, budget)
     if own > 0:
         return own
     return float(
         max(
-            [float(g.max_budget_usd or 0.0) for g in GRANTS.values()]
+            [float(g.max_budget_usd or 0.0) for g in ROWS.values()]
             + [float(b) for _, b in NOVEL_CEILINGS.values()]
             + [float(b) for b in (budget or {}).values()]
         )

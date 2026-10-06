@@ -6,6 +6,7 @@ the real one. `Bed` is the fixture `test_vault_http.py` builds on.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import stat
 import subprocess
@@ -21,7 +22,7 @@ from coscc.http.app import build
 from coscc.config import Config
 from coscc.store.db import Data
 from coscc.features import vault as feature
-from coscc.kernel import Facts, Runs
+from coscc.kernel import Facts, Grant, Runs
 from tests.features.ctx import ctx_for
 
 AGE = """#!{python}
@@ -135,14 +136,24 @@ class Bed(unittest.IsolatedAsyncioTestCase):
             "workspace": str(self.ws),
             "workspace_key": self.key,
             "unit": "0001_thing",
-            "stage": stage,
+            "agent": stage,
             "run": "r1",
             "tree": str(work),
             "directory": directory,
             "scratch": None,
             "resumed": False,
         }
-        return Facts(**{**fields, **over})
+        base = Facts(**{**fields, **over})
+        if "grant" in over:
+            return base
+        # What `issue` gives the run: the secrets listed for its agent, when its row holds the
+        # vault; a push for the PR machine's steps and Gebo's.
+        holds = stage in vault.VAULT_AGENTS
+        use = feature._usable(lambda: self.store, base) if holds else ()
+        branch = "feat/x" if stage in ("pr", "ship", "integrate") else ""
+        return dataclasses.replace(
+            base, grant=Grant(use=tuple((feature.NAME, n) for n in use), branch=branch)
+        )
 
     def tools(self, facts: Facts) -> dict:
         found = feature.build_tools(facts, self.ctx, lambda: self.store)
@@ -179,25 +190,48 @@ class TheToolsTakeNoValue(Bed):
         self.assertEqual(names_in(tools["vault_generate"].input_schema), {"name", "description"})
         self.assertEqual(names_in(tools["vault_list"].input_schema), set())
 
-    def test_the_parts_are_one_server_one_guard_and_one_block(self):
+    def test_the_parts_are_one_catalog_entry_one_guard_and_one_block(self):
         parts = feature.agent(self.ctx, lambda _ctx: self.store)
         (tool,) = parts.tools
         self.assertEqual(
-            (tool.server, tool.names, tool.stages), ("vault", feature.TOOL_NAMES, ("impl", "spike"))
+            (tool.name, tool.server, tool.names, tool.effect),
+            ("vault", "vault", feature.TOOL_NAMES, "external"),
         )
         self.assertEqual([g.name for g in parts.guards], ["vault-leak"])
-        self.assertEqual([b.name for b in parts.blocks], ["vault"])
+        self.assertEqual([(b.name, b.tool) for b in parts.blocks], [("vault", "vault")])
         server = tool.make(self.facts())
         self.assertEqual((server["type"], server["name"]), ("sdk", "vault"))
 
-    def test_the_app_offers_the_tool_to_impl_and_spike_and_to_no_prose_stage(self):
+    def test_the_app_offers_the_tool_to_a_row_naming_it_and_to_no_prose_stage(self):
+        from coscc.agent import policy
+
         hooks = self.core.steps.hooks
-        for stage in ("impl", "spike"):
-            self.assertEqual(
-                [t.server for t in hooks.for_step(stage, str(self.ws)).tools], ["vault"]
-            )
-        for stage in ("plan", "spec", "review", "pr"):
-            self.assertEqual(hooks.for_step(stage, str(self.ws)).tools, ())
+        for key in ("impl", "spike"):
+            held = hooks.held(policy.row_for(key), str(self.ws))
+            self.assertEqual([t.name for t in held], ["vault"])
+        for key in ("plan", "spec", "review", "pr", "intent", "integrate"):
+            self.assertEqual(hooks.held(policy.row_for(key), str(self.ws)), ())
+
+
+class TheGrantNamesOnlyTheSecretsListedForTheAgent(Bed):
+    """`Tool.uses`: what `issue` puts in the run's `use`; nothing the secret's list leaves out."""
+
+    def test_a_secret_not_listed_for_the_agent_gives_no_use(self):
+        (tool,) = feature.agent(self.ctx, lambda _ctx: self.store).tools
+        assert tool.uses is not None
+        self.assertEqual(tool.uses(self.facts("impl")), ("ws:db",))
+        self.assertEqual(tool.uses(self.facts("spike")), ("global:tok",))
+        self.assertEqual(tool.uses(self.facts("review")), ())
+
+    async def test_a_run_whose_grant_does_not_name_it_cannot_use_it(self):
+        marker = self.root / "tree" / "ran"
+        bare = self.facts(grant=Grant())
+        args = {"command": "mkdir ran", "uses": [{"name": "ws:db", "mode": "env"}]}
+        got = await self.call(bare, "vault_exec", args)
+        self.assertEqual([r["code"] for r in got["refusals"]], ["not-in-grant"])
+        self.assertFalse(marker.exists())
+        listed = await self.call(bare, "vault_list", {})
+        self.assertFalse(any(r["usable_now"] for r in listed["secrets"]))
 
 
 class ListingSecrets(Bed):
@@ -496,7 +530,7 @@ class ThePromptBlock(Bed):
         )
 
     def test_the_kernel_renders_the_block_for_a_workspace_with_the_vault_on(self):
-        blocks = self.core.steps.hooks.for_step("impl", str(self.ws)).blocks
+        blocks = self.core.steps.hooks.on(str(self.ws)).blocks
         (block,) = [b for b in blocks if b.name == "vault"]
         self.assertIn("ws:db", block.render(self.facts()))
 

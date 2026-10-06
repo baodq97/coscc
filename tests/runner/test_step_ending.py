@@ -12,6 +12,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -1261,6 +1262,11 @@ class ADeadStepKeepsItsTurns(unittest.TestCase):
         self.assertEqual(attempt["cost_usd"], 0.4)
 
 
+def _nothing(grant):
+    """`grant` without where it runs and what it denies: what is left is what it grants."""
+    return replace(grant, cwd="", secrets=(), home="")
+
+
 class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
     """One more turn on the same session, with no tools, when a review's reply could not be written
     because it hit its ceiling."""
@@ -1392,7 +1398,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertEqual(closing["session_id"], "s1")
         self.assertEqual(closing["tools"], [])
         self.assertEqual(closing["max_turns"], 1)
-        self.assertEqual(closing["gate"].grant, policy.Grant())
+        self.assertEqual(_nothing(closing["gate"].grant), policy.Grant())
         self.assertIsNot(closing["step"], running.handle)
         self.assertIsNone(closing["step"].recorder)
         self.assertIn(f"Reviewed: {head}. Verdict: incomplete.", closing["text"])
@@ -1551,7 +1557,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         sessions = self.Closes()
         self.run_review(sessions)
         gate = sessions.calls[1]["gate"]
-        self.assertEqual(gate.grant, policy.Grant())
+        self.assertEqual(_nothing(gate.grant), policy.Grant())
         self.assertIn(policy.HELD, asyncio.run(asks(gate, "mcp__cos__submit", {})))
 
     def test_a_budget_ceiling_on_the_closing_turn_still_writes_a_round(self):
@@ -1765,7 +1771,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         _, [end], _, _, _ = self.go(sessions)
         self.assertEqual(end["denials"], 1)
         self.assertEqual(end["denied"], [f"mcp__x__y: {policy.HELD}: mcp__x__y is not one"])
-        self.assertEqual(sessions.calls[1]["gate"].grant, policy.Grant())
+        self.assertEqual(_nothing(sessions.calls[1]["gate"].grant), policy.Grant())
 
     def _paused_repair(self, spent_usd):
         # An update paused the repair turn; its main reply is the pieces before it.

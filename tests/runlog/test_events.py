@@ -140,6 +140,7 @@ class WhatIsRecorded(unittest.TestCase):
         self.assertEqual(
             {k: v for k, v in config.items() if k not in events.COMMON},
             {
+                "granted": [],
                 "model": "m",
                 "model_source": "override",
                 "effort": None,

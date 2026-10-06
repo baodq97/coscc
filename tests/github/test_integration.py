@@ -19,7 +19,7 @@ from unittest import mock
 
 from tests.runner.test_step import asks
 from tests.units.test_meta import seed
-from coscc.agent.policy import grant_for
+from coscc.agent.policy import row_for
 from coscc.bus import Bus
 from coscc.github import integrate
 from coscc.git import fetches
@@ -289,6 +289,12 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(
             {k: v for k, v in stored[0].items() if k not in ("run", "seq", "at", "kind")},
             {
+                # Gebo's grant: its tree to write, its branch to push with a lease, `submit`.
+                "granted": [
+                    "write: worktree",
+                    f"push: {start['grants']['branch']} (with a lease)",
+                    "submit",
+                ],
                 "model": "gebo-model",
                 "model_source": "override",
                 "effort": "high",
@@ -558,7 +564,7 @@ class GeboThroughTheService(unittest.TestCase):
         from coscc.runner.queue import Refused
 
         seen = []
-        self.guarded(lambda facts: seen.append(facts.stage) or "not today")
+        self.guarded(lambda facts: seen.append(facts.agent) or "not today")
         with self.assertRaises(Refused) as caught:
             self.integrate_with(self._no_act)
         self.assertEqual(caught.exception.reasons, ("feature-refused",))
@@ -583,7 +589,7 @@ class GeboThroughTheService(unittest.TestCase):
             return "[needs-person] f.txt: both"
 
         self.integrate_with(act)
-        grant = grant_for("integrate")
+        grant = row_for("integrate")
         [kw] = self.core.sessions.kws
         self.assertEqual(
             (kw["max_turns"], kw["max_budget_usd"]), (grant.max_turns, grant.max_budget_usd)

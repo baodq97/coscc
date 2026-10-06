@@ -523,7 +523,7 @@ class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
         self.assertEqual(self.core.attempts.unfinished(self.key, self.unit), [])
         [facts] = seen
         self.assertTrue(facts.resumed)
-        self.assertEqual((facts.unit, facts.stage), (self.unit, "plan"))
+        self.assertEqual((facts.unit, facts.agent), (self.unit, "plan"))
 
 
 class APausedOwnerEndsNothing(_Base):

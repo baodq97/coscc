@@ -257,7 +257,7 @@ class Resume:
                 workspace=workspace,
                 workspace_key=str(owner.get("workspace") or ""),
                 unit=unit,
-                stage=str(owner.get("stage") or ""),
+                agent=str(owner.get("stage") or ""),
                 run=str(owner.get("run") or ""),
                 cwd=str(scratch or tree),
                 watch=tree if scratch else None,
