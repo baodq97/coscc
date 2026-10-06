@@ -609,7 +609,7 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
 
 /* process diagram */
 .pd-wrap { overflow-x: auto; max-width: 100%; }
-.pd { display: block; max-width: 100%; height: auto; }
+.pd { display: block; max-width: none; }
 .pd-node rect { fill: var(--panel); stroke: var(--line-2); stroke-width: 1; }
 .pd-node.opt rect { stroke-dasharray: 4 3; }
 .pd-node.now rect { stroke: var(--accent); stroke-width: 2; fill: var(--bg-sunk); }
@@ -622,3 +622,5 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
 .pd-line.side { stroke: var(--text-3); stroke-dasharray: 4 3; }
 .pd-head { fill: none; stroke: var(--text-3); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
 .pd-edge { font-size: 11px; fill: var(--text-2); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+.pack-draw { padding: 10px 0 4px; border-bottom: 1px solid var(--line); }
+.pack-draw > summary { cursor: pointer; color: var(--text-2); font-weight: 500; }

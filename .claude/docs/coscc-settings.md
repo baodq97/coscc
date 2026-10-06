@@ -22,5 +22,9 @@ Read this before changing `/api/settings/*`, model resolution, `/api/backlog/*` 
 - The autopilot turns on only on loopback, starts only shortlisted units (no shortlist starts
   nothing), and its daily cap counts every step end of the day, a person's too. It holds only
   the autopilot, never a press.
+- A pack is on or off per project, and a project has a default process (`GET/POST /api/packs`, the
+  prefs `packs.state` and `packs.process`; Settings › Each project). Off, a new unit or idea is
+  refused `no-process` and units already open carry on; a unit records its process when it opens and
+  never re-reads the default. A unit whose process no pack has is held `state-gone`.
 - Backlog estimates, relations and the shortlist are run-log rows with `by`; `propose` opens one
   paid session. No gate reads them.

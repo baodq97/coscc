@@ -124,6 +124,66 @@ def a_feature_page_is_drawn_by_the_studio(context, base) -> bool:
         page.close()
 
 
+def a_pack_is_turned_off_and_its_default_process_chosen(context, base, api) -> bool:
+    """Settings › Each project holds the pack: its select changes what a new unit walks, its
+    toggle refuses new units, and the diagram of the chosen process is drawn."""
+    cwd = api.get("/api/workspaces").json()["workspaces"][0]["path"]
+    page = open_studio(context, base, "/may-do")
+    try:
+        page.wait_for_selector("text=New units walk")
+        page.select_option("select", "coscc-sdlc/short")
+        page.wait_for_function(
+            "fetch('/api/packs?cwd=' + encodeURIComponent(%r)).then(r => r.json()).then(p => p[0].process === 'coscc-sdlc/short')"
+            % cwd
+        )
+        drawn = page.locator("svg.pd").count()
+        got = api.get("/api/packs", params={"cwd": cwd}).json()[0]["process"]
+        ok = say(
+            got == "coscc-sdlc/short" and drawn >= 1,
+            "the select saves the default and the diagram is drawn",
+            f"{got}, {drawn}",
+        )
+        page.locator(".toggle").nth(2).click()
+        page.wait_for_timeout(500)
+        off = api.get("/api/packs", params={"cwd": cwd}).json()[0]["on"]
+        refused = api.post("/api/units", json={"cwd": cwd, "slug": "nope", "brief": "x"})
+        ok &= say(
+            off is False
+            and refused.status_code == 400
+            and refused.json().get("code") == "no-process",
+            "off refuses a new unit as no-process",
+            str(refused.status_code),
+        )
+        api.post(
+            "/api/packs",
+            json={"cwd": cwd, "name": "coscc-sdlc", "on": True, "process": "coscc-sdlc/full"},
+        )
+        return ok
+    finally:
+        page.close()
+
+
+def the_sidebar_is_a_drawer_on_a_phone(browser, base, token) -> bool:
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    try:
+        context.add_cookies([{"name": COOKIE, "value": token, "url": base}])
+        page = open_studio(context, base, "/agents")
+        side = page.locator(".side").bounding_box()
+        shut = side is not None and side["x"] + side["width"] <= 1
+        page.locator(".menu-btn").click()
+        page.wait_for_timeout(300)
+        side = page.locator(".side").bounding_box()
+        opened = side is not None and side["x"] >= 0
+        wide = page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        return say(
+            shut and opened and wide,
+            "at 390 px the sidebar is shut, the menu button opens it, nothing scrolls sideways",
+            f"{shut}, {opened}, {wide}",
+        )
+    finally:
+        context.close()
+
+
 def an_unknown_api_path_is_a_404_not_the_page(api: httpx.Client) -> bool:
     got = api.get("/api/x")
     return say(got.status_code == 404, "an unknown /api/x is a 404", str(got.status_code))
@@ -189,6 +249,10 @@ def main() -> int:
                     )
                 )
                 results.append(run(a_feature_page_is_drawn_by_the_studio, context, app.base))
+                results.append(
+                    run(a_pack_is_turned_off_and_its_default_process_chosen, context, app.base, api)
+                )
+                results.append(run(the_sidebar_is_a_drawer_on_a_phone, browser, app.base, token))
                 results.append(run(an_unknown_api_path_is_a_404_not_the_page, api))
             finally:
                 context.close()

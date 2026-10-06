@@ -116,8 +116,8 @@ function Project({ workspace }: { workspace: Workspace }) {
             </Field>
           </>
         )}
+        {packs.data?.map((p) => <Pack key={p.name} workspace={workspace.name} pack={p} disabled={busy} onSave={(body) => save("/api/packs", { cwd, name: p.name, ...body })} />)}
         {shown.data && shown.data.map((f) => <Feature key={f.name} feature={f} disabled={busy} onState={(state) => save("/api/features", { cwd, name: f.name, state })} />)}
-        {packs.data?.map((p) => <Pack key={p.name} pack={p} disabled={busy} onSave={(body) => save("/api/packs", { cwd, name: p.name, ...body })} />)}
         {error && <div style={{ color: "var(--red)", marginTop: 8, fontSize: 12.5 }}>{error.message}</div>}
       </div>
     </div>
@@ -125,12 +125,11 @@ function Project({ workspace }: { workspace: Workspace }) {
 }
 
 /** A pack in one project: on or off, the process a new unit walks, and that process drawn. */
-function Pack({ pack, disabled, onSave }: { pack: PackShown; disabled: boolean; onSave: (body: { on?: boolean; process?: string }) => void }) {
+function Pack({ workspace, pack, disabled, onSave }: { workspace: string; pack: PackShown; disabled: boolean; onSave: (body: { on?: boolean; process?: string }) => void }) {
   const [shown, setShown] = useState(pack.process);
   const drawn = pack.processes.find((p) => p.ref === shown) ?? pack.processes[0];
   return (
     <>
-      <div className="sec-h" style={{ marginTop: 18 }}>Pack</div>
       <Field label={`${pack.name} ${pack.version}`} hint={pack.on ? pack.description : "Off: no new unit or idea opens here. Units already running carry on."}>
         <Toggle on={pack.on} disabled={disabled} onChange={(on) => onSave({ on })} />
       </Field>
@@ -143,15 +142,17 @@ function Pack({ pack, disabled, onSave }: { pack: PackShown; disabled: boolean; 
           ))}
         </select>
       </Field>
-      <div className="row" style={{ gap: 6, margin: "10px 0 8px" }}>
-        {pack.processes.map((p) => (
-          <button key={p.ref} className={`btn sm ${p.ref === drawn.ref ? "primary" : "ghost"}`} onClick={() => setShown(p.ref)}>
-            {p.name}
-          </button>
-        ))}
-        <span className="faint" style={{ fontSize: 12 }}>the process drawn below</span>
-      </div>
-      <ProcessDiagram process={drawn} />
+      <details id={`pack-${workspace}`} className="pack-draw">
+        <summary>How a unit walks {drawn.name}</summary>
+        <div className="row" style={{ gap: 6, margin: "10px 0 8px" }}>
+          {pack.processes.map((p) => (
+            <button key={p.ref} className={`btn sm ${p.ref === drawn.ref ? "primary" : "ghost"}`} onClick={() => setShown(p.ref)}>
+              {p.name}
+            </button>
+          ))}
+        </div>
+        <ProcessDiagram process={drawn} />
+      </details>
     </>
   );
 }

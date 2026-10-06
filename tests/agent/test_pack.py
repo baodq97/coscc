@@ -534,3 +534,34 @@ class AProcessIsHeldToWhatTheLoopAssumes(unittest.TestCase):
         impl = {**_process()["states"]["impl"], "next": [{"to": "ship"}]}
         got = self.reasons(_process(impl=impl))
         self.assertIn("p.ship: a review state is not on every path to it", got)
+
+
+class APackIsOnOrOffPerWorkspace(unittest.TestCase):
+    def setUp(self):
+        from coscc.store.db import Data
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.data = Data(self._tmp.name)
+
+    def test_on_with_full_until_chosen_and_per_workspace(self):
+        self.assertEqual(pack.default_process(self.data, "/a"), "coscc-sdlc/full")
+        pack.set_packs(self.data, "/a", "coscc-sdlc", chosen="coscc-sdlc/short")
+        self.assertEqual(pack.default_process(self.data, "/a"), "coscc-sdlc/short")
+        self.assertEqual(pack.default_process(self.data, "/b"), "coscc-sdlc/full")
+
+    def test_off_gives_no_process_but_keeps_the_choice(self):
+        pack.set_packs(self.data, "/a", "coscc-sdlc", on=False, chosen="coscc-sdlc/short")
+        self.assertIsNone(pack.default_process(self.data, "/a"))
+        self.assertEqual(pack.default_process(self.data, "/b"), "coscc-sdlc/full")
+        pack.set_packs(self.data, "/a", "coscc-sdlc", on=True)
+        self.assertEqual(pack.default_process(self.data, "/a"), "coscc-sdlc/short")
+
+    def test_a_pack_or_process_that_is_not_there_is_refused(self):
+        for args in (
+            ("other", True, None),
+            ("coscc-sdlc", None, "coscc-sdlc/none"),
+            ("coscc-sdlc", None, "x/full"),
+        ):
+            with self.assertRaises(pack.PackError):
+                pack.set_packs(self.data, "/a", args[0], args[1], args[2])
