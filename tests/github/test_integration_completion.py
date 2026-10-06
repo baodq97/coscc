@@ -233,10 +233,10 @@ class ACleanRebaseNeverPushed(ACutIntegration):
     def pushing_act(self, L: str, allowed: dict):
         async def act(tree, gate):
             compare = f"git range-diff origin/main {self.P} {L}"
-            allowed["range-diff"] = type(await gate("Bash", {"command": compare}, None)).__name__
+            allowed["range-diff"] = await gate("Bash", {"command": compare})
             git(tree, *compare.split()[1:])
             push = f"git push --force-with-lease={BRANCH}:{self.P} origin {BRANCH}"
-            allowed["push"] = type(await gate("Bash", {"command": push}, None)).__name__
+            allowed["push"] = await gate("Bash", {"command": push})
             git(tree, *push.split()[1:])
             return "pushed; the range-diff showed context only"
 
@@ -248,9 +248,7 @@ class ACleanRebaseNeverPushed(ACutIntegration):
         self.cut()
         allowed: dict = {}
         stops = self.autopilot_pass(self.pushing_act(L, allowed))
-        self.assertEqual(
-            allowed, {"range-diff": "PermissionResultAllow", "push": "PermissionResultAllow"}
-        )
+        self.assertEqual(allowed, {"range-diff": "", "push": ""})
         [rec] = self.records("integration")
         self.assertEqual(
             (rec["outcome"], rec["mode"], rec["head_after"]), ("pushed", "agent", L), rec["detail"]

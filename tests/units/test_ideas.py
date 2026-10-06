@@ -213,14 +213,13 @@ class AUnitOpenedFromAnIdea(ServiceFixture):
     def test_a_brief_opened_unit_has_no_note_and_no_siblings(self):
         plain = self.run_(self.core.answers.create_unit(self.proj, "plain", "words"))
         self.assertEqual(self.core.ideas.idea_note(self.proj, plain["unit"]), "")
-        self.assertEqual(self.run_(self.core.ideas.siblings(self.proj, plain["unit"])), ((), ""))
+        self.assertEqual(self.run_(self.core.ideas.siblings(self.proj, plain["unit"])), "")
 
     def test_the_impl_prompt_names_each_sibling_and_its_head(self):
         head = subprocess.run(
             ["git", "-C", self.api, "rev-parse", "HEAD"], capture_output=True, text=True
         ).stdout.strip()
-        paths, note = self.run_(self.core.ideas.siblings(self.proj, self.front["unit"]))
-        self.assertEqual(paths, (str(Path(self.api).resolve()),))
+        note = self.run_(self.core.ideas.siblings(self.proj, self.front["unit"]))
         self.assertIn(f"- api: {Path(self.api).resolve()} (HEAD {head[:12]} on main)", note)
         self.assertNotIn("- proj:", note)
 

@@ -633,6 +633,13 @@ def _sent_back(stage: str, directory: Path, review: str, included: list[str]) ->
     ]
 
 
+def _push(stage: str, branch: str) -> list[str]:
+    """`impl` only: the one push the gate lets through, spelled with the branch it reads."""
+    if stage != "impl" or not branch:
+        return []
+    return [f"# Pushing\n\nPush with `git push origin {branch}`."]
+
+
 def _rounds_so_far(stage: str, directory: Path, review: str, included: list[str]) -> list[str]:
     """`review` only: the last round's number and what it left open.
 
@@ -883,6 +890,7 @@ def compose_prompt(
     unit_meta: dict[str, Any] | None = None,
     state_file: str | Path | None = None,
     blocks: tuple[tuple[str, str], ...] = (),
+    branch: str = "",
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole, and the ones it names by
     path only.
@@ -898,7 +906,8 @@ def compose_prompt(
     under its own heading. `plan_map` is what `planmap.for_step` built and
     `commands` the words of the step's grant (`impl` only). `unfinished_round` is
     `{"n", "dropped"}` of a last round the loop read as unfinished (`review` only).
-    `runs_commands` is true when the step's grant holds `Bash`. `unit_meta` is the unit's entry
+    `runs_commands` is true when the step's grant holds `Bash`. `branch` is the unit's branch
+    the worktree stands on, the one push `impl` may make. `unit_meta` is the unit's entry
     in the snapshot: its answers and holds, rendered where the file's `## Answers` blocks were.
 
     The list of included artifacts is returned rather than inferred later: if a step ran
@@ -926,6 +935,7 @@ def compose_prompt(
         *_lane(stage, unit_meta),
         *_answers(stage, directory, artifact, writes_own, unit_meta),
         *_sent_back(stage, directory, review, included),
+        *_push(stage, branch),
         *_rounds_so_far(stage, directory, review, included),
         *_unfinished_round(stage, unfinished_round, included),
         *_incomplete_round(stage, review, included),

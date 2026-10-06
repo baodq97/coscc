@@ -24,12 +24,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-import claude_agent_sdk as sdk
 
 from coscc import kernel
 from coscc.agent import agents, instructions, models, modeltrial, steps, transcript
 from coscc.agent import sessions as sessions_mod
-from coscc.agent.helpers import DEFINITIONS, PROTOCOL, Helpers
+from coscc.agent.helpers import DEFINITIONS, PROTOCOL, Denials, Gate, Helpers
 from coscc.store.journal import Journal, Outcome
 from coscc.units import scratch as scratch_mod
 from coscc.units import submit as submit_mod
@@ -38,6 +37,7 @@ from coscc.agent.policy import (
     GRANTS_PREF,
     LISTED_STAGE,
     Grant,
+    Places,
     beyond_reading,
     grant_for_step,
     is_prose_stage,
@@ -72,9 +72,8 @@ from coscc.runner.reply import (
     _hit_ceiling,
 )
 from coscc.runner.attempt import (
-    Denials,
     CLAUDE_CODE_PRESET,
-    permission_gate,
+    branch_of,
     snapshot,
     _head_of,
     _tree_state,
@@ -120,22 +119,16 @@ async def _closing_turn(
 ) -> tuple[str, dict[str, Any] | None]:
     """The reply of one more turn on a review's own session, and its `done`.
 
-    Same session id, a new handle, no tools, a callback that refuses every call, one turn. A
-    new handle has no recorder, so nothing of this turn reaches the step's live view.
+    Same session id, a new handle, no tools and a gate granting none, one turn. A new handle has
+    no recorder, so nothing of this turn reaches the step's live view.
     """
-
-    async def deny_all(tool: str, tool_input: dict, _context: Any):
-        reason = "the closing turn holds no tools"
-        denials.record(tool, reason, tool_input)
-        return sdk.PermissionResultDeny(message=reason)
-
     text, done = "", None
     async for kind, payload in sessions.stream(
         cwd,
         prompt,
         session_id,
         max_turns=1,
-        can_use_tool=deny_all,
+        gate=Gate(Grant(), Places(roots=(cwd,)), denials),
         tools=[],
         step=sessions_mod.StepHandle(),
         **kw,
@@ -160,22 +153,16 @@ async def _opening_turn(
     """The reply of one more turn on a prose step's own session, how many pieces of text it said,
     and its `done`.
 
-    `_closing_turn`'s shape: same session id, a new handle with no recorder, no tools, a
-    callback that refuses every call, one turn.
+    `_closing_turn`'s shape: same session id, a new handle with no recorder, no tools and a gate
+    granting none, one turn.
     """
-
-    async def deny_all(tool: str, tool_input: dict, _context: Any):
-        reason = "the opening turn holds no tools"
-        denials.record(tool, reason, tool_input)
-        return sdk.PermissionResultDeny(message=reason)
-
     text, blocks, done = "", 0, None
     async for kind, payload in sessions.stream(
         cwd,
         prompt,
         session_id,
         max_turns=1,
-        can_use_tool=deny_all,
+        gate=Gate(Grant(), Places(roots=(cwd,)), denials),
         tools=[],
         step=sessions_mod.StepHandle(),
         **kw,
@@ -203,14 +190,13 @@ async def _submit_turn(
     """One more turn on a step's own session, holding `submit` and nothing else, and its `done`.
     What it says is not kept: the artifact was written before it.
     """
-    gate = permission_gate(Grant(submits=True), cwd, denials)
     done = None
     async for kind, payload in sessions.stream(
         cwd,
         prompt,
         session_id,
         max_turns=SUBMIT_TURNS,
-        can_use_tool=gate,
+        gate=Gate(Grant(submits=True), Places(roots=(cwd,)), denials),
         tools=[],
         step=sessions_mod.StepHandle(),
         mcp_servers={submit_mod.SERVER: channel.server()},
@@ -430,6 +416,7 @@ async def _compose(
         # owner.
         return str(was.get("head") or ""), str(resume.get("message") or ""), [], []
     head = await _head_of(watch or cwd)
+    branch = await branch_of(cwd) if stage == "impl" and not watch else ""
     prompt, included, pointed = compose_prompt(
         cwd,
         directory,
@@ -461,6 +448,7 @@ async def _compose(
         unit_meta=meta,
         state_file=state_file,
         blocks=blocks,
+        branch=branch,
     )
     return head, prompt, included, pointed
 
@@ -1077,7 +1065,7 @@ async def _repair_opening(
             closing, cost = _turn_cost(done, cost)
             after = str((done or {}).get("terminal_reason") or "")
             # A turn that stopped at a ceiling writes nothing. At `max_turns` it was cut off: an MCP tool
-            # still reaches a session with `tools=[]`, and one call refused by `deny_all` ends the only
+            # still reaches a session with `tools=[]`, and one call its gate refuses ends the only
             # turn, so what came before may be a draft whose header says `accepted`. At the budget the
             # turn ran whole and the CLI compared the cost after, so its reply may be complete; it is
             # refused all the same, because the reply's road never ends a step past its ceiling `done`.
@@ -1538,7 +1526,6 @@ class Runner:
         idea_note: str = "",
         siblings_note: str = "",
         mentions_note: str = "",
-        read_also: tuple[str, ...] = (),
         agent: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
         state_file: str | None = None,
@@ -1566,13 +1553,13 @@ class Runner:
         the session's `init` names it. `ci_red` may come alone.
 
         `watch` is the unit's worktree when `cwd` is a spike's throwaway directory: writing is held
-        to `cwd`, the worktree and the unit are read only. Its `HEAD` and `git status --porcelain`
+        to `cwd`, and the spike has no branch to push. Its `HEAD` and `git status --porcelain`
         are read before and after the session and a difference fails the step before any artifact
         is written; nothing is restored, the difference goes in `detail`.
 
-        `idea_note`, `siblings_note`, `mentions_note` and `read_also` are the shared idea, the
-        sibling checkouts `impl` may read, the units this unit names, and the paths the read
-        boundary lets through (never writes, never `git -C`). `unfinished_round` is `{n, dropped}` for a `review` prompt only.
+        `idea_note`, `siblings_note` and `mentions_note` are the shared idea, the sibling
+        checkouts `impl` may read, and the units this unit names. `unfinished_round` is
+        `{n, dropped}` for a `review` prompt only.
 
         `running` is the step's row in `Core.steps`. With it the client is closed when the step
         ends, and a person's Stop ends it as `stopped`, decided by `running.stop_requested`, never
@@ -1729,7 +1716,7 @@ class Runner:
                 raise RunError(
                     "the ceiling was used up before the update, so the step was not resumed"
                 )
-            async for kind, payload in self._open_main(
+            async for kind, payload in await self._open_main(
                 cwd,
                 prompt,
                 session_id,
@@ -1737,10 +1724,8 @@ class Runner:
                 budget_left,
                 grant,
                 denials,
-                channel,
                 watch,
                 directory,
-                read_also,
                 kw,
                 running,
                 owner,
@@ -2010,7 +1995,7 @@ class Runner:
             log.exception("the trial model of %s %s was not recorded", unit, stage)
         return None
 
-    def _open_main(
+    async def _open_main(
         self,
         cwd: str,
         prompt: str,
@@ -2019,10 +2004,8 @@ class Runner:
         budget_left: float | None,
         grant: Grant,
         denials: Denials,
-        channel: submit_mod.Channel | None,
         watch: str | None,
         directory: Path,
-        read_also: tuple[str, ...],
         kw: dict[str, Any],
         running: steps.Running | None,
         owner: dict[str, Any],
@@ -2035,7 +2018,10 @@ class Runner:
     ) -> AsyncIterator[tuple[str, Any]]:
         """The main reply's stream. An `opening` or `closing` turn taken up again has its main reply
         already. The unit's `(ram, disk)` scratch directories are made before the session opens:
-        the gate lets the step write below them and the session's environment names them.
+        the gate lets the step write below them and the session's environment names them. The gate
+        holds the step's places: its `cwd` and, unless it is a spike, the unit's folder to write,
+        and the branch the worktree stands on as the session opens, the one it may push (a spike
+        has none).
 
         The recorder is handed the segment's `config` first, so it comes before any SDK event: the
         model and effort as `kw` has them, the two ceilings as the session gets them, and the
@@ -2045,33 +2031,22 @@ class Runner:
             tell_config(recorder, kw.get("model"), kw.get("effort"), owner, turns_left, budget_left)
         if turn_kind in ("opening", "closing"):
             return nothing()
-        places = self._scratch(workspace, unit)
-        # A spike writes only its `cwd`; the worktree, the unit and what `read_also` names are
-        # read. Only when a path was named, so every other step's gate is unchanged.
-        gate_args = (
-            (None, (watch, str(directory), *read_also))
-            if watch
-            else (str(directory), tuple(read_also))
-            if read_also
-            else (str(directory),)
-        )
+        made = self._scratch(workspace, unit)
         # A step with nothing to name passes nothing, so a stand-in `stream` keeps working.
-        own = (str(places[0]), str(places[1])) if places is not None else None
+        own = (str(made[0]), str(made[1])) if made is not None else None
+        places = Places(
+            roots=(cwd,) if watch else (cwd, str(directory)),
+            scratch=own,
+            ram_cap=scratch_mod.RAM_CAP,
+            branch="" if watch else await branch_of(cwd),
+        )
         return self.sessions.stream(
             cwd,
             prompt,
             session_id or None,
             max_turns=turns_left,
-            # Only pass a gate when something was actually granted. The list is always the grant's, `[]`
-            # when empty: `None` would fall back to `COS_TOOLS`, and an `idea` on a machine that set it
-            # held tools with no gate in front of them.
-            can_use_tool=(
-                permission_gate(
-                    grant, cwd, denials, *gate_args, scratch=own, ram_cap=scratch_mod.RAM_CAP
-                )
-                if grant.opens_anything or channel is not None or grant.mcp
-                else None
-            ),
+            gate=Gate(grant, places, denials, ledger),
+            # The grant's list, `[]` when empty: `None` would fall back to `COS_TOOLS`.
             tools=list(grant.tools),
             max_budget_usd=budget_left,
             **kw,
@@ -2081,8 +2056,8 @@ class Runner:
             **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
             # Only a step with a channel.
             **servers,
-            # Only a grant holding the helpers' tool gets them, and their ledger: impl.
-            **({"agents": DEFINITIONS, "helpers": ledger} if ledger is not None else {}),
+            # Only a grant holding the helpers' tool gets them (impl); the gate holds their ledger.
+            **({"agents": DEFINITIONS} if ledger is not None else {}),
             **({"unit_scratch": own} if own is not None else {}),
         )
 
@@ -2335,6 +2310,8 @@ class Runner:
                 # Every step that may run a command says how many it was refused for running in the
                 # background, zero included.
                 **({"background": denials.background} if "Bash" in grant.tools else {}),
+                # The calls `auto` is estimated to have sent to its classifier: its time signal.
+                classified=denials.classified,
                 models_used=models_used or None,
                 terminal=terminal or None,
                 **(

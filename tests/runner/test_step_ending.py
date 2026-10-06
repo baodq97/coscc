@@ -28,9 +28,11 @@ from tests.runner.test_step import (
     STAGES,
     UNIT,
     _git_repo,
+    asks,
     incomplete_reply,
     make_unit,
 )
+from coscc.agent import policy
 from tests.units.test_submit import submits as _submits
 
 
@@ -658,7 +660,7 @@ class ASpikeThatTouchesTheWorktreeFails(unittest.TestCase):
                 text,
                 session_id=None,
                 max_turns=1,
-                can_use_tool=None,
+                gate=None,
                 workspace=None,
                 **kw,
             ):
@@ -667,10 +669,10 @@ class ASpikeThatTouchesTheWorktreeFails(unittest.TestCase):
                     ("tree", f"{tree}/p.py"),
                     ("unit", f"{directory}/spec.md"),
                 ):
-                    got = await can_use_tool("Write", {"file_path": target}, None)
-                    self.answers[name] = type(got).__name__
-                read = await can_use_tool("Read", {"file_path": f"{tree}/a.txt"}, None)
-                self.answers["read-tree"] = type(read).__name__
+                    said = await asks(gate, "Write", {"file_path": target})
+                    self.answers[name] = "deny" if said else "allow"
+                read = await asks(gate, "Read", {"file_path": f"{tree}/a.txt"})
+                self.answers["read-tree"] = "deny" if read else "allow"
                 touch(tree)
                 yield ("chunk", SPIKE_REPLY)
                 await _submits(kw)
@@ -711,10 +713,10 @@ class ASpikeThatTouchesTheWorktreeFails(unittest.TestCase):
         self.assertEqual(
             answers,
             {
-                "scratch": "PermissionResultAllow",
-                "tree": "PermissionResultDeny",
-                "unit": "PermissionResultDeny",
-                "read-tree": "PermissionResultAllow",
+                "scratch": "allow",
+                "tree": "deny",
+                "unit": "deny",
+                "read-tree": "allow",
             },
         )
 
@@ -1423,7 +1425,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertEqual(closing["session_id"], "s1")
         self.assertEqual(closing["tools"], [])
         self.assertEqual(closing["max_turns"], 1)
-        self.assertTrue(callable(closing["can_use_tool"]))
+        self.assertEqual(closing["gate"].grant, policy.Grant())
         self.assertIsNot(closing["step"], running.handle)
         self.assertIsNone(closing["step"].recorder)
         self.assertIn(f"Reviewed: {head}. Verdict: incomplete.", closing["text"])
@@ -1476,12 +1478,12 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertNotIn("not resumed", end["detail"])
         self.assertIn("review.md: Round 2 incomplete, written by the closing turn", end["detail"])
 
-    def test_the_closing_turn_denies_every_tool_and_counts_it(self):
+    def test_the_closing_turns_gate_grants_nothing(self):
         sessions = self.Closes()
         self.run_review(sessions)
-        gate = sessions.calls[1]["can_use_tool"]
-        verdict = asyncio.run(gate("Read", {"file_path": "/etc/passwd"}, None))
-        self.assertEqual(type(verdict).__name__, "PermissionResultDeny")
+        gate = sessions.calls[1]["gate"]
+        self.assertEqual(gate.grant, policy.Grant())
+        self.assertIn(policy.HELD, asyncio.run(asks(gate, "mcp__cos__submit", {})))
 
     def test_a_budget_ceiling_on_the_closing_turn_still_writes_a_round(self):
         _, [end], review, _, _ = self.run_review(
@@ -1614,8 +1616,8 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
             if self.waits:
                 await asyncio.Event().wait()
             if self.tries_tool:
-                await kw["can_use_tool"]("Write", {"file_path": "/w/plan.md"}, None)
-                yield ("tool", "Write")
+                await asks(kw["gate"], "mcp__x__y", {})
+                yield ("tool", "mcp__x__y")
             yield ("chunk", self.repair)
             await _submits(kw)
             yield (
@@ -1693,15 +1695,12 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         self.assertIn("no `# Plan:` title and no `Status:` line in its header", repair["text"])
         self.assertIn("the whole of `plan.md`", repair["text"])
 
-    def test_the_repair_turn_denies_every_tool_and_counts_it(self):
+    def test_the_repair_turn_grants_nothing_and_counts_what_it_refused(self):
         sessions = self.Repairs(tries_tool=True)
         _, [end], _, _, _ = self.go(sessions)
         self.assertEqual(end["denials"], 1)
-        self.assertEqual(end["denied"], ["Write: the opening turn holds no tools"])
-        verdict = asyncio.run(
-            sessions.calls[1]["can_use_tool"]("Read", {"file_path": "/etc/passwd"}, None)
-        )
-        self.assertEqual(type(verdict).__name__, "PermissionResultDeny")
+        self.assertEqual(end["denied"], [f"mcp__x__y: {policy.HELD}: mcp__x__y is not one"])
+        self.assertEqual(sessions.calls[1]["gate"].grant, policy.Grant())
 
     def _paused_repair(self, spent_usd):
         # An update paused the repair turn; its main reply is the pieces before it.
@@ -1878,10 +1877,9 @@ class ABackgroundRunIsRefusedAndCounted(unittest.TestCase):
         def __init__(self, calls=(), writes=None):
             self.calls, self.writes, self.answers = calls, writes, []
 
-        async def stream(self, cwd, text, session_id=None, max_turns=1, can_use_tool=None, **kw):
+        async def stream(self, cwd, text, session_id=None, max_turns=1, gate=None, **kw):
             for tool_input in self.calls:
-                got = await can_use_tool("Bash", tool_input, None)
-                self.answers.append(type(got).__name__)
+                self.answers.append("deny" if await asks(gate, "Bash", tool_input) else "allow")
             if self.writes is not None:
                 self.writes()
             yield ("chunk", "# Plan: x\nStatus: accepted.\n")
@@ -1922,7 +1920,7 @@ class ABackgroundRunIsRefusedAndCounted(unittest.TestCase):
         )
         fake = self.Fake(calls)
         end = self.run_step("impl", "impl.md", lambda directory: fake)
-        self.assertEqual(fake.answers, ["PermissionResultDeny", "PermissionResultDeny"])
+        self.assertEqual(fake.answers, ["deny", "deny"])
         self.assertEqual(end["outcome"], "failed")
         self.assertEqual((end["background"], end["denials"]), (2, 2))
         self.assertTrue(end["detail"].startswith("the step did not write impl.md"), end["detail"])

@@ -1164,13 +1164,12 @@ class Steps:
             if idea_note:
                 link_kw["idea_note"] = idea_note
         if stage == "impl":
-            sibling_paths, siblings_note = await self.ideas.siblings(cwd, unit)
+            siblings_note = await self.ideas.siblings(cwd, unit)
             if siblings_note:
-                link_kw.update(siblings_note=siblings_note, read_also=sibling_paths)
-        # Every stage reads `idea.md` and `intent.md` of the units its unit names, added to the
-        # siblings' paths.
+                link_kw["siblings_note"] = siblings_note
+        # Every stage is told where `idea.md` and `intent.md` of the units its unit names are.
         directory = self.ws.unit_dir(cwd, unit)
-        mention_paths, mentions_note = mentions.for_step(
+        mentions_note = mentions.for_step(
             cwd,
             unit,
             _read_text(directory / "idea.md"),
@@ -1182,9 +1181,6 @@ class Steps:
         )
         if mentions_note:
             link_kw["mentions_note"] = mentions_note
-            link_kw["read_also"] = tuple(
-                dict.fromkeys((*link_kw.get("read_also", ()), *mention_paths))
-            )
         return link_kw
 
     def _step_kwargs(
@@ -1245,7 +1241,6 @@ class Steps:
                 "tree": tree is not None,
                 "watch": work if scratch is not None else None,
                 "scratch": str(scratch) if scratch is not None else None,
-                "read_also": list(inputs.get("read_also") or ()),
             },
         )
 
@@ -1689,7 +1684,6 @@ class Steps:
                 "tree",
                 "watch",
                 "scratch",
-                "read_also",
             )
         }
         kwargs: dict[str, Any] = dict(
@@ -1707,7 +1701,6 @@ class Steps:
             label=owner.get("label"),
             agent=self.agent_of(stage),
             end_fields=end_fields,
-            read_also=tuple(owner.get("read_also") or ()),
             resume=record,
             owner_extra=extra,
             **({"watch": owner["watch"]} if owner.get("watch") else {}),

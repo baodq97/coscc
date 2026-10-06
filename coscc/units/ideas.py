@@ -293,19 +293,18 @@ class Ideas:
             + "".join(f"    {h}\n" for h in header)
         )
 
-    async def siblings(self, cwd: str, unit: str) -> tuple[tuple[str, ...], str]:
-        """The checkouts `impl` may read, and the note naming each with its HEAD.
+    async def siblings(self, cwd: str, unit: str) -> str:
+        """The note naming the checkouts `impl` may read, each with its HEAD.
 
         The other workspaces the idea lists, and those of the unit's dependencies; never the
         unit's own. A workspace no longer there is named as missing and not read.
         """
         found = self._idea_of(cwd, unit)
         if found is None:
-            return (), ""
+            return ""
         own = found["me"].split("/", 1)[0]
         names = [u["ref"].split("/", 1)[0] for u in found["units"]]
         names += [d.split("/", 1)[0] for d in found["line"]["depends_on"]]
-        paths: list[str] = []
         lines: list[str] = []
         for name in dict.fromkeys(n for n in names if n != own):
             where = self._workspace_by_name(name)
@@ -317,17 +316,14 @@ class Ideas:
                 at = f"HEAD {head[:12]} on {branch}"
             except GitError:
                 at = "HEAD unknown"
-            paths.append(str(Path(where).resolve()))
             lines.append(f"- {name}: {Path(where).resolve()} ({at})")
         if not lines:
-            return (), ""
-        note = (
+            return ""
+        return (
             "Read these to see the other side of the contract. Do not write there: Write and Edit "
-            "are refused outside this worktree, and so is git given one of them with -C, --git-dir, "
-            "--work-tree or GIT_DIR. Nothing else stops a command that writes there.\n\n"
+            "are refused outside this worktree, and a commit there is not this unit's.\n\n"
             + "\n".join(lines)
         )
-        return tuple(paths), note
 
     async def idea(self, cwd: str, idea_id: str) -> dict[str, Any]:
         """One idea, its text, and a row per unit it lists.

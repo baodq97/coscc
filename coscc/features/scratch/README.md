@@ -2,7 +2,7 @@
 
 Read this before changing `coscc/features/scratch/__init__.py`: the block and `FEATURE` are all in it.
 The directories, the variables naming them, the cap and the cleanup are the kernel's
-(`coscc/units/scratch.py`, `policy.decide`, `sessions.child_env`).
+(`coscc/units/scratch.py`, `policy.critical`, `sessions.child_env`).
 
 ## What the agent sees
 
@@ -10,8 +10,8 @@ The directories, the variables naming them, the cap and the cleanup are the kern
   `$COS_SCRATCH_RAM` (capped at `RAM_CAP`) for small one-off files, `$COS_SCRATCH_DISK`
   (also `TMPDIR`) for large files and what a later stage reads back, and that the app removes
   both when the unit ends.
-- No tool and no guard. What may be written is `policy.decide`'s: a redirect may name either
-  directory by its variable, a write tool needs the path itself.
+- No tool and no guard. A write tool may write below either directory, the ram one only under
+  its cap; a command that writes there is the classifier's.
 
 ## Hazards
 

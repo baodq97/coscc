@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+from tests.runner.test_step import asks
 from tests.units.test_meta import ingest
 from coscc.agent.policy import grant_for
 from coscc.bus import Bus
@@ -79,7 +80,11 @@ class StandIn:
     async def stream(self, cwd, prompt, session_id, **kw):
         self.prompts.append(prompt)
         self.kws.append(kw)
-        reply = await self.act(Path(cwd), kw["can_use_tool"])
+
+        async def gate(tool, tool_input):
+            return await asks(kw["gate"], tool, tool_input)
+
+        reply = await self.act(Path(cwd), gate)
         yield ("chunk", reply)
         marker = "[needs-person] "
         said = (
@@ -217,12 +222,12 @@ class GeboThroughTheService(unittest.TestCase):
             git(tree, "add", "f.txt")
             git(tree, "-c", "core.editor=true", "rebase", "--continue")
             push = f"git push --force-with-lease={BRANCH}:{self.head_before} origin {BRANCH}"
-            allowed["push"] = type(await gate("Bash", {"command": push}, None)).__name__
+            allowed["push"] = await gate("Bash", {"command": push})
             git(tree, *push.split()[1:])
             return "kept both lines of f.txt"
 
         rec = self.integrate_with(act)
-        self.assertEqual(allowed["push"], "PermissionResultAllow")
+        self.assertEqual(allowed["push"], "")
         self.assertEqual(rec["outcome"], "pushed")
         self.assertEqual(rec["mode"], "agent")
         self.assertEqual(rec["head_before"], self.head_before)

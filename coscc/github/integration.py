@@ -847,7 +847,7 @@ class Integration:
         if resume is None:
             assert directory is not None
             assert info is not None
-            # By path; Gebo reads what it needs of them (`integrate.read_paths`).
+            # By path; Gebo reads what it needs of them.
             own = {}
             for artifact in ("intent.md", "spec.md", "plan.md", "impl.md"):
                 path = Path(directory).resolve() / artifact
@@ -942,7 +942,6 @@ class Integration:
                 workspace=cwd,
                 prompt=prompt,
                 grant=grant,
-                read_also=integrate.read_paths(units_root, unit, rel),
                 lease=(branch, head_before),
                 model=model,
                 effort=effort,
@@ -1025,6 +1024,7 @@ class Integration:
                 denials=end.get("denials", 0),
                 denied=end.get("denied"),
                 background=end.get("background", 0),
+                classified=end.get("classified", 0),
                 models_used=end.get("models_used") or None,
                 **run_fields,
                 **(end.get("cost") or {}),

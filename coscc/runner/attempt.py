@@ -1,5 +1,5 @@
-"""What a step may do and what it left: the permission gate, the snapshot of a failed attempt,
-and writing the artifact.
+"""What a step left: the branch it may push, the snapshot of a failed attempt, and writing the
+artifact.
 """
 
 from __future__ import annotations
@@ -9,12 +9,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import claude_agent_sdk as sdk
 from claude_agent_sdk.types import SystemPromptPreset
 
 from coscc.git import gitops
 from coscc.agent import sessions as sessions_mod
-from coscc.agent.policy import BACKGROUND_REFUSAL, Grant, decide
 from coscc.runner.reply import (
     ATTEMPT_EXCERPT,
     OpeningError,
@@ -30,81 +28,25 @@ from coscc.runner.review import merge_review
 log = logging.getLogger(__name__)
 
 
-class Denials:
-    """Counts what a step was refused, and keeps the first few reasons.
-
-    The count matters: a step told no fifty times worked around it, and the journal is the
-    only place that shows it.
-    """
-
-    KEEP = 5
-
-    def __init__(self) -> None:
-        self.count = 0
-        # Of `count`, the refusals of a run in the background.
-        self.background = 0
-        self.reasons: list[str] = []
-        # Told of every refusal, with what was asked, when a step has a recorder. `KEEP` bounds only
-        # `reasons`.
-        self.listener: Any = None
-
-    def record(self, tool: str, reason: str, tool_input: Any = None) -> None:
-        self.count += 1
-        if BACKGROUND_REFUSAL in reason:
-            self.background += 1
-        if len(self.reasons) < self.KEEP:
-            self.reasons.append(f"{tool}: {reason}")
-        if self.listener is not None:
-            try:
-                self.listener(tool, tool_input, reason)
-            except Exception:
-                # The recorder never reaches the gate.
-                log.exception("a refused tool was not recorded")
-
-
 # # What a board step holding any tool runs on, instead of the empty system prompt the SDK
 # # sends when none is set; without it a step with `Read` and `Grep` searches with `grep`
-# # through Bash. Bare on purpose: it grants nothing (`permission_gate` and the grant's tool
-# # list still decide every call), and tool-less steps and chat never get it. A copy goes out.
+# # through Bash. Bare on purpose: it grants nothing (the gate and the grant's tool list still
+# # hold every call), and tool-less steps and chat never get it. A copy goes out.
 CLAUDE_CODE_PRESET: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
 
 
-def permission_gate(
-    grant: Grant,
-    workspace: str,
-    denials: Denials,
-    unit_dir: str | None = None,
-    read_also: tuple[str, ...] = (),
-    lease: tuple[str, str] | None = None,
-    scratch: tuple[str, str] | None = None,
-    ram_cap: int = 0,
-):
-    """The callback the SDK asks before every tool call.
-
-    Separate from the tool list on purpose: the list does not cover every source of
-    capability. `read_also`, `lease`, `scratch` and `ram_cap` are passed to `decide` unchanged,
-    and so is the context's `agent_id`, which the CLI sets on a helper's call.
-    """
-
-    async def can_use_tool(tool: str, tool_input: dict, context: Any):
-        reason = decide(
-            grant,
-            tool,
-            tool_input or {},
-            workspace,
-            unit_dir,
-            read_also,
-            lease,
-            getattr(context, "agent_id", None),
-            scratch,
-            ram_cap,
-        )
-        if reason:
-            denials.record(tool, reason, tool_input)
-            return sdk.PermissionResultDeny(message=reason)
-        return sdk.PermissionResultAllow()
-
-    return can_use_tool
+async def branch_of(cwd: str) -> str:
+    """The branch the worktree at `cwd` stands on, the one its session may push; "" for any
+    branch not a unit's (the trunk, `master`, `develop`), a detached HEAD or no checkout. A
+    failure costs the push, never the step."""
+    path = Path(cwd)
+    if not (path / ".git").exists():
+        return ""
+    try:
+        _, branch = await gitops.head_and_branch(path)
+    except gitops.GitError:
+        return ""
+    return branch if gitops.unit_branch(branch) else ""
 
 
 async def snapshot(cwd: str, session_id: str) -> tuple[dict[str, Any], BaseException | None]:

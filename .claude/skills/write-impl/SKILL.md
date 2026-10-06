@@ -32,9 +32,10 @@ From the board the gate was asked (the prompt says so); at a terminal ask
 3. A file `main` changed that contradicts the plan: stop before editing it, record it under
    `## What is still open`, `Status: draft`, leave `plan.md` alone. Otherwise note what you
    adjusted under `## Where the plan was departed from`.
-4. When a review or red CI sent the work back: fix what it named, commit and **push** (`next`
-   offers `impl` until a commit outside `.cos/` reaches the PR head), and record which commit
-   fixed which finding. A `low` need not be fixed; never list one under `## Needs a person`.
+4. When a review or red CI sent the work back: fix what it named, commit and **push** in the
+   one form the prompt names, `git push origin <branch>` (`next` offers `impl` until a commit
+   outside `.cos/` reaches the PR head), and record which commit fixed which finding. A `low`
+   need not be fixed; never list one under `## Needs a person`.
 5. Write `impl.md`.
 
 **A finding this stage cannot close** (needs real money, a command the grant lacks, a person's

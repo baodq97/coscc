@@ -5,23 +5,12 @@ What a failed attempt left, as the next step and the board are told it."""
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import tempfile
 import unittest
-from types import SimpleNamespace
+from pathlib import Path
 
-from coscc.agent.policy import BACKGROUND_REFUSAL, grant_for
-from coscc.runner.attempt import Denials, describe_attempt, permission_gate
-
-
-class DenialsCountTheBackgroundRuns(unittest.TestCase):
-    def test_a_background_refusal_is_counted_apart_from_the_rest(self):
-        denials = Denials()
-        denials.record("Bash", f"run_in_background is refused: {BACKGROUND_REFUSAL}")
-        denials.record(
-            "Bash", f"`&` at character 13 runs a command in the background: {BACKGROUND_REFUSAL}"
-        )
-        denials.record("Bash", "this step may not run 'curl'")
-        self.assertEqual((denials.count, denials.background), (3, 2))
+from coscc.runner.attempt import branch_of, describe_attempt
 
 
 class DescribeAttemptRendersTheRecord(unittest.TestCase):
@@ -132,20 +121,35 @@ class AReplyWithoutItsOpeningIsRefusedByItsClass(unittest.TestCase):
             self.assertFalse((Path(d) / "plan.md").exists())
 
 
-class AHelpersCallIsDecidedAsTheSessionsOwn(unittest.TestCase):
-    """A helper's tool call reaches the same callback, marked only by `agent_id`."""
+class TheBranchIsTheOneTheWorktreeStandsOn(unittest.TestCase):
+    """What a session may push: the worktree's branch, never the trunk, a detached HEAD or no
+    checkout."""
 
-    def test_a_refused_command_is_refused_from_a_helper_too(self):
-        with tempfile.TemporaryDirectory() as ws:
-            denials = Denials()
-            gate = permission_gate(grant_for("impl"), ws, denials)
-            call = {"command": "curl https://example.com"}
-            for context in (SimpleNamespace(agent_id=None), SimpleNamespace(agent_id="a1")):
-                with self.subTest(agent_id=context.agent_id):
-                    result = asyncio.run(gate("Bash", call, context))
-                    self.assertEqual(type(result).__name__, "PermissionResultDeny")
-            allowed = asyncio.run(
-                gate("Bash", {"command": "npm test"}, SimpleNamespace(agent_id="a1"))
+    def git(self, where: Path, *args: str) -> None:
+        subprocess.run(["git", "-C", str(where), *args], check=True, capture_output=True)
+
+    def test_the_units_branch_and_nothing_else(self):
+        with tempfile.TemporaryDirectory() as d:
+            tree = Path(d)
+            self.assertEqual(asyncio.run(branch_of(d)), "")
+            self.git(tree, "init", "-q", "-b", "main")
+            self.git(
+                tree,
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "x",
             )
-            self.assertEqual(type(allowed).__name__, "PermissionResultAllow")
-            self.assertEqual(denials.count, 2)
+            self.assertEqual(asyncio.run(branch_of(d)), "")
+            self.git(tree, "switch", "-q", "-c", "feat/x")
+            self.assertEqual(asyncio.run(branch_of(d)), "feat/x")
+            self.git(tree, "switch", "-q", "--detach")
+            self.assertEqual(asyncio.run(branch_of(d)), "")
+            for other in ("master", "develop", "feat/Bad_name"):
+                self.git(tree, "switch", "-q", "-c", other)
+                self.assertEqual(asyncio.run(branch_of(d)), "", other)

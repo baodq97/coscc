@@ -64,7 +64,7 @@ class TheChildEnvironmentCarriesNoSecret(unittest.TestCase):
     def test_no_cos_knob_reaches_the_child(self):
         with mock.patch.dict(
             os.environ,
-            {"COS_TOOLS": "Bash", "COS_BYPASS_PERMISSIONS": "1", "COS_WORKING_DIR": "/x"},
+            {"COS_TOOLS": "Bash", "COS_ALLOW_WRITE_AND_EXEC": "1", "COS_WORKING_DIR": "/x"},
         ):
             env = child_env()
         self.assertFalse([k for k in env if k.startswith("COS_")])

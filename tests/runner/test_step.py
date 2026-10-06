@@ -21,7 +21,7 @@ from unittest import mock
 from coscc.agent import policy
 from coscc.kernel import Facts, Hooks, Parts, Tool
 from coscc.store.journal import Journal
-from coscc.agent.policy import decide, grant_for
+from coscc.agent.policy import grant_for
 from coscc.runner.prompt import compose_prompt
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner
@@ -33,6 +33,20 @@ from tests.units.test_submit import a_head, submits as _submits
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 SESSION_STAGES = [s for s in STAGES if s not in ("pr", "ship")]
 UNIT = "0009_a-test-unit"
+
+
+async def asks(gate, tool: str, tool_input: dict, agent_id: str | None = None) -> str:
+    """What a session's gate says of one call through its hook: "" or why it is refused."""
+    said = await gate.pre_tool_use(
+        {
+            "tool_name": tool,
+            "tool_input": tool_input,
+            **({"agent_id": agent_id} if agent_id else {}),
+        },
+        None,
+        None,
+    )
+    return ((said or {}).get("hookSpecificOutput") or {}).get("permissionDecisionReason", "")
 
 
 def make_unit(root: Path, **files: str) -> Path:
@@ -335,20 +349,21 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d))
             self._run(d, replies)
+            gate = replies.kw["gate"]
             options = sessions_mod._options(
                 Config(tools=("Read", "Bash")),
                 d,
                 None,
                 tools=replies.kw["tools"],
                 data_dir=d,
+                gate=gate,
             )
         self.assertEqual(replies.kw["tools"], [])
-        # The gate an `idea` now gets lets `submit` through and nothing else.
-        gate = replies.kw["can_use_tool"]
+        # The gate an `idea` gets lets `submit` through and no other MCP tool.
         self.assertEqual(list(replies.kw["mcp_servers"]), ["cos"])
-        for tool, allowed in (("mcp__cos__submit", True), ("Read", False), ("Bash", False)):
-            verdict = asyncio.run(gate(tool, {"file_path": d, "command": "ls"}, None))
-            self.assertEqual(type(verdict).__name__ == "PermissionResultAllow", allowed, tool)
+        self.assertEqual(asyncio.run(asks(gate, "mcp__cos__submit", {})), "")
+        self.assertIn(policy.HELD, asyncio.run(asks(gate, "mcp__cos__other", {})))
+        self.assertEqual(gate.grant.tools, ())
         self.assertEqual(options.tools, [])
 
     def test_the_start_row_names_the_instructions_the_session_was_given(self):
@@ -413,17 +428,6 @@ class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
             text=True,
         ).stdout.strip()
         return tree, head
-
-    def test_the_worktree_git_directory_is_outside_what_review_may_read(self):
-        with tempfile.TemporaryDirectory() as d:
-            tree, _ = self._worktree(d)
-            self.assertTrue((tree / ".git").is_file())
-            gitdir = (tree / ".git").read_text(encoding="utf-8").split(":", 1)[1].strip()
-            unit = Path(d) / "store" / UNIT
-            reason = decide(
-                grant_for("review"), "Read", {"file_path": gitdir + "/HEAD"}, str(tree), str(unit)
-            )
-            self.assertIn("reading outside the workspace", reason)
 
     def test_a_review_run_in_a_worktree_is_handed_its_head(self):
         seen = {}
@@ -909,7 +913,7 @@ class AStepWorksInItsUnitsWorktree(unittest.TestCase):
                 text,
                 session_id=None,
                 max_turns=1,
-                can_use_tool=None,
+                gate=None,
                 workspace=None,
                 **kw,
             ):
@@ -918,8 +922,8 @@ class AStepWorksInItsUnitsWorktree(unittest.TestCase):
                     ("inside", f"{cwd}/x.txt"),
                     ("workspace", f"{workspace}/x.txt"),
                 ):
-                    got = await can_use_tool("Write", {"file_path": target, "content": "x"}, None)
-                    self.answers[name] = type(got).__name__
+                    said = await asks(gate, "Write", {"file_path": target, "content": "x"})
+                    self.answers[name] = "deny" if said else "allow"
                 await _submits(kw)
                 yield ("done", {"session_id": "s-impl", "cost": {}})
 
@@ -950,22 +954,98 @@ class AStepWorksInItsUnitsWorktree(unittest.TestCase):
             _, final = asyncio.run(go())[-1]
             self.assertEqual(final["outcome"], "done", final)
             self.assertEqual((probe.cwd, probe.workspace), (wt, ws))
-            self.assertEqual(probe.answers["inside"], "PermissionResultAllow")
-            self.assertEqual(probe.answers["workspace"], "PermissionResultDeny")
+            self.assertEqual(probe.answers, {"inside": "allow", "workspace": "deny"})
+
+
+class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
+    """The gate a step's session gets: its grant, its worktree and unit to write, the branch the
+    worktree stands on to push, the run's denials and helpers. A spike writes only its `cwd` and
+    pushes nothing."""
+
+    def _run(self, tree: Path, ws: str, stage: str, **kw):
+        seen = {}
+
+        class Probe:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **given):
+                seen.update(given, prompt=text)
+                yield ("chunk", "# Spike: x\nSpec: spec.md. Status: accepted.\n\n## U1\n")
+                await _submits(given)
+                yield ("done", {"session_id": "s", "cost": {}})
+
+        directory = make_unit(
+            Path(ws),
+            intent_md="Status: accepted.\nI",
+            spec_md="Status: accepted.\nS",
+            plan_md="Status: accepted.\nP",
+            impl_md="# Impl\nStatus: accepted.\n",
+        )
+
+        async def go():
+            async for _ in Runner(sessions=Probe(), journal=None).run(
+                workspace=ws,
+                directory=directory,
+                journal_key=ws,
+                unit=UNIT,
+                stage=stage,
+                artifact=f"{stage}.md",
+                stages=STAGES,
+                mode="autonomous",
+                **kw,
+            ):
+                pass
+
+        asyncio.run(go())
+        self.prompt = seen["prompt"]
+        return seen["gate"], directory
+
+    def _tree(self, root: str) -> Path:
+        tree = Path(root) / "tree"
+        git = ["git", "-C", str(tree), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(["git", "init", "-q", "-b", "main", str(tree)], check=True)
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "a"], check=True)
+        subprocess.run(git + ["switch", "-q", "-c", "feat/x"], check=True)
+        return tree
+
+    def test_an_impl_writes_its_worktree_and_unit_and_pushes_its_branch(self):
+        with tempfile.TemporaryDirectory() as d:
+            tree = self._tree(d)
+            gate, directory = self._run(tree, d, "impl", cwd=str(tree))
+        self.assertEqual(gate.places.roots, (str(tree), str(directory)))
+        self.assertEqual(gate.places.branch, "feat/x")
+        self.assertEqual(gate.places.lease, "")
+        self.assertEqual(gate.grant.tools, grant_for("impl").tools)
+        self.assertIsNotNone(gate.helpers)
+        # The prompt names the one push this gate lets through.
+        self.assertIn("`git push origin feat/x`", self.prompt)
+
+    def test_a_spike_writes_its_cwd_and_pushes_nothing(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as scratch:
+            tree = self._tree(d)
+            gate, _ = self._run(tree, d, "spike", cwd=scratch, watch=str(tree))
+        self.assertEqual(gate.places.roots, (scratch,))
+        self.assertEqual(gate.places.branch, "")
+        self.assertIsNone(gate.helpers)
+
+    def test_a_worktree_on_the_trunk_pushes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            tree = self._tree(d)
+            subprocess.run(["git", "-C", str(tree), "switch", "-q", "main"], check=True)
+            gate, _ = self._run(tree, d, "impl", cwd=str(tree))
+        self.assertEqual(gate.places.branch, "")
 
 
 class AnImplReadsItsSiblings(unittest.TestCase):
-    """`read_also` reaches the gate; the note reaches the prompt."""
+    """The note reaches the prompt; a sibling is read and not written."""
 
     def _run(self, **kw):
         class Probe:
             def __init__(self):
                 self.answers, self.prompt = {}, ""
 
-            async def stream(self, cwd, text, session_id=None, max_turns=1, can_use_tool=None, **_):
+            async def stream(self, cwd, text, session_id=None, max_turns=1, gate=None, **_):
                 self.prompt = text
                 for name, (tool, inp) in self.calls.items():
-                    self.answers[name] = type(await can_use_tool(tool, inp, None)).__name__
+                    self.answers[name] = "deny" if await asks(gate, tool, inp) else "allow"
                 await _submits(_)
                 yield ("done", {"session_id": "s-impl", "cost": {}})
 
@@ -994,36 +1074,21 @@ class AnImplReadsItsSiblings(unittest.TestCase):
                         artifact="impl.md",
                         stages=STAGES,
                         mode="autonomous",
-                        **{
-                            k: (
-                                v.format(sib=sib)
-                                if isinstance(v, str)
-                                else tuple(x.format(sib=sib) for x in v)
-                            )
-                            for k, v in kw.items()
-                        },
+                        **{k: v.format(sib=sib) for k, v in kw.items()},
                     )
                 ]
 
             asyncio.run(go())
         return probe
 
-    def test_a_sibling_is_read_and_neither_written_nor_pointed_at_by_git(self):
-        probe = self._run(read_also=("{sib}",), siblings_note="- api: {sib} at abc1234")
-        self.assertEqual(
-            probe.answers,
-            {
-                "read": "PermissionResultAllow",
-                "write": "PermissionResultDeny",
-                "git": "PermissionResultDeny",
-            },
-        )
+    def test_a_sibling_is_read_and_not_written(self):
+        probe = self._run(siblings_note="- api: {sib} at abc1234")
+        self.assertEqual(probe.answers, {"read": "allow", "write": "deny", "git": "allow"})
         self.assertIn("# The sibling repositories this step may read", probe.prompt)
         self.assertIn("at abc1234", probe.prompt)
 
-    def test_a_unit_with_no_idea_runs_impl_with_the_read_also_it_had(self):
+    def test_a_unit_with_no_idea_names_no_sibling(self):
         probe = self._run()
-        self.assertEqual(probe.answers["read"], "PermissionResultDeny")
         self.assertNotIn("sibling repositories", probe.prompt)
 
 
@@ -1289,8 +1354,7 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
 
 
 class AWorkspacesListsReachTheImplGrant(unittest.TestCase):
-    """`allow` and `block` from `cos.db` are in `Facts.commands` and the gate of an `impl`; the
-    protected paths are refused at every stage that runs commands."""
+    """`allow` and `block` from `cos.db` are in `Facts.commands`; the gate reads neither."""
 
     def run_stage(self, d, stage, stored):
         from coscc.config import Config
@@ -1303,10 +1367,8 @@ class AWorkspacesListsReachTheImplGrant(unittest.TestCase):
             config = Config(data_dir=str(Path(d) / "data"), config_home=str(Path(d) / "cfg"))
 
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-                gate = kw["can_use_tool"]
-                for line in ("curl -s x", "rm x", f"cat {Path(d) / 'data' / 'vault'}/a.age"):
-                    said = await gate("Bash", {"command": line}, None)
-                    seen[line] = getattr(said, "message", "")
+                for line in ("curl -s x", "rm x"):
+                    seen[line] = await asks(kw["gate"], "Bash", {"command": line})
                 (directory / f"{stage}.md").write_text("# X\nStatus: accepted.\n", encoding="utf-8")
                 await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {}})
@@ -1344,14 +1406,7 @@ class AWorkspacesListsReachTheImplGrant(unittest.TestCase):
         self.assertIn("curl", seen["commands"])
         self.assertNotIn("rm", seen["commands"])
         self.assertNotIn("git", seen["commands"])
-        self.assertEqual(seen["curl -s x"], "")
-        self.assertIn("may not run 'rm'", seen["rm x"])
-
-    def test_the_vault_is_refused_to_a_command_even_when_allowed(self):
-        with tempfile.TemporaryDirectory() as d:
-            seen = self.run_stage(d, "impl", {d: {"allow": ["cat"], "block": []}})
-        refused = [v for k, v in seen.items() if k.startswith("cat ")]
-        self.assertIn("the app's secrets", refused[0])
+        self.assertEqual((seen["curl -s x"], seen["rm x"]), ("", ""))
 
     def test_another_workspaces_lists_change_nothing(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1432,21 +1487,12 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
             self.assertIsNotNone(probe.kw)
             self.assertNotIn("system_prompt", probe.kw)
 
-    def test_the_read_only_stage_is_still_refused_writes_and_commands(self):
-        import claude_agent_sdk as sdk
-
+    def test_the_read_only_stage_still_holds_only_its_read_tools(self):
         with tempfile.TemporaryDirectory() as d:
             probe, _ = self.run_stage(d, "spec")
             self.assertEqual(probe.kw.get("system_prompt"), self.PRESET)
-            # The very callback the preset session was given, not one rebuilt from `decide`.
-            gate = probe.kw["can_use_tool"]
-            inside = str(Path(d) / "a.txt")
-            for tool, data in (
-                ("Write", {"file_path": inside, "content": "x"}),
-                ("Bash", {"command": "ls"}),
-            ):
-                verdict = asyncio.run(gate(tool, data, None))
-                self.assertIsInstance(verdict, sdk.PermissionResultDeny, tool)
+            self.assertEqual(probe.kw["tools"], list(policy.READ_TOOLS))
+            self.assertEqual(probe.kw["gate"].grant.tools, policy.READ_TOOLS)
 
     def test_the_start_record_says_which_prompt_ran(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2098,11 +2144,9 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
             if session_id is not None:
                 return
             self.kw = kw
-            gate = kw.get("can_use_tool")
-            if gate is not None:
-                for tool in ("mcp__fake__ping", "mcp__fake__other", "mcp__cos__submit", "Bash"):
-                    got = await gate(tool, {"command": "ls"}, None)
-                    self.answers[tool] = type(got).__name__ == "PermissionResultAllow"
+            gate = kw["gate"]
+            for tool in ("mcp__fake__ping", "mcp__fake__other", "mcp__cos__submit", "Bash"):
+                self.answers[tool] = not await asks(gate, tool, {"command": "ls"})
             yield ("chunk", "# Plan: x\nStatus: accepted.\n")
             self.submitted = await _submits(kw)
             yield ("done", {"session_id": "s", "cost": {}})

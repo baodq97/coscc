@@ -11,7 +11,6 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.agent import policy
-from coscc.agent.policy import decide
 from coscc.runner.prompt import (
     build_prompt,
     compose_prompt,
@@ -215,6 +214,24 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
             prompt, _ = self.prompt(d, "changes-requested")
             self.assertIn("then push the branch", prompt)
 
+    def test_impl_is_told_the_one_push_the_app_lets_through(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+            directory = Path(d) / ".cos" / UNIT
+            told, _, _ = compose_prompt(
+                d, directory, UNIT, "impl", STAGES, "impl.md", writes_own=True, branch="feat/x"
+            )
+            plain, _, _ = compose_prompt(
+                d, directory, UNIT, "impl", STAGES, "impl.md", writes_own=True
+            )
+            review, _, _ = compose_prompt(
+                d, directory, UNIT, "review", STAGES, "review.md", branch="feat/x"
+            )
+        self.assertIn("# Pushing\n\nPush with `git push origin feat/x`.", told)
+        self.assertNotIn("Any other form", told)
+        self.assertNotIn("# Pushing", plain)
+        self.assertNotIn("# Pushing", review)
+
     def test_a_review_that_passed_is_not_sent_back(self):
         with tempfile.TemporaryDirectory() as d:
             prompt, included = self.prompt(d, "accepted")
@@ -341,10 +358,10 @@ def _golden_prompt(stage: str) -> str:
 
 
 class EveryPathAPromptNamesCanBeRead(unittest.TestCase):
-    """A path replaces an artifact only where the step's grant may `Read` it. Red the day a grant of
-    these four stages can no longer read its own unit's folder."""
+    """A path replaces an artifact only where the step may `Read` it. Red the day the gate
+    refuses a read of its own unit's folder."""
 
-    def test_decide_allows_read_of_every_named_path(self):
+    def test_the_gate_lets_every_named_path_be_read(self):
         from coscc.runner.prompt import _POINTING
 
         # `implement` is the loop's alias for `impl` and has no rules of its own to build from.
@@ -368,10 +385,10 @@ class EveryPathAPromptNamesCanBeRead(unittest.TestCase):
                 paths = [line[2:].removesuffix(" (above)") for line in block.splitlines()]
                 self.assertEqual(len(paths), 6 if stage == "impl" else 9)
                 cwd = str(directory) if stage == "ship" else str(tree)
+                places = policy.Places(roots=(cwd, str(directory)))
                 for p in paths:
-                    self.assertEqual(
-                        decide(grant, "Read", {"file_path": p}, cwd, str(directory)), "", p
-                    )
+                    said = policy.critical(grant, places, "Read", {"file_path": p}, None)
+                    self.assertEqual(said, "", p)
 
 
 class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):
@@ -431,11 +448,11 @@ class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):
             )
             self.assertIn("review-incomplete", included)
             block = prompt.split("# The unit's files\n\n")[1].split("\n\n")[0]
+            places = policy.Places(roots=(str(tree), str(directory)))
             for line in block.splitlines():
                 p = line[2:].removesuffix(" (above)")
-                self.assertEqual(
-                    decide(grant, "Read", {"file_path": p}, str(tree), str(directory)), "", p
-                )
+                said = policy.critical(grant, places, "Read", {"file_path": p}, None)
+                self.assertEqual(said, "", p)
 
 
 class TheNextReviewIsToldWhyARoundDidNotCount(unittest.TestCase):

@@ -18,5 +18,8 @@ paths:
 - Instructions reach a session as a file, never as an argument (the OS limits argument size).
   A rule with `paths:` arrives as one line telling the session to `Read` it, and nothing checks
   that it did: keep rules small.
-- `--settings` holds only attribution: any other key there passes `setting_sources=[]`.
+- `--settings` holds `autoMode` and, beside a preset, attribution: any other key there passes
+  `setting_sources=[]`. The classifier reads its rules from nowhere else.
+- The app's database is a secret like the vault: no tool reaches it by its path. A step reads
+  the board through the app, never through `sqlite3`.
 - A measuring script's `--measure` inside a step reads an empty database: run it at a terminal.
