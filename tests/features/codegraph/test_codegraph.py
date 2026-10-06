@@ -85,7 +85,6 @@ class Setup(unittest.IsolatedAsyncioTestCase):
             cwd=str(self.root),
             watch=None,
             directory=self.root,
-            commands=("git", "node"),
             resumed=False,
         )
 

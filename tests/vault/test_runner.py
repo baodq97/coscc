@@ -10,7 +10,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.agent.policy import Grant
 from coscc.store.journal import Journal
 from coscc.vault.runner import Result, Use, record, run
 from coscc.vault.store import BadSecret
@@ -18,9 +17,6 @@ from tests.vault.fakes import make_store, on_path
 
 WS = "/ws/proj"
 TOKEN = b"tok-9f8e7d6c5b4a"
-GRANT = Grant(
-    commands=("echo", "cat", "printf", "base64", "wc", "sleep", "stat", "ls", "false", "touch")
-)
 
 
 class Rig:
@@ -47,7 +43,6 @@ class Rig:
             self.store,
             command=command,
             uses=uses,
-            grant=more.pop("grant", GRANT),
             workspace=WS,
             stage=stage,
             unit="0001_demo",
@@ -185,7 +180,7 @@ class NothingRunsWhileASecretIsRefused(unittest.TestCase):
             mock.patch.object(self.rig.store, "open") as opened,
             mock.patch.object(self.rig.store, "values_for") as values,
         ):
-            done = self.rig.run("rm {{secret:ws:tok}}", Use("ws:tok", "placeholder"))
+            done = self.rig.run("rm -rf /etc/x {{secret:ws:tok}}", Use("ws:tok", "placeholder"))
         executed.assert_not_called()
         opened.assert_not_called()
         values.assert_not_called()
@@ -198,16 +193,29 @@ class NothingRunsWhileASecretIsRefused(unittest.TestCase):
         self.assertIn("would change which programs", done.refused)
         self.assertNotIn("wc #", self.rig.everything_logged())
 
-    def test_the_stores_own_paths_are_refused_whatever_the_grant_holds(self):
+    def test_a_vault_line_naming_a_secret_is_refused(self):
         for path in (self.rig.store.dir / "abc.age", self.rig.store.identity):
             with self.subTest(path=path.name):
                 done = self.refused(f"cat {path}")
-                self.assertIn("may not touch", done.refused)
+                self.assertIn("secrets", done.refused)
 
-    def test_a_command_the_grant_does_not_hold_is_refused_in_the_words_of_the_check(self):
-        done = self.refused("curl example.org", Use("ws:tok", "env", "T"))
-        self.assertIn("curl", done.refused)
-        self.assertEqual(done.refusals, ())
+    def test_a_line_reaching_the_host_or_removing_outside_is_refused(self):
+        for line in ("git push origin main", "gh pr merge 7", "rm -rf /etc/x"):
+            with self.subTest(line=line):
+                self.assertTrue(self.refused(line, Use("ws:tok", "env", "T")).refused)
+
+    def test_a_line_that_substitutes_or_cannot_be_read_is_refused(self):
+        for line in ("echo $(id)", "echo `id`", "cat <(ls)", "echo 'open"):
+            with self.subTest(line=line):
+                done = self.refused(line, Use("ws:tok", "env", "T"))
+                self.assertTrue(done.refused)
+                self.assertEqual(done.refusals, ())
+
+    def test_a_program_no_list_names_is_not_refused_for_its_name(self):
+        with mock.patch("coscc.vault.runner._execute") as executed:
+            executed.return_value = (0, b"", b"")
+            done = self.rig.run("curl --version", Use("ws:tok", "env", "T"))
+        self.assertEqual(done.refused, "")
 
     def test_a_variable_name_that_is_not_one_is_refused(self):
         done = self.refused("echo hi", Use("ws:tok", "env", "1 BAD"))
@@ -259,10 +267,7 @@ class CaptureKeepsTheOutputAndNeverReturnsIt(unittest.TestCase):
         self.assertNotIn("made-up-value-42", self.rig.everything_logged())
 
     def test_what_it_keeps_is_masked_in_stderr_too(self):
-        grant = Grant(commands=(*GRANT.commands, "tee"))
-        done = self.rig.run(
-            "echo made-up-value-42 | tee /dev/stderr", capture="ws:made", grant=grant
-        )
+        done = self.rig.run("echo made-up-value-42 | tee /dev/stderr", capture="ws:made")
         self.assertEqual(done.captured, len("made-up-value-42"))
         self.assertNotIn("made-up-value-42", done.stderr)
         self.assertIn("[secret:ws:made]", done.stderr)
@@ -317,9 +322,9 @@ class EveryCallLeavesOneLineWithNoValueInIt(unittest.TestCase):
         self.assertEqual(line["stage"], "spike")
 
     def test_a_refused_command_is_a_line_with_the_words_of_the_check(self):
-        self.rig.run("curl example.org", Use("ws:tok", "env", "T"))
+        self.rig.run("git push origin main", Use("ws:tok", "env", "T"))
         (line,) = self.rig.lines()
-        self.assertIn("curl", line["refused"])
+        self.assertIn("push", line["refused"])
 
     def test_the_actor_can_be_named(self):
         self.rig.run("echo hi", actor="agent:custom")

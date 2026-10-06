@@ -17,7 +17,6 @@ from unittest import mock
 
 from coscc import vault
 from coscc.http import plugin
-from coscc.agent import policy
 from coscc.http.app import build
 from coscc.config import Config
 from coscc.store.db import Data
@@ -141,7 +140,6 @@ class Bed(unittest.IsolatedAsyncioTestCase):
             "tree": str(work),
             "directory": directory,
             "scratch": None,
-            "commands": policy.IMPL_COMMANDS,
             "resumed": False,
         }
         return Facts(**{**fields, **over})
@@ -259,18 +257,29 @@ class ExecutingACommand(Bed):
         )
         self.assertFalse(marker.exists())
 
-    async def test_a_line_the_grant_refuses_is_command_refused_with_its_words(self):
-        for line in ("curl http://example.invalid", f"cat {self.store.dir}/x", "cat ~/x $(id)"):
+    async def test_a_line_critical_refuses_is_command_refused_with_its_words(self):
+        marker = self.root / "marker"
+        for line in (
+            f"cat {self.store.dir}/x",
+            f"cat {self.store.identity}",
+            f"base64 {self.store.identity} > {marker}",
+            "cat ~/x $(id)",
+            "cat ~/x `id`",
+            "diff <(ls) a",
+            "git push origin main",
+            "gh pr merge 7",
+            "rm -rf /etc/x",
+            "echo 'unclosed",
+            f"touch {marker} &",
+        ):
             got = await self.call(self.facts(), "vault_exec", {"command": line})
             self.assertEqual(got["result"], "command-refused", line)
             self.assertTrue(got["reason"], line)
+        self.assertFalse(marker.exists())
 
-    async def test_a_command_the_workspace_added_to_the_list_is_run(self):
-        facts = self.facts(commands=(*policy.IMPL_COMMANDS, "id"))
-        got = await self.call(facts, "vault_exec", {"command": "id -u"})
-        self.assertEqual(got["exit_code"], 0)
+    async def test_a_command_no_list_names_is_run(self):
         got = await self.call(self.facts(), "vault_exec", {"command": "id -u"})
-        self.assertEqual(got["result"], "command-refused")
+        self.assertEqual(got["exit_code"], 0)
 
     async def test_a_spike_runs_in_its_own_directory(self):
         scratch = self.root / "scratch"

@@ -43,15 +43,13 @@ from coscc.kernel import (
     Parts,
     State,
     Tool,
-    check_command,
     cos_dir,
     files_of,
-    grant_for,
     now,
 )
 from coscc.units.turnstats import changes_requested, impl_ends, read_chars, shipped_units
 from coscc.units.turnstats import pairs as turn_pairs
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import date
 from fastapi import APIRouter, Request
 from pathlib import Path
@@ -607,11 +605,6 @@ def build_tools(ctx: Ctx, facts: Facts) -> list[SdkMcpTool[Any]]:
         if where is None or not isinstance(binary, Path):
             return _text("The code index is not ready; use Read and Grep.", True)
         root, sha = where
-        grant = replace(grant_for(facts.stage), commands=facts.commands)
-        for line in (f"{binary} {home / 'bridge.mjs'}", f"git diff --name-only {sha}"):
-            words = check_command(grant, line)
-            if words:
-                return _text(f"Refused: {words}", True)
 
         def ask(op: str, args: Mapping[str, object]) -> object:
             return call(home, binary, op, root, args, QUERY_S)

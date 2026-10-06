@@ -16,7 +16,6 @@ import httpx
 
 from coscc import vault
 from coscc.http import auth
-from coscc.agent import policy
 from coscc.features import vault as feature
 from coscc.vault.store import NAME
 from tests.features.vault import test_vault as base
@@ -174,7 +173,7 @@ class TheOneRouteAValueGoesInBy(Http):
         await self.form(name="deploy", value=key.decode().replace("\n", "\r\n"), broker="1")
         self.assertEqual(self.store.open("ws:deploy", self.key), key)
         self.store.set_policy("ws:deploy", self.key, ("impl",), ("ssh",))
-        facts = self.facts(commands=(*policy.IMPL_COMMANDS, "ssh-add"))
+        facts = self.facts()
         args = {"command": "ssh-add -l", "uses": [{"name": "ws:deploy", "mode": "ssh"}]}
         got = await self.call(facts, "vault_exec", args)
         self.assertEqual(got["exit_code"], 0, got)
