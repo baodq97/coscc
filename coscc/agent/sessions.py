@@ -830,7 +830,8 @@ class Sessions:
         if self.paused:
             raise Refused(PAUSED)
         if gate is not None and (
-            not set(self.secrets()) <= set(gate.grant.secrets) or gate.grant.home != self.config.home
+            not set(self.secrets()) <= set(gate.grant.secrets)
+            or gate.grant.home != self.config.home
         ):
             raise Refused(THIN_GRANT)
         resolved_model = model if model is not None else self.config.model

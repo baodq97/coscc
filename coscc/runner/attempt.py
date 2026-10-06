@@ -34,20 +34,6 @@ log = logging.getLogger(__name__)
 CLAUDE_CODE_PRESET: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
 
 
-async def branch_of(cwd: str) -> str:
-    """The branch the worktree at `cwd` stands on, the one its session may push; "" for any
-    branch not a unit's (the trunk, `master`, `develop`), a detached HEAD or no checkout. A
-    failure costs the push, never the step."""
-    path = Path(cwd)
-    if not (path / ".git").exists():
-        return ""
-    try:
-        _, branch = await gitops.head_and_branch(path)
-    except gitops.GitError:
-        return ""
-    return branch if gitops.unit_branch(branch) else ""
-
-
 async def snapshot(cwd: str, session_id: str) -> tuple[dict[str, Any], BaseException | None]:
     """What a stopped step left behind: git state and a transcript excerpt, read-only.
 

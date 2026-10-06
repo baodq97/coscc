@@ -66,7 +66,6 @@ from coscc.runner.reply import (
     _joined,
 )
 from coscc.runner.attempt import (
-    branch_of,
     snapshot,
     _head_of,
     _tree_state,
@@ -357,6 +356,7 @@ async def _compose(
     was: dict[str, Any],
     watch: str | None,
     *,
+    branch: str,
     blocks: tuple[tuple[str, str], ...],
     gate_said: str,
     base_note: str,
@@ -384,7 +384,7 @@ async def _compose(
         # owner.
         return str(was.get("head") or ""), str(resume.get("message") or ""), []
     head = await _head_of(watch or cwd)
-    branch = await branch_of(cwd) if stage == "impl" and not watch else ""
+    branch = branch if stage == "impl" and not watch else ""
     prompt, envelope = compose_prompt(
         cwd,
         directory,
@@ -1244,6 +1244,7 @@ class Runner:
         directory: Path,
         resumed: bool,
         plan: kernel.Plan | None,
+        branch: str,
     ) -> tuple[
         Any,
         kernel.Facts,
@@ -1259,7 +1260,8 @@ class Runner:
         directories, made here. A step taken up again composes no prompt, so it has no block.
 
         The grant (`run_mod.issue`) holds its `cwd` and, unless it is a spike, the unit's folder to
-        write, and the branch the worktree stands on now, the one it may push (a spike has none)."""
+        write, and `branch`, the unit's own as the app recorded it, the one it may push (a spike
+        has none): never the worktree's `HEAD`, which the session can move."""
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
         asked = kernel.facts(
             workspace=workspace,
@@ -1283,7 +1285,7 @@ class Runner:
             cwd=cwd,
             unit_dir="" if watch else str(directory),
             scratch=own,
-            branch="" if watch else await branch_of(cwd),
+            branch="" if watch else branch,
             # What the row names beyond the kernel's own tools is a feature's: never `--tools`.
             features=tuple(t for t in row.tools if t not in _BUILTIN),
             held=tuple(t.name for t in self.hooks.held(row, workspace)),
@@ -1375,6 +1377,7 @@ class Runner:
         state_file: str | None = None,
         resume: dict[str, Any] | None = None,
         owner_extra: dict[str, Any] | None = None,
+        branch: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -1442,6 +1445,7 @@ class Runner:
             directory=directory,
             resumed=resume is not None,
             plan=plan,
+            branch=branch,
         )
         head, prompt, envelope = await _compose(
             cwd,
@@ -1453,6 +1457,7 @@ class Runner:
             resume,
             was,
             watch,
+            branch=branch,
             blocks=blocks,
             gate_said=gate_said,
             base_note=base_note,

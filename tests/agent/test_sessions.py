@@ -534,7 +534,9 @@ class AClassifierDenialIsRecorded(unittest.IsolatedAsyncioTestCase):
         )
         denials = Denials()
         config = Config(workspaces=("/tmp",))
-        grant = Grant(cwd="/tmp", write=("/tmp",), secrets=sessions.secrets_of(config), home=config.home)
+        grant = Grant(
+            cwd="/tmp", write=("/tmp",), secrets=sessions.secrets_of(config), home=config.home
+        )
         gate = Gate(grant, denials)
         await self._stream([denied, _result("sid")], gate=gate, step=sessions.StepHandle())
         self.assertEqual(denials.count, 1)
@@ -1576,7 +1578,10 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
         _CountingClient.made, _CountingClient.fail = [], False
         full = self.s.secrets()
         home = self.s.config.home
-        thin = (Grant(cwd="/p", secrets=full[:1], home=home), Grant(cwd="/p", secrets=full, home="/x"))
+        thin = (
+            Grant(cwd="/p", secrets=full[:1], home=home),
+            Grant(cwd="/p", secrets=full, home="/x"),
+        )
         with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _CountingClient):
             for grant in thin:
                 with self.assertRaises(sessions.Refused) as caught:

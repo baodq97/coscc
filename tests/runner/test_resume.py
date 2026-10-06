@@ -500,6 +500,48 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual(self.core.steps.tasks, {})
 
 
+class AStepTakenUpPushesTheBranchItWasGranted(_Base):
+    """A step taken up again is handed the branch its first start's grant held (its owner's),
+    never what its worktree's `HEAD` stands on now."""
+
+    def test_the_owners_branch_goes_to_the_run(self):
+        seen: list[dict] = []
+
+        class Records:
+            bus = Bus()
+
+            def __init__(self, *a, **kw):
+                pass
+
+            async def run(self, **kw):
+                seen.append(kw)
+                raise Suspended("paused again")
+                yield
+
+        record = self.paused()
+        record["owner"]["branch"] = "feat/a-problem"
+        with mock.patch("coscc.runner.steps.Runner", Records):
+
+            async def go():
+                self.core.steps.resume_step(record)
+                for _ in range(20):
+                    await asyncio.sleep(0)
+
+            asyncio.run(go())
+        self.assertEqual([kw.get("branch") for kw in seen], ["feat/a-problem"])
+        self.assertEqual(seen[0]["owner_extra"]["branch"], "feat/a-problem")
+
+    def test_an_impl_is_granted_the_units_branch_as_the_loop_names_it(self):
+        from coscc import units
+
+        steps = self.core.steps
+        for said, want in (("feat/a-problem", "feat/a-problem"), ("main", ""), ("-x", "")):
+            with mock.patch.object(units, "branch_name", return_value=said):
+                self.assertEqual(asyncio.run(steps._unit_branch(self.cwd, self.unit)), want)
+        with mock.patch.object(units, "branch_name", side_effect=units.CannotCreate("no intent")):
+            self.assertEqual(asyncio.run(steps._unit_branch(self.cwd, self.unit)), "")
+
+
 class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
     def guarded(self, check):
         from coscc.kernel import Guard, Hooks, Parts

@@ -914,6 +914,7 @@ class Steps:
                 screens_note=screens_note,
                 rounds_before=rounds_before,
                 inputs=inputs,
+                branch=await self._unit_branch(cwd, unit) if stage == "impl" and tree else "",
             )
 
             # Launch.
@@ -1297,6 +1298,17 @@ class Steps:
             link_kw["mentions_note"] = mentions_note
         return link_kw
 
+    async def _unit_branch(self, cwd: str, unit: str) -> str:
+        """The unit's branch as the loop names it (`unit-branch`): the one push an impl's grant
+        holds, whatever its worktree's `HEAD` says. `""` when the loop cannot name it: no push."""
+        try:
+            name = await asyncio.to_thread(
+                units.branch_name, cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit])
+            )
+        except CannotCreate, BadUnit:
+            return ""
+        return name if gitops.unit_branch(name) else ""
+
     def _step_kwargs(
         self,
         *,
@@ -1318,9 +1330,10 @@ class Steps:
         rounds_before: set[Any] | None,
         inputs: dict[str, Any],
         app_note: str = "",
+        branch: str = "",
     ) -> dict[str, Any]:
         """The keyword arguments `Runner.run` is called with: who runs what, where, what the
-        gate said, and the `inputs` gathered."""
+        gate said, the `inputs` gathered, and the unit's `branch`, the one push its grant holds."""
         return dict(
             workspace=cwd,
             directory=directory,
@@ -1347,6 +1360,8 @@ class Steps:
             **({"rerun": True, "rerun_note": note} if rerun else {}),
             # And the autopilot's note, only when it wrote one.
             **({"app_note": app_note} if app_note else {}),
+            # And the unit's branch, only for an impl on its tree.
+            **({"branch": branch} if branch else {}),
             # What `resume_step` needs of this step, in its `suspend` row.
             owner_extra={
                 "workspace_dir": cwd,
@@ -1354,6 +1369,7 @@ class Steps:
                 "tree": tree is not None,
                 "watch": work if scratch is not None else None,
                 "scratch": str(scratch) if scratch is not None else None,
+                "branch": branch,
             },
         )
 
@@ -1783,6 +1799,7 @@ class Steps:
                 "tree",
                 "watch",
                 "scratch",
+                "branch",
             )
         }
         kwargs: dict[str, Any] = dict(
@@ -1801,6 +1818,8 @@ class Steps:
             resume=record,
             owner_extra=extra,
             **({"watch": owner["watch"]} if owner.get("watch") else {}),
+            # The branch the first start was granted, never the worktree's `HEAD` now.
+            **({"branch": owner["branch"]} if owner.get("branch") else {}),
         )
         scratch = Path(owner["scratch"]) if owner.get("scratch") else None
         running.task = asyncio.create_task(
