@@ -1440,6 +1440,85 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertEqual(end["closing"], {"terminal": "completed", "turns": 1, "cost_usd": 0.4})
         self.assertIn("review.md: Round 2 incomplete, written by the closing turn", end["detail"])
 
+    def next_of(self, store: Path, meta, key: str) -> dict:
+        import json
+
+        from tests.units.test_meta import loop
+
+        snap = meta.snapshot(key, {"proj": key})
+        done = loop(
+            "--root", str(store), "--state", "-", "next", UNIT, input=json.dumps(snap), check=False
+        )
+        return json.loads(done.stdout)
+
+    def test_the_incomplete_round_sends_the_unit_to_write_review_again(self):
+        # From the closing turn to `next`: the round the closing turn wrote is recorded as the
+        # review going back to draft, so the loop asks for the review again and not for impl.
+        from coscc.agent.sessions import Sessions
+        from coscc.config import Config
+        from coscc.http.app import Core
+        from tests.units.test_meta import seed
+
+        out, [end], review, head, running = self.run_review(self.Closes())
+        self.assertEqual(end["review_md"], "incomplete")
+        done = out[-1][1]
+        self.assertEqual((done["outcome"], done["incomplete_round"]), ("exhausted", 2))
+        with tempfile.TemporaryDirectory() as d:
+            store = Path(d) / "store"
+            make_unit(
+                store,
+                intent_md="# Intent: x\n",
+                spec_md="# Spec: x\n",
+                plan_md="# Plan: x\n",
+                impl_md="# Impl: x\n",
+                pr_md="# PR: fix(0009): x\nPR: https://github.com/o/r/pull/9\n",
+                review_md=review,
+            )
+            config = Config(
+                workspaces=(), working_dir=str(Path(d) / "work"), data_dir=str(Path(d) / "data")
+            )
+            core = Core(config, Sessions(config))
+            meta, key = core.ws.unit_meta(), str(Path(d) / "work" / "proj")
+            seed(
+                meta,
+                key,
+                UNIT,
+                {
+                    "intent.md": "accepted",
+                    "spec.md": "accepted",
+                    "plan.md": "accepted",
+                    "impl.md": "accepted",
+                    "pr.md": "accepted",
+                    "review.md": "changes-requested",
+                },
+                type="fix",
+            )
+            self.assertNotIn("review-incomplete", self.next_of(store, meta, key)["reasons"])
+            self.assertEqual(asyncio.run(core.answers.ingest(key, UNIT, done, "review.md")), {})
+            [row] = meta.history.transitions(key, UNIT, "review.md")[-1:]
+            self.assertEqual(
+                (row["to_state"], row["guard"], row["authority"], row["source"]),
+                ("draft", "incomplete-round", "code", "run:review"),
+            )
+            after = self.next_of(store, meta, key)
+            self.assertEqual(after["reasons"], ["review-incomplete"])
+            self.assertIn("review round 2 is incomplete — write-review again", after["action"])
+
+    def test_a_review_that_wrote_no_incomplete_round_is_not_moved(self):
+        from coscc.agent.sessions import Sessions
+        from coscc.config import Config
+        from coscc.http.app import Core
+
+        with tempfile.TemporaryDirectory() as d:
+            config = Config(
+                workspaces=(), working_dir=str(Path(d) / "work"), data_dir=str(Path(d) / "data")
+            )
+            core = Core(config, Sessions(config))
+            key = str(Path(d) / "work" / "proj")
+            done = {"outcome": "exhausted", "stage": "review", "unit": UNIT}
+            self.assertEqual(asyncio.run(core.answers.ingest(key, UNIT, done, "review.md")), {})
+            self.assertEqual(core.ws.unit_meta().history.transitions(key, UNIT, "review.md"), [])
+
     def test_a_resumed_closing_turn_resumes_that_turn_not_the_step(self):
         # An update paused the closing turn. The main reply is not asked again; the turn goes on
         # from its safe point with the message, and the step ends once.

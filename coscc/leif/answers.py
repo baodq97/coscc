@@ -282,20 +282,23 @@ class Answers:
         """The record a finished step handed back, written to `cos.db`; no file is read.
 
         A run that ended `done` and submitted for `wrote` goes through `transitions.apply` and
-        guard `stage-result` (or `review-round`); any other step writes nothing. The step still
+        guard `stage-result` (or `review-round`); a review whose closing turn wrote an incomplete
+        round goes back to `draft` through `incomplete-round`; any other step writes nothing. The step still
         ends as it ended, but a failure is not dropped: the `done` item carries `ingest_error`,
         and a `unit_unknowns` row tells the snapshot. A guard that closes is a failure here.
         """
-        if done.get("outcome") != "done":
-            return {}
         submitted = done.get("submitted")
-        if not (wrote and submitted):
+        incomplete = done.get("incomplete_round")
+        if not (wrote and ((done.get("outcome") == "done" and submitted) or incomplete)):
             return {}
         meta = self.ws.unit_meta()
         workspace = self.ws.key(cwd)
         stage = str(done.get("stage") or "")
         try:
-            apply = self._apply_round if stage == submit.ROUND else self._apply_result
+            if incomplete:
+                apply = self._apply_incomplete
+            else:
+                apply = self._apply_round if stage == submit.ROUND else self._apply_result
             await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
             return {}
         except (BadTransition, Busy, sqlite3.Error) as e:
@@ -406,6 +409,39 @@ class Answers:
             actor=f"stage:{stage}",
             source=f"run:{stage}",
             also=lambda conn: meta.record_result(conn, workspace, unit, stage, artifact, submitted),
+        )
+        if not applied.open:
+            raise BadTransition(
+                f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}"
+            )
+
+    def _apply_incomplete(
+        self,
+        meta: UnitMeta,
+        workspace: str,
+        unit: str,
+        stage: str,
+        artifact: str,
+        _submitted: dict[str, Any] | None,
+        done: dict[str, Any],
+    ) -> None:
+        """The incomplete round a review's closing turn wrote, as `review.md` back to `draft`: one
+        transition through guard `incomplete-round`, so the loop asks for the review again."""
+        journal = self.ws.journal() or Journal(meta.root, self.config.data_dir)
+        applied = transitions.apply(
+            meta.history,
+            journal,
+            machine="unit",
+            transition="incomplete",
+            workspace=workspace,
+            unit=unit,
+            artifact=artifact,
+            to_state="draft",
+            inputs={"round": done.get("incomplete_round")},
+            authority="code",
+            session=str(done.get("session_id") or "") or UNKNOWN,
+            actor=f"stage:{stage}",
+            source=f"run:{stage}",
         )
         if not applied.open:
             raise BadTransition(

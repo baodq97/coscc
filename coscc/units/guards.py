@@ -58,6 +58,7 @@ REASONS = (
     "not-merged",
     "not-closed",
     "no-brief",
+    "no-round",
     # A step refused before any spend.
     "unit-busy",
     "updating",
@@ -151,6 +152,11 @@ def impl_claim(inputs: Mapping[str, Any]) -> Verdict:
 def unit_created(inputs: Mapping[str, Any]) -> Verdict:
     """`brief`, whether the press that opened the unit carried one."""
     return OPEN if inputs.get("brief") else _closed("no-brief")
+
+
+def incomplete_round(inputs: Mapping[str, Any]) -> Verdict:
+    """`round`, the number of the incomplete round the closing turn wrote into `review.md`."""
+    return OPEN if inputs.get("round") else _closed("no-round")
 
 
 def skip_decision(inputs: Mapping[str, Any]) -> Verdict:
@@ -272,6 +278,11 @@ GUARDS: dict[str, Guard] = {
             unit_created,
         ),
         Guard(
+            "incomplete-round",
+            "A review goes back to draft only when its closing turn wrote an incomplete round.",
+            incomplete_round,
+        ),
+        Guard(
             "skip-decision",
             "Spec or plan is skipped only on a person's decision.",
             skip_decision,
@@ -326,6 +337,7 @@ TRANSITIONS: dict[str, dict[str, tuple[str, ...]]] = {
         "result": ("stage-result",),
         "round": ("review-round",),
         "claim": ("impl-claim",),
+        "incomplete": ("incomplete-round",),
         "skip": ("skip-decision",),
         "plan": ("spike-holds",),
         "impl": ("dependency-merged",),
