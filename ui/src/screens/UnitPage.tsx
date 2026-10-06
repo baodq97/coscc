@@ -2,7 +2,7 @@
 // panel holds the facts; the timeline holds every run and answer, newest first.
 
 import { Fragment, useState, type ReactNode } from "react";
-import type { Answer, Detail, OutputRecord, StageView, UnitRun } from "../api.gen";
+import type { Answer, Decision, Detail, OutputRecord, StageView, UnitRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import type { PlacedUnit } from "../lib/boards";
 import { allUnits, useBoards } from "../lib/boards";
@@ -150,7 +150,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
             </Prop>
           </>
         ) : (
-          <div className="faint" style={{ fontSize: 12.5 }}>Opens after build.</div>
+          <div className="faint" style={{ fontSize: 12.5 }}>{state.group === "Shipped" ? "No pull request on record." : "Opens after build."}</div>
         )}
         {d?.worktree?.branch && (
           <>
@@ -289,11 +289,12 @@ function Timeline({ detail, names, live, cwd, unit }: { detail: Detail; names: R
   const items: Item[] = [
     ...detail.runs.map((r, i) => ({ at: r.ended || r.started, key: `run-${i}`, node: <RunItem run={r} name={names[r.stage] ?? r.stage} live={!r.ended && r.stage === live} cwd={cwd} unit={unit} /> })),
     ...answeredGroups(detail.answers).map((g, i) => ({ at: g.date, key: `ans-${i}`, node: <AnswerItem group={g} /> })),
+    ...detail.decisions.map((d, i) => ({ at: d.date, key: `dec-${i}`, node: <DecisionItem decision={d} /> })),
   ].sort((a, b) => b.at.localeCompare(a.at));
   if (!items.length)
     return (
       <Empty icon="clock" title="No activity yet">
-        Runs and answers on this unit will appear here.
+        Runs, answers and your decisions on this unit will appear here.
       </Empty>
     );
   return (
@@ -344,22 +345,42 @@ function RunItem({ run, name, live, cwd, unit }: { run: UnitRun; name: string; l
   );
 }
 
-type AnswerGroup = { by: string; authority: string; artifact: string; date: string; answers: Answer[] };
+type AnswerGroup = { by: Answer["by"]; name: string; artifact: string; date: string; answers: Answer[] };
 
-/** Answers given together (same artifact, same person, same day) read as one item. */
+/** Answers given together (same artifact, same `by` and name, same day) read as one item. */
 function answeredGroups(answers: Answer[]): AnswerGroup[] {
   const groups: AnswerGroup[] = [];
   for (const a of answers) {
-    const g = groups.find((x) => x.by === a.by && x.artifact === a.artifact && x.date === a.date);
+    const g = groups.find((x) => x.by === a.by && x.name === a.name && x.artifact === a.artifact && x.date === a.date);
     if (g) g.answers.push(a);
-    else groups.push({ by: a.by, authority: a.authority, artifact: a.artifact, date: a.date, answers: [a] });
+    else groups.push({ by: a.by, name: a.name, artifact: a.artifact, date: a.date, answers: [a] });
   }
   return groups;
 }
 
+const DECISION_ICON = { rerun: "refresh", "more-rounds": "plus", outcome: "check" } as const;
+
+/** A person's rerun, extra review round or outcome: their own decision, beside the runs. */
+function DecisionItem({ decision }: { decision: Decision }) {
+  return (
+    <div className="tl-i">
+      <span className="tl-ic">
+        <Icon name={DECISION_ICON[decision.kind]} size={12} />
+      </span>
+      <div className="tl-c">
+        <div className="tl-h">
+          <b title={decision.by}>You</b>
+          <span>{decision.text}</span>
+          <span className="tl-time">{decision.date}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AnswerItem({ group }: { group: AnswerGroup }) {
-  const leif = /^leif\b/i.test(group.by);
-  const who = leif ? "Leif" : /owner|originator/i.test(group.by) || !group.by ? "You" : group.by;
+  const leif = group.by === "delegated";
+  const who = leif ? "Leif" : "You";
   return (
     <div className="tl-i">
       {leif ? (
@@ -373,7 +394,7 @@ function AnswerItem({ group }: { group: AnswerGroup }) {
       )}
       <div className="tl-c">
         <div className="tl-h">
-          <b>{who}</b>
+          <b title={group.name}>{who}</b>
           <span>
             answered {group.answers.length} question{group.answers.length > 1 ? "s" : ""} on {group.artifact}
           </span>
@@ -383,7 +404,6 @@ function AnswerItem({ group }: { group: AnswerGroup }) {
           {group.answers.map((a) => (
             <div key={a.n} style={{ marginBottom: 4 }}>
               <b>{a.n}.</b> {a.text}
-              {group.authority && group.authority !== "person" && <span className="faint"> · {group.authority}</span>}
             </div>
           ))}
         </div>
