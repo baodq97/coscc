@@ -240,8 +240,8 @@ class Core:
         self.attempts.wake_all()
 
     def _wake_autopilot(self, event: Event) -> None:
-        if not event.going_down:
-            self.autopilot.nudge(event.workspace)
+        if not event.payload.get("going_down"):
+            self.autopilot.nudge(event.payload.get("workspace", ""))
 
     async def _attach(self, cwd, data, journal, key, prs, fresh) -> Callable[[], None]:
         """What the board read adds from above `units`: each unit's integration. Returns what

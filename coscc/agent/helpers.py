@@ -2,7 +2,8 @@
 
 Every session runs Claude Code's `auto` mode. `Gate` is what the app puts in front of it:
 
-- its `PreToolUse` hook asks `Helpers.refused` (where a `SendMessage` may go) and then
+- its `PreToolUse` hook asks `Helpers.refused` (where a `SendMessage` may go, and that it keeps
+  `PROTOCOL`'s shape) and then
   `policy.critical` before `auto` sees a call, and turns any error of its own into a refusal: the
   CLI reads a hook that raised as having no opinion and runs the call;
 - `can_use_tool`, which `auto` asks only after its classifier refused several times running,
@@ -18,6 +19,7 @@ message filter and what `tell` hands the recorder (`worker_start`, `worker_end`,
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -50,6 +52,12 @@ NOT_APPROVED = "auto mode did not approve"
 PEERS = PEERS_TOOL.rsplit("__", 1)[-1]
 # The first word of every message between the agents of a step.
 KINDS = ("need", "changed", "done", "blocked")
+# The kinds that point at code, each naming the files it means (`path:line` when it can).
+POINTING = ("changed", "done")
+# A message's most lines: the longest of 100 real ones ran 33, and 14 ran over 20.
+MESSAGE_LINES = 40
+_KIND = re.compile(r"\s*(\w+):")
+_PATH = re.compile(r"[\w~-]*[/.][\w.~/-]*\w")
 
 # In the leading session's prompt and in every `worker`'s, the same words.
 PROTOCOL = """# Working with helpers
@@ -65,8 +73,8 @@ The agents of this step talk through `SendMessage`, to `"main"` (the leading ses
 `mcp__cos__peers` lists; any other address is refused.
 - A worker sends a message only when it needs something outside its own paths, changes an
   interface another step uses, or is done or blocked.
-- A message is 1 to 20 lines. Its first line opens with one of `need:`, `changed:`, `done:`,
-  `blocked:`; a `changed:` or `done:` names each `path:line` it means.
+- A message is 1 to 40 lines. Its first line opens with one of `need:`, `changed:`, `done:`,
+  `blocked:`; a `changed:` or `done:` names each file it means, as `path:line` when it can.
 - No message for courtesy or to say one arrived. When agents disagree, the leading session
   decides.
 - Every worker ends with exactly one `done:` or `blocked:` to `"main"`: that is the report its
@@ -78,6 +86,26 @@ DEFINITIONS = {
     **SUBAGENTS,
     "worker": {**SUBAGENTS["worker"], "prompt": f"{SUBAGENTS['worker']['prompt']}\n\n{PROTOCOL}"},
 }
+
+
+def malformed(message: object) -> str:
+    """Why a message between the agents of a step breaks `PROTOCOL`, or ""."""
+    if not isinstance(message, str) or not message.strip():
+        return "SendMessage takes its message as text"
+    found = _KIND.match(message)
+    kind = found.group(1) if found else ""
+    if kind not in KINDS:
+        opens = ", ".join(f"`{k}:`" for k in KINDS)
+        return f"a message's first line opens with one of {opens}; this one opens {message.strip()[:30]!r}"
+    lines = len(message.strip().splitlines())
+    if lines > MESSAGE_LINES:
+        return (
+            f"a message is at most {MESSAGE_LINES} lines; this one is {lines}: keep what the "
+            "receiver acts on and point at `path:line` for the rest"
+        )
+    if kind in POINTING and not _PATH.search(message[found.end() :]):
+        return f"a `{kind}:` names each file it means (as `coscc/bus.py:42`); this one names none"
+    return ""
 
 
 class Told(TypedDict, total=False):
@@ -169,13 +197,14 @@ class Helpers:
         )
 
     def refused(self, tool_name: str, tool_input: Mapping[str, object]) -> str:
-        """Why a `SendMessage` is refused, or "": it goes to `"main"` or to a helper of this run."""
+        """Why a `SendMessage` is refused, or "": it goes to `"main"` or to a helper of this run,
+        in `PROTOCOL`'s shape."""
         if tool_name != SEND_MESSAGE:
             return ""
         to = tool_input.get("to")
         if to != MAIN and to not in {h.id for h in self.helpers()}:
             return f'SendMessage goes only to "{MAIN}" or to a helper {PEERS_TOOL} lists: {to!r}'
-        return ""
+        return malformed(tool_input.get("message"))
 
     def wrote(self, agent_id: str, tool_name: str, tool_input: Mapping[str, object]) -> None:
         """A helper's write the gate let through, told as `worker_write`."""

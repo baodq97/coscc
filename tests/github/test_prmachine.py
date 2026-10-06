@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from coscc.bus import Bus
 from coscc.store.db import Data
 from coscc.github import prmachine
 from coscc.store.journal import Journal
@@ -118,6 +119,8 @@ class Fixture(unittest.TestCase):
         self.directory = root / "store" / NAME
         self.directory.mkdir(parents=True)
         self.pushed: list[tuple[str, str]] = []
+        self.bus, self.shipped = Bus(), []
+        self.bus.watch(lambda e: self.shipped.append((e.name, dict(e.payload))))
 
     def unit(self, branch=BRANCH, expected=BRANCH):
         return prmachine.Unit(
@@ -131,7 +134,9 @@ class Fixture(unittest.TestCase):
         async def head(tree):
             return HEAD
 
-        return prmachine.Machine(self.history, self.journal, gh=gh, push=push, head=head)
+        return prmachine.Machine(
+            self.history, self.journal, gh=gh, push=push, head=head, bus=self.bus
+        )
 
     def opened(self, gh):
         m = self.machine(gh)
@@ -209,6 +214,12 @@ class ShipIsMechanical(Fixture):
         self.assertIn(
             "Status: accepted. Round: 1", (self.directory / "ship.md").read_text(encoding="utf-8")
         )
+        [(name, payload)] = self.shipped
+        self.assertEqual(
+            (name, payload["workspace"], payload["unit"], payload["sha"]),
+            ("unit.shipped", WS, NAME, MERGE),
+        )
+        self.assertTrue(payload["at"])
 
     def test_a_closed_guard_never_calls_merge(self):
         for gh, round_, reason in (
@@ -226,6 +237,7 @@ class ShipIsMechanical(Fixture):
                 self.assertIn(reason, out.reasons)
                 self.assertEqual(gh.count("pr", "merge"), 0)
                 self.assertEqual(self.rows("ship.md"), [])
+                self.assertEqual(self.shipped, [])
 
     def test_a_clean_rebase_the_gate_read_merges_pinned_to_the_new_head(self):
         """After a rebase the gate accepts as clean, `ship` merges the new head without another
@@ -284,6 +296,7 @@ class ShipIsMechanical(Fixture):
         self.assertEqual((out.result, out.merge_commit), ("recorded", MERGE))
         self.assertEqual(gh.count("pr", "merge"), 0)
         self.assertEqual([r["guard"] for r in self.rows("ship.md")], ["merge-read"])
+        self.assertEqual([n for n, _ in self.shipped], ["unit.shipped"])
 
     def test_a_refused_merge_leaves_a_draft_that_names_the_refusal(self):
         gh = FakeGh(merge_code=1)

@@ -577,17 +577,19 @@ class Board:
             "answer.written",
             "hold.moved",
             "mode.set",
+            "unit.shipped",
         ):
             bus.subscribe(name, self._on_event)
 
     def _on_event(self, event: Event) -> None:
-        if event.going_down or event.workspace not in self.held:
+        key = event.payload.get("workspace", "")
+        if event.payload.get("going_down") or key not in self.held:
             return
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             return
-        self.refresh(self.held[event.workspace]["cwd"], again=True)
+        self.refresh(self.held[key]["cwd"], again=True)
 
     async def get(self, cwd: str, which: Literal["new", "held", "next"] = "new") -> dict[str, Any]:
         """The board of `cwd`.

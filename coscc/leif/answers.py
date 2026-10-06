@@ -40,7 +40,7 @@ from coscc.config import Config
 from coscc.units.workspaces import Workspaces
 from coscc.runner.queue import Holds
 from coscc.units.ideas import Ideas
-from coscc.bus import Bus, Event
+from coscc.bus import Bus
 
 log = logging.getLogger(__name__)
 
@@ -604,7 +604,7 @@ class Answers:
         )
         written = done["written"][0]
         # The answer itself starts nothing; a pass may, if the switch is on.
-        self.bus.publish(Event("answer.written", self.ws.key(cwd), unit))
+        self.bus.publish("answer.written", {"workspace": self.ws.key(cwd), "unit": unit})
         return {
             "unit": unit,
             "artifact": written["artifact"],
@@ -1022,7 +1022,7 @@ class Answers:
         finally:
             if mark is not None:
                 self.holds.attempts.move(mark, "ended", outcome)
-        self.bus.publish(Event("hold.moved", key, unit))
+        self.bus.publish("hold.moved", {"workspace": key, "unit": unit})
         return {
             "unit": unit,
             "from": from_,

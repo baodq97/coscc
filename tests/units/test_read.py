@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.bus import Bus, Event
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.github import integrate
 from coscc.kernel import Invalid
@@ -491,7 +491,7 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_change_before_any_read_starts_none(self):
         reads = self.counted()
-        self.core.bus.publish(Event("answer.written", self.key, self.unit))
+        self.core.bus.publish("answer.written", {"workspace": self.key, "unit": self.unit})
         self.assertEqual((reads, self.core.boards.reads), ([], {}))
 
 

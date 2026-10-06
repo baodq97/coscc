@@ -152,8 +152,9 @@ async def health() -> dict[str, bool]:
 
 @router.get("/api/stream")
 async def stream(request: Request) -> StreamingResponse:
-    """Every bus event as server-sent events, `{subject, workspace, unit}`, `workspace` being
-    the resolved path. It only says that something changed: the page reads what it shows again.
+    """Every bus event as server-sent events, `{subject, ...payload}`, the payload its subject
+    declares (`bus.SCHEMAS`). It mostly says that something changed: the page reads what it shows
+    again.
     It ends after `STREAM_LIFETIME_SECONDS` with an `end` event, and the page connects again at
     once; an event in that second is missed, and the page's slow refresh covers it."""
     loop = asyncio.get_running_loop()
@@ -174,7 +175,7 @@ async def stream(request: Request) -> StreamingResponse:
                 except TimeoutError:
                     yield ": ping\n\n"
                     continue
-                data = {"subject": e.name, "workspace": e.workspace, "unit": e.unit}
+                data = {"subject": e.name, **e.payload}
                 yield f"data: {json.dumps(data)}\n\n"
             yield "event: end\ndata: {}\n\n"
         finally:
