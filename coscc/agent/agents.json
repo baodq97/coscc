@@ -5,6 +5,7 @@
       "name": "Ingwaz",
       "meaning": "seed",
       "role": "Records the problem in the originator's own words and proposes no solution.",
+      "input": {"artifacts": ["idea?"], "outputs": [], "answers": true, "findings": false, "data": ["mentions"]},
       "output": {
         "kind": "artifact",
         "version": 1,
@@ -19,6 +20,7 @@
       "name": "Nauthiz",
       "meaning": "need",
       "role": "States the problem and the outcome that would prove it solved, and decides no design.",
+      "input": {"artifacts": ["idea?", "intent?"], "outputs": [], "answers": true, "findings": false, "data": ["idea", "mentions"]},
       "output": {
         "kind": "artifact",
         "version": 2,
@@ -39,6 +41,7 @@
       "name": "Kenaz",
       "meaning": "torch: knowledge and craft",
       "role": "Decides the requirements and the shape of the solution, and writes no code and no plan.",
+      "input": {"artifacts": ["intent", "spike?", "spec?"], "outputs": [], "answers": true, "findings": false, "data": ["mentions"]},
       "output": {
         "kind": "artifact",
         "version": 1,
@@ -52,6 +55,7 @@
     "spike": {
       "glyph": "ᛈ",
       "name": "Perthro",
+      "input": {"artifacts": ["intent", "spec", "spike?"], "outputs": [], "answers": true, "findings": false, "data": ["mentions"]},
       "output": {
         "kind": "artifact",
         "version": 1,
@@ -67,6 +71,7 @@
       "name": "Raidho",
       "meaning": "journey: the right road in the right order",
       "role": "Orders the work and names its proof, and writes no code.",
+      "input": {"artifacts": ["intent", "spec?", "spike?", "plan?"], "outputs": [], "answers": true, "findings": false, "data": ["mentions"]},
       "output": {
         "kind": "artifact",
         "version": 2,
@@ -85,6 +90,7 @@
       "name": "Uruz",
       "meaning": "the strength that gives shape",
       "role": "Builds what the accepted plan names and nothing beyond it.",
+      "input": {"artifacts": ["intent", "spec?", "plan?"], "outputs": [], "answers": true, "findings": true, "data": ["plan-map", "drift", "siblings", "mentions"]},
       "output": {
         "kind": "artifact",
         "version": 2,
@@ -101,6 +107,7 @@
       "name": "Tiwaz",
       "meaning": "Tyr: justice and judgement",
       "role": "Judges the change and never edits code.",
+      "input": {"artifacts": ["intent", "spec?", "plan?", "impl", "pr?"], "outputs": ["plan?"], "answers": true, "findings": true, "data": ["integration", "screens", "mentions"]},
       "output": {
         "kind": "review",
         "version": 1,

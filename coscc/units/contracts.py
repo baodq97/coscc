@@ -8,6 +8,7 @@ types: `text`, `number` (an integer), `{"enum": [...]}`, `{"list": <type>}`, an 
 out. `READS` names every field the engine decides on, with the reader and the type it expects:
 a declaration that lacks one, or gives it another type, refuses the load with a named reason.
 The declarations are read and checked once a process first asks, and when the app is built.
+A row's `input` is what its stage is handed (`check_input`); the prompt is built from it alone.
 """
 
 import hashlib
@@ -15,10 +16,12 @@ import json
 import re
 from functools import cache
 from pathlib import Path
-from typing import Literal, TypedDict, get_args
+from collections.abc import Iterable, Mapping
+from typing import Any, Literal, TypedDict, get_args
 
 from coscc.agent.agents import DEFAULT_PATH
 from coscc.agent.policy import Label
+from coscc.units.states import STAGE_NAMES
 
 # What a stage's `judgement` says of its artifact. `rejected` is a machine's, and no agent
 # chooses it.
@@ -281,6 +284,94 @@ def load(path: Path) -> dict[str, Output]:
                 raise ContractError("contract-field-missing", f"{agent}.output (read by submit)")
             out[agent] = check(agent, row["output"])
     return out
+
+
+class Input(TypedDict):
+    """What a stage is handed, and nothing else: earlier artifacts whole (`name?` when it may be
+    absent), earlier stages' records, the unit's answers and open findings, the app's data."""
+
+    artifacts: list[str]
+    outputs: list[str]
+    answers: bool
+    findings: bool
+    data: list[str]
+
+
+# The app's data a stage may declare: the shared idea, the sibling checkouts, the units this one
+# names, the plan's files as they stand, the files `main` changed since the plan, the last
+# integration and the screenshots taken again.
+DATA = ("idea", "siblings", "mentions", "plan-map", "drift", "integration", "screens")
+
+
+def check_input(agent: str, raw: object, agents: Iterable[str]) -> Input:
+    """`raw` as `agent`'s input declaration, or a `ContractError` naming what is wrong. An
+    artifact names a stage (`states.STAGE_NAMES`), an output an agent of `agents`, either with
+    `?` when it may be missing."""
+    keys = set(Input.__annotations__)
+    if not isinstance(raw, dict) or set(raw) != keys:
+        raise _bad(f"{agent}.input", f"an input is {{{', '.join(sorted(keys))}}}")
+    for part, known in (("artifacts", set(STAGE_NAMES)), ("outputs", set(agents))):
+        names = raw[part]
+        if not isinstance(names, list) or not all(
+            isinstance(n, str) and n.rstrip("?") in known for n in names
+        ):
+            raise _bad(f"{agent}.input.{part}", f"{names!r} names none of {sorted(known)}")
+    for part in ("answers", "findings"):
+        if not isinstance(raw[part], bool):
+            raise _bad(f"{agent}.input.{part}", "true or false")
+    if not isinstance(raw["data"], list) or not set(raw["data"]) <= set(DATA):
+        raise _bad(f"{agent}.input.data", f"{raw['data']!r} is not among {', '.join(DATA)}")
+    return Input(
+        artifacts=raw["artifacts"],
+        outputs=raw["outputs"],
+        answers=raw["answers"],
+        findings=raw["findings"],
+        data=raw["data"],
+    )
+
+
+def load_inputs(path: Path) -> dict[str, Input]:
+    """Every agent row's `input` of an `agents.json`, checked; a row with none declares none."""
+    rows = json.loads(path.read_text(encoding="utf-8")).get("agents") or {}
+    return {a: check_input(a, row["input"], rows) for a, row in rows.items() if "input" in row}
+
+
+@cache
+def _inputs() -> dict[str, Input]:
+    return load_inputs(DEFAULT_PATH)
+
+
+def input_of(agent: str) -> Input:
+    """What `agent` declares it is handed; nothing of the unit for an agent that declares none."""
+    return _inputs().get(agent) or Input(
+        artifacts=[], outputs=[], answers=False, findings=False, data=[]
+    )
+
+
+def artifact_text(directory: Path, name: str) -> str:
+    """A declared artifact (`name` or `name?`) as it stands, `""` when the unit has none."""
+    try:
+        return (directory / f"{name.rstrip('?')}.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def record(unit_meta: Mapping[str, Any] | None, agent: str) -> Mapping[str, Any] | None:
+    """The last record `agent` handed back through `submit`, as the unit's snapshot entry
+    carries it; `None` when it handed none."""
+    arts = (unit_meta or {}).get("artifacts") or {}
+    return (arts.get(f"{agent.rstrip('?')}.md") or {}).get("result") or None
+
+
+def missing(agent: str, directory: Path, unit_meta: Mapping[str, Any] | None) -> list[str]:
+    """What `agent` declares it needs and the unit lacks: an artifact with no text, an earlier
+    stage's record never handed back. `[]` when its step may be composed; anything else refuses
+    it before spend (`input-missing`)."""
+    declared = input_of(agent)
+    required = [n for n in declared["artifacts"] if not n.endswith("?")]
+    out = [f"{n}.md" for n in required if not artifact_text(directory, n).strip()]
+    outputs = [n for n in declared["outputs"] if not n.endswith("?")]
+    return out + [f"{n}'s record" for n in outputs if record(unit_meta, n) is None]
 
 
 @cache
