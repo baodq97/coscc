@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ago, modelName, money, unitCode, unitTitle } from "./format";
 import { match } from "./router";
+import { findUnit, type PlacedUnit } from "./boards";
 import { unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { fill, readLines } from "./api";
@@ -39,6 +40,15 @@ describe("format", () => {
   });
 });
 
+describe("findUnit", () => {
+  it("takes a unit's number or its full name, in its own workspace only", () => {
+    const u = { name: "0029_intent-writes", number: 29, workspace: { name: "coscc", path: "/w" } } as PlacedUnit;
+    for (const n of ["29", "0029", "0029_intent-writes"]) expect(findUnit([u], "coscc", n)).toBe(u);
+    for (const n of ["30", "0029_other", "29x", ""]) expect(findUnit([u], "coscc", n)).toBeUndefined();
+    expect(findUnit([u], "other", "29")).toBeUndefined();
+  });
+});
+
 describe("router", () => {
   it("matches a pattern and reads its parameters", () => {
     expect(match("/unit/:ws/:n", "/unit/coscc/162")).toEqual({ ws: "coscc", n: "162" });
@@ -68,7 +78,7 @@ describe("unit state", () => {
   });
 
   it("says a run held at its ceiling is paused at how much of it, under Needs you", () => {
-    const at = { stage: "impl", ceiling: "usd", usd: 8, max_usd: 8, turns: 61, max_turns: 250 };
+    const at = { stage: "impl", code: "budget-reached", ceiling: "usd", usd: 8, max_usd: 8, turns: 61, max_turns: 250 };
     expect(unitState({ ...base, paused: at })).toEqual({ group: "Needs you", label: "Paused at $8.00 of $8.00" });
     expect(unitState({ ...base, paused: { ...at, ceiling: "turns", turns: 250 } }).label).toBe("Paused at 250 of 250 turns");
   });
