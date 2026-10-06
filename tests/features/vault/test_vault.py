@@ -515,7 +515,7 @@ class TheGuardHoldsWhatCarriesAValueOut(Bed):
 
     def test_a_run_log_that_cannot_be_read_holds_the_step(self):
         ctx = ctx_for(
-            runs=Runs(lambda: None, None),
+            runs=Runs(lambda: None),
             units=self.ctx.units,
             settings=self.ctx.settings,
             store=self.ctx.store,

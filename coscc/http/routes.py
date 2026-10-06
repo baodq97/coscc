@@ -39,11 +39,13 @@ from coscc.store.db import Data
 from coscc.bus import Event
 from coscc.http import plugin
 from coscc.kernel import Invalid
-from coscc.leif.agents import AgentPage
+from coscc.leif.agents import AgentPage, ProposalsView
 from coscc.leif.chat import ChatHistory, ChatSessions
 from coscc.leif.insights import Insights
+from coscc.runner import triggers
 from coscc.runner.steps import NextStep
 from coscc.runner.watch import EventsPage
+from coscc.units import proposals
 from coscc.units.backlog import SHORTLIST_MAX
 from coscc.units.read import Cards, Detail, UpNext, cards, detail
 from coscc.units.workspaces import WorkspaceList
@@ -249,6 +251,70 @@ async def set_agent_field(request: Request) -> AgentPage:
     return _core(request).agents.set_agent_field(
         body.get("key"), body.get("field"), body.get("value"), cwd=str(body.get("cwd") or "")
     )
+
+
+@router.post("/api/agents/state")
+async def set_agent_state(request: Request) -> AgentPage:
+    """`{cwd, key, on}` turns a row's event or schedule on or off in one workspace: the pref
+    `agents.state`, the owner's own setting like `/api/packs`, logged as an `agent-state` row
+    `by: owner`. A row with neither is a 400. On, a row may open paid read-only sessions on its
+    own there, under its ceilings and the daily cap."""
+    body = await kernel.body(request)
+    cwd = str(body.get("cwd") or "")
+    return _core(request).agents.set_state(cwd, body.get("key"), body.get("on"))
+
+
+class Started(TypedDict):
+    agent: str
+    started: bool
+
+
+@router.post("/api/agents/run")
+async def run_agent(request: Request) -> Started:
+    """`{cwd, key, unit?, text?}` **opens one paid, read-only session** of a row whose trigger
+    says `manual` (*Run now*), in the background, `started_by: manual`. Refused before spend
+    (`code`): a row with no `manual` trigger, a unit it does not read, an update under way, the
+    daily cap reached, a run of it in this workspace already going. Bounded by the row's
+    ceilings; its `start` and `end` are in the run log."""
+    body = await kernel.body(request)
+    key = str(body.get("key") or "")
+    triggers.start(
+        _core(request),
+        key,
+        str(body.get("cwd") or ""),
+        str(body.get("unit") or ""),
+        by="manual",
+        text=str(body.get("text") or ""),
+    )
+    return {"agent": key, "started": True}
+
+
+@router.get("/api/proposals")
+async def get_proposals(request: Request) -> ProposalsView:
+    """`?cwd=`: every agent's proposals in the workspace, newest first, and the rows that
+    propose."""
+    return await asyncio.to_thread(_core(request).agents.proposals_view, _cwd(request))
+
+
+@router.post("/api/proposals/{pid}")
+async def decide_proposal(pid: int, request: Request) -> proposals.Proposal:
+    """`{cwd, action: accept, slug}` makes a unit from it; `{cwd, action: dismiss, reason}` puts
+    it aside with 1 to 500 characters of why. Either acts for whoever holds the password, as
+    `owner`; no agent holds a tool that reaches it. The scan's press, moved here."""
+    body = await kernel.body(request)
+    core = _core(request)
+    cwd = core.ws.check(str(body.get("cwd") or ""))
+    ws, data = core.ws.key(cwd), Data(core.config.data_dir)
+    action = body.get("action")
+    if action == "accept":
+
+        async def create(slug: str, brief: str) -> str:
+            return str((await core.answers.create_unit(cwd, slug, brief))["unit"])
+
+        return await proposals.accept(data, ws, pid, str(body.get("slug") or ""), create)
+    if action == "dismiss":
+        return await proposals.dismiss(data, ws, pid, str(body.get("reason") or ""))
+    raise Invalid("action must be accept or dismiss")
 
 
 @router.get("/api/insights")
@@ -711,7 +777,7 @@ async def get_features(request: Request) -> Any:
 @router.get("/api/features/shown")
 async def get_features_shown(request: Request) -> list[plugin.Shown]:
     """Each feature as Settings shows it for one workspace: its state, whether `pilot` may be
-    chosen, the sentence, whether it is locked, its schedule and the hours offered."""
+    chosen, the sentence and whether it is locked."""
     core = _core(request)
     cwd = core.ws.check(_cwd(request))
     return plugin.shown(request.app.state.ctxs, request.app.state.plugins, cwd)
@@ -723,21 +789,8 @@ async def set_feature(request: Request) -> Any:
     is read as `on` or `off`. A feature, workspace or state not known, `pilot` for a feature
     without it, or `pilot`/`on` while the feature's status forbids them is a 400. It changes the
     pref `features.state`, then tells the feature, which may start its own setup (codegraph's
-    install). Whoever holds the password or a session can silence a workspace's notices.
-
-    `{cwd, name, schedule}` instead sets how many hours apart a feature with a `schedule` runs
-    on its own there, `0` for never: the pref `features.schedule`. A scheduled run may open a
-    paid session (the `scan` feature's), so this is a spending choice."""
+    install). Whoever holds the password or a session can silence a workspace's notices."""
     body = await kernel.body(request)
-    if "schedule" in body and "state" not in body and "on" not in body:
-        hours = plugin.set_schedule_of(
-            _core(request),
-            request.app.state.plugins,
-            str(body.get("name") or ""),
-            str(body.get("cwd") or ""),
-            body.get("schedule"),
-        )
-        return {"name": str(body.get("name")), "schedule": hours}
     state, on = body.get("state"), body.get("on")
     if state is None and isinstance(on, bool):
         state = "on" if on else "off"

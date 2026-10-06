@@ -86,13 +86,15 @@ def _today(key: str) -> dict:
 
 
 class TheBuiltInPackIsTheTablesItReplaced(unittest.TestCase):
-    def test_the_rows_are_the_twelve_agents(self):
+    def test_the_rows_are_the_twelve_agents_and_the_scan(self):
+        # The scan (M6) replaced a feature, not a table: it has no fixture.
         self.assertEqual(
-            sorted(p.stem for p in (pack.BUILTIN / "agents").glob("*.md")), sorted(FIXTURE)
+            sorted(p.stem for p in (pack.BUILTIN / "agents").glob("*.md")),
+            sorted([*FIXTURE, "scan"]),
         )
         self.assertEqual(
             list(pack.rows()),
-            "idea intent spec spike plan impl review integrate estimate leif scout worker".split(),
+            "idea intent spec spike plan impl review integrate estimate leif scan scout worker".split(),
         )
 
     def test_every_row_resolves_to_the_fixture(self):
@@ -167,7 +169,7 @@ class CheckRefusesABadRowByName(unittest.TestCase):
 
     def test_a_row_names_no_state_the_process_does(self):
         self.assertIn(
-            'trigger is {"engine": <engine>}', self.reasons(_row(trigger={"state": "spec"}))
+            "trigger.state: no such trigger", self.reasons(_row(trigger={"state": "spec"}))
         )
 
     def test_a_name_another_agent_has(self):
@@ -534,6 +536,75 @@ class AProcessIsHeldToWhatTheLoopAssumes(unittest.TestCase):
         impl = {**_process()["states"]["impl"], "next": [{"to": "ship"}]}
         got = self.reasons(_process(impl=impl))
         self.assertIn("p.ship: a review state is not on every path to it", got)
+
+
+def _scan(**over) -> dict:
+    return {**pack.rows()["scan"]["builtin"], **over}
+
+
+class TriggersAreChecked(unittest.TestCase):
+    def reasons(self, row: dict) -> str:
+        rows = {k: r["builtin"] for k, r in pack.rows().items()}
+        return "\n".join(pack.check(row, CATALOG, rows))
+
+    def test_the_scan_row_passes(self):
+        self.assertEqual(self.reasons(_scan()), "")
+
+    def test_an_unknown_trigger_key(self):
+        self.assertIn("trigger.cron: no such trigger", self.reasons(_scan(trigger={"cron": "x"})))
+
+    def test_an_unknown_event(self):
+        said = self.reasons(_scan(trigger={"event": {"name": "unit.exploded"}}))
+        self.assertIn("no bus event 'unit.exploded'", said)
+        said = self.reasons(_scan(trigger={"event": {"name": "chat-turn.ended"}}))
+        self.assertIn("names no workspace", said)
+
+    def test_an_engine_mixed_with_others(self):
+        said = self.reasons(_scan(trigger={"engine": "estimate", "manual": True}, default=None))
+        self.assertIn("an engine row has no other trigger", said)
+
+    def test_a_write_tool_on_a_row_a_schedule_starts(self):
+        said = self.reasons(_scan(tools={"Read": "allow", "Bash": "allow"}))
+        self.assertIn("holds only reading tools, not Bash", said)
+        # Checked with no catalog too, as the owner's file is at load.
+        self.assertIn("not Edit", "\n".join(pack.check(_scan(tools={"Edit": "allow"}))))
+        # A row only a press starts may hold one.
+        manual = _scan(trigger={"manual": True}, tools={"Read": "allow", "Bash": "allow"})
+        del manual["default"]
+        self.assertEqual(self.reasons(manual), "")
+
+    def test_a_schedule_needs_hours_and_a_default(self):
+        row = _scan(trigger={"schedule": {"hours": 0}})
+        del row["default"]
+        said = self.reasons(row)
+        self.assertIn("trigger.schedule.hours must be a whole number from 1", said)
+        self.assertIn("says whether it is on or off", said)
+        self.assertIn("default must be one of on, off", self.reasons(_scan(default="maybe")))
+
+    def test_an_owner_edit_is_held_to_the_same_rules(self):
+        with self.assertRaises(ValueError):
+            pack.write("scan", "tools", {"Write": "allow"})
+        old, new = pack.write("scan", "trigger", {"schedule": {"hours": 6}, "manual": True})
+        self.assertEqual(new["schedule"]["hours"], 6)
+
+
+class AnAgentIsOnOrOffPerWorkspace(unittest.TestCase):
+    def setUp(self):
+        from coscc.store.db import Data
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.data = Data(self._tmp.name)
+
+    def test_its_default_until_chosen_and_per_workspace(self):
+        self.assertFalse(pack.agent_on(self.data, "scan", "/a"))
+        pack.set_agent_on(self.data, "scan", "/a", True)
+        self.assertTrue(pack.agent_on(self.data, "scan", "/a"))
+        self.assertFalse(pack.agent_on(self.data, "scan", "/b"))
+
+    def test_a_row_with_no_event_or_schedule_is_refused(self):
+        with self.assertRaises(pack.PackError):
+            pack.set_agent_on(self.data, "estimate", "/a", True)
 
 
 class APackIsOnOrOffPerWorkspace(unittest.TestCase):

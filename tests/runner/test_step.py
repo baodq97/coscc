@@ -20,7 +20,7 @@ from unittest import mock
 from coscc.agent import pack, policy
 from coscc.kernel import Facts, Hooks, Parts, Tool
 from coscc.store.journal import Journal
-from coscc.agent.policy import row_for
+from coscc.agent.policy import Row, row_for
 from coscc.runner.prompt import compose_prompt
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner
@@ -1781,11 +1781,14 @@ class AStepAnUpdatePaused(unittest.TestCase):
 
 
 def _rows_naming(test: unittest.TestCase, name: str, keys: tuple[str, ...]) -> None:
-    """`policy.ADDED` with `name` added to the rows of `keys`, for the test."""
-    rows = {k: policy.row_for(k) for k in keys}
-    patch = mock.patch.dict(
-        policy.ADDED, {k: replace(r, tools=(*r.tools, name)) for k, r in rows.items()}
-    )
+    """`policy.row_for` with `name` added to the rows of `keys`, for the test."""
+    real = policy.row_for
+
+    def named(key: str) -> Row:
+        row = real(key)
+        return replace(row, tools=(*row.tools, name)) if key in keys else row
+
+    patch = mock.patch.object(policy, "row_for", named)
     patch.start()
     test.addCleanup(patch.stop)
 

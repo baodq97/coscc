@@ -319,8 +319,8 @@ CREATE TABLE IF NOT EXISTS outputs (
 )""",
     """CREATE INDEX IF NOT EXISTS outputs_scope ON outputs (root, workspace, unit, id)""",
     """-- Work an agent proposed for the Backlog (`coscc/units/proposals.py`): `unit` the unit it is
--- about ('' for none), `run` the run that made it, `sources` JSON, `made` the unit accepting it
--- made. Only the owner's press moves `state` on.
+-- about ('' for none), `run` the run that made it, `sources` JSON, `decision` pending, accepted
+-- or dismissed, `made` the unit accepting it made. Only the owner's press moves `decision` on.
 CREATE TABLE IF NOT EXISTS proposals (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace TEXT NOT NULL,
@@ -332,7 +332,7 @@ CREATE TABLE IF NOT EXISTS proposals (
     title     TEXT NOT NULL,
     problem   TEXT NOT NULL,
     sources   TEXT NOT NULL,
-    state     TEXT NOT NULL DEFAULT 'pending',
+    decision  TEXT NOT NULL DEFAULT 'pending',
     made      TEXT NOT NULL DEFAULT '',
     by        TEXT NOT NULL DEFAULT '',
     at        TEXT NOT NULL,
@@ -818,7 +818,7 @@ class Data:
         if "scan_proposals" in tables:
             conn.execute(
                 "INSERT INTO proposals (workspace, agent, unit, run, type, slug, title, problem, "
-                "sources, state, made, by, at, decided, reason) SELECT workspace, 'scan', '', '', "
+                "sources, decision, made, by, at, decided, reason) SELECT workspace, 'scan', '', '', "
                 "type, slug, title, problem, sources, state, unit, by, at, decided, reason "
                 "FROM scan_proposals ORDER BY id"
             )
@@ -832,21 +832,21 @@ class Data:
                 )
         prefs = dict(conn.execute("SELECT key, value FROM prefs").fetchall())
 
-        def read(key: str) -> dict[str, Any]:
+        def _read(key: str) -> dict[str, Any]:
             try:
                 got = json.loads(prefs.get(key) or "{}")
             except ValueError:
                 return {}
             return got if isinstance(got, dict) else {}
 
-        states, hours = read("features.state"), read("features.schedule")
+        states, hours = _read("features.state"), _read("features.schedule")
         chosen = states.pop("scan", None)
         moved = {
             ws: "off" if state == "off" or hours.get("scan", {}).get(ws) == 0 else "on"
             for ws, state in (chosen if isinstance(chosen, dict) else {}).items()
         }
         if moved:
-            agents = read("agents.state")
+            agents = _read("agents.state")
             agents["scan"] = {**(agents.get("scan") or {}), **moved}
             conn.execute(
                 "INSERT INTO prefs (key, value) VALUES ('agents.state', ?) "

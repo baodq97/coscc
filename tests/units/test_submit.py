@@ -367,31 +367,18 @@ class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
             self.assertIsNone(collector.object(), kind)
 
 
-class AFeatureAddsItsSession(unittest.TestCase):
-    """`add_session`: a feature's declaration and purpose under its kind, once."""
+class ATriggeredRowsCollectorKeepsWhatFits(unittest.TestCase):
+    """A row whose output is `proposal` hands its object back through a `Collector` of its own."""
 
-    OUTPUT = {"kind": "session", "version": 1, "fields": {"n": "number"}}
-
-    def tearDown(self):
-        contracts.ADDED.pop("planted", None)
-
-    def test_the_collector_of_an_added_session_keeps_what_fits(self):
-        submit.add_session("planted", self.OUTPUT, "Hand the app a number.")
-        submit.add_session("planted", self.OUTPUT, "Hand the app a number.")
-        collector = submit.Collector("planted")
-        self.assertEqual(collector.schema, contracts.schema("planted"))
-        self.assertIn("Hand the app a number.", collector.description())
-        said = asyncio.run(submits({"mcp_servers": {"cos": collector.server()}}, n=3))
+    def test_the_scan_rows_collector_keeps_what_fits_its_schema(self):
+        collector = submit.Collector("scan")
+        self.assertEqual(collector.schema, contracts.schema("scan"))
+        self.assertIn("work you propose", collector.description())
+        said = asyncio.run(submits({"mcp_servers": {"cos": collector.server()}}, proposals=[]))
         self.assertFalse(said.get("is_error"))
-        self.assertEqual(collector.object(), {"n": 3})
-        said = asyncio.run(submits({"mcp_servers": {"cos": collector.server()}}, n=3, m=1))
+        self.assertEqual(collector.object(), {"proposals": []})
+        said = asyncio.run(submits({"mcp_servers": {"cos": collector.server()}}, n=3))
         self.assertTrue(said["is_error"])
-
-    def test_a_broken_declaration_is_refused_with_its_reason(self):
-        with self.assertRaises(ContractError) as e:
-            submit.add_session("planted", {**self.OUTPUT, "fields": {"n": "integer"}}, "x")
-        self.assertTrue(str(e.exception).startswith("contract-bad-type: planted.n: "))
-        self.assertNotIn("planted", contracts.ADDED)
 
 
 if __name__ == "__main__":

@@ -391,7 +391,8 @@ def _check_event(row: Mapping[str, Any], event: Any) -> list[str]:
         return [f"trigger.event.name: no bus event {name!r}"]
     fields = bus.fields_of(str(name))
     out = [] if "workspace" in fields else [f"trigger.event.name: {name} names no workspace"]
-    given = row.get("input") if isinstance(row.get("input"), dict) else {}
+    raw = row.get("input")
+    given: dict[str, Any] = raw if isinstance(raw, dict) else {}
     if (given.get("artifacts") or given.get("outputs")) and "unit" not in fields:
         out.append(f"trigger.event.name: {name} names no unit, and the row reads one")
     return out + _check_hours("trigger.event", event, "after_hours", required=False)

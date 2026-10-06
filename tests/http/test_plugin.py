@@ -1,4 +1,4 @@
-"""Building the features into the app: what `add_sessions` refuses."""
+"""Building the features into the app: what `check_declarations` refuses."""
 
 from __future__ import annotations
 
@@ -25,13 +25,13 @@ class ABrokenShippedDeclarationStopsTheBuild(unittest.TestCase):
             mock.patch.object(pack, "rows", return_value=broken),
             self.assertRaises(ContractError) as e,
         ):
-            plugin.add_sessions(mock.Mock(), [])
+            plugin.check_declarations()
         self.assertEqual(
             str(e.exception), "contract-field-missing: spec.unmeasured (read by spike-holds)"
         )
 
     def test_the_shipped_declarations_build(self):
-        plugin.add_sessions(mock.Mock(), [])
+        plugin.check_declarations()
 
 
 if __name__ == "__main__":

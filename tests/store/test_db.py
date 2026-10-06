@@ -662,7 +662,7 @@ class AV12DatabaseTakesOneStepTo13(unittest.TestCase):
             self._rows(conn)
             conn.execute("PRAGMA user_version=12")
         self.assertEqual(self.data.version(), SCHEMA_VERSION)
-        self.assertEqual(SCHEMA_VERSION, 16)
+        self.assertEqual(SCHEMA_VERSION, 17)
 
     def _rows(self, conn):
         for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):
@@ -890,6 +890,74 @@ class AV15DatabaseTakesOneStepTo16(unittest.TestCase):
                 ("impl", 3, '{"impl": "kept"}'),
             ],
         )
+
+
+class AV16DatabaseTakesOneStepTo17(unittest.TestCase):
+    """The scan feature's proposals, state and cursor move to the core; its tables and the
+    schedule pref go."""
+
+    def test_proposals_prefs_and_the_cursor_move(self):
+        import json
+
+        from coscc.store.journal import Journal
+
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(Path(d) / "data")
+            journal = Journal(Path(d) / "work", data)
+            journal.finished("/w", "", "scan", "done", agent="scan")
+            journal.finished("/w", "", "estimate", "done")
+            with data.write() as conn:
+                conn.execute(
+                    "CREATE TABLE scan_proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "workspace TEXT, run INTEGER, type TEXT, slug TEXT, title TEXT, problem TEXT, "
+                    "sources TEXT, state TEXT, unit TEXT, by TEXT, at TEXT, decided TEXT, reason TEXT)"
+                )
+                conn.execute("CREATE TABLE scan_runs (id INTEGER PRIMARY KEY)")
+                conn.execute("CREATE TABLE scan_cursor (workspace TEXT, after TEXT, seen TEXT)")
+                for state, unit, reason in (
+                    ("pending", "", ""),
+                    ("accepted", "0007_x", ""),
+                    ("dismissed", "", "no"),
+                ):
+                    conn.execute(
+                        "INSERT INTO scan_proposals (workspace, run, type, slug, title, problem, "
+                        "sources, state, unit, by, at, decided, reason) VALUES ('/w', 1, 'fix', "
+                        "'s', 't', 'p', '[]', ?, ?, 'owner', 'a', 'd', ?)",
+                        (state, unit, reason),
+                    )
+                conn.execute(
+                    "INSERT INTO scan_cursor VALUES ('/w', '2026-10-05T17:14:13+00:00', '[]')"
+                )
+                for key, value in (
+                    ("features.state", {"scan": {"/w": "on", "/v": "on"}, "release": {"/w": "on"}}),
+                    ("features.schedule", {"scan": {"/w": 24, "/v": 0}}),
+                ):
+                    conn.execute(
+                        "INSERT INTO prefs (key, value) VALUES (?, ?)", (key, json.dumps(value))
+                    )
+                conn.execute("PRAGMA user_version=16")
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                moved = [
+                    tuple(r)
+                    for r in conn.execute("SELECT agent, decision, made, reason FROM proposals")
+                ]
+                tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+            ends = {r["stage"]: r for r in journal.records("/w", kinds=("end",))}
+            self.assertEqual(
+                moved,
+                [
+                    ("scan", "pending", "", ""),
+                    ("scan", "accepted", "0007_x", ""),
+                    ("scan", "dismissed", "", "no"),
+                ],
+            )
+            self.assertFalse({"scan_proposals", "scan_runs", "scan_cursor"} & tables)
+            self.assertEqual(ends["scan"]["data_until"], "2026-10-05T17:14:13+00:00")
+            self.assertNotIn("data_until", ends["estimate"])
+            self.assertEqual(data.pref("agents.state"), {"scan": {"/w": "on", "/v": "off"}})
+            self.assertEqual(data.pref("features.state"), {"release": {"/w": "on"}})
+            self.assertIsNone(data.pref("features.schedule"))
 
 
 if __name__ == "__main__":

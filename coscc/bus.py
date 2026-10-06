@@ -15,7 +15,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Literal, TypedDict, get_args, get_type_hints
+from typing import Literal, TypedDict, get_args, get_type_hints
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ SCHEMAS: dict[str, type] = {
 
 
 @cache
-def fields_of(name: str) -> dict[str, Any]:
+def fields_of(name: str) -> dict[str, type]:
     schema = SCHEMAS.get(name) or (
         Moved if name in NAMES and name.rpartition(".")[2] in MOVES else None
     )

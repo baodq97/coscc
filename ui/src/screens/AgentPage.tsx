@@ -31,6 +31,8 @@ const DATA: Record<string, string> = {
   drift: "what main changed since the plan",
   integration: "the last integration",
   screens: "the screenshots",
+  interventions: "what people stepped in for since its last run",
+  proposals: "the proposals already made",
 };
 const EFFECT: Record<string, string> = {
   read: "Reads",
@@ -113,7 +115,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
     }
     setBusy(false);
   };
-  const ctx: Ctx = { a, page, value, edit, saved, builtin, editable: a.editable && !busy, error };
+  const ctx: Ctx = { a, page, value, edit, saved, builtin, editable: a.editable && !busy, error, cwd, setPage: setFresh };
   const t: Tab = TABS.some((x) => x.key === tab) ? (tab as Tab) : "configuration";
   const look = attention(a);
 
@@ -143,7 +145,6 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
           <ul>{a.problems.map((p) => <li key={p}>{p}</li>)}</ul>
         </div>
       )}
-      {!a.editable && <p className="muted">Its feature sets this agent; it is shown here and changed with the feature.</p>}
 
       <div className="tabs agent-tabs" style={{ marginTop: 18 }}>
         {TABS.map((x) => (
@@ -188,6 +189,8 @@ type Ctx = {
   builtin: Record<string, unknown>;
   editable: boolean;
   error: { field: string; message: string } | null;
+  cwd: string;
+  setPage: (p: Page) => void;
 };
 
 /** One part of a row: its label, where it comes from (built in, edited, unsaved) and a reset. */
@@ -515,26 +518,128 @@ function JsonPart({ ctx, field, label, hint }: { ctx: Ctx; field: string; label:
   );
 }
 
-function Trigger({ a, page }: Ctx) {
+function Trigger(ctx: Ctx) {
+  const { a, page } = ctx;
   const t = a.row.trigger ?? {};
+  if (a.group !== "triggered")
+    return (
+      <div className="card card-b">
+        <div className="field">
+          <div>
+            <div className="lab">Runs</div>
+            <div className="hint"><Chip square tone="plain">read-only</Chip></div>
+          </div>
+          <div>
+            <b>{triggerWords(a, page.rows)}</b>
+            <div className="muted" style={{ marginTop: 6 }}>
+              {t.state
+                ? `A unit that reaches that state, in a process that has it, runs this agent when you, or the autopilot, press Run.`
+                : t.engine
+                  ? "The app opens it itself; no unit state starts it."
+                  : "Another agent starts it inside its own run."}{" "}
+              Which agent a state runs is fixed for now.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   return (
     <div className="card card-b">
       <div className="field">
         <div>
           <div className="lab">Runs</div>
-          <div className="hint"><Chip square tone="plain">read-only</Chip></div>
         </div>
         <div>
           <b>{triggerWords(a, page.rows)}</b>
-          <div className="muted" style={{ marginTop: 6 }}>
-            {t.state
-              ? `A unit that reaches that state, in a process that has it, runs this agent when you, or the autopilot, press Run.`
-              : t.engine
-                ? "The app opens it itself; no unit state starts it."
-                : "Another agent starts it inside its own run."}{" "}
-            Which agent a state runs is fixed for now.
-          </div>
+          <div className="muted" style={{ marginTop: 6 }}>It only reads; what it hands back waits for you on Up next.</div>
         </div>
+      </div>
+      {a.on !== null && <OnHere {...ctx} />}
+      {t.schedule && (
+        <Part ctx={ctx} path="trigger.schedule.hours" label="Every" hint="Hours between two runs here, counted from the last.">
+          <NumberField ctx={ctx} path="trigger.schedule.hours" />
+          <span className="muted" style={{ alignSelf: "center" }}>hours</span>
+        </Part>
+      )}
+      {t.event?.after_hours !== undefined && (
+        <Part ctx={ctx} path="trigger.event.after_hours" label="Wait" hint="Hours after the event before it runs.">
+          <NumberField ctx={ctx} path="trigger.event.after_hours" />
+          <span className="muted" style={{ alignSelf: "center" }}>hours</span>
+        </Part>
+      )}
+      {t.manual && <RunNow {...ctx} />}
+    </div>
+  );
+}
+
+/** On or off in this workspace: whether its schedule or event runs it here. */
+function OnHere({ a, cwd, setPage }: Ctx) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = async (on: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      setPage(await api.post<Page>("/api/agents/state", { cwd, key: a.key, on }));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="field">
+      <div>
+        <div className="lab">In this workspace</div>
+        <div className="hint">{a.on ? "Runs on its own here." : "Runs here only when you press Run now."}</div>
+      </div>
+      <div>
+        <div className="seg" role="group" aria-label="On or off in this workspace">
+          <button className={a.on ? "on" : ""} aria-pressed={!!a.on} disabled={busy} onClick={() => set(true)}>On</button>
+          <button className={a.on ? "" : "on"} aria-pressed={!a.on} disabled={busy} onClick={() => set(false)}>Off</button>
+        </div>
+        {error && <div className="field-err">{error}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** One paid run now, asked once with its ceiling named. */
+function RunNow({ a, cwd }: Ctx) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  const usd = a.config.ceilings.max_budget_usd;
+  const run = async () => {
+    if (!asking) return setAsking(true);
+    setBusy(true);
+    setSaid(null);
+    try {
+      await api.post("/api/agents/run", { cwd, key: a.key });
+      setSaid({ ok: true, text: "Started. Its run shows under Runs & $ once it ends." });
+      setAsking(false);
+    } catch (e) {
+      setSaid({ ok: false, text: (e as Error).message });
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="field">
+      <div>
+        <div className="lab">Run now</div>
+        <div className="hint">One paid, read-only run{usd ? `, at most ${money(usd)}` : ""}.</div>
+      </div>
+      <div>
+        <div className="row" style={{ gap: 8 }}>
+          <Button size="sm" kind={asking ? "primary" : ""} icon="bolt" disabled={busy} onClick={run}>
+            {busy ? "Starting…" : asking ? `Spend up to ${money(usd ?? 0)} on a run?` : "Run now"}
+          </Button>
+          {asking && !busy && (
+            <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>
+              Cancel
+            </Button>
+          )}
+        </div>
+        {said && <div className={said.ok ? "muted" : "field-err"} style={{ marginTop: 6 }}>{said.text}</div>}
       </div>
     </div>
   );

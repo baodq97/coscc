@@ -18,7 +18,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, NotRequired, TypedDict
 
 from coscc.agent import pack, policy
 from coscc.bus import Event
@@ -30,8 +30,8 @@ from coscc.store.db import Busy, Data, now
 from coscc.store.journal import BadRecord, Intervention
 from coscc.units import Invalid, contracts, proposals, submit
 
-if TYPE_CHECKING:
-    from coscc.http.app import Core
+# The app's `Core` (`coscc/http/app.py`), a layer above: its parts are read by name.
+Core = Any
 
 log = logging.getLogger(__name__)
 
@@ -122,11 +122,12 @@ def start(
     reason: str = "",
     text: str = "",
 ) -> None:
-    """`check`, then `run` in the background: what a press, Leif and the bus use."""
-    check(core, key, workspace, unit, by=by, reason=reason, text=text)
-    task = asyncio.get_running_loop().create_task(
-        run(core, key, workspace, unit, by=by, reason=reason, text=text)
-    )
+    """`check`, then `run` in the background: what a press, Leif and the bus use. The run holds
+    its (workspace, agent) from here, so a second press is refused at once."""
+    loop = asyncio.get_running_loop()
+    ws = check(core, key, workspace, unit, by=by, reason=reason, text=text)
+    _RUNNING.add((ws, key))
+    task = loop.create_task(_held(core, key, workspace, ws, unit, by, reason, text))
     _TASKS.add(task)
     task.add_done_callback(_done)
 
@@ -158,8 +159,15 @@ async def run(
     `""` when it was `skipped` (its input empty, no session, $0). `Invalid` from `check`."""
     ws = check(core, key, workspace, unit, by=by, reason=reason, text=text)
     _RUNNING.add((ws, key))
+    return await _held(core, key, workspace, ws, unit, by, reason, text)
+
+
+async def _held(
+    core: Core, key: str, cwd: str, ws: str, unit: str, by: str, reason: str, text: str
+) -> str:
+    """`_run` while its (workspace, agent) is held; let go however it ends."""
     try:
-        return await _run(core, key, workspace, ws, unit, by, reason, text)
+        return await _run(core, key, cwd, ws, unit, by, reason, text)
     finally:
         _RUNNING.discard((ws, key))
         core.updater.job_ended()
@@ -286,16 +294,7 @@ def _turn_off(core: Core, journal: Any, ws: str, key: str, why: str) -> None:
     try:
         pack.set_agent_on(data, key, ws, False)
         journal.append(
-            {
-                "kind": STATE_KIND,
-                "workspace": ws,
-                "unit": "",
-                "stage": key,
-                "agent": key,
-                "on": False,
-                "by": "app",
-                "reason": f"a run stopped at its ceiling: {why}",
-            }
+            dict(state_record(ws, key, False, "app", f"a run stopped at its ceiling: {why}"))
         )
     except pack.PackError, BadRecord, Busy:
         log.exception("%s was not turned off after its ceiling", key)
@@ -453,31 +452,47 @@ LEIF_SCHEMA = {
 }
 
 
+class Text(TypedDict):
+    type: str
+    text: str
+
+
+class Reply(TypedDict):
+    """What an MCP tool hands the session."""
+
+    content: list[Text]
+    is_error: NotRequired[bool]
+
+
+async def leif_call(core: Core, cwd: str, args: Mapping[str, Any]) -> Reply:
+    """One `run_agent` call: the run started in the background, or the refusal with its codes."""
+    key = str(args.get("key") or "")
+    try:
+        start(
+            core,
+            key,
+            cwd,
+            str(args.get("unit") or ""),
+            by="leif",
+            reason=str(args.get("reason") or ""),
+        )
+    except Invalid as e:
+        codes = ", ".join(getattr(e, "reasons", ()) or ())
+        said = f"refused{f' ({codes})' if codes else ''}: {e}"
+        return {"content": [{"type": "text", "text": said}], "is_error": True}
+    return {"content": [{"type": "text", "text": f"started {key}; its output lands in the app"}]}
+
+
 def leif_server(core: Core, cwd: str) -> Any:
-    """The chat's `cos` server holding `run_agent`: it starts a row whose trigger says `leif`, in
-    the chat's workspace, with Leif's reason on its `start`; any other row is refused `not-leif`."""
+    """The chat's `cos` server holding `run_agent` (`leif_call`): it starts a row whose trigger says
+    `leif`, in the chat's workspace, with Leif's reason on its `start`; any other row is refused
+    `not-leif`."""
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
     named = ", ".join(k for k, r in pack.rows().items() if _trigger(r).get("leif")) or "none"
 
-    async def handle(args: dict[str, Any]) -> dict[str, Any]:
-        key = str(args.get("key") or "")
-        try:
-            start(
-                core,
-                key,
-                cwd,
-                str(args.get("unit") or ""),
-                by="leif",
-                reason=str(args.get("reason") or ""),
-            )
-        except Invalid as e:
-            codes = ", ".join(getattr(e, "reasons", ()) or ())
-            said = f"refused{f' ({codes})' if codes else ''}: {e}"
-            return {"content": [{"type": "text", "text": said}], "is_error": True}
-        return {
-            "content": [{"type": "text", "text": f"started {key}; its output lands in the app"}]
-        }
+    async def _handle(args: dict[str, Any]) -> dict[str, Any]:
+        return dict(await leif_call(core, cwd, args))
 
     described = (
         "Start one agent run in this workspace, read-only and paid, under the agent's own "
@@ -485,12 +500,25 @@ def leif_server(core: Core, cwd: str) -> Any:
         "reads one; `reason` is why, in a sentence, and is recorded on the run."
     )
     return create_sdk_mcp_server(
-        submit.SERVER, "1.0.0", [tool(LEIF_TOOL, described, LEIF_SCHEMA)(handle)]
+        submit.SERVER, "1.0.0", [tool(LEIF_TOOL, described, LEIF_SCHEMA)(_handle)]
     )
 
 
-def state_record(ws: str, key: str, on: bool, by: str) -> dict[str, Any]:
-    """The run-log row of the owner turning `key` on or off in a workspace."""
+class StateRecord(TypedDict):
+    """The run-log row of a row turned on or off in a workspace."""
+
+    kind: str
+    workspace: str
+    unit: str
+    stage: str
+    agent: str
+    on: bool
+    by: str
+    reason: NotRequired[str]
+
+
+def state_record(ws: str, key: str, on: bool, by: str, reason: str = "") -> StateRecord:
+    """The run-log row of `by` turning `key` on or off in a workspace."""
     return {
         "kind": STATE_KIND,
         "workspace": ws,
@@ -499,4 +527,5 @@ def state_record(ws: str, key: str, on: bool, by: str) -> dict[str, Any]:
         "agent": key,
         "on": on,
         "by": by,
+        **({"reason": reason} if reason else {}),
     }

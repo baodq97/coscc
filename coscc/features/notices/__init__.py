@@ -23,9 +23,9 @@ from starlette.routing import BaseRoute
 from coscc.kernel import BELL, STREAM_SECONDS, Busy, Ctx, Feature, Invalid, is_step, line
 
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
-SOURCE_KINDS = ("autopilot-stop", "questions", "end", "ship")
-# The five kinds, in order.
-Kind = Literal["autopilot-stop", "questions", "step-ended", "ship-refused", "shipped"]
+SOURCE_KINDS = ("autopilot-stop", "questions", "end", "ship", "agent-state")
+# The six kinds, in order.
+Kind = Literal["autopilot-stop", "questions", "step-ended", "ship-refused", "shipped", "agent-off"]
 KINDS: tuple[Kind, ...] = get_args(Kind)
 # Seconds between two `beat` lines of a quiet stream. Chosen, not measured.
 BEAT_SECONDS = 15.0
@@ -103,6 +103,14 @@ def _kind_and_text(record: dict[str, Any]) -> tuple[str, str] | None:
             return None
         said = ENDED.get(outcome, "ended without finishing")
         return "step-ended", f"The {stage or 'last'} step of {unit} in {where} {said}."
+    if kind == "agent-state":
+        # Only the app's own: a run stopped at its ceiling turned its agent off.
+        if record.get("by") != "app" or record.get("on") is not False:
+            return None
+        return (
+            "agent-off",
+            f"{record.get('agent') or 'An agent'} is off in {where}: {record.get('reason') or 'its run stopped at its ceiling'}.",
+        )
     if kind == "ship":
         result = record.get("result")
         if result == "shipped":

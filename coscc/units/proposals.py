@@ -10,9 +10,10 @@ shortlist, and the autopilot never reads this table.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal, TypedDict, get_args
 
 from coscc.store.db import Data, now
@@ -101,9 +102,23 @@ def kept(
 
 
 def _proposal(row: Any) -> Proposal:
-    got: dict[str, Any] = {k: row[k] for k in Proposal.__annotations__}
-    got["sources"] = json.loads(row["sources"])
-    return Proposal(**got)
+    return Proposal(
+        id=int(row["id"]),
+        agent=str(row["agent"]),
+        unit=str(row["unit"]),
+        run=str(row["run"]),
+        type=str(row["type"]),
+        slug=str(row["slug"]),
+        title=str(row["title"]),
+        problem=str(row["problem"]),
+        sources=json.loads(row["sources"]),
+        state=str(row["decision"]),
+        made=str(row["made"]),
+        by=str(row["by"]),
+        at=str(row["at"]),
+        decided=str(row["decided"]),
+        reason=str(row["reason"]),
+    )
 
 
 def add(
@@ -198,8 +213,8 @@ def claim(data: Data, workspace: str, pid: int, to: State, reason: str = "") -> 
     """Move a `pending` proposal to `to`, by `owner`; one already decided is refused."""
     with data.write() as conn:
         done = conn.execute(
-            "UPDATE proposals SET state = ?, by = ?, decided = ?, reason = ? "
-            "WHERE workspace = ? AND id = ? AND state = 'pending'",
+            "UPDATE proposals SET decision = ?, by = ?, decided = ?, reason = ? "
+            "WHERE workspace = ? AND id = ? AND decision = 'pending'",
             (to, OWNER, now(), reason, workspace, pid),
         ).rowcount
     if not done:
@@ -218,7 +233,7 @@ def unclaim(data: Data, workspace: str, pid: int) -> None:
     """Back to `pending`, after a unit could not be made."""
     with data.write() as conn:
         conn.execute(
-            "UPDATE proposals SET state = 'pending', by = '', decided = '', reason = '' "
+            "UPDATE proposals SET decision = 'pending', by = '', decided = '', reason = '' "
             "WHERE workspace = ? AND id = ?",
             (workspace, pid),
         )
@@ -245,3 +260,24 @@ def check_reason(reason: str) -> str:
     if not 0 < len(reason) <= REASON_MAX:
         raise Invalid(f"a dismissal needs a reason of 1 to {REASON_MAX} characters")
     return reason
+
+
+async def accept(
+    data: Data, workspace: str, pid: int, slug: str, create: Callable[[str, str], Awaitable[str]]
+) -> Proposal:
+    """A unit made through `create(slug, brief)`, the app's own way of making one, its brief the
+    proposal's; the slug may differ from the proposal's. Back to `pending` when it fails."""
+    slug = check_slug(slug)
+    p = await asyncio.to_thread(claim, data, workspace, pid, "accepted")
+    try:
+        unit = await create(slug, brief_of(p))
+    except BaseException:
+        await asyncio.to_thread(unclaim, data, workspace, pid)
+        raise
+    await asyncio.to_thread(set_made, data, workspace, pid, unit)
+    return await asyncio.to_thread(one, data, workspace, pid)
+
+
+async def dismiss(data: Data, workspace: str, pid: int, reason: str) -> Proposal:
+    """Put aside with a reason of 1 to `REASON_MAX` characters, which the next run reads."""
+    return await asyncio.to_thread(claim, data, workspace, pid, "dismissed", check_reason(reason))

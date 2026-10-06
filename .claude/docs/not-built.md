@@ -40,6 +40,14 @@ Read this before adding a route, a button or a grant.
   (`person` or `delegated`) written as sent: a label, not an identity check, and no gate reads it.
   A finding answer also feeds a gate, so one agent's round plus an answer anyone with the
   password can write is part of what opens a merge.
+- **A trigger starts a read-only run, not a writing one.** A row an event, a schedule or Leif
+  starts holds only reading tools (`pack.check`, at load and at save), so nothing unwatched
+  writes. `POST /api/agents/state` turns a row's event or schedule on or off per workspace (an
+  `agent-state` row `by: owner`); `POST /api/agents/run` and Leif's `run_agent` (a kernel tool
+  only the chat's grant holds, refused `not-leif` for a row without `trigger.leif`) each open one
+  paid session under the row's ceilings and the daily cap, its `start` naming who started it.
+  `POST /api/proposals/{id}` is the owner's accept or dismiss of a proposal, `by: owner`; no agent
+  holds a tool that reaches it.
 - **A screenshot is an agent's look,** not a person's.
 - **Say what a new route can do,** to whom, at what cost, and where the trace is. Prefer a row
   in the run log to a claim in prose.

@@ -20,9 +20,9 @@ class Unused:
 
 
 def ctx_for(**given: Any) -> Ctx:
-    """`ctx_for(store=data, runs=Runs(...))`: `units`, `runs`, `agents`, `store`, `bus`, `settings`,
+    """`ctx_for(store=data, runs=Runs(...))`: `units`, `runs`, `store`, `bus`, `settings`,
     `refuse_updating`, `asks`, `required_checks`."""
-    handles = {n: given.pop(n, None) or Unused(n) for n in ("units", "runs", "agents", "store")}
+    handles = {n: given.pop(n, None) or Unused(n) for n in ("units", "runs", "store")}
     handles["bus"] = given.pop("bus", None) or Bus()
     handles["settings"] = given.pop("settings", None) or Unused("settings")
     handles["refuse_updating"] = given.pop("refuse_updating", None) or Unused("refuse_updating")

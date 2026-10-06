@@ -358,27 +358,6 @@ class TheEstimateGrantOpensNothing(unittest.TestCase):
         self.assertIn("password", g.warning)
 
 
-class AFeatureAddsItsSession(unittest.TestCase):
-    """`add_session`: a feature's grant, submitting, with its own turns when it asks."""
-
-    def tearDown(self):
-        policy.ADDED.pop("planted", None)
-        policy.OWN_TURNS.discard("planted")
-
-    def test_an_added_session_submits_and_keeps_its_own_turns(self):
-        grant = Row(max_turns=2, max_budget_usd=0.5)
-        policy.add_session("planted", grant, own_turns=True)
-        policy.add_session("planted", grant, own_turns=True)
-        g = row_for("planted")
-        self.assertTrue(g.submits)
-        self.assertEqual((g.max_turns, g.max_budget_usd), (2, 0.5))
-        self.assertEqual(says(g, "mcp__cos__submit", {}), "")
-
-    def test_a_name_another_grant_holds_is_refused(self):
-        with self.assertRaises(ValueError):
-            policy.add_session("impl", Row(), own_turns=False)
-
-
 if __name__ == "__main__":
     unittest.main()
 

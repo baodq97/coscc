@@ -8,7 +8,7 @@ Read this before changing `/api/settings/*`, model resolution, `/api/backlog/*` 
   with no model. Every change is one `agent-setting` row with the old and new value, and each
   run's `start` names its row (`pack`, `row_hash`, `edited`). `POST /api/agents/field` saves one
   key whole (`body`, `skill:<name>` too; `null` resets) after `pack.check` with the catalog and
-  the contracts; `trigger` is shown, not saved. A model id is not checked when
+  the contracts; `trigger` is saved only on a row its own trigger starts. A model id is not checked when
   saved; a wrong one fails the next step. A hand-edited owner file that breaks the row refuses
   that agent's runs (`agent-invalid`) and shows on the Agents page.
 - A stage marked `novel` runs on a dearer row with higher ceilings, so one press can cost more.
@@ -28,3 +28,13 @@ Read this before changing `/api/settings/*`, model resolution, `/api/backlog/*` 
   never re-reads the default. A unit whose process no pack has is held `state-gone`.
 - Backlog estimates, relations and the shortlist are run-log rows with `by`; `propose` opens one
   paid session. No gate reads them.
+- A row no state runs may carry a `trigger` (`coscc/runner/triggers.py`): an `event` (at once, or
+  `after_hours` later through `trigger_due`), a `schedule` (`hours` since its last `end`), `manual`
+  (*Run now*, `POST /api/agents/run`) and `leif` (Leif's `run_agent`). Such a row holds only
+  reading tools when an event, a schedule or Leif starts it. An event or a schedule runs it only
+  where it is on: `default`, or the pref `agents.state` (`POST /api/agents/state`, an
+  `agent-state` row `by: owner`). A run that stops at its ceiling turns it off there with an
+  `agent-state` row `by: app` and a notice. A row whose input says `skip_when_empty` and finds no
+  intervention ends `skipped` at $0 with no session.
+- A row whose output is `proposal` puts what it proposes in `proposals`, shown on Up next; only
+  the owner's press (`POST /api/proposals/{id}`, accept or dismiss with a reason) moves one.
