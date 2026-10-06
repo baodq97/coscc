@@ -127,10 +127,11 @@ stateDiagram-v2
   [*] --> refused: mark busy / held / gate closed / updater applying
   [*] --> preparing: POST /api/board/run (PERSON) or autopilot launch
   preparing --> running: start row; one agent session
-  running --> repair: prose reply without its opening (0127) / review at ceiling (closing turn)
+  running --> repair: prose reply without its opening (0127)
   repair --> ended
   running --> ended: session ends
-  ended --> [*]: end{outcome: done|failed|exhausted|stopped|cancelled}
+  running --> paused: a ceiling; a person's raise continues the same session
+  ended --> [*]: end{outcome: done|failed|paused-budget|stopped|cancelled}
 ```
 
 | Transition | Decided by | Recorded |
@@ -140,7 +141,7 @@ stateDiagram-v2
 | the work itself, and the record it hands back through `submit` | **AGENT** | the file, `outputs` |
 | prose stages: app writes the file from the reply, checks the title | CODE on AGENT text | `end.opening` |
 | tool stages: file must exist before `submit` is taken | CODE on AGENT file | — |
-| ceilings (turns, $ per grant, `policy.py:253-397`) → exhausted | CODE | `end` |
+| ceilings (turns, $ per grant, `policy.py:253-397`) → paused-budget; a person's raise goes on | CODE | `end`, `raise` |
 | Stop (`POST /api/board/stop`) | PERSON | `end.stopped_by` |
 | after `end`: post review rounds as PR comments; `pr-sync` title/body; worktree cleanup after ship; write `questions` and `ship` rows; nudge autopilot (`coscc/runner/steps.py` `after_end`) | CODE | `pr-comment`, `pr-sync`, `questions`, `ship` |
 | startup recovery: a `start` with a dead pid and no `end` → `end{failed, recovered}` (`runlog/recovery.py:55-76`) | CODE | `end` |
@@ -162,8 +163,8 @@ A pass, all CODE (`Autopilot.run_pass`):
 1. No shortlist → stop `shortlist`.
 2. For each shortlisted unit in order: `coscc.loop next`, then `stop_for` (`leif/decide.py`):
    `a` open questions · `b` findings waiting / needs a person · `d` integration needs a person ·
-   `e` last step not done (except first exhausted, first missing-opening, exhausted ship before
-   a recording ship), integration failed/refused, screenshot retake failed, and since `0136` a
+   `e` last step not done (except first missing-opening; a step paused at its ceiling stops with code
+   `budget-reached`), integration failed/refused, screenshot retake failed, and since `0136` a
    `pr` or `ship` the PR machine failed or its guard refused (its `prmachine` row) · `c` ship while
    `may_ship` off · none when rerun pending / CI pending / dependency · `f` otherwise, and a merge
    GitHub refused after the PR machine requested it (`merge_refused`, as `0112` R7).
@@ -233,7 +234,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 
 **Defects found while mapping (verified in code):**
 
-- After a repair or closing turn, `cost_usd` is the session total but tokens/turns are the first turn's (`runner/__init__.py:228`).
+- After a repair turn, `cost_usd` is the session total but tokens/turns are the first turn's (`runner/__init__.py:228`).
 
 **Structural facts the redesign must answer:**
 

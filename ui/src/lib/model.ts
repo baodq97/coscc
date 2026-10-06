@@ -1,7 +1,7 @@
 // The studio's names for the app's shapes, which `api.gen.ts` holds as the app makes them.
 
 import type { AgentRow, Card, WorkspaceRow } from "../api.gen";
-import { STAGE_LABEL } from "./format";
+import { STAGE_LABEL, pausedAt } from "./format";
 
 export type Workspace = WorkspaceRow;
 export type Unit = Card;
@@ -16,6 +16,8 @@ export function unitState(u: Unit): { group: string; label: string } {
   if (u.why === "paused" || u.hold?.state === "paused") return { group: "Paused", label: "Paused" };
   if (u.why === "finished" || u.why === "outdated-main") return { group: "Shipped", label: "Shipped" };
   if (u.phase === "pre-intent") return { group: "Ideas", label: "Idea" };
+  // A run stopped at its ceiling and kept its session: only a person raises it, reruns it or drops the unit.
+  if (u.paused) return { group: "Needs you", label: pausedAt(u.paused) };
   if (u.open > 0) return { group: "Needs you", label: `${u.open} question${u.open > 1 ? "s" : ""}` };
   // The next stage is refused before it spends until what it declares it needs is there.
   if (u.missing?.length) return { group: "Needs you", label: `Needs ${u.missing.join(" and ")}` };

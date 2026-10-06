@@ -2,12 +2,12 @@
 // panel holds the facts; the timeline holds every run and answer, newest first.
 
 import { Fragment, useState, type ReactNode } from "react";
-import type { Answer, Decision, Detail, OutputRecord, StageView, UnitRun } from "../api.gen";
+import type { Answer, Decision, Detail, OutputRecord, Paused, StageView, UnitRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import type { PlacedUnit } from "../lib/boards";
 import { allUnits, useBoards } from "../lib/boards";
 import { FeatureSlots } from "../lib/feature";
-import { STAGE_LABEL, ago, modelName, money, unitCode, unitTitle } from "../lib/format";
+import { STAGE_LABEL, ago, modelName, money, pausedAt, unitCode, unitTitle } from "../lib/format";
 import { AgentAvatar, Icon, LeifMark } from "../lib/icons";
 import { unitState } from "../lib/model";
 import { Link } from "../lib/router";
@@ -68,6 +68,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
             <Track stages={d?.stages ?? []} now={now} done={shipped} waiting={open.length > 0} />
           </div>
         )}
+        {placed.paused && <PausedBanner unit={placed} paused={placed.paused} onDone={() => detail.reload()} />}
         {open.length > 0 && (
           <div className="callout amber" style={{ marginTop: 18 }}>
             <Icon name="chat" size={15} />
@@ -82,7 +83,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
             </Link>
           </div>
         )}
-        {next.data && !shipped && !open.length && (
+        {next.data && !shipped && !open.length && !placed.paused && (
           <div className="callout" style={{ marginTop: 18 }}>
             <Icon name="arrow" size={15} />
             <div className="grow">
@@ -162,7 +163,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         <Actions
           unit={placed}
           running={Boolean(running)}
-          stage={next.data && !next.data.blocked ? next.data.stage ?? "" : ""}
+          stage={next.data && !next.data.blocked && !placed.paused ? next.data.stage ?? "" : ""}
           moves={d?.hold_moves ?? []}
           onDone={() => {
             detail.reload();
@@ -183,6 +184,80 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
           )}
         </div>
       </aside>
+    </div>
+  );
+}
+
+/** What a run held at its ceiling needs: a higher ceiling to go on in the same session, or a rerun from scratch. */
+function PausedBanner({ unit, paused, onDone }: { unit: PlacedUnit; paused: Paused; onDone: () => void }) {
+  const turns = paused.ceiling === "turns";
+  const [value, setValue] = useState(String(turns ? (paused.max_turns ?? 0) * 2 : Math.round((paused.max_usd ?? 0) * 2 * 100) / 100));
+  const [asking, setAsking] = useState("");
+  const [note, setNote] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const at = { cwd: unit.workspace.path, unit: unit.name, stage: paused.stage };
+  const stage = STAGE_LABEL[paused.stage] ?? paused.stage;
+  const act = async (what: string, run: () => Promise<unknown>) => {
+    if (asking !== what) return setAsking(what);
+    setBusy(true);
+    setError(null);
+    try {
+      await run();
+      setAsking("");
+      onDone();
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="callout amber" style={{ marginTop: 18, flexWrap: "wrap" }}>
+      <Icon name="pause" size={15} />
+      <div className="grow" style={{ minWidth: 260 }}>
+        <b>{stage} paused: {pausedAt(paused).replace("Paused at ", "")}</b>
+        <div className="muted">
+          It hit its {turns ? "turn" : "$"} ceiling and kept its session and its work. Raise the ceiling and it goes on where it stopped; a rerun starts the stage from scratch.
+        </div>
+        <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <label className="faint" style={{ fontSize: 12.5 }}>
+            New {turns ? "turn" : "$"} ceiling
+          </label>
+          <input className="input sm" type="number" min={0} step={turns ? 1 : 0.5} value={value} aria-label={`New ${turns ? "turn" : "dollar"} ceiling`} onChange={(e) => setValue(e.target.value)} />
+          <Button
+            kind="primary"
+            size="sm"
+            icon="arrow"
+            disabled={busy || !(Number(value) > ((turns ? paused.max_turns : paused.max_usd) ?? 0))}
+            title="Goes on in the same session and spends quota."
+            onClick={() => act("raise", () => api.start("/api/board/run", { ...at, raise: turns ? { turns: Number(value) } : { usd: Number(value) } }))}
+          >
+            {asking === "raise" ? "Spend quota and go on?" : "Raise and continue"}
+          </Button>
+          <Button size="sm" icon="refresh" disabled={busy} onClick={() => (asking === "rerun" ? act("rerun", () => api.start("/api/board/run", { ...at, rerun: true, note: note.trim() })) : setAsking("rerun"))}>
+            {asking === "rerun" ? "Spend quota on a fresh start?" : "Rerun from scratch"}
+          </Button>
+          {asking === "drop" ? (
+            <Button size="sm" kind="danger" disabled={busy || !reason.trim()} onClick={() => act("drop", () => api.post("/api/units/hold", { cwd: at.cwd, unit: at.unit, to: "dropped", reason: reason.trim() }))}>
+              Drop, and close its pull request
+            </Button>
+          ) : (
+            <Button size="sm" kind="ghost" icon="x" disabled={busy} onClick={() => setAsking("drop")}>
+              Drop…
+            </Button>
+          )}
+          {asking && !busy && (
+            <Button size="sm" kind="ghost" onClick={() => setAsking("")}>
+              Cancel
+            </Button>
+          )}
+        </div>
+        {asking === "rerun" && <input className="input" style={{ marginTop: 8 }} placeholder="A note for the new run (optional)" value={note} onChange={(e) => setNote(e.target.value)} />}
+        {asking === "drop" && <textarea className="ta" rows={2} style={{ fontSize: 12.5, marginTop: 8 }} placeholder="Why drop it? (kept with the unit)" value={reason} onChange={(e) => setReason(e.target.value)} />}
+        {error && <div style={{ color: "var(--red)", fontSize: 12.5, marginTop: 8 }}>{error.message}</div>}
+      </div>
     </div>
   );
 }
@@ -308,8 +383,10 @@ function Timeline({ detail, names, live, cwd }: { detail: Detail; names: Record<
 
 function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: boolean; cwd: string }) {
   const [shown, setShown] = useState(live);
+  const [part, setPart] = useState("");
+  const paused = run.outcome === "paused-budget";
   const stopped = run.ended && run.outcome !== "done";
-  const verb = live ? "is working on" : stopped ? run.outcome : "finished";
+  const verb = live ? "is working on" : paused ? "paused" : stopped ? run.outcome : "finished";
   return (
     <div className="tl-i">
       <span className="tl-ic">
@@ -319,7 +396,7 @@ function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: b
         <div className="tl-h">
           <b>{name}</b>
           <span>
-            {stopped ? <Chip square tone="red">{verb}</Chip> : verb} {(STAGE_LABEL[run.stage] ?? run.stage).toLowerCase()}
+            {stopped ? <Chip square tone={paused ? "amber" : "red"}>{verb}</Chip> : verb} {(STAGE_LABEL[run.stage] ?? run.stage).toLowerCase()}
           </span>
           {live && <Dot tone="live" />}
           {run.cost_usd != null && <span className="faint">· {money(run.cost_usd)}</span>}
@@ -328,7 +405,22 @@ function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: b
         <div className="faint" style={{ fontSize: 12 }}>
           {[run.turns != null ? `${run.turns} turns` : "", run.model ? modelName(run.model) : "", run.artifact].filter(Boolean).join(" · ")}
         </div>
-        {stopped && run.detail && <div className="muted" style={{ marginTop: 2 }}>{run.detail}</div>}
+        {paused && run.paused && <div className="muted" style={{ marginTop: 2 }}>{pausedAt(run.paused)}; a raised ceiling goes on in this session.</div>}
+        {stopped && !paused && run.detail && <div className="muted" style={{ marginTop: 2 }}>{run.detail}</div>}
+        {run.parts.length > 0 && (
+          <div className="faint" style={{ fontSize: 12, marginTop: 2 }} title="One session: a ceiling paused it and you raised it">
+            One session in {run.parts.length + 1} parts{run.raised_by ? `, raised by ${run.raised_by}` : ""}
+          </div>
+        )}
+        {run.parts.map((p, i) => (
+          <div key={p.run || i} style={{ marginTop: 4 }}>
+            <button className="link-btn faint" style={{ fontSize: 12 }} onClick={() => setPart(part === p.run ? "" : p.run)}>
+              Part {i + 1}: {p.paused ? pausedAt(p.paused) : "ended"} · {ago(p.ended)}
+              {part === p.run ? " (hide)" : ""}
+            </button>
+            {part === p.run && p.run && <RunLog cwd={cwd} run={p.run} live={false} />}
+          </div>
+        ))}
         {run.envelope.length > 0 && (
           <div className="faint" style={{ fontSize: 12 }} title="What its prompt held, as its row declares">
             Given: {run.envelope.join(" · ")}
@@ -336,7 +428,7 @@ function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: b
         )}
         {run.run && (
           <button className="link-btn faint" style={{ fontSize: 12, marginTop: 4 }} onClick={() => setShown(!shown)}>
-            {shown ? "Hide what it did" : "What it did"}
+            {shown ? "Hide what it did" : run.parts.length ? `What part ${run.parts.length + 1} did` : "What it did"}
           </button>
         )}
         {run.run && shown && <RunLog cwd={cwd} run={run.run} live={live} />}

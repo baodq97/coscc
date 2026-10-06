@@ -109,8 +109,7 @@ async def _opening_turn(
     """The reply of one more turn on a prose step's own session, how many pieces of text it said,
     and its `done`.
 
-    `_closing_turn`'s shape: same session id, a new handle with no recorder, no tools and a gate
-    granting none, one turn.
+    Same session id, a new handle with no recorder, no tools and a gate granting none, one turn.
     """
     text, blocks, done = "", 0, None
     async for kind, payload in sessions.stream(
@@ -1377,8 +1376,8 @@ class Runner:
         `resume` is a `suspend` row, with the `message` to send and the `pieces` the transcript held
         before its safe point. The step goes on in the same session under what is left of the
         grant's two ceilings and writes no `start`; one whose ceiling is used up opens no session and
-        ends `exhausted`. A row whose `owner.kind` is `opening` or `closing` goes through the main
-        reply again from those pieces and takes up that one turn. `owner_extra` is what `Core`
+        ends `paused-budget`. A row whose `owner.kind` is `opening` goes through the main reply again
+        from those pieces and takes up that one turn. A person's raise of a ceiling is such a row. `owner_extra` is what `Core`
         adds to the owner a `suspend` row carries.
         """
         was = dict((resume or {}).get("owner") or {})

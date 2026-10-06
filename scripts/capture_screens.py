@@ -44,6 +44,8 @@ After them `make_idea_fixture` makes `0006_frontend-calls-api`, and
                            one head by the autopilot (`make_autopilot_fixture`)
     0009_refused-impl      an accepted plan, whose `impl` the autopilot queued and
                            the gate refused with `gate-closed` (`seed_refusal`)
+    0010_paused-impl       an accepted plan whose `impl` hit its $4 ceiling, was raised to $8
+                           and hit that: held `budget-reached`, two parts of one session
 
 Every file is written by hand as prose; each unit's states (the `statuses`, `type`, `shipped`
 and `questions` its fixture carries) are seeded as rows in `cos.db` by `seed_fixture`, since
@@ -351,8 +353,21 @@ AUTOPILOT_FIXTURE = {
             "plan.md": "# Plan: refused impl\nIntent: intent.md. Author: capture_screens.\n",
         },
     },
+    # An `impl` that hit its $ ceiling, was raised once and hit the higher one (`seed_runs`): held
+    # `budget-reached`, one session in two parts.
+    "paused-impl": {
+        "statuses": dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"),
+        "type": "feat",
+        "files": {
+            "intent.md": INTENT.format(
+                title="paused impl", problem="Một impl dừng ở trần chi phí."
+            ),
+            "spec.md": "# Spec: paused impl\nIntent: intent.md. Author: capture_screens.\n",
+            "plan.md": "# Plan: paused impl\nIntent: intent.md. Author: capture_screens.\n",
+        },
+    },
 }
-DRAFT_IMPL, REFUSED_IMPL = "0008_draft-impl", "0009_refused-impl"
+DRAFT_IMPL, REFUSED_IMPL, PAUSED_IMPL = "0008_draft-impl", "0009_refused-impl", "0010_paused-impl"
 
 Rows = list[tuple[Path, str, Mapping[str, Any]]]
 
@@ -695,6 +710,53 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
         journal.finished(
             key, "", stage, "done", agent=stage, status="done", run=run, turns=2, cost_usd=usd
         )
+    # One `impl` that paused at $4.00, was raised to $8.00 and paused again: two runs, one session.
+    journal.started(key, PAUSED_IMPL, "impl", "manual", run="capture-paused-1")
+    _run_events(work, data_dir, key, PAUSED_IMPL, "impl", "capture-paused-1", "paused-budget")
+    journal.finished(
+        key,
+        PAUSED_IMPL,
+        "impl",
+        "paused-budget",
+        run="capture-paused-1",
+        agent="impl",
+        status="paused-budget",
+        session_id="capture-session",
+        ceiling="usd",
+        max_budget_usd=4.0,
+        max_turns=250,
+        turns=61,
+        cost_usd=4.0,
+        detail="stopped at the ceiling: error_max_budget_usd",
+    )
+    journal.raised(
+        key,
+        PAUSED_IMPL,
+        "impl",
+        run="capture-paused-2",
+        by="owner",
+        from_usd=4.0,
+        from_turns=250,
+        max_budget_usd=8.0,
+        max_turns=250,
+    )
+    _run_events(work, data_dir, key, PAUSED_IMPL, "impl", "capture-paused-2", "paused-budget")
+    journal.finished(
+        key,
+        PAUSED_IMPL,
+        "impl",
+        "paused-budget",
+        run="capture-paused-2",
+        agent="impl",
+        status="paused-budget",
+        session_id="capture-session",
+        ceiling="usd",
+        max_budget_usd=8.0,
+        max_turns=250,
+        turns=118,
+        cost_usd=8.0,
+        detail="stopped at the ceiling: error_max_budget_usd",
+    )
     for _ in range(3):
         journal.started(key, "0004_finished", "impl", "autonomous")
         journal.finished(
@@ -706,7 +768,9 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     journal.finished(key, "0004_finished", "impl", "failed", cost_unknown=True)
 
 
-def _run_events(work: Path, data_dir: Path, key: str, unit: str, stage: str, run: str) -> None:
+def _run_events(
+    work: Path, data_dir: Path, key: str, unit: str, stage: str, run: str, outcome: str = "done"
+) -> None:
     """A short run's events as the recorder stores them: its config, a read, a refusal, its words
     and its end."""
     from coscc.store.db import Data
@@ -719,7 +783,7 @@ def _run_events(work: Path, data_dir: Path, key: str, unit: str, stage: str, run
         ("denied", {"tool": "Bash", "input": {"command": "curl x"}, "reason": "not granted"}),
         ("text", {"text": "Three units are ready to estimate; 0002 waits on its question."}),
         ("result", {"num_turns": 2, "cost_usd": 0.11, "terminal_reason": "completed"}),
-        ("end", {"outcome": "done", "detail": ""}),
+        ("end", {"outcome": outcome, "detail": ""}),
     ]
     data.step_events_add(
         run,
@@ -850,7 +914,7 @@ def seed_pilot(data_dir: Path, proj: Path) -> None:
 def make_autopilot_fixture(
     api: httpx.Client, work: Path, data_dir: Path, proj: Path, rows: Rows
 ) -> None:
-    """`AUTOPILOT_FIXTURE`, a shortlist of those two units alone, and two tries of
+    """`AUTOPILOT_FIXTURE`, a shortlist of the first two units alone, and two tries of
     `0008_draft-impl` on one head: each an `autopilot-pick` that went on with the draft and the
     step it began, ended. Then the scan's proposals, the rest of what the Backlog shows."""
     from coscc.store.journal import Journal

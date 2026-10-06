@@ -30,7 +30,7 @@ REPLY_KEPT = 2000
 
 
 # # Characters of transcript kept for a failed attempt. Chosen, and too short: the earliest
-# # relevant tool output in exhausted transcripts started 88k-102k characters from the end.
+# # relevant tool output in a run that hit its ceiling started 88k-102k characters from the end.
 ATTEMPT_EXCERPT = 8000
 
 

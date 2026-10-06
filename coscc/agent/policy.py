@@ -215,10 +215,8 @@ GRANTS: dict[str, Grant] = {
     # `git diff`, so it sees the working tree and `impl.md`, not the diff.
     "review": Grant(
         tools=READ_TOOLS,
-        # Chosen, not measured: 20/$2.0 stopped review sessions before they wrote a round. A
-        # review that still stops at it gets one closing turn from the app (`runner.Runner.run`),
-        # which this budget does not bound: the CLI compares the session's whole cost after the
-        # turn has run.
+        # Chosen, not measured: 20/$2.0 stopped review sessions before they wrote a round. One that
+        # still stops at it pauses, and a person's raise goes on in its session.
         max_turns=40,
         max_budget_usd=4.0,
     ),
@@ -249,7 +247,7 @@ GRANTS: dict[str, Grant] = {
 #
 # 250 is chosen, not measured, and $16 is 2 x $8.0. The dearest turn measured $0.0419 across
 # `novel` runs (250 turns, $10.48) and $0.0568 across all `impl` runs ($14.21), so $16 leaves a
-# thin margin. A `novel` impl that stops on the budget is not escalated.
+# thin margin.
 NOVEL_CEILINGS: dict[str, tuple[int, float]] = {
     "impl": (250, 16.0),
 }

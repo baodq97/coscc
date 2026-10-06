@@ -9,5 +9,5 @@ Read this before changing the `spike` grant or its scratch directory.
   with no `spike.md`. This detects, and does not undo; an ignored path is not seen.
 - The app counts the round (1 plus the earlier spike records with a `fails`); the loop stops for
   a person at the second. A spike writes no round, and presses that hit a ceiling record none.
-- When the reply is not an artifact (a ceiling, a broken session), the app writes `spike.md`
-  from the progress file through the same checks. The step still ends `exhausted` or `failed`.
+- When the reply is not an artifact (a broken session), the app writes `spike.md`
+  from the progress file through the same checks. The step still ends `failed`. A spike that hits a ceiling pauses, scratch kept.

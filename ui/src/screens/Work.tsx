@@ -49,7 +49,7 @@ export function Work({ workspace }: { workspace?: string }) {
                   <span className="meta">
                     {u.type && <Chip square tone="plain">{u.type}</Chip>}
                     {!workspace && <span>{u.workspace.name}</span>}
-                    <span>{unitState(u).label}</span>
+                    {u.paused ? <Chip square tone="amber">{unitState(u).label}</Chip> : <span>{unitState(u).label}</span>}
                   </span>
                 </Link>
               ))}

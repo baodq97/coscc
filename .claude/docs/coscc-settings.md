@@ -8,6 +8,9 @@ Read this before changing `/api/settings/*`, model resolution, `/api/backlog/*` 
 - A stage marked `novel` runs on a dearer row with higher ceilings, so one press can cost more.
   A temporary model trial can override a stage's model without showing on Settings; the step's
   `start` row names it.
+- A step that hits its turn or $ ceiling pauses and keeps its session: a person raises the ceiling
+  on the unit's page and it goes on where it stopped. A raise is a person's; the autopilot stops
+  there and never raises one.
 - An agent's name goes into every prompt, the `Author:` a session writes and the commit trailer;
   it opens and closes no gate.
 - The autopilot turns on only on loopback, starts only shortlisted units (no shortlist starts
