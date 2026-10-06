@@ -78,7 +78,7 @@ class Waste(unittest.TestCase):
             [
                 end("u", "spec", cost_usd=1.0),
                 end("u", "spec", outcome="failed", cost_usd=2.0),
-                end("u", "spec", outcome="exhausted"),
+                end("u", "spec", outcome="paused-budget"),
                 end("u", "plan", outcome="stopped", cost_usd=4.0),
                 end("", "estimate", cost_usd=1.0),
                 end("", "estimate", cost_usd=1.0),
@@ -86,8 +86,8 @@ class Waste(unittest.TestCase):
             tz=TZ,
         )
         self.assertEqual(
-            waste(m, "exhausted-or-failed"),
-            {"kind": "exhausted-or-failed", "count": 2, "usd": 2.0, "unknown": 1, "note": None},
+            waste(m, "failed"),
+            {"kind": "failed", "count": 1, "usd": 2.0, "unknown": 0, "note": None},
         )
         again = waste(m, "run-again")
         self.assertEqual((again["count"], again["usd"], again["unknown"]), (2, 2.0, 1))
@@ -196,7 +196,7 @@ class Anomalies(unittest.TestCase):
     def test_failed(self):
         m = spend.model(
             [
-                end("u", "impl", outcome="exhausted"),
+                end("u", "impl", outcome="failed"),
                 end("u", "plan", outcome="stopped"),
                 end("v", "spec", outcome="failed", cost_usd=0.5),
             ],
@@ -204,7 +204,7 @@ class Anomalies(unittest.TestCase):
         )
         self.assertEqual(
             sorted((a["unit"], a["value"]) for a in kinds(m, "failed")),
-            [("u", "exhausted"), ("v", "failed")],
+            [("u", "failed"), ("v", "failed")],
         )
 
     def test_no_unit_is_never_over_budget(self):
@@ -260,7 +260,7 @@ class MatchesTheRunsTable(unittest.TestCase):
             ("0001_a", "plan", "done", "2026-09-24T16:59:59+00:00", {"cost_usd": 0.004561}),
             ("0001_a", "impl", "failed", "2026-09-24T17:00:00+00:00", {}),
             ("0002_b", "impl", "done", "2026-09-24T17:00:01+00:00", {"cost_usd": 12.5}),
-            ("0002_b", "impl", "exhausted", "2026-09-25T01:00:00+00:00", {"cost_usd": None}),
+            ("0002_b", "impl", "paused-budget", "2026-09-25T01:00:00+00:00", {"cost_usd": None}),
             ("0003_c", "spec", "done", "2026-09-25T02:00:00+00:00", {"cost_usd": 0.0}),
             ("0003_c", "review", "failed", "2026-09-25T03:00:00+00:00", {}),
             ("", "estimate", "done", "2026-09-25T04:00:00+00:00", {"cost_usd": 0.0371}),

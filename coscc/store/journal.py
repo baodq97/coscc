@@ -28,7 +28,8 @@ import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, NamedTuple, get_args
+from collections.abc import Mapping
+from typing import Any, Callable, Iterable, Literal, NamedTuple, TypedDict, get_args
 
 from coscc.store.db import BUSY_TIMEOUT, Data, now as _now
 
@@ -415,10 +416,10 @@ class Journal:
             }
         )
 
-    def raised(self, workspace: str, unit: str, stage: str, **fields: Any) -> dict[str, Any]:
+    def raised(self, workspace: str, unit: str, stage: str, **fields: Any) -> None:
         """A person raised the ceiling a run paused at, and its session goes on (`run` is the new
         part's): the run's row opens again. `by`, the old and the new ceilings are in `fields`."""
-        return self.append(
+        self.append(
             {"kind": "raise", "workspace": workspace, "unit": unit, "stage": stage, **fields}
         )
 
@@ -810,7 +811,18 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def paused_of(end: dict[str, Any]) -> dict[str, Any] | None:
+class PausedAt(TypedDict):
+    """What a run that hit a ceiling says of it: the `ceiling` (`turns` or `usd`), both ceilings
+    and what was spent of them."""
+
+    ceiling: str | None
+    max_usd: float | None
+    max_turns: int | None
+    usd: float | None
+    turns: int | None
+
+
+def paused_of(end: Mapping[str, Any]) -> PausedAt | None:
     """What a run that hit a ceiling says of it: which one (`turns` or `usd`), both ceilings and
     what was spent; `None` for any other `end`."""
     if end.get("outcome") != "paused-budget":
@@ -824,7 +836,7 @@ def paused_of(end: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def paused_stage(rows: Iterable[dict[str, Any]], stage: str) -> dict[str, Any] | None:
+def paused_stage(rows: Iterable[Mapping[str, Any]], stage: str) -> PausedAt | None:
     """The `paused` of the latest run of `stage` in a timeline, when it ended at a ceiling and
     nothing went on from it: the unit is held `budget-reached`."""
     last = next((r for r in reversed(list(rows)) if r.get("stage") == stage), None)

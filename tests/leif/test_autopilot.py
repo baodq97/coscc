@@ -999,30 +999,15 @@ class Scripted(_Base):
         self.assertEqual(stops, [])
         return log
 
-    async def test_an_exhausted_impl_after_its_own_integration_runs_once_more(self):
-        log = await self._impl_after_a_red_rebase("exhausted")
+    async def test_an_impl_paused_after_its_own_integration_stops_and_is_not_raised(self):
+        log = await self._impl_after_a_red_rebase("paused-budget")
         await self.pass_()
-        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")] * 2)
-        self.assertEqual(self.stops(), {})
-        await self.settled()
-        log.started(self.key, "0001_a", "impl", "autonomous", started_by="autopilot")
-        log.finished(self.key, "0001_a", "impl", "exhausted")
-        await self.pass_()
-        self.assertEqual(len(self.launched), 2)
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
         self.assertEqual(self.stops(), {"0001_a": "e"})
-        reason = self.core.autopilot.stops[self.key]["0001_a"]["reason"]
-        self.assertEqual(reason, "the last impl step ended exhausted")
-
-    async def test_the_impl_after_an_exhausted_one_is_the_one(self):
-        log = await self._impl_after_a_red_rebase("exhausted")
-        await self.pass_()
-        await self.settled()
-        log.started(self.key, "0001_a", "impl", "autonomous", started_by="autopilot")
-        log.finished(self.key, "0001_a", "impl", "done")
-        await self.pass_()
-        self.assertEqual(len(self.launched), 2)
-        self.assertEqual(self.stops(), {"0001_a": "e"})
-        self.assertEqual(self.core.autopilot.stops[self.key]["0001_a"]["reason"], decide.STILL_RED)
+        stop = self.core.autopilot.stops[self.key]["0001_a"]
+        self.assertEqual(stop["code"], "budget-reached")
+        self.assertEqual(stop["reason"], "the last impl step paused at its ceiling")
+        self.assertIsNotNone(log)
 
     async def test_a_rebase_that_turns_ci_red_runs_impl_once_then_stops(self):
         await self._impl_after_a_red_rebase()
@@ -1907,65 +1892,26 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [])
 
-    # --- , a step that only ran out of turns runs once more -----------------
+    # --- a step that paused at its ceiling waits for a person ------------------
 
-    def ran_out(self, unit, stage):
+    def paused(self, unit, stage):
         Journal(self.config.working_dir, self.config.data_dir).finished(
-            self.key, unit, stage, "exhausted"
+            self.key, unit, stage, "paused-budget", ceiling="usd", max_budget_usd=4.0
         )
 
-    async def test_a_first_exhausted_step_runs_its_stage_again(self):
-        self.ran_out("0001_a", "plan")
-        self.add("0001_a", "plan")
-        await self.pass_()
-        self.assertEqual(self.launched, [("0001_a", "plan", "autopilot")])
-        self.assertEqual([(p["unit"], p["stage"]) for p in self.picks()], [("0001_a", "plan")])
-        self.assertEqual(self.stops(), {})
-
-    async def test_the_rerun_that_runs_out_again_stops_e(self):
-        self.ran_out("0001_a", "plan")
-        self.add("0001_a", "plan")
-        await self.pass_()
-        self.assertEqual(len(self.picks()), 1)
-        self.release.set()
-        await self.settled()
-        self.ran_out("0001_a", "plan")
-        await self.pass_()
-        self.assertEqual(self.stops(), {"0001_a": "e"})
-        self.assertEqual(
-            self.core.autopilot.stops[self.key]["0001_a"]["reason"],
-            "the last plan step ended exhausted",
-        )
-        self.assertEqual((len(self.picks()), len(self.launched)), (1, 1))
-
-    async def test_an_exhausted_ship_stops_the_first_time(self):
+    async def test_a_step_paused_at_its_ceiling_stops_e_and_is_never_run_or_raised_again(self):
         self.core.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
-        self.ran_out("0001_a", "ship")
-        self.add("0001_a", "ship")
-        await self.pass_()
-        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
-
-    async def test_a_held_unit_or_a_closed_gate_after_a_first_exhausted_step(self):
-        self.ran_out("0001_a", "plan")
-        self.add("0001_a", "")
-        self.nexts["0001_a"]["hold"] = {
-            "state": "paused",
-            "reason": "later",
-            "by": "Leif",
-            "date": "2026-09-27",
-        }
-
-        self.refuse["0002_b"] = "draft"
-        self.ran_out("0002_b", "impl")
-        self.add("0002_b", "impl", plan=["a/b.py"])
-        await self.pass_()
-        await self.pass_()
-        self.assertEqual([p["unit"] for p in self.picks()], ["0002_b"])
-        self.assertEqual(self.stops(), {"0002_b": "f"})
-        self.assertEqual(
-            self.core.autopilot.stops[self.key]["0002_b"],
-            {"unit": "0002_b", "kind": "f", "reason": "impl was refused: draft", "code": "draft"},
-        )
+        raised: list = []
+        self.core.steps.raise_step = lambda *a, **kw: raised.append((a, kw))
+        for stage in ("plan", "impl", "ship"):
+            self.paused("0001_a", stage)
+            self.add("0001_a", stage)
+            await self.pass_()
+            self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {"0001_a": "e"}))
+            stop = self.core.autopilot.stops[self.key]["0001_a"]
+            self.assertEqual(stop["code"], "budget-reached")
+            self.assertEqual(stop["reason"], f"the last {stage} step paused at its ceiling")
+        self.assertEqual(raised, [])
 
     # --- , a prose step whose reply lacked its opening runs once more ---------
 
@@ -1999,54 +1945,6 @@ class Scripted(_Base):
             "the last plan step ended failed",
         )
         self.assertEqual((len(self.picks()), len(self.launched)), (1, 1))
-
-    async def test_the_two_counts_are_apart(self):
-        self.ran_out("0001_a", "plan")
-        self.add("0001_a", "plan")
-        await self.pass_()
-        self.release.set()
-        await self.settled()
-        self.unopened("0001_a", "plan")
-        await self.pass_()
-        self.assertEqual((len(self.launched), self.stops()), (2, {}))
-        await self.settled()
-        Journal(self.config.working_dir, self.config.data_dir).finished(
-            self.key, "0001_a", "plan", "failed", detail="the session returned nothing"
-        )
-        await self.pass_()
-        self.assertEqual(self.stops(), {"0001_a": "e"})
-        self.assertEqual(len(self.launched), 2)
-
-    # --- , an old exhausted `ship` before one that only records ---------------
-
-    RECORDING = "ship — #95 was merged as abc1234 at 2026-09-20T00:00:00Z: record it in ship.md; do not merge"
-    MERGING = "ship — merge with --match-head-commit abc1234"
-
-    def shipped(self, unit, **start):
-        Journal(self.config.working_dir, self.config.data_dir).append(
-            {
-                "kind": "start",
-                "workspace": self.key,
-                "unit": unit,
-                "stage": "ship",
-                "started_by": "person",
-                **start,
-            }
-        )
-        self.ran_out(unit, "ship")
-
-    def ran_out_at(self, unit):
-        ends = Journal(self.config.working_dir, self.config.data_dir).records(kind="end")
-        return [e for e in ends if e.get("unit") == unit and e.get("outcome") == "exhausted"][-1][
-            "at"
-        ]
-
-    async def test_a_recording_ship_that_ran_out_is_not_run_again(self):
-        self.core.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
-        self.shipped("0001_a", ship_mode="record")
-        self.add("0001_a", "ship", action=self.RECORDING, reasons=["recording-ship"])
-        await self.pass_()
-        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
 
     # --- an open question waits for a person -------------------------------------
 
@@ -2334,17 +2232,6 @@ class Scripted(_Base):
         self.assertEqual(
             self.core.autopilot.stops[self.key]["0001_a"],
             {"unit": "0001_a", "kind": "f", "reason": "finish and accept impl.md"},
-        )
-
-    async def test_an_old_exhausted_ship_still_stops_a_merging_ship(self):
-        self.core.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
-        self.shipped("0001_a")
-        self.add("0001_a", "ship", action=self.MERGING)
-        await self.pass_()
-        self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {"0001_a": "e"}))
-        self.assertEqual(
-            self.core.autopilot.stops[self.key]["0001_a"]["reason"],
-            "the last ship step ended exhausted",
         )
 
     async def test_the_stop_names_each_question_that_waits(self):

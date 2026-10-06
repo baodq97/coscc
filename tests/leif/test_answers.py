@@ -457,30 +457,6 @@ class AnAnswerSaysWhoseDecisionItIs(unittest.TestCase):
         self.assertEqual(self.rows(), [])
 
 
-class AClosingTurnsIncompleteRoundIsARow(unittest.TestCase):
-    """The incomplete round a review's closing turn wrote reaches the loop as a row."""
-
-    setUp = HowAnAnswerNamesItsQuestion.setUp
-    LONG = HowAnAnswerNamesItsQuestion.LONG
-
-    def test_the_round_is_a_row_with_its_head_and_review_goes_back_to_draft(self):
-        done = {"stage": "review", "outcome": "failed", "incomplete_round": 2, "head": "a" * 40}
-        said = asyncio.run(self.core.answers.ingest(self.cwd, self.unit, done, "review.md"))
-        self.assertEqual(said, {})
-        with self.core.ws.unit_meta().data.connect() as conn:
-            rows = [
-                tuple(r)
-                for r in conn.execute(
-                    "SELECT n, head, verdict FROM review_rounds WHERE unit = ?", (self.unit,)
-                )
-            ]
-        self.assertEqual(rows, [(2, "a" * 40, "incomplete")])
-        snap = self.core.ws.snapshot(self.cwd, [self.unit])
-        entry = snap["units"][f"{snap['workspace']}/{self.unit}"]
-        self.assertEqual(entry["artifacts"]["review.md"]["status"], "draft")
-        self.assertEqual(entry["artifacts"]["review.md"]["rounds"][0]["verdict"], "incomplete")
-
-
 class RecordingAnOutcome(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

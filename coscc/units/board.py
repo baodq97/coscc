@@ -13,6 +13,7 @@ workspace's `.cos/` with `--root` (`coscc/loop/run.py` starts it). The board rep
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -611,7 +612,7 @@ def _state(state: str, label: str = "") -> dict[str, str]:
     return {"state": state, "label": label or STATE_LABEL[state], "color": STATE_COLOR[state]}
 
 
-def paused_label(p: dict[str, Any]) -> str:
+def paused_label(p: Mapping[str, Any]) -> str:
     """What a card says of a run held at a ceiling: which ceiling, and how much of it was spent."""
     if p.get("ceiling") == "turns":
         return f"Paused at {p.get('turns')} of {p.get('max_turns')} turns"

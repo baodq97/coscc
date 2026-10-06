@@ -1265,35 +1265,39 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
             Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nSPEC", **files
         )
 
-    def test_the_spike_prompt_names_its_progress_file_and_its_ceilings(self):
-        # The numbers are the grant's, not a second copy.
-        g = grant_for("spike")
+    def test_the_spike_prompt_names_its_progress_file(self):
         with tempfile.TemporaryDirectory() as d:
             directory = self.unit(d)
             prompt, _ = compose_prompt(
-                d,
-                directory,
-                UNIT,
-                "spike",
-                "spike.md",
-                worktree="/the/tree",
-                ceilings=(g.max_turns, g.max_budget_usd),
+                d, directory, UNIT, "spike", "spike.md", worktree="/the/tree"
             )
             self.assertIn(f"`{Path(d).resolve() / 'spike.md'}`", prompt)
-            self.assertIn(f"{g.max_turns} turns", prompt)
-            self.assertIn(f"${g.max_budget_usd:.2f}", prompt)
             self.assertIn("the app writes `spike.md` from this file", prompt)
 
-    def test_no_other_stage_prompt_changes_by_a_byte(self):
+    def test_every_stage_prompt_carries_its_room_and_nothing_else_changes(self):
+        """The envelope's budget: both ceilings, said once, and named among the parts."""
         with tempfile.TemporaryDirectory() as d:
             directory = self.unit(d, spike_md="Status: accepted.\nR")
             for stage in SESSION_STAGES:
-                if stage == "spike":
-                    continue
                 artifact = f"{stage}.md"
+                plain, parts = compose_prompt(d, directory, UNIT, stage, artifact)
+                roomy, held = compose_prompt(
+                    d, directory, UNIT, stage, artifact, ceilings=(80, 8.0)
+                )
+                self.assertNotIn("# Your room", plain)
+                self.assertEqual(held, [*parts, "budget"], stage)
+                self.assertIn("This step has at most 80 turns and $8.00.", roomy)
                 self.assertEqual(
-                    compose_prompt(d, directory, UNIT, stage, artifact, ceilings=(80, 8.0)),
-                    compose_prompt(d, directory, UNIT, stage, artifact),
+                    roomy.replace(
+                        roomy[
+                            roomy.index("# Your room") : roomy.index(
+                                "\n\n---\n\n", roomy.index("# Your room")
+                            )
+                            + 7
+                        ],
+                        "",
+                    ),
+                    plain,
                     stage,
                 )
 
@@ -1330,7 +1334,9 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
             asyncio.run(go())
         [(text, turns, budget)] = seen
         self.assertEqual((turns, budget), (g.max_turns, g.max_budget_usd))
-        self.assertIn(f"This step has {g.max_turns} turns and ${g.max_budget_usd:.2f}.", text)
+        self.assertIn(
+            f"This step has at most {g.max_turns} turns and ${g.max_budget_usd:.2f}.", text
+        )
 
     def test_the_spike_skill_carries_the_progress_file(self):
         # Red too when a stale `coscc/_harness/` hides `.claude/`.
@@ -1707,7 +1713,7 @@ class AStepAnUpdatePaused(unittest.TestCase):
             # With the cost unknown, the whole budget.
             self.assertEqual(sessions.calls[0]["max_budget_usd"], grant.max_budget_usd)
 
-    def test_a_used_up_ceiling_ends_the_step_exhausted_without_a_session(self):
+    def test_a_used_up_ceiling_ends_the_step_paused_without_a_session(self):
         grant = grant_for("plan")
         for used, terminal in (
             ({"api_calls": grant.max_turns}, "error_max_turns"),
@@ -1718,7 +1724,7 @@ class AStepAnUpdatePaused(unittest.TestCase):
                 _, journal, _ = self.run_plan(d, sessions, self.resume(**used))
                 self.assertEqual(sessions.calls, [])
                 [end] = journal.records(kind="end")
-                self.assertEqual(end["outcome"], "exhausted")
+                self.assertEqual(end["outcome"], "paused-budget")
                 self.assertIn(terminal, end["detail"])
 
     def test_a_resumed_prose_step_writes_its_artifact_from_the_pieces_before_and_after(self):

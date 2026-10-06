@@ -1,15 +1,12 @@
 """Tests for `coscc/runner/review.py`, split from `tests/runner/test_step.py`.
 
-A round merged into `review.md` keeps the rounds before it, and a closing round is
-checked before it is written."""
+A round merged into `review.md` keeps the rounds before it."""
 
 from __future__ import annotations
 
 import unittest
 
-from coscc.runner.review import closing_round_problem as closing_round_problem_of
 from coscc.runner.review import merge_review, render_round, replace_new_rounds
-from tests.runner.test_step import REVIEW_R1, incomplete_reply
 
 
 class ARoundIsWrittenFromItsObject(unittest.TestCase):
@@ -102,74 +99,3 @@ class MergeReview(unittest.TestCase):
         self.assertEqual(
             body, "# Review: x\nStatus: accepted.\n\n## Round 1\n\nF1\n\n## Round 2\n\nok\n"
         )
-
-
-class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
-    """Only an incomplete round, for the head the step ran on, whatever its header says."""
-
-    HEAD = "b" * 40
-
-    def problem(self, reply, existing=REVIEW_R1):
-        from coscc.runner.review import closing_round_problem
-
-        return closing_round_problem(existing, reply, self.HEAD)
-
-    def test_the_shape_names_is_accepted(self):
-        self.assertIsNone(self.problem(incomplete_reply(self.HEAD)))
-        self.assertIsNone(self.problem("```\n" + incomplete_reply(self.HEAD) + "```\n"))
-        self.assertIsNone(self.problem(incomplete_reply(self.HEAD, number=1), existing=""))
-
-    def test_the_header_line_is_read_as_leniently_as_the_loop_reads_it(self):
-        line = f"Reviewed: {self.HEAD}. Verdict: incomplete."
-        for written in (line.rstrip("."), line.lower(), line.replace(": ", ":  ")):
-            with self.subTest(written=written):
-                self.assertIsNone(self.problem(incomplete_reply(self.HEAD).replace(line, written)))
-        self.assertIsNotNone(self.problem(incomplete_reply("c" * 40)))
-
-    def test_the_round_comes_after_every_recorded_round_too(self):
-        # `review.md` holds Round 1 but the rows hold Rounds 1 and 2: Round 2 would take a
-        # recorded number, so the closing round is Round 3.
-        self.assertIsNotNone(
-            closing_round_problem_of(REVIEW_R1, incomplete_reply(self.HEAD), self.HEAD, (1, 2))
-        )
-        self.assertIsNone(
-            closing_round_problem_of(
-                REVIEW_R1, incomplete_reply(self.HEAD, number=3), self.HEAD, (1, 2)
-            )
-        )
-
-    def test_a_round_with_no_status_line_passes(self):
-        reply = incomplete_reply(self.HEAD).replace("Status: draft.", "").replace("Status: ", "")
-        self.assertNotIn("Status:", reply)
-        self.assertIsNone(self.problem(reply))
-
-    def test_only_the_round_after_the_last_one_on_disk(self):
-        # Round 5 on one round would be written, and `ship` would call it renumbered for good.
-        self.assertIn("## Round 2", self.problem(incomplete_reply(self.HEAD, number=5)))
-
-    def test_everything_else_is_refused(self):
-        for why, reply in (
-            ("pass", incomplete_reply(self.HEAD, verdict="pass")),
-            ("changes-requested", incomplete_reply(self.HEAD, verdict="changes-requested")),
-            (
-                "a section missing",
-                incomplete_reply(self.HEAD, sections=("Reviewed so far", "Findings")),
-            ),
-            (
-                "out of order",
-                incomplete_reply(
-                    self.HEAD, sections=("Findings", "Reviewed so far", "What was not reviewed")
-                ),
-            ),
-            ("another head", incomplete_reply("c" * 40)),
-            (
-                "two rounds",
-                incomplete_reply(self.HEAD)
-                + "\n"
-                + incomplete_reply(self.HEAD, number=3).split("\n\n", 1)[1],
-            ),
-            ("no round", "# Review: x\n"),
-            ("nothing", "Tôi hết lượt."),
-        ):
-            with self.subTest(why=why):
-                self.assertIsNotNone(self.problem(reply))

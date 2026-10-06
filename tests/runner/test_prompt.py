@@ -17,7 +17,6 @@ from tests.runner.test_step import (
     SESSION_STAGES,
     UNIT,
     _golden_unit,
-    incomplete_reply,
     make_unit,
 )
 
@@ -385,35 +384,6 @@ def _golden_prompt(stage: str) -> str:
         return text
 
 
-class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):
-    def prompt(self, incomplete):
-        with tempfile.TemporaryDirectory() as d:
-            directory = make_unit(Path(d), intent_md="I", plan_md="P", impl_md="I", pr_md="P")
-            return compose_prompt(
-                d,
-                directory,
-                UNIT,
-                "review",
-                "review.md",
-                head="b" * 40,
-                incomplete_round=incomplete,
-            )
-
-    def test_an_incomplete_last_round_is_carried_verbatim(self):
-        text = incomplete_reply("b" * 40).split("\n\n", 1)[1]
-        prompt, included = self.prompt({"n": 2, "text": text})
-        self.assertIn("review-incomplete", included)
-        block = prompt.split("# The incomplete round\n\n")[1].split("\n\n---\n\n")[0]
-        self.assertIn(text[text.index("### Reviewed so far") :].rstrip(), block)
-        self.assertIn("write Round 3 as a full round", block)
-        self.assertIn("Never write `Verdict: incomplete` yourself", block)
-
-    def test_any_other_last_round_adds_nothing(self):
-        prompt, included = self.prompt(None)
-        self.assertNotIn("review-incomplete", included)
-        self.assertNotIn("# The incomplete round", prompt)
-
-
 class TheNextReviewIsToldWhyARoundDidNotCount(unittest.TestCase):
     """`service.steps.run_step` hands over the round the loop read as unfinished; this module only places
     it."""
@@ -575,16 +545,14 @@ class NoPromptAsksForAStatusLine(unittest.TestCase):
                         )
                         self.assertNotIn("Status:", prompt)
 
-    def test_no_reopening_turn_and_no_drift_note_carries_it(self):
+    def test_no_reopening_prompt_and_no_drift_note_carries_it(self):
         from coscc.git import drift
         from coscc.runner.reply import opening_prompt
-        from coscc.runner.review import closing_prompt
 
         sha = "a" * 40
         for text in (
             opening_prompt("review.md", "no title"),
             opening_prompt("spec.md", "no title"),
-            closing_prompt(sha, 2),
             drift.describe({"checked": False, "reason": "no worktree"}),
             drift.describe({"checked": True, "files": ["a.py"], "plan_sha": sha, "main_sha": sha}),
         ):
