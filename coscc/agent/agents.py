@@ -110,14 +110,13 @@ def settings_json(row: dict[str, Any]) -> str:
 
 
 def identity_section(row: dict[str, Any]) -> str:
-    """The section a prompt opens with. An empty field is left out of its sentence."""
-    glyph, name, meaning, role = (str(row.get(f) or "") for f in FIELDS)
+    """The section a prompt opens with. An empty field is left out of its sentence. The role is the
+    row's body, the system prompt, so it is not said again here."""
+    glyph, name, meaning = (str(row.get(f) or "") for f in ("glyph", "name", "meaning"))
     who = " ".join(p for p in (glyph, name) if p)
     if meaning:
         who += f" ({meaning})"
     lines = ["# Who you are", "", f"You are {who}, the agent of the {row['key']} stage."]
-    if role:
-        lines.append(f"Your role: {role}")
     lines += [
         "",
         "Where the rules below ask for your name and do not spell it out, write exactly "
