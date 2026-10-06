@@ -10,9 +10,10 @@ Read this before adding a route, a button or a grant.
   agent's work. The loop waits for a person only at the review-round limit and at
   `needs-person`, and that stop is an agent's claim confirmed by another agent.
 - **A gate is advice unless code enforces it.** Nothing forces a session to run `coscc.loop` or
-  stop on non-zero; a hook could. A grant reads words, not intent: assume any program it may
-  start walks past it. What stops a merge or a force-push on `main` is the host's ruleset, not
-  this harness.
+  stop on non-zero; a hook could. Every session runs auto mode: the app refuses a few critical
+  calls by their words and a classifier judges the rest, so assume a program it lets run can
+  walk past both. What stops a merge or a force-push on `main` is the host's ruleset, not this
+  harness.
 - **A press starts what it names and nothing more.** A person's answer, an outcome, a review
   comment, an integration, a hold, a stop, a release, a setting, a shortlist and turning a
   feature off each write a row and start no other stage. The autopilot, when a workspace turns

@@ -578,8 +578,9 @@ def _options(
     `mcp_servers` is the app's own in-process servers, `{"cos": <submit>}` for a step that
     hands back an object; `strict_mcp_config` stays, so those are the only ones.
 
-    The hooks are the gate's own in-process callbacks, never a settings file's. `unit_scratch` is the unit's `(ram, disk)` directories, which `child_env` puts into the
-    session's environment.
+    The hooks are the gate's own in-process callbacks, never a settings file's. `unit_scratch`
+    is the unit's `(ram, disk)` directories, which `child_env` puts into the session's
+    environment.
     """
     # A board step brings its own list from `policy.Grant`; everything else gets the app
     # default, empty. `tools=[]` and `tools=None` differ for the SDK, so test `is None`. Read
