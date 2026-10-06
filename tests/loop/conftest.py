@@ -131,7 +131,7 @@ def entry(
     return {
         "artifacts": arts,
         "type": type,
-        "links": links or {"idea": None, "repo": None, "dependsOn": None},
+        "links": links or {"idea": None, "dependsOn": None},
         "holds": holds or [],
         "answers": answers or [],
         "unknowns": unknowns or [],
@@ -154,7 +154,6 @@ class UnitStore:
         self.workspace = workspace
         self.units: dict[str, dict] = {}
         self.workspaces: list[str] = [workspace]
-        self.ideas: dict[str, list] = {}
 
     def unit(
         self, name: str, files: dict[str, str], known: dict | None = None, ws: str | None = None
@@ -175,7 +174,6 @@ class UnitStore:
             "workspace": self.workspace,
             "workspaces": self.workspaces,
             "units": self.units,
-            "ideas": self.ideas,
             **override,
         }
         path = self.root / "state.json"

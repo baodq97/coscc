@@ -151,8 +151,7 @@ def test_new_idea_ignores_stray_files(store: UnitStore):
 # --- meta ---------------------------------------------------------------------------------
 
 INTENT = (
-    header("Dùng SQLite", "accepted", extra="Type: Feat. Idea: ws/ideas/0001_x.md. Repo: coscc.\n")
-    + "Depends on: ws/0001_a, other/0002_b.\n"
+    header("Dùng SQLite", "accepted", extra="Type: Feat.\n")
     + "\n## Why\nVì tiếng Việt có dấu: đạt, trượt.\n\n"
     + QUESTIONS
     + "\n"
@@ -162,7 +161,7 @@ INTENT = (
 
 def test_meta_of_an_empty_store(store: UnitStore):
     r = run(store, "meta")
-    assert json.loads(r.out) == {"units": {}, "ideas": None}
+    assert json.loads(r.out) == {"units": {}}
 
 
 def _whole_store(store: UnitStore) -> None:
@@ -184,33 +183,17 @@ def _whole_store(store: UnitStore) -> None:
     store.unit("20", {})
     ideas = store.cos / "ideas"
     ideas.mkdir()
-    (ideas / "0001_good.md").write_text(
-        "# Idea: Tiếng Việt  \nAuthor: x. Status: accepted.\n\n## Units\n"
-        "- ws/0001_a\n- ws/0002_b. Depends on: ws/0001_a, ws/0003_c.\n"
-        "- ws/0004_d. Depends on: ws/0001_a.\n\n- not a unit\n- ws/0005_e. Depends on: nope\n"
-        "- other/0006_f.\n"
-    )
-    (ideas / "0002_nostatus.md").write_text("# Idea: No status\n\nBody only\n")
-    (ideas / "0003_crlf.md").write_text(
-        "# Idea: Crlf\r\nStatus: draft.\r\n## Units\r\n- ws/0001_a\r\n"
-    )
-    (ideas / "0004_bad.md").write_text("# Idea:\n## Units\n- \n")
+    (ideas / "0001_good.md").write_text("# Idea: Tiếng Việt\nAuthor: x. Status: accepted.\n")
     (ideas / "broken.md").write_text("# Idea: Broken\n")
     (ideas / "0005_adir.md").mkdir()
-    (ideas / "B_upper.md").write_text("x")
-    (ideas / "a-hyphen.md").write_text("x")
-    (ideas / "a_under.md").write_text("x")
-    (ideas / "a.dot").write_text("x")
-    (ideas / "0010-slug.md").write_text("x")
 
 
-def test_meta_of_a_whole_store_with_units_and_ideas(store: UnitStore):
+def test_meta_of_a_whole_store_leaves_the_ideas_folder_out_of_its_units(store: UnitStore):
     _whole_store(store)
     r = run(store, "meta")
     data = json.loads(r.out)
-    assert list(data) == ["units", "ideas"]
+    assert list(data) == ["units"]
     assert "ideas" not in data["units"]
-    assert data["ideas"] is not None
 
 
 def test_meta_of_one_unit(store: UnitStore):
@@ -247,11 +230,11 @@ def test_meta_reads_the_status_a_stage_may_carry(store: UnitStore):
     assert first["ship.md"]["raw"] is None
 
 
-def test_meta_reads_questions_answers_holds_and_links(store: UnitStore):
+def test_meta_reads_questions_answers_holds_and_type(store: UnitStore):
     _whole_store(store)
     unit = json.loads(run(store, "meta", "0001_first", "intent.md").out)["units"]["0001_first"]
     assert [q["n"] for q in unit["artifacts"]["intent.md"]["questions"]] == [1, 3]
-    assert unit["links"]["dependsOn"] == ["ws/0001_a", "other/0002_b"]
+    assert "links" not in unit
     assert unit["type"] == "feat"
     assert [h["state"] for h in unit["holds"]] == ["paused", "active", "dropped"]
     assert unit["answers"]
@@ -295,21 +278,4 @@ def test_meta_reads_odd_text_alike(store: UnitStore, text):
 def test_meta_reads_a_file_with_a_bad_byte_alike(store: UnitStore):
     d = store.unit("0001_bytes", {})
     (d / "intent.md").write_bytes(b"# Intent: \xff\xfe bad\nStatus: draft.\n\xc3\n")
-    assert run(store, "meta").code == 0
-
-
-@pytest.mark.parametrize(
-    "idea",
-    [
-        "",
-        "# Idea: x\nStatus: draft.\n## Units\n- ws/0001_a. Depends on: ws/0002_b\n",
-        "# Idea: x\nStatus: draft.\n## Units\n- ws/0001_a.\n- ws/0002_b. Depends on: ws/0001_a.\n",
-        "# Idea:x\nStatus: draft.\n## Units\n   - ws/0001_a   \n",
-        "# Idea:   spaced  \nStatus: draft.\n## Units\n- ws/0001_a \n",
-    ],
-)
-def test_meta_reads_an_idea_alike(store: UnitStore, idea):
-    ideas = store.cos / "ideas"
-    ideas.mkdir()
-    (ideas / "0001_x.md").write_text(idea)
     assert run(store, "meta").code == 0

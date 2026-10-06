@@ -31,7 +31,7 @@ from coscc.loop.model import (
     parse_type,
     read_unit,
 )
-from coscc.loop.paths import next_number, read_ideas, unit_meta
+from coscc.loop.paths import next_number, unit_meta
 from coscc.loop import stringify
 from coscc.loop.model import (
     parse_deadline,
@@ -97,7 +97,7 @@ def entry_from(m: dict, records: dict | None = None) -> dict:
     return {
         "artifacts": arts,
         "type": m.get("type"),
-        "links": m.get("links") or {"idea": None, "repo": None, "dependsOn": None},
+        "links": m.get("links") or {"idea": None, "dependsOn": None},
         "holds": [h for h in (m.get("holds") or []) if h.get("by") is not None],
         "answers": m.get("answers"),
         "unknowns": [],
@@ -113,13 +113,12 @@ def state_of_root(root: Path, records: dict | None = None) -> dict:
         for d in sorted(cos.iterdir()):
             if d.is_dir() and d.name != "ideas":
                 units[f"/{d.name}"] = entry_from(unit_meta(str(d)), (records or {}).get(d.name))
-    ideas = read_ideas(str(cos)) if (cos / "ideas").exists() else []
-    return {"workspace": "", "workspaces": [], "units": units, "ideas": {"": ideas}}
+    return {"workspace": "", "workspaces": [], "units": units}
 
 
 def read(dir_: Path, name: str, records: dict | None = None) -> dict:
     """`read_unit` of `dir_` under `name`, with the snapshot of its files and `records`."""
-    state = {"workspace": "", "workspaces": [], "units": {}, "ideas": {"": []}}
+    state = {"workspace": "", "workspaces": [], "units": {}}
     state["units"][f"/{name}"] = entry_from(unit_meta(str(dir_)), records)
     return read_unit(str(dir_), name, state)
 
@@ -1488,7 +1487,7 @@ def spike_unit(tmp_path, files, records=None):
 def with_entry(d, name="0039_x"):
     """The snapshot of `d`'s files and its entry, for a test to change before `read_unit`."""
     entry = entry_from(unit_meta(str(d)))
-    state = {"workspace": "", "workspaces": [], "units": {f"/{name}": entry}, "ideas": {"": []}}
+    state = {"workspace": "", "workspaces": [], "units": {f"/{name}": entry}}
     return state, entry
 
 

@@ -707,7 +707,7 @@ def review_rounds(env=os.environ):
 NO_ENTRY = {
     "artifacts": {},
     "type": None,
-    "links": {"idea": None, "repo": None, "dependsOn": None},
+    "links": {"idea": None, "dependsOn": None},
     "holds": [],
     "answers": [],
     "unknowns": [],
@@ -777,19 +777,6 @@ def valid_ws(s):
     return isinstance(s, str) and bool(WS_RE.fullmatch(s)) and s not in (".", "..")
 
 
-def parse_idea_ref(ref):
-    parts = js(nullish(ref, "")).split("/")
-    if len(parts) == 2:
-        ws, dir_, file = None, parts[0], parts[1]
-    elif len(parts) == 3:
-        ws, dir_, file = parts
-    else:
-        return None
-    if dir_ != IDEAS or not IDEA_FILE_RE.fullmatch(file) or (ws is not None and not valid_ws(ws)):
-        return None
-    return {"ws": ws, "file": file}
-
-
 def parse_unit_ref(ref):
     parts = js(nullish(ref, "")).split("/")
     if len(parts) == 1:
@@ -803,49 +790,32 @@ def parse_unit_ref(ref):
     return {"ws": ws, "name": name}
 
 
-def header_field(text, key):
-    lines = split_lines(text)
-    first = _find(lines, lambda l: l.startswith("## "))
-    header = "\n".join((lines if first == -1 else lines[:first])[1:])
-    m = re.search(rf"(?:^|\s){key}:[ \t]*([^\s,]+(?:,[ \t]*[^\s,]+)*)", header, A | re.M)
-    return re.sub(r"\.$", "", m[1]) if m else None
-
-
-def parse_links(text):
-    deps = header_field(text, "Depends on")
-    return {
-        "idea": header_field(text, "Idea"),
-        "repo": header_field(text, "Repo"),
-        "dependsOn": None if deps is None else re.split(r",[ \t]*", deps),
-    }
-
-
-def store_of(ws, repo, state):
+def store_of(ws, state):
     if ws is not None and ws in nullish(dig(state, "workspaces"), []):
         return {"ws": ws}
-    if ws is None or ws == repo:
+    if ws is None or ws == state["workspace"]:
         return {"ws": state["workspace"]}
     return {"why": f"the app has no workspace named {ws}"}
 
 
 # `LINKS`: what `read_unit` learned of a unit's links, kept off the unit
-# so `status --json` carries `idea`, `repo` and `dependsOn` alone. Keyed by `id`, the unit kept
+# so `status --json` carries `idea` and `dependsOn` alone. Keyed by `id`, the unit kept
 # beside its entry so the id is never reused while the entry stands.
 LINKS: dict[int, tuple[object, dict]] = {}
 
 
 def links_of(unit):
     kept = LINKS.get(id(unit))
-    return kept[1] if kept and kept[0] is unit else {"needs": [], "waiting": []}
+    return kept[1] if kept and kept[0] is unit else {"waiting": []}
 
 
-def dependency(raw, unit, repo, state):
+def dependency(raw, unit, state):
     ref = parse_unit_ref(raw)
     if not ref:
         return {"ref": raw, "merged": None, "why": "not NNNN_<slug> or <ws>/NNNN_<slug>"}
-    if ref["name"] == unit["name"] and (ref["ws"] is None or ref["ws"] == repo):
+    if ref["name"] == unit["name"] and (ref["ws"] is None or ref["ws"] == state["workspace"]):
         return {"ref": raw, "merged": None, "why": "a unit cannot depend on itself"}
-    store = store_of(ref["ws"], repo, state)
+    store = store_of(ref["ws"], state)
     if "why" in store:
         return {"ref": raw, "merged": None, "why": store["why"]}
     e = entry_of(state, store["ws"], ref["name"])
@@ -866,84 +836,37 @@ def dependency(raw, unit, repo, state):
     return {"ref": raw, "merged": False, "why": "not merged: the app holds no merge of it"}
 
 
-def idea_line(idea, unit, repo, state):
-    ref = parse_idea_ref(idea)
-    if not ref:
-        return {"why": "not ideas/NNNN_<slug>.md or <ws>/ideas/NNNN_<slug>.md"}
-    if repo is None:
-        return {"why": "intent.md declares no Repo:, so its line under ## Units cannot be found"}
-    store = store_of(ref["ws"], repo, state)
-    if "why" in store:
-        return {"why": store["why"]}
-    ideas = nullish(dig(state, "ideas", store["ws"]), [])
-    read = next((i for i in ideas if f"{js(dig(i, 'id'))}.md" == ref["file"]), None)
-    if not read:
-        return {"why": f"the app knows no {store['ws']}/{IDEAS}/{ref['file']}"}
-    line = next((u for u in read["units"] if dig(u, "ref") == f"{repo}/{unit['name']}"), None)
-    if line:
-        return {"line": line}
-    return {"why": f"it does not list {repo}/{unit['name']} under ## Units"}
-
-
 def resolve_links(unit, links, state):
     idea = nullish(dig(links, "idea"))
-    repo = nullish(dig(links, "repo"))
     depends_on = nullish(dig(links, "dependsOn"))
     related = []
     for b in nullish(dig(links, "backlog"), []):
-        d = {**dependency(dig(b, "ref"), unit, repo, state), "source": dig(b, "source")}
+        d = {**dependency(dig(b, "ref"), unit, state), "source": dig(b, "source")}
         if d["why"] != "dropped" and not d["why"].startswith("rejected"):
             related.append(d)
-    if idea is None and repo is None and depends_on is None and not related:
+    if idea is None and depends_on is None and not related:
         return
-    needs = []
     if idea is not None:
         unit["idea"] = idea
-    if repo is not None:
-        unit["repo"] = repo
-        if not valid_ws(repo):
-            unit["problems"].append(f'intent.md: Repo: "{repo}" is not a workspace name')
     if depends_on is not None or related:
         unit["dependsOn"] = [
-            *(dependency(ref, unit, repo, state) for ref in nullish(depends_on, [])),
+            *(dependency(ref, unit, state) for ref in nullish(depends_on, [])),
             *related,
         ]
         for d in unit["dependsOn"]:
             if d["merged"] is None:
-                where = "backlog relation" if d.get("source") else "intent.md: Depends on:"
+                where = "backlog relation" if d.get("source") else "Depends on:"
                 unit["problems"].append(f"{where} {js(d['ref'])} — {d['why']}")
-    if idea is not None:
-        found = idea_line(idea, unit, repo, state)
-        if "why" in found:
-            unit["problems"].append(f"intent.md: Idea: {idea} — {found['why']}")
-            needs.append(f"Idea: {idea} cannot be read: {found['why']}")
-        else:
-
-            def full(r):
-                ref = parse_unit_ref(r)
-                return f"{repo}/{r}" if ref and ref["ws"] is None else r
-
-            listed = sorted(full(r) for r in found["line"]["dependsOn"])
-            declared = sorted(full(r) for r in nullish(depends_on, []))
-            if ", ".join(listed) != ", ".join(declared):
-                needs.append(
-                    f"{idea} lists {repo}/{unit['name']} with Depends on: "
-                    f"{', '.join(listed) or 'nothing'}, but intent.md declares "
-                    f"{', '.join(declared) or 'none'} — the two must match"
-                )
     waiting = [d for d in unit.get("dependsOn", []) if d["merged"] is not True]
-    LINKS[id(unit)] = (unit, {"needs": needs, "waiting": waiting})
+    LINKS[id(unit)] = (unit, {"waiting": waiting})
 
 
 def link_needs(unit):
     kept = links_of(unit)
     return [
-        *kept["needs"],
-        *(
-            f"waits on {js(d['ref'])}: {d['why']} "
-            f"({'backlog relation' if d.get('source') else 'Depends on:'})"
-            for d in kept["waiting"]
-        ),
+        f"waits on {js(d['ref'])}: {d['why']} "
+        f"({'backlog relation' if d.get('source') else 'Depends on:'})"
+        for d in kept["waiting"]
     ]
 
 
@@ -961,13 +884,6 @@ def wait_on_dependencies(unit, answer):
             "action": f"{WAITING_ON}{refs} to merge",
             "stage": "",
             "why": "dependency",
-        }
-    if kept["needs"]:
-        return {
-            "blocked": True,
-            "action": f"fix the idea link — {kept['needs'][0]}",
-            "stage": "",
-            "why": "unreadable",
         }
     return answer
 
