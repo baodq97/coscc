@@ -141,7 +141,7 @@ function Project({ workspace }: { workspace: Workspace }) {
           </div>
           <div className="card">
             {v.unestimated.map((u) => (
-              <Row key={u} workspace={workspace.name} unit={u} rank="–" estimate={null}>
+              <Row key={u} workspace={workspace.name} unit={u} rank="–" estimate={null} paused={paused[u]}>
                 <Estimate disabled={busy} onSave={(value, effort, basis) => save("/api/backlog/estimate", { unit: u, value, effort, basis })} />
               </Row>
             ))}

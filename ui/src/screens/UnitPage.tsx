@@ -217,9 +217,11 @@ function PausedBanner({ unit, paused, onDone }: { unit: PlacedUnit; paused: Paus
     <div className="callout amber" style={{ marginTop: 18, flexWrap: "wrap" }}>
       <Icon name="pause" size={15} />
       <div className="grow" style={{ minWidth: 260 }}>
-        <b>{stage} paused: {pausedAt(paused).replace("Paused at ", "")}</b>
+        <b>
+          {stage} hit its {turns ? `${paused.max_turns}-turn` : money(paused.max_usd)} ceiling
+        </b>
         <div className="muted">
-          It hit its {turns ? "turn" : "$"} ceiling and kept its session and its work. Raise the ceiling and it goes on where it stopped; a rerun starts the stage from scratch.
+          Spent {money(paused.usd)} of {money(paused.max_usd)} and {paused.turns ?? "?"} of {paused.max_turns ?? "?"} turns. It kept its session and its work: raise the ceiling and it goes on where it stopped, or rerun the stage from scratch.
         </div>
         <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           <label className="faint" style={{ fontSize: 12.5 }}>
