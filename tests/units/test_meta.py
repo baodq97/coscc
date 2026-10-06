@@ -390,6 +390,22 @@ class TheIngest(Base):
         links = self.meta.snapshot(WS, NAMES)["units"]["proj/0017_linked"]["links"]
         self.assertEqual(links["dependsOn"], None)
 
+    def test_an_intent_its_run_submitted_leaves_the_type_to_the_record(self):
+        self.meta.import_store(WS, self.store)
+        intent = self.store / ".cos" / "0003_old-unit" / "intent.md"
+        intent.write_text(intent.read_text() + "\nThêm một dòng.\n")
+        unknowns = self.meta.ingest(
+            WS,
+            self.store,
+            "0003_old-unit",
+            actor="stage:intent",
+            session="s1",
+            source="run:intent",
+            decided=("intent.md",),
+        )
+        self.assertEqual([u for u in unknowns if u["field"] == "type"], [])
+        self.assertEqual([u for u in self.meta.unknowns([WS]) if u["field"] == "type"], [])
+
     def test_a_failed_ingest_is_a_problem_on_the_card(self):
         self.meta.import_store(WS, self.store)
         self.meta.ingest_failed(WS, "0013_open-question", "coscc.loop meta exited 2")

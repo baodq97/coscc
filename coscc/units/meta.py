@@ -310,9 +310,13 @@ class UnitMeta:
             )
         if "intent.md" in dict(changed) and "links" in meta:
             kind = meta.get("type")
-            recorded = conn.execute(
-                f"SELECT 1 FROM outputs WHERE {_ONE} AND agent = 'intent'", scope
-            ).fetchone()
+            # A run that submitted its intent hands the type to `record_result`.
+            recorded = (
+                "intent.md" in decided
+                or conn.execute(
+                    f"SELECT 1 FROM outputs WHERE {_ONE} AND agent = 'intent'", scope
+                ).fetchone()
+            )
             if not recorded:
                 conn.execute(
                     f"UPDATE unit_meta SET type = ? WHERE {_ONE}", (kind or "unknown", *scope)
